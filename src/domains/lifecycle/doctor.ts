@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { accessSync, chmodSync, constants, type Dirent, existsSync, readdirSync, type Stats, statSync } from "node:fs";
+import {
+	accessSync,
+	chmodSync,
+	constants,
+	type Dirent,
+	existsSync,
+	lstatSync,
+	readdirSync,
+	type Stats,
+	statSync,
+} from "node:fs";
 import { dirname, join, relative as relativePath } from "node:path";
 import { isDevVersion, readPancodeVersionLabel } from "../../core/build-info.js";
 import { readSettings, validateSettingsFile } from "../../core/config.js";
@@ -434,6 +444,16 @@ function credentialsDamage(): string | null {
 	}
 }
 
+/** Only a file that is not there means no key was saved; a path that cannot be looked at is reported. */
+function credentialsAbsent(path: string): boolean {
+	try {
+		lstatSync(path);
+		return false;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT";
+	}
+}
+
 /**
  * True when PanCode has never written to this home: each of the four roots is
  * missing or an empty directory. A `mkdir -p`, an installer or another tool can
@@ -744,12 +764,16 @@ export function runDoctor(options: DoctorOptions = {}): DoctorFinding[] {
 		}
 	}
 
-	// Single "credentials" row covers all three states (missing / wrong mode /
+	// Single "credentials" row covers every state (none saved / wrong mode /
 	// correct mode / read error) so external assertions can grep one stable
-	// row name instead of branching on state.
+	// row name instead of branching on state. The first saved key creates the file.
 	const creds = join(config, "credentials.yaml");
-	if (!existsSync(creds)) {
-		findings.push({ ok: false, name: "credentials", detail: "missing (run `pancode doctor --fix`)" });
+	if (credentialsAbsent(creds)) {
+		findings.push({
+			ok: true,
+			name: "credentials",
+			detail: "none saved; save a key with `pancode auth login <target>`",
+		});
 	} else {
 		try {
 			accessSync(creds, constants.R_OK);

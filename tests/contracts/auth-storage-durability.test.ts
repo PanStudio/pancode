@@ -163,20 +163,11 @@ describe("contracts/auth storage durability", () => {
 		strictEqual(open().listStored().length, 1, "a first login still writes");
 	});
 
-	/**
-	 * The exact bytes `initializePancodeHome` scaffolds at src/core/init.ts:80. A
-	 * first guard at this shape called the product's own fresh file damaged, so a
-	 * brand-new install could not log in at all and `pancode configure --api-key`
-	 * died with it. Pinned to the literal scaffold so a change to one side has to
-	 * be a change to both.
-	 */
-	it("accepts the credentials scaffold a fresh install ships", () => {
-		const scaffold = "# Managed via `pancode auth`. Do not edit manually unless you know what you are doing.\n{}\n";
-		writeFileSync(path, scaffold, "utf8");
-
-		strictEqual(open().damageReason(), null, "the shipped scaffold is an empty store, not a damaged one");
-		const storage = open();
-		storage.setApiKey("openai", "sk-not-a-real-key-first-login");
+	// A fresh home has no credentials.yaml; the first saved key is what creates it.
+	it("creates the store on the first saved key", () => {
+		rmSync(path, { force: true });
+		strictEqual(open().damageReason(), null, "a home without the file is not damaged");
+		open().setApiKey("openai", "sk-not-a-real-key-first-login");
 		strictEqual(open().listStored().length, 1, "the very first login on a fresh install succeeds");
 		ok(readFileSync(path, "utf8").includes("sk-not-a-real-key-first-login"));
 	});

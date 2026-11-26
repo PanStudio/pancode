@@ -10,7 +10,6 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:
 import { join } from "node:path";
 import { isDevVersion } from "./build-info.js";
 import { SETTINGS_FILE_MODE, SETTINGS_SCAFFOLD_YAML } from "./defaults.js";
-import { applyOwnerOnlyAcl } from "./owner-only-acl.js";
 import { readPancodeVersion } from "./package-root.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
 import { withStateFileLockSync } from "./state-file-lock.js";
@@ -161,24 +160,6 @@ export function initializePancodeHome(): InitReport {
 			safeResourceWrite(settingsPath, SETTINGS_SCAFFOLD_YAML, { encoding: "utf8", mode: SETTINGS_FILE_MODE });
 			created.push(settingsPath);
 			touched = true;
-		});
-	}
-
-	const credentialsPath = join(configDir, "credentials.yaml");
-	if (!existsSync(credentialsPath)) {
-		withStateFileLockSync(credentialsPath, () => {
-			if (existsSync(credentialsPath)) return;
-			// On Windows the directory goes owner-only first, so the temp file never inherits a wider ACL.
-			applyOwnerOnlyAcl(configDir, {}, { directory: true });
-			safeResourceWrite(
-				credentialsPath,
-				"# Managed via `pancode auth`. Do not edit manually unless you know what you are doing.\n{}\n",
-				{ encoding: "utf8", mode: 0o600 },
-			);
-			chmodSync(credentialsPath, 0o600);
-			// On Windows the mode is not access control; a failure here shows in doctor.
-			applyOwnerOnlyAcl(credentialsPath);
-			created.push(credentialsPath);
 		});
 	}
 

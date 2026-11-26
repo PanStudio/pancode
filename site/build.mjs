@@ -511,12 +511,12 @@ function shell(html, path, title, description, type, options) {
 		.replaceAll("<!-- published-version -->", escapeHtml(product.publishedVersion))
 		.replace("<!-- version-source -->", `${repository}/tree/${ref}`)
 		.replaceAll("<!-- source-blob -->", `${repository}/blob/${ref}`)
+		// Open and close together: a transcript <pre> carries a class and must not gain a stray </div>.
 		.replace(
-			/<pre(?: data-label="([^"]*)")?>/g,
-			(_, label) =>
-				`<div class="code-block">${label ? `<p class="code-label eyebrow">${label}</p>` : ""}<pre tabindex="0" aria-label="Code example ${++number}">`,
+			/<pre(?: data-label="([^"]*)")?>([\s\S]*?)<\/pre>/g,
+			(_, label, body) =>
+				`<div class="code-block">${label ? `<p class="code-label eyebrow">${label}</p>` : ""}<pre tabindex="0" aria-label="Code example ${++number}">${body}</pre></div>`,
 		)
-		.replace(/<\/pre>/g, "</pre></div>")
 		.replace(
 			/<span aria-hidden="true">([↗→←↓])<\/span>/g,
 			(_, arrow) =>
@@ -621,7 +621,8 @@ function directive(name, args, inner, render) {
 			const steps = render(inner)
 				.split(/(?=<h3 )/)
 				.filter((part) => part.trim());
-			return `<ol class="guide-steps">${steps.map((step, index) => `<li class="guide-step"><span class="step-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div>${step}</div></li>`).join("")}</ol>`;
+			// A titled steps group opens its own section, so the contents list and its tracker reach the steps.
+			return `${args ? render(`## ${args}`) : ""}<ol class="guide-steps">${steps.map((step, index) => `<li class="guide-step"><span class="step-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div>${step}</div></li>`).join("")}</ol>`;
 		}
 		case "prompt":
 			return `<figure class="guide-prompt"><figcaption class="eyebrow"><span class="chapter">${escapeHtml(args || "Ask PanCode")}</span></figcaption><blockquote>${render(inner)}</blockquote><button type="button" class="copy" data-copy="${escapeHtml(plain(inner))}" aria-label="Copy the request">Copy</button></figure>`;
@@ -694,7 +695,12 @@ function renderMarkdown(markdown, sourcePath, guide = false) {
 		const base = slug(text);
 		const count = ids.get(base) ?? 0;
 		ids.set(base, count + 1);
-		return `<h${depth} id="${escapeHtml(base + (count ? `-${count}` : ""))}">${text}</h${depth}>\n`;
+		const id = escapeHtml(base + (count ? `-${count}` : ""));
+		// A numbered section ("1. Install PanCode") sets its number apart; the heading text stays as written.
+		const numbered = depth === 2 && text.match(/^(\d+\.)\s+([\s\S]+)$/);
+		if (numbered)
+			return `<h2 id="${id}" class="numbered-section"><span class="step-number">${numbered[1]}</span> <span>${numbered[2]}</span></h2>\n`;
+		return `<h${depth} id="${id}">${text}</h${depth}>\n`;
 	};
 	renderer.link = function ({ href, tokens, title }) {
 		if (/^(?:javascript|data|vbscript):/i.test(href)) return this.parser.parseInline(tokens);
@@ -864,7 +870,7 @@ for (const item of index) {
 		? `\n\n## Related ${kinds}\n\n::: next Related ${kinds}\n${examples.map((article) => `- [${article.title}](${article.url})`).join("\n")}\n:::\n`
 		: "";
 	const rendered = renderMarkdown(markdown + relatedBlock, item.source, true);
-	const headings = [...rendered.matchAll(/<h2 id="([^"]+)">([\s\S]*?)<\/h2>/g)];
+	const headings = [...rendered.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
 	const toc = headings.map(([, id, text]) => `<a href="#${id}">${text.replace(/<[^>]+>/g, "")}</a>`).join("\n");
 	const nav = groups
 		.map(
@@ -936,7 +942,7 @@ for (const item of articles) {
 	const folder = item.folder;
 	const markdown = await read(`${folder}/${item.source}`);
 	const content = renderMarkdown(markdown, `site/${folder}/${item.source}`, true);
-	const headings = [...content.matchAll(/<h2 id="([^"]+)">([\s\S]*?)<\/h2>/g)];
+	const headings = [...content.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
 	const toc = headings.map(([, id, text]) => `<a href="#${id}">${text.replace(/<[^>]+>/g, "")}</a>`).join("\n");
 	const facts = [
 		["Written for", `v${item.versionScope ?? product.version}`],
@@ -1013,10 +1019,11 @@ const fact = (label, value) => `<div><dt class="eyebrow">${label}</dt><dd>${valu
 // The PanHub catalog: the rows of the bundled hub/index.yaml as hub-catalog.mjs
 // validated them, so the page lists exactly what this release installs.
 const hubCommit = source.commit ?? values.revision ?? null;
-const hubKinds = ["plugin", "extension", "skill", "agent", "prompt", "playbook"];
+const hubKinds = ["plugin", "extension", "server", "skill", "agent", "prompt", "playbook"];
 const hubPlural = {
 	plugin: "Plugins",
 	extension: "Extensions",
+	server: "Servers",
 	skill: "Skills",
 	agent: "Agents",
 	prompt: "Prompts",
@@ -1045,18 +1052,45 @@ const hubRow = (row) => {
 		.join("");
 	return `<li class="hub-row" id="${escapeHtml(id)}" data-hub-text="${escapeHtml(text)}" data-hub-kind="${escapeHtml(row.kind)}"><div class="hub-row-head"><h3>${escapeHtml(row.name)}</h3><span class="tag">v${escapeHtml(row.version)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><details class="hub-row-more"><summary>${escapeHtml(row.description)}</summary><dl class="hub-meta">${meta}</dl></details>${hubCommand(row)}</li>`;
 };
-const hubCommand = (row) =>
-	`<div class="command-line"><code>${escapeHtml(row.install)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(row.install)}" aria-label="Copy the install command for ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+// A core server is built into PanCode, so its row gives the command another agent host runs to serve it.
+const hubBuiltIn = (row) => row.kind === "server" && row.tier === "core";
+const hubServe = (row) => `npx -y -p @akougkas/pancode pankit serve ${row.name}`;
+// What a bare serve command leaves out, said beside it.
+const hubServeNotes = {
+	store: {
+		html:
+			"Started as shown, it runs with no store root configured. In a project, <code>pancode store where</code> prints the full command with its <code>--root</code>, <code>--cache</code> and <code>--project</code>.",
+		markdown:
+			"Started as shown, it runs with no store root configured; in a project, `pancode store where` prints the full command with its `--root`, `--cache` and `--project`.",
+	},
+};
+const hubCommand = (row) => {
+	const command = hubBuiltIn(row) ? hubServe(row) : row.install;
+	const label = hubBuiltIn(row) ? "Copy the command that serves" : "Copy the install command for";
+	const note =
+		hubBuiltIn(row) && hubServeNotes[row.name]
+			? `<p class="caption hub-serve-note">${hubServeNotes[row.name].html}</p>`
+			: "";
+	const line = `<div class="command-line"><code>${escapeHtml(command)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(command)}" aria-label="${label} ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+	return note ? `<div class="hub-command">${line}${note}</div>` : line;
+};
 // The packs a newcomer starts with, in hub-featured.json order, above the full catalog.
 const hubFeatured = JSON.parse(await read("hub-featured.json")).map((key) => {
 	const row = hubCatalog.rows.find((item) => `${item.kind}:${item.name}` === key);
 	if (!row) throw new Error(`hub-featured.json names ${key}, which is not in the PanHub catalog.`);
 	return `<li class="hub-featured-row"><div class="hub-row-head"><h3><a href="#${escapeHtml(`${row.kind}-${row.name}`)}">${escapeHtml(row.name)}</a></h3><span class="tag">${escapeHtml(row.kind)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><p>${escapeHtml(row.description)}</p>${hubCommand(row)}</li>`;
 });
-const hubGroups = [...hubKinds, ...new Set(hubCatalog.rows.map((row) => row.kind))]
+const hubKindRows = [...hubKinds, ...new Set(hubCatalog.rows.map((row) => row.kind))]
 	.filter((kind, i, all) => all.indexOf(kind) === i)
 	.map((kind) => [kind, hubCatalog.rows.filter((row) => row.kind === kind)])
-	.filter(([, rows]) => rows.length)
+	.filter(([, rows]) => rows.length);
+const hubChips = hubKindRows
+	.map(
+		([kind]) =>
+			`<button type="button" class="hub-chip" data-hub-kind="${escapeHtml(kind)}" aria-pressed="false">${hubPlural[kind] ?? escapeHtml(kind)}</button>`,
+	)
+	.join("");
+const hubGroups = hubKindRows
 	.map(
 		([kind, rows]) =>
 			`<section class="hub-group" aria-labelledby="hub-${kind}" data-hub-group><h2 id="hub-${kind}">${hubPlural[kind] ?? escapeHtml(kind)} <span class="hub-group-count" data-hub-group-count>${rows.length}</span></h2><ul class="hub-rows">${rows.map(hubRow).join("")}</ul></section>`,
@@ -1073,7 +1107,7 @@ const hubSlots = {
 		fact("Command", "<code>pancode hub</code>"),
 		fact("Packs", String(hubCatalog.rows.length)),
 	].join(""),
-	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><div class="hub-chips" role="group" aria-label="Kind"><button type="button" class="hub-chip" data-hub-kind="" aria-pressed="true">All</button><button type="button" class="hub-chip" data-hub-kind="plugin" aria-pressed="false">Plugins</button><button type="button" class="hub-chip" data-hub-kind="extension" aria-pressed="false">Extensions</button><button type="button" class="hub-chip" data-hub-kind="skill" aria-pressed="false">Skills</button></div><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
+	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><div class="hub-chips" role="group" aria-label="Kind"><button type="button" class="hub-chip" data-hub-kind="" aria-pressed="true">All</button>${hubChips}</div><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
 	"hub-featured": `<section class="hub-featured" aria-labelledby="hub-featured-title" data-hub-featured><h2 id="hub-featured-title">Start with these</h2><ul class="hub-featured-rows">${hubFeatured.join("")}</ul></section>`,
 	"hub-groups": hubGroups,
 	"hub-source": `Bundled with PanCode v${escapeHtml(product.version)}: ${hubIndexLink} at ${hubAt}, sha256 <code class="hub-sha" data-hub-sha256>${hubCatalog.source.sha256}</code>.`,
@@ -1327,11 +1361,11 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
 const hubMarkdown = () =>
 	[
-		`The ${hubCatalog.rows.length} packs listed in the index bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
+		`The ${hubCatalog.rows.length} packs listed in the index bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). A skill, plugin or extension installs with the command on its row, for your user; add \`--project\` to install it into the current project. A server is built into PanCode, so there is nothing to install: its row gives the command that serves it to another agent host over MCP, and that command takes no install flags. A listing at any tier is not an endorsement.`,
 		hubCatalog.rows
 			.map(
 				(row) =>
-					`- \`${row.kind}:${row.name}\` v${row.version}, ${row.tier}, ${row.publisher}, ${row.licence}: ${row.description} Install: \`${row.install}\``,
+					`- \`${row.kind}:${row.name}\` v${row.version}, ${row.tier}, ${row.publisher}, ${row.licence}: ${row.description} ${hubBuiltIn(row) ? `Built into PanCode; serve it to another agent host: \`${hubServe(row)}\`.${hubServeNotes[row.name] ? ` ${hubServeNotes[row.name].markdown}` : ""}` : `Install: \`${row.install}\``}`,
 			)
 			.join("\n"),
 	].join("\n\n");
