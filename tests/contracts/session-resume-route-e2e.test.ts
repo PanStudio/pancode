@@ -145,7 +145,9 @@ describe("resuming a session keeps the route it ran on", { timeout: 180_000 }, (
 			strictEqual(row?._meta["pancode/session"]?.model, "other-model");
 			await client.request("session/close", { sessionId });
 		} finally {
+			// Ending stdin only asks the child to leave; it must be gone before `after` removes the home it writes.
 			client.close();
+			if (!(await client.waitForExit(30_000))) await client.forceTerminate();
 		}
 		deepStrictEqual(readChatRoute(), { target: "mock-chat", model: "mock-model" });
 	});

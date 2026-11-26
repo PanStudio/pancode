@@ -44,10 +44,15 @@ test("built CLI operator invocation isolates stdout, disposes code and keeps ord
 		);
 		equal(run(["extensions", "discover", source, "--json"]).status, 0);
 		equal(run(["extensions", "install", source, "--project", "--json"]).status, 0);
+		// The installed extension claims the token, so the runtime refuses it without loading the extension's code.
 		const ordinary = run(["run", "/ext:pancode-fixture:inspect"]);
-		equal(ordinary.status, 2, ordinary.stderr);
-		match(ordinary.stderr, /not a command/);
+		equal(ordinary.status, 1, ordinary.stderr);
+		match(ordinary.stderr, /\/ext:pancode-fixture:inspect is not an available extension command/);
+		equal(`${ordinary.stdout}${ordinary.stderr}`.includes("untrusted startup stdout"), false);
 		equal(existsSync(path.join(cwd, "pancode-disposed.txt")), false);
+		const unclaimed = run(["run", "/ext:nope:inspect"]);
+		equal(unclaimed.status, 2, unclaimed.stderr);
+		match(unclaimed.stderr, /\/ext:nope:inspect is not a command/);
 		const invoked = run(["extensions", "run", "pancode-fixture", "inspect", "--json", "--", "literal --argument"]);
 		equal(invoked.status, 0, invoked.stderr);
 		const output = JSON.parse(invoked.stdout);
