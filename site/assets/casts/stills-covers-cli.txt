@@ -4,7 +4,7 @@ Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 == cli-report-preview
 
 ~/projects/calibration-lab $ pancode report bug --title "footer flickers on resize" --body-file notes.txt --dry-run
-Public, posted from your gh account to github.com/akougkas/pancode; nothing sent yet
+Public, posted from your gh account to github.com/PanStudio/pancode; nothing sent yet
 
 ----- title -----
 
@@ -43,7 +43,7 @@ nothing listed
 
 ```pancode-report
 v: 1
-id: rpt_01M8CHEQGH2Q980QGKX6S530DN
+id: rpt_01M8CQCM41EG8SJ2HQQKZGYBMD
 kind: bug
 area: none
 surface: headless
@@ -68,7 +68,7 @@ Masked by PanCode: 1 path, 1 host name. No secrets recognized.
 No diagnostic bundle is attached.
 
 Sending will, in this order:
-  1. search akougkas/pancode for an existing report of the same problem
+  1. search PanStudio/pancode for an existing report of the same problem
   2. post the text you reviewed as a public issue from your gh account
 dry run: nothing sent
 ~/projects/calibration-lab $
@@ -80,7 +80,7 @@ dry run: nothing sent
 saved target mercury (runtime=inception)
   model      mercury-3
   apiKeyEnv  INCEPTION_API_KEY
-  probe ok (7ms) 3 models
+  probe ok (6ms) 3 models
 
 settings written to /home/researcher/.config/pancode/settings.yaml
 warning: INCEPTION_API_KEY is not set in this shell; export it before using target mercury
