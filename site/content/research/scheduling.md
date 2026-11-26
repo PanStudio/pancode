@@ -1,7 +1,7 @@
 A group of agents is a workload. Each job needs a route, a share of a real endpoint, a boundary on what it may touch, and a way to tell whether it did its work. PanCode schedules its own workers and other coding agents under those rules. This page describes that design and how to measure it.
 
-::: note Design described for the 0.9.0 development tree
-The mechanisms here are read from source on the development branch. The role grader, the evidence packets, and the capability envelope are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+::: note Design described for PanCode 0.9.1
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 :::
 
 ## The design
@@ -39,7 +39,7 @@ These are facts about the design, read from source. They are not study results.
 
 - One policy is enforced for PanCode's own workers, the Claude SDK, and agents reached through mediated ACP. Other agent command lines receive the closest flags they support, and OpenCode cannot enforce read-only.
 - Whether a reviewer is independent of the builder (a different agent and model lineage) is recorded and never enforced.
-- Candidates in compete mode share one model, so their diversity comes from short prompts.
+- Compete takes 2 to 4 candidates, and each can name its own target and model. Given only a count, they share one model and differ by a one-line stance in each prompt.
 - Matching a worker's claim to a command that ran is text matching.
 - Adaptive routing from past results is off by default.
 - No comparison between a single agent and any of these arrangements has been run.
@@ -70,6 +70,8 @@ pancode fleet verify <run-id> --json
 pancode config set fleet.retry.maxRetries 0
 ```
 :::
+
+Worked examples: [Run a playbook from plan to commit](/tutorials/run-a-playbook-and-land-it.html) and [Coordinate the coding agents you already use](/tutorials/coordinate-your-coding-agents.html).
 
 ## First experiment
 

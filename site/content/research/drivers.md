@@ -1,7 +1,7 @@
 A model reaches PanCode through a wire format, and each wire caches, prices, and constrains a request in its own way. The driver layer shapes every request for its wire and records what the provider's cache did with it. This page describes that design, where it lives in the source, and how to measure it.
 
-::: note Design described for the 0.9.0 development tree
-The mechanisms here are read from source on the development branch, and some are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+::: note Design described for PanCode 0.9.1
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 :::
 
 ## The design
@@ -73,6 +73,8 @@ pancode targets --probe
 
 The probe shows the capabilities each target answered with.
 :::
+
+Worked example: [Choose a model for your project](/tutorials/choose-model-for-your-project.html).
 
 ## First experiment
 

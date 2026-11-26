@@ -59,4 +59,5 @@ To enforce a boundary for named files, use [information-flow rules](/tutorials/i
 - [Choose a model for your project](/tutorials/choose-model-for-your-project.html)
 - [Connection guide](/docs/guide/configuration-and-targets.html)
 - [When do several agents or small models pay off?](/research/fleets-and-local-models.html)
+- [How the drivers work](/research/drivers.html)
 :::

@@ -40,6 +40,13 @@ only mechanisms confirmed in source, state the tree or release they were read
 from, and list the limits the source shows. Open-question pages follow the
 subsystem pages, and each one's `category` names the subsystem it belongs to.
 
+The research index opens with the thesis: the harness is a systems problem, and
+PanCode is systems software for coding agents. Each subsystem row shows that
+subsystem's question, from `question` in `content/research.json`. "Work with
+PanCode" holds four invitations: run an experiment, read or change the system,
+evaluate it for a team, and work with the author. The maintainer's signed note
+above it is the only first-person text on the site.
+
 Pages live in `content/research/` and `content/research.json` has the same
 shape as `content/tutorials.json`. Every research page is an invitation to
 contributors and outside researchers, and has these parts:
@@ -140,6 +147,12 @@ Each tutorial and research entry lists `guides`: the one to three
 Related list built from these entries, so a guide links to its worked
 examples. Name a guide only when the article uses that feature; the build fails
 on a path that is not published.
+
+Tutorials sit in eight categories, in the order `build.mjs` lists them: Getting
+started, Models and agents, Checks and records, Safety and autonomy, Workers and
+fleets, Context and memory, Scientific software, Extend and share. A tutorial
+that exercises one subsystem ends its `next` list with that subsystem's research
+page, and each subsystem page names its worked example.
 
 Markdown stays the source. A line `::: name arguments` opens a guide block and
 `:::` closes it; the body is Markdown.

@@ -118,4 +118,5 @@ To keep unconfined yolo inside the sandbox, also set `safety.sandbox: required`.
 - [Check a change against your repository](/tutorials/check-a-change-against-your-repository.html)
 - [Tools and permissions](/docs/guide/tool-usage.html)
 - [Keep a long coding task on track](/tutorials/keep-long-coding-tasks-on-track.html)
+- [How protection works](/research/protection.html)
 :::

@@ -1,7 +1,7 @@
 When an agent says a task is done, that is a claim. PanCode keeps its own account of what happened: which checks ran on the final tree, which of the agent's statements a command supports, and what was never measured. This page describes that design and the first experiment the project plans to run.
 
-::: note Design described for the 0.9.0 development tree
-The mechanisms here are read from source on the development branch. The claimed and assessed completion states and the intervention ledger are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+::: note Design described for PanCode 0.9.1
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 :::
 
 ## The design
@@ -76,6 +76,8 @@ pancode telemetry verify --run <run-id>
 The command uses only the record's own files, so it works on another machine.
 :::
 
+Worked example: [Check a change against your repository](/tutorials/check-a-change-against-your-repository.html).
+
 ## First experiment
 
 ::: note Proposed, not yet run
@@ -86,7 +88,7 @@ Write trap tasks, each with a hidden grader the agent never sees. In one, the na
 
 Run each task several times on one model from each model lineage, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.
 
-Two things are needed first. The trap tasks do not exist yet, and the campaign runner does not read the sealed assessment or repeat a run.
+One thing is needed first: the trap tasks do not exist yet. The campaign runner already repeats a roster with `--repeat` and records each run's sealed completion and verification.
 
 ## Open questions
 

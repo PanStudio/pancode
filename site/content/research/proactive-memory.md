@@ -20,7 +20,7 @@ Durable lessons are separate from those banks, and only eligible approved record
 
 Repository knowledge from a task-bank entry can also receive automatic approval once one session records that the lesson held, with no contradiction or recorded regression. It waits for a person if another approved or rejected lesson already carries the same command as evidence.
 
-In 0.8.0 the gate is narrower. Automatic approval needs a command that could have failed. A lesson backed only by a quote from a repository file waits for a person, and so does one whose only command cannot fail, such as `echo`, `ls` or `true`. Expect more pending lessons than 0.7.0 produced.
+The gate is narrow. Automatic approval needs a command that could have failed. A lesson backed only by a quote from a repository file waits for a person, and so does one whose only command cannot fail, such as `echo`, `ls` or `true`.
 
 PanCode records two useful observations about an approved lesson: `delivered` when its reminder was submitted, and `held` when the recommended command then succeeds exactly. A held lesson did not necessarily cause that success, and the agent might have run the command anyway. That gap is the research problem in one sentence.
 
@@ -34,7 +34,7 @@ Memory is the obvious fix, and also an easy way to pay for tokens that do nothin
 
 **Measure counterfactual effect.** Compare paired sessions on seeded tasks with memory on and off, and with a lesson present and absent. Count repeated failures, rounds, and cost, including memory's own calls.
 
-**Audit the approval gate.** Collect automatically approved lessons from real repositories and have a person grade them. A false-approval rate, even from a small sample, would be new evidence about whether one held session is enough. Lessons approved before and after the 0.8.0 change are separate samples, because the rule changed between them.
+**Audit the approval gate.** Collect automatically approved lessons from real repositories and have a person grade them. A false-approval rate, even from a small sample, would be new evidence about whether one held session is enough. Lessons approved under an earlier, wider gate are a separate sample, because the rule changed.
 
 **Study reminder timing.** Reminders can land at tool-batch boundaries, at turn end, or on the next prompt. Cadence is configurable, so whether frequent reminders help or distract can be tested.
 

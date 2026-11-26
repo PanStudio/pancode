@@ -85,4 +85,5 @@ Stored memory is not fine-tuning of the underlying model. Its value depends on s
 - [Run a research campaign and a blind arena](/tutorials/run-a-research-campaign-and-a-blind-arena.html)
 - [Continuity guide](/docs/guide/context-continuity.html)
 - [PanHub](/docs/guide/panhub.html)
+- [How memory works](/research/memory.html)
 :::

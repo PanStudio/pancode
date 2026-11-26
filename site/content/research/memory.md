@@ -1,7 +1,7 @@
 A context window is storage that fills, and the provider's prompt cache makes some of that storage cheap to keep and expensive to disturb. PanCode manages the window as a tiered store: live context, records it can recall exactly, and a summary as the last resort. This page describes that design and how to measure it.
 
-::: note Design described for the 0.9.0 development tree
-The mechanisms here are read from source on the development branch. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+::: note Design described for PanCode 0.9.1
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 :::
 
 ## The design
@@ -68,6 +68,8 @@ pancode telemetry tokens --session <id> --by-source --json
 
 Compare cached and fresh input across the turns that follow an eviction.
 :::
+
+Worked example: [Keep a long coding task on track](/tutorials/keep-long-coding-tasks-on-track.html).
 
 ## First experiment
 

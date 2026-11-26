@@ -62,4 +62,5 @@ Passing tests establish the behavior covered by those tests. This small example 
 ::: next
 - [Check a change against your repository](/tutorials/check-a-change-against-your-repository.html)
 - [Quality policy guide](/docs/guide/quality-policy.html)
+- [How accounting works](/research/accounting.html)
 :::

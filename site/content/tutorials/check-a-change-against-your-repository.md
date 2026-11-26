@@ -100,4 +100,5 @@ The actual check, its result, and any missing evidence. A sealed run record is a
 - [Run a research campaign and a blind arena](/tutorials/run-a-research-campaign-and-a-blind-arena.html)
 - [Quality policy guide](/docs/guide/quality-policy.html)
 - [Install PanCode](/#start)
+- [How accounting works](/research/accounting.html)
 :::
