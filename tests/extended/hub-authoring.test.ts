@@ -416,7 +416,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		}
 	});
 
-	it("all 39 curated packs pass validation", () => {
+	it("all 45 curated packs pass validation", () => {
 		const isDir = (p: string) => statSync(p).isDirectory();
 		const hubDir = join(REPO_ROOT, "hub", "packs");
 
@@ -433,6 +433,9 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			...readdirSync(join(hubDir, "prompts"))
 				.map((d) => join(hubDir, "prompts", d))
 				.filter(isDir),
+			...readdirSync(join(hubDir, "servers"))
+				.map((d) => join(hubDir, "servers", d))
+				.filter(isDir),
 			...readdirSync(join(hubDir, "skills"))
 				.filter((d) => !d.endsWith(".yaml") && !d.endsWith(".md") && !d.endsWith(".json"))
 				.filter((d) => isDir(join(hubDir, "skills", d)))
@@ -443,7 +446,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 				),
 		];
 
-		equal(packagePaths.length, 38, `expected 38 curated packs, found ${packagePaths.length}`);
+		equal(packagePaths.length, 45, `expected 45 curated packs, found ${packagePaths.length}`);
 
 		for (const pkgPath of packagePaths) {
 			const res = validateHubPackage(pkgPath);

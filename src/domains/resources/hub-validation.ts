@@ -80,10 +80,33 @@ export interface HubValidationOptions {
 	authoring?: { knownSkills: ReadonlySet<string> };
 }
 
-/** The policy manifest of the PanKit servers this PanCode ships, beside its bundled index. */
-function shippedKitServers(): unknown[] {
-	const parsed: unknown = JSON.parse(readFileSync(path.join(resolvePackageRoot(), "packages/kit/servers.json"), "utf8"));
-	return isRecord(parsed) && Array.isArray(parsed.servers) ? parsed.servers : [];
+/** The servers of the PanKit policy manifest this PanCode ships, or why that file cannot serve as one. */
+function shippedKitServers(): Record<string, unknown>[] | string {
+	const file = path.join(resolvePackageRoot(), "packages", "kit", "servers.json");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(file, "utf8"));
+	} catch (err) {
+		return `the shipped PanKit policy ${file} cannot be read: ${err instanceof Error ? err.message : String(err)}`;
+	}
+	if (!isRecord(parsed) || parsed.version !== 1)
+		return `the shipped PanKit policy ${file} is not version 1 of the server manifest`;
+	if (!Array.isArray(parsed.servers) || !parsed.servers.every(isRecord))
+		return `the shipped PanKit policy ${file} has no list of server entries`;
+	return parsed.servers;
+}
+
+/**
+ * Whether `root` is the first-party pack of server `id` inside this PanCode
+ * package. Only that directory may supply a builtin-form pack to an index or an
+ * install; validation alone accepts any copy whose policy matches.
+ */
+export function isBundledServerPack(root: string, id: string): boolean {
+	try {
+		return realpathSync(root) === realpathSync(path.join(resolvePackageRoot(), "hub", "packs", "servers", id));
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -115,7 +138,9 @@ function validateServerPack(root: string, manifest: PluginManifest): HubComponen
 	if (entry.id !== manifest.name) return fail(`server.json names ${entry.id}, not the pack name ${manifest.name}`);
 	if (entry.version !== manifest.version)
 		return fail(`server.json has version ${String(entry.version)}, not the pack version ${manifest.version}`);
-	const shipped = shippedKitServers().find((server) => isRecord(server) && server.id === entry.id);
+	const servers = shippedKitServers();
+	if (typeof servers === "string") return fail(servers);
+	const shipped = servers.find((server) => server.id === entry.id);
 	if (shipped === undefined) return fail(`${entry.id} is not a server PanKit ships; only those have a server.json`);
 	if (JSON.stringify(shipped) !== JSON.stringify(entry))
 		return fail(`server.json differs from the ${entry.id} entry of packages/kit/servers.json; run pnpm kit:manifest`);

@@ -49,7 +49,7 @@ import {
 import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
 import { remoteIndexRows } from "./hub-trust.js";
 import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
-import { type HubPackageValidationResult, validateHubPackage } from "./hub-validation.js";
+import { type HubPackageValidationResult, isBundledServerPack, validateHubPackage } from "./hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory } from "./skills/bare-skill.js";
 
 export type HubEntry = HubPackageEntry;
@@ -131,6 +131,7 @@ export function discoverHub(options: { catalog?: string; cwd?: string } = {}): H
 	const privateEntries = parseCatalog(privatePath, diagnostics);
 	const byRef = new Map<string, HubEntry>();
 	const revoked = revokedHubDigests();
+	const builtinServers = new Set(bundledPlugins.filter((entry) => entry.kind === "server").map(hubEntryRef));
 	for (const entry of [
 		...bundledPlugins,
 		...remote,
@@ -143,6 +144,11 @@ export function discoverHub(options: { catalog?: string; cwd?: string } = {}): H
 			const message = `${packRevokedMessage(entry.name, revocation)}; not offered`;
 			if (!diagnostics.includes(message)) diagnostics.push(message);
 			byRef.delete(hubEntryRef(entry));
+			continue;
+		}
+		if (builtinServers.has(hubEntryRef(entry)) && !bundledPlugins.includes(entry)) {
+			const message = `${hubEntryRef(entry)} is built into PanCode; a row from another index cannot replace it`;
+			if (!diagnostics.includes(message)) diagnostics.push(message);
 			continue;
 		}
 		byRef.set(hubEntryRef(entry), entry);
@@ -271,6 +277,8 @@ export function registerHubPackage(source: string, options: HubScopeOptions & { 
 	const candidate = validateHubPackage(local);
 	if (!candidate.valid || !candidate.manifest || !candidate.contentDigest) throw new Error(validationReasons(candidate));
 	const manifest = candidate.manifest;
+	if (manifest.pancode.kind === "server" && existsSync(path.join(local, "server.json")))
+		throw new Error(`server:${manifest.name} is built into PanCode; only the bundled index names it`);
 	const receiptEnvelopeDigest =
 		manifest.pancode.kind === "extension" ? (reviewExtensionEnvelope(local)?.digest ?? null) : null;
 	const serves = manifest.pancode.kind === "extension" ? loadManifestFromRoot(local).manifest?.plugin : undefined;
@@ -437,6 +445,12 @@ export function planHubInstall(
 			throw new Error(`pack kind mismatch: expected ${entry.kind}`);
 		if (candidate.manifest.name !== entry.name)
 			throw new Error(`plugin identity mismatch: expected ${entry.name}, found ${candidate.manifest.name}`);
+		if (
+			entry.kind === "server" &&
+			existsSync(path.join(fetched.root, "server.json")) &&
+			!isBundledServerPack(fetched.root, entry.name)
+		)
+			throw new Error(`server:${entry.name} is built into PanCode; only its bundled pack can supply it`);
 		if (entry.version && candidate.manifest.version !== entry.version)
 			throw new Error(`plugin version mismatch: expected ${entry.version}, found ${candidate.manifest.version}`);
 		const declaredRequirements = candidate.manifest.pancode.requires ?? [];
