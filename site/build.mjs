@@ -1374,7 +1374,7 @@ const llmsSummary = `# PanCode
 
 PanCode is a harness for development work. Panos, its orchestrator agent, plans a task, runs it on the models you connect and hands parts of it to workers, including the coding agents you already have. It routes across providers, sandboxes commands, checks finished work against what ran and keeps memory, in the terminal, in scripts and CI, in ACP editors or on the desktop. PanHub packs and PanKit servers cover HPC and scientific software.
 
-PanCode is a product of ${publisher.name}. It needs no account and no root, and sends nothing home. It is free for individuals, small teams, research and teaching, and its source is available on GitHub under the PanCode License 1.0. Larger organizations get a 32-day evaluation, then a commercial license from ${publisher.name}.
+PanCode is a product of ${publisher.name}. It needs no account and no root, and sends nothing home. It is free for individuals, small organizations (fewer than 100 people and under $1M revenue), and noncommercial research and teaching. Its source is available on GitHub under the PanCode License 1.0. Larger organizations get a 32-day evaluation, then a commercial license from ${publisher.name}.
 
 - Install on macOS, Linux, or WSL: \`curl -fsSL ${product.origin}/install.sh | sh\`
 - Install on Windows (best effort) in PowerShell: \`irm ${product.origin}/install.ps1 | iex\`

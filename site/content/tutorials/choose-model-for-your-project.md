@@ -102,7 +102,7 @@ Vision support depends on the model and the route. A model advertised as multimo
 ::: limits Know where information goes
 - PanCode runs locally, but a configured cloud model receives the input sent to that provider.
 - Local inference keeps inference on the selected server; tools, peers, plugins, and commands can still make network requests.
-- PanCode is free for individuals, small teams, research and teaching. Inference hardware, provider usage, and subscriptions can still cost money.
+- PanCode is free for individuals, small organizations (fewer than 100 people and under $1M revenue), and noncommercial research and teaching. Inference hardware, provider usage, and subscriptions can still cost money.
 :::
 
 ::: next
