@@ -29,7 +29,7 @@ function placePanel(details: HTMLDetailsElement): void {
 export function Explained({ client, label, value, factRef }: Explainable & { client: Client; label: string }) {
 	const panel = useRef<HTMLDetailsElement>(null);
 	const [open, setOpen] = useState(false);
-	useDetailsDismiss(panel, open);
+	useDetailsDismiss(panel);
 	const explanation = useQuery({
 		meta: { errorSurface: "inline" },
 		// Under "telemetry", so a live update that moves the number re-reads its explanation too.
