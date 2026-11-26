@@ -33,7 +33,7 @@ A dispatch with `release` checked builds and tests nothing. It runs two jobs, an
 
 | Job | What it does |
 | --- | --- |
-| `tested run` | `scripts/release/tested-run.mjs` finds the newest push run of `ci.yml` for the dispatched commit on the dispatched branch that completed with every job passed, downloads that run's `release` artifact by run id and checks it against its `SHA256SUMS`, the commit, the version and the changelog. With no such run, a run that failed or is still going, or an expired artifact, it fails within seconds and names the reason; nothing is rebuilt |
+| `tested run` | Runs `scripts/release/tested-run.mjs` to find the newest push run of `ci.yml` for the dispatched commit on the dispatched branch that completed with every job passed, downloads that run's `release` artifact by run id and checks it against its `SHA256SUMS`, the commit, the version and the changelog. With no such run, a run that failed or is still going, or an expired artifact, it fails within seconds and names the reason; nothing is rebuilt |
 | `publish` | After `tested run`, behind the `release` environment. It downloads the same artifact, refuses a `SHA256SUMS` other than the one `tested run` checked, attests every asset and runs `scripts/release/publish.mjs` |
 
 `pnpm run ci` runs the same gate on one machine: the checks beside the build, the tests against the built tarball, then the install smoke of this machine's bundle. `pnpm run release:build -- --out <dir>` and `pnpm run release:smoke -- <dir>/assets` run the two halves alone.

@@ -290,6 +290,8 @@ function checkCiScripts(): void {
 		fail("ci-scripts", "ci (22) and ci (24) test the built release");
 	const tested = jobs["tested-run"];
 	const publish = jobs.publish;
+	if (tested?.name !== "tested run" || publish?.name !== "publish")
+		fail("ci-scripts", "preserve the release job names tested run and publish that tested-run.mjs skips");
 	if (tested?.if !== releaseOnly || tested.needs !== undefined || tested.environment !== undefined)
 		fail("ci-scripts", "tested-run starts a release dispatch, before the release environment asks for approval");
 	if (!isDeepStrictEqual(tested?.permissions, { contents: "read", actions: "read" }))
