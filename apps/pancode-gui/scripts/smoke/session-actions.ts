@@ -314,20 +314,52 @@ export async function sessionActionSteps(run: SmokeRun) {
 	});
 	await step("streaming and cancel", async () => {
 		// Streamed deltas never render the composer: its props are scalars and a route memoized on
-		// settings and health. Count across the middle of the workload stream, well after the send's own
-		// renders, through Markdown, code, tool bursts and a failed call.
-		const composerRenders = () =>
-			page.evaluate(
-				() =>
-					(globalThis as unknown as { __pancodeRenderCounts: Record<string, number> }).__pancodeRenderCounts.composer ?? 0,
-			);
+		// settings and health. Count across the workload stream, through Markdown, code, tool bursts and a
+		// failed call. The send settling and the turn ending are the composer's own state, so the window opens
+		// on the first commit after it stops saying Sending and closes on the last commit that still offers
+		// Stop. The page reads both edges as it commits them, so a slow runner's polling cannot widen it.
+		type ComposerWindow = {
+			start?: { renders: number; headings: number };
+			last?: { renders: number; headings: number };
+			ended?: boolean;
+			missed?: string;
+		};
+		await page.evaluate(() => {
+			const scope = globalThis as unknown as {
+				__pancodeRenderCounts: Record<string, number>;
+				__composerWindow?: ComposerWindow;
+			};
+			const edges: ComposerWindow = {};
+			scope.__composerWindow = edges;
+			const earlier = new Set(document.querySelectorAll(".chat-turn"));
+			const observer = new MutationObserver(() => {
+				const turn = [...document.querySelectorAll(".chat-turn")].at(-1);
+				const headings = turn?.querySelectorAll(".md-heading").length ?? 0;
+				if (turn === undefined || earlier.has(turn) || headings === 0) return;
+				const renders = scope.__pancodeRenderCounts.composer ?? 0;
+				const running = document.querySelector(".composer__stop") !== null;
+				if (edges.start === undefined) {
+					if (!running) edges.missed = "the turn ended before its send settled";
+					else if (document.querySelector(".composer__delivery-note strong")?.textContent !== "Sending")
+						edges.start = { renders, headings };
+				} else if (running) edges.last = { renders, headings };
+				else edges.ended = true;
+				if (edges.ended || edges.missed !== undefined) observer.disconnect();
+			});
+			observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+		});
 		await page.getByLabel("Message PanCode", { exact: true }).fill("[workload] Audit the convergence notes.");
 		await page.getByRole("button", { name: "Send", exact: true }).click();
-		const workload = page.locator(".chat-turn").last();
-		await workload.getByRole("heading", { name: "Results", exact: true }).waitFor();
-		const rendersBefore = await composerRenders();
-		await workload.getByRole("heading", { name: "How the levels relate", exact: true }).waitFor();
-		assert.equal(await composerRenders(), rendersBefore, "a streamed delta rendered the composer");
+		const measured = await page
+			.waitForFunction(() => {
+				const edges = (globalThis as unknown as { __composerWindow?: ComposerWindow }).__composerWindow;
+				return edges?.ended || edges?.missed !== undefined ? edges : null;
+			})
+			.then((handle) => handle.jsonValue() as Promise<ComposerWindow>);
+		assert.equal(measured.missed, undefined, measured.missed);
+		const { start, last } = measured;
+		assert.ok(start && last && last.headings > start.headings, "no heading streamed between the send and the turn end");
+		assert.equal(last.renders, start.renders, "a streamed delta rendered the composer");
 		await settled();
 		await page.getByLabel("Message PanCode", { exact: true }).fill("[stream-held] Show progress until cancelled.");
 		await page.getByRole("button", { name: "Send", exact: true }).click();
