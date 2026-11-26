@@ -8,7 +8,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { QUALIFIED_MAJORS } from "./release/node-majors.mjs";
+
+/** The Node majors the `ci (22)` and `ci (24)` jobs test. */
+const QUALIFIED_MAJORS = ["22", "24"];
 
 const root = resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -73,7 +75,7 @@ const python = run("python3");
 optional(
 	python !== null,
 	"python3",
-	python ?? "not on PATH; only `pnpm run preflight`, the release commands and `pnpm run eval:prompts` need it",
+	python ?? "not on PATH; only the website build in `pnpm run ci` and `pnpm run eval:prompts` need it",
 );
 
 required(

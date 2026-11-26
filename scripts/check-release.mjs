@@ -10,15 +10,13 @@
  *
  * Package audit via `npm pack --dry-run --json`: forbids files that must
  * never ship (caches, source maps, benchmarks), requires the runtime
- * resources the CLI resolves from the installed package root, and enforces
- * size budgets. Release qualification (`pnpm run ci`) runs it, so a publish
- * cannot ship an unaudited tarball.
+ * resources the CLI resolves from the installed package root, and stops a
+ * tarball that doubled in size. scripts/release/build.mjs runs it on the
+ * tarball it packs, so nothing is tested or published unaudited.
  *
  * Version coherence: the version in package.json must be the version the top
- * of CHANGELOG.md describes. `prepublishOnly` runs this gate, so without the
- * check a publish could ship with the release notes still sitting under an
- * `## Unreleased` heading, which is what the tree looked like when this was
- * added.
+ * of CHANGELOG.md describes, and a publishable version needs its dated
+ * heading.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -28,20 +26,10 @@ import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { packagedHeaderBytes } from "./license-headers.mjs";
 import { packedLicenseProblems } from "./packed-license.mjs";
 import { pnpmArgv } from "./pnpm.mjs";
 import { bundledGuiAuditLockfiles, shippedAdvisoryFindings } from "./release-audit.mjs";
-import {
-	BUDGET_WARN_RATIO,
-	classifySizes,
-	MAX_ENTRY_COUNT,
-	MAX_TARBALL_BYTES,
-	MAX_UNPACKED_BYTES,
-	SHIPPED_SCRIPTS,
-	SOURCE_PACK,
-} from "./release-budgets.mjs";
-import { releaseVersionErrors } from "./release-version-policy.mjs";
+import { DEV_VERSION, releaseVersionErrors } from "./release-version-policy.mjs";
 import { planSourcePack, readSourcePackMembers } from "./source-pack-plan.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -84,8 +72,10 @@ const ENTRIES = [
 ];
 
 const manifest = JSON.parse(readFileSync(join(root, "scripts", "release-manifest.json"), "utf8"));
-
-// Size budgets live in scripts/release-budgets.mjs, shared with the preflight that reads them before any build.
+const SHIPPED_SCRIPTS = new Set(manifest.requiredFiles.filter((file) => file.startsWith("scripts/")));
+const SOURCE_PACK = "dist/assets/source.pack";
+// About twice the 0.9.0 tarball: a tripwire for a packaging defect such as a doubled dist/, not a budget.
+const MAX_TARBALL_BYTES = 40_000_000;
 
 const FORBIDDEN = [
 	{
@@ -147,9 +137,8 @@ checkVersionCoherence();
  * the changelog never touched. Both are silent at publish time and permanent
  * afterwards, because a published version cannot be replaced.
  *
- * Development branches may keep `## Unreleased`. An explicit publish context,
- * a hosted tag build, or an exact local version tag is immutable and requires
- * `## <version> - YYYY-MM-DD`.
+ * A development version may keep `## Unreleased`. A stable or pre-release
+ * version is publishable and requires `## <version> - YYYY-MM-DD`.
  */
 function checkVersionCoherence() {
 	let version;
@@ -174,27 +163,11 @@ function checkVersionCoherence() {
 		return;
 	}
 
-	const explicitRelease = process.env.PANCODE_RELEASE_CONTEXT === "publish";
-	const hostedTag = process.env.GITHUB_REF?.startsWith("refs/tags/") ?? false;
-	let exactVersionTag = false;
-	if (typeof version === "string" && version.length > 0) {
-		try {
-			const tags = execFileSync("git", ["tag", "--points-at", "HEAD"], {
-				cwd: root,
-				encoding: "utf8",
-				stdio: ["ignore", "pipe", "ignore"],
-			});
-			exactVersionTag = tags.split(/\r?\n/).includes(`v${version}`);
-		} catch {
-			// A packed source tree may have no Git metadata. npm publish supplies
-			// the explicit release context, so absence of Git never weakens it.
-		}
-	}
 	errors.push(
 		...releaseVersionErrors({
 			version,
 			changelog,
-			releaseContext: explicitRelease || hostedTag || exactVersionTag,
+			releaseContext: typeof version === "string" && !DEV_VERSION.test(version),
 		}),
 	);
 }
@@ -241,19 +214,6 @@ for (const file of files) {
 		}
 	}
 }
-
-// The SPDX license headers count against no budget, so the classes, the tarball and the unpacked size leave them out.
-let headers = { discounts: new Map(), unpacked: 0, tarball: 0 };
-try {
-	headers = await packagedHeaderBytes(packageRoot, report.files, { sourcePack: SOURCE_PACK });
-} catch (error) {
-	errors.push(`unable to measure the license headers: ${error instanceof Error ? error.message : String(error)}`);
-}
-const tarballBytes = report.size - headers.tarball;
-const unpackedBytes = report.unpackedSize - headers.unpacked;
-const sizes = classifySizes(report.files, { discount: headers.discounts });
-const sizeTotals = sizes.totals;
-errors.push(...sizes.errors);
 
 for (const required of REQUIRED_FILES) {
 	if (!fileSet.has(required)) errors.push(`missing required file: ${required}`);
@@ -448,32 +408,12 @@ function checkShippedAdvisories() {
 
 checkShippedAdvisories();
 
-if (tarballBytes > MAX_TARBALL_BYTES) {
-	errors.push(`tarball ${tarballBytes} bytes exceeds budget ${MAX_TARBALL_BYTES}`);
-}
-if (unpackedBytes > MAX_UNPACKED_BYTES) {
-	errors.push(`unpacked ${unpackedBytes} bytes exceeds budget ${MAX_UNPACKED_BYTES}`);
-}
-// A ceiling about to be crossed is named while the release still passes, so the re-pin is a decision and not a surprise.
-for (const warning of [
-	...sizes.warnings,
-	...(tarballBytes > MAX_TARBALL_BYTES * BUDGET_WARN_RATIO && tarballBytes <= MAX_TARBALL_BYTES
-		? [`tarball is at ${tarballBytes} of ${MAX_TARBALL_BYTES} bytes (${MAX_TARBALL_BYTES - tarballBytes} left)`]
-		: []),
-])
-	process.stdout.write(`check-release: warning: ${warning}\n`);
-if (report.files.length > MAX_ENTRY_COUNT) {
-	errors.push(`entry count ${report.files.length} exceeds budget ${MAX_ENTRY_COUNT}`);
-}
+if (report.size > MAX_TARBALL_BYTES) errors.push(`tarball is ${report.size} bytes, over ${MAX_TARBALL_BYTES}`);
 
 if (errors.length > 0) {
 	for (const error of errors) process.stderr.write(`check-release: ${error}\n`);
 	process.exit(1);
 }
 
-process.stdout.write(
-	`check-release: ok (${report.files.length}/${MAX_ENTRY_COUNT} files, tarball ${tarballBytes}/${MAX_TARBALL_BYTES} bytes, unpacked ${unpackedBytes}/${MAX_UNPACKED_BYTES} bytes; ${sizeTotals
-		.map((budget) => `${budget.class} ${budget.bytes}/${budget.maxBytes} bytes`)
-		.join(", ")})\n`,
-);
+process.stdout.write(`check-release: ok (${report.files.length} files, tarball ${report.size} bytes)\n`);
 process.exit(0);

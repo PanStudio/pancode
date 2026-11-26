@@ -240,48 +240,63 @@ function checkBoundaries(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// ci-scripts: package.json scripts and the CI/release workflows held against
-// what they must do. Was tests/contracts/ci-scripts.test.ts.
+// ci-scripts: the one pipeline (.github/workflows/ci.yml) held against what it
+// must do. Was tests/contracts/ci-scripts.test.ts.
 // ---------------------------------------------------------------------------
 function checkCiScripts(): void {
-	const ci = parseYaml(readRoot(".github/workflows/ci.yml"));
-	const release = parseYaml(readRoot(".github/workflows/release.yml"));
-	const smoke = parseYaml(readRoot(".github/workflows/browser-smoke.yml"));
-	for (const [file, workflow] of [
-		["ci.yml", ci],
-		["release.yml", release],
-		["browser-smoke.yml", smoke],
-	] as const) {
-		// The browser smoke alone runs unasked, in its own workflow, so no push or pull request ever reports the
-		// required ci checks as skipped.
-		const triggers = file === "browser-smoke.yml" ? ["push", "pull_request", "workflow_call"] : ["workflow_dispatch"];
-		if (!isDeepStrictEqual(Object.keys(workflow.on ?? {}), triggers))
-			fail("ci-scripts", `${file} must run only on ${triggers.join(", ")}`);
-		if (workflow.permissions?.contents !== "read") fail("ci-scripts", `${file} defaults to read-only contents`);
-		for (const [name, job] of Object.entries(workflow.jobs ?? {}) as Array<
-			[
-				string,
-				{
-					permissions?: Record<string, string>;
-					"continue-on-error"?: boolean;
-					steps?: Array<{ "continue-on-error"?: boolean; run?: string; uses?: string }>;
-				},
-			]
-		>) {
-			if (
-				(job.permissions?.contents === "write" || job.permissions?.["id-token"] === "write") &&
-				!(file === "release.yml" && name === "release")
-			)
-				fail("ci-scripts", "only the approved release job may write contents or mint publishing identity");
-			if (job["continue-on-error"]) fail("ci-scripts", "gate jobs must propagate failures");
-			for (const step of job.steps ?? []) {
-				if (step["continue-on-error"] || step.run?.includes("--ignore-scripts"))
-					fail("ci-scripts", "steps must propagate failures and lifecycle hooks");
-				if (step.uses && !step.uses.startsWith("./") && !/@[0-9a-f]{40}$/u.test(step.uses))
-					fail("ci-scripts", `${file} must pin ${step.uses}`);
-			}
+	type Step = { "continue-on-error"?: boolean; run?: string; uses?: string };
+	type Job = {
+		name?: string;
+		if?: string;
+		needs?: string | string[];
+		environment?: string;
+		permissions?: Record<string, string>;
+		strategy?: { matrix?: { node?: number[] } };
+		"continue-on-error"?: boolean;
+		steps?: Step[];
+	};
+	const ci = parseYaml(readRoot(".github/workflows/ci.yml")) as {
+		on?: Record<string, unknown>;
+		permissions?: Record<string, string>;
+		jobs?: Record<string, Job>;
+	};
+	const jobs = ci.jobs ?? {};
+	// A push trigger registers the workflow with GitHub from a repository's first push; a workflow that only
+	// dispatches stayed unregistered on the empty public repository and the 0.9.0 release could not start.
+	if (!isDeepStrictEqual(Object.keys(ci.on ?? {}), ["push", "pull_request", "workflow_dispatch"]))
+		fail("ci-scripts", "ci.yml runs on push, pull_request and workflow_dispatch");
+	if (!isDeepStrictEqual(ci.permissions, { contents: "read" }))
+		fail("ci-scripts", "ci.yml defaults to read-only contents");
+	for (const [name, job] of Object.entries(jobs)) {
+		if (name !== "publish" && job.permissions !== undefined)
+			fail("ci-scripts", `only the publish job declares permissions; ${name} inherits read-only contents`);
+		if (name !== "publish" && job.environment !== undefined)
+			fail("ci-scripts", `only the publish job runs in an environment; ${name} names ${job.environment}`);
+		if (job["continue-on-error"]) fail("ci-scripts", "gate jobs must propagate failures");
+		for (const step of job.steps ?? []) {
+			if (step["continue-on-error"] || step.run?.includes("--ignore-scripts"))
+				fail("ci-scripts", "steps must propagate failures and lifecycle hooks");
+			if (step.uses && !/@[0-9a-f]{40}$/u.test(step.uses)) fail("ci-scripts", `ci.yml must pin ${step.uses}`);
 		}
 	}
+	if (jobs.test?.name !== `ci (\${{ matrix.node }})` || !isDeepStrictEqual(jobs.test?.strategy?.matrix?.node, [22, 24]))
+		fail("ci-scripts", "preserve the branch-protection check names ci (22) and ci (24)");
+	if (!jobs.test?.steps?.some((step) => step.run?.includes("scripts/ci.mjs test")))
+		fail("ci-scripts", "ci (22) and ci (24) test the built release");
+	const publish = jobs.publish;
+	const others = Object.keys(jobs).filter((name) => name !== "publish");
+	if (
+		publish?.environment !== "release" ||
+		publish.if !== `\${{ github.event_name == 'workflow_dispatch' && inputs.release }}` ||
+		!isDeepStrictEqual([...(Array.isArray(publish.needs) ? publish.needs : [])].sort(), [...others].sort())
+	)
+		fail("ci-scripts", "publish runs only for a release dispatch, after every other job, behind the release environment");
+	if (!isDeepStrictEqual(publish?.permissions, { contents: "read", "id-token": "write", attestations: "write" }))
+		fail("ci-scripts", "publish holds read-only contents plus the OIDC identity for npm and attestations");
+	if (/pnpm|npm (?:install|pack|ci)\b|build\.mjs/u.test(JSON.stringify(publish?.steps ?? [])))
+		fail("ci-scripts", "publish ships the files the other jobs tested; it installs and builds nothing");
+	if (/NPM_TOKEN|NODE_AUTH_TOKEN/u.test(readRoot(".github/workflows/ci.yml")))
+		fail("ci-scripts", "npm is published through trusted publishing; no workflow holds an npm token");
 	// The labeler is the one workflow fed by untrusted issue text: pinned, read-only contents, issues write only, and
 	// no expression reaching a run step or the script.
 	const labels = parseYaml(readRoot(".github/workflows/report-labels.yml"));
@@ -300,39 +315,6 @@ function checkCiScripts(): void {
 			if (`${step.run ?? ""}${step.with?.script ?? ""}`.includes("${{"))
 				fail("ci-scripts", "report-labels.yml must not interpolate expressions into a step");
 		}
-	}
-	if (ci.jobs?.["browser-smoke"]?.uses !== "./.github/workflows/browser-smoke.yml")
-		fail("ci-scripts", "a dispatch runs the same browser smoke that pushes and pull requests run");
-	if (ci.jobs?.ci?.name !== "ci (22)" || ci.jobs?.["runtime-compatibility"]?.name !== "ci (24)")
-		fail("ci-scripts", "preserve branch-protection check names");
-	if (ci.jobs?.ci?.needs !== "prepare" || ci.jobs?.["runtime-compatibility"]?.needs !== "prepare")
-		fail("ci-scripts", "both required checks consume one prepared package; platform queues must not block them");
-	if (!ci.jobs?.ci?.steps?.some((step: { run?: string }) => step.run?.includes("release-candidate.mjs test")))
-		fail("ci-scripts", "ci (22) tests the qualified artifact");
-	if (ci.jobs?.platform?.if !== `\${{ inputs.platforms }}`)
-		fail("ci-scripts", "platform boot checks are explicitly requested");
-	if (ci.jobs?.["browser-smoke"]?.if !== `\${{ github.event_name == 'workflow_dispatch' && inputs.browser }}`)
-		fail("ci-scripts", "the browser smoke is explicitly requested");
-	if (
-		release.jobs?.release?.needs !== "preflight" ||
-		release.jobs?.release?.environment !== "release" ||
-		release.jobs?.release?.permissions?.contents !== "write"
-	)
-		fail("ci-scripts", "GitHub publication requires read-only preflight and protected owner approval");
-	const releaseText = readRoot(".github/workflows/release.yml");
-	if (/pnpm|npm (?:install|pack)|test:|workflow_call|uses: \.\/\.github\/workflows/gu.test(releaseText))
-		fail("ci-scripts", "release reuses qualification without installing, building, testing, or calling CI");
-	for (const job of Object.values(release.jobs ?? {}) as Array<{
-		steps?: Array<{ uses?: string; with?: Record<string, unknown> }>;
-	}>) {
-		if (
-			!job.steps?.some(
-				(step) =>
-					step.uses?.startsWith("actions/download-artifact@") &&
-					step.with?.["run-id"] === `\${{ inputs.qualification_run }}`,
-			)
-		)
-			fail("ci-scripts", "every release job must consume the specified qualification run");
 	}
 	if (existsSync(join(root, ".github/workflows/pages.yml")))
 		fail("ci-scripts", "keep the existing gh-pages deployment without a duplicate main-triggered workflow");

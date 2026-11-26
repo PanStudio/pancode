@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * pnpm run check:packed-install -- --tarball <pancode-*.tgz> --prefix <dir>
+ * pnpm run check:packed-install -- --tarball <akougkas-pancode-*.tgz> --prefix <dir>
  *
- * PanCode publishes one npm package, `pancode`. This proves its tarball (`npm pack`) is all a user needs:
- * every `bin` and `exports` target is in the tarball, it installs alone into an empty prefix with an empty
- * npm cache of its own and no `@pancode/*` package beside it, and from inside that prefix `pancode --version`,
- * `panstore --help`, `pankit list` and `pankit manifest` run and every `pancode/sdk/<subpath>` export imports. The
+ * PanCode publishes one npm package, `@akougkas/pancode`. This proves its tarball (`npm pack`) is all an npm
+ * user needs: every `bin` and `exports` target is in the tarball, it installs alone into an empty prefix with an
+ * empty npm cache of its own and no `@pancode/*` package beside it, and from inside that prefix `pancode --version`,
+ * `panstore --help`, `pankit list` and `pankit manifest` run and every `sdk/<subpath>` export imports. The
  * release checks follow: `panstore --version` prints the package version, `pankit list` names exactly the seven
  * PanKit servers and `pankit serve node` completes one MCP handshake and exits 0 (`scripts/release/installed-commands.mjs`). Then the
  * installed CLI scaffolds an extension outside the prefix and `pancode extensions test` runs its tests
@@ -24,7 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { gunzipSync } from "node:zlib";
-import { checkInstalledCommands } from "./release/installed-commands.mjs";
+import { checkInstalledCommands, PACKAGE_NAME } from "./release/installed-commands.mjs";
 
 const shell = process.platform === "win32";
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -69,12 +69,13 @@ export function tarballProblems(files) {
 	const text = raw.toString("utf8");
 	const manifest = JSON.parse(text);
 	const problems = [];
-	if (manifest.name !== "pancode") problems.push(`the packed name is ${manifest.name}; PanCode publishes only pancode`);
+	if (manifest.name !== PACKAGE_NAME)
+		problems.push(`the packed name is ${manifest.name}; PanCode publishes only ${PACKAGE_NAME}`);
 	if (text.includes("workspace:")) problems.push("the packed package.json still contains a workspace: specifier");
 	for (const field of ["dependencies", "optionalDependencies", "peerDependencies"])
 		for (const name of Object.keys(manifest[field] ?? {}))
 			if (name.startsWith("@pancode/")) problems.push(`package.json ${field} names ${name}, which is never published`);
-	const bin = typeof manifest.bin === "string" ? { [manifest.name]: manifest.bin } : (manifest.bin ?? {});
+	const bin = manifest.bin ?? {};
 	for (const command of COMMANDS) if (!bin[command]) problems.push(`package.json bin has no ${command}`);
 	for (const target of [...exportTargets(manifest.exports), ...Object.values(bin)]) {
 		const inside = `package/${target.replace(/^\.\//u, "")}`;
@@ -125,7 +126,7 @@ export async function checkPackedInstall({ tarball, prefix }) {
 			cwd: prefix,
 		});
 		const scoped = join(prefix, "node_modules", "@pancode");
-		if (existsSync(scoped)) throw new Error(`${scoped} exists; the pancode tarball must install with no @pancode/*`);
+		if (existsSync(scoped)) throw new Error(`${scoped} exists; the tarball must install with no @pancode/*`);
 		const env = {
 			...process.env,
 			PANCODE_HOME: home,
@@ -151,8 +152,8 @@ export async function checkPackedInstall({ tarball, prefix }) {
 		);
 		const specifiers = Object.keys(manifest.exports ?? {})
 			.filter((key) => key.startsWith("./sdk/"))
-			.map((key) => `pancode/${key.slice(2)}`);
-		if (specifiers.length === 0) throw new Error("package.json exports no pancode/sdk/<subpath>");
+			.map((key) => `${manifest.name}/${key.slice(2)}`);
+		if (specifiers.length === 0) throw new Error("package.json exports no sdk/<subpath>");
 		const script = `Promise.all(${JSON.stringify(specifiers)}.map((s) => import(s))).catch((e) => { console.error(e); process.exit(1); })`;
 		run(process.execPath, ["--input-type=module", "-e", script], { cwd: prefix, shell: false });
 		lines.push(`import ok: ${specifiers.join(", ")}`);
@@ -179,7 +180,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 			args: process.argv.slice(2).filter((argument) => argument !== "--"),
 			options: { tarball: { type: "string" }, prefix: { type: "string" } },
 		});
-		if (!values.tarball || !values.prefix) throw new Error("usage: --tarball <pancode-*.tgz> --prefix <dir>");
+		if (!values.tarball || !values.prefix) throw new Error("usage: --tarball <akougkas-pancode-*.tgz> --prefix <dir>");
 		const { lines } = await checkPackedInstall({ tarball: resolve(values.tarball), prefix: resolve(values.prefix) });
 		for (const line of lines) console.log(`check-packed-install: ${line}`);
 		console.log("check-packed-install: ok");

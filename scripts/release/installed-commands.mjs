@@ -10,6 +10,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** The servers the `pancode` package ships, as `pankit list` prints them. */
+/** The name PanCode is published under on npm. */
+export const PACKAGE_NAME = "@akougkas/pancode";
+
 export const KIT_SERVERS = ["node", "modules", "spack", "darshan", "scidata", "catalog", "store"];
 /** The MCP handshake must finish, and the server exit, within this. */
 export const HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -33,10 +36,10 @@ export function kitListProblems(listed, expected = KIT_SERVERS) {
 
 /** `[node, <bin target>]` for one command of the installed package, so no shell or `.cmd` shim is involved. */
 function binTarget(prefix, command) {
-	const packageRoot = join(prefix, "node_modules", "pancode");
+	const packageRoot = join(prefix, "node_modules", PACKAGE_NAME);
 	const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 	const target = manifest.bin?.[command];
-	if (typeof target !== "string") throw new Error(`the installed pancode package has no ${command} bin`);
+	if (typeof target !== "string") throw new Error(`the installed ${PACKAGE_NAME} package has no ${command} bin`);
 	return join(packageRoot, target);
 }
 
@@ -133,7 +136,7 @@ export function mcpHandshake(command, args, { cwd, env, timeoutMs = HANDSHAKE_TI
 }
 
 /**
- * Runs the three checks against the `pancode` package installed under `prefix` and returns what they read.
+ * Runs the three checks against the package installed under `prefix` and returns what they read.
  * `env` must carry a scratch PanCode home.
  */
 export async function checkInstalledCommands({ prefix, env, version }) {
