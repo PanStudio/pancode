@@ -63,7 +63,7 @@ export const HELD_WINDOW_WARNING_MS = 60_000;
  * The risk a call carries, as the tone its action chip and its command gutter
  * take. Red is reserved for what the classifier cannot bound or undo; amber
  * for execution and dispatch, whose effects may already have run; orange for a
- * workspace write, which can be reviewed and reverted; cyan for a read. An
+ * file write, whose effect the operator can read; cyan for a read. An
  * outward exposure never reads below amber, whatever the class.
  */
 export function permissionRiskTone(actionClass: ActionClass, exposure?: ApprovalRequestView["exposure"]): Tone {
@@ -113,6 +113,7 @@ export function permissionDecisionPresentation(view: ApprovalRequestView): Decis
 			origin: view.origin,
 			...(view.exposure !== undefined ? { exposure: view.exposure } : {}),
 			...(view.sandboxed === true ? { sandboxed: true as const } : {}),
+			...(view.reach !== undefined ? { reach: view.reach } : {}),
 			workers: approvedWorkers(view),
 		}),
 	);

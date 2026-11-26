@@ -54,6 +54,12 @@ interface BashOperandRoles {
 	 * a file that exists, meet glob entries such as `*.key`.
 	 */
 	pathOperands: Set<string>;
+	/**
+	 * The words a command opens by their role alone: an input redirect operand, a file operand of a known reader, a
+	 * copy operand or a search operand. Unlike `pathOperands`, no word joins for its spelling, so `echo /etc/x` opens
+	 * nothing. The approval card reads it to say how far a command reaches; no rail reads it.
+	 */
+	opened: Set<string>;
 	writes: BashWriteOperand[];
 	searches: RecursiveSearch[];
 }
@@ -88,12 +94,13 @@ const ROLE_PREFIX_WRAPPERS: ReadonlySet<string> = new Set([
 export function bashOperandRoles(command: string): BashOperandRoles {
 	// C-22: a here-document the parsed call proves is data names no file (row 287).
 	command = heredocDataText(command) ?? withoutDataHeredocBodies(command, "stdin-only", "rails");
-	const roles: BashOperandRoles = { reads: [], pathOperands: new Set(), writes: [], searches: [] };
+	const roles: BashOperandRoles = { reads: [], pathOperands: new Set(), opened: new Set(), writes: [], searches: [] };
 	const inner = inlineShellScript(command);
 	if (inner !== null && inner !== command) {
 		const nested = bashOperandRoles(inner);
 		roles.reads.push(...nested.reads);
 		for (const operand of nested.pathOperands) roles.pathOperands.add(operand);
+		for (const operand of nested.opened) roles.opened.add(operand);
 		roles.writes.push(...nested.writes);
 		roles.searches.push(...nested.searches);
 	}
@@ -274,6 +281,7 @@ function segmentOperandRoles(tokens: ReadonlyArray<ShellToken>, roles: BashOpera
 		// An unquoted word spelled with a separator (`../x.key`) is a path wherever it stands; a quoted script is not.
 		const pathPosition = positioned.has(token) || shellExpandsWord(token) || (!token.quoted && token.value.includes("/"));
 		pushReadCandidate(token.value, roles.reads, pathPosition ? roles.pathOperands : null);
+		if (positioned.has(token) && !token.value.startsWith("-")) roles.opened.add(token.value);
 	}
 }
 

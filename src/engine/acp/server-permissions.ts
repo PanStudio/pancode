@@ -11,7 +11,11 @@ import type { PermissionRequestedPayload, PermissionResolvedPayload } from "../.
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../../domains/safety/autonomy.js";
-import { describeMainCallConsequences, mainCallExposure } from "../../domains/safety/call-consequence.js";
+import {
+	describeMainCallConsequences,
+	mainCallExposure,
+	mainCallReach,
+} from "../../domains/safety/call-consequence.js";
 import { describeCallTarget, sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { COMMAND_CONSEQUENCE_MAX_SEVERE } from "../../domains/safety/command-consequence.js";
 import type { DecisionPresentation, TrustedDecisionFacts } from "../../domains/safety/decision-presentation.js";
@@ -590,6 +594,7 @@ export function installPermissionBridge(input: {
 				: { kind: "autonomy", level: meta.axis.slice("autonomy:".length) || DEFAULT_AUTONOMY_LEVEL },
 			origin: { kind: "main" },
 			exposure: call.tool === ToolNames.AskUser ? askUserExposure(call.args) : mainCallExposure(call, decision),
+			reach: mainCallReach(call, decision),
 			...(meta.dispatchPlan !== undefined ? { workers: meta.dispatchPlan.taskCount } : {}),
 		});
 		// A dispatch plan is named by what one approval starts, as the terminal card names it.
