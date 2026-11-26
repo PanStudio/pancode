@@ -318,8 +318,7 @@
 	"layout": {
 		"page": "1248px",
 		"measure": "65ch",
-		"header": "4.5rem",
-		"family-row": "2.25rem"
+		"header": "4.5rem"
 	},
 	"radius": {
 		"xs": "4px",

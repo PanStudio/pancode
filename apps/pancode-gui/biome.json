@@ -34,7 +34,7 @@
 		}
 	},
 	"files": {
-		"includes": ["**", "!**/dist", "!**/node_modules", "!**/*.html", "!**/*.log"],
+		"includes": ["**", "!**/dist", "!**/node_modules", "!**/*.html", "!**/*.log", "!client/public/brand/provenance.json"],
 		"maxSize": 4194304
 	}
 }

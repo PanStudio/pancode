@@ -181,7 +181,7 @@ That leaves a real choice when a package should serve both audiences. Ordinary t
 
 Keep the skill layout intact when you edit a package: adding a `skills/` directory to a standalone skill silently stops its root `SKILL.md` from loading. [hub-portability.test.ts](https://github.com/akougkas/pancode/blob/main/tests/extended/hub-portability.test.ts) asserts all of this for every curated package. See [coding agent interoperability](interop.md) for the exact install commands.
 
-Extensions are a separate package kind with their own manifest, installation state and consent; see [Extensions](harness-extensions.md), and write one against [PanSDK](sdk.md). They cannot declare domain resources: prompts, agents, skills, playbooks and reference files ship in a plugin. An extension that serves a plugin names it with `plugin: <name>` in its own manifest, and the plugin's prompts keep a working fallback for when the extension is absent.
+Extensions are a separate package kind with their own manifest, installation state and consent; see [Extensions](harness-extensions.md), and write one against the [extension API](sdk.md). They cannot declare domain resources: prompts, agents, skills, playbooks and reference files ship in a plugin. An extension that serves a plugin names it with `plugin: <name>` in its own manifest, and the plugin's prompts keep a working fallback for when the extension is absent.
 
 ## Authoring templates and contributor journey
 
@@ -195,7 +195,7 @@ PanCode provides working, valid authoring templates for the five content kinds i
 
 Templates are reference models: `pnpm run hub:pin` validates them and leaves them out of `hub/index.yaml`. Follow this unified contributor journey:
 
-1. **Choose package kind**: Decide whether your package is a single-kind package (`skill`, `agent`, `prompt`, `playbook`) exposing exactly one public component, or a composite `plugin` combining multiple components. Code that changes PanCode is an extension, authored with `pancode extensions init` and [PanSDK](sdk.md) instead.
+1. **Choose package kind**: Decide whether your package is a single-kind package (`skill`, `agent`, `prompt`, `playbook`) exposing exactly one public component, or a composite `plugin` combining multiple components. Code that changes PanCode is an extension, authored with `pancode extensions init` and the [extension API](sdk.md) instead.
 2. **Copy authoring template**: Copy from `hub/_authoring/templates/<kind>/` into your project or repository.
 3. **Author resources**: Single-kind packages expose exactly one public resource file in their declared resource directory. Packages may carry explicitly invoked scripts (for example for offline evaluation or verification tasks); these are declared metadata and are strictly distinct from extensions, which run code with hooks and runtime tools.
 4. **Validate**: Run `pancode hub validate ./lab-research --json` to verify manifest schemas, resource payloads, reference syntax, and loadability.

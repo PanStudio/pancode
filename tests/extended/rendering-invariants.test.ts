@@ -4375,6 +4375,35 @@ describe("agent invocations", () => {
 		}
 	});
 
+	it("counts a review's failing verdict as a finished run in the fan-out tally", () => {
+		const panel = createChatPanel({ getOutputStyle: () => "standard" });
+		panel.applyEvent({ type: "agent_start" } as never);
+		dispatchStart(panel, "rev", { tasks: [{ task: "a" }, { task: "b" }] });
+		for (const index of [0, 1]) {
+			panel.applyWorkerState(card({ assignmentId: `r${index}`, agentId: "verifier", parentToolCallId: "rev" }));
+		}
+		const reviewAxes = { artifactIntegrity: "verified", validationGrounding: "failed" };
+		panel.applyEvent({
+			type: "tool_execution_end",
+			toolCallId: "rev",
+			toolName: "dispatch",
+			result: {
+				content: [{ type: "text", text: "dispatch (parallel) total=2 failed=0" }],
+				details: {
+					runCount: 2,
+					failedCount: 0,
+					runs: [
+						{ agentId: "scout", exitCode: 0, trust: { axes: { ...reviewAxes, validationGrounding: "validated" } } },
+						{ agentId: "verifier", exitCode: 0, trust: { axes: reviewAxes }, reviewFindings: 1 },
+					],
+				},
+			},
+			isError: false,
+			durationMs: 10_000,
+		} as never);
+		strictEqual(plainRender(panel, 120).split("\n")[0], `${GLYPH.workerAgent} delegated 2 tasks · 2 ok · 10s`);
+	});
+
 	it("groups a council round under one header with each member's roster label", () => {
 		const panel = createChatPanel({ getOutputStyle: () => "standard" });
 		panel.appendUser("/council should retry() own its clock?");

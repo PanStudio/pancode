@@ -529,16 +529,18 @@ export function workerTextLabel(status: CanonicalTrustStatus, run?: FinishedRun 
  * read as a failed run, and the orchestrator recorded nothing (WTF-P 0.8.3 A3).
  */
 function reviewVerdictLabel(status: CanonicalTrustStatus, run: FinishedRun | null): string | null {
-	if (run === null) return null;
-	const entry = status.validationGrounding;
-	if (entry.state !== "failed" || entry.authority.id !== "result-quality") return null;
-	const output = run.delivered?.output;
-	const found = reviewFindings(
-		run.facts.quality?.resultContract?.sourceId,
-		output?.state === "final" ? output.text : null,
-	)?.length;
+	const found = run === null ? undefined : reviewFindingCount(status, run);
 	if (found === undefined) return null;
 	return `review verdict: fail (${found} ${found === 1 ? "finding" : "findings"}):`;
+}
+
+/** How many checks a review's own failing verdict names; undefined when the failure is not a review verdict. */
+export function reviewFindingCount(status: CanonicalTrustStatus, run: FinishedRun): number | undefined {
+	const entry = status.validationGrounding;
+	if (entry.state !== "failed" || entry.authority.id !== "result-quality") return undefined;
+	const output = run.delivered?.output;
+	return reviewFindings(run.facts.quality?.resultContract?.sourceId, output?.state === "final" ? output.text : null)
+		?.length;
 }
 
 /** Contract kinds whose passing checks name commands a host can rerun; every other report's checks are judgments. */

@@ -38,7 +38,7 @@ export interface StoreVerifyOptions {
 	actor?: StoreRecordProducer;
 	/** A recovered record omits the sha256 of a blob larger than this unless `hashLarge`; default no limit. */
 	hashMaxBytes?: number;
-	/** How the command is invoked, for the note `hashLarge` writes; default `panstore`. */
+	/** How the command is invoked, for the note `hashLarge` writes; default `pancode store`. */
 	command?: string;
 	signal?: AbortSignal;
 }
@@ -150,7 +150,7 @@ export async function verifyStoreTag(
 							blob,
 							identity: { bytes: info.bytes, modifiedMs: info.modifiedMs, sha256: digest },
 							producedBy: options.actor ?? { actor: "standalone" },
-							note: `sha256 ${digest} (${options.command ?? "panstore"} verify --hash-large)`,
+							note: `sha256 ${digest} (${options.command ?? "pancode store"} verify --hash-large)`,
 						});
 						recordedHash = digest;
 					}

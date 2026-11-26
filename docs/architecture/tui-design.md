@@ -50,18 +50,18 @@ Renderers ask for semantic roles (`TEXT_ROLES`, `STRUCTURAL_ROLES` and `FUNCTION
 
 | Token | Hex (unknown background) and palette entry | Role |
 | :--- | :--- | :--- |
-| `editor` | `#02874a` (`cyanFocal`) | Compatibility name. The composer rails paint the `composerRail` role, which resolves to the same palette entry. |
+| `editor` | `#018567` (`cyanFocal`) | Compatibility name. The composer rails paint the `composerRail` role, which resolves to the same palette entry. |
 | `editorDanger` | `#c15149` (`error`) | Compatibility name; no renderer paints it. |
 | `editorAction` | `#1178c8` (`orangeFocal`) | Compatibility name; no renderer paints it. |
 | `editorYoloBackground` | `#201300` (`yoloSurface`) | Compatibility name. The `yolo` composer surface paints the `composerSurface` role, which resolves to the same palette entry. |
 | `editorYoloText` | `#767572` (`ivoryFocal`) | Compatibility name; `yolo` composer text resolves through the role matrix. |
-| `accent` | `#02874a` (`cyanFocal`) | Selections, prompts, the expanded footer's `Details` title, voice glyph (`■`), active phases. |
-| `accentDeep` | `#03864a` (`cyanReading`) | Bold CAPS section headers and structural tags. |
+| `accent` | `#018567` (`cyanFocal`) | Selections, prompts, the expanded footer's `Details` title, voice glyph (`■`), active phases. |
+| `accentDeep` | `#018467` (`cyanReading`) | Bold CAPS section headers and structural tags. |
 | `action` | `#1178c8` (`orangeFocal`) | Active operations: dispatch pills, running fleet badges, steering queue markers. |
 | `emphasis` | `#767572` (`neutralFocal`) | Emphasized neutral text. |
 | `tool` | `#76746f` (`neutralReading`) | Action-row verbs in the tool ledger. |
 | `agent` | `#54789c` (`turquoise`) | Dispatch verbs and active worker counts. |
-| `success` | `#1f836f` (`success`) | Positive outcomes (`✓`), clean git state, added diff lines (`+`). |
+| `success` | `#4e804d` (`success`) | Positive outcomes (`✓`), clean git state, added diff lines (`+`). |
 | `warning` | `#966e04` (`warning`) | Warnings, dirty git trees, retry attempts, blocked tools. |
 | `error` | `#c15149` (`error`) | Failures (`✗`), error rails, removed diff lines (`-`). |
 | `info` | `#54789c` (`turquoise`) | Informational notices and links. |
@@ -70,7 +70,7 @@ Renderers ask for semantic roles (`TEXT_ROLES`, `STRUCTURAL_ROLES` and `FUNCTION
 | `muted` | `#76746f` (`neutralReading`) | Secondary text: paths, previews, telemetry counts. |
 | `title` | `#767572` (`neutralStrong`) | Overlay and frame headers. |
 | `frame` | `#76756f` (`border`) | Borders, dividers, unused context meter space. |
-| `frameStrong` | `#03864a` (`cyanReading`) | Compatibility name; the transcript scrollbar thumb paints the `scrollMarker` role, which resolves to the same palette entry. |
+| `frameStrong` | `#018467` (`cyanReading`) | Compatibility name; the transcript scrollbar thumb paints the `scrollMarker` role, which resolves to the same palette entry. |
 
 The palette keeps neutral stone and ivory tones for text, with the brand green and a secondary azure as accents. The palette entry names are historical: the `cyan*` entries and the `cyan` intent carry the brand green, and the `orange*` entries and the `action` intent carry the azure. Near-white is reserved for answers and entered text.
 

@@ -27,7 +27,7 @@ Seven pages cover extending PanCode. Start from what you want to do:
 | Find and install a skill, agent or plugin someone published | [PanHub](panhub.md#browse-and-install) |
 | Package my skills, prompts and agents for others to install | [Authoring plugins](authoring-plugins.md) |
 | Add code that changes PanCode: hooks, tools, commands, a workspace | [Extensions](harness-extensions.md) |
-| Write and test that code, or an MCP tool server, against PanCode's SDK | [PanSDK](sdk.md) |
+| Write and test that code, or an MCP tool server, against PanCode's extension API | [Extension API (unstable)](sdk.md) |
 | Hand a task to Claude Code, Codex or OpenCode | [Coding agent interoperability](interop.md) |
 | Move my prompts, skills and settings to another machine | [Share archives](extensions-and-sharing.md#share-archives) |
 | Tell a plugin from an extension, or find which page owns a contract | [Plugins](plugins.md) |
@@ -84,4 +84,4 @@ A plugin and an extension are separate packages, each with its own manifest, dig
 | Skill install rule, marketplace offers, registry and pins, `hub:pin` | [PanHub](panhub.md#registry-and-pins) |
 | Prompt and skill roots, collisions, trust, share archives | [Prompts, skills, and share archives](extensions-and-sharing.md) |
 | Extension manifest, capability envelope, hooks, runtime tools, commands, workspaces, sandbox, lifecycle, workspace trust of project extensions | [Extensions](harness-extensions.md) |
-| SDK entry points, extension scaffold and test host, MCP tool servers | [PanSDK](sdk.md) |
+| Extension API entry points, extension scaffold and test host, MCP tool servers | [Extension API (unstable)](sdk.md) |

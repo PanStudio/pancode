@@ -43,7 +43,7 @@
 		{
 			"id": "gui-icon-192",
 			"source": "assets/pancode-app-icon-192.png",
-			"sha256": "0c58ad0ebeee7f3f916678627d2cb795c8b64d7b6d7177c22c286d0f6f0cc16b",
+			"sha256": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
 			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 192,
@@ -62,7 +62,7 @@
 		{
 			"id": "gui-icon-512",
 			"source": "assets/pancode-app-icon-512.png",
-			"sha256": "19cf57dc070e34882506195104ffb517222014c081cfb320e87df13d6134b1bd",
+			"sha256": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9",
 			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 512,
@@ -238,7 +238,7 @@
 		{
 			"id": "gui-pancode-mark",
 			"source": "assets/pancode-mark-gui.webp",
-			"sha256": "a5036c8164c0d10ecedbfb83602519d9f0ea99cf0e12faf0016246c2730e6401",
+			"sha256": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 128,
@@ -257,7 +257,7 @@
 		{
 			"id": "gui-favicon",
 			"source": "assets/pancode-app-favicon.png",
-			"sha256": "22f154abe875fd4284ba2b9de0efd794360f0c2e7fa2620fe3961dd3bf2abfa4",
+			"sha256": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 32,
@@ -501,7 +501,7 @@
 			"id": "social-link-dark",
 			"template": "site/cards/link.html",
 			"output": "site/assets/social-card.png",
-			"sourceSha256": "5d6a0d9111a39b37b706a1d7957b2280ee94c149ab8668feea9f36ae221917f3",
+			"sourceSha256": "cad28dd6629cdcb3578efedb7c058bdb67fa19ddc3a30bea43c2fa2386458567",
 			"sha256": "7c9c8f73e1ee3559afa85d0378da678c69a9f9ae7da3397dd401b351fa66d17d",
 			"sources": [
 				"site/cards/link.html",
@@ -531,7 +531,7 @@
 			"id": "social-link-light",
 			"template": "site/cards/link-light.html",
 			"output": "site/assets/social-card-light.png",
-			"sourceSha256": "44d188a5b5a01d7ef4a098374872287025ffb92a52b2ead996819199349c9b23",
+			"sourceSha256": "75b450c32692ef0eb979fdc93c0bbcd6ba238bcc3352dba81e67c5795612d4e4",
 			"sha256": "1818fa132070f1f1c786fb5ada16eba876d22253edd27942ec4aa122c631563d",
 			"sources": [
 				"site/cards/link-light.html",
@@ -561,7 +561,7 @@
 			"id": "social-square-dark",
 			"template": "site/cards/square.html",
 			"output": "site/assets/social-square.png",
-			"sourceSha256": "165748db1661346ecafde36a613c3173775ee760bb70238fc3f90c4544871eb2",
+			"sourceSha256": "83b4b580f3f57e5829a1077d1f5550d2e7b9a5885f4b0924c9c2e5f3e8744331",
 			"sha256": "fba0375d1d5d8be9c454eb7684a13d8108101330db3a3c4aa5bb8d0fd87ec84c",
 			"sources": [
 				"site/cards/square.html",
@@ -591,7 +591,7 @@
 			"id": "social-square-light",
 			"template": "site/cards/square-light.html",
 			"output": "site/assets/social-square-light.png",
-			"sourceSha256": "d4b3d4ff7870042e0e44263edb6390f7920c212aba2e1dd454c65b11b6208d21",
+			"sourceSha256": "ff54e2e1cd68c16c2748ba94d64f512188a61cc46a18abe541a7f45b70a4973e",
 			"sha256": "18ab4ad1d90957802aafd2378ab340cf7eba1bb5834cf7c44fe3c41c1c539146",
 			"sources": [
 				"site/cards/square-light.html",

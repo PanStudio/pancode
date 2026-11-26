@@ -109,7 +109,7 @@ Release (see [release/README.md](release/README.md)):
 - `release/node-runtime.json`, `release/pin-node.mjs`: the Node.js release every bundle carries, with the SHA-256 of its archive per target, and the script that writes that file after checking the Node.js release signature.
 - `release/smoke.mjs`: `pnpm run release:smoke`.
 - `release/publish.mjs`: the `publish` job's step: npm, the GitHub release, `main`, then the website and the channel files.
-- `release/installed-commands.mjs`: checks of the installed `panstore` and `pankit` commands.
+- `release/installed-commands.mjs`: checks of the installed `pancode` and `pankit` commands.
 - `release-version-policy.mjs` (+ `.d.mts`): which package versions and changelog headings a checkout or release accepts.
 - `check-release.mjs`: audits the built `dist/` and the packed tarball's contents.
 - `release-manifest.json`: runtime files the installed package must contain.

@@ -255,7 +255,7 @@ export function validateStoreRoots(roots: ReadonlyArray<StoreRootSpec>): string 
 }
 
 /**
- * One `--root` option of `panstore` and the store server: `<name>=<dir>`, or for the first root a bare `<dir>`,
+ * One `--root` option of the store server (`pancode mcp serve store`): `<name>=<dir>`, or for the first root a bare `<dir>`,
  * which is named `default`. A tag is placed on a root by name, so a primary configured under another name is
  * given as `<name>=<dir>`. Null when a further root is not `<name>=<dir>`.
  */

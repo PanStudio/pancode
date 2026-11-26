@@ -34,8 +34,8 @@ export interface StoreRecordUse {
 }
 
 /**
- * Who wrote a record. The `store` tool writes `main` or `worker`; a command run from a shell (`pancode store`,
- * `panstore`) writes `standalone`.
+ * Who wrote a record. The `store` tool writes `main` or `worker`; a command run from a shell (`pancode store`)
+ * writes `standalone`.
  */
 export type StoreRecordActor = "main" | "worker" | "standalone" | "extension" | "mcp";
 

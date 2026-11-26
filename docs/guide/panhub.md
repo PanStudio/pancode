@@ -397,4 +397,4 @@ Every committed install, update, enable, disable, remove, register and import wr
 
 ## Authoring a pack
 
-Writing a pack, an extension or an MCP server is covered in [PanSDK](sdk.md); manifest fields and the contributor journey are in [authoring-plugins.md](authoring-plugins.md#authoring-templates-and-contributor-journey). A first-party pack goes under `hub/packs/<kind>/` and is pinned with `pnpm hub:pin`; a community pack is submitted as one row file, as described in [Community packs](#community-packs).
+Writing a pack, an extension or an MCP server is covered in [Extension API (unstable)](sdk.md); manifest fields and the contributor journey are in [authoring-plugins.md](authoring-plugins.md#authoring-templates-and-contributor-journey). A first-party pack goes under `hub/packs/<kind>/` and is pinned with `pnpm hub:pin`; a community pack is submitted as one row file, as described in [Community packs](#community-packs).

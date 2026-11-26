@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { setupWorkspaceId, withOpenedWorkspace, workspaceNotice } from "../client/pages/home-draft-model.js";
-import { readMessages, stepFor, viewFor, workingLabel } from "../client/wizard/wizard-model.js";
+import { readMessages, stepFor, testedLede, viewFor, workingLabel } from "../client/wizard/wizard-model.js";
 import type { SetupState } from "../contracts/setup.js";
 
 const select = (heading: string[], labels: string[]) =>
@@ -127,6 +128,7 @@ test("the test request is read from the CLI's lines: waiting on it, its answer, 
 	if (saved.kind !== "saved") return;
 	assert.equal(saved.verified, true);
 	assert.equal(saved.tested, "answered in 0.8 s");
+	assert.equal(testedLede(saved.tested ?? ""), "The model answered a test message in 0.8 s.");
 	assert.deepEqual(saved.summary, []);
 
 	const anyway = viewFor(
@@ -171,4 +173,15 @@ test("an opened workspace is listed at once, even when the list read before the 
 		[{ id: "ws-a" }, { id: "ws-z" }],
 		"a reopen moves, not copies",
 	);
+});
+
+test("a wizard choice's focus ring sits outside the row, clear of its flush-left text", () => {
+	const css = readFileSync(new URL("../client/wizard/wizard.css", import.meta.url), "utf8");
+	assert.match(css, /\.wizard-card \{[^}]*padding: var\(--space-3\) var\(--space-2\) var\(--space-3\) 0;/);
+	assert.doesNotMatch(css, /\.wizard-card:focus-visible \{[^}]*outline-offset: -/);
+});
+
+test("a wizard field row keeps its button at the input's height when the field carries a hint line below", () => {
+	const css = readFileSync(new URL("../client/wizard/wizard.css", import.meta.url), "utf8");
+	assert.match(css, /\.wizard-field__row \{[^}]*align-items: flex-start;/);
 });

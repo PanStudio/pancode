@@ -48,7 +48,7 @@ function captureUnless(absent, command, args, options) {
 }
 
 /** The release in `directory`, refused unless it is publishable; `commit` is the commit the caller's run checked out. */
-export function readRelease(directory, commit) {
+export function readRelease(directory, commit, changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8")) {
 	const release = JSON.parse(readFileSync(join(directory, "release.json"), "utf8"));
 	const problems = [];
 	if (release.channel === null)
@@ -59,7 +59,7 @@ export function readRelease(directory, commit) {
 	problems.push(
 		...releaseVersionErrors({
 			version: release.version,
-			changelog: readFileSync(join(root, "CHANGELOG.md"), "utf8"),
+			changelog,
 			releaseContext: true,
 		}),
 	);

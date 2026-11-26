@@ -315,6 +315,39 @@ describe("contracts/acp exposes the engine steering queues without a second prom
 		strictEqual(await served, 0);
 	});
 
+	it("sends a steer or follow-up the run took in as the operator's message at its place in the turn", async () => {
+		const peer = fakeTransport();
+		const listeners = new Set<(event: never) => void>();
+		const send = (event: Record<string, unknown>) => {
+			for (const listener of listeners) listener(event as never);
+		};
+		const loop = fakeChat({
+			onEvent: (handler) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+		});
+		const served = servePancodeAcpAgent({ transport: peer.transport, chat: loop.chat, cwd: process.cwd() });
+		const sessionId = await openSession(peer);
+		const { prompt } = await startPrompt(peer, sessionId);
+		// Before the run's first message ends, the event is the prompt the client already holds.
+		send({ type: "queued_user_turn", kind: "follow-up", text: "the scheduled prompt" });
+		send({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Working." }] } });
+		send({ type: "queued_user_turn", kind: "steer", text: "use the cached index" });
+		send({ type: "queued_user_turn", kind: "follow-up", text: "then write the report" });
+		send({ type: "queued_user_turn", kind: "interrupt", text: "a fresh prompt" });
+		loop.finish();
+		await prompt;
+
+		const users = peer.notifications
+			.map((frame) => (frame.params as { update?: { sessionUpdate?: string; content?: { text?: string } } }).update)
+			.filter((update) => update?.sessionUpdate === "user_message_chunk")
+			.map((update) => update?.content?.text);
+		deepStrictEqual(users, ["use the cached index", "then write the report"]);
+		peer.transport.close();
+		strictEqual(await served, 0);
+	});
+
 	it("reports the engine's refusal instead of cancelling, and reports an idle session", async () => {
 		const peer = fakeTransport();
 		const loop = fakeChat();

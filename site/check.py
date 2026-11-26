@@ -434,22 +434,22 @@ if cast_pages:
                 errors.append(f'{path}: {cast.name} must be asciicast v2 without env, command or timestamp')
         if casts and sum(sizes.values()) + max(cast.stat().st_size for cast in casts) > 1_500_000:
             errors.append(f'{path}: the first play exceeds the 1.5 MB recording media budget')
-# The Family navigation: every page names the five products in family.json
-# order, in the header row and in the Menu, and marks only its own entry.
-family = json.loads((site / 'family.json').read_text())
-family_links = [(item['page'], 'Pan' + item['name'].removeprefix('Pan')) for item in family]
-for item in family:
-    if item['page'] != '/' and origin + item['page'] not in urls:
-        errors.append(f"Family page {item['page']} is missing from the sitemap")
-for path in pages:
-    source = (root / ('index.html' if path == '/' else path.lstrip('/'))).read_text()
-    for label, pattern in (('header', r'<nav class="family" aria-label="Family">(.*?)</nav>'), ('Menu', r'<div class="nav-family" role="group" aria-label="Family">(.*?)</div>')):
-        block = re.search(pattern, source, re.S)
-        links = re.findall(r'<a href="([^"]+)"( aria-current="page")?>(.*?)</a>', block.group(1)) if block else []
-        if [(href, re.sub(r'<[^>]+>', '', name)) for href, _, name in links] != family_links:
-            errors.append(f'{path}: the Family navigation in the {label} does not list {", ".join(name for _, name in family_links)} in order')
-        elif [href for href, current, _ in links if current] != ([path] if path in {href for href, _ in family_links} else []):
-            errors.append(f'{path}: the Family navigation in the {label} marks the wrong current page')
+# One platform: the 0.9.0 family pages are gone, neither built nor redirected,
+# and nothing a visitor or crawler reads names a family, PanSDK or a panstore command.
+for path in ('/panstore.html', '/pankit.html', '/sdk.html'):
+    if path in redirects or (root / path.lstrip('/')).exists():
+        errors.append(f'{path}: the family pages are gone; build neither the page nor a redirect')
+for file in sorted(root.rglob('*')):
+    if file.suffix not in ('.html', '.txt', '.xml', '.json', '.webmanifest'):
+        continue
+    text = re.sub(r'\bfont-family\b', '', file.read_text())
+    name = file.relative_to(root).as_posix()
+    if re.search(r'\bPanSDK\b', text, re.I):
+        errors.append(f'{name}: names PanSDK; the extension API has no product name')
+    if re.search(r'\bfamil(?:y|ies)\b', text, re.I):
+        errors.append(f'{name}: says "family"; PanCode is one platform')
+    if re.search(r'(?<![\w/.~-])panstore(?![\w/.-])', text):
+        errors.append(f'{name}: names a panstore command; the store\'s command is pancode store')
 # The PanHub page lists exactly the rows hub-catalog.mjs derived from the
 # bundled index, and names that index's digest.
 catalog_check = subprocess.run(['node', str(site / 'hub-catalog.mjs'), '--check'], capture_output=True, text=True)
@@ -468,4 +468,4 @@ if f'<code class="hub-sha" data-hub-sha256>{catalog["source"]["sha256"]}</code>'
 if errors:
     print('\n'.join(errors))
     sys.exit(1)
-print(f'Checked {len(pages)} pages: unique titles, canonical URLs, social previews, structured data, rendered docs, assets, internal links, sitemap coverage, robots.txt, llms.txt, the Family navigation and the PanHub catalog.')
+print(f'Checked {len(pages)} pages: unique titles, canonical URLs, social previews, structured data, rendered docs, assets, internal links, sitemap coverage, robots.txt, llms.txt, one platform and the PanHub catalog.')

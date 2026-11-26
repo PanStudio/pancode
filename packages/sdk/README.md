@@ -1,13 +1,14 @@
-# PanSDK
+# @pancode/sdk
 
-PanSDK, the contract for authoring PanCode extensions, packs, tools and MCP servers.
-It is part of PanCode, systems software for coding agents.
+PanCode's extension API: the contract for authoring PanCode extensions, packs, tools and MCP servers.
+The extension API is unstable: its entry points, types, validators and limits can change in any release until
+PanCode defines it.
 It ships inside the `@akougkas/pancode` npm package as `pancode/sdk/<subpath>`. This workspace package, `@pancode/sdk`, is
 private: PanCode bundles it at build time and never publishes it on its own.
 
 ## Install
 
-PanSDK comes with the `@akougkas/pancode` npm package, which needs Node 22.19 or later, and its source is licensed
+The extension API comes with the `@akougkas/pancode` npm package, which needs Node 22.19 or later, and its source is licensed
 Apache-2.0.
 
 ```bash
@@ -61,7 +62,7 @@ pancode extensions validate <path> [--json]
 pancode extensions test <path>
 ```
 
-`init` scaffolds a package whose tsconfig resolves the SDK imports against the installed PanCode, so it type-checks
+`init` scaffolds a package whose tsconfig resolves the `pancode/sdk/*` imports against the installed PanCode, so it type-checks
 and tests without a `node_modules`. `validate` prints the capability envelope and its digest, and `test` runs the
 package's `**/*.test.ts` files.
 
@@ -102,7 +103,7 @@ await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo, sav
   `execute` or `destructive` and names its write paths in `pathArguments`. `readOnly` defaults to true for a `read`
   tool and may not be true for another class; `idempotent` defaults to false.
 - `run` returns `{ text }`, `{ json }` or `{ error }`. A returned `error` or a thrown exception reaches the client as
-  a tool result with `isError: true`. The SDK does not truncate large results.
+  a tool result with `isError: true`. `serveStdio` does not truncate large results.
 - `defineTool` and `defineServer` throw when a definition is wrong, so a broken server fails as it starts.
 - Stdout carries only protocol frames. Log through `context.log`, which writes to stderr. While the server owns the
   process's stdout it also points the global `console` at stderr, but a tool that writes to `process.stdout`
@@ -121,8 +122,8 @@ A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/test
 
 ## Documentation
 
-- PanSDK guide, with every entry point and the authoring commands: https://pancode.dev/docs/guide/sdk.html
+- Extension API guide, with every entry point and the authoring commands: https://pancode.dev/docs/guide/sdk.html
 - Extensions and runtime api 2: https://pancode.dev/docs/guide/harness-extensions.html
-- PanKit, built on this SDK: https://pancode.dev/docs/guide/pankit.html
+- PanKit, PanCode's agent toolkit, built on this API: https://pancode.dev/docs/guide/pankit.html
 - Source: https://github.com/akougkas/pancode/tree/main/packages/sdk
 - PanCode: https://github.com/akougkas/pancode

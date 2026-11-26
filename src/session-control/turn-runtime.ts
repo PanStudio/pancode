@@ -28,6 +28,7 @@ import { beginCall, type TelemetryCall, telemetryCaptures } from "../core/teleme
 import type { CallSettled } from "../core/telemetry/schemas.js";
 import { normalizeTokenUsage } from "../core/token-split.js";
 import { ToolNames } from "../core/tool-names.js";
+import { runCapStopCode } from "../core/turn-constraints.js";
 import { requestFits } from "../domains/context/budget/request-fit.js";
 import { observationTracing, traceObservation } from "../domains/memory/observation-events.js";
 import type { MiddlewareToolChoiceControl } from "../domains/middleware/index.js";
@@ -1188,7 +1189,17 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 			beforeToolBatch: ({ assistantMessage }) => {
 				const calls = assistantMessage.content.filter((block) => block.type === "toolCall");
 				const capRefusal = deps.runCaps?.admitToolCalls(calls.length);
-				return capRefusal !== undefined ? { reason: capRefusal } : undefined;
+				if (capRefusal === undefined) return undefined;
+				// The engine refuses these calls before the registry, so no finish event says they were refused.
+				const reasonCode = runCapStopCode(capRefusal);
+				for (const call of calls)
+					toolOutcomes.set(call.id, {
+						outcome: "blocked",
+						reason: capRefusal,
+						durationMs: 0,
+						...(reasonCode === undefined ? {} : { reasonCode }),
+					});
+				return { reason: capRefusal };
 			},
 			beforeToolCall: async ({ assistantMessage, toolCall }) => {
 				protocolRetryCalls.delete(toolCall.id);

@@ -289,7 +289,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 		if (width === 1600) await page.screenshot({ path: join(output, "composer-queue.png"), fullPage: true });
 		// From rest, as a pointer user arrives: the press itself focuses the composer, and the control must not move under it.
 		await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-		await page.getByRole("button", { name: "Take them back", exact: true }).click();
+		await page.getByRole("button", { name: "Take it back", exact: true }).click();
 		await page.waitForFunction(
 			() => (document.querySelector(".composer__field") as HTMLTextAreaElement | null)?.value === "Then summarise it.",
 		);

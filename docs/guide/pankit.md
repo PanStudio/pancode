@@ -1,10 +1,10 @@
 # PanKit
 
-PanKit is PanCode's suite of MCP tool servers for HPC and scientific work, run with one command, `pankit`, by PanCode or by any other MCP host.
+PanKit is PanCode's agent toolkit: MCP tool servers for HPC and scientific work that PanCode runs in its sessions and shares with other agents, such as Claude Code and Codex, through one command, `pankit`.
 
 The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the commands are in [cli.ts](../../packages/kit/src/cli.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
 
-PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@akougkas/pancode` npm package ships it as the `pankit` command, beside `pancode` and `panstore`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on [PanSDK](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/akougkas/pancode/blob/main/packages/kit/README.md).
+PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@akougkas/pancode` npm package ships it as the `pankit` command, beside `pancode`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/akougkas/pancode/blob/main/packages/kit/README.md).
 
 ## Servers
 
@@ -183,7 +183,7 @@ Network rules for a `ckan` source:
 pankit serve store --root [<name>=]<dir> [--root <name>=<dir> ...] [--cache <dir>] [--project <dir>] [--project-id <id>] [--write-tag <tag> ...]
 ```
 
-The options are `panstore`'s. The first `--root` is the primary root, named `default` unless given as `<name>=<dir>`; each further root is `<name>=<dir>`. `--project` is any directory of the project and defaults to the directory the server starts in. `--project-id` is the project's `store.projectId`: it keys the store by that id, so every checkout of the project on every host reaches the same store; without it the store is keyed by the project's path. `--cache` is where `store_get` keeps its read-only copies and defaults to `~/.cache/panstore`; the server reads no variables, so it does not follow `XDG_CACHE_HOME`. `pancode store where` prints the `--root`, `--cache`, `--project` and `--project-id` options that reach the store PanCode uses for a project.
+The first `--root` is the primary root, named `default` unless given as `<name>=<dir>`; each further root is `<name>=<dir>`. `--project` is any directory of the project and defaults to the directory the server starts in. `--project-id` is the project's `store.projectId`: it keys the store by that id, so every checkout of the project on every host reaches the same store; without it the store is keyed by the project's path. `--cache` is where `store_get` keeps its read-only copies and defaults to `~/.cache/panstore`; the server reads no variables, so it does not follow `XDG_CACHE_HOME`. `pancode store where` prints the `--root`, `--cache`, `--project` and `--project-id` options that reach the store PanCode uses for a project.
 
 Each `--write-tag <tag>` lets `store_put` and `store_note` write that tag and the tags nested under it (`--write-tag results` allows `results` and `results/run1`). A write into any other tag is refused, naming the tags allowed, before the source file is opened. Without one the server writes nothing. Reads are not confined: every tag of the project can be read. A read also refuses when the primary root does not exist, so a mistyped `--root` is never read as an empty store.
 
@@ -251,4 +251,4 @@ A server's own description of its tools (the read-only, destructive and idempote
 - `node_gpus` reports NVIDIA GPUs only, through `nvidia-smi`.
 - The `store` server's reads are not confined to its write tags; see [PanStore limits](panstore.md#limits).
 - A fleet worker that may write the project starts a builtin server without its network grant, so a server that needs the network fails there.
-- PanKit servers on macOS and Windows are unverified. The release boot on those platforms installs the package and runs `pancode --version`, `pancode --help`, `panstore --version`, `pankit list` and one `pankit serve node` handshake; no server's tools are called there.
+- PanKit servers on macOS and Windows are unverified. The release boot on those platforms installs the package and runs `pancode --version`, `pancode --help`, `pankit list` and one `pankit serve node` handshake; no server's tools are called there.

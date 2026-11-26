@@ -3,13 +3,14 @@
 PanStore, the project store, usable as a library without the harness.
 It is part of PanCode, systems software for coding agents.
 This workspace package, `@pancode/store`, is private: PanCode bundles it at build time and never publishes it on its
-own, so the imports below work inside this checkout. The `panstore` command ships with the `@akougkas/pancode` npm package.
+own, so the imports below work inside this checkout. Its commands run as `pancode store`, which ships with the
+`@akougkas/pancode` npm package.
 
 ## Install
 
 ```sh
 npm install -g @akougkas/pancode
-panstore --root ~/panstore tags
+pancode store tags
 ```
 
 The guide is [PanStore](https://pancode.dev/docs/guide/panstore.html); the source is
@@ -57,22 +58,15 @@ const history = await readBlobHistory(backend, "sim/run7", "a.txt");
 
 The package does not resolve XDG directories or walk to a project root; the host passes the resolved paths in.
 
-## `panstore`
+## `pancode store`
 
-`panstore`, installed with `pancode`, runs the store's commands without the harness:
-
-```sh
-panstore --root [<name>=]<dir> [--root <name>=<dir> ...] [--cache <dir>] [--project <dir>] [--project-id <id>] <command> ...
-```
-
-`--root` is required; further roots are `<name>=<dir>`. The first is named `default` unless it is given as `<name>=<dir>` too, which a store whose tags were placed on a primary root of another name needs. `--cache` defaults to `$XDG_CACHE_HOME/panstore`.
-`--project` defaults to the current directory; every checkout and task worktree of one repository derives the
-same project key. `--project-id` (default `$PANSTORE_PROJECT_ID`) is the project's `store.projectId`: with it the
-key comes from the id, so checkouts at different paths on different hosts reach one store. The commands are those
-of `pancode store` (`tags`, `ls`, `stat`, `history`, `verify`, `put`, `get`, `rm`, `rm-tag`, `adopt`, `where`,
-`usage`, `locks`), and the records they write name the actor `standalone`. `locks` lists the project's store locks
-and their state (`live`, `dead`, `remote`, `unreadable`); `locks break <id>` removes one that is not live.
-`pancode store where` prints the `panstore` command line that reaches a PanCode project's store.
+`pancode store` runs the store's commands from a shell, against the roots, cache and project PanCode resolves from
+its settings: `tags`, `ls`, `stat`, `history`, `verify`, `put`, `get`, `rm`, `rm-tag`, `adopt`, `where`, `usage` and
+`locks`. Every checkout and task worktree of one repository derives the same project key; a project's
+`store.projectId` keys the store by that id instead, so checkouts at different paths on different hosts reach one
+store. The records these commands write name the actor `standalone`. `locks` lists the project's store locks and
+their state (`live`, `dead`, `remote`, `unreadable`); `locks break <id>` removes one that is not live.
+`pancode store where` prints the `pankit serve store` command line that serves a PanCode project's store over MCP.
 
 ## Limits
 

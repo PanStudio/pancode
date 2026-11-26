@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- The `panstore` command is removed; the project store's commands are `pancode store <command>`. `pancode store where` now ends with the `pankit serve store` line that serves the project's store over MCP from any directory, and `PANSTORE_PROJECT_ID` is gone: a project's `store.projectId` keys its store.
+- The SDK is documented as PanCode's extension API, unstable until PanCode defines it; its `pancode/sdk/<subpath>` imports are unchanged.
+
 ### Fixes
 
 - After a native upgrade, the desktop app's background service restarts on the new version instead of refusing with "belongs to another installation" and asking for a handover.

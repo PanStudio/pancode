@@ -66,6 +66,39 @@ export function InterviewHeading({ round, titleId }: { round: InterviewRound; ti
 	);
 }
 
+/** One answered question on the review page; its question reads as it did when it was asked. */
+export function ReviewedAnswer({
+	question,
+	at,
+	answer,
+	busy,
+	onEdit,
+}: {
+	question: InterviewRound["questions"][number];
+	at: number;
+	answer: InterviewDraft | undefined;
+	busy: boolean;
+	onEdit: () => void;
+}) {
+	return (
+		<article>
+			<div>
+				<h4>{question.header || `Question ${at + 1}`}</h4>
+				<button type="button" disabled={busy} onClick={onEdit}>
+					Edit
+				</button>
+			</div>
+			<MarkdownContent source={question.question} complete deferDiagrams />
+			{answer?.selected.map((choice) => (
+				<span className="interview-dialog__chosen" key={choice}>
+					{question.options?.[choice]?.label}
+				</span>
+			))}
+			{answer?.text.trim() ? <blockquote>{answer.text}</blockquote> : null}
+		</article>
+	);
+}
+
 function InterviewDialog({ client, sessionId, round }: { client: Client; sessionId: string; round: InterviewRound }) {
 	const queries = useQueryClient();
 	const [answers, setAnswers] = useState(() => savedAnswers(round));
@@ -223,22 +256,15 @@ function InterviewDialog({ client, sessionId, round }: { client: Client; session
 								These are your answers.
 							</h3>
 							{round.questions.map((question, at) => (
-								// biome-ignore lint/suspicious/noArrayIndexKey: the round is immutable and owns these question indices.
-								<article key={`${round.id}-review-${at}`}>
-									<div>
-										<h4>{question.header || `Question ${at + 1}`}</h4>
-										<button type="button" disabled={send.isPending} onClick={() => move(at)}>
-											Edit
-										</button>
-									</div>
-									<p>{question.question}</p>
-									{answers[at]?.selected.map((choice) => (
-										<span className="interview-dialog__chosen" key={choice}>
-											{question.options?.[choice]?.label}
-										</span>
-									))}
-									{answers[at]?.text.trim() ? <blockquote>{answers[at]?.text}</blockquote> : null}
-								</article>
+								<ReviewedAnswer
+									// biome-ignore lint/suspicious/noArrayIndexKey: the round is immutable and owns these question indices.
+									key={`${round.id}-review-${at}`}
+									question={question}
+									at={at}
+									answer={answers[at]}
+									busy={send.isPending}
+									onEdit={() => move(at)}
+								/>
 							))}
 						</section>
 					) : (

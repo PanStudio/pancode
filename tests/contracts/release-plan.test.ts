@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, doesNotThrow, strictEqual, throws } from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -44,7 +44,9 @@ describe("release decisions", () => {
 
 	it("refuses to publish a development version, a dirty build or an asset that differs from SHA256SUMS", async () => {
 		const { readRelease } = await import(publishModule);
-		const version = JSON.parse(readFileSync("package.json", "utf8")).version as string;
+		// The checkout may be a development tree, so the release names its own version and changelog.
+		const version = "1.2.3";
+		const changelog = `# Changelog\n\n## ${version} - 2026-01-01\n`;
 		const scratch = mkdtempSync(join(tmpdir(), "pancode-release-"));
 		try {
 			mkdirSync(join(scratch, "assets"));
@@ -71,15 +73,15 @@ describe("release decisions", () => {
 				);
 			};
 			write({});
-			doesNotThrow(() => readRelease(scratch));
-			doesNotThrow(() => readRelease(scratch, "0".repeat(40)));
-			throws(() => readRelease(scratch, "1".repeat(40)), /not this run's commit 1{40}/u);
+			doesNotThrow(() => readRelease(scratch, undefined, changelog));
+			doesNotThrow(() => readRelease(scratch, "0".repeat(40), changelog));
+			throws(() => readRelease(scratch, "1".repeat(40), changelog), /not this run's commit 1{40}/u);
 			write({ channel: null });
-			throws(() => readRelease(scratch), /development version/u);
+			throws(() => readRelease(scratch, undefined, changelog), /development version/u);
 			write({ dirty: true });
-			throws(() => readRelease(scratch), /uncommitted changes/u);
+			throws(() => readRelease(scratch, undefined, changelog), /uncommitted changes/u);
 			write({}, Buffer.from("other bytes"));
-			throws(() => readRelease(scratch), /does not match SHA256SUMS/u);
+			throws(() => readRelease(scratch, undefined, changelog), /does not match SHA256SUMS/u);
 		} finally {
 			rmSync(scratch, { recursive: true, force: true });
 		}

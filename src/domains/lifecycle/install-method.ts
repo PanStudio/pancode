@@ -7,7 +7,7 @@
  * install's roots and touch the global npm prefix.
  */
 
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { PACKAGE_NAME, resolvePackageRoot } from "../../core/package-root.js";
@@ -69,7 +69,7 @@ export interface InstallerRecord {
 	manager?: string;
 	pathAdded?: boolean;
 	pathEntry?: string;
-	/** Launchers written beside `launcher` for the package's other commands (panstore, pankit). */
+	/** Launchers written beside `launcher` for the package's other commands (pankit). */
 	binLaunchers?: string[];
 }
 
@@ -229,6 +229,31 @@ function installerRecordForPrefix(prefix: string): InstallerRecord | null {
 	return readInstallerRecord(dirname(versions));
 }
 
+/**
+ * pnpm 11 and later link a global package from `<pnpm home>/store/v<n>/links/...`,
+ * reached through `<pnpm home>/global/v<n>/<id>/node_modules`. A project can share
+ * that store too, so the root counts as global only when pnpm's global directory
+ * links to it.
+ */
+function pnpmGlobalStoreLink(parts: string[], root: string): boolean {
+	const at = parts.findIndex(
+		(part, i) => part === "store" && /^v\d+$/.test(parts[i + 1] ?? "") && parts[i + 2] === "links",
+	);
+	if (at < 1) return false;
+	const globalDir = join(parts.slice(0, at).join(sep) || sep, "global", parts[at + 1] as string);
+	try {
+		return readdirSync(globalDir).some((id) => {
+			try {
+				return realpathSync(join(globalDir, id, "node_modules", PACKAGE_NAME)) === root;
+			} catch {
+				return false;
+			}
+		});
+	} catch {
+		return false;
+	}
+}
+
 /** Inspect layout without running a package manager or consulting the network. */
 export function inspectInstallation(entryPath = process.argv[1], fallbackRoot = resolvePackageRoot()): Installation {
 	let entry = join(fallbackRoot, DIST_CLI_SUFFIX);
@@ -272,6 +297,7 @@ export function inspectInstallation(entryPath = process.argv[1], fallbackRoot = 
 	// global layouts should receive registry nudges or global-manager instructions.
 	if (parts.includes("pnpm") && parts.some((part, i) => part === "global" && /^\d+$/.test(parts[i + 1] ?? "")))
 		return { ...base, kind: "pnpm" };
+	if (pnpmGlobalStoreLink(parts, root)) return { ...base, kind: "pnpm" };
 	if (root.includes(sep + join("install", "global", "node_modules") + sep)) return { ...base, kind: "bun" };
 	if (parts.includes("node_modules")) return { ...base, kind: "local" };
 	return { ...base, kind: "unknown" };

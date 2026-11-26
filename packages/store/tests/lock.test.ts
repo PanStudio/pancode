@@ -54,7 +54,7 @@ describe("store locks", () => {
 		strictEqual(await ran(dir, "blob:a"), true);
 		strictEqual(existsSync(rebooted), false);
 		const garbage = plant(dir, "blob:b", "{not json", 60 * 60 * 1000);
-		await rejects(ran(dir, "blob:b"), /cannot be read.*panstore locks break [0-9a-f]{32}\./u);
+		await rejects(ran(dir, "blob:b"), /cannot be read.*pancode store locks break [0-9a-f]{32}\./u);
 		strictEqual(readFileSync(garbage, "utf8"), "{not json");
 	});
 
@@ -65,7 +65,7 @@ describe("store locks", () => {
 		await rejects(ran(dir, "blob:c"), (error: Error) => {
 			strictEqual(
 				error.message,
-				`Another writer holds the store lock for blob:c: pid 4242 on other-node since ${at}. If that writer is gone, run panstore locks break ${storeLockId("blob:c")}.`,
+				`Another writer holds the store lock for blob:c: pid 4242 on other-node since ${at}. If that writer is gone, run pancode store locks break ${storeLockId("blob:c")}.`,
 			);
 			return true;
 		});

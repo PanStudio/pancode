@@ -17,7 +17,7 @@ import { storeLocksDir } from "./paths/index.js";
  * system, so a lock file is never partial. A lock is taken over only when its
  * holder ran on this host and is gone: its pid is not alive, or the host has
  * booted since. A lock from another host, or one that cannot be read, is never
- * broken here; an operator clears it with `panstore locks break <id>`.
+ * broken here; an operator clears it with `pancode store locks break <id>`.
  */
 
 const LOCK_WAIT_MS = 30 * 1000;
@@ -172,7 +172,7 @@ function lockFile(projectDir: string, key: string): string {
 }
 
 function holderRefusal(key: string, info: StoreLockInfo): StoreRefusal {
-	const command = `panstore locks break ${info.id}`;
+	const command = `pancode store locks break ${info.id}`;
 	if (info.state === "unreadable")
 		return new StoreRefusal(
 			"unavailable",

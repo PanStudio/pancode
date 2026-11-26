@@ -10,12 +10,15 @@ const closed = { additionalProperties: false };
  * additionally denies every other parked request from the turn and aborts the
  * prompt, which settles with stopReason "cancelled" rather than "end_turn".
  * It is offered only when the agent announced the option; an older engine has
- * two choices and the third must not be drawn.
+ * two choices and the third must not be drawn. `allow-session-scope` allows the
+ * call and the session scope the agent named for it; it exists only on an ask
+ * that carries `sessionScope`.
  */
 export const PermissionDecision = Type.Union([
 	Type.Literal("allow-once"),
 	Type.Literal("reject"),
 	Type.Literal("reject-and-stop"),
+	Type.Literal("allow-session-scope"),
 ]);
 export type PermissionDecision = Static<typeof PermissionDecision>;
 /**
@@ -68,6 +71,11 @@ export const Permission = Type.Object(
 		worker: Type.Optional(WorkerAskFacts),
 		/** True when the agent offered a third, turn-ending refusal for this ask. */
 		canStopTurn: Type.Boolean(),
+		/**
+		 * What the agent's session option for a sandbox escape covers: the script files, cwd and env it
+		 * read from the call (src/domains/safety/escape-scope.ts). Absent when the ask offers no such option.
+		 */
+		sessionScope: Type.Optional(Type.String({ maxLength: 1024 })),
 	},
 	closed,
 );

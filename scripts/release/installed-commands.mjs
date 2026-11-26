@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The installed `panstore` and `pankit` commands, run from an npm prefix that holds the `pancode` package:
- * `panstore --version` prints the package version, `pankit list` lists exactly the PanKit servers, and
+ * The installed `pancode` and `pankit` commands, run from an npm prefix that holds the `pancode` package:
+ * `pancode --version` names the package version, `pankit list` lists exactly the PanKit servers, and
  * `pankit serve node` answers one MCP `initialize` over stdio and exits 0 once stdin closes.
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -141,8 +141,8 @@ export function mcpHandshake(command, args, { cwd, env, timeoutMs = HANDSHAKE_TI
  */
 export async function checkInstalledCommands({ prefix, env, version }) {
 	const started = Date.now();
-	const panstore = runCommand(prefix, "panstore", ["--version"], env).trim();
-	if (panstore !== version) throw new Error(`panstore --version printed ${panstore}; expected ${version}`);
+	const reported = runCommand(prefix, "pancode", ["--version"], env);
+	if (!reported.includes(version)) throw new Error(`pancode --version printed ${reported.trim()}; expected ${version}`);
 	const servers = listedServers(runCommand(prefix, "pankit", ["list"], env));
 	const problems = kitListProblems(servers);
 	if (problems.length > 0) throw new Error(problems.join("\n"));
@@ -150,5 +150,5 @@ export async function checkInstalledCommands({ prefix, env, version }) {
 		cwd: prefix,
 		env,
 	});
-	return { panstoreVersion: panstore, pankitServers: servers, pankitServeNode: handshake, ms: Date.now() - started };
+	return { pankitServers: servers, pankitServeNode: handshake, ms: Date.now() - started };
 }

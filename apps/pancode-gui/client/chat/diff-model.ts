@@ -52,6 +52,17 @@ const NO_TRAILING_NEWLINE_NOTE = "no longer ends with a newline";
  * call was not approved and nothing about who declined it.
  */
 export const NOT_APPROVED_NOTE = "was not approved";
+/**
+ * src/domains/safety/denial.ts `denialLines` opens the account of a refused call with
+ * `Refused by <layer>`: what a live run reads when the operator rejects the card or the
+ * safety judge or PanCode's policy refuses it, none of which carries NOT_APPROVED_NOTE.
+ */
+const REFUSAL_ACCOUNT = /^Refused by (?:PanCode policy|operator approval|MCP server policy)\b/m;
+
+/** Whether a call's result is the runtime's own refusal of it, so nothing ran. */
+export function refusalResult(resultText: string | null | undefined): boolean {
+	return typeof resultText === "string" && (resultText.includes(NOT_APPROVED_NOTE) || REFUSAL_ACCOUNT.test(resultText));
+}
 
 /** DOM bound. The wire is already capped; this stops a pathological row count. */
 const MAX_RENDERED_DIFF_ROWS = 2_000;
@@ -425,7 +436,7 @@ export function diffPanel(inputs: DiffInputs): DiffPanel {
 	// A bare `failed` or `cancelled` status proves neither an operator rejection
 	// nor zero bytes written. Only the producer's own refusal sentence earns
 	// "not approved"; everything else stays neutral about what reached disk.
-	const refused = inputs.resultText?.includes(NOT_APPROVED_NOTE) ?? false;
+	const refused = refusalResult(inputs.resultText);
 	const settled = inputs.status === "failed" || inputs.status === "cancelled" || inputs.status === "unknown";
 
 	if (raw !== null) {

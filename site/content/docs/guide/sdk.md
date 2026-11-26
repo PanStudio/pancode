@@ -1,10 +1,10 @@
-# Write extensions and tools with PanSDK
+# Extension API (unstable)
 
 Scaffold, validate and test extensions, and write MCP tool servers.
 
-## What PanSDK holds
+## What the extension API holds
 
-PanSDK is the contract for writing PanCode extensions, packs, tools and MCP servers. It ships inside the `@akougkas/pancode` npm package, licensed Apache-2.0, as five imports:
+The extension API is how you write PanCode extensions, packs, tools and MCP servers. It is unstable: its imports, types and limits can change in any release, so pin the PanCode version an extension is tested against. It ships inside the `@akougkas/pancode` npm package, licensed Apache-2.0, as five imports:
 
 | Import | Holds |
 | --- | --- |

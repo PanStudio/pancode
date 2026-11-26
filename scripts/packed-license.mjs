@@ -5,8 +5,8 @@
  *
  * LICENSE and NOTICE must be the committed files, byte for byte, and they are
  * the only license files: packages/sdk/LICENSE stays out, because NOTICE tells
- * a reader that the Apache License 2.0 PanSDK is under is the part of LICENSE
- * after its Additional Conditions. That part must therefore hold the terms of
+ * a reader that the Apache License 2.0 the extension API is under is the part
+ * of LICENSE after its Additional Conditions. That part must therefore hold the terms of
  * packages/sdk/LICENSE exactly.
  */
 import { existsSync, readFileSync } from "node:fs";

@@ -19,6 +19,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
+import { DEV_VERSION } from "../release-version-policy.mjs";
 import { hostTarget } from "./bundle.mjs";
 
 const windows = process.platform === "win32";
@@ -139,7 +140,11 @@ const command = (name) => join(bin, windows && name !== "pancode" ? `${name}.cmd
 const installed = () => run(command("pancode"), ["--version"], env).split("\n")[0].trim();
 const expectVersion = (wanted) => {
 	const line = installed();
-	if (line !== `PanCode ${wanted}`) throw new Error(`pancode --version printed "${line}"; expected PanCode ${wanted}`);
+	// A development build names the commit it came from: `PanCode 0.9.1-dev (unreleased · d024932)`.
+	const named = DEV_VERSION.test(wanted)
+		? line.startsWith(`PanCode ${wanted} (unreleased · `)
+		: line === `PanCode ${wanted}`;
+	if (!named) throw new Error(`pancode --version printed "${line}"; expected PanCode ${wanted}`);
 };
 
 let failed = false;
@@ -165,9 +170,9 @@ try {
 		else run("sh", [join(assets, "install.sh"), "--install-dir", root, "--bin-dir", bin], env);
 		expectVersion(version);
 	});
-	step("panstore and pankit answer", () => {
-		const store = run(command("panstore"), ["--version"], env).trim();
-		if (store !== version) throw new Error(`panstore --version printed "${store}"; expected ${version}`);
+	step("pancode store and pankit answer", () => {
+		if (!run(command("pancode"), ["store", "--help"], env).trim())
+			throw new Error("pancode store --help printed nothing");
 		if (!run(command("pankit"), ["list"], env).trim()) throw new Error("pankit list printed nothing");
 	});
 	step("doctor reads an installer install", () => {
@@ -188,7 +193,7 @@ try {
 		run(command("pancode"), ["uninstall", "--yes"], env);
 		// Windows removes the running launcher, its Node and the installed versions from a detached process
 		// after this one has exited, so they outlive the command by however long that removal takes.
-		const left = () => [root, command("pancode"), command("panstore")].filter((file) => existsSync(file));
+		const left = () => [root, command("pancode"), command("pankit")].filter((file) => existsSync(file));
 		for (let waited = 0; left().length > 0 && waited < 360; waited++)
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
 		if (left().length > 0) {

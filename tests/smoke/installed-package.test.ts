@@ -822,16 +822,12 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				stdio: "pipe",
 			});
 
-			// One package, three commands: npm links each bin from the one tarball alone.
-			for (const command of ["pancode", "panstore", "pankit"])
+			// One package, two commands: npm links each bin from the one tarball alone.
+			for (const command of ["pancode", "pankit"])
 				ok(existsSync(join(prefix, "node_modules", ".bin", command)), `npm must link the ${command} bin`);
+			ok(!existsSync(join(prefix, "node_modules", ".bin", "panstore")), "pancode store is PanStore's one command");
 			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "the package installs with no @pancode/* package");
-			const storeHelp = await run(
-				join(prefix, "node_modules", ".bin", "panstore"),
-				["--help"],
-				foreign,
-				isolatedEnv(home),
-			);
+			const storeHelp = await run(bin, ["store", "--help"], foreign, isolatedEnv(home));
 			strictEqual(storeHelp.code, 0, storeHelp.stderr);
 			const kitList = await run(join(prefix, "node_modules", ".bin", "pankit"), ["list"], foreign, isolatedEnv(home));
 			strictEqual(kitList.code, 0, kitList.stderr);

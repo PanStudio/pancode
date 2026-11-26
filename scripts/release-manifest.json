@@ -62,7 +62,6 @@
 		"dist/sdk/mcp-server.js",
 		"dist/extensions/test-kit.js",
 		"dist/kit/cli.js",
-		"dist/store/cli.js",
 		"examples/extensions/lab-status/pancode-extension.json",
 		"examples/extensions/measurements/pancode-extension.json",
 		"examples/extensions/README.md",

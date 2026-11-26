@@ -84,7 +84,7 @@ This is the first experiment the project plans to run. Nobody has run it yet.
 
 Write trap tasks, each with a hidden grader the agent never sees. In one, the natural fix passes the visible test and a later cleanup edit breaks it. In another, the test runner cannot start. In a third, a numerical result drifts inside the test's tolerance and outside the reference's. A fourth cannot be completed as stated.
 
-Run each task several times on one model from each family, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.
+Run each task several times on one model from each model lineage, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.
 
 Two things are needed first. The trap tasks do not exist yet, and the campaign runner does not read the sealed assessment or repeat a run.
 

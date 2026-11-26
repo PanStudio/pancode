@@ -1,8 +1,9 @@
 # PanKit
 
-PanKit is PanCode's suite of MCP tool servers for HPC and scientific work: software modules, Spack packages,
+PanKit is PanCode's agent toolkit: MCP tool servers for HPC and scientific work, covering software modules, Spack packages,
 node facts, I/O traces, scientific file formats, dataset catalogs and the project store. It is one package with
-one command, `pankit`, and every server speaks the Model Context Protocol over stdio, so any MCP host can run it.
+one command, `pankit`, and every server speaks the Model Context Protocol over stdio, so Claude Code, Codex or any
+other MCP host can run it.
 PanCode reaches the same servers through its MCP gateway as `builtin` servers.
 
 PanKit ships inside the `@akougkas/pancode` npm package, which installs `pankit` beside `pancode`. This workspace package,
@@ -13,7 +14,7 @@ PanKit ships inside the `@akougkas/pancode` npm package, which installs `pankit`
 `pankit` ships in the `@akougkas/pancode` npm package and needs Node 22.19 or later.
 
 ```bash
-npm install -g @akougkas/pancode      # installs pancode, panstore and pankit
+npm install -g @akougkas/pancode      # installs pancode and pankit
 pankit list
 ```
 
@@ -63,7 +64,7 @@ pankit --version
 ```
 
 Exit codes: 0 success, 1 operational failure, 2 usage error. Options follow the server id: `scidata` takes
-`--cache <dir>`, `catalog` takes `--file <path>`, `store` takes `panstore`'s `--root`, `--cache`, `--project`, `--project-id`
+`--cache <dir>`, `catalog` takes `--file <path>`, `store` takes `--root`, `--cache`, `--project`, `--project-id`
 and `--write-tag`, and the other servers take none. A server that reads variables from its caller's environment names
 them in the `environment` field of its manifest entry; pass those through.
 
@@ -83,6 +84,6 @@ the servers are unverified on macOS and Windows. The full list is in
 ## Documentation
 
 - PanKit guide, with every tool, server configuration and PanCode integration: https://pancode.dev/docs/guide/pankit.html
-- PanSDK, which the servers are built on: https://pancode.dev/docs/guide/sdk.html
+- The extension API (unstable), which the servers are built on: https://pancode.dev/docs/guide/sdk.html
 - Source: https://github.com/akougkas/pancode/tree/main/packages/kit
 - PanCode: https://github.com/akougkas/pancode

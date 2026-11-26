@@ -106,7 +106,7 @@ async function seed(f: Fixture, tag: string, blob: string, content: string, note
 	assert.equal(put.recorded, true);
 }
 
-test("configure takes panstore's options: roots, cache, project and repeated write tags", () => {
+test("configure takes the store server's options: roots, cache, project and repeated write tags", () => {
 	const cwd = join(base, "cwd");
 	const one = parseStoreOptions(["--root", "r"], cwd);
 	assert.ok(one);
