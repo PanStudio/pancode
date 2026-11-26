@@ -1,6 +1,6 @@
 rows:
   - kind: plugin
-    publisher: akougkas
+    publisher: panstudio
     name: zulipchat
     version: 0.8.1
     description: Zulip messaging and search, and hand-off to Zulip agent bots.

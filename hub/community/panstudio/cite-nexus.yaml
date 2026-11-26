@@ -1,6 +1,6 @@
 rows:
   - kind: plugin
-    publisher: akougkas
+    publisher: panstudio
     name: cite-nexus
     version: 0.2.5
     description: >-
