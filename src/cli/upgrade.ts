@@ -692,10 +692,16 @@ export async function runUpgradeCommand(
 		const desktopDeclined = opts.postInstall && process.env.PANCODE_INSTALL_GUI === "0";
 		if (!opts.dryRun && desktopDeclined && existsSync(backgroundOwner)) {
 			presenter.note("Left the desktop app as it was, as the installer's --no-gui asked.");
-			presenter.commandAdvice(
-				"Move it to this installation when you want it to follow:",
-				"pancode gui background install --handover",
-			);
+			// The app of this same installation only needs a restart to load the new version; a handover is for an
+			// app another installation runs.
+			const owner = backgroundPackageRoot(stateDir);
+			if (owner !== null && installIdentity(owner) === installIdentity(activeInstallation.root))
+				presenter.commandAdvice("Restart it when you want it on this version:", "pancode gui background restart --if-idle");
+			else
+				presenter.commandAdvice(
+					"Move it to this installation when you want it to follow:",
+					"pancode gui background install --handover",
+				);
 		} else if (!opts.dryRun && existsSync(backgroundOwner)) {
 			const owner = opts.postInstall ? backgroundPackageRoot(stateDir) : null;
 			if (owner !== null && installIdentity(owner) !== installIdentity(activeInstallation.root)) {

@@ -318,7 +318,16 @@ test("an installer post-install under --no-gui leaves the desktop app, its hando
 	assert.equal(declined.status, 0, declined.stderr + declined.stdout);
 	assert.doesNotMatch(declined.stdout + declined.stderr, /must not (hand over|restart)/);
 	assert.match(declined.stdout, /Left the desktop app as it was/);
+	assert.match(declined.stdout, /pancode gui background install --handover/);
 	// No child ran at all, so no `gui background install` could write a launcher or a Start Menu shortcut.
+	assert.equal(existsSync(join(f.home.dir, "calls.jsonl")), false);
+
+	// The app of this same installation needs only a restart, not a handover from itself.
+	writeFileSync(join(background, "server.json"), JSON.stringify({ packageRoot: f.root }));
+	const own = await f.call(["--post-install"], untouched, { PANCODE_INSTALL_GUI: "0" });
+	assert.equal(own.status, 0, own.stderr + own.stdout);
+	assert.match(own.stdout, /pancode gui background restart --if-idle/);
+	assert.doesNotMatch(own.stdout, /--handover|Move it to this installation/);
 	assert.equal(existsSync(join(f.home.dir, "calls.jsonl")), false);
 });
 
