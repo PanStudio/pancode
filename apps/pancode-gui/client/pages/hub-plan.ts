@@ -92,6 +92,17 @@ export function originSentence(pkg: Package): string {
 		: hubOriginLabel(origin);
 }
 
+/** The packs of kind `server`, in catalog order. The core ones are built into PanCode and have no copy. */
+export const serverPackages = (packages: readonly Package[]): Package[] =>
+	packages.filter((pkg) => pkg.kind === "server");
+
+/** What a server row says in place of its copies, in the words `pancode hub` answers with. */
+export function serverSentence(pkg: Package): string {
+	return pkg.builtIn
+		? `Built into PanCode and has no installed copy; pancode mcp list shows it, and a user declaration with the id ${pkg.name} in mcp.yaml overrides it.`
+		: originSentence(pkg);
+}
+
 export const stepTitle = (step: PlanStep) =>
 	`${VERB[step.operation]} ${step.identity.ref} ${step.operation === "install" ? "into" : "in"} ${scopeHub(step.identity.scope)}`;
 

@@ -26,6 +26,7 @@ import {
 	type Plan,
 	type Scope,
 	scopeCopy,
+	serverSentence,
 	stepTitle,
 	verb,
 } from "./hub-plan.js";
@@ -580,7 +581,15 @@ export function HubCatalog({
 						</div>
 						{(!compact || selected === pkg.ref) && (
 							<div className="hub-package__copies">
-								{!pkg.copies.length && <StatusMark tone="neutral" label="Not installed" />}
+								{!pkg.copies.length &&
+									(pkg.builtIn ? (
+										<>
+											<StatusMark tone="success" label="Built in" />
+											<p className="panel-note">{serverSentence(pkg)}</p>
+										</>
+									) : (
+										<StatusMark tone="neutral" label="Not installed" />
+									))}
 								{pkg.copies.map((copy) => {
 									const state = copyState(String(copy.state));
 									const scope = copy.scope as Scope;
@@ -606,7 +615,7 @@ export function HubCatalog({
 										</div>
 									);
 								})}
-								{!desktopManaged(pkg) && (
+								{!desktopManaged(pkg) && !pkg.builtIn && (
 									<details className="hub-terminal">
 										<summary>Manage extension in the terminal</summary>
 										<p className="panel-note">{TERMINAL_NOTE}</p>
