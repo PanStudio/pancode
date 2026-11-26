@@ -28,8 +28,7 @@ export function MachineSwitcher({
 	const [wanted, setWanted] = useState(false);
 	const { attachments, error, loading, pending, open } = useMachineAttach(local, wanted);
 	const ref = useRef<HTMLDetailsElement>(null);
-	const [opened, setOpened] = useState(false);
-	useDetailsDismiss(ref, opened);
+	useDetailsDismiss(ref);
 	const choices = machineChoices(attachments, current);
 	const label = switcherLabel(current, remoteHost);
 	return (
@@ -37,7 +36,6 @@ export function MachineSwitcher({
 			className="wb-menu wb-machine"
 			ref={ref}
 			onToggle={(event) => {
-				setOpened(event.currentTarget.open);
 				if (event.currentTarget.open) setWanted(true);
 			}}
 		>

@@ -4,9 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { memo } from "react";
 import { Link } from "react-router";
 import type { RunResultFacts } from "../../contracts/run-result-facts.js";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { TimelineItem } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
+import { heldSessionQuery } from "../api/session-query.js";
 import { itemRunId, runRecordLine } from "./run-record-model.js";
 import "./artifacts.css";
 
@@ -35,9 +35,7 @@ export const WorkerRunRecord = memo(function WorkerRunRecord({
 
 function RunRecordObserver({ client, sessionId, runId }: { client: Client; sessionId: string; runId: string }) {
 	const record = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: (snapshot) =>
 			runId ? (snapshot.fleet.filter((frame) => frame.record?.runId === runId).at(-1)?.record ?? null) : null,
 	}).data;

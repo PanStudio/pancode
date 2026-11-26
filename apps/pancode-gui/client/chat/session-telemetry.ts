@@ -7,6 +7,7 @@ import type { ContextLedger } from "../../contracts/context-ledger.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
+import { heldSessionQuery } from "../api/session-query.js";
 import { sessionReadScope } from "../api/sessions.js";
 
 import { type Spend, tokensText, usageReadable } from "./session-usage-model.js";
@@ -34,9 +35,7 @@ export function settledKey(turns: Turns): string {
 function useSettledKey(client: Client, sessionId: string): string {
 	return (
 		useQuery({
-			queryKey: ["session", sessionId],
-			queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-			enabled: false,
+			...heldSessionQuery(client, sessionId),
 			select: (snapshot) => settledKey(snapshot.turns),
 		}).data ?? "none"
 	);
@@ -54,9 +53,7 @@ export function useSessionCapabilities(client: Client, sessionId: string, open: 
 
 export function useSessionTelemetry(client: Client, sessionId: string) {
 	return useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: (snapshot) => snapshot.telemetry ?? null,
 	}).data;
 }
@@ -64,9 +61,7 @@ export function useSessionTelemetry(client: Client, sessionId: string) {
 /** Context work is part of the same snapshot as chat and telemetry, including work between turns. */
 export function useContextWork(client: Client, sessionId: string) {
 	return useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: (snapshot) => snapshot.contextWork,
 	}).data;
 }

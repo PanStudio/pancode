@@ -6,6 +6,7 @@ import type { TrustPreviewFile, TrustSurface } from "../../contracts/review.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { ApiProblem, emptyInput } from "../api/client.js";
+import { sessionBuffer } from "../api/sessions.js";
 import { Dialog } from "../interaction/Dialog.js";
 import {
 	afterTrust,
@@ -88,7 +89,7 @@ export function TrustReview({
 			// The view route re-reads trust in a resting task and restarts its engine when the report changed.
 			await client.call(routes.viewSession, task, crypto.randomUUID());
 			const snapshot = await client.call(routes.session, task);
-			queries.setQueryData(["session", sessionId], snapshot);
+			queries.setQueryData(["session", sessionId], sessionBuffer(sessionId).snapshot(snapshot) ?? snapshot);
 			return afterTrust(
 				true,
 				ignoredSurfaces(snapshot.telemetry?.trust).some((group) => group.surface === surface),

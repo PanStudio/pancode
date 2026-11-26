@@ -266,8 +266,8 @@ try {
 					getComputedStyle(document.body).color ===
 					((document.documentElement.dataset.theme ??
 						(matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark"
-						? "rgb(241, 238, 230)"
-						: "rgb(15, 14, 12)"),
+						? "rgb(235, 239, 242)"
+						: "rgb(21, 28, 31)"),
 			);
 			await checkedPage.evaluate(
 				() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),

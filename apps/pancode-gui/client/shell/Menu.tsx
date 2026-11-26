@@ -61,7 +61,7 @@ export function Menu({
 }) {
 	const ref = useRef<HTMLDetailsElement>(null);
 	const [open, setOpen] = useState(false);
-	useDetailsDismiss(ref, open);
+	useDetailsDismiss(ref);
 	// A fixed panel does not follow a scrolling list, so it closes instead of drifting off its button. The
 	// exception is the scroll that focusing one of its own items causes: that one moves it along.
 	useEffect(() => {

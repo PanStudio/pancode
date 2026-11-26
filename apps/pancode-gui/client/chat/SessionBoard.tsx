@@ -6,6 +6,7 @@ import type { AgentCapabilities } from "../../contracts/capabilities.js";
 import type { MemoryDecision } from "../../contracts/review.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
+import { heldSessionQuery } from "../api/session-query.js";
 import { StatusMark } from "../design/status.js";
 import {
 	boardView,
@@ -123,9 +124,7 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 		onError: (error) => setDecisionNote({ tone: "error", text: error.message }),
 	});
 	const workspaceId = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, params),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: (session) => session.workspaceId,
 	}).data;
 	const propose = useMutation({

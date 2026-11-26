@@ -8,14 +8,16 @@ import { setTimeout } from "node:timers/promises";
 import { Problem } from "../contracts/common.js";
 import type { Event } from "../contracts/events.js";
 import { routes } from "../contracts/routes.js";
+import { emptySession } from "../contracts/session-projection.js";
 import { acpProblem } from "../server/acp/client.js";
 import { AcpProtocolError } from "../server/pancode/http-shims.js";
 import { harness, json } from "./harness/app.js";
 import { seedHistory } from "./harness/history-fixture.js";
 
-const { QueryClient } = await import("@tanstack/react-query");
+const { QueryClient, QueryObserver } = await import("@tanstack/react-query");
 const { ApiProblem } = await import("../client/api/client.js");
-const { sessionQuery } = await import("../client/api/session-query.js");
+const { heldSessionQuery, sessionQuery } = await import("../client/api/session-query.js");
+const { sessionBuffer } = await import("../client/api/sessions.js");
 
 test("ACP problems explain missing credentials and failed turns without forwarding upstream prose", () => {
 	const failure = (code: unknown, reason?: unknown) =>
@@ -517,4 +519,23 @@ test("a saved task another process holds names its holder, keeps its history rea
 	assert.equal(registered?.since, startedAt);
 	assert.equal(registered?.stale, false);
 	assert.equal(registered?.canTakeOver, true);
+});
+
+test("a refetch after a read-only observer mounts never stores a snapshot older than the folded deltas", async (t) => {
+	const id = "held-observer-race";
+	// The REST read was taken before the turn's last deltas; the buffer has folded them since.
+	const older = { ...emptySession(id, "workspace"), revision: 3 };
+	const folded = sessionBuffer(id).snapshot({ ...emptySession(id, "workspace"), revision: 5 });
+	const client = { call: async () => older } as unknown as Parameters<typeof sessionQuery>[0];
+	const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	t.after(() => queries.clear());
+	queries.setQueryData(["session", id], folded);
+	const live = new QueryObserver(queries, sessionQuery(client, id)).subscribe(() => {});
+	t.after(live);
+	// A transcript row that only reads the snapshot mounts last, as a dispatch's outcome line does.
+	const reader = new QueryObserver(queries, { ...heldSessionQuery(client, id), select: (value) => value.revision });
+	t.after(reader.subscribe(() => {}));
+	await queries.invalidateQueries({ queryKey: ["session", id] });
+	assert.equal(queries.getQueryData<{ revision: number }>(["session", id])?.revision, 5);
+	assert.equal(reader.getCurrentResult().data, 5);
 });

@@ -41,7 +41,7 @@ export function AutonomyPill({
 	const panel = useRef<HTMLDetailsElement>(null);
 	const [open, setOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
-	useDetailsDismiss(panel, open);
+	useDetailsDismiss(panel);
 	const supported = capabilities?.session?.autonomy === true;
 	const current = useQuery({
 		queryKey: ["session-autonomy", sessionId],

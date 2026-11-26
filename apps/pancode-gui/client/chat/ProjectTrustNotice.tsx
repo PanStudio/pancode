@@ -3,9 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { TrustSurface } from "../../contracts/review.js";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionTelemetry } from "../../contracts/session-telemetry.js";
 import type { Client } from "../api/client.js";
+import { heldSessionQuery } from "../api/session-query.js";
 import { TrustReview } from "./TrustReview.js";
 import { ignoredSurfaces, TRUST_INTRO } from "./trust-model.js";
 import "./artifacts.css";
@@ -25,9 +25,7 @@ export function ProjectTrustNotice({
 	const [reviewing, setReviewing] = useState<TrustSurface | null>(null);
 	// The pane already holds this task's snapshot; its workspace is read from there, never fetched here.
 	const workspaceId = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: (session) => session.workspaceId,
 	}).data;
 	const groups = ignoredSurfaces(trust);
