@@ -239,7 +239,7 @@ it("hands post-install checks to the installed binary with the selected options"
 			},
 		});
 		strictEqual(code, 0);
-		deepStrictEqual(calls, ["install:pancode@99.0.0", "post:beta"]);
+		deepStrictEqual(calls, ["install:@akougkas/pancode@99.0.0", "post:beta"]);
 	} finally {
 		temp.cleanup();
 	}

@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
 	chmodSync,
-	copyFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -38,18 +37,24 @@ function fixture(t: { after(fn: () => void): void }) {
 	const prefix = (version: string) => {
 		const dir = join(root, "versions", version);
 		mkdirSync(join(dir, suffix), { recursive: true });
-		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "pancode", version }));
+		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version }));
 		utimesSync(dir, 1, 1);
 		return dir;
+	};
+	/** The Node a version directory carries, as a link to this test's own. */
+	const node = (dir: string) => {
+		mkdirSync(join(dir, "bin"), { recursive: true });
+		if (!existsSync(join(dir, "bin/node"))) symlinkSync(process.execPath, join(dir, "bin/node"));
+		return join(dir, "bin/node");
 	};
 	const current = prefix("0.6.1"),
 		previous = prefix("0.6.0");
 	const record = {
-		schema: 2,
+		schema: 3,
 		kind: "pancode-installer",
 		current,
 		previous,
-		node: join(root, "runtime/node"),
+		node: join(current, "bin/node"),
 		launcher: join(root, "bin/pancode"),
 	};
 	const save = (value: unknown) => writeFileSync(join(root, "install.json"), JSON.stringify(value));
@@ -72,7 +77,7 @@ function fixture(t: { after(fn: () => void): void }) {
 				XDG_DATA_HOME: join(root, "home/data"),
 			},
 		});
-	return { root, prefix, record, save, run, receipts, receipt };
+	return { root, prefix, node, record, save, run, receipts, receipt };
 }
 
 test("macOS process parsing stays bounded for padded commands with Unicode line separators", () => {
@@ -127,7 +132,7 @@ test("retention preserves current, rollback and live receipts while collecting o
 	assert.equal(existsSync(refused), false);
 });
 
-test("a proven keep set removes every unused version, runtime and helper at once, whatever its age", {
+test("a proven keep set removes every unused version and helper at once, whatever its age", {
 	skip: process.platform !== "linux",
 }, async (t) => {
 	const f = fixture(t);
@@ -138,20 +143,12 @@ test("a proven keep set removes every unused version, runtime and helper at once
 	const duplicate = fresh(f.prefix("0.6.1-20261009000000-42"));
 	const unused = fresh(f.prefix("0.5.9"));
 	const held = fresh(f.prefix("0.5.8"));
-	const runtime = (name: string) => {
-		mkdirSync(join(f.root, "runtime", name, "bin"), { recursive: true });
-		return join(f.root, "runtime", name);
-	};
-	const currentNode = runtime("node-v24.2.0-linux-x64");
-	const launcherNode = runtime("node-v24.0.0-linux-x64");
-	const oldNode = runtime("node-v24.1.0-linux-x64");
 	mkdirSync(join(f.root, "launchers"));
 	const named = join(f.root, "launchers/aaa.cjs");
 	const stale = join(f.root, "launchers/bbb.cjs");
 	for (const file of [named, stale]) writeFileSync(file, "");
 	mkdirSync(join(f.root, "bin"));
-	writeFileSync(f.record.launcher, `#!/bin/sh\nexec '${launcherNode}/bin/node' '${named}' launch '${f.root}' "$@"\n`);
-	f.save({ ...f.record, node: join(currentNode, "bin/node") });
+	writeFileSync(f.record.launcher, `#!/bin/sh\nexec '${f.record.node}' '${named}' launch '${f.root}' "$@"\n`);
 	const dead = f.receipt("dead.json", { pid: 99999999, host: hostname(), root: f.root, current: unused });
 	const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", join(held, suffix)], { stdio: "ignore" });
 	t.after(() => holder.kill());
@@ -165,19 +162,14 @@ test("a proven keep set removes every unused version, runtime and helper at once
 		"0.5.9",
 		"0.6.1-20261009000000-42",
 		"bbb.cjs",
-		"node-v24.1.0-linux-x64",
 	]);
 	assert.equal(existsSync(unused), true, "a dry run removes nothing");
 
 	const result = f.run("prune");
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(
-		result.stdout,
-		/removed 2 unused versions, 1 runtime, 1 launcher helper \(.+\); kept .*0\.6\.1 \(current\)/,
-	);
-	for (const gone of [duplicate, unused, oldNode, stale, dead]) assert.equal(existsSync(gone), false, gone);
-	for (const kept of [f.record.current, f.record.previous, held, currentNode, launcherNode, named])
-		assert.equal(existsSync(kept), true, kept);
+	assert.match(result.stdout, /removed 2 unused versions, 1 launcher helper \(.+\); kept .*0\.6\.1 \(current\)/);
+	for (const gone of [duplicate, unused, stale, dead]) assert.equal(existsSync(gone), false, gone);
+	for (const kept of [f.record.current, f.record.previous, held, named]) assert.equal(existsSync(kept), true, kept);
 	assert.equal(existsSync(join(f.root, ".install-lock")), false);
 });
 
@@ -256,7 +248,6 @@ test("prune keeps what the GUI service names by its resolved path when the root 
 	const f = fixture(t);
 	const gui = f.prefix("0.5.9");
 	const unused = f.prefix("0.5.7");
-	mkdirSync(join(f.root, "runtime", "node-v24.1.0"), { recursive: true });
 	const link = `${f.root}-link`;
 	symlinkSync(f.root, link);
 	t.after(() => rmSync(link, { force: true }));
@@ -264,13 +255,13 @@ test("prune keeps what the GUI service names by its resolved path when the root 
 		...f.record,
 		current: join(link, "versions/0.6.1"),
 		previous: join(link, "versions/0.6.0"),
-		node: join(link, "runtime/node"),
+		node: join(link, "versions/0.6.1/bin/node"),
 	});
 	const state = join(f.root, "home", "state");
 	mkdirSync(join(state, "gui/background"), { recursive: true });
 	writeFileSync(
 		join(state, "gui/background/server.json"),
-		JSON.stringify({ packageRoot: join(gui, suffix), launch: { node: join(f.root, "runtime/node-v24.1.0/node") } }),
+		JSON.stringify({ packageRoot: join(gui, suffix), launch: { node: join(gui, "bin/node") } }),
 	);
 	for (const [name, value] of [
 		["HOME", join(f.root, "home")],
@@ -288,55 +279,54 @@ test("prune keeps what the GUI service names by its resolved path when the root 
 	const result = lifecycle.prune(link, { inventory: () => ({ complete: true, texts: [] }) });
 	assert.equal(result.proof, true);
 	assert.equal(existsSync(gui), true, "the GUI's version stays");
-	assert.equal(existsSync(join(f.root, "runtime/node-v24.1.0")), true, "the GUI's Node stays");
 	assert.equal(existsSync(unused), false);
 	assert.equal(existsSync(f.record.current), true);
 });
 
-test("activation moves a POSIX launcher to the new Node and collects the old runtime", {
+test("activation moves a POSIX launcher to the new version's Node and collects the version before the previous one", {
 	skip: process.platform === "win32",
 }, (t) => {
 	const f = fixture(t);
-	const runtime = (name: string) => {
-		mkdirSync(join(f.root, "runtime", name, "bin"), { recursive: true });
-		symlinkSync(process.execPath, join(f.root, "runtime", name, "bin/node"));
-		return join(f.root, "runtime", name, "bin/node");
-	};
 	const candidate = (version: string) => {
 		const dir = f.prefix(version);
+		f.node(dir);
 		mkdirSync(join(dir, suffix, "dist/cli"), { recursive: true });
 		writeFileSync(join(dir, suffix, "dist/cli/index.js"), `console.log(${JSON.stringify(version)});`);
+		writeFileSync(join(dir, "bundle.json"), JSON.stringify({ version, target: "linux-x64", node: "24.22.3" }));
 		return dir;
 	};
 	rmSync(join(f.root, "install.json"));
-	const activate = (node: string, prefix: string) =>
-		f.run("activate", node, "24", "linux-x64", prefix, f.record.launcher, "latest", "-", "0", "0");
-	const first = runtime("node-v24.0.0-linux-x64");
-	const a = activate(first, candidate("0.6.2"));
+	const activate = (prefix: string) => f.run("activate", prefix, f.record.launcher, "latest", "-", "0", "0");
+	const first = candidate("0.6.2");
+	const a = activate(first);
 	assert.equal(a.status, 0, a.stderr);
-	const second = runtime("node-v24.1.0-linux-x64");
-	const b = activate(second, candidate("0.6.3"));
+	const second = candidate("0.6.3");
+	const b = activate(second);
 	assert.equal(b.status, 0, b.stderr);
 	const manifest = JSON.parse(readFileSync(join(f.root, "install.json"), "utf8"));
-	assert.equal(manifest.launcherNode, second);
-	assert.match(readFileSync(f.record.launcher, "utf8"), new RegExp(`exec '${second}'`));
-	// The first runtime is still the previous version's Node, kept for rollback.
-	assert.equal(manifest.previousNode, first);
-	const c = activate(second, candidate("0.6.4"));
+	assert.equal(manifest.schema, 3);
+	assert.equal(manifest.node, join(second, "bin/node"));
+	assert.deepEqual([manifest.nodeVersion, manifest.nodeBuild], ["24.22.3", "linux-x64"]);
+	assert.match(readFileSync(f.record.launcher, "utf8"), new RegExp(`exec '${join(second, "bin/node")}'`));
+	// The first version, with its Node, is kept for rollback.
+	assert.equal(manifest.previous, first);
+	const c = activate(candidate("0.6.4"));
 	assert.equal(c.status, 0, c.stderr);
-	assert.equal(existsSync(join(f.root, "runtime/node-v24.0.0-linux-x64")), process.platform !== "linux");
+	assert.equal(existsSync(first), process.platform !== "linux");
+	// Rollback moves the launcher back to the previous version's Node.
+	assert.equal(f.run("rollback").status, 0);
+	assert.match(readFileSync(f.record.launcher, "utf8"), new RegExp(`exec '${join(second, "bin/node")}'`));
+	assert.equal(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).node, join(second, "bin/node"));
 });
 
 test("every command the package declares gets a launcher, and rollback and the next activation keep them in step", {
 	skip: process.platform === "win32",
 }, (t) => {
 	const f = fixture(t);
-	mkdirSync(join(f.root, "runtime/node-v24.0.0-linux-x64/bin"), { recursive: true });
-	const node = join(f.root, "runtime/node-v24.0.0-linux-x64/bin/node");
-	symlinkSync(process.execPath, node);
 	rmSync(join(f.root, "install.json"));
 	const activate = (version: string, bins: Record<string, string>) => {
 		const dir = f.prefix(version);
+		f.node(dir);
 		mkdirSync(join(dir, suffix, "dist/cli"), { recursive: true });
 		writeFileSync(join(dir, suffix, "dist/cli/index.js"), `console.log(${JSON.stringify(version)});`);
 		const bin: Record<string, string> = { pancode: "dist/cli/index.js" };
@@ -345,8 +335,8 @@ test("every command the package declares gets a launcher, and rollback and the n
 			mkdirSync(dirname(join(dir, suffix, file)), { recursive: true });
 			writeFileSync(join(dir, suffix, file), `console.log(${JSON.stringify(`${name} ${version}`)}, process.argv[2]);`);
 		}
-		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "pancode", version, bin }));
-		const result = f.run("activate", node, "24", "linux-x64", dir, f.record.launcher, "latest", "-", "0", "0");
+		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version, bin }));
+		const result = f.run("activate", dir, f.record.launcher, "latest", "-", "0", "0");
 		assert.equal(result.status, 0, result.stderr);
 		return result;
 	};
@@ -377,20 +367,18 @@ test("a pin records where it came from and keeps its first date across reinstall
 	skip: process.platform === "win32",
 }, (t) => {
 	const f = fixture(t);
-	mkdirSync(join(f.root, "runtime/node-v24.0.0-linux-x64/bin"), { recursive: true });
-	const node = join(f.root, "runtime/node-v24.0.0-linux-x64/bin/node");
-	symlinkSync(process.execPath, node);
 	rmSync(join(f.root, "install.json"));
 	const activate = (version: string, pin: string, source: string) => {
 		const dir = f.prefix(version);
+		f.node(dir);
 		mkdirSync(join(dir, suffix, "dist/cli"), { recursive: true });
 		writeFileSync(join(dir, suffix, "dist/cli/index.js"), `console.log(${JSON.stringify(version)});`);
-		const result = f.run("activate", node, "24", "linux-x64", dir, f.record.launcher, "latest", pin, "0", "0", source);
+		const result = f.run("activate", dir, f.record.launcher, "latest", pin, "0", "0", source);
 		assert.equal(result.status, 0, result.stderr);
 		return JSON.parse(readFileSync(join(f.root, "install.json"), "utf8"));
 	};
-	const first = activate("0.6.2", "0.6.2", "package-file");
-	assert.equal(first.pinSource, "package-file");
+	const first = activate("0.6.2", "0.6.2", "bundle-file");
+	assert.equal(first.pinSource, "bundle-file");
 	const again = activate("0.6.2-again", "0.6.2", "version-flag");
 	assert.deepEqual([again.pinSource, again.pinnedAt], [first.pinSource, first.pinnedAt]);
 	const released = activate("0.6.3", "-", "version-flag");
@@ -403,7 +391,7 @@ test("a pin records where it came from and keeps its first date across reinstall
 test("one tracking phrase names a pin, its origin and how to release it, or what the install follows", () => {
 	const installer = {
 		root: "/i",
-		node: "/i/runtime/n/bin/node",
+		node: "/i/versions/0.6.2/bin/node",
 		nodeVersion: "24",
 		nodeBuild: "linux-x64",
 		current: "/i/versions/0.6.2",
@@ -484,11 +472,9 @@ test("rollback keeps the capable desktop manager and cleanup while launching the
 		join(manager, suffix, "dist/gui/server.js"),
 		"console.log(JSON.stringify({args:process.argv.slice(2),root:process.env.PANCODE_PACKAGE_ROOT}));",
 	);
-	mkdirSync(join(f.root, "runtime"));
-	copyFileSync(process.execPath, f.record.node);
 	mkdirSync(join(f.root, "bin"));
 	writeFileSync(f.record.launcher, "owned launcher");
-	f.save({ ...f.record, current: active, previous: manager, desktopManager: manager });
+	f.save({ ...f.record, current: active, previous: manager, desktopManager: manager, node: f.node(active) });
 	const result = f.run("launch", "gui", "background", "open", "--directory", join(f.root, "desktop"));
 	assert.equal(result.status, 0, result.stderr);
 	assert.deepEqual(JSON.parse(result.stdout), {
@@ -524,8 +510,7 @@ test("version, help and read-only doctor probes create no state root while a rea
 		join(f.record.current, suffix, "dist/cli/index.js"),
 		`if (process.argv.includes("--fix")) console.log(require("node:fs").readdirSync(${JSON.stringify(f.receipts)}).length);`,
 	);
-	mkdirSync(join(f.root, "runtime"));
-	copyFileSync(process.execPath, f.record.node);
+	f.node(f.record.current);
 	mkdirSync(join(f.root, "bin"));
 	writeFileSync(f.record.launcher, "owned launcher");
 	const state = join(f.root, "home/state");

@@ -798,7 +798,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				t.signal,
 			);
 
-			const packageRoot = join(prefix, "node_modules", "pancode");
+			const packageRoot = join(prefix, "node_modules", "@akougkas", "pancode");
 			const bin = join(packageRoot, "dist", "cli", "index.js");
 			const sdkChunks = emittedFilesContaining(packageRoot, "async function ensureClaudeAgentSdk(");
 			strictEqual(sdkChunks.size, 1);
@@ -822,10 +822,10 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				stdio: "pipe",
 			});
 
-			// One package, three commands: npm links each bin from the pancode tarball alone.
+			// One package, three commands: npm links each bin from the one tarball alone.
 			for (const command of ["pancode", "panstore", "pankit"])
 				ok(existsSync(join(prefix, "node_modules", ".bin", command)), `npm must link the ${command} bin`);
-			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "pancode installs with no @pancode/* package");
+			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "the package installs with no @pancode/* package");
 			const storeHelp = await run(
 				join(prefix, "node_modules", ".bin", "panstore"),
 				["--help"],
@@ -1376,7 +1376,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 					ok(existsSync(join(packageRoot, file)), `installed extension author file ${file} exists`);
 					match(readFileSync(join(packageRoot, file), "utf8"), /^\/\/ SPDX-License-Identifier: Apache-2\.0\n/u, file);
 				}
-			const sdkImport = `await Promise.all(${JSON.stringify(sdkSubpaths.map((subpath) => `pancode/sdk/${subpath}`))}.map((s) => import(s)));`;
+			const sdkImport = `await Promise.all(${JSON.stringify(sdkSubpaths.map((subpath) => `@akougkas/pancode/sdk/${subpath}`))}.map((s) => import(s)));`;
 			execFileSync(process.execPath, ["--input-type=module", "-e", sdkImport], {
 				cwd: prefix,
 				env: isolatedEnv(home),

@@ -46,7 +46,7 @@ async function asSourceCheckout<T>(temp: LifecycleHome, fn: () => Promise<T>): P
 	const checkout = join(temp.root, "checkout");
 	mkdirSync(join(checkout, "dist", "cli"), { recursive: true });
 	mkdirSync(join(checkout, "src", "cli"), { recursive: true });
-	writeFileSync(join(checkout, "package.json"), JSON.stringify({ name: "pancode" }), "utf8");
+	writeFileSync(join(checkout, "package.json"), JSON.stringify({ name: "@akougkas/pancode" }), "utf8");
 	writeFileSync(join(checkout, "src", "cli", "index.ts"), "", "utf8");
 	writeFileSync(join(checkout, "dist", "cli", "index.js"), "", "utf8");
 	const saved = process.argv[1];
@@ -232,9 +232,9 @@ describe("contracts/uninstall-lifecycle", () => {
 		const savedPath = process.env.PATH;
 		const savedEntry = process.argv[1];
 		try {
-			const packageRoot = join(temp.root, "npm", "lib", "node_modules", "pancode");
+			const packageRoot = join(temp.root, "npm", "lib", "node_modules", "@akougkas", "pancode");
 			mkdirSync(join(packageRoot, "dist", "cli"), { recursive: true });
-			writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "pancode" }), "utf8");
+			writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@akougkas/pancode" }), "utf8");
 			writeFileSync(join(packageRoot, "dist", "cli", "index.js"), "", "utf8");
 			const fakeBin = join(temp.root, "fake-bin");
 			mkdirSync(fakeBin);
@@ -265,12 +265,11 @@ describe("contracts/uninstall-lifecycle", () => {
 			try {
 				const root = join(temp.root, ".local", "share", "pancode-install");
 				const current = join(root, "versions", "0.6.2");
-				const node = join(root, "runtime", "node-v24", "bin", "node");
-				mkdirSync(current, { recursive: true });
+				const node = join(current, "bin", "node");
 				mkdirSync(join(node, ".."), { recursive: true });
 				writeFileSync(
 					join(root, "install.json"),
-					JSON.stringify({ schema: 2, kind: "pancode-installer", current, node, launcher: launcherPath(temp) }),
+					JSON.stringify({ schema: 3, kind: "pancode-installer", current, node, launcher: launcherPath(temp) }),
 					"utf8",
 				);
 				writeFileSync(join(root, "operator-note.txt"), "not ours\n", "utf8");
@@ -285,7 +284,6 @@ describe("contracts/uninstall-lifecycle", () => {
 					match(stdout, /✓ Inactive install: /u);
 					match(stdout, /Removed the inactive install/u);
 					ok(!existsSync(join(root, "versions")));
-					ok(!existsSync(join(root, "runtime")));
 					ok(existsSync(join(root, "operator-note.txt")), "only what the installer created goes");
 				}
 			} finally {
@@ -303,10 +301,10 @@ describe("contracts/uninstall-lifecycle", () => {
 			writeFileSync(
 				join(root, "install.json"),
 				JSON.stringify({
-					schema: 2,
+					schema: 3,
 					kind: "pancode-installer",
 					current,
-					node: join(root, "runtime", "node-v24", "bin", "node"),
+					node: join(current, "bin", "node"),
 					launcher: launcherPath(temp),
 				}),
 				"utf8",
@@ -378,10 +376,10 @@ describe("contracts/uninstall-lifecycle", () => {
 			writeFileSync(
 				join(root, "install.json"),
 				JSON.stringify({
-					schema: 2,
+					schema: 3,
 					kind: "pancode-installer",
 					current,
-					node: join(root, "runtime", "node-v24", "bin", "node"),
+					node: join(current, "bin", "node"),
 					launcher: exe,
 				}),
 				"utf8",
@@ -418,7 +416,13 @@ describe("contracts/uninstall-lifecycle", () => {
 			const exe = join(temp.binDir, "pancode.exe");
 			writeFileSync(
 				join(root, "install.json"),
-				JSON.stringify({ schema: 2, kind: "pancode-installer", current, node: "node", launcher: exe }),
+				JSON.stringify({
+					schema: 3,
+					kind: "pancode-installer",
+					current,
+					node: join(current, "bin", "node"),
+					launcher: exe,
+				}),
 				"utf8",
 			);
 			writeFileSync(exe, "MZ", "utf8");
@@ -656,14 +660,14 @@ describe("contracts/uninstall-lifecycle", () => {
 			const pkg = join(real, "pancode-install", "versions", "0.6.2", "lib", "node_modules", "pancode");
 			mkdirSync(join(pkg, "dist", "cli"), { recursive: true });
 			writeFileSync(join(pkg, "dist", "cli", "index.js"), "");
-			writeFileSync(join(pkg, "package.json"), '{"name":"pancode","version":"0.6.2"}');
+			writeFileSync(join(pkg, "package.json"), '{"name":"@akougkas/pancode","version":"0.6.2"}');
 			writeFileSync(
 				join(root, "install.json"),
 				JSON.stringify({
-					schema: 2,
+					schema: 3,
 					kind: "pancode-installer",
 					current,
-					node: join(root, "runtime", "node-v24", "bin", "node"),
+					node: join(current, "bin", "node"),
 					launcher: launcherPath(temp),
 				}),
 			);

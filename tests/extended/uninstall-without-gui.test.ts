@@ -9,7 +9,7 @@ import { after, describe, it } from "node:test";
 // A terminal-only build: a package root with no dist/gui. The root is cached on first use, so it is
 // fixed before anything resolves it, and this file runs in its own process.
 const bareRoot = mkdtempSync(join(tmpdir(), "pancode-test-bare-root-"));
-writeFileSync(join(bareRoot, "package.json"), '{"name":"pancode","version":"0.0.0"}\n', "utf8");
+writeFileSync(join(bareRoot, "package.json"), '{"name":"@akougkas/pancode","version":"0.0.0"}\n', "utf8");
 process.env.PANCODE_PACKAGE_ROOT = bareRoot;
 
 const { prepareGuiUninstall } = await import("../../src/cli/gui.js");

@@ -1,24 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * Contracts for scripts/install.sh, the curl-able installer that brings its
- * own Node. Only --dry-run runs here: it stops before any download or write,
- * so nothing reaches the network or a real home.
+ * Contracts for scripts/install.sh, the curl-able installer that unpacks one
+ * verified bundle. The installs here run the real script against a file://
+ * mirror holding a small bundle whose Node is this test's own, so nothing
+ * reaches the network or a real home.
  */
 import { match, ok, strictEqual } from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -26,6 +28,9 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SCRIPT = join(ROOT, "scripts", "install.sh");
+const TARGET = "linux-x64";
+/** npm's SemVer beside this Node; the installer reads the active bundle's copy to order versions. */
+const NPM_SEMVER = join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "node_modules", "semver");
 
 function run(args: string[], env: Record<string, string> = {}) {
 	const home = mkdtempSync(join(tmpdir(), "pancode-install-script-"));
@@ -46,40 +51,50 @@ function run(args: string[], env: Record<string, string> = {}) {
 	}
 }
 
-describe("contracts/install-script", () => {
-	it("the hosted bootstrap writes its downloads only inside its own private directory, and keeps a downloader on a relative PATH entry", () => {
-		const scratch = mkdtempSync(join(tmpdir(), "pancode-bootstrap-"));
-		try {
-			const bin = join(scratch, "bin");
-			const temp = join(scratch, "tmp");
-			mkdirSync(bin);
-			mkdirSync(temp);
-			const victim = join(scratch, "victim");
-			writeFileSync(victim, "untouched\n");
-			// Another local user who can list the temp directory plants a link at every name derived from the mktemp name.
-			writeFileSync(
-				join(bin, "mktemp"),
-				`#!/bin/sh\nname=$(/usr/bin/mktemp "$@") || exit 1\nln -s "${victim}" "$name.channel"\nprintf '%s\\n' "$name"\n`,
-			);
-			writeFileSync(
-				join(bin, "curl"),
-				'#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; *) url=$1 ;; esac; shift; done\ncase "$url" in *registry.npmjs.org*) echo \'{"version":"0.8.4"}\' > "$out" ;; *) echo "exit 0" > "$out" ;; esac\n',
-			);
-			chmodSync(join(bin, "mktemp"), 0o755);
-			chmodSync(join(bin, "curl"), 0o755);
-			// ./bin is relative, so the stub curl is found only if it is resolved before the cd; the proxy stops a real one.
-			const result = spawnSync("sh", [join(ROOT, "scripts", "installer-bootstrap", "install.sh"), "--channel", "beta"], {
-				cwd: scratch,
-				env: { HOME: scratch, PATH: "./bin:/usr/bin:/bin", TMPDIR: temp, LANG: "C", https_proxy: "none://unreachable" },
-				encoding: "utf8",
-			});
-			strictEqual(result.status, 0, result.stderr);
-			strictEqual(readFileSync(victim, "utf8"), "untouched\n");
-		} finally {
-			rmSync(scratch, { recursive: true, force: true });
-		}
-	});
+/**
+ * Writes `pancode-<version>-<TARGET>.tar.gz` into `directory`: this test's Node behind a wrapper, the real
+ * lifecycle helper, and a CLI that answers the commands the installer runs. Returns the archive's path.
+ */
+function writeBundle(scratch: string, directory: string, version: string): string {
+	const tree = join(scratch, `tree-${version}`);
+	const pkg = join(tree, "lib", "node_modules", "pancode");
+	mkdirSync(join(tree, "bin"), { recursive: true });
+	mkdirSync(join(tree, "lib", "node_modules", "npm", "node_modules"), { recursive: true });
+	mkdirSync(join(pkg, "scripts"), { recursive: true });
+	mkdirSync(join(pkg, "dist", "cli"), { recursive: true });
+	writeFileSync(join(tree, "bin", "node"), `#!/bin/sh\nexec '${process.execPath}' "$@"\n`);
+	chmodSync(join(tree, "bin", "node"), 0o755);
+	symlinkSync(NPM_SEMVER, join(tree, "lib", "node_modules", "npm", "node_modules", "semver"));
+	writeFileSync(join(tree, "bundle.json"), JSON.stringify({ version, target: TARGET, node: process.versions.node }));
+	writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version }));
+	copyFileSync(join(ROOT, "scripts", "native-install.cjs"), join(pkg, "scripts", "native-install.cjs"));
+	writeFileSync(
+		join(pkg, "dist", "cli", "index.js"),
+		[
+			"const args = process.argv.slice(2);",
+			'if (args[0] === "--version") console.log(`PanCode $' + '{require("../../package.json").version}`);',
+			'if (args[0] === "doctor") console.log(JSON.stringify({ findings: [] }));',
+			'if (args[0] === "tools") console.log(JSON.stringify({ ok: true, message: "pane host" }));',
+			"",
+		].join("\n"),
+	);
+	mkdirSync(directory, { recursive: true });
+	const archive = join(directory, `pancode-${version}-${TARGET}.tar.gz`);
+	const packed = spawnSync("tar", ["-czf", archive, "-C", tree, "."], { encoding: "utf8" });
+	strictEqual(packed.status, 0, packed.stderr);
+	rmSync(tree, { recursive: true });
+	return archive;
+}
 
+/** A release in `mirror`: the bundle and the SHA256SUMS that lists it, or `sum` in place of its real checksum. */
+function writeRelease(scratch: string, mirror: string, version: string, sum?: string): void {
+	const directory = join(mirror, `v${version}`);
+	const archive = writeBundle(scratch, directory, version);
+	const actual = createHash("sha256").update(readFileSync(archive)).digest("hex");
+	writeFileSync(join(directory, "SHA256SUMS"), `${sum ?? actual}  pancode-${version}-${TARGET}.tar.gz\n`);
+}
+
+describe("contracts/install-script", () => {
 	it("pins the same Node floor as package.json engines.node", () => {
 		const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { engines?: { node?: string } };
 		const floor = /^>=\s*(\d+\.\d+\.\d+)$/u.exec(pkg.engines?.node ?? "")?.[1];
@@ -100,227 +115,132 @@ describe("contracts/install-script", () => {
 		match(text, /offer_gui\(\) \{\n\t\[ "\$install_gui" != 0 \] \|\| return 0/u);
 	});
 
-	it("fails closed only on a definitive Node signature failure", () => {
-		const root = mkdtempSync(join(tmpdir(), "pancode-install-sig-"));
+	it("installs a channel's bundle, pins an exact version or a bundle file, and never moves down unless told to leave a pre-release", {
+		skip: process.platform === "win32" || !existsSync(NPM_SEMVER),
+	}, () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-install-bundle-"));
 		try {
 			const mirror = join(root, "mirror");
-			const release = join(mirror, "v24.11.1");
-			mkdirSync(release, { recursive: true });
-			const tarball = "node-v24.11.1-linux-x64.tar.gz";
-			writeFileSync(join(release, tarball), "not a node tarball");
-			const sum = createHash("sha256").update("not a node tarball").digest("hex");
-			writeFileSync(join(release, "SHASUMS256.txt"), `${sum}  ${tarball}\n`);
-			// A gpgv whose status and stderr come from FAKE_GPG: bad, nokey or toolerror.
-			const bin = join(root, "bin");
-			mkdirSync(bin);
-			writeFileSync(
-				join(bin, "gpgv"),
-				[
-					"#!/bin/sh",
-					'case "$FAKE_GPG" in',
-					"bad) echo '[GNUPG:] BADSIG 0 node' ;;",
-					"nokey) echo '[GNUPG:] ERRSIG 0 1 8 00 0 9'; echo '[GNUPG:] NO_PUBKEY 0'; echo 'gpgv: Can not check signature: No public key' >&2 ;;",
-					"toolerror) echo '[GNUPG:] NO_PUBKEY 0'; echo 'gpgv: keyblock resource `pubring.kbx: invalid keyring' >&2 ;;",
-					"esac",
-					"",
-				].join("\n"),
-			);
-			chmodSync(join(bin, "gpgv"), 0o755);
-			writeFileSync(join(root, "pubring.kbx"), "");
-			const install = (env: Record<string, string> = {}) =>
-				run(["--version", "v0.6.0", "--node-version", "24.11.1"], {
-					PATH: `${bin}:/usr/bin:/bin`,
-					TMPDIR: root,
-					PANCODE_NODE_MIRROR: `file://${mirror}`,
-					PANCODE_NODE_BUILD: "linux-x64",
-					PANCODE_NODE_KEYRING: join(root, "pubring.kbx"),
-					...env,
-				});
-			const checksummed = /checksum verified for node-v24\.11\.1-linux-x64\.tar\.gz/u;
-			// A custom mirror without a signature keeps the checksum-only warning.
-			const unsigned = install();
-			match(unsigned.stderr, /no SHASUMS256\.txt\.asc signature at file:/u);
-			match(`${unsigned.stdout}${unsigned.stderr}`, checksummed);
-			writeFileSync(join(release, "SHASUMS256.txt.asc"), "signature");
-			const toolError = install({ FAKE_GPG: "toolerror" });
-			match(toolError.stderr, /could not check the SHASUMS256\.txt signature/u);
-			match(`${toolError.stdout}${toolError.stderr}`, checksummed);
-			const bad = install({ FAKE_GPG: "bad" });
-			strictEqual(bad.code, 1, bad.stderr);
-			match(bad.stderr, /signature on SHASUMS256\.txt is BAD/u);
-			const unknown = install({ FAKE_GPG: "nokey" });
-			strictEqual(unknown.code, 1, unknown.stderr);
-			match(unknown.stderr, /outside the Node\.js release keyring; refusing to install/u);
-			// The explicit opt-out installs on the checksum alone.
-			match(`${install({ FAKE_GPG: "nokey", PANCODE_REQUIRE_SIGNATURE: "0" }).stderr}`, /PANCODE_REQUIRE_SIGNATURE=0/u);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("refuses a nodejs.org signature file that holds no valid signature, keeping the old-gpg warning", () => {
-		const root = mkdtempSync(join(tmpdir(), "pancode-install-nodata-"));
-		try {
-			const release = join(root, "dist", "v24.11.1");
-			mkdirSync(release, { recursive: true });
-			const tarball = "node-v24.11.1-linux-x64.tar.gz";
-			writeFileSync(join(release, tarball), "not a node tarball");
-			const sum = createHash("sha256").update("not a node tarball").digest("hex");
-			writeFileSync(join(release, "SHASUMS256.txt"), `${sum}  ${tarball}\n`);
-			writeFileSync(join(release, "SHASUMS256.txt.asc"), "not a signature");
-			const bin = join(root, "bin");
-			mkdirSync(bin);
-			// A curl that serves https://nodejs.org/dist from the release directory above, so the signature is official.
-			writeFileSync(
-				join(bin, "curl"),
-				[
-					"#!/bin/sh",
-					'out=""; url=""',
-					'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; --proto|--retry|--connect-timeout) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done',
-					'case "$url" in https://nodejs.org/dist/*) f="$FAKE_DIST/$(printf %s "$url" | cut -c25-)"; [ -f "$f" ] && cp "$f" "$out" && exit 0 ;; esac',
-					"exit 22",
-					"",
-				].join("\n"),
-			);
-			// gpgv's output for junk (NODATA, a CRC and packet error) and for a gpgv that cannot read the .kbx keyring.
-			writeFileSync(
-				join(bin, "gpgv"),
-				[
-					"#!/bin/sh",
-					'case "$FAKE_GPG" in',
-					"nodata) echo '[GNUPG:] NODATA 3'; echo \"gpgv: [don't know]: invalid packet (ctb=66)\" >&2; echo 'gpgv: no signature found' >&2 ;;",
-					"toolerror) echo '[GNUPG:] NO_PUBKEY 0'; echo 'gpgv: keyblock resource `pubring.kbx: invalid keyring' >&2 ;;",
-					"esac",
-					"",
-				].join("\n"),
-			);
-			chmodSync(join(bin, "curl"), 0o755);
-			chmodSync(join(bin, "gpgv"), 0o755);
-			writeFileSync(join(root, "pubring.kbx"), "");
-			const install = (env: Record<string, string>) =>
-				run(["--version", "v0.6.0", "--node-version", "24.11.1"], {
-					PATH: `${bin}:/usr/bin:/bin`,
-					TMPDIR: root,
-					FAKE_DIST: join(root, "dist"),
-					PANCODE_NODE_BUILD: "linux-x64",
-					PANCODE_NODE_KEYRING: join(root, "pubring.kbx"),
-					...env,
-				});
-			const junk = install({ FAKE_GPG: "nodata" });
-			strictEqual(junk.code, 1, junk.stderr);
-			match(junk.stderr, /nodejs\.org served is not a signature gpgv could verify .*refusing to install/u);
-			ok(!/checksum verified/u.test(`${junk.stdout}${junk.stderr}`), junk.stderr);
-			const oldTool = install({ FAKE_GPG: "toolerror" });
-			match(oldTool.stderr, /could not check the SHASUMS256\.txt signature/u);
-			match(`${oldTool.stdout}${oldTool.stderr}`, /checksum verified for node-v24\.11\.1-linux-x64\.tar\.gz/u);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("resolves the channel without a project .npmrc and refuses a channel older than the active install unless told to leave a pre-release", {
-		skip:
-			process.platform === "win32" || !existsSync(join(dirname(process.execPath), "..", "lib", "node_modules", "npm")),
-	}, async () => {
-		const root = mkdtempSync(join(tmpdir(), "pancode-install-npmrc-"));
-		const requests: string[] = [];
-		// One loopback registry per source, each answering the packument with its own latest.
-		const registry = (name: string, latest: string) =>
-			new Promise<{ server: Server; url: string }>((resolve) => {
-				const server = createServer((req, res) => {
-					requests.push(`${name} ${req.url}`);
-					res.setHeader("content-type", "application/json");
-					res.end(
-						JSON.stringify({
-							name: "pancode",
-							"dist-tags": { latest },
-							versions: { [latest]: { name: "pancode", version: latest } },
-						}),
-					);
-				});
-				server.listen(0, "127.0.0.1", () => {
-					const address = server.address();
-					resolve({ server, url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}/` });
-				});
-			});
-		const project = await registry("project", "0.6.0");
-		const user = await registry("user", "0.8.0");
-		try {
-			const build = `${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
-			const installRoot = join(root, "install");
-			const runtime = join(installRoot, "runtime", `node-v${process.versions.node}-${build}`);
-			mkdirSync(join(runtime, "bin"), { recursive: true });
-			mkdirSync(join(runtime, "lib", "node_modules"), { recursive: true });
-			symlinkSync(process.execPath, join(runtime, "bin", "node"));
-			symlinkSync(
-				join(dirname(process.execPath), "..", "lib", "node_modules", "npm"),
-				join(runtime, "lib", "node_modules", "npm"),
-			);
-			writeFileSync(join(installRoot, ".installer-owner"), "");
 			const home = join(root, "home");
-			const repo = join(root, "repo");
+			const installRoot = join(root, "install");
 			const bin = join(root, "bin");
-			for (const dir of [home, repo, bin, join(root, "launchers")]) mkdirSync(dir);
-			writeFileSync(join(repo, ".npmrc"), `registry=${project.url}\n`);
-			writeFileSync(join(home, ".npmrc"), `registry=${user.url}\n`);
-			writeFileSync(join(bin, "curl"), "#!/bin/sh\nexit 22\n");
-			chmodSync(join(bin, "curl"), 0o755);
-			const install = (...extra: string[]) =>
-				new Promise<string>((resolve) => {
-					const child = spawn(
-						"sh",
-						[
-							SCRIPT,
-							"--node-version",
-							process.versions.node,
-							"--install-dir",
-							installRoot,
-							"--bin-dir",
-							join(root, "launchers"),
-							"--no-post-install",
-							...extra,
-						],
-						{
-							cwd: repo,
-							env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, LANG: "C", TMPDIR: root, PANCODE_NODE_BUILD: build },
-							stdio: ["ignore", "pipe", "pipe"],
-						},
-					);
-					let output = "";
-					child.stdout.on("data", (chunk) => {
-						output += chunk;
-					});
-					child.stderr.on("data", (chunk) => {
-						output += chunk;
-					});
-					child.on("close", () => resolve(output));
+			mkdirSync(join(mirror, "channel"), { recursive: true });
+			mkdirSync(home);
+			writeFileSync(join(mirror, "channel", "latest"), "0.9.0\n");
+			writeRelease(root, mirror, "0.9.0");
+			writeRelease(root, mirror, "0.9.2");
+			const prerelease = writeBundle(root, join(root, "downloads"), "0.9.3-rc.1");
+			const install = (...args: string[]) => {
+				const result = spawnSync("sh", [SCRIPT, "--no-gui", "--install-dir", installRoot, "--bin-dir", bin, ...args], {
+					cwd: root,
+					env: {
+						HOME: home,
+						PATH: "/usr/bin:/bin",
+						LANG: "C",
+						TMPDIR: root,
+						PANCODE_RELEASE_MIRROR: `file://${mirror}`,
+						PANCODE_TARGET: TARGET,
+					},
+					input: "",
+					encoding: "utf8",
 				});
-			const fresh = await install();
-			match(fresh, /resolved latest to 0\.8\.0/u, fresh);
-			ok(!requests.some((line) => line.startsWith("project")), requests.join("\n"));
-			const activate = (version: string) => {
-				const active = join(installRoot, "versions", version);
-				mkdirSync(join(active, "lib", "node_modules", "pancode"), { recursive: true });
-				writeFileSync(
-					join(active, "lib", "node_modules", "pancode", "package.json"),
-					`{"name":"pancode","version":"${version}"}`,
-				);
-				writeFileSync(join(installRoot, "install.json"), `{\n  "current": "${active}"\n}\n`);
+				return { code: result.status, output: `${result.stdout}${result.stderr}` };
 			};
-			activate("0.9.0");
-			const older = await install();
-			match(older, /latest channel resolved to 0\.8\.0, older than the active 0\.9\.0/u, older);
-			ok(!/installing pancode/u.test(older), older);
+			const manifest = () => JSON.parse(readFileSync(join(installRoot, "install.json"), "utf8"));
+			const activeVersion = () =>
+				JSON.parse(readFileSync(join(manifest().current, "lib", "node_modules", "pancode", "package.json"), "utf8"))
+					.version;
+
+			const fresh = install();
+			strictEqual(fresh.code, 0, fresh.output);
+			match(fresh.output, /resolved latest to 0\.9\.0/u);
+			match(fresh.output, /verified pancode-0\.9\.0-linux-x64\.tar\.gz/u);
+			const first = manifest();
+			strictEqual(first.schema, 3);
+			strictEqual(first.current, join(installRoot, "versions", "0.9.0"));
+			strictEqual(first.node, join(installRoot, "versions", "0.9.0", "bin", "node"));
+			strictEqual(first.nodeBuild, TARGET);
+			strictEqual(first.channel, "latest");
+			strictEqual(first.versionPin, "");
+			strictEqual(first.autoUpdate, true);
+			ok(!existsSync(join(installRoot, "runtime")), "a version carries its own Node");
+			const launched = spawnSync(join(bin, "pancode"), ["--version"], {
+				env: { HOME: home, PATH: "/usr/bin:/bin" },
+				encoding: "utf8",
+			});
+			strictEqual(launched.stdout.trim(), "PanCode 0.9.0", launched.stderr);
+
+			const exact = install("--version", "0.9.2");
+			strictEqual(exact.code, 0, exact.output);
+			strictEqual(manifest().versionPin, "0.9.2");
+			strictEqual(manifest().pinSource, "version-flag");
+			strictEqual(manifest().previous, join(installRoot, "versions", "0.9.0"));
+
+			const older = install();
+			strictEqual(older.code, 1, older.output);
+			match(older.output, /latest channel resolved to 0\.9\.0, older than the active 0\.9\.2/u);
 			// The flag leaves only a pre-release; a stable active install is still protected.
-			match(await install("--leave-prerelease"), /older than the active 0\.9\.0/u);
-			activate("0.9.0-rc.1");
-			match(await install(), /older than the active 0\.9\.0-rc\.1/u);
-			const leaving = await install("--leave-prerelease");
-			match(leaving, /leaving the pre-release 0\.9\.0-rc\.1 for stable 0\.8\.0/u, leaving);
-			match(leaving, /installing pancode@0\.8\.0 /u, leaving);
+			match(install("--leave-prerelease").output, /older than the active 0\.9\.2/u);
+			strictEqual(activeVersion(), "0.9.2");
+
+			const fromFile = install("--bundle", prerelease);
+			strictEqual(fromFile.code, 0, fromFile.output);
+			strictEqual(manifest().versionPin, "0.9.3-rc.1");
+			strictEqual(manifest().pinSource, "bundle-file");
+			match(install().output, /older than the active 0\.9\.3-rc\.1/u);
+			const leaving = install("--leave-prerelease");
+			strictEqual(leaving.code, 0, leaving.output);
+			match(leaving.output, /leaving the pre-release 0\.9\.3-rc\.1 for stable 0\.9\.0/u);
+			strictEqual(activeVersion(), "0.9.0");
+			strictEqual(manifest().versionPin, "");
 		} finally {
-			project.server.close();
-			user.server.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("installs nothing from a bundle that fails its checksum or a release with no bundle for this target", {
+		skip: process.platform === "win32",
+	}, () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-install-refusal-"));
+		try {
+			const mirror = join(root, "mirror");
+			const home = join(root, "home");
+			const installRoot = join(root, "install");
+			mkdirSync(home);
+			writeRelease(root, mirror, "0.9.0", "0".repeat(64));
+			mkdirSync(join(mirror, "v0.9.1"));
+			writeFileSync(join(mirror, "v0.9.1", "SHA256SUMS"), `${"1".repeat(64)}  pancode-0.9.1-darwin-arm64.tar.gz\n`);
+			const install = (version: string) => {
+				const result = spawnSync(
+					"sh",
+					[SCRIPT, "--no-gui", "--install-dir", installRoot, "--bin-dir", join(root, "bin"), "--version", version],
+					{
+						cwd: root,
+						env: {
+							HOME: home,
+							PATH: "/usr/bin:/bin",
+							LANG: "C",
+							TMPDIR: root,
+							PANCODE_RELEASE_MIRROR: `file://${mirror}`,
+							PANCODE_TARGET: TARGET,
+						},
+						input: "",
+						encoding: "utf8",
+					},
+				);
+				return { code: result.status, stderr: result.stderr };
+			};
+			const tampered = install("0.9.0");
+			strictEqual(tampered.code, 1, tampered.stderr);
+			match(tampered.stderr, /pancode-0\.9\.0-linux-x64\.tar\.gz has SHA-256 [0-9a-f]{64}, but the release lists 0{64}/u);
+			const missing = install("0.9.1");
+			strictEqual(missing.code, 1, missing.stderr);
+			match(missing.stderr, /PanCode 0\.9\.1 ships no linux-x64 bundle.*npm install -g @akougkas\/pancode@0\.9\.1/u);
+			strictEqual(readdirSync(join(installRoot, "versions")).length, 0);
+			ok(!existsSync(join(installRoot, "install.json")));
+			ok(!existsSync(join(installRoot, ".install-lock")), "a refused install releases its lock");
+			ok(!existsSync(join(root, "bin", "pancode")));
+		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -333,32 +253,22 @@ describe("contracts/install-script", () => {
 		}
 	});
 
-	it("rejects malformed local Node release names before creating directories", () => {
-		for (const version of ["24.", "24..1", "24.1", "24.1.2.3"]) {
-			const r = run(["--dry-run", "--node-tarball", `/unused/node-v${version}-linux-x64.tar.xz`]);
-			strictEqual(r.code, 1, r.stderr);
-			match(r.stderr, /must keep its release file name/);
-			ok(!r.created);
-		}
-		strictEqual(run(["--dry-run", "--node-tarball", "/unused/node-v24.11.1-linux-x64.tar.xz"]).code, 0);
-	});
-
 	it("dry run names the plan and writes nothing", () => {
-		const r = run(["--dry-run", "--version", "v0.6.0"]);
+		const r = run(["--dry-run", "--version", "v0.9.0", "--no-auto-update", "--no-modify-path"]);
 		strictEqual(r.code, 0, r.stderr);
-		match(r.stdout, /package: +pancode@0\.6\.0$/mu);
-		match(r.stdout, /would install the newest Node v24\.x/u);
+		match(
+			r.stdout,
+			/bundle: +PanCode 0\.9\.0 for \S+ from https:\/\/github\.com\/akougkas\/pancode\/releases\/download$/mu,
+		);
+		match(r.stdout, /would unpack the bundle into .*\/versions\/<version>/u);
 		match(r.stdout, /dry run complete/u);
 		ok(!r.created, "a dry run creates nothing under HOME");
 	});
-	it("accepts background opt-out and refuses pre-0.6.0 installs without writes", () => {
-		const r = run(["--dry-run", "--version", "0.6.0", "--no-auto-update", "--no-modify-path"]);
-		strictEqual(r.code, 0, r.stderr);
-		match(r.stdout, /pancode@0\.6\.0/u);
-		const old = run(["--dry-run", "--version", "0.5.9"]);
-		strictEqual(old.code, 1);
-		match(old.stderr, /requires 0\.6\.0 or newer/u);
-		ok(!old.created);
+
+	it("refuses an option it does not have, before any write", () => {
+		const r = run(["--node-version", "24"]);
+		strictEqual(r.code, 1, r.stderr);
+		match(r.stderr, /unknown option: --node-version \(see --help\)/u);
 		ok(!r.created);
 	});
 

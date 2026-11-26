@@ -69,7 +69,7 @@ describe("handbook discovery", () => {
 			writeFileSync(own, "# Hand-written\n\nHand-written guidance.\n");
 			return own;
 		};
-		const own = checkout(join(root, "pancode-checkout"), "pancode");
+		const own = checkout(join(root, "pancode-checkout"), "@akougkas/pancode");
 		deepStrictEqual(
 			loadProjectPancodeMd(join(root, "pancode-checkout")).files.map((file) => file.path),
 			[own],
