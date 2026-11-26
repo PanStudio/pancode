@@ -1419,7 +1419,7 @@ test("a route pick says what it does to the running turn, and only what is still
 	match(routeTurnEffect("output", fits, "second") ?? "", /next turn, because output has started/u);
 	match(
 		routeTurnEffect("first-output", { kind: "too-large", neededTokens: 13000, window: 8000 }, "small") ?? "",
-		/next turn, because this conversation needs about 13k tokens and that model's window is 8k/u,
+		/next turn, because this conversation needs about 13.0k tokens and that model's window is 8.0k/u,
 	);
 	strictEqual(routeTurnEffect("first-output", { kind: "same" }, "same"), null);
 	strictEqual(routeTurnEffect("idle", fits, "second"), null);
