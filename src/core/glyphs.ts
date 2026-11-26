@@ -8,9 +8,9 @@ import { asciiOnly } from "./terminal-preferences.js";
  * a command, a task or an answer is printed byte for byte in every mode.
  */
 const UNICODE_GLYPHS = {
-	// The PanCode mark in three cells: the P of the wordmark on its tile, whose edges are the two half
-	// blocks. Shown in the welcome and dashboard headers and the status line.
-	brand: "▐P▌",
+	// The PanCode mark in three cells: the for-all sign of the facet mark on its tile, whose edges are the two
+	// half blocks. Shown in the welcome and dashboard headers and the status line.
+	brand: "▐∀▌",
 	// Agent voice glyph for the chat reply prefix: the mark's tile in one cell. It renders in accent
 	// on a normal turn and error red on a failed one.
 	agent: "■",
@@ -161,7 +161,7 @@ const UNICODE_GLYPHS = {
  * and a new Unicode entry fails to compile until it has an ASCII form. Blocked (`=`) differs from warning (`!`).
  */
 const ASCII_GLYPHS: { readonly [K in keyof typeof UNICODE_GLYPHS]: string } = {
-	brand: "[P]",
+	brand: "[V]",
 	agent: "*",
 	user: ">",
 	userBar: "|",

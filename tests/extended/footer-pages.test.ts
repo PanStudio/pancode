@@ -226,7 +226,7 @@ test("the footer exposes workspace, model identity and worker count in bounded r
 	strictEqual(renderCompactDashboard(idle, 40).length, 1, "a narrow idle footer is one row");
 	const text = plain(renderCompactDashboard(state(), 160));
 	match(text, /1 worker/);
-	match(text, /^\s*▐P▌ /);
+	match(text, /^\s*▐∀▌ /);
 	match(text, /ctx /);
 	match(text, /pancode.*v050/);
 	doesNotMatch(text, /autonomy|yolo|70k processed|standard|exploring/);

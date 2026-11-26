@@ -1,0 +1,134 @@
+{
+	"id": "darshan",
+	"version": "0.1.0",
+	"title": "Darshan I/O traces",
+	"environment": [],
+	"tools": [
+		{
+			"name": "darshan_files",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096,
+						"pattern": "^[^-\\u0000-\\u001f\\u007f][^\\u0000-\\u001f\\u007f]*$",
+						"description": "The Darshan log file (.darshan), relative to the server's working directory. Must not begin with '-'."
+					},
+					"module": {
+						"type": "string",
+						"enum": ["POSIX", "MPIIO", "STDIO"],
+						"description": "The Darshan module: POSIX, MPIIO (Darshan's MPI-IO) or STDIO. Default POSIX."
+					},
+					"metric": {
+						"type": "string",
+						"enum": ["bytesRead", "bytesWritten", "readTime", "writeTime", "metaTime", "opens"],
+						"description": "Rank files by bytesRead, bytesWritten, readTime, writeTime, metaTime or opens. Default bytesRead."
+					},
+					"limit": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 100,
+						"description": "How many files to return, 1 to 100. Default 20."
+					}
+				},
+				"required": ["path"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "darshan_modules",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096,
+						"pattern": "^[^-\\u0000-\\u001f\\u007f][^\\u0000-\\u001f\\u007f]*$",
+						"description": "The Darshan log file (.darshan), relative to the server's working directory. Must not begin with '-'."
+					},
+					"module": {
+						"type": "string",
+						"pattern": "^[A-Z][A-Z0-9_]{0,31}$",
+						"description": "The Darshan module, upper case without punctuation: POSIX, MPIIO, STDIO, H5F, H5D, PNETCDF_FILE and so on. Default POSIX."
+					}
+				},
+				"required": ["path"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "darshan_summary",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096,
+						"pattern": "^[^-\\u0000-\\u001f\\u007f][^\\u0000-\\u001f\\u007f]*$",
+						"description": "The Darshan log file (.darshan), relative to the server's working directory. Must not begin with '-'."
+					}
+				},
+				"required": ["path"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "darshan_timeline",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096,
+						"pattern": "^[^-\\u0000-\\u001f\\u007f][^\\u0000-\\u001f\\u007f]*$",
+						"description": "The Darshan log file (.darshan), relative to the server's working directory. Must not begin with '-'."
+					},
+					"module": {
+						"type": "string",
+						"enum": ["POSIX", "MPIIO", "STDIO"],
+						"description": "The Darshan module: POSIX, MPIIO (Darshan's MPI-IO) or STDIO. Default POSIX."
+					}
+				},
+				"required": ["path"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		}
+	]
+}

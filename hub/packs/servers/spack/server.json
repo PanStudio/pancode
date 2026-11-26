@@ -1,0 +1,135 @@
+{
+	"id": "spack",
+	"version": "0.1.0",
+	"title": "Spack packages",
+	"environment": [
+		"SPACK_DISABLE_LOCAL_CONFIG",
+		"SPACK_ENV",
+		"SPACK_PYTHON",
+		"SPACK_ROOT",
+		"SPACK_SYSTEM_CONFIG_PATH",
+		"SPACK_USER_CACHE_PATH",
+		"SPACK_USER_CONFIG_PATH"
+	],
+	"tools": [
+		{
+			"name": "spack_env",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"environment": {
+						"type": "string",
+						"maxLength": 128,
+						"pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+						"description": "A named Spack environment whose roots to return. Default: the active environment."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "spack_find",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"spec": {
+						"type": "string",
+						"maxLength": 256,
+						"pattern": "^(?=.*[^ ])(?! *[-.])(?!.* [-.])(?:[A-Za-z0-9@:,.=+~^%_\\[\\] -]|/[a-z0-9]+(?![^ ]))+$",
+						"description": "A Spack spec such as `hdf5@1.14 +mpi ^openmpi` or `/abc1234`: at most 256 characters, entries separated by spaces, none beginning with - (write a disabled variant as ~name)."
+					},
+					"environment": {
+						"type": "string",
+						"maxLength": 128,
+						"pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+						"description": "A named Spack environment; only the specs installed in it are listed."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "spack_info",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"package": {
+						"type": "string",
+						"maxLength": 128,
+						"pattern": "^[a-z0-9][a-z0-9_-]*$",
+						"description": "A package name such as `hdf5`."
+					}
+				},
+				"required": ["package"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "spack_locate",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"spec": {
+						"type": "string",
+						"maxLength": 256,
+						"pattern": "^(?=.*[^ ])(?! *[-.])(?!.* [-.])(?:[A-Za-z0-9@:,.=+~^%_\\[\\] -]|/[a-z0-9]+(?![^ ]))+$",
+						"description": "The installed spec whose prefix to return. A Spack spec such as `hdf5@1.14 +mpi ^openmpi` or `/abc1234`: at most 256 characters, entries separated by spaces, none beginning with - (write a disabled variant as ~name). Give spec or package, not both."
+					},
+					"package": {
+						"type": "string",
+						"maxLength": 128,
+						"pattern": "^[a-z0-9][a-z0-9_-]*$",
+						"description": "The package whose recipe directory to return. Give spec or package, not both."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "spack_spec",
+			"actionClass": "execute",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"spec": {
+						"type": "string",
+						"maxLength": 256,
+						"pattern": "^(?=.*[^ ])(?! *[-.])(?!.* [-.])(?:[A-Za-z0-9@:,.=+~^%_\\[\\] -]|/[a-z0-9]+(?![^ ]))+$",
+						"description": "A Spack spec such as `hdf5@1.14 +mpi ^openmpi` or `/abc1234`: at most 256 characters, entries separated by spaces, none beginning with - (write a disabled variant as ~name)."
+					}
+				},
+				"required": ["spec"]
+			},
+			"annotations": {
+				"readOnlyHint": false,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		}
+	]
+}

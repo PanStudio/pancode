@@ -29,6 +29,7 @@ const KIND_DIRS = [
 	{ dirName: "playbooks", expectedKind: "playbook" },
 	{ dirName: "plugins", expectedKind: "plugin" },
 	{ dirName: "extensions", expectedKind: "extension" },
+	{ dirName: "servers", expectedKind: "server" },
 ] as const;
 
 interface PackageTarget {

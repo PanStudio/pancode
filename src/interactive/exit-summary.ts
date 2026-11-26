@@ -485,7 +485,7 @@ export function renderExitSummary(
 					{
 						label: "checks",
 						lines: [clean(checks.facts)],
-						role: checks.failed ? ("error" as const) : checks.settled ? ("body" as const) : ("warning" as const),
+						role: checks.failed ? ("error" as const) : checks.settled ? ("success" as const) : ("warning" as const),
 					},
 				]
 			: []),
@@ -797,7 +797,7 @@ export function renderExitSummary(
 }
 
 /**
- * `▐P▌ PanCode · session <id> ───── this visit ─`: the meta goes before the title is shortened, and a title wider
+ * `▐∀▌ PanCode · session <id> ───── this visit ─`: the meta goes before the title is shortened, and a title wider
  * than the row closes with an ellipsis.
  */
 function titleRule(theme: PancodeTheme, cells: number, sessionText: string, meta: string): string {
