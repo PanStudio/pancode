@@ -916,8 +916,9 @@ export function withDoctorCommand(finding: DoctorFinding): DoctorFinding {
 		/`(?:pancode(?:`| [^`<>]+`)|pnpm [^`]+`|chmod [^`]+`|git (?:mv|rm) [^`]+`|export [A-Za-z_]\w*=[^`]+`)/.test(
 			finding.detail,
 		) ||
-		// The setup-status sentence names its command as plain "Run: pancode ...".
-		/\bRun: pancode /.test(finding.detail)
+		// The setup-status sentence names its command as plain "Run: pancode ...", and a project trust notice as
+		// "Review with pancode config trust <surface>".
+		/\b(?:Run:|Review with) pancode /.test(finding.detail)
 	)
 		return finding;
 	const name = finding.name;
