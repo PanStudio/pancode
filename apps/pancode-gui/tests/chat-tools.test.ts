@@ -723,6 +723,38 @@ test("a call refused at its gate says so on its row instead of echoing the refus
 	assert.equal(refused.failed, true);
 });
 
+// A live ACP run words the refusal through denialLines: the operator's Reject and the safety judge's refusal
+// both carry "Refused by <layer>" and end with the model's instruction, never "was not approved".
+test("a live operator rejection or judge refusal is a refusal, not a failure echoing the model's instruction", () => {
+	const account = (lead: string, layer: string) =>
+		toolItem({
+			title: "bash",
+			toolKind: "execute",
+			status: "failed",
+			toolCallId: "c1",
+			rawInput: { command: "ls -la /elsewhere" },
+			rawOutput: {
+				result: {
+					content: [
+						{
+							type: "text",
+							text: `${lead}\nRefused by ${layer}; PanCode classifies this call as execute. Not retryable: an identical call asks the operator again.\nTo allow it: the operator must approve it.\nDo not retry this action through another tool or a respelled command; pivot or report the blocker.`,
+						},
+					],
+				},
+				isError: true,
+			},
+		});
+	const rejected = presentTool(account("The operator denied this tool call", "operator approval (sandbox-escape)"), {
+		decision: "rejected",
+	});
+	assert.deepEqual([rejected.statusLabel, rejected.digest, rejected.ended], ["Rejected", null, true]);
+	const judged = presentTool(account("The judge did not find this action authorized.", "PanCode policy (safety-judge)"));
+	assert.deepEqual([judged.statusLabel, judged.digest, judged.ended], ["Refused", null, true]);
+	const broke = presentTool(account("Refused by nobody: EACCES", "a typo"));
+	assert.equal(broke.statusLabel, "Failed");
+});
+
 test("a delegation whose run was stopped reads Stopped with a dash, not Failed", () => {
 	const stopped = presentTool(
 		toolItem({
