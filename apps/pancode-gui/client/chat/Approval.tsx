@@ -38,6 +38,7 @@ import {
 	KEYBOARD_HINT,
 	NO_DECISION_FACTS,
 	safetyFacts,
+	sessionScopeRows,
 	workerAskRows,
 } from "./approval-model.js";
 import "./approval.css";
@@ -387,7 +388,11 @@ function ApprovalCard({ sessionId, permission, call, answer, eyebrow, hint, vari
 	const timings = deriveApprovalTimings(permission, now);
 	const facts = safetyFacts(permission, call?.locations, timings);
 	const chips = decisionChips(permission.decision, permission.plan);
-	const rows = [...decisionRows(permission.decision, permission.plan), ...workerAskRows(permission.worker)];
+	const rows = [
+		...decisionRows(permission.decision, permission.plan),
+		...workerAskRows(permission.worker),
+		...sessionScopeRows(permission.sessionScope),
+	];
 	const refusal = answerRefusal(answer, permission.id);
 	return (
 		<article

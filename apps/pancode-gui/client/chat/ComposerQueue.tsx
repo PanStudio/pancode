@@ -3,7 +3,7 @@
 import type { QueueEditRequest } from "../../contracts/steering.js";
 import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
-import { type QueuedMessage, queueActions, queueRowLabel, queueSummary } from "./composer-model.js";
+import { type QueuedMessage, queueActions, queueRowLabel, queueSummary, takeBackLabel } from "./composer-model.js";
 
 /** The messages waiting on the engine, with the edits the agent announced for each and a way to take them all back. */
 export function QueuedMessages({
@@ -21,6 +21,7 @@ export function QueuedMessages({
 	drain: { readonly isPending: boolean; mutate(): void };
 	edit: { readonly isPending: boolean; mutate(request: QueueEditRequest): void };
 }) {
+	const takeBack = takeBackLabel(queued.length, drain.isPending);
 	return (
 		<section className="composer__queue" aria-label="Messages waiting on the engine">
 			<div className="composer__queue-head">
@@ -32,9 +33,9 @@ export function QueuedMessages({
 					type="button"
 					disabled={drain.isPending}
 					onClick={() => drain.mutate()}
-					title="Take every waiting message back out of the queue and into this field."
+					title={takeBack.title}
 				>
-					{drain.isPending ? "Taking them back…" : "Take them back"}
+					{takeBack.label}
 				</button>
 			</div>
 			<ol className="composer__queue-list">

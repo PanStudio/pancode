@@ -20,7 +20,7 @@ import type { TimelineItem } from "../../contracts/sessions.js";
 import { formatDuration } from "../api/clock.js";
 import type { StatusTone } from "../design/status.js";
 import { hasStyle, stripAnsi } from "../render/ansi.js";
-import { type DiffPanel, diffCounts, diffPanel, NOT_APPROVED_NOTE, type ProposalBaseline } from "./diff-model.js";
+import { type DiffPanel, diffCounts, diffPanel, type ProposalBaseline, refusalResult } from "./diff-model.js";
 import { type ChainStepStatus, readGateway, toolNameOf } from "./gateway-model.js";
 
 /** Generic tool-label aliases from PanCode. */
@@ -352,13 +352,13 @@ export function applyPartialFrame(_previous: string | undefined, frame: string |
 
 /**
  * Whether the runtime settled this call at its approval gate. The sentence is the producer's own
- * (see NOT_APPROVED_NOTE), so it holds for every tool, and it proves only that no approval arrived.
+ * (see refusalResult), so it holds for every tool, and it proves only that no approval arrived.
  */
 export function notApproved(
 	item: Pick<TimelineItem, "status">,
 	wire: Pick<ToolWire, "resultText" | "isError">,
 ): boolean {
-	return (item.status === "failed" || wire.isError) && (wire.resultText?.includes(NOT_APPROVED_NOTE) ?? false);
+	return (item.status === "failed" || wire.isError) && refusalResult(wire.resultText);
 }
 
 /**

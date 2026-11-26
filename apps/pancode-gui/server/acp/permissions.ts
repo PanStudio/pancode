@@ -12,7 +12,7 @@ import {
 import { boundedText } from "../../contracts/session-projection.js";
 import type { TimelineItem } from "../../contracts/sessions.js";
 import { ACP_DECISION_META_KEY, ACP_DISPATCH_PLAN_META_KEY, ACP_WORKER_ASK_META_KEY } from "../../contracts/wire.js";
-import type { AcpRequestPermissionResponse } from "../pancode/http-shims.js";
+import { type AcpRequestPermissionResponse, ESCAPE_SCOPE_OPTION_PREFIX } from "../pancode/http-shims.js";
 import { AppProblem } from "../services/problem.js";
 import { record } from "./client.js";
 
@@ -24,6 +24,8 @@ type Pending = {
 	reject: string;
 	/** Absent when the agent offered only the two one-time choices. */
 	stop?: string;
+	/** Present when the agent offered a session option for a sandbox escape. */
+	scope?: string;
 	resolve: (response: AcpRequestPermissionResponse) => void;
 	timers: ReturnType<typeof setTimeout>[];
 };
@@ -92,6 +94,12 @@ export class Permissions {
 		// none leaves `canStopTurn` false so the UI does not draw a control that
 		// would resolve to an ordinary reject.
 		const stop = options.find((option) => option.optionId === "reject-and-stop" && typeof option.optionId === "string");
+		// A sandbox escape's session option, matched by its exact id and kind; its name is the scope it grants.
+		const scopeOption = options.find(
+			(option) => option.optionId === "allow-session-scope" && option.kind === "allow_always",
+		);
+		const scopeName =
+			typeof scopeOption?.name === "string" ? scopeOption.name.replace(ESCAPE_SCOPE_OPTION_PREFIX, "").trim() : "";
 		// Declining is the only answer this app gives on its own, and the session keeps running after it.
 		const decline = (reason: string) => {
 			this.declined(reason);
@@ -132,6 +140,7 @@ export class Permissions {
 			expiresAt: new Date(now + budgetMs).toISOString(),
 			status: "pending",
 			canStopTurn: stop !== undefined,
+			...(scopeName ? { sessionScope: boundedText(scopeName, 1024) } : {}),
 			...(facts ? { decision: facts } : {}),
 			...(plan ? { plan } : {}),
 			...(worker ? { worker } : {}),
@@ -142,6 +151,7 @@ export class Permissions {
 				allow: allowId,
 				reject: rejectId,
 				...(stop ? { stop: stop.optionId as string } : {}),
+				...(scopeName ? { scope: scopeOption?.optionId as string } : {}),
 				resolve,
 				timers: [],
 			};
@@ -180,10 +190,19 @@ export class Permissions {
 		// instead keeps the client's own UI honest about what it just did.
 		if (decision === "reject-and-stop" && !pending.stop)
 			throw new AppProblem("conflict", "PanCode did not offer a turn-ending refusal for this request.");
+		if (decision === "allow-session-scope" && !pending.scope)
+			throw new AppProblem("conflict", "PanCode did not offer a session approval for this request.");
 		this.take(pending);
-		this.publish("permission.resolved", { ...pending.value, status: decision === "allow-once" ? "allowed" : "rejected" });
+		const allowed = decision === "allow-once" || decision === "allow-session-scope";
+		this.publish("permission.resolved", { ...pending.value, status: allowed ? "allowed" : "rejected" });
 		const optionId =
-			decision === "allow-once" ? pending.allow : decision === "reject-and-stop" ? pending.stop : pending.reject;
+			decision === "allow-once"
+				? pending.allow
+				: decision === "allow-session-scope"
+					? pending.scope
+					: decision === "reject-and-stop"
+						? pending.stop
+						: pending.reject;
 		pending.resolve({ outcome: { outcome: "selected", optionId: optionId as string } });
 	}
 	/**

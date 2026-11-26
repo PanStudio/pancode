@@ -120,8 +120,7 @@ export function WelcomeStep({
 					<>
 						<p>Choose what you already use. PanCode checks the endpoint and model list when the provider allows it.</p>
 						<p>
-							Back returns to the previous step. Your choices are saved only at the review, except a browser sign-in you
-							complete.
+							Back returns to the previous step. Nothing is saved before the last step, except a browser sign-in you complete.
 						</p>
 					</>
 				) : (

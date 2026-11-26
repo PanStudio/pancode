@@ -11,7 +11,7 @@ import { Icon } from "../design/icons.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { PathField } from "../shell/PathField.js";
 import { rememberWorkspace } from "../shell/tasks.js";
-import type { SignIn, WizardView } from "./wizard-model.js";
+import { type SignIn, testedLede, type WizardView } from "./wizard-model.js";
 
 function useHeadingFocus() {
 	const root = useRef<HTMLElement>(null);
@@ -107,7 +107,7 @@ export function SavedStep({
 			</h1>
 			<p className="wizard-step__lede">
 				{view.tested
-					? `The model answered a test message (${view.tested}).`
+					? testedLede(view.tested)
 					: view.verified
 						? "PanCode reached the connection and has the model it will start on."
 						: "Availability is not verified. The settings are saved; check the connection again in Settings."}

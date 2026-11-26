@@ -13,7 +13,7 @@ import { Interviews } from "../server/acp/interviews.js";
 register(
 	`data:text/javascript,${encodeURIComponent('export async function load(url, context, next) { return url.endsWith(".css") ? { format: "module", source: "", shortCircuit: true } : next(url, context); }')}`,
 );
-const { InterviewHeading } = await import("../client/chat/Interview.js");
+const { InterviewHeading, ReviewedAnswer } = await import("../client/chat/Interview.js");
 
 const questions = [{ question: "Which partition?", options: [{ label: "gpu" }, { label: "cpu" }] }];
 
@@ -53,4 +53,23 @@ test("the interview dialog labels an operator_only round and leaves an ordinary 
 	assert.match(marked, /class="interview-dialog__operator-only"/);
 	assert.match(marked, /Operator only/);
 	assert.doesNotMatch(render(round), /Operator only|interview-dialog__operator-only/);
+});
+
+test("the review page draws a question's markdown as the question page did, not its raw backticks", () => {
+	const html = renderToStaticMarkup(
+		React.createElement(ReviewedAnswer, {
+			question: {
+				header: "Outside workspace",
+				question: "Should I write `hello` to `/tmp/x/note.txt`?",
+				options: [{ label: "Yes" }],
+			},
+			at: 0,
+			answer: { selected: [0], text: "" },
+			busy: false,
+			onEdit: () => {},
+		}),
+	);
+	assert.match(html, /<code[^>]*>hello<\/code>/);
+	assert.doesNotMatch(html, /`/);
+	assert.match(html, /interview-dialog__chosen">Yes</);
 });
