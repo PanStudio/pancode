@@ -11,7 +11,6 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
-import { isRecord } from "../../core/type-guards.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import {
 	installExtension,
@@ -50,7 +49,12 @@ import {
 import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
 import { remoteIndexRows } from "./hub-trust.js";
 import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
-import { type HubPackageValidationResult, isBundledServerPack, validateHubPackage } from "./hub-validation.js";
+import {
+	type HubPackageValidationResult,
+	isBundledServerPack,
+	shippedServerPolicy,
+	validateHubPackage,
+} from "./hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory } from "./skills/bare-skill.js";
 
 export type HubEntry = HubPackageEntry;
@@ -643,7 +647,11 @@ export function resolveHubPackage(
 	throw new Error(`${source} is not a PanHub pack or a local pack directory; find the name with \`pancode hub search\``);
 }
 
-/** A server PanCode carries: its bundled row and the policy its pack holds. It has no installed copy. */
+/**
+ * A server PanCode carries: its bundled row and the shipped policy its pack holds. It has no installed copy.
+ * `damaged` says why the pack's `server.json` cannot be described, and then `tools` and `environment` are empty;
+ * `revoked` is the revocation of the row's digest.
+ */
 export interface BuiltinHubServer {
 	ref: HubRequirementRef;
 	id: string;
@@ -652,36 +660,32 @@ export interface BuiltinHubServer {
 	tools: Array<{ name: string; actionClass: string }>;
 	environment: string[];
 	entry: HubEntry;
+	damaged?: string;
+	revoked?: string;
 }
 
-/** The server a row names when it is one PanCode carries, read from its bundled pack's `server.json`. */
+/** The server a row names when it is the canonical bundled core row of one PanCode carries. */
 export function builtinHubServer(entry: HubEntry): BuiltinHubServer | undefined {
-	if (entry.kind !== "server" || !isBundledServerPack(entry.sourceUrl, entry.name)) return undefined;
-	let policy: unknown;
-	try {
-		policy = JSON.parse(readFileSync(path.join(entry.sourceUrl, "server.json"), "utf8"));
-	} catch {
-		return undefined;
-	}
 	if (
-		!isRecord(policy) ||
-		policy.id !== entry.name ||
-		typeof policy.version !== "string" ||
-		typeof policy.title !== "string" ||
-		!Array.isArray(policy.tools) ||
-		!Array.isArray(policy.environment)
+		entry.kind !== "server" ||
+		entry.publisher !== "pancode" ||
+		entry.tier !== "core" ||
+		entry.source !== undefined ||
+		!isBundledServerPack(entry.sourceUrl, entry.name)
 	)
 		return undefined;
+	const policy = shippedServerPolicy(entry.sourceUrl, entry.name);
+	const revocation = entry.sha256 ? revokedHubDigests().get(entry.sha256) : undefined;
 	return {
 		ref: hubEntryRef(entry),
 		id: entry.name,
-		version: policy.version,
-		title: policy.title,
-		tools: policy.tools
-			.filter(isRecord)
-			.map((tool) => ({ name: String(tool.name), actionClass: String(tool.actionClass) })),
-		environment: policy.environment.map(String),
+		version: typeof policy === "string" ? (entry.version ?? "") : policy.version,
+		title: typeof policy === "string" ? entry.name : policy.title,
+		tools: typeof policy === "string" ? [] : policy.tools,
+		environment: typeof policy === "string" ? [] : policy.environment,
 		entry,
+		...(typeof policy === "string" ? { damaged: policy } : {}),
+		...(revocation ? { revoked: packRevokedMessage(entry.name, revocation) } : {}),
 	};
 }
 
@@ -707,7 +711,9 @@ export function builtinHubServerFor(
 	if (kind !== undefined && kind !== "server") return undefined;
 	const server = builtinHubServers().find((item) => item.id === name);
 	if (!server || kind !== undefined) return server;
-	return discoverHub(options).entries.filter((item) => item.name === name).length === 1 ? server : undefined;
+	return discoverHub(options).entries.every((item) => item.name !== name || hubEntryRef(item) === server.ref)
+		? server
+		: undefined;
 }
 
 export function planHubUpdate(

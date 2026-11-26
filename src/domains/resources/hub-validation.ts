@@ -109,6 +109,50 @@ export function isBundledServerPack(root: string, id: string): boolean {
 	}
 }
 
+/** The facts of one server PanKit ships, as its policy manifest states them. */
+export interface ShippedServerPolicy {
+	version: string;
+	title: string;
+	tools: Array<{ name: string; actionClass: string }>;
+	environment: string[];
+}
+
+/**
+ * The shipped policy of server `id` when the pack at `root` holds exactly that entry in `server.json`, or why it
+ * does not. The facts come from the shipped manifest, so a changed copy is reported rather than described.
+ */
+export function shippedServerPolicy(root: string, id: string): ShippedServerPolicy | string {
+	const file = path.join(root, "server.json");
+	let entry: unknown;
+	try {
+		entry = JSON.parse(readFileSync(file, "utf8"));
+	} catch (err) {
+		return `${file} cannot be read: ${err instanceof Error ? err.message : String(err)}`;
+	}
+	const servers = shippedKitServers();
+	if (typeof servers === "string") return servers;
+	const shipped = servers.find((server) => server.id === id);
+	if (shipped === undefined) return `${id} is not a server PanKit ships`;
+	if (JSON.stringify(shipped) !== JSON.stringify(entry))
+		return `${file} differs from the ${id} entry of packages/kit/servers.json`;
+	const { version, title, tools, environment } = shipped;
+	if (
+		typeof version !== "string" ||
+		typeof title !== "string" ||
+		!Array.isArray(tools) ||
+		!tools.every((tool) => isRecord(tool) && typeof tool.name === "string" && typeof tool.actionClass === "string") ||
+		!Array.isArray(environment) ||
+		!environment.every((name) => typeof name === "string")
+	)
+		return `the ${id} entry of packages/kit/servers.json lacks a version, title, tools or environment`;
+	return {
+		version,
+		title,
+		tools: tools.map((tool) => ({ name: tool.name as string, actionClass: tool.actionClass as string })),
+		environment: environment as string[],
+	};
+}
+
 /**
  * A builtin server pack holds `server.json`, one server's entry of the PanKit
  * policy manifest. Only the servers PanCode ships have that form, so the file

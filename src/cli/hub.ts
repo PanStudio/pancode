@@ -482,16 +482,41 @@ function builtinInspectView(server: BuiltinHubServer): InspectView {
 		version: entry.version ?? server.version,
 		description: entry.description || server.title,
 		facts: [
-			["state", "built in; pancode mcp list shows it"],
+			["state", server.revoked ? "built in, revoked" : "built in; pancode mcp list shows it"],
 			["origin", "bundled"],
 			["trust", trustLabel({ ...entry, publisher: hubEntryPublisher(entry) })],
-			["environment", server.environment.join(", ") || "none"],
+			["environment", server.damaged ? undefined : server.environment.join(", ") || "none"],
 			["sha256", entry.sha256],
 		],
 		membersHeading: "tools",
 		members: server.tools.map((tool) => ({ kind: "tool", name: tool.name, note: tool.actionClass })),
-		diagnostics: [],
+		diagnostics: [server.revoked, server.damaged ? `damaged: ${server.damaged}` : undefined].filter(
+			(line): line is string => line !== undefined,
+		),
 	};
+}
+
+/** Inspect a built-in server: its row and shipped tools, or exit 1 naming the damage or revocation. */
+function inspectBuiltin(server: BuiltinHubServer, parsed: Parsed): number {
+	const entry = server.entry;
+	const ok = !server.damaged && !server.revoked;
+	if (parsed.json)
+		process.stdout.write(
+			`${JSON.stringify(
+				{
+					...entry,
+					publisher: hubEntryPublisher(entry),
+					builtIn: true,
+					title: server.title,
+					...(server.damaged ? { damaged: server.damaged } : { tools: server.tools, environment: server.environment }),
+					...(server.revoked ? { revoked: server.revoked } : {}),
+				},
+				null,
+				2,
+			)}\n`,
+		);
+	else printInspection(builtinInspectView(server));
+	return ok ? 0 : 1;
 }
 
 interface HubCommandOptions {
@@ -670,12 +695,23 @@ function builtinLifecycleAnswer(
 		return undefined;
 	}
 	if (!server) return undefined;
-	const answer = builtinServerAnswer(parsed.command as HubOperation, server);
-	if (parsed.json)
-		process.stdout.write(
-			`${JSON.stringify({ ok: answer.ok, ref: server.ref, builtIn: true, message: answer.message }, null, 2)}\n`,
-		);
-	else if (answer.ok) process.stdout.write(`${answer.message}\n`);
+	const operation = parsed.command as HubOperation;
+	const answer = builtinServerAnswer(operation, server);
+	if (parsed.json) {
+		const ref = { ref: server.ref, builtIn: true, message: answer.message };
+		if (!answer.ok) process.stdout.write(`${JSON.stringify({ ok: false, error: answer.message, ...ref }, null, 2)}\n`);
+		else {
+			// The plan of no steps, so --json reads like any other install or update and still writes nothing.
+			const plan = planHubLifecycle({
+				operation,
+				ref: parsed.positional[0] as string,
+				cwd: process.cwd(),
+				...(discoveryOptions.catalog || parsed.from ? { catalog: parsed.from ?? discoveryOptions.catalog } : {}),
+			});
+			const apply = applyHubLifecycle(plan, { dryRun: parsed.dryRun });
+			process.stdout.write(`${JSON.stringify({ ...lifecycleJson(operation, plan, apply, true), ...ref }, null, 2)}\n`);
+		}
+	} else if (answer.ok) process.stdout.write(`${answer.message}\n`);
 	else printError(answer.message);
 	return answer.ok ? 0 : 1;
 }
@@ -1049,6 +1085,9 @@ async function executeHubCommand(
 			return result.valid ? 0 : 1;
 		}
 		if (parsed.command === "inspect") {
+			// A built-in server by ref or by its bundled directory: the same validated facts either way.
+			const builtin = builtinHubServerFor(ref, options);
+			if (builtin) return inspectBuiltin(builtin, parsed);
 			const local = pluginLocalPath(ref);
 			if (existsSync(local)) {
 				const candidate = readPluginManifest(local);
@@ -1071,20 +1110,6 @@ async function executeHubCommand(
 				return installed.valid ? 0 : 1;
 			}
 			const entry = resolveHubPackage(ref, options);
-			const server = builtinHubServer(entry);
-			if (server) {
-				if (parsed.json)
-					emit({
-						...entry,
-						publisher: hubEntryPublisher(entry),
-						builtIn: true,
-						title: server.title,
-						tools: server.tools,
-						environment: server.environment,
-					});
-				else printInspection(builtinInspectView(server));
-				return 0;
-			}
 			const record = readHubInventory({
 				cwd: options.cwd,
 				...(options.catalog ? { catalog: options.catalog } : {}),
