@@ -255,7 +255,7 @@ export interface SideUnit {
 	text: string;
 	/** Paints a form of the unit; plain when omitted. */
 	paint?: (text: string) => string;
-	/** Joined to the next unit by one space instead of ` · `: a mark that leads its group (`▐P▌ default`). */
+	/** Joined to the next unit by one space instead of ` · `: a mark that leads its group (`▐∀▌ default`). */
 	lead?: boolean;
 	/** Rank at which the unit drops whole; lower goes first. Omitted, the unit never drops. */
 	drop?: number;

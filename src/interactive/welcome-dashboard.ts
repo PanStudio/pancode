@@ -295,7 +295,7 @@ function fitByPriority(theme: PancodeTheme, units: ReadonlyArray<Unit>, maxWidth
 }
 
 /**
- * The collapsed session header: persistent `▐P▌ PanCode <version>` identity,
+ * The collapsed session header: persistent `▐∀▌ PanCode <version>` identity,
  * plus an actionable warning chip only when untrusted project config needs attention.
  * Route, autonomy, workspace, and context are permanently owned by the status line / deck.
  */
@@ -358,8 +358,8 @@ const WIDE_ART_MIN_WIDTH = 100;
 /**
  * The brand form, from first boot, tier, and viewport dimensions:
  * - First boot: full 11-row stacked wordmark at every tier when `width >= 76 && rows >= 24`.
- * - Subsequent boots: `compact` uses `▐P▌` mark (zero giant art); `standard`/`detailed` use
- *   the 5-row horizontal one-band wordmark above orientation facts when `width >= 57 && rows >= 30`, else `▐P▌`.
+ * - Subsequent boots: `compact` uses `▐∀▌` mark (zero giant art); `standard`/`detailed` use
+ *   the 5-row horizontal one-band wordmark above orientation facts when `width >= 57 && rows >= 30`, else `▐∀▌`.
  */
 type BrandForm = "stacked" | "band-above" | "mark";
 
@@ -550,7 +550,7 @@ function lastValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: numb
 }
 
 /**
- * The launchpad header row: persistent `▐P▌` mark, `PanCode`, version and, where it fits, the
+ * The launchpad header row: persistent `▐∀▌` mark, `PanCode`, version and, where it fits, the
  * product tagline, never duplicating the route.
  */
 function headerRows(theme: PancodeTheme, version: string, room: number): string[] {

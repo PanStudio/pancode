@@ -33,7 +33,7 @@ const EDITOR = "Ask Panos";
  * status line opens with its identity group (mark, autonomy, cwd) since
  * 2e82eb30d, which dropped the `no Git branch` words a non-repository showed.
  */
-const HYDRATED = /▐P▌ default · /u;
+const HYDRATED = /▐∀▌ default · /u;
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
 const CURSOR_SHOWN = "\x1b[?25h";
 /** Typed across the handoff. No character opens a completion or a command mode. */
