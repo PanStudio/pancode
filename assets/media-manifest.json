@@ -120,8 +120,8 @@
 		{
 			"id": "tui-boot-png",
 			"source": "assets/screenshots/tui-boot.png",
-			"sha256": "c336984cc3fe16543db1f9f25045ec39893334a3c6716a4b2c8e27b9b1bf35fe",
-			"provenance": "Actual capture of PanCode 0.9.0-dev, packed from branch site/v080-sprint at 0d1f36358 ahead of the release and installed with npm install -g, on 2026-11-12. Recorded by site/capture/run.mjs (scenario still-tui-boot) in a fresh bubblewrap profile (home /home/researcher, host lab) with its own network namespace, interface.demo on and interface.outputDetail set to detailed. Fixed 120x44 terminal recorded as asciinema v2 and rendered by the site's player in IBM Plex Mono at 2x. Qwen 3.8 27B through a LiteLLM gateway, reached through the capture harness's alias proxy, so the model id shows no host name. Fresh launch in ~/projects/calibration-lab, no prompt sent. Welcome panel, composer and footer (rows 3-24).",
+			"sha256": "4023f29c74a3dea2a19d20137e95f335d68c599514ae248bb4c46a47ddfb227f",
+			"provenance": "Actual capture of PanCode 0.9.1, packed from branch site/v080-sprint at 0d1f36358 ahead of the release and installed with npm install -g, on 2026-11-12. Recorded by site/capture/run.mjs (scenario still-tui-boot) in a fresh bubblewrap profile (home /home/researcher, host lab) with its own network namespace, interface.demo on and interface.outputDetail set to detailed. Fixed 120x44 terminal recorded as asciinema v2 and rendered by the site's player in IBM Plex Mono at 2x. Qwen 3.8 27B through a LiteLLM gateway, reached through the capture harness's alias proxy, so the model id shows no host name. Fresh launch in ~/projects/calibration-lab, no prompt sent. Welcome panel, composer and footer (rows 3-24).",
 			"dimensions": {
 				"width": 2268,
 				"height": 1308
@@ -136,13 +136,13 @@
 			"copies": [
 				"site/assets/tui-boot.png"
 			],
-			"capturedVersion": "0.9.0-dev"
+			"capturedVersion": "0.9.1"
 		},
 		{
 			"id": "tui-boot-webp",
 			"source": "assets/screenshots/tui-boot.webp",
-			"sha256": "554167e5765e7b8ef258dee9096bc8069868e644348d9a92fcd6bcd66850c4b7",
-			"provenance": "Actual capture of PanCode 0.9.0-dev, packed from branch site/v080-sprint at 0d1f36358 ahead of the release and installed with npm install -g, on 2026-11-12. Recorded by site/capture/run.mjs (scenario still-tui-boot) in a fresh bubblewrap profile (home /home/researcher, host lab) with its own network namespace, interface.demo on and interface.outputDetail set to detailed. Fixed 120x44 terminal recorded as asciinema v2 and rendered by the site's player in IBM Plex Mono at 2x. Qwen 3.8 27B through a LiteLLM gateway, reached through the capture harness's alias proxy, so the model id shows no host name. Fresh launch in ~/projects/calibration-lab, no prompt sent. Welcome panel, composer and footer (rows 3-24).",
+			"sha256": "75c2c27082c8324494cc3d1aea4c99d05f63341126894257df5e6f2be4ebc0e0",
+			"provenance": "Actual capture of PanCode 0.9.1, packed from branch site/v080-sprint at 0d1f36358 ahead of the release and installed with npm install -g, on 2026-11-12. Recorded by site/capture/run.mjs (scenario still-tui-boot) in a fresh bubblewrap profile (home /home/researcher, host lab) with its own network namespace, interface.demo on and interface.outputDetail set to detailed. Fixed 120x44 terminal recorded as asciinema v2 and rendered by the site's player in IBM Plex Mono at 2x. Qwen 3.8 27B through a LiteLLM gateway, reached through the capture harness's alias proxy, so the model id shows no host name. Fresh launch in ~/projects/calibration-lab, no prompt sent. Welcome panel, composer and footer (rows 3-24).",
 			"dimensions": {
 				"width": 2268,
 				"height": 1308
@@ -157,7 +157,7 @@
 			"copies": [
 				"site/assets/tui-boot.webp"
 			],
-			"capturedVersion": "0.9.0-dev"
+			"capturedVersion": "0.9.1"
 		},
 		{
 			"id": "gui-conversation-png",
@@ -462,8 +462,8 @@
 		{
 			"id": "animation-fix-a-test",
 			"source": "assets/animations/anim-fix-a-test.gif",
-			"sha256": "c1559a98f8989d7942bdad595103b428ea39da72cd9e1d283fb2f507e58443db",
-			"provenance": "Rendered by agg from site/assets/casts/anim-fix-a-test.cast, recorded from PanCode 0.9.0-dev by site/capture/animation.mjs.",
+			"sha256": "bc4c5dc42b43ee8c3adefe89a8a157275b73950c978b2db27ecca5a13cafc111",
+			"provenance": "Rendered by agg from site/assets/casts/anim-fix-a-test.cast, recorded from PanCode 0.9.1 by site/capture/animation.mjs.",
 			"dimensions": {
 				"width": 897,
 				"height": 694
@@ -473,15 +473,15 @@
 				"repository",
 				"readme"
 			],
-			"altTextSeed": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin <= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s.",
+			"altTextSeed": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos explores the project with 5 searches and 2 files, runs the test check and sees 6 pass and 1 fail, edits one line of temperature.mjs, runs the test check again with exit 0, and explains that kelvinToCelsius rejected 0 K because its check used <= 0 and that all 7 tests passed, in 11s.",
 			"representation": "captured-recording",
 			"copies": []
 		},
 		{
 			"id": "animation-model-switch",
 			"source": "assets/animations/anim-model-switch.gif",
-			"sha256": "afc297e451332bed99fe1998ea3546bdf19a85b2b681acd4dc203c686f84db54",
-			"provenance": "Rendered by agg from site/assets/casts/anim-model-switch.cast, recorded from PanCode 0.9.0-dev by site/capture/animation.mjs.",
+			"sha256": "0704c73531a6bf5a58d8a6b5be969bd926bf10607999934158df4c52e114076a",
+			"provenance": "Rendered by agg from site/assets/casts/anim-model-switch.cast, recorded from PanCode 0.9.1 by site/capture/animation.mjs.",
 			"dimensions": {
 				"width": 897,
 				"height": 694

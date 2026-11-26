@@ -5,7 +5,7 @@
 	"theme": {
 		"fg": "#f1eee6",
 		"bg": "#000000",
-		"palette": "#000000:#ff6b60:#25b469:#f2b106:#1994f4:#c3affe:#34dbb9:#d6d2c7:#837f76:#ff6b60:#00e884:#f2b106:#4aa8ff:#c3affe:#34dbb9:#f1eee6"
+		"palette": "#000000:#ff6b60:#61e165:#f2b106:#1994f4:#c3affe:#06b28c:#d6d2c7:#837f76:#ff6b60:#61e165:#f2b106:#4aa8ff:#c3affe:#07e4b4:#f1eee6"
 	},
 	"copilot": {
 		"target": "copilot",
@@ -322,7 +322,7 @@
 			],
 			"capture": {
 				"label": "Unattended run",
-				"alt": "Terminal recording of pancode run --output-format stream-json asked to run the test check and report how many tests pass, with events written to run.jsonl and exit 0 printed; jq then reads the run_end result text: 6 tests passed and 1 failed, the absolute zero test at calibration.test.mjs:19, where kelvinToCelsius(0) threw a RangeError, and the check exited with code 1. The final frame shows the end of the run_end event: tool calls with nothing refused or written, safety decisions with 3 allowed and 0 blocked, an empty verify block, and timings.",
+				"alt": "Terminal recording of pancode run --output-format stream-json asked to run the test check and report how many tests pass, with events written to run.jsonl and exit 0 printed; jq then reads the run_end result text: 6 passing tests and 1 failure, the absolute zero test, where kelvinToCelsius(0) throws a RangeError. The final frame shows the end of the run_end event: tool calls with nothing refused or written, safety decisions with 3 allowed and 0 blocked, an empty verify block, timings and the dispatch block.",
 				"caption": "A headless run: JSON events to a file, exit status 0, and the answer read from the run_end event that closes the stream."
 			}
 		},
@@ -545,7 +545,7 @@
 			],
 			"capture": {
 				"label": "Let it work",
-				"alt": "Terminal recording on gpt-6-luna: pancode doctor reports chat on target copilot with the endpoint reachable, warnings about directory and settings.yaml permissions and missing credentials and state metadata, and 6 rows need attention, 45 checks passed. On the scratch branch, Panos then reads package.json and build.mjs, runs rm -rf dist, checks build and test (both exit 0) and reports that npm run build regenerated dist/ and all 7 tests passed; /rewind lists snapshot #1 from the bash delete as same as now, and its preview says the workspace already matches the snapshot, so nothing would change.",
+				"alt": "Terminal recording on gpt-6-luna: pancode doctor reports chat on target copilot with the endpoint reachable, warnings about directory and settings.yaml permissions, missing state metadata and the herdr pane host not being installed, and 5 rows need attention, 46 checks passed, 14 notes. On the scratch branch, Panos then searches package.json, runs rm -rf dist, checks build and test (both exit 0) and reports that it deleted dist/, ran npm run build to regenerate it, and all 7 tests passed; /rewind lists snapshot #1 from the bash delete as same as now, and its preview says the workspace already matches the snapshot, so nothing would change.",
 				"caption": "Doctor's report, a rebuild on a scratch branch, and /rewind's preview, closed with Esc so nothing is restored."
 			}
 		},
@@ -1002,7 +1002,7 @@
 				},
 				"tui-context": {
 					"label": "/context",
-					"alt": "Terminal /context panel after one turn: 12.8k / 272k tokens in use (4.7%), split into system prompt, tool definitions, agent fleet, project context, messages, tool results and assistant output, with 205k free and a 54.4k autocompact reserve; autocompact runs at 80% with 12 active tools, and the next request has 226k of headroom.",
+					"alt": "Terminal /context panel after one turn: 12.9k / 272k tokens in use (4.7%), split into system prompt, tool definitions, agent fleet, project context, messages, tool results and assistant output, with 205k free and a 54.4k autocompact reserve; autocompact runs at 80% with 12 active tools, and the next request has 226k of headroom.",
 					"caption": "/context: the window size, the tokens in use, and what fills them."
 				},
 				"tui-settings-models": {
@@ -1197,7 +1197,7 @@
 				},
 				"tui-configure-saved": {
 					"label": "Saved",
-					"alt": "Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher's GitHub Copilot subscription on github.com is used under the organization's Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 1.7 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure.",
+					"alt": "Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher's GitHub Copilot subscription on github.com is used under the organization's Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 3.2 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure.",
 					"caption": "Accepting the offer tests the recommended model and saves it as the default for chat and workers."
 				}
 			}
@@ -1353,7 +1353,7 @@
 				},
 				"tui-approval-effect": {
 					"label": "Approval",
-					"alt": "Terminal approval card for bash git push origin main, after the request Run git push origin main: it is marked outward consequence at default autonomy, with timeout_ms=300000, effect Publishes to origin and undo not guaranteed, Enter to allow, Esc to deny and Alt+X to stop the turn, and a note that no answer in 4:59 denies the call.",
+					"alt": "Terminal approval card for bash git push origin main, after the request Run git push origin main: it is marked runs a command at default autonomy, with effect Publishes to origin and undo not guaranteed, Enter to allow, Esc to deny and Alt+X to stop the turn, and a note that no answer in 4:59 denies the call.",
 					"caption": "An outward command such as git push comes to you; the effect row says what it would change."
 				}
 			}
@@ -1639,7 +1639,7 @@
 			},
 			"capture": {
 				"label": "Fix a test",
-				"alt": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin <= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s.",
+				"alt": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos explores the project with 5 searches and 2 files, runs the test check and sees 6 pass and 1 fail, edits one line of temperature.mjs, runs the test check again with exit 0, and explains that kelvinToCelsius rejected 0 K because its check used <= 0 and that all 7 tests passed, in 11s.",
 				"caption": "A short task on GPT-6 Luna through GitHub Copilot: the agent finds the off-by-one guard, edits it, and runs the project's test check."
 			},
 			"profile": "configured",
@@ -2279,7 +2279,7 @@
 					"pause": 0.5
 				},
 				{
-					"type": "SID=$(pancode session history | awk 'NR>1{print $1}' | tail -1)",
+					"type": "SID=$(pancode session history --json | jq -r '.sessions[] | select(.parentSessionId == null) | .id')",
 					"delay": 15
 				},
 				{
@@ -2348,22 +2348,22 @@
 			"shots": {
 				"tui-experiment-contract": {
 					"label": "Contract",
-					"alt": "Terminal turn on gpt-6-luna through copilot with the experiment-protocol skill armed: the tail of the new .pancode/validation.yaml diff, then Panos says the contract pins Node.js v24.22.2, records source checksums and defines runtime and accuracy thresholds with no measurements taken; a high-rigor finish gate reminder follows, the turn records the missing validation as a noted limitation, and the footer reads Done, 32s, 14 calls.",
+					"alt": "Terminal turn on gpt-6-luna through copilot with the experiment-protocol skill armed: the tail of the new .pancode/validation.yaml diff, then Panos says the pre-registration specifies the lookup-table comparison, accuracy and speed thresholds, environment, deterministic input protocol, verdicts and result artifact paths, and that no measurements or validation checks were run; after a high-rigor finish gate reminder, a first noted limitation fails because its reason is not an accepted value and a second is recorded, Panos says the limitation is recorded, and the footer reads Done, 29s, 10 calls.",
 					"caption": "The experiment-protocol skill writes the thresholds down before anything is measured, and records that nothing was validated."
 				},
 				"tui-usage": {
 					"label": "/usage",
-					"alt": "Terminal /usage dock after one gpt-6-luna turn through copilot: tabs for activity, accounts, session, models, workers and health; a 26 weeks activity bar with 1 session in this workspace; no file changes; the session at 37s so far, 0.5053 credits, 19,508 fresh and 189,286 cached tokens; 5 calls with no reasoning figure; no subscription window reported; and a receipt of 0.5053 credits.",
+					"alt": "Terminal /usage dock after one gpt-6-luna turn through copilot: tabs for activity, accounts, session, models, workers and health; a 26 weeks activity bar with 1 session in this workspace; no file changes; the session at 34s so far, 0.3362 credits, 8,555 fresh and 138,471 cached tokens; 2 calls with no reasoning figure; no subscription window reported; and a receipt of 0.3362 credits.",
 					"caption": "/usage after one turn on gpt-6-luna: what the session cost in credits and tokens."
 				},
 				"tui-tree": {
 					"label": "/tree",
-					"alt": "Terminal after /fork: a notice that the conversation forked into a new session while the original is unchanged and workspace files were not rewound, then the Session tree dock showing where the fork came from, a legend, and the first 10 of 41 turns (You, Panos, tool calls and tool results), with the selected turn's id, time and what Enter does.",
+					"alt": "Terminal after /fork: a notice that the conversation forked into a new session while the original is unchanged and workspace files were not rewound, then the Session tree dock showing where the fork came from, a legend, and the first 10 of 35 turns (You, Panos, tool calls and tool results), with the selected turn's id, time and what Enter does.",
 					"caption": "/tree after /fork: the branch records where it came from, and Enter continues from an earlier turn."
 				},
 				"cli-telemetry-session": {
 					"label": "Session record",
-					"alt": "Terminal: telemetry why-stopped says the session closed after a normal last turn, with spend not measured over 208,794 tokens; telemetry verify reports the session sealed with 151 lines in 1 segment and 3 objects and its head hash; telemetry cost --by turn shows one turn with 14 calls and 208,794 tokens, cost not measured, and an economy line of 0.5053 credits.",
+					"alt": "Terminal: telemetry why-stopped says the session closed after a normal last turn, with spend not measured over 147,026 tokens; telemetry verify reports the session sealed with 127 lines in 1 segment and 3 objects and its head hash; telemetry cost --by turn shows one turn with 10 calls and 147,026 tokens, cost not measured, and an economy line of 0.3362 credits.",
 					"caption": "The session's record: why it stopped, whether it verifies, and what each turn used."
 				}
 			}
@@ -2740,7 +2740,7 @@
 				"gui-task": {
 					"image": "assets/gui-task.webp",
 					"label": "Task",
-					"alt": "PanCode desktop app, version 0.9.0-dev, with the calibration-lab workspace in the sidebar. A finished task: after groups of 8 and 2 completed tools, Panos reports it removed dist/, rebuilt it and that npm test passed all 7 tests, then lists the reference points for freezing, boiling and absolute zero and the Celsius values the round-trip checks use. The footer reads Done, 21s, 10 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low.",
+					"alt": "PanCode desktop app, version 0.9.1, with the calibration-lab workspace in the sidebar. A finished task: below the passing npm test output, Panos reports it removed dist/, rebuilt it (dist/temperature.mjs) and that npm test passed all 7 tests, then lists the reference temperatures calibration.test.mjs checks: freezing, boiling, absolute zero and the round-trip inputs. The footer reads Done, 12s, 7 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low.",
 					"caption": "A finished task in the desktop app: the tool groups, the answer and the turn footer."
 				},
 				"gui-approval": {

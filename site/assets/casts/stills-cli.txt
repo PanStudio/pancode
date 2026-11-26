@@ -1,0 +1,273 @@
+Terminal command-line stills
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== cli-extension-validate
+
+~/projects/calibration-lab $ pancode extensions init lint-status --template status
+Created lint-status (status) at /home/researcher/projects/calibration-lab/.pancode/dev/extensions/lint-status
+Next: pancode extensions validate /home/researcher/projects/calibration-lab/.pancode/dev/extensions/lint-status
+Then: pancode extensions test /home/researcher/projects/calibration-lab/.pancode/dev/extensions/lint-status
+~/projects/calibration-lab $ pancode extensions validate .pancode/dev/extensions/lint-status
+Valid: /home/researcher/projects/calibration-lab/.pancode/dev/extensions/lint-status
+warning: extension_license_missing: declare license: <SPDX expression>; a PanHub row without a licence fails review (/home/researcher/projects/calibration-lab/.pancode/dev/extensions/lint-status/pancode-extension.yaml)
+Capability envelope (operator consent):
+{
+  "commands": [
+    "status"
+  ],
+  "state": {
+    "session": true,
+    "store": false
+  },
+  "events": [
+    "session_open"
+  ],
+  "tickMs": 5000,
+  "watch": [],
+  "hooks": [],
+  "tools": [],
+  "ui": [
+    "status",
+    "band"
+  ],
+  "workspaces": [],
+  "access": [],
+  "permissions": {
+    "fs": {
+      "read": [],
+      "write": []
+    },
+    "exec": false,
+    "net": false
+  }
+}
+SHA-256: e1c73d4d0ee21b99cdc317ddf04705b1f5c949fae749e9e57c052f5fe9dd8bf5
+Registration check: passed
+Registration check executes the package's startup code in a private copy under its declared Node permissions, inside the OS sandbox when one is available (network blocked unless declared). Permissions are a seat belt, not a boundary against hostile code. No activation or handler invocation occurs.
+~/projects/calibration-lab $ pancode extensions test .pancode/dev/extensions/lint-status
+✔ lint-status status behavior (21.065548ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 192.869597
+~/projects/calibration-lab $
+
+== cli-playbook-graph
+
+~/projects/calibration-lab $ pancode playbook validate sdlc --var task="Add empty-input handling to the parser"
+parse: parsed playbook version 3
+graph: validated 8 declared steps
+commands: validated 6 code steps
+agents: resolved 4 agents
+plan: compiled 14 plan steps with hash bd1368c9d8aadf713ceb8ae4eb5832cd00a9d2dafafd55a2d53bf660e8c6eaa5
+~/projects/calibration-lab $ pancode playbook graph sdlc --var task="Add empty-input handling to the parser"
+wave 1
+  plan kind=agent agent=architect scope=workspace writes=[]
+wave 2
+  commit-plan kind=code command=commit scope=workspace writes=[]
+wave 3
+  build kind=agent agent=coder scope=workspace writes=[]
+wave 4
+  suite.check.1 kind=code command=test scope=workspace writes=[]
+wave 5
+  suite.repair.1 kind=agent agent=coder scope=workspace writes=[]
+wave 6
+  suite.check.2 kind=code command=test scope=workspace writes=[]
+wave 7
+  suite.repair.2 kind=agent agent=coder scope=workspace writes=[]
+wave 8
+  suite.check.3 kind=code command=test scope=workspace writes=[]
+wave 9
+  review.check.1 kind=agent agent=verifier scope=readonly writes=[]
+wave 10
+  review.repair.1 kind=agent agent=coder scope=workspace writes=[]
+wave 11
+  review.check.2 kind=agent agent=verifier scope=readonly writes=[]
+wave 12
+  commit-code kind=code command=commit scope=workspace writes=[]
+wave 13
+  document kind=agent agent=documenter scope=workspace writes=[]
+wave 14
+  commit-docs kind=code command=commit scope=workspace writes=[]
+loop suite
+  check suite.check.1 kind=code scope=workspace writes=[]
+  check suite.check.2 kind=code scope=workspace writes=[]
+  check suite.check.3 kind=code scope=workspace writes=[]
+  repair suite.repair.1 kind=agent scope=workspace writes=[]
+  repair suite.repair.2 kind=agent scope=workspace writes=[]
+loop review
+  check review.check.1 kind=agent scope=readonly writes=[]
+  check review.check.2 kind=agent scope=readonly writes=[]
+  repair review.repair.1 kind=agent scope=workspace writes=[]
+~/projects/calibration-lab $
+
+== cli-hub-dry-run
+
+skill:tdd (project): pancode core LicenseRef-PanCode-1.0
+planned install skill:tdd (project)
+~/projects/calibration-lab $ pancode hub install skill:tdd --project --dry-run --json
+{
+  "ok": true,
+  "plan": {
+    "version": 1,
+    "id": "119ad3dfe4d7d9b8",
+    "createdAt": "2026-11-26T18:21:14.615Z",
+    "cwd": "/home/researcher/projects/calibration-lab",
+    "request": {
+      "operation": "install",
+      "ref": "skill:tdd",
+      "cwd": "/home/researcher/projects/calibration-lab",
+      "scope": "project",
+      "force": false,
+      "withRequirements": false
+    },
+    "steps": [
+      {
+        "operation": "install",
+        "identity": {
+          "ref": "skill:tdd",
+          "kind": "skill",
+          "name": "tdd",
+          "scope": "project"
+        },
+        "destination": "/home/researcher/projects/calibration-lab/.pancode/plugins/tdd",
+        "versions": {
+          "to": "0.4.2"
+        },
+        "source": {
+          "sourceUrl": "/opt/pancode/lib/node_modules/@akougkas/pancode/hub/packs/skills/coding/tdd",
+          "sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116",
+          "staged": true,
+          "publisher": "pancode",
+          "tier": "core",
+          "license": "LicenseRef-PanCode-1.0"
+        },
+        "content": {
+          "valid": true,
+          "resources": [
+            {
+              "kind": "skill",
+              "name": "tdd",
+              "valid": true
+            }
+          ],
+          "diagnostics": []
+        },
+        "expected": [
+          {
+            "scope": "project",
+            "id": "tdd",
+            "recorded": false,
+            "tree": "absent",
+            "enabled": true
+          }
+        ],
+        "dependencies": {
+          "requires": [],
+          "missing": [],
+          "inactive": []
+        },
+        "dependents": {
+          "newlyBroken": [],
+          "preexisting": []
+        },
+        "effectiveAfter": {
+          "scope": "project",
+          "loadable": true,
+          "state": "loadable"
+        },
+        "fallbackNote": "this copy becomes the effective copy",
+        "recovery": "nothing to recover; the destination is empty"
+      }
+    ],
+    "reviews": [],
+    "applicable": true,
+    "diagnostics": []
+  },
+  "apply": {
+    "planId": "119ad3dfe4d7d9b8",
+    "dryRun": true,
+    "outcomes": [
+      {
+        "status": "unattempted",
+        "operation": "install",
+        "identity": {
+          "ref": "skill:tdd",
+          "kind": "skill",
+          "name": "tdd",
+          "scope": "project"
+        },
+        "diagnostics": []
+      }
+    ],
+    "committed": 0,
+    "failed": 0,
+    "unattempted": 1,
+    "refresh": {
+      "status": "not-applicable",
+      "reason": "dry run; nothing committed"
+    }
+  },
+  "confirmed": false,
+  "writes": [
+    {
+      "ref": "skill:tdd",
+      "path": "/home/researcher/projects/calibration-lab/.pancode/plugins/tdd",
+      "sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116",
+      "sourceUrl": "/opt/pancode/lib/node_modules/@akougkas/pancode/hub/packs/skills/coding/tdd"
+    }
+  ],
+  "results": [],
+  "id": "tdd",
+  "path": "/home/researcher/projects/calibration-lab/.pancode/plugins/tdd",
+  "sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116"
+}
+~/projects/calibration-lab $
+
+== cli-interop-inspect
+
+~/projects/calibration-lab $ pancode interop inspect
+Claude Code: present; version 2.1.332; ACP not configured; adapter unknown; headless claude-code (binary installed, target needed); pane CLI installed
+  acp: unavailable; ACP delegation agent is not configured. Next: Run pancode configure --interop
+  headless: unavailable; No target uses the claude-code runtime. Next: Configure a target with runtime claude-code
+  pane: experimental; installed CLI; static inspection cannot verify a live Herdr pane host. Next: Start PanCode inside Herdr with pancode --with-panes
+  Inventory known: none found
+Codex: present; version 0.163.0; ACP not configured; adapter unknown; headless codex-cli (binary installed, target needed); pane CLI installed
+  acp: unavailable; ACP delegation agent is not configured. Next: Run pancode configure --interop
+  headless: unavailable; No target uses the codex-cli runtime. Next: Configure a target with runtime codex-cli
+  pane: experimental; installed CLI; static inspection cannot verify a live Herdr pane host. Next: Start PanCode inside Herdr with pancode --with-panes
+  Inventory known: none found
+OpenCode: present; version 1.18.32; ACP not configured; adapter present; headless opencode-cli (binary installed, target needed); pane CLI installed
+  acp: unavailable; ACP delegation agent is not configured. Next: Run pancode configure --interop
+  headless: unavailable; No target uses the opencode-cli runtime. Next: Configure a target with runtime opencode-cli
+  pane: experimental; installed CLI; static inspection cannot verify a live Herdr pane host. Next: Start PanCode inside Herdr with pancode --with-panes
+  Inventory known: none found
+GitHub Copilot: present; version 1.0.116; ACP not configured; adapter present; headless unsupported; pane unsupported
+  acp: unavailable; ACP delegation agent is not configured. Next: Run pancode configure --interop
+  Inventory known: none found
+Antigravity CLI: absent; version unknown; ACP not configured; adapter absent; headless antigravity-code (install CLI, target needed); pane unavailable
+  acp: unavailable; agy CLI is missing. Next: Install Antigravity CLI
+  headless: unavailable; agy CLI is missing. Next: Install Antigravity CLI
+  pane: unavailable; agy CLI is missing. Next: Install Antigravity CLI
+  Inventory known: none found
+~/projects/calibration-lab $
+
+== cli-store-stat
+
+~/projects/calibration-lab $ pancode store put results run-042.csv --note "baseline, 64 ranks"
+stored results:run-042.csv (42 B) from /home/researcher/projects/calibration-lab/run-042.csv
+~/projects/calibration-lab $ pancode store stat results:run-042.csv
+ref       results:run-042.csv
+path      /home/researcher/.cache/pancode/store/7e80b71a546b499d/results/run-042.csv
+bytes     42
+modified  2026-11-26 18:21:23Z
+drift     none
+sha256    e04f3f7a5c4bc0bfc01b7b59ed571a18e0a0bdb0b4c958c96662fb4d71a556a5
+generated no producing run on record
+put by    standalone
+backend   local
+~/projects/calibration-lab $

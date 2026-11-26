@@ -1,0 +1,50 @@
+Guided setup with a stored login
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== tui-configure-detected
+
+
+┌  Welcome to PanCode
+│
+│  Choose what you already use. PanCode checks the endpoint and model list when the provider allows it.
+│  Before saving, PanCode sends the model one short test message (a few tokens; paid providers bill it).
+│  Esc goes back a step, and from the first step leaves without saving. Your choices are written to your PanCode
+│  settings only after the test message, except a browser sign-in you complete.
+│
+│  PanCode found a way to reach a model:
+│
+│  ❯ GitHub Copilot SDK, signed in  model gpt-6-luna (recommended)
+│    Set up something else          an API key, a subscription, or a server
+│
+│  ↑↓ move · Enter select · Esc cancel · q quit
+
+== tui-configure-saved
+
+
+┌  Welcome to PanCode
+│
+│  Choose what you already use. PanCode checks the endpoint and model list when the provider allows it.
+│  Before saving, PanCode sends the model one short test message (a few tokens; paid providers bill it).
+│  Esc goes back a step, and from the first step leaves without saving. Your choices are written to your PanCode
+│  settings only after the test message, except a browser sign-in you complete.
+│
+●  Using        GitHub Copilot SDK, signed in
+Uses your GitHub Copilot subscription as researcher on github.com; your organization's Copilot policies apply.
+│
+│  Testing copilot-sdk / gpt-6-luna ...
+│
+◇  Testing copilot-sdk / gpt-6-luna ... answered in 3.2 s.
+◇  target copilot-sdk saved, runtime copilot-sdk
+◇  chat runs on copilot-sdk, model gpt-6-luna
+◇  fleet default is copilot-sdk
+◇  settings written to ~/.config/pancode/settings.yaml
+◇  Saved. Chat and workers use this model. Change it any time with /model or /config.
+│
+│  Start PanCode:
+●    pancode
+│  Change any of this later:
+●    pancode configure
+│
+└  Done
+
+~/projects/calibration-lab $

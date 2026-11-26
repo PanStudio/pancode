@@ -51,7 +51,7 @@ pancode research start --check bench --metric wall_ms --direction min \
 
 `--scope` limits which files the agent may change, and an iteration that changes anything outside it is archived without being measured. The checks and every file they name are protected the same way, so the agent cannot speed up the benchmark by editing it.
 
-::: result What the recorded session printed
+::: result What the session printed
 ```text
 campaign r20261114-233756-1d28 (stopped: max-iterations)
 objective: min wall_ms from check bench; min improvement +5.00%, 5 pairs
@@ -123,7 +123,7 @@ pancode arena standings --suite speed
 
 Before a vote, `show` lists A and B in a seeded random order and hides the target, model, duration, tokens and cost. `--reveal` before a vote is refused. PanCode never grades a contender; the vote is yours, and so is the note.
 
-::: result What the recorded session printed
+::: result What the session printed
 ```text
 recorded tie for match 20261114-233756-7102; arena show 20261114-233756-7102 reveals who is who
 ```

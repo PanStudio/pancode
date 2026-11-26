@@ -1,11 +1,11 @@
 PanCode doctor on a fresh install
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == repaired
 
 ~ $ pancode doctor --fix
 WARN chat                   cannot run yet: no model target is configured; run `pancode configure` to choose one
-OK   PanCode version        0.9.0-dev (unreleased · 765279a)
+OK   PanCode version        0.9.1
 WARN external tool herdr    pane host 0.9.5 is not installed; run `pancode panes install`
 chat is not set up: run `pancode configure`
 2 rows need attention, 44 checks passed, 13 notes; `pancode doctor --verbose` prints every row
@@ -15,7 +15,7 @@ chat is not set up: run `pancode configure`
 
 ~ $ pancode doctor
 WARN chat                   cannot run yet: no model target is configured; run `pancode configure` to choose one
-OK   PanCode version        0.9.0-dev (unreleased · 765279a)
+OK   PanCode version        0.9.1
 WARN external tool herdr    pane host 0.9.5 is not installed; run `pancode panes install`
 chat is not set up: run `pancode configure`
 2 rows need attention, 42 checks passed, 13 notes; `pancode doctor --verbose` prints every row

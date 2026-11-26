@@ -1,0 +1,31 @@
+PanCode desktop setup on a fresh profile
+Recorded with PanCode 0.9.1. Each section is the page text at that moment.
+
+== gui-setup
+
+Skip to setup
+1
+Provider
+2
+Connect
+3
+Model
+4
+Test
+5
+Workspace
+
+PanCode is systems software for coding agents. Panos, the agent you talk to, works in the folders you choose.
+
+Welcome to PanCode.
+
+Choose what you already use. PanCode checks the endpoint and model list when the provider allows it.
+
+Back returns to the previous step. Nothing is saved before the last step, except a browser sign-in you complete.
+
+Pick a provider. An app on this computer, a server, a subscription or an API account.
+Connect and choose a model. PanCode checks the address and reads the model list.
+Open a folder. PanCode works inside it. Your approval policy controls which actions ask first.
+Get started
+Explore without a model
+Welcome to PanCode
