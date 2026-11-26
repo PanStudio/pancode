@@ -13,6 +13,7 @@ import { validateStoreProjectId } from "@pancode/store/paths";
 import { parse as parseYaml } from "yaml";
 import { DEFAULT_SETTINGS, SETTINGS_FILE_MODE, type ThinkingLevel } from "./defaults.js";
 import { writeDiagnostic } from "./diagnostics.js";
+import { markUserTargets } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
 import { readSettingsDocument } from "./settings-document.js";
 import {
@@ -129,6 +130,7 @@ export function validateSettingsFile(): SettingsValidationResult {
 	const parsed = read.document;
 	// An empty file parses as null; it holds no settings, so it reads as an empty map.
 	const result = validateSettings(parsed ?? {});
+	markUserTargets(result.settings.targets);
 	const projectIdIssue = userStoreProjectIdIssue(parsed);
 	if (projectIdIssue === null) return result;
 	delete result.settings.store.projectId;

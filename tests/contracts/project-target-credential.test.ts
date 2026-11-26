@@ -7,11 +7,27 @@ import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readLayeredSettings, readStrictLayeredSettings } from "../../src/core/settings-layers.js";
+import { classifyCallFailure } from "../../src/core/call-failure.js";
+import { redeclaredTargetSentence } from "../../src/core/project-target-urls.js";
+import { applySessionRouting, seedSessionRouting } from "../../src/core/session-routing.js";
+import {
+	PROJECT_TARGETS_REPLACE_USER_TARGETS,
+	readLayeredSettings,
+	readStrictLayeredSettings,
+} from "../../src/core/settings-layers.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import { bootAuthStatus } from "../../src/domains/providers/auth/boot-status.js";
 import { openAuthStorage } from "../../src/domains/providers/auth/index.js";
-import { type RuntimeAuthMetadata, resolveAuthTarget } from "../../src/domains/providers/auth/storage.js";
+import {
+	type RuntimeAuthMetadata,
+	resolveAuthTarget,
+	targetRequiresAuth,
+} from "../../src/domains/providers/auth/storage.js";
+import {
+	providerFailureAdvice,
+	providerFailureHeadline,
+	readProviderFailureRoute,
+} from "../../src/interactive/renderers/provider-error.js";
 import { runCli } from "../harness/headless-run.js";
 import { closeServer } from "../harness/openai-compat-fixture.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -105,6 +121,134 @@ test("a project targets list that drops a user-only target warns against the pro
 		[...userTargets, "safety:", "  review:", "    target: ghost", ""].join("\n"),
 	);
 	throws(() => readStrictLayeredSettings(workspace), /safety\.review\.target: unknown target 'ghost'/);
+});
+
+test("a project redeclaring a credentialed user target is refused naming its file, never sent the placeholder", async (t) => {
+	const home = await isolatePancodeEnv("pancode-project-redeclared-target-");
+	t.after(() => home.restore());
+	const configDir = process.env.PANCODE_CONFIG_DIR;
+	ok(configDir);
+	mkdirSync(configDir, { recursive: true });
+	const url = "http://192.0.2.10:4000/v1";
+	writeFileSync(
+		join(configDir, "settings.yaml"),
+		[
+			"targets:",
+			"  - id: litellm",
+			"    runtime: litellm",
+			`    url: ${url}`,
+			"    auth:",
+			"      apiKeyRef: litellm-key",
+			"  - id: ' work '",
+			"    runtime: github-copilot",
+			"    auth:",
+			"      oauthProfile: work-login",
+			"",
+		].join("\n"),
+	);
+	const workspace = join(home.dir, "workspace");
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	const localFile = join(workspace, ".pancode", "settings.local.yaml");
+	writeFileSync(
+		localFile,
+		`targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n  - id: work\n    runtime: github-copilot\n    auth:\n      apiKeyEnvVar: WORK_KEY\n`,
+	);
+	const snapshot = captureProjectSurface(workspace, "settings");
+	ok(snapshot.contentHash);
+	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+
+	const layered = readLayeredSettings(workspace);
+	const replaced = layered.issues.filter((issue) => issue.message === PROJECT_TARGETS_REPLACE_USER_TARGETS);
+	strictEqual(replaced.length, 1);
+	strictEqual(replaced[0]?.origin, "project.local");
+	const target = layered.settings.targets.find((entry) => entry.id === "litellm");
+	ok(target);
+	strictEqual(target.auth?.apiKeyRef, undefined, "the project layer kept no stored-credential reference");
+	// The protocol tier needs no credential by default; without the refusal this target got the local placeholder key.
+	const litellm: RuntimeAuthMetadata = { id: "litellm", tier: "protocol", auth: "api-key" };
+	strictEqual(targetRequiresAuth(target, litellm), true);
+	const refusal = redeclaredTargetSentence("litellm", localFile);
+	strictEqual(resolveAuthTarget(target, litellm).credentialRefusal, refusal);
+	const status = bootAuthStatus(target, litellm);
+	strictEqual(status.available, false);
+	strictEqual(status.redeclared, refusal);
+	// The session's routed view is a clone; the file still comes from this snapshot.
+	const view = applySessionRouting(layered.settings, seedSessionRouting(layered.settings));
+	const routed = view.targets.find((entry) => entry.id === "litellm");
+	ok(routed);
+	strictEqual(resolveAuthTarget(routed, litellm).credentialRefusal, refusal);
+	// A copy that lost its origin is still refused, never sent the placeholder.
+	match(
+		resolveAuthTarget(structuredClone(target), litellm).credentialRefusal ?? "",
+		/redeclared in a project settings file/,
+	);
+	// A sign-in runtime ignores the project's key variable, and its fix names no key variable; the user id was trimmed.
+	const work = layered.settings.targets.find((entry) => entry.id === "work");
+	ok(work);
+	const copilot: RuntimeAuthMetadata = { id: "github-copilot", tier: "cloud", auth: "oauth" };
+	const signIn = resolveAuthTarget(work, copilot).credentialRefusal ?? "";
+	strictEqual(signIn, redeclaredTargetSentence("work", localFile, true));
+	strictEqual(signIn.includes("apiKeyEnvVar"), false);
+	strictEqual(bootAuthStatus(work, copilot).available, false);
+	// Back on the user's own list, now keyless on purpose: the recorded redeclaration does not reach it.
+	writeFileSync(join(configDir, "settings.yaml"), `targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n`);
+	const own = readLayeredSettings(home.dir).settings.targets.find((entry) => entry.id === "litellm");
+	ok(own);
+	strictEqual(targetRequiresAuth(own, litellm), false);
+	strictEqual(targetRequiresAuth(structuredClone(own), litellm), true, "a copy with no origin stays refused");
+	const ownView = applySessionRouting(
+		readLayeredSettings(home.dir).settings,
+		seedSessionRouting(readLayeredSettings(home.dir).settings),
+	);
+	const ownRouted = ownView.targets.find((entry) => entry.id === "litellm");
+	ok(ownRouted);
+	strictEqual(targetRequiresAuth(ownRouted, litellm), false);
+	const auth = openAuthStorage();
+	auth.setApiKey("litellm-key", "sk-stored-canary");
+	const resolved = await auth.resolveForTarget(resolveAuthTarget(target, litellm));
+	strictEqual(resolved.apiKey, undefined);
+	strictEqual(resolved.refused, true);
+});
+
+test("a refused credential and a placeholder-key 401 each name their real cause, not a key to replace", () => {
+	const signInRefusal = redeclaredTargetSentence("work", "/w/.pancode/settings.yaml", true);
+	const refused = classifyCallFailure(
+		new Error(redeclaredTargetSentence("litellm", "/w/.pancode/settings.local.yaml")),
+		{
+			invoked: false,
+		},
+	);
+	strictEqual(refused.stage, "auth");
+	strictEqual(refused.errorClass, "credential_refused");
+	const refusedRoute = { targetId: "litellm", stage: refused.stage, errorClass: refused.errorClass };
+	strictEqual(providerFailureHeadline(refusedRoute), null, "PanCode's own refusal leads the block");
+	strictEqual(providerFailureAdvice(refusedRoute).includes("pancode configure"), false);
+
+	const placeholder = readProviderFailureRoute({
+		targetId: "bare",
+		stage: "auth",
+		errorClass: "http_401",
+		noCredential: true,
+	});
+	ok(placeholder);
+	strictEqual(providerFailureHeadline(placeholder), "The endpoint asks for a credential; this target sends none.");
+	match(providerFailureAdvice(placeholder), /^pancode configure --id bare adds one /);
+	// A project's list replaces the user's, so its own target's fix is that file, not configure.
+	const projectOnly = readProviderFailureRoute({ ...placeholder, projectFile: "/w/.pancode/settings.yaml" });
+	ok(projectOnly);
+	strictEqual(
+		providerFailureAdvice(projectOnly).startsWith("Give bare auth.apiKeyEnvVar in /w/.pancode/settings.yaml "),
+		true,
+	);
+	// A runtime that reads no key gets no key-variable fix.
+	const keyless = readProviderFailureRoute({ ...placeholder, projectFile: "/w/.pancode/settings.yaml", keyless: true });
+	ok(keyless);
+	strictEqual(providerFailureAdvice(keyless).includes("apiKeyEnvVar"), false);
+	strictEqual(providerFailureAdvice(keyless).includes("pancode configure"), false);
+	strictEqual(classifyCallFailure(new Error(signInRefusal), { invoked: false }).errorClass, "credential_refused");
+	// A real key the endpoint refused keeps the old wording.
+	const sent = { targetId: "bare", stage: "auth", errorClass: "http_401" };
+	strictEqual(providerFailureHeadline(sent), "The provider refused the credential.");
 });
 
 test("a trusted project target that names its key variable is sent that variable and nothing else", async (t) => {
