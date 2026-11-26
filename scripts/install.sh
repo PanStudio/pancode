@@ -1,30 +1,28 @@
 #!/bin/sh
 # SPDX-License-Identifier: LicenseRef-PanCode-1.0
 # SPDX-FileCopyrightText: 2026 Anthony Kougkas
-# PanCode installer: a private Node.js runtime plus the npm package, in your
-# home directory, with no root and no system Node.
+# PanCode installer: one verified archive holding PanCode and the Node.js it
+# runs on, unpacked in your home directory, with no root and no system Node.
 #
 #   curl -fsSL https://pancode.dev/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/akougkas/pancode/main/scripts/install.sh | sh
-#   curl -fsSL .../install.sh | sh -s -- --version 0.6.0
+#   curl -fsSL https://pancode.dev/install.sh | sh -s -- --version 0.9.0
 #
 # What it does, in order:
-#   1. Detects OS, CPU and C library (glibc version or musl).
-#   2. Picks a Node.js build that runs there: the official nodejs.org tarball on
-#      macOS and on glibc >= 2.28, the unofficial glibc-2.17 build on older x64
-#      Linux (RHEL/CentOS 7 class clusters), and a musl build on Alpine.
-#   3. Verifies SHASUMS256.txt for every download, and its OpenPGP signature
-#      against the Node.js release keys when gpgv or gpg is present. A mismatch
-#      stops the install.
-#   4. Unpacks Node under the install root and installs pancode with
-#      that Node's own npm into a versioned prefix next to it.
-#   5. Writes a small launcher (default ~/.local/bin/pancode) that runs the
-#      managed Node on the managed package, replacing it atomically and keeping
-#      the previous version for --rollback, and one beside it for each other
-#      command the package declares (panstore, pankit).
+#   1. Detects OS, CPU and C library (glibc version or musl) and picks the
+#      bundle built for them.
+#   2. Reads the channel's version from pancode.dev and that release's
+#      SHA256SUMS from GitHub, downloads the bundle and verifies its SHA-256.
+#      A mismatch stops the install.
+#   3. Unpacks the bundle into a versioned directory under the install root.
+#      Nothing is fetched from a package registry: the bundle carries the
+#      dependency tree the release was tested with.
+#   4. Writes a small launcher (default ~/.local/bin/pancode) that runs the
+#      new version, replacing it atomically and keeping the previous version
+#      for --rollback, and one beside it for each other command the package
+#      declares (panstore, pankit).
 #
 # Shell startup files are edited only with --modify-path. Proxies are honored
-# through https_proxy/http_proxy (curl, wget and npm all read them).
+# through https_proxy/http_proxy (curl and wget both read them).
 #
 # The whole body lives in functions and main is called on the last line, so a
 # truncated download parses as an incomplete script and runs nothing.
@@ -35,47 +33,35 @@ set -eu
 # before its trap runs (#436).
 trap '' PIPE
 
-PACKAGE="pancode"
-PACKAGE_MIN="0.6.0"
-# Mirrors package.json engines.node; tests/contracts/install-script.test.ts
-# keeps the two in sync. A requested Node older than this is refused.
+NPM_PACKAGE="@akougkas/pancode"
+# Mirrors package.json engines.node, for the advice printed where no bundle fits.
 NODE_MIN="22.19.0"
-# The newest LTS major that CI runs (the `ci (24)` job in .github/workflows/ci.yml).
-NODE_DEFAULT_MAJOR="24"
-NODE_OFFICIAL_BASE="https://nodejs.org/dist"
-NODE_UNOFFICIAL_BASE="https://unofficial-builds.nodejs.org/download/release"
-# The Node.js release team's active signing keys, published by the project
-# outside nodejs.org, so a compromised download host cannot also swap the keys.
-NODE_KEYRING_URL="https://github.com/nodejs/release-keys/raw/HEAD/gpg-only-active-keys/pubring.kbx"
+RELEASE_BASE="https://github.com/akougkas/pancode/releases/download"
+CHANNEL_BASE="https://pancode.dev/channel"
 LAUNCHER_MARK="# pancode-installer launcher"
 MANIFEST_KIND="pancode-installer"
 FAILED_CANDIDATE_MARK=".pancode-refused-candidate"
-# Unpacked Node is about 210 MB and one package prefix about 460 MB, half of it
-# the optional Claude Agent SDK binary (--include-claude-sdk opts in). Refuse early
-# rather than die half way through on a quota.
-MIN_FREE_KB=750000
+# A bundle is about 85 MB and unpacks to about 330 MB. Refuse early rather
+# than die half way through on a quota.
+MIN_FREE_KB=500000
 
 usage() {
 	cat <<'USAGE'
 Usage: install.sh [options]
 
-Install PanCode 0.6.0 or newer with a private Node.js runtime. No root, no system Node.
+Install PanCode with the Node.js it runs on. No root, no system Node.
 
 Options:
-  --version <spec>      PanCode version: an exact version such as 0.6.0 or a
-                        dist-tag. Default: the --channel. Env: PANCODE_VERSION
+  --version <spec>      PanCode version: an exact version such as 0.9.0, or
+                        latest or beta. Default: the --channel. An exact
+                        version pins the install. Env: PANCODE_VERSION
   --channel <name>      latest (default) or beta. Env: PANCODE_CHANNEL
   --leave-prerelease    With the latest channel, move from an active pre-release
                         to stable even when stable is older. Without it, a
                         channel older than the active version is refused.
-  --package <file.tgz>  Install a local `npm pack` tarball instead of the
-                        registry package. Env: PANCODE_PACKAGE
-  --node-version <v>    Node.js major (24) or exact version (24.11.1).
-                        Default: the newest 24.x. Env: PANCODE_NODE_VERSION
-  --node-tarball <f>    Use a local Node.js tarball (airgapped sites). Its
-                        SHASUMS256.txt must sit next to it, or be named by
-                        PANCODE_NODE_SHASUMS. Env: PANCODE_NODE_TARBALL
-  --refresh-runtime     Download Node again even if the wanted one is present.
+  --bundle <file>       Install a downloaded bundle (pancode-<version>-<target>.tar.gz)
+                        instead of fetching one; for hosts without network
+                        access. Pins the install. Env: PANCODE_BUNDLE
   --install-dir <dir>   Install root. Env: PANCODE_INSTALL_DIR
                         Default: $XDG_DATA_HOME/pancode-install on Linux
                         (~/.local/share/pancode-install), ~/Library/Application
@@ -89,7 +75,7 @@ Options:
   --modify-path         Append a PATH line for the bin dir to your shell's
                         startup file. Without it, the installer only prints one.
   --no-auto-update      Disable background updates. Env: PANCODE_AUTO_UPDATE=0
-  --auto-update         Enable background updates (unpinned native installs only).
+  --auto-update         Enable background updates (unpinned installs only).
   --rollback            Point the launcher back at the previous installed version.
   --no-post-install     Skip `pancode upgrade --post-install` after installing.
   --gui                 Also set up the desktop app (Linux: starts at login and
@@ -102,19 +88,13 @@ Options:
   --dry-run             Print the plan; download and change nothing.
   -h, --help            Show this help.
 
-Environment for restricted networks:
-  PANCODE_NODE_MIRROR             Base URL (https:// or file://) laid out
-                                     like https://nodejs.org/dist
-  PANCODE_NODE_UNOFFICIAL_MIRROR  Same, for unofficial-builds.nodejs.org
-  PANCODE_NODE_KEYRING            Local copy of the Node.js release keyring
-  PANCODE_REQUIRE_SIGNATURE=1     Fail unless the OpenPGP signature verifies
-  PANCODE_REQUIRE_SIGNATURE=0     Accept a missing or unverified signature
-  PANCODE_NODE_BUILD              Force a build: linux-x64, linux-arm64,
-                                     linux-x64-glibc-217, linux-x64-musl,
-                                     linux-arm64-musl, darwin-x64, darwin-arm64
-  npm_config_registry                npm registry mirror for the package
-  npm_config_cache                   npm cache to reuse (default: one under the install
-                                     root, removed when the install ends)
+Environment:
+  PANCODE_RELEASE_MIRROR  Base URL (https:// or file://) of a mirror laid out as
+                          <base>/channel/<latest|beta> and
+                          <base>/v<version>/<release asset>
+  PANCODE_TARGET          Force a bundle: linux-x64, linux-arm64,
+                          linux-x64-glibc-217, linux-x64-musl, linux-arm64-musl,
+                          darwin-x64, darwin-arm64
 
 Remove everything later with:
   pancode uninstall
@@ -171,32 +151,28 @@ version_ge() {
 	}'
 }
 
-require_supported_version() {
-	version_ge "${1%%-*}" "$PACKAGE_MIN" || fail "PanCode $1 is unsupported; this installer requires $PACKAGE_MIN or newer. The active installation was left unchanged."
-}
-
 single_line() {
 	[ "$(printf '%s\n' "$1" | wc -l | tr -d ' ')" = 1 ]
 }
 
-# Exact semver, or an npm dist-tag. Everything else is refused before it can
-# reach npm: a spec like `npm:evil@1`, `>=1`, `../x`, `file:...`, or a value
-# with whitespace would install a different package or be read as a range or URL.
+# Exact semver, or a channel name. Everything else is refused before it can
+# become part of a download URL or a directory name.
 validate_version() {
 	spec="$1"
 	case "$spec" in
 		v[0-9]*) spec="${spec#v}" ;;
 	esac
 	if single_line "$spec" && printf '%s\n' "$spec" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-		require_supported_version "$spec"
 		printf '%s\n' "$spec"
 		return 0
 	fi
-	if single_line "$spec" && printf '%s\n' "$spec" | grep -Eq '^[a-z][a-z0-9-]{0,31}$'; then
-		printf '%s\n' "$spec"
-		return 0
-	fi
-	fail "invalid --version '$1'; use an exact version such as 0.6.0 or a dist-tag such as beta"
+	case "$spec" in
+		latest | beta)
+			printf '%s\n' "$spec"
+			return 0
+			;;
+	esac
+	fail "invalid --version '$1'; use an exact version such as 0.9.0, or latest or beta"
 }
 
 refuse_sudo() {
@@ -214,7 +190,7 @@ pick_downloader() {
 	elif have wget; then
 		downloader=wget
 	else
-		fail "neither curl nor wget was found; install one, or fetch Node and the package by hand and pass --node-tarball and --package"
+		fail "neither curl nor wget was found; install one, or fetch a bundle by hand and pass --bundle"
 	fi
 }
 
@@ -259,7 +235,7 @@ detect_platform() {
 	case "$(uname -m 2>/dev/null || echo unknown)" in
 		x86_64 | amd64) arch=x64 ;;
 		aarch64 | arm64) arch=arm64 ;;
-		*) fail "unsupported CPU: $(uname -m). Supported: x86_64 and arm64. Install Node $NODE_MIN or newer yourself (conda-forge builds more CPUs), then: npm install -g $PACKAGE" ;;
+		*) fail "unsupported CPU: $(uname -m). Supported: x86_64 and arm64. Install Node $NODE_MIN or newer yourself (conda-forge builds more CPUs), then: npm install -g $NPM_PACKAGE" ;;
 	esac
 	# An x64 shell under Rosetta on Apple silicon should still get native Node.
 	if [ "$os" = darwin ] && [ "$arch" = x64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then
@@ -282,202 +258,78 @@ detect_platform() {
 	fi
 	libc=glibc
 	glibc="$(ldd --version 2>&1 | head -n 1 | grep -Eo '[0-9]+\.[0-9]+' | tail -n 1)" || glibc=""
-	[ -n "$glibc" ] || fail "could not determine the glibc version (getconf GNU_LIBC_VERSION and ldd --version both failed); set PANCODE_NODE_BUILD to pick a Node build"
+	[ -n "$glibc" ] || fail "could not determine the glibc version (getconf GNU_LIBC_VERSION and ldd --version both failed); set PANCODE_TARGET to pick a bundle"
 }
 
 # Sets node_build (the tarball's platform part), node_index_key (its name in
-# index.tab), node_official and node_base.
-select_node_build() {
-	if [ -n "${PANCODE_NODE_BUILD:-}" ]; then
-		node_build="$PANCODE_NODE_BUILD"
+
+# Sets target, the bundle built for this OS, CPU and C library.
+select_target() {
+	if [ -n "${PANCODE_TARGET:-}" ]; then
+		target="$PANCODE_TARGET"
 	elif [ "$os" = darwin ]; then
-		node_build="darwin-$arch"
+		target="darwin-$arch"
 	elif [ "$libc" = musl ]; then
-		node_build="linux-$arch-musl"
+		target="linux-$arch-musl"
 	elif version_ge "$glibc" 2.28; then
-		node_build="linux-$arch"
+		target="linux-$arch"
 	elif [ "$arch" = x64 ] && version_ge "$glibc" 2.17; then
-		node_build="linux-x64-glibc-217"
+		target="linux-x64-glibc-217"
 	elif [ "$arch" = arm64 ]; then
-		fail "glibc $glibc is older than 2.28, which official arm64 Node.js builds need, and no older-glibc arm64 build exists. Use conda-forge nodejs (conda create -n node -c conda-forge 'nodejs>=22'), then run npm install -g $PACKAGE with that Node."
+		fail "glibc $glibc is older than 2.28, which arm64 Node.js builds need, and no older-glibc arm64 bundle exists. Use conda-forge nodejs (conda create -n node -c conda-forge 'nodejs>=22'), then run npm install -g $NPM_PACKAGE with that Node."
 	else
 		fail "glibc $glibc is older than 2.17, the oldest any Node.js 22+ build supports"
 	fi
-	node_official=1
-	case "$node_build" in
-		darwin-x64 | darwin-arm64) node_index_key="osx-${node_build#darwin-}-tar" ;;
-		linux-x64 | linux-arm64 | linux-x64-musl) node_index_key="$node_build" ;;
-		linux-x64-glibc-217 | linux-arm64-musl)
-			node_index_key="$node_build"
-			node_official=0
-			;;
-		*) fail "unknown Node build '$node_build'; see --help for PANCODE_NODE_BUILD values" ;;
+	case "$target" in
+		linux-x64 | linux-arm64 | linux-x64-glibc-217 | linux-x64-musl | linux-arm64-musl | darwin-x64 | darwin-arm64) ;;
+		*) fail "unknown bundle target '$target'; see --help for PANCODE_TARGET values" ;;
 	esac
-	if [ "$node_official" = 1 ]; then
-		node_base="${PANCODE_NODE_MIRROR:-$NODE_OFFICIAL_BASE}"
-	else
-		node_base="${PANCODE_NODE_UNOFFICIAL_MIRROR:-$NODE_UNOFFICIAL_BASE}"
-	fi
-	node_base="${node_base%/}"
 }
 
-# Resolve a major (24) to the newest release that ships this build. An exact
-# version passes through.
-resolve_node_version() {
-	wanted="${1#v}"
-	if printf '%s\n' "$wanted" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-		printf '%s\n' "$wanted"
-		return 0
-	fi
-	printf '%s\n' "$wanted" | grep -Eq '^[0-9]+$' || fail "invalid Node version '$1'; use a major such as 24 or an exact version such as 24.11.1"
-	download "$node_base/index.tab" "$work/index.tab" ||
-		fail "could not read $node_base/index.tab; check the network or proxy (https_proxy), or set PANCODE_NODE_MIRROR"
-	resolved="$(awk -F '\t' -v prefix="v$wanted." -v key="$node_index_key" '
-		NR > 1 && index($1, prefix) == 1 {
-			n = split($3, files, ",")
-			for (i = 1; i <= n; i++) if (files[i] == key) { print substr($1, 2); exit }
-		}' "$work/index.tab")"
-	[ -n "$resolved" ] || fail "no Node.js $wanted.x release at $node_base ships a $node_build build"
+# The version a channel names: one line at <channel base>/<channel>.
+resolve_channel() {
+	download "$channel_base/$1" "$work/channel" ||
+		fail "could not read $channel_base/$1; check the network or proxy (https_proxy), pass --version <exact version>, or set PANCODE_RELEASE_MIRROR"
+	resolved="$(head -n 1 "$work/channel" | tr -d ' \r')"
+	printf '%s\n' "$resolved" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || fail "$channel_base/$1 does not name a version"
 	printf '%s\n' "$resolved"
 }
 
-# Check the OpenPGP signature on SHASUMS256.txt.asc. Prints the path of the
-# signed checksum list, or nothing when the signature could not be checked.
-# A bad signature stops the install.
-verify_signature() {
-	if have gpgv; then
-		gpg_tool=gpgv
-	elif have gpg; then
-		gpg_tool=gpg
-	else
-		warn "neither gpgv nor gpg is installed; SHASUMS256.txt signature not checked"
-		return 0
-	fi
-	keyring="${PANCODE_NODE_KEYRING:-}"
-	if [ -z "$keyring" ]; then
-		keyring="$work/pubring.kbx"
-		if ! download "$NODE_KEYRING_URL" "$keyring"; then
-			warn "could not fetch the Node.js release keys from $NODE_KEYRING_URL; signature not checked"
-			return 0
-		fi
-	fi
-	# A private GNUPGHOME keeps this away from your own keyrings and trust db.
-	GNUPGHOME="$work/gnupg"
-	export GNUPGHOME
-	mkdir -p "$GNUPGHOME"
-	chmod 700 "$GNUPGHOME"
-	if [ "$gpg_tool" = gpgv ]; then
-		gpgv --status-fd 1 --keyring "$keyring" --output "$work/SHASUMS256.verified" "$1" >"$work/gpg.status" 2>"$work/gpg.err" || true
-	else
-		gpg --batch --no-default-keyring --keyring "$keyring" --status-fd 1 --output "$work/SHASUMS256.verified" --decrypt "$1" >"$work/gpg.status" 2>"$work/gpg.err" || true
-	fi
-	if grep -q '^\[GNUPG:\] BADSIG' "$work/gpg.status"; then
-		fail "the OpenPGP signature on SHASUMS256.txt is BAD; refusing to install. The download or mirror may have been tampered with."
-	fi
-	if grep -q '^\[GNUPG:\] VALIDSIG' "$work/gpg.status" && [ -s "$work/SHASUMS256.verified" ]; then
-		printf '%s\n' "$work/SHASUMS256.verified"
-		return 0
-	fi
-	# A key outside the Node release keyring is definitive; a tool that cannot read the keyring (gpgv 1.x
-	# and gpg 2.0 cannot read .kbx, as on CentOS 7) is not, and keeps the checksum-only warning. That
-	# tool still reads the signature packet (ERRSIG, NO_PUBKEY) and reports no NODATA, and its error
-	# is about the keyring, not on a line checking the signature.
-	tool_error=0
-	if grep -Eq '^\[GNUPG:\] (ERRSIG|NO_PUBKEY)' "$work/gpg.status" &&
-		! grep -q '^\[GNUPG:\] NODATA' "$work/gpg.status" &&
-		grep -vi 'signature' "$work/gpg.err" | grep -Eqi 'keyblock resource|keyring|unsupported|invalid packet'; then
-		tool_error=1
-	fi
-	# Runs in a command substitution, so a definitive reason goes through a file.
-	if [ "$tool_error" = 0 ] && grep -q '^\[GNUPG:\] NO_PUBKEY' "$work/gpg.status"; then
-		printf 'SHASUMS256.txt is signed by a key outside the Node.js release keyring\n' >"$work/unsigned"
-		return 0
-	fi
-	# From nodejs.org itself, anything else (no OpenPGP data, no signature packet, an unreadable one) is
-	# as definitive as no signature at all.
-	if [ "$tool_error" = 0 ] && [ -z "${PANCODE_NODE_TARBALL:-}" ] && [ "$node_base" = "$NODE_OFFICIAL_BASE" ]; then
-		printf 'the SHASUMS256.txt.asc nodejs.org served is not a signature %s could verify (%s)\n' "$gpg_tool" \
-			"$(head -n 1 "$work/gpg.err" 2>/dev/null)" >"$work/unsigned"
-		return 0
-	fi
-	warn "could not check the SHASUMS256.txt signature with $gpg_tool ($(head -n 1 "$work/gpg.err" 2>/dev/null)); relying on the checksum file fetched over HTTPS"
+# Refuses a channel that resolved to a version older than the active one, using
+# the active install's own Node and npm's SemVer. Only an explicit request
+# (`pancode upgrade --channel latest` passes --leave-prerelease) moves down; a
+# recorded channel never does.
+guard_downgrade() {
+	current_prefix="$(manifest_field current)"
+	[ -n "$current_prefix" ] || return 0
+	active_node="$(manifest_field node)"
+	active_version="$("$active_node" -e 'process.stdout.write(require(process.argv[1]).version)' "$current_prefix/lib/node_modules/pancode/package.json" 2>/dev/null)" || return 0
+	downgrade="$("$active_node" -e 'const s=require(process.argv[1]),r=process.argv[2],a=process.argv[3];process.stdout.write(s.valid(a)&&s.lt(r,a)?(s.prerelease(a)&&!s.prerelease(r)?"prerelease":"older"):"")' "$current_prefix/lib/node_modules/npm/node_modules/semver" "$1" "$active_version" 2>/dev/null)" || return 0
+	case "$downgrade:$version" in
+		prerelease:latest)
+			[ "$leave_prerelease" = 1 ] || fail "the $channel channel resolved to $1, older than the active $active_version; the installation was left unchanged. To leave the pre-release for stable $1, pass --leave-prerelease; to return to the previous install, use --rollback."
+			log "leaving the pre-release $active_version for stable $1"
+			;;
+		prerelease:* | older:*)
+			fail "the $channel channel resolved to $1, older than the active $active_version; the installation was left unchanged. To install $1, pass --version $1; to return to the previous install, use --rollback."
+			;;
+	esac
 }
 
-# Fetch, verify and unpack Node into $runtime_dir.
-install_node_runtime() {
-	tarball_name="node-v$node_version-$node_build.tar.$compression"
-	if [ -n "${PANCODE_NODE_TARBALL:-}" ]; then
-		[ -f "$PANCODE_NODE_TARBALL" ] || fail "--node-tarball $PANCODE_NODE_TARBALL does not exist"
-		cp -- "$PANCODE_NODE_TARBALL" "$work/$tarball_name"
-		sums="${PANCODE_NODE_SHASUMS:-$(dirname "$PANCODE_NODE_TARBALL")/SHASUMS256.txt}"
-		[ -f "$sums" ] || fail "no SHASUMS256.txt next to $PANCODE_NODE_TARBALL; copy it from the same release directory or set PANCODE_NODE_SHASUMS"
-		cp -- "$sums" "$work/SHASUMS256.txt"
-		if [ -f "$sums.asc" ]; then cp -- "$sums.asc" "$work/SHASUMS256.txt.asc"; fi
-	else
-		log "downloading $node_base/v$node_version/$tarball_name"
-		if ! download "$node_base/v$node_version/$tarball_name" "$work/$tarball_name" && [ "$compression" = xz ] && have gzip; then
-			# A partial mirror often carries only one of the two archives.
-			compression=gz
-			tarball_name="node-v$node_version-$node_build.tar.gz"
-			log "no .tar.xz there; trying $tarball_name"
-			download "$node_base/v$node_version/$tarball_name" "$work/$tarball_name" || tarball_name=""
-		fi
-		[ -n "$tarball_name" ] && [ -s "$work/$tarball_name" ] ||
-			fail "download failed: $node_base/v$node_version/node-v$node_version-$node_build.tar.* (network, proxy, or a missing build; PANCODE_NODE_MIRROR selects a mirror)"
-		download "$node_base/v$node_version/SHASUMS256.txt" "$work/SHASUMS256.txt" ||
-			fail "could not download SHASUMS256.txt for Node v$node_version; refusing to install an unverified runtime"
-		if [ "$node_official" = 1 ]; then
-			download "$node_base/v$node_version/SHASUMS256.txt.asc" "$work/SHASUMS256.txt.asc" || rm -f "$work/SHASUMS256.txt.asc"
-		fi
-	fi
-
-	sums_file="$work/SHASUMS256.txt"
-	signed=0
-	unsigned_reason=""
-	if [ -f "$work/SHASUMS256.txt.asc" ]; then
-		verified="$(verify_signature "$work/SHASUMS256.txt.asc")"
-		if [ -f "$work/unsigned" ]; then unsigned_reason="$(cat "$work/unsigned")"; fi
-		if [ -n "$verified" ]; then
-			sums_file="$verified"
-			signed=1
-			ok "SHASUMS256.txt signature verified against the Node.js release keys"
-		fi
-	elif [ "$node_official" = 0 ]; then
-		log "unofficial-builds publishes no signature; verifying the checksum only"
-	elif [ -z "${PANCODE_NODE_TARBALL:-}" ] && [ "$node_base" = "$NODE_OFFICIAL_BASE" ]; then
-		unsigned_reason="nodejs.org served no SHASUMS256.txt.asc signature"
-	else
-		warn "no SHASUMS256.txt.asc signature at $node_base; verifying the checksum only"
-	fi
-	if [ "$signed" = 0 ] && [ "${PANCODE_REQUIRE_SIGNATURE:-}" = 1 ]; then
-		fail "PANCODE_REQUIRE_SIGNATURE=1, but no verified signature covers SHASUMS256.txt"
-	fi
-	# A definitive failure (no signature from nodejs.org, one that is not a valid signature, or a key
-	# outside the release keyring) fails closed; only an explicit PANCODE_REQUIRE_SIGNATURE=0 installs on the HTTPS checksum alone.
-	if [ -n "$unsigned_reason" ]; then
-		[ "${PANCODE_REQUIRE_SIGNATURE:-}" = 0 ] ||
-			fail "$unsigned_reason; refusing to install. PANCODE_REQUIRE_SIGNATURE=0 relies on the checksum alone."
-		warn "$unsigned_reason; PANCODE_REQUIRE_SIGNATURE=0, so relying on the checksum file fetched over HTTPS"
-	fi
-
-	expected="$(awk -v f="$tarball_name" '$2 == f {print $1}' "$sums_file")"
-	[ -n "$expected" ] || fail "$tarball_name is not listed in SHASUMS256.txt; refusing to install it"
-	actual="$(sha256_of "$work/$tarball_name")"
-	[ "$expected" = "$actual" ] || fail "checksum mismatch for $tarball_name (expected $expected, got $actual); refusing to install it"
-	ok "checksum verified for $tarball_name"
-
-	unpack="$install_root/runtime/.staging.$$"
-	rm -rf "$unpack"
-	mkdir -p "$unpack"
-	if [ "$compression" = xz ]; then
-		xz -dc "$work/$tarball_name" | tar -xf - -C "$unpack" || fail "could not unpack $tarball_name into $unpack (disk full or over quota?)"
-	else
-		gzip -dc "$work/$tarball_name" | tar -xf - -C "$unpack" || fail "could not unpack $tarball_name into $unpack (disk full or over quota?)"
-	fi
-	[ -x "$unpack/node-v$node_version-$node_build/bin/node" ] || fail "$tarball_name did not contain bin/node"
-	if [ -e "$runtime_dir" ]; then runtime_dir="$runtime_dir-$$"; node_bin="$runtime_dir/bin/node"; fi
-	mv "$unpack/node-v$node_version-$node_build" "$runtime_dir"
-	rm -rf "$unpack"
+# Downloads the release's bundle for this target into $work and verifies it
+# against the release's SHA256SUMS. Sets bundle_file.
+fetch_bundle() {
+	asset="pancode-$1-$target.tar.gz"
+	download "$release_base/v$1/SHA256SUMS" "$work/SHA256SUMS" ||
+		fail "could not read $release_base/v$1/SHA256SUMS; PanCode $1 may not exist, or the network or proxy (https_proxy) blocks it"
+	expected="$(awk -v file="$asset" '$2 == file || $2 == "*" file {print $1; exit}' "$work/SHA256SUMS")"
+	[ -n "$expected" ] || fail "PanCode $1 ships no $target bundle. Install Node $NODE_MIN or newer yourself, then: npm install -g $NPM_PACKAGE@$1"
+	log "downloading $asset"
+	download "$release_base/v$1/$asset" "$work/$asset" || fail "could not download $release_base/v$1/$asset"
+	actual="$(sha256_of "$work/$asset")"
+	[ "$actual" = "$expected" ] || fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed"
+	ok "verified $asset (sha256 $expected)"
+	bundle_file="$work/$asset"
 }
 
 check_node_runs() {
@@ -485,16 +337,14 @@ check_node_runs() {
 		detail="$(head -n 3 "$work/node.err")"
 		hint=""
 		case "$detail" in
-			*GLIBC* | *libstdc* | *CXXABI*) hint=" This build needs a newer C or C++ runtime than this system has; on x64, PANCODE_NODE_BUILD=linux-x64-glibc-217 selects the older-glibc build." ;;
+			*GLIBC* | *libstdc* | *CXXABI*) hint=" This bundle needs a newer C or C++ runtime than this system has; on x64, PANCODE_TARGET=linux-x64-glibc-217 selects the older-glibc bundle." ;;
 		esac
-		if [ "$libc" = musl ]; then hint=" musl builds need libstdc++ and libgcc (apk add libstdc++)."; fi
-		fail "the managed Node at $node_bin does not run: $detail.$hint"
+		if [ "$libc" = musl ]; then hint=" musl bundles need libstdc++ and libgcc (apk add libstdc++)."; fi
+		fail "the bundled Node at $node_bin does not run: $detail.$hint"
 	fi
-	version_ge "$ran" "$NODE_MIN" || fail "Node $ran is older than PanCode's floor $NODE_MIN"
-	ok "Node v$ran runs ($node_build)"
+	ok "Node v$ran runs ($target)"
 }
 
-# Free space in KB on the filesystem holding directory $1.
 free_kb() {
 	df -Pk "$1" 2>/dev/null | awk 'NR == 2 {print $4}'
 }
@@ -521,10 +371,10 @@ check_existing_launcher() {
 	[ -e "$launcher" ] || [ -L "$launcher" ] || return 0
 	launcher_is_ours && return 0
 	if [ -L "$launcher" ]; then
-		target="$(readlink "$launcher")"
-		case "$target" in
-			/*) checkout_entry="$target" ;;
-			*) checkout_entry="$bin_dir/$target" ;;
+		link_target="$(readlink "$launcher")"
+		case "$link_target" in
+			/*) checkout_entry="$link_target" ;;
+			*) checkout_entry="$bin_dir/$link_target" ;;
 		esac
 		case "$checkout_entry" in
 			*/dist/cli/index.js)
@@ -534,17 +384,17 @@ check_existing_launcher() {
 				fi
 				;;
 		esac
-		case "$target" in
-			*lib/node_modules/pancode/*)
-				warn "replacing $launcher, a link into an npm install of PanCode ($target)"
-				npm_prefix="${checkout_entry%/lib/node_modules/pancode/*}"
+		case "$link_target" in
+			*lib/node_modules/"$NPM_PACKAGE"/*)
+				warn "replacing $launcher, a link into an npm install of PanCode ($link_target)"
+				npm_prefix="${checkout_entry%/lib/node_modules/"$NPM_PACKAGE"/*}"
 				npm_prefix="$(cd "$npm_prefix" 2>/dev/null && pwd -P || printf '%s' "$npm_prefix")"
-				warn "that npm copy stays on disk; remove it with the npm that installed it: npm uninstall -g --prefix \"$npm_prefix\" $PACKAGE"
+				warn "that npm copy stays on disk; remove it with the npm that installed it: npm uninstall -g --prefix \"$npm_prefix\" $NPM_PACKAGE"
 				return 0
 				;;
 		esac
-		[ "$force" = 1 ] || fail "refusing to replace $launcher; it points to $target (a source-checkout launcher, perhaps). Rerun with --force to replace it, or choose another --bin-dir."
-		warn "replacing pancode symlink that points outside this install: $launcher -> $target"
+		[ "$force" = 1 ] || fail "refusing to replace $launcher; it points to $link_target (a source-checkout launcher, perhaps). Rerun with --force to replace it, or choose another --bin-dir."
+		warn "replacing pancode symlink that points outside this install: $launcher -> $link_target"
 		return 0
 	fi
 	[ "$force" = 1 ] || fail "refusing to overwrite $launcher, which this installer did not write; move it aside, choose another --bin-dir, or rerun with --force"
@@ -604,7 +454,7 @@ warn_about_shadowing_pancode() {
 
 # The installed binary computes the next step for this home: found keys and servers, or the route in use.
 print_next_steps() {
-	if ! { version_ge "${installed_version%%-*}" "0.7.1" && "$node_bin" "$entry" setup --next </dev/null 2>/dev/null; }; then
+	if ! "$node_bin" "$entry" setup --next </dev/null 2>/dev/null; then
 		printf 'Run: pancode\n'
 	fi
 	[ "$install_gui" = 0 ] || printf 'Desktop app: pancode gui\n'
@@ -741,7 +591,7 @@ reclaim_stale_install_lock() {
 	fi
 	rm -f "$lock/pid.reclaim.$$"
 	warn "reclaimed stale installation lock $lock (pid $owner_pid on $(cat "$lock/hostname" 2>/dev/null || echo "$owner_host"))"
-	rm -rf "$install_root/versions/.staging.$owner_pid" "$install_root/runtime/.staging.$owner_pid"
+	rm -rf "$install_root/versions/.staging.$owner_pid"
 	return 0
 }
 
@@ -784,10 +634,9 @@ do_rollback() {
 	node_path="$(manifest_field node)"
 	current="$(manifest_field current)"
 	helper="$current/lib/node_modules/pancode/scripts/native-install.cjs"
-	[ -f "$helper" ] || fail "rollback requires a PanCode $PACKAGE_MIN or newer managed installation"
+	[ -f "$helper" ] || fail "the active install at $current is incomplete; rerun the installer"
 	previous="$(manifest_field previous)"
 	previous_version="$("$node_path" -e 'process.stdout.write(require(process.argv[1]).version)' "$previous/lib/node_modules/pancode/package.json" 2>/dev/null)" || fail "no complete previous install"
-	require_supported_version "$previous_version"
 	active_version="$("$node_path" -e 'process.stdout.write(require(process.argv[1]).version)' "$current/lib/node_modules/pancode/package.json" 2>/dev/null)" || active_version="unknown"
 	check_writable_dir "install dir" "$install_root" "--install-dir"
 	check_writable_dir "bin dir" "$bin_dir" "--bin-dir"
@@ -799,34 +648,25 @@ do_rollback() {
 	"$node_path" "$helper" rollback "$install_root" </dev/null
 }
 
-# npm's debug logs live in the work directory cleanup removes; a failure keeps the newest one where its path still opens.
-npm_log_note() {
-	case "$npm_cache" in "$work"/*) ;; *) return 0 ;; esac
-	newest="$(ls -t "$npm_cache/_logs/"*-debug-*.log 2>/dev/null | head -n 1)"
-	[ -n "$newest" ] || return 0
-	kept_log="$(mktemp "${TMPDIR:-/tmp}/pancode-install-npm.XXXXXX")" && cp "$newest" "$kept_log" 2>/dev/null && printf ' npm log: %s' "$kept_log"
-}
-
 cleanup() {
 	if [ -n "${watchdog_pid:-}" ]; then kill "$watchdog_pid" 2>/dev/null || true; fi
-	if [ -n "${npm_pid:-}" ]; then
-		kill -KILL "$npm_pid" 2>/dev/null || true
-		wait "$npm_pid" 2>/dev/null || true
+	if [ -n "${unpack_pid:-}" ]; then
+		kill -KILL "$unpack_pid" 2>/dev/null || true
+		wait "$unpack_pid" 2>/dev/null || true
 	fi
 	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
 	if [ -n "${work:-}" ]; then rm -rf "$work"; fi
-	if [ -n "${install_root:-}" ]; then rm -rf "$install_root/runtime/.staging.$$" "$install_root/versions/.staging.$$"; fi
+	if [ -n "${install_root:-}" ]; then rm -rf "$install_root/versions/.staging.$$"; fi
 	return 0
 }
 
 main() {
 	version_spec="${PANCODE_VERSION:-}"
 	channel="${PANCODE_CHANNEL:-latest}"
-	package_file="${PANCODE_PACKAGE:-}"
-	node_wanted="${PANCODE_NODE_VERSION:-$NODE_DEFAULT_MAJOR}"
+	bundle_arg="${PANCODE_BUNDLE:-}"
 	install_root_arg=""
 	bin_dir_arg="${PANCODE_BIN_DIR:-$HOME/.local/bin}"
-	omit_optional=1
+	include_claude_sdk=0
 	modify_path="${PANCODE_MODIFY_PATH:-0}"
 	auto_update="${PANCODE_AUTO_UPDATE:-preserve}"
 	lock_owned=0
@@ -834,21 +674,18 @@ main() {
 	leave_prerelease=0
 	post_install=1
 	install_gui="${PANCODE_INSTALL_GUI:-ask}"
-	refresh_runtime=0
 	force=0
 	dry_run=0
 	work=""
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
-			--version | --channel | --package | --node-version | --node-tarball | --install-dir | --bin-dir)
+			--version | --channel | --bundle | --install-dir | --bin-dir)
 				[ $# -ge 2 ] || fail "$1 needs a value"
 				case "$1" in
 					--version) version_spec="$2" ;;
 					--channel) channel="$2" ;;
-					--package) package_file="$2" ;;
-					--node-version) node_wanted="$2" ;;
-					--node-tarball) PANCODE_NODE_TARBALL="$2" ;;
+					--bundle) bundle_arg="$2" ;;
 					--install-dir) install_root_arg="$2" ;;
 					--bin-dir) bin_dir_arg="$2" ;;
 				esac
@@ -856,12 +693,10 @@ main() {
 				;;
 			--version=*) version_spec="${1#--version=}" ;;
 			--channel=*) channel="${1#--channel=}" ;;
-			--package=*) package_file="${1#--package=}" ;;
-			--node-version=*) node_wanted="${1#--node-version=}" ;;
-			--node-tarball=*) PANCODE_NODE_TARBALL="${1#--node-tarball=}" ;;
+			--bundle=*) bundle_arg="${1#--bundle=}" ;;
 			--install-dir=*) install_root_arg="${1#--install-dir=}" ;;
 			--bin-dir=*) bin_dir_arg="${1#--bin-dir=}" ;;
-			--include-claude-sdk) omit_optional=0 ;;
+			--include-claude-sdk) include_claude_sdk=1 ;;
 			--modify-path) modify_path=1 ;;
 			--no-modify-path) modify_path=0 ;;
 			--no-auto-update) auto_update=0 ;;
@@ -871,7 +706,6 @@ main() {
 			--no-post-install) post_install=0 ;;
 			--gui) install_gui=1 ;;
 			--no-gui) install_gui=0 ;;
-			--refresh-runtime) refresh_runtime=1 ;;
 			--force | -f) force=1 ;;
 			--dry-run) dry_run=1 ;;
 			--help | -h)
@@ -900,6 +734,11 @@ main() {
 	if [ "$leave_prerelease" = 1 ] && [ "$version" != latest ]; then
 		fail "--leave-prerelease only moves to the latest channel, not $version"
 	fi
+	mirror="${PANCODE_RELEASE_MIRROR:-}"
+	mirror="${mirror%/}"
+	release_base="${mirror:-$RELEASE_BASE}"
+	channel_base="${mirror:+$mirror/channel}"
+	channel_base="${channel_base:-$CHANNEL_BASE}"
 
 	refuse_sudo
 	[ -n "${HOME:-}" ] || fail "HOME is not set"
@@ -918,45 +757,23 @@ main() {
 	fi
 
 	detect_platform
-	select_node_build
-	if [ -n "${PANCODE_NODE_TARBALL:-}" ]; then
-		PANCODE_NODE_TARBALL="$(absolute_path "$(expand_tilde "$PANCODE_NODE_TARBALL")")"
-		tar_base="$(basename "$PANCODE_NODE_TARBALL")"
-		node_wanted="$(printf '%s\n' "$tar_base" | sed -n 's/^node-v\([0-9][0-9.]*\)-.*\.tar\.[gx]z$/\1/p')"
-		tar_build="$(printf '%s\n' "$tar_base" | sed -n 's/^node-v[0-9.]*-\(.*\)\.tar\.[gx]z$/\1/p')"
-		{ single_line "$node_wanted" && printf '%s\n' "$node_wanted" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && [ -n "$tar_build" ]; } || fail "--node-tarball must keep its release file name, such as node-v24.11.1-linux-x64.tar.xz"
-		node_build="$tar_build"
-		case "$tar_base" in
-			*.xz) compression=xz ;;
-			*) compression=gz ;;
-		esac
-	elif have xz; then
-		compression=xz
+	select_target
+	bundle_file=""
+	if [ -n "$bundle_arg" ]; then
+		bundle_file="$(absolute_path "$(expand_tilde "$bundle_arg")")"
+		[ -f "$bundle_file" ] || fail "--bundle $bundle_file does not exist"
+		source_label="$bundle_file"
 	else
-		compression=gz
+		source_label="PanCode $version for $target from $release_base"
 	fi
-	if [ -n "$package_file" ]; then
-		package_file="$(absolute_path "$(expand_tilde "$package_file")")"
-		[ -f "$package_file" ] || fail "--package $package_file does not exist"
-		spec="$package_file"
-	else
-		spec="$PACKAGE@$version"
-	fi
-	npm_extra="--include=optional"
-	if [ "$omit_optional" = 1 ]; then npm_extra="--omit=optional"; fi
 
 	log "platform:     $os-$arch${libc:+ ($libc${glibc:+ $glibc})}"
-	log "node build:   $node_build from $node_base"
-	log "package:      $spec"
+	log "bundle:       $source_label"
 	log "install root: $install_root"
 	log "launcher:     $launcher"
 
 	if [ "$dry_run" = 1 ]; then
-		case "$node_wanted" in
-			*.*.*) log "would install Node v${node_wanted#v}" ;;
-			*) log "would install the newest Node v${node_wanted#v}.x that ships $node_build" ;;
-		esac
-		log "would run that Node's npm: npm install --prefix $install_root/versions/<version>/lib${npm_extra:+ $npm_extra} $spec"
+		log "would unpack the bundle into $install_root/versions/<version>"
 		log "would write $launcher, a launcher beside it for each other command the package declares, and $install_root/install.json, then run: $launcher upgrade --post-install"
 		# The same prefix checks as a real run, so a dry run that passes names no blocker the install then hits.
 		check_writable_dir "install dir" "$install_root" "--install-dir or PANCODE_INSTALL_DIR"
@@ -968,153 +785,97 @@ main() {
 		return 0
 	fi
 
-	have tar || fail "tar was not found; it is needed to unpack Node.js"
-	if [ "$compression" = xz ]; then
-		have xz || fail "xz was not found; it is needed for a .tar.xz Node tarball (a .tar.gz works without it)"
-	else
-		have gzip || fail "neither xz nor gzip was found; one is needed to unpack Node.js"
-	fi
-	pick_downloader
+	have tar || fail "tar was not found; it is needed to unpack the bundle"
+	have gzip || fail "gzip was not found; it is needed to unpack the bundle"
+	[ -n "$bundle_file" ] || pick_downloader
 	check_writable_dir "install dir" "$install_root" "--install-dir or PANCODE_INSTALL_DIR"
 	check_writable_dir "bin dir" "$bin_dir" "--bin-dir or PANCODE_BIN_DIR"
 	check_existing_launcher
 	acquire_install_lock
 	if [ ! -f "$install_root/install.json" ] && [ ! -f "$install_root/.installer-owner" ]; then
-		[ ! -e "$install_root/runtime" ] && [ ! -e "$install_root/versions" ] || fail "refusing to claim existing runtime/versions directories without installer ownership"
+		[ ! -e "$install_root/versions" ] || fail "refusing to claim an existing versions directory without installer ownership"
 	fi
 	printf '%s\n' "$MANIFEST_KIND" >"$install_root/.installer-owner"
-	mkdir -p "$install_root/runtime" "$install_root/versions" || fail "could not create $install_root"
+	mkdir -p "$install_root/versions" || fail "could not create $install_root"
 	available="$(free_kb "$install_root")"
 	case "$available" in
 		'' | *[!0-9]*) ;;
 		*)
 			if [ "$available" -lt "$MIN_FREE_KB" ]; then
-				fail "only $((available / 1024)) MB free under $install_root; PanCode and its runtime need about $((MIN_FREE_KB / 1024)) MB. Free space, or choose --install-dir on a larger filesystem."
+				fail "only $((available / 1024)) MB free under $install_root; PanCode needs about $((MIN_FREE_KB / 1024)) MB. Free space, or choose --install-dir on a larger filesystem."
 			fi
 			;;
 	esac
 	work="$(mktemp -d "$install_root/.work.XXXXXX")" || fail "could not create a work directory under $install_root"
-	trap cleanup EXIT
-	trap 'exit 130' INT
-	trap 'exit 143' TERM
 
-	node_version="$(resolve_node_version "$node_wanted")"
-	version_ge "$node_version" "$NODE_MIN" || fail "Node $node_version is older than PanCode's floor $NODE_MIN; pick $NODE_DEFAULT_MAJOR or newer"
-	runtime_dir="$install_root/runtime/node-v$node_version-$node_build"
-	node_bin="$runtime_dir/bin/node"
-	if [ "$refresh_runtime" = 0 ] && [ -x "$node_bin" ] && "$node_bin" --version >/dev/null 2>&1; then
-		ok "reusing Node v$node_version at $runtime_dir"
-	else
-		install_node_runtime
-	fi
-	check_node_runs
-
-	npm_cli="$runtime_dir/lib/node_modules/npm/bin/npm-cli.js"
-	[ -f "$npm_cli" ] || fail "the Node runtime at $runtime_dir has no bundled npm"
-	# npm's cache and logs stay in the work directory cleanup removes, not in ~/.npm outside the install root,
-	# unless the user named a cache of their own.
-	npm_cache="${npm_config_cache:-${NPM_CONFIG_CACHE:-$work/npm-cache}}"
-	# Use npm's bundled SemVer implementation after provisioning Node, before
-	# downloading a package. Missing prerelease tags still fall back to latest.
-	if [ -z "$package_file" ]; then
+	if [ -z "$bundle_file" ]; then
 		case "$version" in
 			latest | beta)
-				# The channel is resolved from $work with --prefix there, so a project
-				# .npmrc in the operator's directory cannot pick the registry that
-				# answers it; the user and global npmrc still apply.
-				(cd "$work" && PATH="$runtime_dir/bin:$PATH" npm_config_cache="$npm_cache" npm_config_update_notifier=false npm_config_fund=false "$node_bin" "$npm_cli" view "$PACKAGE" dist-tags --json --loglevel=error --prefix "$work" >"$work/dist-tags.json" </dev/null) || fail "cannot resolve the $channel channel from the registry.$(npm_log_note)"
-				resolved="$("$node_bin" -e '
-const fs=require("node:fs"), semver=require(process.argv[1]+"/node_modules/semver");
-const tags=JSON.parse(fs.readFileSync(process.argv[2],"utf8")), channel=process.argv[3];
-const tracks=channel==="beta"?["beta","latest"]:["latest"];
-const versions=tracks.map(tag=>tags[tag]).filter(v=>semver.valid(v));
-if(!versions.length)process.exit(1);process.stdout.write(versions.sort(semver.rcompare)[0]);
-' "$runtime_dir/lib/node_modules/npm" "$work/dist-tags.json" "$version")" || fail "no published version on $channel or its stable fallback"
-				require_supported_version "$resolved"
-				current_prefix="$(manifest_field current)"
-				downgrade=""
-				if [ -n "$current_prefix" ] && active_version="$("$node_bin" -e 'process.stdout.write(require(process.argv[1]).version)' "$current_prefix/lib/node_modules/pancode/package.json" 2>/dev/null)"; then
-					# "older", or "prerelease" when a stable release is older than an active pre-release.
-					downgrade="$("$node_bin" -e 'const s=require(process.argv[1]+"/node_modules/semver"),r=process.argv[2],a=process.argv[3];process.stdout.write(s.valid(a)&&s.lt(r,a)?(s.prerelease(a)&&!s.prerelease(r)?"prerelease":"older"):"")' "$runtime_dir/lib/node_modules/npm" "$resolved" "$active_version")" || downgrade=""
-				fi
-				# Only an explicit request (`pancode upgrade --channel latest` passes --leave-prerelease)
-				# moves down; a recorded channel or a registry the operator did not choose never does.
-				case "$downgrade:$version" in
-					prerelease:latest)
-						[ "$leave_prerelease" = 1 ] || fail "the $channel channel resolved to $resolved, older than the active $active_version; the installation was left unchanged. To leave the pre-release for stable $resolved, pass --leave-prerelease; to return to the previous install, use --rollback."
-						log "leaving the pre-release $active_version for stable $resolved"
-						;;
-					prerelease:* | older:*)
-						fail "the $channel channel resolved to $resolved, older than the active $active_version; the installation was left unchanged. To install $resolved, pass --version $resolved; to return to the previous install, use --rollback."
-						;;
-				esac
-				spec="$PACKAGE@$resolved"
+				resolved="$(resolve_channel "$version")"
+				guard_downgrade "$resolved"
 				log "resolved $channel to $resolved"
 				;;
+			*) resolved="$version" ;;
 		esac
+		fetch_bundle "$resolved"
 	fi
-	# Active sessions may still lazily read any prior package or runtime.
+
+	# Active sessions may still lazily read any prior version.
 	staging="$install_root/versions/.staging.$$"
 	rm -rf "$staging"
-	log "installing $spec with the npm bundled in Node v$node_version"
-	# A project install into <prefix>/lib lands the package at the same
-	# lib/node_modules/pancode path a global install uses, and unlike
-	# `install -g` (npm 11) it honors --omit=optional.
-	# stdin is closed because under `curl | sh` it carries the rest of this
-	# script, and a child that reads it would eat the installer.
-	mkdir -p "$staging/lib"
-	# npm runs as a waited background child: a shell defers its INT/TERM trap
-	# until a foreground child exits, and npm takes 10-20 s to honor SIGTERM, so
-	# a quitting session's installer used to outlive it. `wait` returns at once
-	# on a trapped signal and cleanup kills npm before removing staging (#436).
-	# shellcheck disable=SC2086 # npm_extra is one flag or nothing.
-	PATH="$runtime_dir/bin:$PATH" npm_config_cache="$npm_cache" npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false \
-		"$node_bin" "$npm_cli" install --prefix "$staging/lib" --no-save --loglevel=error $npm_extra "$spec" </dev/null &
-	npm_pid=$!
-	npm_status=0
-	wait "$npm_pid" || npm_status=$?
-	npm_pid=""
-	if [ "$npm_status" != 0 ]; then
-		fail "npm could not install $spec. Common causes: no route to the registry (set https_proxy, or npm_config_registry for a mirror), an unknown version, or a full disk under $install_root.$(npm_log_note)"
-	fi
+	mkdir -p "$staging"
+	# tar runs as a waited background child: a shell defers its INT/TERM trap
+	# until a foreground child exits, so a quitting session's installer would
+	# outlive it. `wait` returns at once on a trapped signal and cleanup kills
+	# tar before removing staging (#436). stdin is closed because under
+	# `curl | sh` it carries the rest of this script.
+	tar -xzf "$bundle_file" -C "$staging" </dev/null &
+	unpack_pid=$!
+	unpack_status=0
+	wait "$unpack_pid" || unpack_status=$?
+	unpack_pid=""
+	[ "$unpack_status" = 0 ] || fail "could not unpack $bundle_file under $install_root (a full disk, or not a PanCode bundle)"
+	node_bin="$staging/bin/node"
 	pkg_dir="$staging/lib/node_modules/pancode"
-	installed_version="$("$node_bin" -e 'const p=require(process.argv[1]);if(p.name!=="pancode")process.exit(1);process.stdout.write(p.version)' "$pkg_dir/package.json" 2>/dev/null)" ||
-		fail "npm finished, but $pkg_dir is not an pancode package"
-	require_supported_version "$installed_version"
+	[ -x "$node_bin" ] && [ -f "$pkg_dir/package.json" ] || fail "$bundle_file is not a PanCode bundle for Linux or macOS"
+	check_node_runs
+	installed_version="$("$node_bin" -e 'const p=require(process.argv[1]);if(p.name!==process.argv[2])process.exit(1);process.stdout.write(p.version)' "$pkg_dir/package.json" "$NPM_PACKAGE" 2>/dev/null)" ||
+		fail "$bundle_file does not hold the $NPM_PACKAGE package"
 	final_prefix="$install_root/versions/$installed_version"
 	if [ -e "$final_prefix" ]; then final_prefix="$final_prefix-$(date -u +%Y%m%d%H%M%S)-$$"; fi
 	mv "$staging" "$final_prefix"
+	node_bin="$final_prefix/bin/node"
 	entry="$final_prefix/lib/node_modules/pancode/dist/cli/index.js"
-	[ -f "$entry" ] || fail "the installed package has no dist/cli/index.js"
-	if [ "$omit_optional" = 0 ]; then
+	[ -f "$entry" ] || fail "the bundle has no dist/cli/index.js"
+	if [ "$include_claude_sdk" = 1 ]; then
 		"$node_bin" "$entry" tools install claude-sdk </dev/null || fail "Claude SDK provisioning failed; previous launcher remains active."
 	fi
-	ok "installed $PACKAGE $installed_version"
+	ok "installed PanCode $installed_version"
 
 	helper="$final_prefix/lib/node_modules/pancode/scripts/native-install.cjs"
-	[ -f "$helper" ] || fail "candidate has no managed lifecycle helper; previous install remains active. Run: pancode doctor --fix"
+	[ -f "$helper" ] || fail "the bundle has no lifecycle helper; previous install remains active"
 	pin=""
 	pin_source=version-flag
 	case "$version_spec" in [0-9]* | v[0-9]*) pin="$installed_version" ;; esac
-	if [ -n "$package_file" ]; then
+	if [ -n "$bundle_arg" ]; then
 		pin="$installed_version"
-		pin_source=package-file
+		pin_source=bundle-file
 	fi
-	"$node_bin" "$helper" activate "$install_root" "$node_bin" "$node_version" "$node_build" "$final_prefix" "$launcher" "$channel" "$pin" "$auto_update" "$post_install" "$pin_source" </dev/null || {
+	"$node_bin" "$helper" activate "$install_root" "$final_prefix" "$launcher" "$channel" "$pin" "$auto_update" "$post_install" "$pin_source" </dev/null || {
 		: >"$final_prefix/$FAILED_CANDIDATE_MARK"
 		active_version="$("$node_bin" -e 'process.stdout.write(require(process.argv[1]).version)' "$(manifest_field current)/lib/node_modules/pancode/package.json" 2>/dev/null)" || active_version=""
 		if [ -n "$active_version" ] && ! version_ge "${installed_version%%-*}" "${active_version%%-*}"; then
 			# An older version rejects keys a newer one wrote, and its own doctor --fix exits 1 and changes nothing.
-			fail "candidate checks failed; previous install remains active. PanCode $installed_version is older than the active $active_version, and doctor --fix cannot make it read settings a newer version wrote, whatever the lines above advise. To use $installed_version, remove the keys named above from settings.yaml, then rerun this installer."
+			fail "candidate checks failed; previous install remains active. PanCode $installed_version is older than the active $active_version, and doctor --fix cannot make it read settings a newer version wrote, whatever the lines above advise. To use $installed_version, move the newer settings aside first."
 		fi
 		# The pancode on PATH is still the previous version, and a version that predates a repair reports nothing to fix.
 		fail "candidate checks failed; previous install remains active. Repair with the new version itself, then rerun this installer: \"$node_bin\" \"$entry\" doctor --fix"
 	}
 	if [ "$post_install" = 1 ]; then
 		# --no-gui reaches the post-install too, so it leaves an existing desktop setup and its shortcut alone (F-C17).
-		PANCODE_INSTALL_GUI="$install_gui" "$node_bin" "$entry" upgrade --post-install </dev/null || fail "package is installed, but local initialization needs attention; run: $launcher upgrade --post-install. Previous binary remains available via --rollback."
+		PANCODE_INSTALL_GUI="$install_gui" "$node_bin" "$entry" upgrade --post-install </dev/null || fail "PanCode is installed, but local initialization needs attention; run: $launcher upgrade --post-install. Previous binary remains available via --rollback."
 	fi
-	if version_ge "${installed_version%%-*}" "0.6.2"; then provision_workspace; fi
+	provision_workspace
 	offer_gui
 	warn_about_shadowing_pancode
 	print_next_steps

@@ -9,6 +9,8 @@ const { pathToFileURL } = require("node:url");
 const crypto = require("node:crypto");
 const os = require("node:os");
 const MARK = "# pancode-installer launcher";
+const PACKAGE_NAME = "@akougkas/pancode";
+const SCHEMA = 3;
 
 /** The host id install.sh records in `.install-lock/host`, so it can reclaim a lock this process leaves behind. */
 function installLockHost() {
@@ -163,21 +165,33 @@ function record(root) {
 		["node", "current", "launcher"].some((name) => typeof value[name] !== "string" || !path.isAbsolute(value[name]))
 	)
 		throw new Error(`Incomplete installer manifest: ${file}; expected absolute node, current and launcher paths`);
-	if (![1, 2].includes(value.schema)) throw new Error(`Unsupported installer schema in ${file}`);
+	if (value.schema !== SCHEMA) throw new Error(`Unsupported installer schema in ${file}`);
 	if (
 		value.kind !== "pancode-installer" ||
 		!inside(path.join(root, "versions"), value.current) ||
-		!inside(path.join(root, "runtime"), value.node)
+		value.node !== nodeOf(value.current)
 	)
 		throw new Error(`Invalid installer ownership: ${file}`);
 	if (value.desktopManager && !inside(path.join(root, "versions"), value.desktopManager))
 		throw new Error("Desktop manager is outside owned versions");
 	if (value.previous && !inside(path.join(root, "versions"), value.previous))
 		throw new Error("Previous package is outside owned versions");
-	for (const name of ["previousNode", "launcherNode"])
-		if (value[name] && !inside(path.join(root, "runtime"), value[name]))
-			throw new Error(`${name} is outside owned runtime`);
 	return value;
+}
+
+// Every version directory is one unpacked bundle and carries the Node that runs it.
+function nodeOf(prefix) {
+	return process.platform === "win32" ? path.join(prefix, "node.exe") : path.join(prefix, "bin", "node");
+}
+
+// What the bundle says about itself: its target and the Node it carries.
+function bundleInfo(prefix) {
+	try {
+		const info = JSON.parse(fs.readFileSync(path.join(prefix, "bundle.json"), "utf8"));
+		return { target: String(info.target || ""), node: String(info.node || "") };
+	} catch {
+		return { target: "", node: "" };
+	}
 }
 
 function entry(prefix) {
@@ -269,6 +283,33 @@ function syncBinLaunchers(root, prefix, binDir, launcherNode, recorded) {
 		if (typeof file === "string" && !written.includes(file) && ownedLauncher(file, root))
 			fs.rmSync(file, { force: true });
 	return written;
+}
+
+// Writes the pancode launcher for `node` and returns its path. A POSIX launcher execs its Node, so replacing the
+// file never disturbs a running shell; the Windows launcher is a native exe that reads pancode.launch on each start.
+// Either follows the active version's Node, so prune can collect the version it left.
+function writeLauncher(root, node, launcher) {
+	const bootstrap = bootstrapFor(root);
+	fs.mkdirSync(path.dirname(launcher), { recursive: true });
+	if (process.platform !== "win32") {
+		const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+		atomic(launcher, `#!/bin/sh\n${MARK}\nexec ${quote(node)} ${quote(bootstrap)} launch ${quote(root)} "$@"\n`, 0o755);
+		return launcher;
+	}
+	if (/[%\r\n"]/u.test(node + bootstrap + root + launcher))
+		throw new Error("Windows installer paths cannot contain percent, newline or quote characters");
+	const cmd = path.join(path.dirname(launcher), "pancode.cmd");
+	const exe = installWindowsLauncher(
+		cmd,
+		`${node}\n${quoteWindows(bootstrap)} launch ${quoteWindows(root)}\nutf8-console\n`,
+	);
+	if (exe) return exe;
+	atomic(
+		cmd,
+		`@echo off\r\nsetlocal DisableDelayedExpansion\r\nfor /f "tokens=2 delims=:" %%C in ('chcp') do set "PANCODE_LAUNCHER_CP=%%C"\r\nchcp 65001 >nul\r\nrem ${MARK}\r\n"${node}" "${bootstrap}" launch "${root}" %*\r\nset "PANCODE_LAUNCHER_EXIT=%errorlevel%"\r\nchcp %PANCODE_LAUNCHER_CP% >nul\r\nexit /b %PANCODE_LAUNCHER_EXIT%\r\n`,
+		0o755,
+	);
+	return cmd;
 }
 
 function checkCandidate(node, prefix, postInstall, echo = true) {
@@ -437,7 +478,7 @@ function formatBytes(bytes) {
 	return `${Math.round(bytes / 1e3)} kB`;
 }
 
-// One retention rule for versions/, runtime/ and launchers/ on every platform. The keep set is
+// One retention rule for versions/ and launchers/ on every platform. The keep set is
 // the manifest, the launcher, the GUI service files, running-build and launch receipts, and the
 // process inventory. With a complete inventory everything else goes at once; without one, keep
 // anything younger than seven days and the newest three. Dead local launch receipts are removed.
@@ -453,18 +494,17 @@ function prune(root, options = {}) {
 	// A version whose package.json cannot be read for a reason other than its absence (a
 	// Windows file held open without sharing) is left alone, and said so, rather than skipped silently.
 	const unreadable = [];
-	for (const kind of ["versions", "runtime", "launchers"]) {
+	for (const kind of ["versions", "launchers"]) {
 		const dir = path.join(root, kind);
 		for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
 			if (name.startsWith(".")) continue;
 			const file = path.join(dir, name);
 			const info = fs.lstatSync(file);
 			if (kind === "launchers" ? !info.isFile() || !name.endsWith(".cjs") : !info.isDirectory()) continue;
-			if (kind === "runtime" && !name.startsWith("node-v")) continue;
 			if (kind === "versions") {
 				const owner = packageName(file);
 				if (owner.error) unreadable.push({ kind, name, path: file, error: owner.error });
-				if (owner.name !== "pancode") continue;
+				if (owner.name !== PACKAGE_NAME) continue;
 			}
 			// Service files, session records and /proc carry resolved paths, the manifest the
 			// logical ones; behind a symlinked home both spellings must protect the entry.
@@ -502,11 +542,8 @@ function prune(root, options = {}) {
 	};
 	for (const extra of options.keep ?? []) protect(extra, "being activated");
 	protect(installed?.current, "current");
-	protect(installed?.node, "current");
 	protect(installed?.previous, "previous");
-	protect(installed?.previousNode, "previous");
 	protect(installed?.desktopManager, "desktop manager");
-	protect(installed?.launcherNode, "launcher");
 	const readText = (file, why) => {
 		try {
 			protect(fs.readFileSync(file, "utf8"), why);
@@ -594,7 +631,7 @@ function prune(root, options = {}) {
 	if (!inventory.complete) unproven(inventory.reason);
 	for (const text of inventory.texts) protect(text, "running process");
 	if (proof === false) {
-		for (const kind of ["versions", "runtime", "launchers"]) {
+		for (const kind of ["versions", "launchers"]) {
 			const own = entries.filter((entry) => entry.kind === kind).sort((a, b) => b.mtimeMs - a.mtimeMs);
 			own.forEach((entry, index) => {
 				if (kept.has(entry.path)) return;
@@ -628,7 +665,7 @@ function prune(root, options = {}) {
 		removed.push({ kind: entry.kind, name: entry.name, path: entry.path, bytes });
 	}
 	if (!options.dryRun) {
-		for (const kind of ["versions", "runtime", "launchers"]) {
+		for (const kind of ["versions", "launchers"]) {
 			const dir = path.join(root, kind);
 			for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : [])
 				if (name.startsWith(PRUNE_PREFIX)) {
@@ -667,7 +704,6 @@ function describePrune(result) {
 	};
 	const parts = [
 		count("versions", "unused version", "unused versions"),
-		count("runtime", "runtime", "runtimes"),
 		count("launchers", "launcher helper", "launcher helpers"),
 	].filter(Boolean);
 	const lines = [];
@@ -872,7 +908,7 @@ async function main() {
 	if (action === "rollback") {
 		if (!old?.previous || !inside(path.join(root, "versions"), old.previous))
 			throw new Error("No owned previous install available");
-		const node = old.previousNode || old.node;
+		const node = nodeOf(old.previous);
 		check(node, old.previous, false, false);
 		// Two builds of one -dev version differ only by their prefix, so both labels name it then.
 		const restoredVersion = packageVersion(old.previous);
@@ -885,26 +921,20 @@ async function main() {
 		// A pin follows the operator to the version they rolled back to. Left on the
 		// replaced version, the next upgrade or installer run reinstalled exactly it.
 		const pin = old.versionPin ? packageVersion(old.previous) || old.versionPin : "";
-		const binLaunchers = syncBinLaunchers(
-			root,
-			old.previous,
-			path.dirname(old.launcher),
-			old.launcherNode || node,
-			old.binLaunchers,
-		);
+		const launcher = writeLauncher(root, node, old.launcher);
+		const binLaunchers = syncBinLaunchers(root, old.previous, path.dirname(launcher), node, old.binLaunchers);
+		const bundle = bundleInfo(old.previous);
 		atomic(
 			path.join(root, "install.json"),
 			`${JSON.stringify(
 				{
 					...old,
 					node,
-					nodeVersion: old.previousNodeVersion || old.nodeVersion,
-					nodeBuild: old.previousNodeBuild || old.nodeBuild,
+					nodeVersion: bundle.node,
+					nodeBuild: bundle.target,
 					current: old.previous,
 					previous: old.current,
-					previousNode: old.node,
-					previousNodeVersion: old.nodeVersion,
-					previousNodeBuild: old.nodeBuild,
+					launcher,
 					versionPin: pin,
 					...pinRecord(old, pin, "rollback"),
 					autoUpdate: false,
@@ -922,7 +952,8 @@ async function main() {
 		return;
 	}
 	if (action !== "activate") throw new Error(`Unknown installer action ${action}`);
-	let [node, nodeVersion, nodeBuild, current, launcher, channel, pin, autoUpdate, postInstall, pinSource] = args;
+	let [current, launcher, channel, pin, autoUpdate, postInstall, pinSource] = args;
+	const node = nodeOf(current);
 	if (process.env.PANCODE_BACKGROUND_UPDATE === "1") {
 		if (
 			old?.current !== process.env.PANCODE_BACKGROUND_CURRENT ||
@@ -937,12 +968,9 @@ async function main() {
 		postInstall = "0";
 	}
 	if (autoUpdate === "preserve") autoUpdate = old?.autoUpdate === false && !old?.versionPin ? "0" : "1";
-	if (!inside(path.join(root, "versions"), current) || !inside(path.join(root, "runtime"), node))
-		throw new Error("Candidate is outside owned install directories");
-	if (process.platform === "win32" && /[%\r\n"]/u.test([node, old?.launcherNode, root, launcher].join("")))
-		throw new Error("Windows installer paths cannot contain percent, newline or quote characters");
+	if (!inside(path.join(root, "versions"), current)) throw new Error("Candidate is outside owned install directories");
 	// The candidate is in versions/ but not yet in the manifest.
-	pruneQuietly(root, [current, node], { final: false });
+	pruneQuietly(root, [current], { final: false });
 	const fromVersion = old ? packageVersion(old.current) : "";
 	const toVersion = packageVersion(current);
 	if (channel === "latest" && /^\d+\.\d+\.\d+-/.test(fromVersion) && /^\d+\.\d+\.\d+$/.test(toVersion)) {
@@ -952,46 +980,22 @@ async function main() {
 	}
 	check(node, current, postInstall === "1");
 	// Activation has one commit point: launchers read this manifest on each invocation.
-	const bootstrap = bootstrapFor(root);
-	// A POSIX launcher execs its Node, so replacing the file never disturbs a running shell and
-	// the launcher can follow the new runtime, letting prune collect the old one. cmd.exe rereads
-	// a running .cmd by byte offset, so a Windows launcher keeps its first Node.
-	const launcherNode = process.platform === "win32" ? old?.launcherNode || node : node;
-	const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-	const body =
-		process.platform === "win32"
-			? `@echo off\r\nsetlocal DisableDelayedExpansion\r\nfor /f "tokens=2 delims=:" %%C in ('chcp') do set "PANCODE_LAUNCHER_CP=%%C"\r\nchcp 65001 >nul\r\nrem ${MARK}\r\n"${launcherNode}" "${bootstrap}" launch "${root}" %*\r\nset "PANCODE_LAUNCHER_EXIT=%errorlevel%"\r\nchcp %PANCODE_LAUNCHER_CP% >nul\r\nexit /b %PANCODE_LAUNCHER_EXIT%\r\n`
-			: `#!/bin/sh\n${MARK}\nexec ${quote(launcherNode)} ${quote(bootstrap)} launch ${quote(root)} "$@"\n`;
-	if (process.platform === "win32" && /[%\r\n"]/u.test(launcherNode + bootstrap + root + launcher))
-		throw new Error("Windows installer paths cannot contain percent, newline or quote characters");
-	fs.mkdirSync(path.dirname(launcher), { recursive: true });
-	const exe =
-		process.platform === "win32"
-			? installWindowsLauncher(
-					path.join(path.dirname(launcher), "pancode.cmd"),
-					`${launcherNode}\n${quoteWindows(bootstrap)} launch ${quoteWindows(root)}\nutf8-console\n`,
-				)
-			: null;
-	if (exe) launcher = exe;
-	else atomic(launcher, body, 0o755);
-	const binLaunchers = syncBinLaunchers(root, current, path.dirname(launcher), launcherNode, old?.binLaunchers);
+	launcher = writeLauncher(root, node, launcher);
+	const binLaunchers = syncBinLaunchers(root, current, path.dirname(launcher), node, old?.binLaunchers);
+	const bundle = bundleInfo(current);
 	atomic(
 		path.join(root, "install.json"),
 		`${JSON.stringify(
 			{
-				schema: 2,
+				schema: SCHEMA,
 				kind: "pancode-installer",
 				node,
-				nodeVersion,
-				nodeBuild,
+				nodeVersion: bundle.node,
+				nodeBuild: bundle.target,
 				current,
 				desktopManager: current,
 				previous: old?.current || "",
-				previousNode: old?.node || "",
-				previousNodeVersion: old?.nodeVersion || "",
-				previousNodeBuild: old?.nodeBuild || "",
 				launcher,
-				launcherNode,
 				binLaunchers,
 				channel,
 				manager: process.env.PANCODE_INSTALL_MANAGER || old?.manager || "",

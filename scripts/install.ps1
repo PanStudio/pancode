@@ -1,23 +1,26 @@
-# PanCode installer for Windows: a private Node.js runtime plus the npm
-# package, in your user profile, with no administrator rights and no system Node.
+# PanCode installer for Windows: one verified archive holding PanCode and the
+# Node.js it runs on, unpacked in your user profile, with no administrator
+# rights and no system Node.
 #
 #   irm https://pancode.dev/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://pancode.dev/install.ps1))) -Version 0.6.0
-#   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Package .\pancode-0.6.0.tgz
+#   & ([scriptblock]::Create((irm https://pancode.dev/install.ps1))) -Version 0.9.0
+#   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Bundle .\pancode-0.9.0-win-x64.tar.gz
 #
 # The Windows counterpart of scripts/install.sh, with the same layout so
 # `pancode doctor`, `upgrade` and `uninstall` read both the same way:
-#   <InstallDir>\runtime\node-v<ver>-win-<arch>\node.exe
+#   <InstallDir>\versions\<version>\node.exe
 #   <InstallDir>\versions\<version>\lib\node_modules\pancode
 #   <InstallDir>\install.json
 #   <BinDir>\pancode.exe and pancode.launch
 # The launcher is a small native exe (assets\windows-launcher) that starts the
-# managed Node with your arguments unchanged; a .cmd would pass them through
+# bundled Node with your arguments unchanged; a .cmd would pass them through
 # cmd.exe, which expands %NAME% in them.
-# It downloads the official win-x64 or win-arm64 zip, verifies it against
-# SHASUMS256.txt (and that file's OpenPGP signature when gpg is on PATH), and
-# adds the launcher to the user PATH and the current PowerShell session by
-# default. Use -NoModifyPath (or PANCODE_MODIFY_PATH=0) to opt out.
+# It reads the channel's version from pancode.dev and that release's
+# SHA256SUMS from GitHub, downloads the win-x64 or win-arm64 bundle, verifies
+# its SHA-256, and adds the launcher to the user PATH and the current
+# PowerShell session by default. Use -NoModifyPath (or PANCODE_MODIFY_PATH=0)
+# to opt out. PANCODE_RELEASE_MIRROR names a mirror laid out as
+# <base>/channel/<latest|beta> and <base>/v<version>/<release asset>.
 #
 # Native Windows is best effort for PanCode; Linux, macOS and WSL are the
 # primary platforms.
@@ -28,9 +31,7 @@
 param(
 	[string]$Version = $env:PANCODE_VERSION,
 	[string]$Channel = $(if ($env:PANCODE_CHANNEL) { $env:PANCODE_CHANNEL } else { "latest" }),
-	[string]$Package = $env:PANCODE_PACKAGE,
-	[string]$NodeVersion = $(if ($env:PANCODE_NODE_VERSION) { $env:PANCODE_NODE_VERSION } else { "24" }),
-	[string]$NodeZip = $env:PANCODE_NODE_TARBALL,
+	[string]$Bundle = $env:PANCODE_BUNDLE,
 	[string]$InstallDir = $env:PANCODE_INSTALL_DIR,
 	[string]$BinDir = $env:PANCODE_BIN_DIR,
 	[switch]$IncludeClaudeSdk,
@@ -41,7 +42,6 @@ param(
 	[switch]$Rollback,
 	[switch]$LeavePrerelease,
 	[switch]$NoPostInstall,
-	[switch]$RefreshRuntime,
 	[switch]$Force,
 	[switch]$DryRun
 )
@@ -50,15 +50,14 @@ function Install-Pancode {
 	param($Options)
 	$ErrorActionPreference = "Stop"
 	$ProgressPreference = "SilentlyContinue"
-	# Windows PowerShell 5.1 defaults to TLS 1.0, which nodejs.org refuses.
+	# Windows PowerShell 5.1 defaults to TLS 1.0, which GitHub refuses.
 	[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-	$PackageName = "pancode"
-	# Mirrors package.json engines.node.
-	$NodeMin = [version]"22.19.0"
+	$PackageName = "@akougkas/pancode"
 	$LauncherMark = "# pancode-installer launcher"
-	$OfficialBase = if ($env:PANCODE_NODE_MIRROR) { $env:PANCODE_NODE_MIRROR.TrimEnd("/") } else { "https://nodejs.org/dist" }
-	$KeyringUrl = "https://github.com/nodejs/release-keys/raw/HEAD/gpg-only-active-keys/pubring.kbx"
+	$mirror = if ($env:PANCODE_RELEASE_MIRROR) { $env:PANCODE_RELEASE_MIRROR.TrimEnd("/") } else { "" }
+	$ReleaseBase = if ($mirror) { $mirror } else { "https://github.com/akougkas/pancode/releases/download" }
+	$ChannelBase = if ($mirror) { "$mirror/channel" } else { "https://pancode.dev/channel" }
 
 	function Say([string]$Text) { Write-Host "[install] $Text" }
 	function Ok([string]$Text) { Write-Host "[install] ok: $Text" }
@@ -77,8 +76,8 @@ function Install-Pancode {
 	$spec = $Options.Channel
 	if ($Options.Version) {
 		$v = $Options.Version -replace "^v(?=\d)", ""
-		if ($v -notmatch "^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$" -and $v -notmatch "^[a-z][a-z0-9-]{0,31}$") {
-			Fail "invalid -Version '$($Options.Version)'; use an exact version such as 0.6.0 or a dist-tag such as beta"
+		if ($v -notmatch "^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$" -and $v -notin @("latest", "beta")) {
+			Fail "invalid -Version '$($Options.Version)'; use an exact version such as 0.9.0, or latest or beta"
 		}
 		$spec = $v
 	}
@@ -104,11 +103,11 @@ function Install-Pancode {
 	$launcher = Join-Path $binDir "pancode.cmd"
 	$exeLauncher = Join-Path $binDir "pancode.exe"
 	$exeLaunchFile = Join-Path $binDir "pancode.launch"
-	$installSpec = if ($Options.Package) { Get-AbsolutePath $Options.Package } else { "$PackageName@$spec" }
-	if ($Options.Package -and -not (Test-Path -LiteralPath $installSpec)) { Fail "-Package $installSpec does not exist" }
+	$bundleSource = if ($Options.Bundle) { Get-AbsolutePath $Options.Bundle } else { "PanCode $spec for $build from $ReleaseBase" }
+	if ($Options.Bundle -and -not (Test-Path -LiteralPath $bundleSource)) { Fail "-Bundle $bundleSource does not exist" }
 
 	Say "platform:     Windows $build (PowerShell $($PSVersionTable.PSVersion))"
-	Say "package:      $installSpec"
+	Say "bundle:       $bundleSource"
 	Say "install root: $installRoot"
 	Say "launcher:     $exeLauncher"
 
@@ -127,7 +126,7 @@ function Install-Pancode {
 			Ok "dry run complete; nothing was changed"
 			return
 		}
-		Say "would install Node $($Options.NodeVersion) ($build) and run its npm: npm install --prefix $installRoot\versions\<version>\lib $installSpec"
+		Say "would unpack the bundle into $installRoot\versions\<version>"
 		Say "would then install the pinned herdr that hosts PanCode's terminal panes: pancode tools install herdr"
 		Ok "dry run complete; nothing was downloaded or changed"
 		return
@@ -193,185 +192,87 @@ function Install-Pancode {
 	}
 	$owner = Join-Path $installRoot ".installer-owner"
 	if (-not (Test-Path -LiteralPath (Join-Path $installRoot "install.json")) -and -not (Test-Path -LiteralPath $owner)) {
-		if ((Test-Path -LiteralPath (Join-Path $installRoot "runtime")) -or (Test-Path -LiteralPath (Join-Path $installRoot "versions"))) { Fail "refusing to claim existing runtime/versions directories without installer ownership" }
+		if (Test-Path -LiteralPath (Join-Path $installRoot "versions")) { Fail "refusing to claim an existing versions directory without installer ownership" }
 	}
 	[IO.File]::WriteAllText($owner, "pancode-installer")
-	New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "runtime"), (Join-Path $installRoot "versions"), $binDir | Out-Null
+	New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "versions"), $binDir | Out-Null
 	$work = Join-Path $installRoot (".work." + [guid]::NewGuid().ToString("N").Substring(0, 8))
 	New-Item -ItemType Directory -Force -Path $work | Out-Null
-		# Resolve the Node version: an exact x.y.z passes through, a major picks
-		# the newest release that ships this build's zip.
-		$nodeVersion = $Options.NodeVersion -replace "^v", ""
-		$zipName = $null
-		if ($Options.NodeZip) {
-			$zipName = Split-Path -Leaf $Options.NodeZip
-			if ($zipName -notmatch "^node-v(\d+\.\d+\.\d+)-(win-[a-z0-9]+)\.zip$") { Fail "-NodeZip must keep its release file name, such as node-v24.11.1-win-x64.zip" }
-			$nodeVersion = $Matches[1]
-			if ($Matches[2] -ne $build) { Fail "-NodeZip architecture $($Matches[2]) does not match $build" }
-		} elseif ($nodeVersion -notmatch "^\d+\.\d+\.\d+$") {
-			if ($nodeVersion -notmatch "^\d+$") { Fail "invalid Node version '$nodeVersion'; use a major such as 24 or an exact version" }
-			$index = Join-Path $work "index.json"
-			Get-File "$OfficialBase/index.json" $index
-			$release = (Get-Content -LiteralPath $index -Raw | ConvertFrom-Json) |
-				Where-Object { $_.version -like "v$nodeVersion.*" -and $_.files -contains "$build-zip" } |
-				Select-Object -First 1
-			if (-not $release) { Fail "no Node.js $nodeVersion.x release at $OfficialBase ships $build" }
-			$nodeVersion = $release.version.TrimStart("v")
-		}
-		if ([version]$nodeVersion -lt $NodeMin) { Fail "Node $nodeVersion is older than PanCode's floor $NodeMin" }
-		if (-not $zipName) { $zipName = "node-v$nodeVersion-$build.zip" }
-		$runtimeDir = Join-Path $installRoot "runtime\node-v$nodeVersion-$build"
-		$node = Join-Path $runtimeDir "node.exe"
-
-		if ((Test-Path -LiteralPath $node) -and -not $Options.RefreshRuntime) {
-			Ok "reusing Node v$nodeVersion at $runtimeDir"
-		} else {
-			$zip = Join-Path $work $zipName
-			$sums = Join-Path $work "SHASUMS256.txt"
-			if ($Options.NodeZip) {
-				Copy-Item -LiteralPath $Options.NodeZip -Destination $zip
-				$localSums = if ($env:PANCODE_NODE_SHASUMS) { $env:PANCODE_NODE_SHASUMS } else { Join-Path (Split-Path -Parent $Options.NodeZip) "SHASUMS256.txt" }
-				if (-not (Test-Path -LiteralPath $localSums)) { Fail "no SHASUMS256.txt next to $($Options.NodeZip); copy it from the same release or set PANCODE_NODE_SHASUMS" }
-				Copy-Item -LiteralPath $localSums -Destination $sums
-				if (Test-Path -LiteralPath "$localSums.asc") { Copy-Item -LiteralPath "$localSums.asc" -Destination "$sums.asc" }
-			} else {
-				Say "downloading $OfficialBase/v$nodeVersion/$zipName"
-				Get-File "$OfficialBase/v$nodeVersion/$zipName" $zip
-				Get-File "$OfficialBase/v$nodeVersion/SHASUMS256.txt" $sums
-				try { Get-File "$OfficialBase/v$nodeVersion/SHASUMS256.txt.asc" "$sums.asc" } catch { Remove-Item -LiteralPath "$sums.asc" -ErrorAction SilentlyContinue }
-			}
-			$signed = $false
-			$gpgv = Get-Command gpgv -ErrorAction SilentlyContinue
-			$unsignedReason = if (-not $gpgv) { "no gpgv on PATH" } elseif (-not (Test-Path -LiteralPath "$sums.asc")) { "no SHASUMS256.txt.asc signature" } else { "" }
-			if ($gpgv -and (Test-Path -LiteralPath "$sums.asc")) {
-				$keyring = if ($env:PANCODE_NODE_KEYRING) { $env:PANCODE_NODE_KEYRING } else { Join-Path $work "pubring.kbx" }
-				if (-not $env:PANCODE_NODE_KEYRING) { try { Get-File $KeyringUrl $keyring } catch { $keyring = $null; $unsignedReason = "the Node.js release keys could not be fetched" } }
-				if ($keyring) {
-					$unsignedReason = "gpgv could not check the signature"
-					$status = & $gpgv.Source --status-fd 1 --keyring $keyring --output "$sums.verified" "$sums.asc" 2>"$sums.gpg.err"
-					# A key outside the release keyring is definitive; a gpgv that cannot read the keyring is not. That
-					# gpgv still reads the signature packet (ERRSIG, NO_PUBKEY), reports no NODATA, and its error is about
-					# the keyring, not on a line checking the signature.
-					$errText = (@(Get-Content -LiteralPath "$sums.gpg.err" -ErrorAction SilentlyContinue) | Where-Object { $_ -notmatch "(?i)signature" }) -join "`n"
-					$readSignature = [bool]($status -match "ERRSIG|NO_PUBKEY") -and -not [bool]($status -match "NODATA")
-					$toolError = $readSignature -and ($errText -match "(?i)keyblock resource|keyring|unsupported|invalid packet")
-					# From nodejs.org itself, anything else (no OpenPGP data, no signature packet) is as definitive as no signature.
-					if (($status -match "NO_PUBKEY") -and -not $toolError) { $unsignedReason = "SHASUMS256.txt is signed by a key outside the Node.js release keyring" }
-					elseif (-not $toolError -and -not $Options.NodeZip -and $OfficialBase -eq "https://nodejs.org/dist") { $unsignedReason = "the SHASUMS256.txt.asc nodejs.org served is not a signature gpgv could verify" }
-					if ($status -match "BADSIG") { Fail "the OpenPGP signature on SHASUMS256.txt is BAD; refusing to install" }
-					if ($status -match "VALIDSIG") { $sums = "$sums.verified"; $signed = $true; Ok "SHASUMS256.txt signature verified against the Node.js release keys" }
-				}
-			}
-			if (-not $signed) {
-				if ($env:PANCODE_REQUIRE_SIGNATURE -eq "1") { Fail "PANCODE_REQUIRE_SIGNATURE=1, but no verified signature covers SHASUMS256.txt" }
-				# A signature that could be checked and was missing or did not verify fails closed unless explicitly waived.
-				# Definitive only: nodejs.org itself served no signature or one that is not a valid signature, or an unknown key signed it.
-				$officialOrigin = -not $Options.NodeZip -and $OfficialBase -eq "https://nodejs.org/dist"
-				if ($officialOrigin -and -not (Test-Path -LiteralPath "$sums.asc")) { $unsignedReason = "nodejs.org served no SHASUMS256.txt.asc signature" }
-				$checkable = $unsignedReason -in @("nodejs.org served no SHASUMS256.txt.asc signature", "SHASUMS256.txt is signed by a key outside the Node.js release keyring", "the SHASUMS256.txt.asc nodejs.org served is not a signature gpgv could verify")
-				if ($checkable -and $env:PANCODE_REQUIRE_SIGNATURE -ne "0") { Fail "$unsignedReason; refusing to install. PANCODE_REQUIRE_SIGNATURE=0 relies on the checksum alone." }
-				Say "$unsignedReason; verifying the checksum from SHASUMS256.txt over HTTPS"
-			}
-			$expected = (Get-Content -LiteralPath $sums | Where-Object { $_ -match "^([0-9a-f]{64})\s+$([regex]::Escape($zipName))$" } | Select-Object -First 1) -replace "\s.*$", ""
-			if (-not $expected) { Fail "$zipName is not listed in SHASUMS256.txt; refusing to install it" }
-			$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
-			if ($actual -ne $expected) { Fail "checksum mismatch for $zipName (expected $expected, got $actual); refusing to install it" }
-			Ok "checksum verified for $zipName"
-
-			$unpack = Join-Path $work "runtime"
-			Remove-Item -LiteralPath $unpack -Recurse -Force -ErrorAction SilentlyContinue
-			New-Item -ItemType Directory -Force -Path $unpack | Out-Null
-			# bsdtar ships with Windows 10 1803 and later and is far faster than Expand-Archive.
-			$tar = Join-Path $env:SystemRoot "System32\tar.exe"
-			if (Test-Path -LiteralPath $tar) { & $tar -xf $zip -C $unpack; if ($LASTEXITCODE -ne 0) { Fail "could not unpack $zipName" } }
-			else { Expand-Archive -LiteralPath $zip -DestinationPath $unpack -Force }
-			if (Test-Path -LiteralPath $runtimeDir) { $runtimeDir = "$runtimeDir-$PID"; $node = Join-Path $runtimeDir "node.exe" }
-			Move-Item -LiteralPath (Join-Path $unpack "node-v$nodeVersion-$build") -Destination $runtimeDir
-			Remove-Item -LiteralPath $unpack -Recurse -Force -ErrorAction SilentlyContinue
-		}
-		$ran = & $node -e "process.stdout.write(process.versions.node)"
-		if ($LASTEXITCODE -ne 0 -or -not $ran) { Fail "the managed Node at $node does not run" }
-		Ok "Node v$ran runs ($build)"
-
-		# Retain every runtime and package prefix while old sessions may still use them.
+		$tar = Join-Path $env:SystemRoot "System32\tar.exe"
+		if (-not (Test-Path -LiteralPath $tar)) { Fail "tar.exe was not found in $env:SystemRoot\System32; PanCode's installer needs Windows 10 1803 or later" }
+		# Retain every installed version while old sessions may still use it.
 		$manifestPath = Join-Path $installRoot "install.json"
 		$old = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } else { $null }
 		$previous = if ($old -and $old.current -and (Test-Path -LiteralPath $old.current)) { $old.current } else { "" }
-		$npmCli = Join-Path $runtimeDir "node_modules\npm\bin\npm-cli.js"
-		if (-not $Options.Package -and $spec -in @("latest", "beta")) {
-			$tagsFile = Join-Path $work "dist-tags.json"
-			$savedNotifier = $env:npm_config_update_notifier
-			$savedFund = $env:npm_config_fund
-			$env:npm_config_update_notifier = "false"; $env:npm_config_fund = "false"
-			# Resolved from $work with --prefix there, so a project .npmrc in the operator's directory cannot pick the registry; user and global npmrc still apply.
-			Push-Location -LiteralPath $work
-			try { $tags = & $node $npmCli view $PackageName dist-tags --json --loglevel=error --prefix $work }
-			finally { Pop-Location; $env:npm_config_update_notifier = $savedNotifier; $env:npm_config_fund = $savedFund }
-			if ($LASTEXITCODE -ne 0) { Fail "cannot resolve the $spec channel from the registry" }
-			[IO.File]::WriteAllText($tagsFile, ($tags -join "`n"))
-			$resolve = 'const fs=require("node:fs"),semver=require(process.argv[2]+"/node_modules/semver");const tags=JSON.parse(fs.readFileSync(process.argv[3],"utf8")),c=process.argv[4];const tracks=c==="beta"?["beta","latest"]:["latest"];const versions=tracks.map(t=>tags[t]).filter(v=>semver.valid(v));if(!versions.length)process.exit(1);process.stdout.write(versions.sort(semver.rcompare)[0]);'
-			$resolverFile = Join-Path $work "resolve-channel.cjs"
-			[IO.File]::WriteAllText($resolverFile, $resolve)
-			$resolved = & $node $resolverFile (Join-Path $runtimeDir "node_modules\npm") $tagsFile $spec
-			if ($LASTEXITCODE -ne 0) { Fail "no published version on $spec or its stable fallback" }
-			if ($previous) {
-				$activeVersion = $null
-				try { $activeVersion = [string](Get-Content -LiteralPath (Join-Path $previous "lib\node_modules\pancode\package.json") -Raw | ConvertFrom-Json).version } catch { $activeVersion = $null }
-				if ($activeVersion) {
-					# "older", or "prerelease" when a stable release is older than an active pre-release.
-					$downgrade = & $node -e 'const s=require(process.argv[1]+"/node_modules/semver"),r=process.argv[2],a=process.argv[3];process.stdout.write(s.valid(a)&&s.lt(r,a)?(s.prerelease(a)&&!s.prerelease(r)?"prerelease":"older"):"")' (Join-Path $runtimeDir "node_modules\npm") $resolved $activeVersion
-					if ($LASTEXITCODE -ne 0) { $downgrade = "" }
-					# Only an explicit request (`pancode upgrade --channel latest` passes -LeavePrerelease)
-					# moves down; a recorded channel or a registry the operator did not choose never does.
-					if ($downgrade -eq "prerelease" -and $spec -eq "latest") {
-						if (-not $Options.LeavePrerelease) { Fail "the $spec channel resolved to $resolved, older than the active $activeVersion; the installation was left unchanged. To leave the pre-release for stable $resolved, pass -LeavePrerelease; to return to the previous install, use -Rollback." }
-						Say "leaving the pre-release $activeVersion for stable $resolved"
-					} elseif ($downgrade) { Fail "the $spec channel resolved to $resolved, older than the active $activeVersion; the installation was left unchanged. To install $resolved, pass -Version $resolved; to return to the previous install, use -Rollback." }
+		if ($Options.Bundle) {
+			$bundleFile = $bundleSource
+		} else {
+			$resolved = $spec
+			if ($spec -in @("latest", "beta")) {
+				$channelFile = Join-Path $work "channel"
+				try { Get-File "$ChannelBase/$spec" $channelFile } catch { Fail "could not read $ChannelBase/$spec; check the network or proxy (HTTPS_PROXY), pass -Version <exact version>, or set PANCODE_RELEASE_MIRROR" }
+				$resolved = ([string](Get-Content -LiteralPath $channelFile -TotalCount 1)).Trim()
+				if ($resolved -notmatch "^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") { Fail "$ChannelBase/$spec does not name a version" }
+				if ($previous) {
+					$activeVersion = $null
+					try { $activeVersion = [string](Get-Content -LiteralPath (Join-Path $previous "lib\node_modules\pancode\package.json") -Raw | ConvertFrom-Json).version } catch { $activeVersion = $null }
+					if ($activeVersion) {
+						# The active install's own Node and npm's SemVer decide: "older", or "prerelease" when a
+						# stable release is older than an active pre-release.
+						$downgrade = & (Join-Path $previous "node.exe") -e 'const s=require(process.argv[1]),r=process.argv[2],a=process.argv[3];process.stdout.write(s.valid(a)&&s.lt(r,a)?(s.prerelease(a)&&!s.prerelease(r)?"prerelease":"older"):"")' (Join-Path $previous "node_modules\npm\node_modules\semver") $resolved $activeVersion
+						if ($LASTEXITCODE -ne 0) { $downgrade = "" }
+						# Only an explicit request (`pancode upgrade --channel latest` passes -LeavePrerelease)
+						# moves down; a recorded channel never does.
+						if ($downgrade -eq "prerelease" -and $spec -eq "latest") {
+							if (-not $Options.LeavePrerelease) { Fail "the $spec channel resolved to $resolved, older than the active $activeVersion; the installation was left unchanged. To leave the pre-release for stable $resolved, pass -LeavePrerelease; to return to the previous install, use -Rollback." }
+							Say "leaving the pre-release $activeVersion for stable $resolved"
+						} elseif ($downgrade) { Fail "the $spec channel resolved to $resolved, older than the active $activeVersion; the installation was left unchanged. To install $resolved, pass -Version $resolved; to return to the previous install, use -Rollback." }
+					}
 				}
+				Say "resolved $spec to $resolved"
 			}
-			$installSpec = "$PackageName@$resolved"
-			Say "resolved $spec to $resolved"
+			$asset = "pancode-$resolved-$build.tar.gz"
+			$sums = Join-Path $work "SHA256SUMS"
+			try { Get-File "$ReleaseBase/v$resolved/SHA256SUMS" $sums } catch { Fail "could not read $ReleaseBase/v$resolved/SHA256SUMS; PanCode $resolved may not exist, or the network or proxy (HTTPS_PROXY) blocks it" }
+			$expected = (Get-Content -LiteralPath $sums | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($asset))$" } | Select-Object -First 1) -replace "\s.*$", ""
+			if (-not $expected) { Fail "PanCode $resolved ships no $build bundle" }
+			$bundleFile = Join-Path $work $asset
+			Say "downloading $asset"
+			Get-File "$ReleaseBase/v$resolved/$asset" $bundleFile
+			$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleFile).Hash.ToLowerInvariant()
+			if ($actual -ne $expected) { Fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed" }
+			Ok "verified $asset (sha256 $expected)"
 		}
 		$staging = Join-Path $installRoot "versions\.staging-$PID"
-		New-Item -ItemType Directory -Force -Path (Join-Path $staging "lib") | Out-Null
-		$npmArgs = @($npmCli, "install", "--prefix", (Join-Path $staging "lib"), "--no-save", "--loglevel=error")
-		if (-not $Options.IncludeClaudeSdk) { $npmArgs += "--omit=optional" } else { $npmArgs += "--include=optional" }
-		$npmArgs += $installSpec
-		# npm misparses UNC tarball arguments. Stage local packages on the install volume first.
-		if ($Options.Package) {
-			$localPackage = Join-Path $work "candidate.tgz"
-			Copy-Item -LiteralPath $installSpec -Destination $localPackage
-			$installSpec = $localPackage
-			$npmArgs[$npmArgs.Length - 1] = $installSpec
-		}
-		Say "installing $installSpec with the npm bundled in Node v$nodeVersion"
-		$savedPath = $env:Path
-		$env:Path = "$runtimeDir;$env:Path"
-		$env:npm_config_update_notifier = "false"; $env:npm_config_fund = "false"; $env:npm_config_audit = "false"
-		try { & $node @npmArgs } finally { $env:Path = $savedPath }
-		if ($LASTEXITCODE -ne 0) { Fail "npm could not install $installSpec (network, proxy via HTTPS_PROXY, npm_config_registry, or disk space)" }
+		New-Item -ItemType Directory -Force -Path $staging | Out-Null
+		& $tar -xzf $bundleFile -C $staging
+		if ($LASTEXITCODE -ne 0) { Fail "could not unpack $bundleFile under $installRoot (a full disk, or not a PanCode bundle)" }
 		$pkgJson = Join-Path $staging "lib\node_modules\pancode\package.json"
+		if (-not (Test-Path -LiteralPath (Join-Path $staging "node.exe")) -or -not (Test-Path -LiteralPath $pkgJson)) { Fail "$bundleFile is not a PanCode bundle for Windows" }
+		$ran = & (Join-Path $staging "node.exe") -e "process.stdout.write(process.versions.node)"
+		if ($LASTEXITCODE -ne 0 -or -not $ran) { Fail "the bundled Node in $bundleFile does not run" }
+		Ok "Node v$ran runs ($build)"
 		$pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
-		if ($pkg.name -ne $PackageName) { Fail "npm finished, but $pkgJson is not $PackageName" }
-		if ([version](($pkg.version -split '-')[0]) -lt [version]"0.6.0") { Fail "Native Windows managed lifecycle requires 0.6.0 or later; registry returned $($pkg.version). Previous install and launcher remain active. No package has been published by this installer." }
+		if ($pkg.name -ne $PackageName) { Fail "$bundleFile does not hold the $PackageName package" }
 		$final = Join-Path $installRoot "versions\$($pkg.version)"
 		if (Test-Path -LiteralPath $final) { $final = "$final-$(Get-Date -Format yyyyMMddHHmmss)-$PID" }
 		Move-Item -LiteralPath $staging -Destination $final
+		$node = Join-Path $final "node.exe"
 		$entry = Join-Path $final "lib\node_modules\pancode\dist\cli\index.js"
 		if ($Options.IncludeClaudeSdk) {
 			& $node $entry tools install claude-sdk
 			if ($LASTEXITCODE -ne 0) { Fail "Claude SDK provisioning failed; previous launcher remains active." }
 		}
-		Ok "installed $PackageName $($pkg.version)"
+		Ok "installed PanCode $($pkg.version)"
 
 		$helper = Join-Path $final "lib\node_modules\pancode\scripts\native-install.cjs"
 		if (-not (Test-Path -LiteralPath $helper)) { Fail "candidate lacks lifecycle helper; previous install remains active. Run: pancode doctor --fix" }
-		$pin = if ($Options.Package -or $Options.Version -match "^v?\d+\.\d+\.\d+") { [string]$pkg.version } else { "-" }
+		$pin = if ($Options.Bundle -or $Options.Version -match "^v?\d+\.\d+\.\d+") { [string]$pkg.version } else { "-" }
 		$auto = if ($Options.NoAutoUpdate -or $env:PANCODE_AUTO_UPDATE -eq "0") { "0" } elseif ($env:PANCODE_AUTO_UPDATE -eq "1") { "1" } else { "preserve" }
 		if ($Options.AutoUpdate) { $auto = "1" }
 		$post = if ($Options.NoPostInstall) { "0" } else { "1" }
-		$pinSource = if ($Options.Package) { "package-file" } else { "version-flag" }
-		& $node $helper activate $installRoot $node $nodeVersion $build $final $launcher $Options.Channel $pin $auto $post $pinSource
+		$pinSource = if ($Options.Bundle) { "bundle-file" } else { "version-flag" }
+		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource
 		# The pancode on PATH is still the previous version, and a version that predates a repair reports nothing to fix.
 		if ($LASTEXITCODE -ne 0) { New-Item -ItemType File -Force -Path (Join-Path $final ".pancode-refused-candidate") | Out-Null }
 		if ($LASTEXITCODE -ne 0) {
@@ -449,20 +350,18 @@ function Install-Pancode {
 		}
 		# The installed binary computes the next step for this home: found keys and servers, or the route in use.
 		$next = $null
-		if ([version](($pkg.version -split '-')[0]) -ge [version]"0.7.1") {
-			$savedPreference = $ErrorActionPreference
-			$ErrorActionPreference = "Continue"
-			try { $next = & $node $entry setup --next 2>$null; if ($LASTEXITCODE -ne 0) { $next = $null } } catch { $next = $null } finally { $ErrorActionPreference = $savedPreference }
-		}
+		$savedPreference = $ErrorActionPreference
+		$ErrorActionPreference = "Continue"
+		try { $next = & $node $entry setup --next 2>$null; if ($LASTEXITCODE -ne 0) { $next = $null } } catch { $next = $null } finally { $ErrorActionPreference = $savedPreference }
 		if ($next) { $next | ForEach-Object { Write-Host $_ } } else { Write-Host "Run: $run" }
 		# The background service is a separate step: `pancode gui background install` adds the logon task.
 		Write-Host "Desktop app: $run gui"
 		# Last, so the command a user copies from the bottom is one that runs as printed.
 		if (-not (Path-Contains $env:Path $binDir)) { Write-Host "$binDir is not on this terminal's PATH. Until it is, run: $run" }
 	} finally {
-		# Stopping this script (Ctrl+C, a quitting session) leaves the npm child
-		# and its descendants running and writing into staging; end the whole
-		# tree before the lock and staging go (#436). Untested: no pwsh here.
+		# Stopping this script (Ctrl+C, a quitting session) leaves tar or a
+		# candidate check running and writing into staging; end the whole
+		# tree before the lock and staging go (#436).
 		Get-CimInstance Win32_Process -Filter "ParentProcessId=$PID" -ErrorAction SilentlyContinue |
 			ForEach-Object { & taskkill.exe /T /F /PID $_.ProcessId 2>$null | Out-Null }
 		Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
@@ -475,10 +374,10 @@ function Install-Pancode {
 $InvokedAsFile = [bool]$MyInvocation.MyCommand.Path
 try {
 	Install-Pancode -Options ([pscustomobject]@{
-		Version = $Version; Channel = $Channel; Package = $Package; NodeVersion = $NodeVersion; NodeZip = $NodeZip
+		Version = $Version; Channel = $Channel; Bundle = $Bundle
 		InstallDir = $InstallDir; BinDir = $BinDir; IncludeClaudeSdk = [bool]$IncludeClaudeSdk; AddToPath = [bool]$AddToPath
 		NoModifyPath = [bool]$NoModifyPath; NoAutoUpdate = [bool]$NoAutoUpdate; AutoUpdate = [bool]$AutoUpdate; Rollback = [bool]$Rollback
-		LeavePrerelease = [bool]$LeavePrerelease; NoPostInstall = [bool]$NoPostInstall; RefreshRuntime = [bool]$RefreshRuntime; Force = [bool]$Force; DryRun = [bool]$DryRun
+		LeavePrerelease = [bool]$LeavePrerelease; NoPostInstall = [bool]$NoPostInstall; Force = [bool]$Force; DryRun = [bool]$DryRun
 	})
 } catch {
 	# An installer refusal is one line with its fix, as on Linux; anything else keeps its position for a bug report.
