@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ExitSummaryStyle, OutputStyle } from "../core/defaults.js";
-import { formatFooterTokens } from "../core/display-units.js";
 import { formatCount } from "../core/format-time.js";
 import { tierPolicy } from "../core/presentation-tier.js";
 import { USAGE_NOT_MEASURED } from "../core/views/usage-words.js";
@@ -296,7 +295,7 @@ function autonomyFacts(snapshot: ExitSummarySnapshot, tier: OutputStyle): string
 			);
 		if (total > 0) facts.push(countLabel(total, "open decision"));
 		if (tierPolicy(tier).evidence) {
-			facts.push(report.confinement, `${formatFooterTokens(report.usage.tokens)} cap tokens`);
+			facts.push(report.confinement, `${formatCount(report.usage.tokens)} cap tokens`);
 			if (total === 0) facts.push("no open decisions");
 		}
 		if (tierPolicy(tier).provenance) {

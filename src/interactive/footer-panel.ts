@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { formatFooterTokens } from "../core/display-units.js";
 import type { JobRecord } from "../core/job-types.js";
 import { jobPollFailure } from "../core/job-types.js";
 import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
@@ -19,8 +18,6 @@ export const ACTIVE_DISPATCH_STATUSES: ReadonlySet<DispatchBoardStatus> = new Se
 	"stale",
 ]);
 export const FAILED_DISPATCH_STATUSES: ReadonlySet<DispatchBoardStatus> = new Set(["failed", "aborted", "dead"]);
-
-export { formatFooterTokens };
 
 /** Run counts only: tokens are the read model's to total, and the footer already shows the session's (#434 §11.3). */
 function dispatchStatusCounts(rows: ReadonlyArray<DispatchBoardRow>): {
