@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { ok, rejects, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
 import { AcpRequestError } from "../../src/engine/acp/errors.js";
@@ -30,6 +30,8 @@ function hangingChat(): AcpServerChat & { release: () => void } {
 }
 
 const CATALOG = { version: 1 as const, commands: [] };
+const PROMPTS = [{ name: "review", description: "Review the diff" }];
+const EXTENSION_COMMANDS = [{ name: "ext:fixture:inspect", description: "Inspect the fixture" }];
 
 function control(calls: string[]) {
 	return {
@@ -42,6 +44,8 @@ function control(calls: string[]) {
 			return { level: "info" as const, lines: ["ran"] };
 		},
 		injectsUserTurn: (command: unknown) => command === "share",
+		prompts: () => PROMPTS,
+		extensionCommands: () => EXTENSION_COMMANDS,
 		capability: {
 			version: 1 as const,
 			list: "_pancode/commands/list",
@@ -88,8 +92,10 @@ describe("contracts/acp exposes the operator command catalog only when one is wi
 		strictEqual(init.agentCapabilities._meta["pancode/commands"]?.list, "_pancode/commands/list");
 		strictEqual(init.agentCapabilities._meta["pancode/commands"]?.count, undefined);
 		const session = (await peer.call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
-		strictEqual(await peer.call("_pancode/commands/list", {}), CATALOG);
-		await peer.call("_pancode/commands/list", {});
+		// The host's catalog plus the prompts and extension commands, which are read per call.
+		const listed = { ...CATALOG, prompts: PROMPTS, extensionCommands: EXTENSION_COMMANDS };
+		deepStrictEqual(await peer.call("_pancode/commands/list", {}), listed);
+		deepStrictEqual(await peer.call("_pancode/commands/list", {}), listed);
 		strictEqual(calls.filter((entry) => entry === "catalog").length, 1);
 		const result = (await peer.call("_pancode/commands/invoke", {
 			sessionId: session.sessionId,
