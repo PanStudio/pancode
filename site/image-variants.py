@@ -128,9 +128,9 @@ def generate_icons():
     # App icons set the stone at 80% on a black ground (DESIGN.md, Mark); only favicons stay transparent.
     for size in ICON_SIZES:
         fit(size, .8, (*black, 255)).save(SITE / f"assets/responsive/pancode-icon-{size}.png", optimize=True)
-    # A maskable icon is cropped to a circle by the platform: a full black ground,
-    # with the glyph inside the central safe zone.
-    fit(512, .8, (*black, 255)).save(SITE / "assets/responsive/pancode-icon-maskable-512.png", optimize=True)
+    # A maskable icon is cropped to a circle by the platform: a full black ground, with every painted
+    # pixel inside the safe circle of radius 40% of the canvas (check() measures it).
+    fit(512, .74, (*black, 255)).save(SITE / "assets/responsive/pancode-icon-maskable-512.png", optimize=True)
     # The 16 pixel image takes the small cut, whose wider channel survives at that size.
     small = [fit(48, 1), fit(32, 1), fit(16, 1, source=small_cut)]
     small[0].save(SITE / "assets/responsive/favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)], append_images=small[1:])
@@ -148,8 +148,13 @@ def check():
     for size in ICON_SIZES:
         if Image.open(SITE / f"assets/responsive/pancode-icon-{size}.png").size != (size, size):
             raise ValueError("square application icon dimensions differ")
-    if Image.open(SITE / "assets/responsive/pancode-icon-maskable-512.png").size != (512, 512):
+    maskable = Image.open(SITE / "assets/responsive/pancode-icon-maskable-512.png").convert("RGB")
+    if maskable.size != (512, 512):
         raise ValueError("maskable application icon dimensions differ")
+    pixels = maskable.load()
+    reach = max((x + .5 - 256) ** 2 + (y + .5 - 256) ** 2 for y in range(512) for x in range(512) if max(pixels[x, y]) >= 100)
+    if reach > (512 * .4) ** 2:
+        raise ValueError("maskable application icon paints outside its safe circle")
     if sorted(Image.open(SITE / "assets/responsive/favicon.ico").info["sizes"]) != [(16, 16), (32, 32), (48, 48)]:
         raise ValueError("favicon.ico must carry 16, 32 and 48 pixel images")
     social = json.loads(SOCIAL_MANIFEST.read_text())
