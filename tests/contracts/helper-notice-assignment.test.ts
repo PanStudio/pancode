@@ -11,7 +11,7 @@ import type { ChatLoopEvent } from "../../src/session-control/chat-loop.js";
 const identity = {
 	agentId: "scout",
 	agentAudience: "shadow" as const,
-	requestOrigin: "agent" as const,
+	requestOrigin: "harness" as const,
 	targetId: "inception",
 	wireModelId: "mercury-2.5",
 	runtimeId: "inception",
@@ -74,6 +74,23 @@ test("parallel helpers keep one notice each", () => {
 			"warning: PanCode's Scout helper failed; your turn is not affected · /fleet shows why",
 			"info: PanCode's Scout helper is working",
 		]);
+	} finally {
+		dispose();
+	}
+});
+
+test("a shadow worker the operator's turn dispatched is announced as the operator's, its failover included", () => {
+	const { bus, shown, dispose } = footer();
+	try {
+		const asked = { ...identity, requestOrigin: "agent" as const };
+		bus.emit("run.started", { ...asked, runId: "run-a", pid: null, assignmentId: "run-a", attempt: 0 });
+		bus.emit("run.failed", { ...asked, runId: "run-a", outcome: "failed", outcomeDetail: null, reason: "failed" });
+		deepStrictEqual(shown(), ["warning: Your Scout worker failed · /fleet shows why"]);
+		const failover = { ...identity, requestOrigin: "internal" as const, rootRequestOrigin: "user" as const };
+		bus.emit("run.started", { ...failover, runId: "run-b", pid: null, assignmentId: "run-a", attempt: 1 });
+		deepStrictEqual(shown(), ["info: Your Scout worker is working"]);
+		bus.emit("run.completed", { ...failover, runId: "run-b", outcome: "succeeded" } as never);
+		deepStrictEqual(shown(), ["success: Your Scout worker finished"]);
 	} finally {
 		dispose();
 	}

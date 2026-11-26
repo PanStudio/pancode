@@ -49,8 +49,8 @@ for (const audience of ["internal", "shadow"] as const)
 			notices,
 			audience === "internal"
 				? []
-				: // The helper's card says it is working; only its failure reaches the footer.
-					["PanCode's Context-bootstrap helper failed; your turn is not affected · /fleet shows why"],
+				: // The helper's card says it is working; only its failure reaches the footer, worded as the operator's since their turn asked for it.
+					["Your Context-bootstrap worker failed · /fleet shows why"],
 		);
 		strictEqual(islands, audience === "internal" ? 0 : 2);
 		subscriptions.dispose();
