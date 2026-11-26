@@ -1,8 +1,23 @@
 /* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
 /* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
-.mark-tile {
-	fill: var(--pancode-black);
+/* The mark at interface sizes: the full cut of assets/brand/pancode-mark.svg in flat colour. */
+.mark-left,
+.mark-top {
+	fill: var(--pancode-green400);
 }
-.mark-glyph {
-	fill: var(--accent);
+.mark-right {
+	fill: var(--pancode-teal400);
+}
+.mark-point {
+	fill: var(--pancode-orange400);
+}
+html[data-theme="light"] .mark-left,
+html[data-theme="light"] .mark-top {
+	fill: var(--pancode-green700);
+}
+html[data-theme="light"] .mark-right {
+	fill: var(--pancode-teal700);
+}
+html[data-theme="light"] .mark-point {
+	fill: var(--pancode-orange700);
 }

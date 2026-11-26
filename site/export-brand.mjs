@@ -26,7 +26,13 @@ await mkdir(join(out, "assets/fonts"), { recursive: true });
 await writeFile(join(out, marker), `${site}\n`);
 await writeFile(join(out, "css/pancode.css"), await tokenCSS());
 await cp(join(site, "design-system.json"), join(out, "design-system.json"));
-for (const name of ["pancode-mark.png", "pancode-mark.webp", "pancode-mark-small.png", "pancode-mark-small.webp", "provenance.json"])
+for (const name of [
+	"pancode-mark.png",
+	"pancode-mark.webp",
+	"pancode-mark-small.png",
+	"pancode-mark-small.webp",
+	"provenance.json",
+])
 	await cp(join(site, "assets/brand", name), join(out, "assets/brand", name));
 for (const name of [
 	"pancode-mark.svg",
