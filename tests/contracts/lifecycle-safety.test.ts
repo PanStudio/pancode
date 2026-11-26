@@ -181,18 +181,34 @@ test("self-upgrade plans automatic replacement only for a newer npm release", as
 		(await planSelfUpgrade({ installation, runningVersion: "0.5.7", fetchVersion: async () => "0.5.7" })).status,
 		"current",
 	);
+	const pnpm = { ...installation, kind: "pnpm" as const };
 	strictEqual(
-		(
-			await planSelfUpgrade({
-				installation: { ...installation, kind: "pnpm" },
-				runningVersion: "0.5.7",
-				fetchVersion: async () => {
-					throw new Error("manual installations must not touch the registry");
-				},
-			})
-		).status,
+		(await planSelfUpgrade({ installation: pnpm, runningVersion: "0.5.7", fetchVersion: async () => "0.5.8" })).status,
 		"manual",
 	);
+	strictEqual(
+		(await planSelfUpgrade({ installation: pnpm, runningVersion: "0.5.7", fetchVersion: async () => "0.5.7" })).status,
+		"current",
+	);
+	strictEqual(
+		(await planSelfUpgrade({ installation: pnpm, runningVersion: "0.5.7", fetchVersion: async () => null })).status,
+		"unavailable",
+		"a lookup that brings no version confirms no newer release",
+	);
+	for (const kind of ["source", "local", "unknown", "homebrew", "winget"] as const)
+		strictEqual(
+			(
+				await planSelfUpgrade({
+					installation: { ...installation, kind },
+					runningVersion: "0.5.7",
+					fetchVersion: async () => {
+						throw new Error(`the npm registry is not asked about a ${kind} installation`);
+					},
+				})
+			).status,
+			"manual",
+			kind,
+		);
 });
 
 test("approved self-upgrade trusts success only after the installed package is verified", async (t) => {

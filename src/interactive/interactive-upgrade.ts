@@ -90,10 +90,13 @@ export function createInteractiveUpgradeFlow(deps: InteractiveUpgradeFlowDeps): 
 						});
 				deps.signal.throwIfAborted();
 				if (plan.status === "manual") {
+					const { kind } = plan.installation;
 					const lead =
-						plan.installation.kind === "source"
+						kind === "source"
 							? "This source checkout updates through git, not the package registry. Run:"
-							: `This ${plan.installation.kind} installation must be updated by its owning package manager. Run:`;
+							: kind === "npm" || kind === "pnpm" || kind === "bun"
+								? `This ${kind} installation must be updated by its owning package manager. Run:`
+								: `PanCode cannot see which version this ${kind} installation's package manager has; it updates through that manager. Run:`;
 					deps.notify("warning", `${lead}\n${plan.command}`, "lifecycle:upgrade-manual");
 					deps.record?.("warn", lead);
 					// One transcript row per line: a row holds a single line, and the source
