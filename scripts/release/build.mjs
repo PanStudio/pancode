@@ -161,6 +161,8 @@ export async function buildRelease({ out, targets, site }) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const { values } = parseArgs({
+		// `pnpm run release:build -- --out <dir>` hands the separator through.
+		args: process.argv.slice(2).filter((argument) => argument !== "--"),
 		options: {
 			out: { type: "string" },
 			targets: { type: "string", default: "host" },

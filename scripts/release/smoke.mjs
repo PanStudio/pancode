@@ -90,8 +90,10 @@ function serve(directory) {
 	});
 }
 
-const assets = resolve(process.argv[2] ?? "");
-if (!process.argv[2] || !existsSync(join(assets, "SHA256SUMS"))) {
+// `pnpm run release:smoke -- <dir>` hands the separator through.
+const [named] = process.argv.slice(2).filter((argument) => argument !== "--");
+const assets = resolve(named ?? "");
+if (!named || !existsSync(join(assets, "SHA256SUMS"))) {
 	console.error("usage: smoke.mjs <assets dir written by scripts/release/build.mjs>");
 	process.exit(2);
 }
