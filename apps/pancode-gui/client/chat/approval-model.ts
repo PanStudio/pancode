@@ -24,6 +24,7 @@ import {
 	decisionTierLabel,
 	reversibilityWords,
 	safetyNetRailText,
+	UNREAD_COMMAND_EFFECT,
 	unansweredWords,
 	workerAuthorityWords,
 } from "../../../../src/core/views/approval-words.js";
@@ -290,8 +291,7 @@ export function decisionRows(
 	// consequence, so an operator reads what this command does before the reversibility.
 	const effects = decision.consequenceLines ?? [];
 	if (effects.length > 0) rows.push({ term: "Effect", value: effects.join(" "), lines: effects });
-	else if (decision.actionClass === "execute")
-		push("Effect", "Not classified. PanCode has no reading of what this command changes.");
+	else if (decision.actionClass === "execute") push("Effect", UNREAD_COMMAND_EFFECT);
 	push(
 		"Reversibility",
 		decision.reversibilityCopy.length > 0 ? decision.reversibilityCopy : reversibilityWords(decision.reversibility),
