@@ -41,16 +41,16 @@ function paints(dark: string, light?: string): CSSProperties {
 /**
  * The mark: four facets of one stone with the for-all sign as the channel between them, and no tile. Fill follows
  * size: the small cut's flat facets and wider channel to 24 px, the full cut's paths in those flat colours below
- * 32 px, and from 32 px the full cut's gradients (the light cut's colours on a light theme). Mono is the full cut in
- * the current text colour.
+ * 32 px, and from 32 px the full cut's gradients (the light cut's colours on a light theme). Mono, for every
+ * single-colour context at any size, is the small cut's facets in the current text colour (site/DESIGN.md "Mark").
  */
 function MarkArt({ className, fill = "graded" }: { className: string; fill?: MarkFill }) {
 	const scope = useId().replace(/[^\w-]/g, "");
 	if (!CUTS) return <svg className={className} viewBox="0 0 64 64" aria-hidden="true" />;
 	if (fill === "mono")
 		return (
-			<svg className={className} viewBox={CUTS.full.viewBox} aria-hidden="true">
-				{CUTS.full.facets.map((facet) => (
+			<svg className={className} viewBox={CUTS.small.viewBox} aria-hidden="true">
+				{CUTS.small.facets.map((facet) => (
 					<path key={facet.part} className="pancode-mark__mono" d={facet.d} />
 				))}
 			</svg>
