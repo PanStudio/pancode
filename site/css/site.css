@@ -598,7 +598,7 @@
 	.interface-item figure > a {
 		display: grid;
 		align-items: center;
-		background: var(--pancode-black);
+		background: var(--code);
 		border: 1px solid var(--line-strong);
 		border-radius: var(--radius);
 		aspect-ratio: 1.5;
@@ -809,7 +809,7 @@
 		inline-size: 100%;
 		aspect-ratio: 1.8;
 		object-fit: contain;
-		background: var(--pancode-black);
+		background: var(--code);
 		border: 1px solid var(--line-strong);
 		padding: 1rem;
 		border-radius: var(--radius);
@@ -1996,7 +1996,7 @@
 		display: grid;
 		place-items: center;
 		padding: 1rem;
-		background: var(--pancode-black);
+		background: var(--code);
 	}
 	.image-view img {
 		inline-size: 100%;
@@ -2191,7 +2191,7 @@
 		border-start-start-radius: 0;
 		border-start-end-radius: 0;
 	}
-	/* Captures keep their own dark surface in both themes. */
+	/* Captures keep their recorded ground; the frame around them follows the theme. */
 	.guide-capture,
 	.guide-sequence,
 	.guide-diagram {

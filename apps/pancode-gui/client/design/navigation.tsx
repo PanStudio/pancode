@@ -6,8 +6,8 @@ import { announce, composeTitle, useLiveState } from "../interaction/announcer.j
 
 /** `--paper` from client/design/tokens.css, light and dark. Keep these two in step with it. */
 export const THEME_COLORS: Readonly<Record<"light" | "dark", string>> = {
-	light: "#f5f3ee",
-	dark: "#000000",
+	light: "#f6f1e6",
+	dark: "#0e1113",
 };
 
 /**

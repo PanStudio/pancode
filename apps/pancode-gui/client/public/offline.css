@@ -4,34 +4,34 @@
    muted ink, accent, secondary, on-accent and focus exactly as client/design/brand.css generates them, for the
    light theme, the explicit dark theme and the system dark theme. Keep these values in step with brand.css. */
 :root {
-	--paper: #f5f3ee;
-	--ink: #0f0e0c;
-	--ink-muted: #53514b;
+	--paper: #f6f1e6;
+	--ink: #151c1f;
+	--ink-muted: #535c62;
 	--accent: #00755b;
-	--secondary: #1472bd;
-	--on-accent: #ffffff;
+	--secondary: #0d5d9d;
+	--on-accent: #fbf8f1;
 	--focus: #00755b;
 	color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme="light"]) {
-		--paper: #000000;
-		--ink: #f1eee6;
-		--ink-muted: #a6a297;
+		--paper: #0e1113;
+		--ink: #ebeff2;
+		--ink-muted: #a0a9ae;
 		--accent: #07e4b4;
 		--secondary: #4aa8ff;
-		--on-accent: #000000;
+		--on-accent: #0e1113;
 		--focus: #07e4b4;
 		color-scheme: dark;
 	}
 }
 :root[data-theme="dark"] {
-	--paper: #000000;
-	--ink: #f1eee6;
-	--ink-muted: #a6a297;
+	--paper: #0e1113;
+	--ink: #ebeff2;
+	--ink-muted: #a0a9ae;
 	--accent: #07e4b4;
 	--secondary: #4aa8ff;
-	--on-accent: #000000;
+	--on-accent: #0e1113;
 	--focus: #07e4b4;
 	color-scheme: dark;
 }

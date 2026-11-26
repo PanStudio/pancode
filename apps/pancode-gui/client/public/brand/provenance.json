@@ -12,7 +12,7 @@
 	],
 	"projection": {
 		"source": "site/export-brand.mjs",
-		"designSha256": "516a45001f7eeead1b893c003d90a9b90e1ca3dfa90c4d806ac59325c30634e2",
+		"designSha256": "8dadcc9cbdd7a1c0127cf7faa6fa373690cbe7d9361d59ec0ffa6b47c7ec1792",
 		"encoders": {
 			"pngquant": "2.18.0",
 			"Pillow": "12.1.0",
