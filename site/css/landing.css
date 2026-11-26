@@ -399,6 +399,10 @@
 	.evidence .t-status {
 		margin-block-start: var(--space-3);
 	}
+	/* The evidence keeps every value on narrow screens, so its segments wrap instead of the hero's hiding. */
+	.evidence .t-status > span {
+		white-space: normal;
+	}
 	.evidence .t-status:first-child {
 		margin-block-start: 0;
 		padding-block-start: 0;
@@ -552,12 +556,18 @@
 			font-size: 0.75rem;
 			padding: var(--space-3) var(--space-4) var(--space-4);
 		}
-		.t-more {
+		.term .t-more {
 			display: none;
 		}
 		.hero-field .pan-label,
 		.hero-field .pan-cap {
 			display: none;
+		}
+	}
+	/* Action links get a full touch target where fingers do the tapping. */
+	@media (max-width: 767px), (pointer: coarse) {
+		.landing main .text-link {
+			min-block-size: 2.75rem;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

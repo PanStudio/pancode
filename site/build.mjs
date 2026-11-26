@@ -270,18 +270,16 @@ function responsiveImages(html, path) {
 		const pancode = source === "assets/brand/pancode-mark.webp";
 		const guide = articles.some((item) => item.url === path);
 		const article = guide || path.startsWith("/docs");
-		// Brand marks render at .brand img sizes; listing cards subtract the 1rem
-		// padding and 1px border around each card image from the column width.
-		const sizes = pancode
-			? tag.includes('class="scene-mark"')
-				? "160px"
-				: "(max-width: 600px) 27px, 32px"
-			: guide
-				? "(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px"
-				: article
-					? "(max-width: 600px) calc(100vw - 40px), (max-width: 850px) calc(100vw - 64px), 760px"
-					: path === "/"
-						? "(max-width: 600px) calc(100vw - 64px), (max-width: 824px) calc(100vw - 88px), (max-width: 1000px) 736px, (max-height: 650px) 736px, (max-width: 1100px) calc((94vw - 64px) * 0.623 - 24px), (max-width: 1344px) calc((94vw - 96px) * 0.623 - 24px), 700px"
+		// An image that states its own sizes keeps them. Brand marks render at .brand img sizes; listing
+		// cards subtract the 1rem padding and 1px border around each card image from the column width.
+		const sizes = tag.match(/\ssizes="([^"]+)"/)?.[1]
+			? ""
+			: pancode
+				? "(max-width: 600px) 27px, 32px"
+				: guide
+					? "(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px"
+					: article
+						? "(max-width: 600px) calc(100vw - 40px), (max-width: 850px) calc(100vw - 64px), 760px"
 						: "(max-width: 600px) calc(100vw - 74px), (max-width: 1100px) calc(50vw - 90px), (max-width: 1344px) calc(50vw - 106px), 566px";
 		const srcset = [...item.variants, { path: source, width: item.width }]
 			.map((v) => `/${v.path} ${v.width}w`)
@@ -289,7 +287,7 @@ function responsiveImages(html, path) {
 		if (pancode) tag = tag.replace(`src="/${source}"`, `src="/${item.variants.find((v) => v.width === 64).path}"`);
 		if (!/\bwidth=/.test(tag)) tag = tag.replace("<img", `<img width="${item.width}" height="${item.height}"`);
 		return tag
-			.replace(/\s*\/?>(?=$)/, ` srcset="${srcset}" sizes="${sizes}" decoding="async">`)
+			.replace(/\s*\/?>(?=$)/, ` srcset="${srcset}"${sizes && ` sizes="${sizes}"`} decoding="async">`)
 			.replace(/ decoding="async"(?=[\s\S]* decoding="async")/, "");
 	});
 }
