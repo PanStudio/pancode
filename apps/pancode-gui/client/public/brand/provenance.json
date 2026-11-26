@@ -3,13 +3,16 @@
 		{
 			"name": "pancode-mark",
 			"source": "assets/brand/pancode-mark.svg",
-			"sha256": "cba71a2df2c09e2e47d26806967be0a3869563cde05cbb48df5d920c01887b5f",
-			"dimensions": [512, 512]
+			"sha256": "d9693e716c0a01be37d52a24484f8c66b01cd19c8011f4b962b222fe8de568c4",
+			"dimensions": [
+				512,
+				512
+			]
 		}
 	],
 	"projection": {
 		"source": "site/export-brand.mjs",
-		"designSha256": "5250c1481b9d2e3ca833a639032de3fe35c6cd0164e8341d2406828e15834fb9",
+		"designSha256": "7b4537617b8e0a284ed19e4edb8ddc5f66a73c2a84c782b52be7ed78a9f69448",
 		"encoders": {
 			"pngquant": "2.18.0",
 			"Pillow": "12.1.0",
@@ -24,10 +27,10 @@
 			"optimization": "pngquant 2.18.0, quality 90-100, speed 1; palette quantization after resizing."
 		},
 		"sha256": {
-			"pancode-logo.webp": "a5036c8164c0d10ecedbfb83602519d9f0ea99cf0e12faf0016246c2730e6401",
-			"favicon.png": "22f154abe875fd4284ba2b9de0efd794360f0c2e7fa2620fe3961dd3bf2abfa4",
-			"icon-192.png": "0c58ad0ebeee7f3f916678627d2cb795c8b64d7b6d7177c22c286d0f6f0cc16b",
-			"icon-512.png": "19cf57dc070e34882506195104ffb517222014c081cfb320e87df13d6134b1bd"
+			"pancode-logo.webp": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
+			"favicon.png": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
+			"icon-192.png": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
+			"icon-512.png": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9"
 		}
 	}
 }

@@ -7,10 +7,10 @@
 	--paper: #f5f3ee;
 	--ink: #0f0e0c;
 	--ink-muted: #53514b;
-	--accent: #137643;
+	--accent: #00755b;
 	--secondary: #1472bd;
 	--on-accent: #ffffff;
-	--focus: #137643;
+	--focus: #00755b;
 	color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,10 +18,10 @@
 		--paper: #000000;
 		--ink: #f1eee6;
 		--ink-muted: #a6a297;
-		--accent: #00e884;
+		--accent: #07e4b4;
 		--secondary: #4aa8ff;
 		--on-accent: #000000;
-		--focus: #00e884;
+		--focus: #07e4b4;
 		color-scheme: dark;
 	}
 }
@@ -29,10 +29,10 @@
 	--paper: #000000;
 	--ink: #f1eee6;
 	--ink-muted: #a6a297;
-	--accent: #00e884;
+	--accent: #07e4b4;
 	--secondary: #4aa8ff;
 	--on-accent: #000000;
-	--focus: #00e884;
+	--focus: #07e4b4;
 	color-scheme: dark;
 }
 

@@ -62,7 +62,7 @@ function MarkArt({ className }: { className: string }) {
 /**
  * The "PanCode is working" indicator: a still blue live dot in the running status colour, always beside
  * the words that say what is running. It means PanCode, a worker, a tool or the setup child is doing
- * something right now, never ordinary data loading. `done` turns it into the jade check, shown only
+ * something right now, never ordinary data loading. `done` turns it into the leaf check, shown only
  * after a reported completion. It is decorative to assistive technology unless it gets a `label`.
  */
 export function PancodePulse({ size = 16, label, done = false }: { size?: number; label?: string; done?: boolean }) {
