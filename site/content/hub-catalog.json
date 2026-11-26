@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "41a1d10a1e58536db751f655d1e57c025f724dfe2c5a48ef384cbe7611956ca9",
+		"sha256": "91a2047edd956569c1dca543660cb280642d9b3c48c88164bea3b91a175236ac",
 		"rows": 45,
 		"revoked": 0
 	},
@@ -129,7 +129,7 @@
 			"source": {
 				"path": "hub/packs/plugins/pankit"
 			},
-			"sha256": "02ccb33e9614d1af9aa06f6ce53c046fc2026d9810297c66435c8d99d23a3ad6",
+			"sha256": "07849383aa947ac6a5aa9915eaf11685328d6def3449269e44e790f1e534e586",
 			"install": "pancode hub install plugin:pankit"
 		},
 		{
