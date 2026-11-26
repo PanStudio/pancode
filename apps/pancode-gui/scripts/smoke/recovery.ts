@@ -350,16 +350,27 @@ export async function recoverySteps(run: SmokeRun) {
 		const lastGroup = page.locator(".chat-turn").last().locator("details.activity").last();
 		if (!(await lastGroup.evaluate((node) => (node as HTMLDetailsElement).open)))
 			await lastGroup.locator(":scope > summary").click();
-		const row = lastGroup.locator(".tool-card", { hasText: "2 runs" }).first();
+		// A batch's card heads with its task count (pinned in tests/chat-tools.test.ts) and, opened, names each
+		// run as "N · agent" with its task.
+		const row = lastGroup
+			.locator(".tool-card", { has: page.locator(".tool-card__headline", { hasText: /^2 tasks$/ }) })
+			.first();
 		await row.waitFor();
-		assert.doesNotMatch(await row.innerText(), /no task preview/);
-		assert.match(await row.innerText(), /scout, writer/);
-		// The allowed plan's runs reach the Agents drill, one node per task.
-		await openDrill("Agents");
-		for (const [agent, task] of [
+		if (!(await row.evaluate((node) => (node as HTMLDetailsElement).open))) await row.locator(":scope > summary").click();
+		const runs = [
 			["scout", "Survey the soil samples"],
 			["writer", "Draft the comparison report"],
-		] as const) {
+		] as const;
+		for (const [index, [agent, task]] of runs.entries()) {
+			const fact = row.locator(".tool-card__fact", {
+				has: page.locator(".tool-card__fact-label", { hasText: `${index + 1} · ${agent}` }),
+			});
+			await fact.waitFor();
+			assert.equal((await fact.locator(".tool-card__fact-value").innerText()).trim(), task);
+		}
+		// The allowed plan's runs reach the Agents drill, one node per task.
+		await openDrill("Agents");
+		for (const [agent, task] of runs) {
 			const node = pane.locator(".worker-graph .agents-node", {
 				has: page.locator(".agents-node__task", { hasText: task }),
 			});
