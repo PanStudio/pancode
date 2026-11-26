@@ -735,6 +735,61 @@
 		min-block-size: 0;
 		border-block-start: 1px solid var(--line);
 	}
+
+	.product-stage {
+		margin: var(--space-7) 0 var(--space-6);
+	}
+	.product .interface-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: var(--space-6);
+	}
+	.journey-list {
+		list-style: none;
+		padding: 0;
+		margin: var(--space-7) 0 0;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+	.journey-list > li {
+		padding: var(--space-5) var(--space-6) var(--space-5) 0;
+		border-block-start: 1px solid var(--line-strong);
+	}
+	.journey-list > li + li {
+		padding-inline-start: var(--space-6);
+		border-inline-start: 1px solid var(--line);
+	}
+	.journey-list h3 {
+		font: var(--type-title);
+		margin: var(--space-3) 0 var(--space-2);
+	}
+	.journey-list p {
+		color: var(--muted);
+		margin: 0 0 var(--space-4);
+	}
+	.journey-more {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2) var(--space-6);
+		margin-block-start: var(--space-6);
+	}
+	/* The questions sit in two columns under their heading, not in the side column site.css gives .faq. */
+	.landing .faq {
+		display: block;
+	}
+	.landing .faq .faq-items {
+		margin-block-start: var(--space-7);
+	}
+	.start-section .install-steps {
+		max-inline-size: 52rem;
+	}
+	.faq .faq-items {
+		columns: 2;
+		column-gap: var(--space-8);
+	}
+	.faq .faq-items details {
+		break-inside: avoid;
+	}
 	@media (max-width: 1023px) {
 		.reach-body {
 			grid-template-columns: minmax(0, 1fr);
@@ -755,6 +810,19 @@
 			grid-template-columns: repeat(5, max-content);
 			overflow-x: auto;
 			gap: var(--space-5);
+		}
+	}
+	@media (max-width: 767px) {
+		.product .interface-grid,
+		.journey-list {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.journey-list > li + li {
+			padding-inline-start: 0;
+			border-inline-start: 0;
+		}
+		.faq .faq-items {
+			columns: 1;
 		}
 	}
 	@media (max-width: 767px) {
