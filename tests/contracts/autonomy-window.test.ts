@@ -581,7 +581,7 @@ test("the footer shows YOLO mode, escalates ending/paused windows to the alert r
 	for (const line of narrow.split("\n")) ok(visibleWidth(line) <= 100);
 	const narrowest = footerAt(status, 50);
 	doesNotMatch(narrowest, /412\/600/u);
-	match(narrowest, /^\s*▐P▌ YOLO/u);
+	match(narrowest, /^\s*▐∀▌ YOLO/u);
 	for (const line of narrowest.split("\n")) ok(visibleWidth(line) <= 50);
 	// A window about to end is an alert: the dedicated alert row carries it above Row 1 at compact.
 	const ending = footerAt({ ...status, usage: { ...status.usage, activeMs: 116 * 60_000 } }, 80, "compact").split("\n");

@@ -13,7 +13,7 @@ import type { PancodeTheme } from "./tokens.js";
  */
 
 /**
- * The mark as a tile: the P in the on-accent ink over the brand green, between two half blocks in that green. Where
+ * The mark as a tile: the for-all sign in the on-accent ink over the brand green, between two half blocks in that green. Where
  * the theme cannot fill a cell with the brand colour (ASCII, no colour, 16 colours, an unknown background) the three
  * cells stay text in the wordmark ink.
  */

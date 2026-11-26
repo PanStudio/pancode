@@ -1,0 +1,150 @@
+{
+	"id": "modules",
+	"version": "0.1.0",
+	"title": "Software modules",
+	"environment": [
+		"LMOD_*",
+		"LOADEDMODULES",
+		"MODULEPATH",
+		"MODULESHOME",
+		"MODULES_*",
+		"_LMFILES_",
+		"_ModuleTable*",
+		"__LMOD_*",
+		"__MODULES_*"
+	],
+	"tools": [
+		{
+			"name": "modules_avail",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"name": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9][A-Za-z0-9_.+/-]*$",
+						"maxLength": 128,
+						"description": "Only modules whose full name (name/version) matches this, case-sensitively."
+					},
+					"match": {
+						"type": "string",
+						"enum": ["prefix", "contains"],
+						"description": "Whether name must start the full name or may appear anywhere in it. Default prefix."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "modules_collections",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"name": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9][A-Za-z0-9_.+/-]*$",
+						"maxLength": 128,
+						"description": "A collection to list the modules of."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "modules_list",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "modules_plan",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"modules": {
+						"type": "array",
+						"minItems": 1,
+						"maxItems": 20,
+						"items": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9_.+/-]*$",
+							"maxLength": 128
+						},
+						"description": "The modules to load, in the order they should be loaded."
+					}
+				},
+				"required": ["modules"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "modules_show",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"name": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9][A-Za-z0-9_.+/-]*$",
+						"maxLength": 128,
+						"description": "The module, as name or name/version."
+					}
+				},
+				"required": ["name"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "modules_spider",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"name": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9][A-Za-z0-9_.+/-]*$",
+						"maxLength": 128,
+						"description": "A name, or part of one, to list its versions; or name/version to also get the modules to load first."
+					}
+				},
+				"required": ["name"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		}
+	]
+}

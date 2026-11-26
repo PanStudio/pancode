@@ -108,7 +108,7 @@ test("the detailed launchpad is open: no frame, the version on its header row, n
 		const plain = lines.map(stripTerminalSequences);
 		ok(!plain.some((row) => /[┌┐└┘│╭╮╰╯├┤]/u.test(row)), "no frame at any width");
 		ok(
-			plain.some((row) => row.includes("▐P▌ PanCode 0.5.6")),
+			plain.some((row) => row.includes("▐∀▌ PanCode 0.5.6")),
 			plain.join("\n"),
 		);
 		const joined = plain.join("\n");

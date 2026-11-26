@@ -665,7 +665,7 @@ test("an open worker card leaves when another PanCode process answered its ask, 
 
 test("shared primitives fit the status line, open an island and mark a pending chip", () => {
 	const theme = pancodeTheme();
-	const mark: SideUnit = { text: "▐P▌", lead: true };
+	const mark: SideUnit = { text: "▐∀▌", lead: true };
 	const autonomy = (word: string): SideUnit => (word === "default" ? { text: word, drop: 5 } : { text: word });
 	const cwd = (full: string, tail2: string, base: string): SideUnit => ({
 		text: full,
@@ -685,13 +685,13 @@ test("shared primitives fit the status line, open an island and mark a pending c
 			[mark, autonomy("default"), { text: "proj/compact" }, branch("main*")],
 			[{ text: "gpt-6-luna" }],
 			80,
-			"▐P▌ default · proj/compact · main*                                    gpt-6-luna",
+			"▐∀▌ default · proj/compact · main*                                    gpt-6-luna",
 		],
 		[
 			[mark, autonomy("default"), standard, branch("main*")],
 			[{ text: "0.30 credits", drop: 1 }, ...route("gpt-6-luna")],
 			80,
-			"▐P▌ default · ~/…/proj/standard · main*      0.30 credits · copilot · gpt-6-luna",
+			"▐∀▌ default · ~/…/proj/standard · main*      0.30 credits · copilot · gpt-6-luna",
 		],
 		[
 			[mark, autonomy("default"), standard, branch("main*")],
@@ -702,21 +702,21 @@ test("shared primitives fit the status line, open an island and mark a pending c
 				...route("gpt-6-luna"),
 			],
 			80,
-			"▐P▌ default · proj/standard · main*  2 workers · 1 queued · copilot · gpt-6-luna",
+			"▐∀▌ default · proj/standard · main*  2 workers · 1 queued · copilot · gpt-6-luna",
 		],
 		[
 			[mark, autonomy("YOLO"), { text: "proj/compact" }, branch("main*")],
 			[{ text: "gpt-6-luna" }],
 			80,
-			"▐P▌ YOLO · proj/compact · main*                                       gpt-6-luna",
+			"▐∀▌ YOLO · proj/compact · main*                                       gpt-6-luna",
 		],
 		[
 			[mark, autonomy("default"), panes, branch("main")],
 			route("gpt-6-luna"),
 			65,
-			"▐P▌ default · ~/…/lead-panes/proj · main     copilot · gpt-6-luna",
+			"▐∀▌ default · ~/…/lead-panes/proj · main     copilot · gpt-6-luna",
 		],
-		[[mark, autonomy("default"), panes, branch("main")], route("gpt-6-luna"), 33, "▐P▌ proj · main        gpt-6-luna"],
+		[[mark, autonomy("default"), panes, branch("main")], route("gpt-6-luna"), 33, "▐∀▌ proj · main        gpt-6-luna"],
 		[
 			[mark, autonomy("YOLO"), panes, branch("main")],
 			[
@@ -728,7 +728,7 @@ test("shared primitives fit the status line, open an island and mark a pending c
 				},
 			],
 			33,
-			"▐P▌ YOLO   claude-sonnet…20261101",
+			"▐∀▌ YOLO   claude-sonnet…20261101",
 		],
 	];
 	for (const [left, right, width, expected] of cases) {

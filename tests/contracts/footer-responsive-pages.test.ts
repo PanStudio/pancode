@@ -24,7 +24,7 @@ test("the narrow footer leads with the mark, keeps the model id at the right edg
 		// Standard is two rows; a W1 width keeps the status bar alone.
 		strictEqual(rows.length, width < 44 ? 1 : 2);
 		for (const row of rows) ok(visibleWidth(row) <= width);
-		match(rows[0] ?? "", /^\s*▐P▌ /);
+		match(rows[0] ?? "", /^\s*▐∀▌ /);
 		match(rows[0] ?? "", /q4_k_m\s*$/);
 		if (width >= 80) match(rows[0] ?? "", /v050/);
 		strictEqual(visibleWidth(rows[0] ?? ""), width);
@@ -85,7 +85,7 @@ test("a narrow alert row sits above the status bar and preserves urgent chords a
 		// A W1 width keeps the alert and status bar; standard at 60 adds its key row.
 		strictEqual(rows.length, width < 44 ? 2 : 3);
 		match(rows[0] ?? "", /✗ Provider unavailab(?:le|…)/);
-		match(rows[1] ?? "", /^\s*▐P▌ /);
+		match(rows[1] ?? "", /^\s*▐∀▌ /);
 		doesNotMatch(rows.join("\n"), /Saved/);
 		for (const row of rows) ok(visibleWidth(row) <= width);
 		state.session.shutdownArmed = true;
@@ -164,7 +164,7 @@ test("compact tier stays at most 2 rows even when busy with alerts, and ASCII id
 		const busyRows = renderCompactDashboard(state, 96);
 		strictEqual(busyRows.length, 2);
 		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc stops/);
-		match(stripTerminalSequences(busyRows[1] ?? ""), /▐P▌/);
+		match(stripTerminalSequences(busyRows[1] ?? ""), /▐∀▌/);
 	} finally {
 		setPresentationTier(prevTier);
 	}
@@ -176,7 +176,7 @@ test("compact tier stays at most 2 rows even when busy with alerts, and ASCII id
 		asciiState.workspace.dirty = true;
 		asciiState.session.modelId = "qwopus";
 		const row0 = stripTerminalSequences(renderCompactDashboard(asciiState, 96)[0] ?? "");
-		match(row0, /▐P▌ default {2}pancode \(v050\*\)/);
+		match(row0, /▐∀▌ default {2}pancode \(v050\*\)/);
 	} finally {
 		if (prevAscii === undefined) delete process.env.PANCODE_ASCII;
 		else process.env.PANCODE_ASCII = prevAscii;
@@ -262,14 +262,14 @@ test("busy row 1 keeps elapsed clock from 0s, matches width step-downs, and plac
 
 	// 96 busy: basename `<dir>`, clock from 0s
 	const busy96 = stripTerminalSequences(renderCompactDashboard(state, 96)[0] ?? "");
-	match(busy96, /▐P▌ default · pancode · v050/u);
+	match(busy96, /▐∀▌ default · pancode · v050/u);
 	match(busy96, /waiting for model · 0s/u);
 
 	// 60 busy: drops `<dir>` and `ctx `, keeps `<branch>`, clock, and `<%>`
 	const busy60 = stripTerminalSequences(renderCompactDashboard(state, 60)[0] ?? "");
 	doesNotMatch(busy60, /pancode/u);
 	doesNotMatch(busy60, /\bctx\b/u);
-	match(busy60, /▐P▌ v050/u);
+	match(busy60, /▐∀▌ v050/u);
 	match(busy60, /waiting · 0s/u);
 	match(busy60, /26% │ gpt-6-luna/u);
 
@@ -284,7 +284,7 @@ test("busy row 1 keeps elapsed clock from 0s, matches width step-downs, and plac
 	state.status = { ...state.status, phase: "idle" };
 	const idle80 = stripTerminalSequences(renderCompactDashboard(state, 80)[0] ?? "");
 	doesNotMatch(idle80, /\bdefault\b/u);
-	match(idle80, /▐P▌ pancode · v050/u);
+	match(idle80, /▐∀▌ pancode · v050/u);
 	match(idle80, /│ low │ gpt-6-luna/u);
 
 	// Compact busy Row 2 keeps `<level>` at 96 cols; compact idle setting feedback renders BELOW status bar
@@ -317,7 +317,7 @@ test("busy row 1 keeps elapsed clock from 0s, matches width step-downs, and plac
 		state.status = { ...state.status, phase: "idle" };
 		const compactIdleFb = renderCompactDashboard(state, 96).map(stripTerminalSequences);
 		strictEqual(compactIdleFb.length, 2);
-		match(compactIdleFb[0] ?? "", /^ ▐P▌/u);
+		match(compactIdleFb[0] ?? "", /^ ▐∀▌/u);
 		match(compactIdleFb[1] ?? "", /Output detail: compact/u);
 	} finally {
 		setPresentationTier(prevTier);
