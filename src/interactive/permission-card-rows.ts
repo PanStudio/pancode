@@ -12,6 +12,7 @@ import {
 	dispatchPlanHeadline,
 	reversibilityWords,
 	safetyNetRailText,
+	UNREAD_COMMAND_EFFECT,
 	unansweredWords,
 } from "../core/views/approval-words.js";
 import type { DecisionPresentation } from "../domains/safety/decision-presentation.js";
@@ -429,7 +430,7 @@ export function permissionCardParts(
 		// Silence here would read as "no notable effect" on exactly the commands PanCode cannot read.
 		effectFacts.push({
 			label: "effect",
-			value: "not classified: PanCode has no reading of what this command changes",
+			value: UNREAD_COMMAND_EFFECT,
 			tone: "warning",
 		});
 	}

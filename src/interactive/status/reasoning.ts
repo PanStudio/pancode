@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { formatCount } from "../../core/format-time.js";
 import { GLYPH } from "../../core/glyphs.js";
 import type { Quantity } from "../../core/telemetry/dto.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
@@ -47,28 +48,13 @@ export function reasoningFromQuantity(quantity: Quantity | null): ReasoningUsage
 }
 
 /**
- * Compact token text for the surfaces that have no formatter of their own. The
- * footer passes its own `formatFooterTokens` so its chips keep the width
- * budget the rest of the footer is measured against.
- */
-export function compactReasoningTokens(value: number): string {
-	if (value < 1000) return String(Math.round(value));
-	if (value < 1_000_000) {
-		const scaled = (value / 1000).toFixed(1);
-		return `${scaled.endsWith(".0") ? scaled.slice(0, -2) : scaled}k`;
-	}
-	const scaled = (value / 1_000_000).toFixed(1);
-	return `${scaled.endsWith(".0") ? scaled.slice(0, -2) : scaled}M`;
-}
-
-/**
  * `reasoning 123` for a provider-attested count, `reasoning ≈123` for anything
  * PanCode inferred. A provider-measured zero is shown as `reasoning 0`; an unmeasured
  * turn has no chip (#434).
  */
 export function formatReasoningChip(
 	view: ReasoningUsageView,
-	format: (value: number) => string = compactReasoningTokens,
+	format: (value: number) => string = formatCount,
 ): string | null {
 	if (view.provenance === "unmeasured" || (view.tokens <= 0 && view.provenance !== "provider")) return null;
 	return `reasoning ${view.provenance === "provider" ? "" : GLYPH.estimate}${format(view.tokens)}`;

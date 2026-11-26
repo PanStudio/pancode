@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { formatFooterTokens } from "../core/display-units.js";
 import { formatCount } from "../core/format-time.js";
 import type { FactMetric, FactScope, Quantity } from "../core/telemetry/dto.js";
 import { factRef } from "../core/telemetry/dto.js";
@@ -116,8 +115,8 @@ function compactFigure(quantity: Quantity): string {
 /** The measured part of a quantity in the footer's narrow form, or null when no call measured it. */
 export function measuredCount(quantity: Quantity): string | null {
 	const fact = quantity.fact;
-	if ("kind" in fact) return fact.kind === "measured" ? formatFooterTokens(fact.value) : null;
-	return fact.coverage.measured > 0 ? formatFooterTokens(fact.measured) : null;
+	if ("kind" in fact) return fact.kind === "measured" ? formatCount(fact.value) : null;
+	return fact.coverage.measured > 0 ? formatCount(fact.measured) : null;
 }
 
 /** The measured part of a quantity as a receipt states it, in the shared count form, or null when no call measured it. */

@@ -3,12 +3,13 @@
 
 /** The reasoning rail: settled thinking markers and the live thinking stream. */
 import { AssistantProseProjection, sanitizeAssistantProse } from "../core/assistant-prose.js";
+import { formatCount } from "../core/format-time.js";
 import { escapeTerminalControls } from "../core/terminal-controls.js";
 import { redactStreamingSecretString } from "../domains/safety/redaction.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
 import { dimLine, PROSE_GUTTER_WIDTH, REASON_INK, RESET } from "./chat-ink.js";
 import { previewRows } from "./renderers/preview.js";
-import { compactReasoningTokens, type ReasoningUsageView } from "./status/index.js";
+import type { ReasoningUsageView } from "./status/index.js";
 import { GLYPH, pancodeTheme, SGR_ITALIC } from "./theme/index.js";
 
 /**
@@ -42,7 +43,7 @@ export function renderSettledThinkingMarker(view: ReasoningUsageView, width: num
 	const count =
 		view.provenance === "unmeasured" || view.tokens <= 0
 			? null
-			: `${view.provenance === "provider" ? "" : GLYPH.estimate}${compactReasoningTokens(view.tokens)} tokens`;
+			: `${view.provenance === "provider" ? "" : GLYPH.estimate}${formatCount(view.tokens)} tokens`;
 	return `${REASON_RAIL()}${dimLine(
 		count === null ? THINKING_HIDDEN_LABEL : `${THINKING_HIDDEN_LABEL} ${GLYPH.sep} ${count}`,
 		Math.max(1, width - PROSE_GUTTER_WIDTH),

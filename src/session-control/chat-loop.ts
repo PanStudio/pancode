@@ -47,7 +47,7 @@ import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessage
 import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
-import { formatFooterTokens } from "../core/display-units.js";
+import { formatCount } from "../core/format-time.js";
 import {
 	armedSkillSurface,
 	evaluateSkillToolSurface,
@@ -120,7 +120,6 @@ import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
 import { compactionFailureReason, createChatLoopSubmit, isRedirectReason } from "./chat-loop-submit.js";
-import { footerTokens } from "./compaction-lines.js";
 import {
 	DRAFT_MAX_TOKENS,
 	DRAFT_TEMPERATURES,
@@ -2273,14 +2272,14 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 					if (context.lastCompactionCardSettled()) return;
 					const tokens = context.contextUsage().tokens;
 					reply(
-						`[/context compact] cancelled; context unchanged${tokens !== null ? ` at ${footerTokens(tokens)} tokens` : ""}`,
+						`[/context compact] cancelled; context unchanged${tokens !== null ? ` at ${formatCount(tokens)} tokens` : ""}`,
 					);
 					return;
 				}
 				// A failed summary saved nothing either, and the operator needs that, the reason in words and the way on (HS14).
 				const tokens = context.contextUsage().tokens;
 				reply(
-					`[/context compact] failed; context unchanged${tokens !== null ? ` at ${footerTokens(tokens)} tokens` : ""}. ${compactionFailureReason(err)}. /context compact tries again; /model picks another route to summarize on.`,
+					`[/context compact] failed; context unchanged${tokens !== null ? ` at ${formatCount(tokens)} tokens` : ""}. ${compactionFailureReason(err)}. /context compact tries again; /model picks another route to summarize on.`,
 					"error",
 				);
 				return;
@@ -2294,10 +2293,10 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 				const hasMessages =
 					entries.some((entry) => entry.kind === "message") || agentRuntime.agent.state.messages.length > 0;
 				const usage = context.contextUsage();
-				const used = usage.tokens !== null ? `${formatFooterTokens(usage.tokens)} tokens` : "unknown usage";
+				const used = usage.tokens !== null ? `${formatCount(usage.tokens)} tokens` : "unknown usage";
 				const budget =
 					usage.tokens !== null && usage.contextWindow > 0
-						? `${formatFooterTokens(usage.tokens)} of ${formatFooterTokens(usage.contextWindow)} tokens used`
+						? `${formatCount(usage.tokens)} of ${formatCount(usage.contextWindow)} tokens used`
 						: used;
 				// Nothing was summarized, so instructions given for the summary went unused, and the operator should know (bt-11).
 				const unused = instructions?.trim() ? ". Your compaction instructions were not used" : "";

@@ -7,10 +7,10 @@
  * and never derives new ones.
  */
 import type { ContextOperation, ContextOperationOutcome } from "../core/context-operation.js";
+import { formatCount } from "../core/format-time.js";
 import { GLYPH } from "../core/glyphs.js";
 import type { ContextActivityKind } from "../core/telemetry/live-events.js";
 import { stripTerminalSequences } from "../engine/tui.js";
-import { footerTokens } from "../session-control/compaction-lines.js";
 import type { TurnPreparationPhase } from "../session-control/turn-state.js";
 
 export const CONTEXT_KIND_TITLES: Record<ContextActivityKind, string> = {
@@ -85,7 +85,7 @@ export function tokenRow(operation: ContextOperation): string | null {
 	const change = tokens.before > 0 ? Math.round(((tokens.after - tokens.before) / tokens.before) * 100) : undefined;
 	const delta =
 		change === undefined || change === 0 ? "" : ` ${GLYPH.sep} ${change < 0 ? GLYPH.minus : "+"}${Math.abs(change)}%`;
-	return `${footerTokens(tokens.before)} ${GLYPH.next} ${footerTokens(tokens.after)} tokens${delta} ${GLYPH.sep} estimate`;
+	return `${formatCount(tokens.before)} ${GLYPH.next} ${formatCount(tokens.after)} tokens${delta} ${GLYPH.sep} estimate`;
 }
 
 /**
@@ -95,7 +95,7 @@ export function tokenRow(operation: ContextOperation): string | null {
  */
 export function unchangedTokenLead(operation: Pick<ContextOperation, "outcome" | "tokens"> | undefined): string {
 	if (operation?.outcome !== "unchanged" || !operation.tokens) return "";
-	return `${footerTokens(operation.tokens.after)} tokens ${GLYPH.sep} `;
+	return `${formatCount(operation.tokens.after)} tokens ${GLYPH.sep} `;
 }
 
 const WARNINGS_SHOWN = 6;
