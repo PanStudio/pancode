@@ -39,7 +39,7 @@ These are facts about the design, read from source. They are not study results.
 
 - One policy is enforced for PanCode's own workers, the Claude SDK, and agents reached through mediated ACP. Other agent command lines receive the closest flags they support, and OpenCode cannot enforce read-only.
 - Whether a reviewer is independent of the builder (a different agent and model lineage) is recorded and never enforced.
-- Candidates in compete mode share one model, so their diversity comes from short prompts.
+- Compete takes 2 to 4 candidates, and each can name its own target and model. Given only a count, they share one model and differ by a one-line stance in each prompt.
 - Matching a worker's claim to a command that ran is text matching.
 - Adaptive routing from past results is off by default.
 - No comparison between a single agent and any of these arrangements has been run.

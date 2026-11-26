@@ -88,7 +88,7 @@ Write trap tasks, each with a hidden grader the agent never sees. In one, the na
 
 Run each task several times on one model from each model lineage, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.
 
-Two things are needed first. The trap tasks do not exist yet, and the campaign runner does not read the sealed assessment or repeat a run.
+One thing is needed first: the trap tasks do not exist yet. The campaign runner already repeats a roster with `--repeat` and records each run's sealed completion and verification.
 
 ## Open questions
 
