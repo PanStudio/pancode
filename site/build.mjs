@@ -352,12 +352,12 @@ const founder = {
 	"@id": `${product.origin}/#founder`,
 	name: "Anthony Kougkas",
 	url: "https://akougkas.io/",
-	jobTitle: "Founder, Pan Labs",
+	jobTitle: "Founder, PanStudio",
 };
 const publisher = {
 	"@type": "Organization",
 	"@id": `${product.origin}/#publisher`,
-	name: "Pan Labs",
+	name: "PanStudio",
 	url: `${product.origin}/`,
 	founder: { "@id": founder["@id"] },
 };

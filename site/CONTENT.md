@@ -44,7 +44,7 @@ The research index opens with the thesis: the harness is a systems problem, and
 PanCode is systems software for coding agents. Each subsystem row shows that
 subsystem's question, from `question` in `content/research.json`. "Work with
 PanCode" holds four invitations: run an experiment, read or change the system,
-evaluate it for a team, and work with Pan Labs. The founder's signed note above
+evaluate it for a team, and work with PanStudio. The founder's signed note above
 it is the only first-person text on the site.
 
 Pages live in `content/research/` and `content/research.json` has the same
@@ -95,7 +95,7 @@ to its path successor.
 
 ## Publisher and dates
 
-PanCode is a product of Pan Labs. Anthony Kougkas, its founder, writes the
+PanCode is a product of PanStudio. Anthony Kougkas, its founder, writes the
 articles, and the site credits him as their author. Do not narrate earlier prototypes or projects as
 PanCode history. Credit upstream projects and contributors. Do not manufacture
 dates.
