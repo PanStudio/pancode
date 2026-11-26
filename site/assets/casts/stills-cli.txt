@@ -45,7 +45,7 @@ SHA-256: e1c73d4d0ee21b99cdc317ddf04705b1f5c949fae749e9e57c052f5fe9dd8bf5
 Registration check: passed
 Registration check executes the package's startup code in a private copy under its declared Node permissions, inside the OS sandbox when one is available (network blocked unless declared). Permissions are a seat belt, not a boundary against hostile code. No activation or handler invocation occurs.
 ~/projects/calibration-lab $ pancode extensions test .pancode/dev/extensions/lint-status
-✔ lint-status status behavior (21.065548ms)
+✔ lint-status status behavior (24.03098ms)
 ℹ tests 1
 ℹ suites 0
 ℹ pass 1
@@ -53,7 +53,7 @@ Registration check executes the package's startup code in a private copy under i
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 192.869597
+ℹ duration_ms 225.03312
 ~/projects/calibration-lab $
 
 == cli-playbook-graph
@@ -114,8 +114,8 @@ planned install skill:tdd (project)
   "ok": true,
   "plan": {
     "version": 1,
-    "id": "119ad3dfe4d7d9b8",
-    "createdAt": "2026-11-26T18:21:14.615Z",
+    "id": "88599a53af875462",
+    "createdAt": "2026-11-26T20:04:55.117Z",
     "cwd": "/home/researcher/projects/calibration-lab",
     "request": {
       "operation": "install",
@@ -136,11 +136,11 @@ planned install skill:tdd (project)
         },
         "destination": "/home/researcher/projects/calibration-lab/.pancode/plugins/tdd",
         "versions": {
-          "to": "0.4.2"
+          "to": "0.4.3"
         },
         "source": {
-          "sourceUrl": "/opt/pancode/lib/node_modules/@akougkas/pancode/hub/packs/skills/coding/tdd",
-          "sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116",
+          "sourceUrl": "/opt/pancode/lib/node_modules/@panstudio/pancode/hub/packs/skills/coding/tdd",
+          "sha256": "2510ddf0d0cf95f78492f2077cb6639ca0d7d20b925babadaa0e6893c734df59",
           "staged": true,
           "publisher": "pancode",
           "tier": "core",
@@ -189,7 +189,7 @@ planned install skill:tdd (project)
     "diagnostics": []
   },
   "apply": {
-    "planId": "119ad3dfe4d7d9b8",
+    "planId": "88599a53af875462",
     "dryRun": true,
     "outcomes": [
       {
@@ -217,14 +217,14 @@ planned install skill:tdd (project)
     {
       "ref": "skill:tdd",
       "path": "/home/researcher/projects/calibration-lab/.pancode/plugins/tdd",
-      "sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116",
-      "sourceUrl": "/opt/pancode/lib/node_modules/@akougkas/pancode/hub/packs/skills/coding/tdd"
+      "sha256": "2510ddf0d0cf95f78492f2077cb6639ca0d7d20b925babadaa0e6893c734df59",
+      "sourceUrl": "/opt/pancode/lib/node_modules/@panstudio/pancode/hub/packs/skills/coding/tdd"
     }
   ],
   "results": [],
   "id": "tdd",
   "path": "/home/researcher/projects/calibration-lab/.pancode/plugins/tdd",
-  "sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116"
+  "sha256": "2510ddf0d0cf95f78492f2077cb6639ca0d7d20b925babadaa0e6893c734df59"
 }
 ~/projects/calibration-lab $
 
@@ -246,7 +246,7 @@ OpenCode: present; version 1.18.32; ACP not configured; adapter present; headles
   headless: unavailable; No target uses the opencode-cli runtime. Next: Configure a target with runtime opencode-cli
   pane: experimental; installed CLI; static inspection cannot verify a live Herdr pane host. Next: Start PanCode inside Herdr with pancode --with-panes
   Inventory known: none found
-GitHub Copilot: present; version 1.0.116; ACP not configured; adapter present; headless unsupported; pane unsupported
+GitHub Copilot: present; version unknown; ACP not configured; adapter present; headless unsupported; pane unsupported
   acp: unavailable; ACP delegation agent is not configured. Next: Run pancode configure --interop
   Inventory known: none found
 Antigravity CLI: absent; version unknown; ACP not configured; adapter absent; headless antigravity-code (install CLI, target needed); pane unavailable
@@ -264,7 +264,7 @@ stored results:run-042.csv (42 B) from /home/researcher/projects/calibration-lab
 ref       results:run-042.csv
 path      /home/researcher/.cache/pancode/store/7e80b71a546b499d/results/run-042.csv
 bytes     42
-modified  2026-11-26 18:21:23Z
+modified  2026-11-26 20:05:04Z
 drift     none
 sha256    e04f3f7a5c4bc0bfc01b7b59ed571a18e0a0bdb0b4c958c96662fb4d71a556a5
 generated no producing run on record
