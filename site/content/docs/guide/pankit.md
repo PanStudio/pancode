@@ -4,7 +4,7 @@ Run PanKit's MCP tool servers in PanCode or in any other MCP host.
 
 ## What PanKit gives you
 
-PanKit is a suite of MCP tool servers for HPC and scientific work. PanCode installs it as the `pankit` command. PanCode loads every server as a builtin MCP server, and any other MCP host can launch one with `pankit serve <server>`.
+PanKit is PanCode's agent toolkit, shareable with other agents over MCP: seven tool servers for HPC and scientific work. PanCode installs it as the `pankit` command. PanCode loads every server as a builtin MCP server, and any other MCP host can launch one with `pankit serve <server>`.
 
 | Server | What it answers |
 | --- | --- |

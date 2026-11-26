@@ -72,7 +72,7 @@
     {
       "path": "guide/panstore.md",
       "source": "docs/guide/panstore.md",
-      "sha256": "f098c30b62cf07b678a2cb1241f0ac716f2b427ba434e5546bc43a051942de99",
+      "sha256": "327f1bb1ebdca1b73a34447baae7eb61f09d6d85366b10446965583c912db857",
       "sourceSha256": "195f7baaf26e8370d8620244b973433c9d4b4ed43a93a0c7eb7f46d029648463"
     },
     {
@@ -84,14 +84,8 @@
     {
       "path": "guide/pankit.md",
       "source": "docs/guide/pankit.md",
-      "sha256": "031b11c2c6171aa0bf1e8e64590e8c0b854196bd10f9938704d899f518688162",
+      "sha256": "bf103f166397c41dc86e598d0fff28002c7185fb3d843390cf4ef889e2123fa7",
       "sourceSha256": "59d68d03807e288ffcff7c1095b96abbef3231733d317268d0a418adb1925944"
-    },
-    {
-      "path": "guide/sdk.md",
-      "source": "docs/guide/sdk.md",
-      "sha256": "5422a2a84027b6c7c9996e24288ef6c5c1b17fd53d50670db5f06c1818daec22",
-      "sourceSha256": "6c5f212724be0e2175fac3f30b42ab8ff5bdc0e1604da81dc1603d41114512a6"
     },
     {
       "path": "guide/fleet-dispatch.md",
@@ -112,6 +106,12 @@
       "sourceSha256": "df6b2f8d413e0dc84d3c07c31be60f66e69c5f298068eb6efc5cd0193a965bc7"
     },
     {
+      "path": "guide/sdk.md",
+      "source": "docs/guide/sdk.md",
+      "sha256": "4a411ddd17a4534531a608612a6ab52b5594a0c3c11d2a66ee21826a650fea5c",
+      "sourceSha256": "6c5f212724be0e2175fac3f30b42ab8ff5bdc0e1604da81dc1603d41114512a6"
+    },
+    {
       "path": "guide/interop.md",
       "source": "docs/guide/interop.md",
       "sha256": "4fbe461a5b412af325154ad29352691e264a28b92196ddd6677f9e16b950c53b",
@@ -120,7 +120,7 @@
     {
       "path": "guide/doctor.md",
       "source": "docs/guide/doctor.md",
-      "sha256": "05eeda4fc58851cd64226ac01f2c8a5d9356defaea83f6e51a048f015eded517",
+      "sha256": "675937d4ada53ce04586d9adb685bc31f22f6bd2a9467452bee341f909424d04",
       "sourceSha256": "84e6bba273d049ef977f91f752e7fe7933ce0f24aebfda59b982e6b35cbc7046"
     },
     {

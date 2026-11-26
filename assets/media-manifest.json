@@ -501,7 +501,7 @@
 			"id": "social-link-dark",
 			"template": "site/cards/link.html",
 			"output": "site/assets/social-card.png",
-			"sourceSha256": "b5b00a2c3f1514df7be5c01dde1d60a4e432dc6beacf4bed33d4c5241c02d525",
+			"sourceSha256": "6cef7fe3fdeb269b03328db44be0d4db00aeb649743f6aed375df21560a31564",
 			"sha256": "15baa2dee5b4ba808f2ea3defc4190ea2d4ddf50066658c1dca6c780ce9a5824",
 			"sources": [
 				"site/cards/link.html",
@@ -531,7 +531,7 @@
 			"id": "social-link-light",
 			"template": "site/cards/link-light.html",
 			"output": "site/assets/social-card-light.png",
-			"sourceSha256": "0d60f73330e9b5f4993cb2b3b0170f556609cf0841764ee90f4a21b1bc23174e",
+			"sourceSha256": "ae848280573d3526ff15aa40b4630a1ca2ec8081c61d5812585cb918ba28a0a2",
 			"sha256": "d90573d1fae67cc1f6568a9cd848d89c07785e33c10c4f577485453472d885bf",
 			"sources": [
 				"site/cards/link-light.html",
@@ -561,7 +561,7 @@
 			"id": "social-square-dark",
 			"template": "site/cards/square.html",
 			"output": "site/assets/social-square.png",
-			"sourceSha256": "2849aab22ca87bd1805f0a1d7b6ce33a1fd735e6dcba2afbb1f8547849d49e95",
+			"sourceSha256": "30b708741893490e07a4bd69148309c84a38be1a139bdd567a10f91b2da3f9a7",
 			"sha256": "00e395ebfb803f03918bcc38d431c19320990c2927169808941c83052e67060d",
 			"sources": [
 				"site/cards/square.html",
@@ -591,7 +591,7 @@
 			"id": "social-square-light",
 			"template": "site/cards/square-light.html",
 			"output": "site/assets/social-square-light.png",
-			"sourceSha256": "8c2056b37f87f18c3d6999736db4412e7aff16de969ee784d5b9fd061a08ec08",
+			"sourceSha256": "3f59d250c098b98a6f98d86a5417e13ac31a85572353c3b46ed704e92f6aec79",
 			"sha256": "539fbbd16d504125b4d85c4e6ddb243ab1077c522211b463bc7481a32d7d8ac1",
 			"sources": [
 				"site/cards/square-light.html",

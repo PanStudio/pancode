@@ -90,7 +90,7 @@
 		"path": "guide/panstore.md",
 		"source": "docs/guide/panstore.md",
 		"title": "Keep results in PanStore",
-		"group": "The family",
+		"group": "Store, hub and toolkit",
 		"excerpt": "Keep datasets and results outside the working tree, with a record of where each came from.",
 		"description": "Keep datasets and results outside the working tree with PanStore, with a record of where each file came from and whether it changed.",
 		"summary": "panstore.md"
@@ -99,7 +99,7 @@
 		"path": "guide/panhub.md",
 		"source": "docs/guide/panhub.md",
 		"title": "Packs from PanHub",
-		"group": "The family",
+		"group": "Store, hub and toolkit",
 		"excerpt": "Find, install and manage skills, plugins, extensions and other packs.",
 		"description": "Find, review and install PanHub packs with pancode hub or /hub, choose user or project scope, and trust the packs a project brings.",
 		"summary": "panhub.md"
@@ -108,19 +108,10 @@
 		"path": "guide/pankit.md",
 		"source": "docs/guide/pankit.md",
 		"title": "Tool servers with PanKit",
-		"group": "The family",
+		"group": "Store, hub and toolkit",
 		"excerpt": "Run PanKit's MCP tool servers in PanCode or in any other MCP host.",
 		"description": "Check, serve and trust PanKit's MCP tool servers for HPC and scientific work, inside PanCode or from any other MCP host.",
 		"summary": "pankit.md"
-	},
-	{
-		"path": "guide/sdk.md",
-		"source": "docs/guide/sdk.md",
-		"title": "Write extensions and tools with PanSDK",
-		"group": "The family",
-		"excerpt": "Scaffold, validate and test extensions, and write MCP tool servers.",
-		"description": "Scaffold, validate and test a PanCode extension, and write an MCP tool server with a declared policy, using the pancode/sdk imports.",
-		"summary": "sdk.md"
 	},
 	{
 		"path": "guide/fleet-dispatch.md",
@@ -145,6 +136,15 @@
 		"group": "Extend PanCode",
 		"excerpt": "Install and write extensions that declare what they may do.",
 		"summary": "extensions.md"
+	},
+	{
+		"path": "guide/sdk.md",
+		"source": "docs/guide/sdk.md",
+		"title": "Extension API (unstable)",
+		"group": "Extend PanCode",
+		"excerpt": "Scaffold, validate and test extensions, and write MCP tool servers.",
+		"description": "Scaffold, validate and test a PanCode extension, and write an MCP tool server with a declared policy, using the unstable pancode/sdk imports.",
+		"summary": "sdk.md"
 	},
 	{
 		"path": "guide/interop.md",

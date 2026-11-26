@@ -35,7 +35,7 @@
 @layer base {
 	html {
 		scroll-behavior: smooth;
-		scroll-padding-block-start: calc(var(--header) + var(--family-row) + 1rem);
+		scroll-padding-block-start: calc(var(--header) + 1rem);
 	}
 	body {
 		background: var(--paper);
@@ -205,22 +205,30 @@
 		border-block-end: 1px solid var(--line);
 	}
 	.mast-row {
-		min-block-size: var(--header);
-		display: flex;
+		block-size: var(--header);
+		display: grid;
+		grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
 		align-items: center;
-		justify-content: space-between;
-		gap: 2rem;
+		gap: var(--space-6);
 	}
 	.brand {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.7rem;
+		gap: var(--space-3);
 		text-decoration: none;
+		flex-shrink: 0;
+		justify-self: start;
+	}
+	.brand .mark {
+		inline-size: 1.75rem;
+		block-size: 1.75rem;
 		flex-shrink: 0;
 	}
 	.brand-name {
 		font: 700 1.75rem / 1 var(--font-display);
 		letter-spacing: -0.04em;
+		/* The display face sits low in its line box; this centres the cap height on the mark. */
+		translate: 0 -0.04em;
 	}
 	.brand-pan {
 		color: var(--accent);
@@ -231,8 +239,13 @@
 	.nav,
 	.mast-actions {
 		display: flex;
-		gap: 1.75rem;
+		gap: var(--space-6);
 		align-items: center;
+		white-space: nowrap;
+	}
+	.mast-actions {
+		gap: var(--space-4);
+		justify-self: end;
 	}
 	.nav a,
 	.source-link {
@@ -250,21 +263,48 @@
 		text-decoration-color: var(--accent);
 		text-underline-offset: 0.6rem;
 	}
-	.mast-actions {
-		gap: 1rem;
-	}
+	/* A 36px round button whose hit area reaches 44px. */
 	.theme-toggle {
-		inline-size: 2.75rem;
-		block-size: 2.75rem;
+		position: relative;
+		display: grid;
+		place-items: center;
+		inline-size: 2.25rem;
+		block-size: 2.25rem;
+		padding: 0;
 		background: transparent;
-		border: 1px solid var(--line-control);
-		border-radius: var(--radius-sm);
-		font-size: 1.3rem;
-		line-height: 1;
+		border: 0;
+		border-radius: 50%;
+		color: var(--muted);
+	}
+	.theme-toggle::after {
+		content: "";
+		position: absolute;
+		inset: -0.25rem;
+		border-radius: 50%;
 	}
 	.theme-toggle:hover {
 		color: var(--accent);
-		border-color: var(--accent);
+		background: var(--accent-soft);
+	}
+	.theme-icon,
+	.theme-icon svg {
+		display: block;
+		inline-size: 1.25rem;
+		block-size: 1.25rem;
+	}
+	.theme-icon {
+		position: relative;
+	}
+	.theme-icon svg {
+		position: absolute;
+		inset: 0;
+	}
+	.theme-moon,
+	html[data-theme="light"] .theme-sun {
+		visibility: hidden;
+	}
+	html[data-theme="light"] .theme-moon {
+		visibility: visible;
 	}
 	.nav-more {
 		display: none;
@@ -296,35 +336,51 @@
 		text-decoration: none;
 	}
 	.colophon {
-		padding-block: 2.5rem 1.5rem;
+		padding-block: var(--space-8) var(--space-5);
 		border-block-start: 1px solid var(--line);
 	}
 	.footer-top {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		justify-content: space-between;
-		gap: 2rem;
-		padding-block-end: 2rem;
+		gap: var(--space-3) var(--space-6);
+		padding-block-end: var(--space-7);
 	}
 	.footer-top > p {
 		color: var(--muted);
-		font-size: 0.85rem;
+		font-size: 0.95rem;
+	}
+	.footer-links {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: var(--space-6);
+		padding-block-end: var(--space-7);
+	}
+	.footer-links .eyebrow {
+		margin-block-end: var(--space-3);
+	}
+	.footer-links ul {
+		display: grid;
+		gap: var(--space-1);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.footer-links a {
+		display: inline-block;
+		padding-block: var(--space-1);
+		color: var(--ink-soft);
+		font-size: 0.9rem;
+		text-decoration: none;
+	}
+	.footer-links a:hover {
+		color: var(--accent);
 	}
 	.footer-bottom {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding-block-start: 1.25rem;
+		padding-block-start: var(--space-5);
 		border-block-start: 1px solid var(--line);
 		color: var(--muted);
 		font-size: 0.72rem;
-	}
-	.footer-bottom > div {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1.25rem;
-		justify-content: flex-end;
 	}
 }
 /* Placed early only for source order; the @layer order on line 1 still decides precedence. */
@@ -910,9 +966,9 @@
 	.docs-sidebar,
 	.docs-toc {
 		position: sticky;
-		inset-block-start: calc(var(--header) + var(--family-row) + 1.5rem);
+		inset-block-start: calc(var(--header) + 1.5rem);
 		block-size: fit-content;
-		max-block-size: calc(100dvh - var(--header) - var(--family-row) - 3rem);
+		max-block-size: calc(100dvh - var(--header) - 3rem);
 		overflow: auto;
 		scrollbar-width: thin;
 	}
@@ -1157,26 +1213,59 @@
 			gap: 3rem;
 		}
 	}
-	@media (max-width: 1000px) {
-		.source-link,
-		.mast-actions > .btn {
-			display: none;
-		}
-	}
 	@media (max-width: 850px) {
 		:root {
 			--header: 4.25rem;
 		}
 		.mast-row {
-			gap: 1rem;
+			gap: var(--space-4);
 		}
 		.nav {
-			gap: 1.1rem;
+			gap: var(--space-4);
 		}
+		.mast-actions {
+			gap: var(--space-3);
+		}
+	}
+	/* Narrow rows keep the actions apart from the links with a hairline instead of space. */
+	@media (max-width: 1000px) {
+		.mast-row {
+			grid-template-columns: auto minmax(0, 1fr) auto;
+		}
+		.mast .nav {
+			justify-self: center;
+		}
+		.mast .brand-name {
+			font-size: 1.5rem;
+		}
+		.mast-actions {
+			padding-inline-start: var(--space-4);
+			border-inline-start: 1px solid var(--line);
+		}
+	}
+	@media (max-width: 760px) {
+		.mast-actions {
+			padding-inline-start: 0;
+			border-inline-start: 0;
+		}
+		.mast-row {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+		.nav,
 		.source-link,
 		.mast-actions > .btn {
 			display: none;
 		}
+		.nav-more {
+			display: block;
+		}
+	}
+	@media (max-width: 767px) {
+		.footer-links {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@media (max-width: 850px) {
 		.hero-intro {
 			max-inline-size: 65ch;
 		}
@@ -1239,10 +1328,6 @@
 		.doc h1 {
 			font-size: 2.25rem;
 		}
-		.footer-bottom {
-			align-items: start;
-			flex-direction: column;
-		}
 	}
 	@media (max-width: 600px) {
 		.page {
@@ -1251,18 +1336,8 @@
 		.brand-name {
 			font-size: 1.5rem;
 		}
-		.nav {
-			display: none;
-		}
-		.nav-more {
-			display: block;
-		}
 		.mast-actions {
-			gap: 0.5rem;
-		}
-		.theme-toggle {
-			inline-size: 2.75rem;
-			block-size: 2.75rem;
+			gap: var(--space-2);
 		}
 		.hero {
 			padding-block-start: 1.5rem;
@@ -1345,13 +1420,6 @@
 		}
 		.project-section {
 			gap: 2rem;
-		}
-		.footer-top {
-			display: grid;
-			gap: 1rem;
-		}
-		.footer-bottom {
-			font-size: 0.65rem;
 		}
 		.tutorial-grid {
 			grid-template-columns: 1fr;
@@ -1480,12 +1548,11 @@
 	:where(.btn, .copy, .theme-toggle, .nav-more summary):active {
 		scale: 0.98;
 	}
-	.theme-toggle span {
-		display: inline-block;
+	.theme-icon {
 		transition: rotate var(--motion-base) var(--motion-ease);
 	}
-	html[data-theme="light"] .theme-toggle span {
-		rotate: 180deg;
+	html[data-theme="light"] .theme-icon {
+		rotate: 360deg;
 	}
 	.nav a {
 		position: relative;
@@ -1600,9 +1667,6 @@
 }
 @layer responsive {
 	@media (max-width: 850px) {
-		.footer-bottom > div {
-			justify-content: flex-start;
-		}
 		.interface-item figcaption {
 			font-size: 1rem;
 		}
@@ -1665,7 +1729,7 @@
 		.hero-capture,
 		.interface-item img,
 		.arrow,
-		.theme-toggle span {
+		.theme-icon {
 			transition: none;
 		}
 		.arrow {
@@ -2381,50 +2445,8 @@
 		}
 	}
 }
-/* The family row: one line above the main row of the header naming every
-   product, each set like the wordmark. Below 600px the Menu carries it. */
-@layer shell {
-	.family {
-		border-block-end: 1px solid var(--line);
-	}
-	.family-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-6);
-		min-block-size: var(--family-row);
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	.family a,
-	.nav-family a {
-		font: 700 0.8rem / 1 var(--font-display);
-		letter-spacing: -0.01em;
-		text-decoration: none;
-		white-space: nowrap;
-	}
-	.family a {
-		padding-block: 0.35rem;
-		text-underline-offset: 0.4rem;
-	}
-	.family a:hover,
-	.family a[aria-current] {
-		text-decoration: underline;
-		text-decoration-color: var(--line-control);
-	}
-	.family a[aria-current] {
-		text-decoration-color: var(--accent);
-	}
-	.nav-family {
-		margin-block-start: 0.5rem;
-		padding-block-start: 0.5rem;
-		border-block-start: 1px solid var(--line);
-	}
-	.nav-more nav .nav-family a[aria-current] {
-		background: var(--accent-soft);
-	}
-}
 @layer docs {
-	.family-title {
+	.hub-title {
 		letter-spacing: -0.04em;
 	}
 	.hub-intro {
@@ -2548,15 +2570,5 @@
 	.hub-source {
 		margin-block-start: var(--space-8);
 		overflow-wrap: anywhere;
-	}
-}
-@layer responsive {
-	@media (max-width: 600px) {
-		:root {
-			--family-row: 0px;
-		}
-		.family {
-			display: none;
-		}
 	}
 }

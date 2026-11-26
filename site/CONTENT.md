@@ -115,25 +115,15 @@ unique installations. The published site loads Cloudflare Web Analytics' beacon,
 which counts page views without cookies, and no other tracker. Do not add a
 tracker or an unsupported adoption claim.
 
-## Family pages
+## PanHub, PanStore and PanKit
 
-PanStore, PanKit and PanSDK each have one product page, written in
-`content/family/<id>.md` and registered in `family.json`. A page answers what
-the tool is (one paragraph), how to get it, one short example taken from its
-package README, and what it does not do, in a `limits` block that links the
-guide's limits. It links the full guide, the npm page and the source. PanKit's
-page lists its servers.
-
-All three ship in the one `pancode` package: installing PanCode installs the
-`panstore` and `pankit` commands and the `pancode/sdk/*` exports. Never print a
-scoped `@pancode/` package name, and never claim signing that the release does
-not perform. The page header shows the package version the build reads, the
-command or import, and the licence, from `family.json`; do not repeat them as
-prose.
-
-PanHub's page is the catalog, generated from the bundled index and labelled as
-the packs bundled with this release. A listing is not an endorsement; the page
-says what each tier means. PanCode's page is the overview.
+PanCode is one platform, and the site presents it that way. PanHub's page is
+the catalog, generated from the bundled index and labelled as the packs bundled
+with this release. A listing is not an endorsement; the page says what each
+tier means. PanStore is the store behind `pancode store` and PanKit is
+PanCode's agent toolkit, shareable with other agents over MCP; each is
+documented in its guide and has no page of its own. Never name PanSDK (the
+extension API is unstable), a `panstore` command, or a family of products.
 
 ## Guide composition
 

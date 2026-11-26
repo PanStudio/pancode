@@ -1,7 +1,7 @@
 You can use PanCode to coordinate the coding agents you already have installed. Give a peer a focused assignment, follow a managed run where the connector supports it, and review its output before accepting the change.
 
 ::: note Version scope
-The supported peer family includes Claude Code, Codex, OpenCode, Pi, and Antigravity. Their modes and controls differ. Install and authenticate each peer's own CLI before configuring it in PanCode.
+The supported peers are Claude Code, Codex, OpenCode, Pi, and Antigravity. Their modes and controls differ. Install and authenticate each peer's own CLI before configuring it in PanCode.
 :::
 
 ::: needs
