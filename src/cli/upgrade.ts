@@ -671,6 +671,14 @@ export async function runUpgradeCommand(
 		opts.channel = installation.installer.channel as Channel;
 
 	const updateCommand = installationCommand(installation, "upgrade", opts.channel);
+	// npm and Bun carry a beta dist-tag only while a pre-release is current, so a hand-run registry command on the
+	// beta channel names the version that channel resolves to, the newer of the beta and latest tags.
+	const handRunCommand = async (resolved: string | null): Promise<string> => {
+		if (opts.channel !== "beta" || !["npm", "pnpm", "bun"].includes(installation.kind)) return updateCommand;
+		const lookup = resolved === null ? await deps.lookUpAvailableVersion("beta", installation.kind) : null;
+		const version = resolved ?? (lookup?.asked ? lookup.version : null);
+		return version === null ? updateCommand : installationCommand(installation, "upgrade", version);
+	};
 	const sourceAdvice = () => presenter.commandAdvice(SOURCE_UPGRADE_LEAD, updateCommand);
 	const backgroundOwner = join(stateDir, "gui/background/owner.json");
 	const finish = async (): Promise<number> => {
@@ -744,7 +752,10 @@ export async function runUpgradeCommand(
 	if (!opts.postInstall && method !== "npm" && method !== "installer" && method !== "source") {
 		presenter.note(`Installation method: ${methodLabel}`);
 		presenter.note(`Package: ${installation.root}`);
-		presenter.commandAdvice("Update with the original package manager and its original global directory:", updateCommand);
+		presenter.commandAdvice(
+			"Update with the original package manager and its original global directory:",
+			await handRunCommand(null),
+		);
 		presenter.commandAdvice("Then start pancode on the last session:", "pancode --continue");
 		if (opts.dryRun) presenter.warn("Dry run: no changes made");
 		else presenter.fail("This installation needs a package-manager update; no package was replaced.");
@@ -919,7 +930,10 @@ export async function runUpgradeCommand(
 				method === "installer" ? "install.sh failed" : "npm install failed",
 				err instanceof Error ? err.message : String(err),
 			);
-			presenter.commandAdvice("To upgrade by hand, run:", `${updateCommand}\npancode upgrade --post-install`);
+			presenter.commandAdvice(
+				"To upgrade by hand, run:",
+				`${await handRunCommand(availableVersion)}\npancode upgrade --post-install`,
+			);
 			presenter.finish();
 			return 1;
 		}

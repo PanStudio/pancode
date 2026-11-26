@@ -406,6 +406,14 @@ test("manual package managers get instructions without replacement and dry runs 
 	});
 	assert.equal(result.status, 1, result.stderr + result.stdout);
 	assert.match(result.stdout, /pnpm add -g/);
+	// npm has no beta dist-tag between pre-releases, so the beta command names the version beta resolves to.
+	const beta = await f.call(["--channel", "beta", "--json"], {
+		inspectInstallation: () => ({ ...inspectInstallation(f.entry), kind: "pnpm" }),
+		lookUpAvailableVersion: async (channel) => ({ asked: true, version: channel === "beta" ? "99.0.0" : null }),
+	});
+	assert.equal(beta.status, 1, beta.stderr + beta.stdout);
+	assert.match(beta.stdout, /pnpm add -g @akougkas\/pancode@99\.0\.0/);
+	assert.doesNotMatch(beta.stdout, /@beta/);
 	const preview = await f.call(["--dry-run", "--restart"]);
 	assert.equal(preview.status, 0, preview.stderr + preview.stdout);
 	assert.match(preview.stdout, /Would relaunch/);
