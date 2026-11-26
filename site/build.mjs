@@ -295,9 +295,26 @@ function responsiveImages(html, path) {
 // rendering for a round trip. It is inlined and allowed by its exact hash.
 const themeScript = (await read("js/theme.js")).trim();
 const themeHash = `'sha256-${createHash("sha256").update(themeScript).digest("base64")}'`;
+// Google Analytics 4 runs only when product.json names a measurement id. Its
+// loader is the one remote script the policy allows; collection goes to
+// google-analytics.com. Without an id no page carries the tag or these origins.
+const analyticsId = product.analytics?.ga4 ?? "";
+if (!/^(?:G-[A-Z0-9]+)?$/.test(analyticsId))
+	throw new Error("product.json analytics.ga4 must be empty or a GA4 measurement id (G-...).");
+const analyticsOrigins = analyticsId
+	? {
+			script: " https://www.googletagmanager.com",
+			img: " https://*.google-analytics.com https://*.googletagmanager.com",
+			connect: " https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com",
+		}
+	: { script: "", img: "", connect: "" };
+// The consent banner ships hidden on every page when analytics is on; analytics.js
+// shows it until the visitor chooses. It sits fixed at the foot of the viewport but
+// first in the tab order after the skip link, so a keyboard reaches it at once.
+const consent = analyticsId ? partials.match(/<section class="consent"[\s\S]*?<\/section>/)[0] : "";
 // GitHub Pages sends no custom headers, so the policy nginx used to send rides
 // in a meta tag. frame-ancestors is not honored there and cannot be restored.
-const contentSecurityPolicy = `default-src 'self'; script-src 'self' ${themeHash} https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'`;
+const contentSecurityPolicy = `default-src 'self'; script-src 'self' ${themeHash}${analyticsOrigins.script}; style-src 'self'; img-src 'self' data:${analyticsOrigins.img}; font-src 'self'; connect-src 'self'${analyticsOrigins.connect}; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'`;
 // The terminal player compiles WebAssembly, which only pages embedding a recording allow.
 const castContentSecurityPolicy = contentSecurityPolicy.replace(
 	"script-src 'self'",
@@ -500,7 +517,7 @@ function head(
 <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}"><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="${escapeHtml(brand.defaultTheme)}">${themeColors}
 <link rel="canonical" href="${url}"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark-small.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png" sizes="180x180"><link rel="author" href="/humans.txt">
 ${path === "/404.html" ? "" : brand.type.preload.map((name) => `<link rel="preload" href="/assets/fonts/${name}" as="font" type="font/woff2" crossorigin>`).join("")}
-<link rel="stylesheet" href="/css/site.css"><link rel="stylesheet" href="/css/art.css"><script>${themeScript}</script>${cast ? `<script src="/js/cast.js" data-player-src="/assets/player/asciinema-player.min.js" data-player-css="/assets/player/asciinema-player.css" data-cast-css="/css/cast.css" defer></script>` : ""}
+<link rel="stylesheet" href="/css/site.css"><link rel="stylesheet" href="/css/art.css"><script>${themeScript}</script>${analyticsId ? `<script src="/js/analytics.js" data-ga4="${analyticsId}" defer></script>` : ""}${cast ? `<script src="/js/cast.js" data-player-src="/assets/player/asciinema-player.min.js" data-player-css="/assets/player/asciinema-player.css" data-cast-css="/css/cast.css" defer></script>` : ""}
 <meta property="og:locale" content="en_US"><meta property="og:site_name" content="${escapeHtml(product.name)}"><meta property="og:type" content="${type === "Article" || type === "TechArticle" ? "article" : "website"}"><meta property="og:url" content="${url}"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${imageUrl}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="${image.width}"><meta property="og:image:height" content="${image.height}"><meta property="og:image:alt" content="${escapeHtml(imageAlt)}">${published && type !== "WebPage" ? `<meta property="article:published_time" content="${published}">` : ""}${lastmod && type !== "WebPage" ? `<meta property="article:modified_time" content="${lastmod}">` : ""}
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${escapeHtml(title)}"><meta name="twitter:description" content="${escapeHtml(description)}"><meta name="twitter:image" content="${imageUrl}"><meta name="twitter:image:alt" content="${escapeHtml(imageAlt)}">
 <meta name="robots" content="${path === "/404.html" ? "noindex" : "index,follow,max-image-preview:large,max-snippet:-1"}"><script type="application/ld+json">${JSON.stringify(graph).replace(/</g, "\\u003c")}</script>`;
@@ -513,7 +530,10 @@ function shell(html, path, title, description, type, options) {
 		href === active ? `${all} aria-current="page"` : all,
 	);
 	let number = 0;
-	const result = inlineArt(html.replace("<!-- site-header -->", header).replace("<!-- site-footer -->", footer), path)
+	const result = inlineArt(
+		html.replace("<!-- site-header -->", consent + header).replace("<!-- site-footer -->", footer),
+		path,
+	)
 		.replace("<!-- site-head -->", head(path, title, description, type, options))
 		.replaceAll("<!-- version -->", escapeHtml(product.version))
 		.replaceAll("<!-- published-version -->", escapeHtml(product.publishedVersion))
@@ -846,7 +866,14 @@ await writeFile(join(out, "css/site.css"), minifyCss(`${await read("css/brand.cs
 await writeFile(join(out, "css/landing.css"), minifyCss(await read("css/landing.css")));
 await writeFile(join(out, "css/art.css"), minifyCss(await read("css/art.css")));
 await mkdir(join(out, "js"));
-for (const name of ["site.js", "docs.js", "redirect.js", "hub.js", "landing.js"])
+for (const name of [
+	"site.js",
+	"docs.js",
+	"redirect.js",
+	"hub.js",
+	"landing.js",
+	...(analyticsId ? ["analytics.js"] : []),
+])
 	await cp(join(root, "js", name), join(out, "js", name));
 await mkdir(join(out, "content"));
 await writeFile(join(out, "content/docs-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -863,6 +890,19 @@ await writePage(
 	await read("404.html"),
 	"Page not found · PanCode",
 	"Find your way back to the PanCode overview, documentation, and tutorials.",
+);
+await writePage(
+	"/privacy.html",
+	(await read("privacy.html")).replace(
+		"<!-- analytics-choice -->",
+		analyticsId
+			? '<p>Your current choice: <strong data-consent-state>not made yet</strong>.</p><div class="actions"><button class="btn btn-small" type="button" data-consent-choice="granted">Accept analytics cookies</button><button class="btn-small consent-decline" type="button" data-consent-choice="denied">Decline</button></div><p>Decline withdraws an earlier Accept: the site sets analytics storage back to denied and deletes the Google Analytics cookies on pancode.dev. Clearing this site\'s data in your browser also resets the choice, and the banner asks again.</p>'
+			: "<p>Analytics is switched off in this build of the site: no page loads the Google tag, so nothing is measured and there is no choice to make.</p>",
+	),
+	"Privacy · PanCode",
+	"What pancode.dev measures with Google Analytics, the consent choice and how to withdraw it. PanCode the program sends nothing home.",
+	"WebPage",
+	{ sources: ["privacy.html", "product.json"] },
 );
 
 const groups = [...new Set(index.map((item) => item.group))];

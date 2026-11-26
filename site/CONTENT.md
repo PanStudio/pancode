@@ -118,9 +118,12 @@ environments, checks, and a documented cost basis. Do not caricature other tools
 
 The desired outcome is a useful installed workflow. Search ranking and adoption
 are hypotheses until measured. Aggregate npm downloads are a noisy proxy, not
-unique installations. The published site loads Cloudflare Web Analytics' beacon,
-which counts page views without cookies, and no other tracker. Do not add a
-tracker or an unsupported adoption claim.
+unique installations. The published site measures its visitors with Google
+Analytics 4 behind Google Consent Mode: storage starts denied, and only the
+visitor's Accept lets it set cookies. `/privacy.html` says what is measured and
+how to withdraw the choice. It is the only tracker; do not add another, any ads
+feature or an unsupported adoption claim. PanCode the program still needs no
+account and sends nothing home; keep the two apart in copy.
 
 ## PanHub, PanStore and PanKit
 
