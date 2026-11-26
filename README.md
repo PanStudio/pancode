@@ -30,7 +30,8 @@ through ACP and delegation.
 ## Get started
 
 You need a model that supports tool calling. Linux, macOS and WSL are the
-primary platforms. The installer brings its own Node.js and needs no root:
+primary platforms. The installer downloads one verified archive that holds
+PanCode and the Node.js it runs on, and needs no root:
 
 ```bash
 curl -fsSL https://pancode.dev/install.sh | sh
@@ -50,7 +51,7 @@ cannot find `pancode`, follow the installer's `PATH` instruction, then run
 With Node.js 22.19 or newer already installed:
 
 ```bash
-npm install -g pancode
+npm install -g @akougkas/pancode
 ```
 
 From source, build the v0.9.0 release:

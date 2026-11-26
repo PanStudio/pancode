@@ -2,10 +2,11 @@ PanStore keeps a project's datasets and results as blobs in named tags outside t
 
 ## Install
 
-PanStore ships inside the `pancode` npm package. Installing PanCode also installs the `panstore` command.
+PanStore ships with PanCode. Installing PanCode, with the installer or from npm, also installs the `panstore` command.
 
 ```bash
-npm install -g pancode
+curl -fsSL https://pancode.dev/install.sh | sh
+npm install -g @akougkas/pancode   # or, with Node.js 22.19 or newer
 ```
 
 Inside a PanCode project, the same commands run as `pancode store <command>` with the roots and cache from your settings. The model reaches the store through its `store` tool, and any MCP host reaches it through the [PanKit](/pankit.html) `store` server.
@@ -37,5 +38,5 @@ pancode store verify results
 - [Keep results in PanStore](/docs/guide/panstore.html)
 - [Keep results in the project store, a tutorial](/tutorials/keep-results-in-the-project-store.html)
 - [The PanStore package and its source](../../../packages/store/README.md)
-- [pancode on npm](https://www.npmjs.com/package/pancode)
+- [@akougkas/pancode on npm](https://www.npmjs.com/package/@akougkas/pancode)
 :::

@@ -1,12 +1,12 @@
 # PanSDK
 
-PanSDK is the contract for authoring PanCode extensions, packs, tools and MCP servers, imported as `pancode/sdk/<entry point>` from the `pancode` npm package.
+PanSDK is the contract for authoring PanCode extensions, packs, tools and MCP servers, imported as `pancode/sdk/<entry point>` from the `@akougkas/pancode` npm package.
 
 The entry points are [extension/index.ts](../../packages/sdk/src/extension/index.ts), [pack/index.ts](../../packages/sdk/src/pack/index.ts), [testing/index.ts](../../packages/sdk/src/testing/index.ts), [tool/index.ts](../../packages/sdk/src/tool/index.ts) and [mcp-server/index.ts](../../packages/sdk/src/mcp-server/index.ts); `pancode extensions init|validate|test` is `runExtensionsAuthoring` in [extensions-authoring.ts](../../src/cli/extensions-authoring.ts), and the scaffold is `scaffoldExtension` in [scaffold.ts](../../src/domains/extensions/authoring/scaffold.ts).
 
 ## What PanSDK is
 
-PanSDK is the workspace package `@pancode/sdk`, licensed Apache-2.0. It is private: PanCode bundles it at build time into `dist/sdk/` and never publishes it on its own. The `pancode` package exports it as five subpaths, each with JavaScript and type declarations:
+PanSDK is the workspace package `@pancode/sdk`, licensed Apache-2.0. It is private: PanCode bundles it at build time into `dist/sdk/` and never publishes it on its own. The `@akougkas/pancode` package exports it as five subpaths, each with JavaScript and type declarations:
 
 | Import | Holds |
 | --- | --- |
@@ -22,10 +22,10 @@ PanSDK is the workspace package `@pancode/sdk`, licensed Apache-2.0. It is priva
 
 An extension package made with `pancode extensions init` needs no `npm install`: its tsconfig maps `pancode/sdk/extension` and `pancode/sdk/testing` to the installed PanCode's `dist/sdk/`, and `pancode extensions test` supplies `pancode/sdk/testing` when the tests run. See [Scaffold, validate and test](#scaffold-validate-and-test).
 
-Any other Node project, such as an MCP server, adds the `pancode` package as a dependency and imports the subpaths. Node 22.19 or later is required.
+Any other Node project, such as an MCP server, adds the package as a dependency under the name `pancode`, so the `pancode/sdk/<entry point>` imports resolve from `node_modules`. Node 22.19 or later is required.
 
 ```bash
-npm install pancode
+npm install --save-dev pancode@npm:@akougkas/pancode
 ```
 
 ## Extension types

@@ -3,12 +3,12 @@
 PanStore, the project store, usable as a library without the harness.
 It is part of PanCode, systems software for coding agents.
 This workspace package, `@pancode/store`, is private: PanCode bundles it at build time and never publishes it on its
-own, so the imports below work inside this checkout. The `panstore` command ships with the `pancode` npm package.
+own, so the imports below work inside this checkout. The `panstore` command ships with the `@akougkas/pancode` npm package.
 
 ## Install
 
 ```sh
-npm install -g pancode
+npm install -g @akougkas/pancode
 panstore --root ~/panstore tags
 ```
 

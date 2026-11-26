@@ -9,12 +9,12 @@ The [architecture overview](../architecture/architecture.md) explains the instal
 
 To install PanCode on Linux or macOS, run `curl -fsSL https://pancode.dev/install.sh | sh`.
 
-On Windows, run `irm https://pancode.dev/install.ps1 | iex` in PowerShell. Both installers bring a private Node runtime. For npm or source installs, see the methods below.
+On Windows, run `irm https://pancode.dev/install.ps1 | iex` in PowerShell. Both installers download one bundle that holds PanCode and the Node.js it runs on. For npm or source installs, see the methods below.
 
 ## Installation methods
 
-PanCode installs with `scripts/install.sh` (or `scripts/install.ps1` on Windows), which brings a private Node.js runtime; from the npm registry as
-`pancode` using npm, pnpm, or Bun; or from a source checkout using the
+PanCode installs with `scripts/install.sh` (or `scripts/install.ps1` on Windows), which unpacks a bundle that carries its own Node.js; from the npm registry as
+`@akougkas/pancode` using npm, pnpm, or Bun; or from a source checkout using the
 pinned pnpm workflow. The [README quick start](../../README.md#get-started) covers
 installing and first run. The package routes require Node.js `>=22.19.0`,
 including installations managed by Bun; the installer satisfies that itself. On
@@ -31,13 +31,13 @@ returns its exit status. Both install the same layout under
 `%LOCALAPPDATA%\pancode\install` with the launcher
 `%USERPROFILE%\.local\bin\pancode.exe`, and need no administrator rights.
 The launcher is a small native program that reads `pancode.launch` beside it
-and starts the managed Node with your arguments unchanged, so cmd.exe never
+and starts the bundled Node with your arguments unchanged, so cmd.exe never
 expands `%NAME%` or splits on `&` in them. The installer copies it only when its
 bytes match the SHA-256 pinned in the package. An
 npm or pnpm global install starts PanCode through npm's own `pancode.cmd`,
 which cmd.exe expands. `install.sh` run from an MSYS, MinGW or Cygwin shell stops and names the
 PowerShell command. A relative path given to `install.ps1` for the install
-directory, the bin directory or `-Package` resolves against the PowerShell
+directory, the bin directory or `-Bundle` resolves against the PowerShell
 location, not the process directory. Linux, macOS and WSL are the primary
 platforms.
 
@@ -49,16 +49,53 @@ version. The banner, `--version`, `pancode doctor` and the ACP handshake all use
 label, and extension version ranges are checked against the version without `-dev`, the release the
 development tree is becoming.
 
+### What the installer downloads
+
+The installer downloads one bundle for your platform from the GitHub release,
+`https://github.com/akougkas/pancode/releases/download/v<version>/pancode-<version>-<target>.tar.gz`,
+and unpacks it. A bundle holds Node.js (24.22.3 in PanCode 0.9.0), npm, and PanCode
+with the dependency tree the release was tested with, so nothing is resolved from
+a package registry when you install. A bundle is about 85 MB and unpacks to about
+330 MB.
+
+| Target | Platform |
+| --- | --- |
+| `linux-x64`, `linux-arm64` | Linux with glibc 2.28 or newer |
+| `linux-x64-glibc-217` | x64 Linux with glibc 2.17 to 2.27 |
+| `linux-x64-musl`, `linux-arm64-musl` | Alpine and other musl systems |
+| `darwin-arm64`, `darwin-x64` | macOS; an x64 shell under Rosetta gets `darwin-arm64` |
+| `win-x64`, `win-arm64` | Windows, installed by `install.ps1` |
+
+Before unpacking, the installer reads that release's `SHA256SUMS` and compares the
+bundle's SHA-256 with the line for it. A mismatch stops the install with
+`<asset> has SHA-256 <actual>, but the release lists <expected>; nothing was installed`.
+Every release asset also carries a GitHub build attestation, which you can check
+yourself:
+
+```bash
+gh attestation verify pancode-<version>-<target>.tar.gz --repo akougkas/pancode
+```
+
+The Node.js inside a bundle is pinned by SHA-256 in
+[node-runtime.json](https://github.com/akougkas/pancode/blob/main/scripts/release/node-runtime.json). The release
+signature on Node's own checksum list is verified when that pin is written, by
+[pin-node.mjs](https://github.com/akougkas/pancode/blob/main/scripts/release/pin-node.mjs), so the installer needs no
+OpenPGP tools.
+
+The installer finds the version to install in a channel file: one line at
+`https://pancode.dev/channel/latest` or `https://pancode.dev/channel/beta`. An
+exact `--version` skips the channel file.
+
 ### npm install-scripts warning
 
 npm versions that gate dependency install scripts behind `allowScripts` may print, on
-`npm install -g pancode`, that `@google/genai` (preinstall) and `protobufjs`
+`npm install -g @akougkas/pancode`, that `@google/genai` (preinstall) and `protobufjs`
 (postinstall) have install scripts not yet covered by `allowScripts`. The installation is
 complete and works without them: the `@google/genai` preinstall is `echo 'preinstall: no-op'`,
 and the `protobufjs` postinstall only prints a warning when a package that depends on it
 pins a version range in a style it does not recommend. Neither builds, downloads or writes
 anything PanCode needs, so skipping them is safe. To silence the warning, allow them as
-npm suggests, once with `npm install -g --allow-scripts=@google/genai,protobufjs pancode`
+npm suggests, once with `npm install -g --allow-scripts=@google/genai,protobufjs @akougkas/pancode`
 or for every global install with
 `npm config set allow-scripts=@google/genai,protobufjs --location=user`.
 
@@ -70,8 +107,8 @@ display as unreleased.
 
 ```bash
 curl -fsSL https://pancode.dev/install.sh | sh -s -- --channel beta
-npm install -g pancode@beta
-bun add -g pancode@beta
+npm install -g @akougkas/pancode@beta
+bun add -g @akougkas/pancode@beta
 pancode upgrade --channel beta
 ```
 
@@ -79,20 +116,16 @@ pancode upgrade --channel beta
 & ([scriptblock]::Create((irm https://pancode.dev/install.ps1))) -Channel beta
 ```
 
-Upgrade and both installers resolve `beta` to the newest of `beta` and `latest`
-by SemVer precedence. A missing `beta` tag falls back to stable. npm and Bun use their selected dist-tag;
-publication forwards those tags to stable when they point lower. A bare upgrade
-follows the managed installation's recorded channel, or uses `latest` for a
-package-manager installation.
+`pancode upgrade` resolves `beta` to the newest of `beta` and `latest` by SemVer
+precedence. The installers read one channel file: a stable release moves `channel/beta` as well as
+`channel/latest`, so `beta` always names the newest release of either kind. npm
+and Bun use the dist-tag you select. A bare upgrade follows the installer
+install's recorded channel, or uses `latest` for a package-manager installation.
 
-The installers read the channel's dist-tags with npm from their own work
-directory, and `pancode upgrade` starts the installer or npm from the
-directory it installs into. A project `.npmrc` in the directory you run them
-from does not choose the registry; your user `~/.npmrc`, the global npmrc and
-`npm_config_registry` still do. A channel that resolves to a version older than
-the active one is refused before anything is installed. The one exception is
-leaving a pre-release for the stable release, described below. To move down in
-any other case, name the version with `--version`, or use `--rollback`.
+A channel that resolves to a version older than the active one is refused before
+anything is downloaded. The one exception is leaving a pre-release for the
+stable release, described below. To move down in any other case, name the
+version with `--version`, or use `--rollback`.
 
 Return to stable with `pancode upgrade --channel latest`. From a pre-release
 that is newer than stable, such as a release candidate, `upgrade` installs the
@@ -116,40 +149,40 @@ The flag applies to the `latest` channel only. A stable install, another
 channel, a recorded channel, background updates and a plain `pancode upgrade`
 keep the refusal.
 
-The hosted script at `https://pancode.dev/install.sh` downloads the
-installer of the release its channel names, and for `latest` that is the newest
-stable release's installer.
+The script at `https://pancode.dev/install.sh` is the newest stable release's
+installer, and every release carries its own `install.sh`, `install.ps1` and
+`install.cmd` as assets.
 
 An explicit channel selection clears an installer's version pin.
-Managed installs retain the previous
-binary for `pancode upgrade --rollback`; rollback turns background updates off.
-Global npm/Bun users reinstall `pancode@latest` with their package manager.
+Installer installs retain the previous
+version for `pancode upgrade --rollback`; rollback turns background updates off.
+Global npm/Bun users reinstall `@akougkas/pancode@latest` with their package manager.
 
 ### The installer layout
 
 | Path (Linux default) | Contents |
 | --- | --- |
-| `~/.local/share/pancode-install/runtime/node-v<ver>-<build>/` | The managed Node.js. macOS uses `~/Library/Application Support/pancode/install`, Windows `%LOCALAPPDATA%\pancode\install`; `--install-dir`, `PANCODE_INSTALL_DIR` or `PANCODE_HOME/install` override it. |
-| `.../versions/<version>/lib/node_modules/pancode/` | One package prefix per installed version. The manifest names the current and previous ones, which always stay. See [Pruning](#pruning-versions-and-runtimes) for when the others go. |
-| `.../install.json` | Manifest naming the Node, the current and previous prefixes, the launcher, the channel, any version pin, whether background updates are on, whether a package manager wraps the install, and whether the installer added the launcher directory to `PATH`. Activating a version is one atomic write of this file. |
+| `~/.local/share/pancode-install/` | The install root. macOS uses `~/Library/Application Support/pancode/install`, Windows `%LOCALAPPDATA%\pancode\install`; `--install-dir`, `PANCODE_INSTALL_DIR` or `PANCODE_HOME/install` override it. |
+| `.../versions/<version>/` | One unpacked bundle per installed version: `bin/node`, `lib/node_modules/npm`, `lib/node_modules/pancode` and `bundle.json`, which names the version, the target and the Node.js version. On Windows the Node is `node.exe` with `node_modules\npm` beside it. Each version runs on the Node inside it. The manifest names the current and previous versions, which always stay. See [Pruning](#pruning-versions) for when the others go. |
+| `.../install.json` | Manifest naming the current and previous versions, the current version's Node, the launcher, the channel, any version pin, whether background updates are on, whether a package manager wraps the install, and whether the installer added the launcher directory to `PATH`. Activating a version is one atomic write of this file. |
 | `.../launchers/` | The launcher's helper script. Each running launcher also writes one receipt under the state root's `launches/`, naming its install root, version and Node, which pruning and `uninstall` check before they remove anything; a launcher that cannot write it (a read-only state root) still runs. Receipts whose local process is gone are removed. |
-| `.../.installer-owner`, `.../.install-lock/` | The ownership marker that stops an installer from claiming a directory that already holds `runtime/` or `versions/`, and the lock held while an install, rollback or uninstall runs. Each installer reclaims a lock on its own when this machine wrote it, the owner pid is gone and the lock is older than 10 minutes, which covers a lock an interrupted `pancode uninstall` or prune left behind. A lock held by a live process, a foreign host or a recent crash stops the run with exit status 75, and deleting only that directory once its owner has exited clears it. |
-| `~/.local/bin/pancode` (`%USERPROFILE%\.local\bin\pancode.exe` and `pancode.launch` on Windows) | A small launcher that reads the manifest on each start and runs the managed Node on the current prefix. On Linux and macOS each activation points it at the current Node; on Windows it keeps the Node of the first install, because an install that started from an older `pancode.cmd` may still be running it and `cmd.exe` rereads a running `.cmd` file. |
+| `.../.installer-owner`, `.../.install-lock/` | The ownership marker that stops an installer from claiming a directory that already holds `versions/`, and the lock held while an install, rollback or uninstall runs. Each installer reclaims a lock on its own when this machine wrote it, the owner pid is gone and the lock is older than 10 minutes, which covers a lock an interrupted `pancode uninstall` or prune left behind. A lock held by a live process, a foreign host or a recent crash stops the run with exit status 75, and deleting only that directory once its owner has exited clears it. |
+| `~/.local/bin/pancode` (`%USERPROFILE%\.local\bin\pancode.exe` and `pancode.launch` on Windows) | A small launcher that starts the current version's Node on the helper, which reads the manifest on each start and runs the current version. Each activation and rollback rewrites it for the version it activates. |
 
-#### Pruning versions and runtimes
+#### Pruning versions
 
 Every activation (install, `upgrade`, a background update and `--rollback`) prunes the
 install root with one rule on every platform. It keeps the current and previous
-versions, a desktop manager's version, the launcher's helper and every version or
-Node named by a live session receipt, a running build record, the desktop app's
+versions, a desktop manager's version, the launcher's helper and every version
+named by a live session receipt, a running build record, the desktop app's
 background service, or a process of the current user that runs from the root
 (`/proc` on Linux, `ps` on macOS, CIM on Windows). When that inventory is complete,
 everything else goes at once, including a same-version reinstall. When it is not,
-such as on a network filesystem or with an unreadable receipt, versions and runtimes
+such as on a network filesystem or with an unreadable receipt, versions
 from the last seven days and the newest three stay. A file Windows has locked is
 skipped and retried at the next activation. The installer prints what it removed and
 kept, for example
-`[install] removed 15 unused versions (2.8 GB), 0 runtimes; kept 0.9.1 (current), 0.9.1-rc.3 (previous)`.
+`[install] removed 15 unused versions (4.9 GB); kept 0.9.1 (current), 0.9.1-rc.3 (previous)`.
 To preview or run it by hand, under the install lock:
 
 ```bash
@@ -159,9 +192,9 @@ node ~/.local/share/pancode-install/versions/<current>/lib/node_modules/pancode/
 
 The install root sits beside the data root rather than inside it, so
 `pancode reset` and `uninstall --keep-config` never delete the Node that runs
-them. The Node runtime adds about 210 MB to a version, and the optional Claude Agent SDK
+them. An installed version takes about 330 MB, and the optional Claude Agent SDK
 component adds about 224 MB under the data root when it is provisioned. The installer
-refuses to start with under 750000 KB (about 732 MB) free at the install root.
+refuses to start with under 500000 KB (about 488 MB) free at the install root.
 
 Repository development uses pnpm 10.34.5 and `pnpm-lock.yaml`. Registry
 consumers install the built package and do not need the repository toolchain.
@@ -178,16 +211,13 @@ lock, which exits 75. `--help` exits 0.
 
 | Flag | Environment | Effect |
 | --- | --- | --- |
-| `--version <spec>` | `PANCODE_VERSION` | An exact version such as `0.9.0` (a leading `v` is dropped) or a dist-tag of up to 32 lowercase letters, digits and hyphens that starts with a letter. Anything else is refused. An exact version pins the install. Default: the channel. |
+| `--version <spec>` | `PANCODE_VERSION` | An exact version such as `0.9.0` (a leading `v` is dropped), or `latest` or `beta`. Anything else is refused. An exact version pins the install. Default: the channel. |
 | `--channel <name>` | `PANCODE_CHANNEL` | `latest` (default) or `beta`. |
-| `--package <file.tgz>` | `PANCODE_PACKAGE` | Install a local `npm pack` tarball instead of the registry package. This pins the install. |
-| `--node-version <v>` | `PANCODE_NODE_VERSION` | Node.js major such as `24` (default, newest 24.x) or an exact version. A version below 22.19.0 is refused. |
-| `--node-tarball <file>` | `PANCODE_NODE_TARBALL` | A local Node.js tarball for airgapped sites. It must keep its release name, `node-v<ver>-<build>.tar.xz` or `.tar.gz`, with `SHASUMS256.txt` beside it or named by `PANCODE_NODE_SHASUMS`. |
+| `--bundle <file>` | `PANCODE_BUNDLE` | Install a bundle you already downloaded, `pancode-<version>-<target>.tar.gz`, and fetch nothing: the route for a host without network access. This pins the install. |
 | `--leave-prerelease` | none | With the `latest` channel, move from an active pre-release to the stable release even when stable is older. Without it a channel that resolves below the active version is refused. With any other channel or version the run stops with `--leave-prerelease only moves to the latest channel, not <name>`. `pancode upgrade --channel latest` passes it when you leave a pre-release. |
-| `--refresh-runtime` | none | Download Node again even when the wanted one is already present. |
 | `--install-dir <dir>` | `PANCODE_INSTALL_DIR` | The install root. Defaults: `$XDG_DATA_HOME/pancode-install` on Linux, `~/Library/Application Support/pancode/install` on macOS, `$PANCODE_HOME/install` when `PANCODE_HOME` is set. |
 | `--bin-dir <dir>` | `PANCODE_BIN_DIR` | Where the `pancode` launcher goes. Default `~/.local/bin`. |
-| `--include-claude-sdk` | none | Provision the optional Claude Agent SDK component, about 224 MB, with `pancode tools install claude-sdk` after the package installs. See [Lean install](#lean-install-the-claude-agent-sdk). |
+| `--include-claude-sdk` | none | Provision the optional Claude Agent SDK component, about 224 MB, with `pancode tools install claude-sdk` after the bundle is unpacked. See [Lean install](#lean-install-the-claude-agent-sdk). |
 | `--modify-path` | `PANCODE_MODIFY_PATH=1` | Append a `PATH` line for the bin dir to the shell startup file: `~/.zshrc` (or `$ZDOTDIR/.zshrc`) for zsh, `~/.bashrc` for bash, `$XDG_CONFIG_HOME/fish/config.fish` (default `~/.config/fish/config.fish`) with `fish_add_path` for fish, `~/.profile` otherwise. The line carries the marker `# added by pancode install.sh`, so a rerun does not add it twice. |
 | `--no-modify-path` | none | Leave startup files unchanged. This is the default; the installer prints the line to add instead. |
 | `--auto-update` | `PANCODE_AUTO_UPDATE=1` | Turn background updates on. They apply to unpinned installs only. |
@@ -197,21 +227,19 @@ lock, which exits 75. `--help` exits 0.
 | `--gui` | `PANCODE_INSTALL_GUI=1` | Install the desktop app without asking. See [Desktop app offer](#desktop-app-offer-linux-and-wsl). |
 | `--no-gui` | `PANCODE_INSTALL_GUI=0` | Skip the desktop app. |
 | `--force`, `-f` | none | Replace a `pancode` launcher this installer did not write, including a symlink that points outside the install. A symlink into an npm install of PanCode is replaced without it, with a warning. |
-| `--dry-run` | none | Print the platform, Node build, package, install root and launcher, then what would run. Nothing is downloaded or changed. |
+| `--dry-run` | none | Print the platform, bundle, install root and launcher, then what would run. Nothing is downloaded or changed. |
 | `-h`, `--help` | none | Print the usage text. |
 
 The installer always runs `pancode tools install herdr --json`, as `install.ps1` does, which downloads PanCode's pinned herdr into its own data directory unless that version is already there. `PANCODE_TOOLCHAIN_MIRROR` points it at a local or internal copy. A failure there never fails the install; bare `pancode` then starts in the plain terminal, where `/panes` and `pancode doctor` name the fix, and never downloads on first launch, so run `pancode panes install` when you have network access. After an upgrade moves the pin, launch installs the new pin. A herdr on `PATH` is never used to host PanCode.
 
 `install.ps1` takes PowerShell parameters with the same meanings. It has no GUI
-parameter, no unofficial Node mirror and no forced Node build.
+parameter and no forced target; it needs `tar.exe`, which Windows 10 1803 and later include.
 
 | Parameter | Environment | Effect |
 | --- | --- | --- |
 | `-Version` | `PANCODE_VERSION` | Same grammar as `--version`. |
 | `-Channel` | `PANCODE_CHANNEL` | `latest` (default) or `beta`. |
-| `-Package` | `PANCODE_PACKAGE` | A local `npm pack` tarball. |
-| `-NodeVersion` | `PANCODE_NODE_VERSION` | Node.js major (default `24`) or exact version. |
-| `-NodeZip` | `PANCODE_NODE_TARBALL` | A local `node-v<ver>-win-<arch>.zip`, with `SHASUMS256.txt` beside it or named by `PANCODE_NODE_SHASUMS`. |
+| `-Bundle` | `PANCODE_BUNDLE` | A downloaded `pancode-<version>-win-<arch>.tar.gz`. |
 | `-InstallDir` | `PANCODE_INSTALL_DIR` | The install root. Defaults: `$PANCODE_HOME\install`, else `%LOCALAPPDATA%\pancode\install`. |
 | `-BinDir` | `PANCODE_BIN_DIR` | Where `pancode.exe` goes. Default `%USERPROFILE%\.local\bin`. |
 | `-IncludeClaudeSdk` | none | Provision the optional Claude Agent SDK component. |
@@ -221,7 +249,6 @@ parameter, no unofficial Node mirror and no forced Node build.
 | `-Rollback` | none | Point the launcher at the previous version. Without `install.json` a real run fails before creating anything with `no installer manifest at <root>\install.json; nothing to roll back`. With `-DryRun` it prints `would point <launcher> back at the previous version recorded in <root>\install.json` and changes nothing. Run directly, it only moves the launcher; `pancode upgrade --rollback` runs it and also records an older restored version in `home.json` (see [Upgrades](#b-upgrades-pancode-upgrade)). |
 | `-NoPostInstall` | none | Skip `pancode upgrade --post-install`. |
 | `-LeavePrerelease` | none | With the `latest` channel, move from an active pre-release to the stable release even when stable is older. With any other channel or version the run stops with `-LeavePrerelease only moves to the latest channel, not <name>`. |
-| `-RefreshRuntime` | none | Download Node again. |
 | `-Force` | none | Replace a launcher the installer did not write. |
 | `-DryRun` | none | Print the plan and change nothing. |
 
@@ -236,10 +263,10 @@ directory is not on `PATH`, a closing line names the launcher's full path to run
 
 An `install.ps1` failure writes one `[install] error: <message>` line to stderr; an exception that is not an installer refusal also gets the `[install] error:` prefix and appends the failing script position. Run with `-File` or through `install.cmd`, the process then exits 1. Under `irm | iex` the script never calls `exit`, so the caller's PowerShell session stays open and the error line is the only signal.
 
-An exact `--version` or a `--package` records a version pin. A pinned install
+An exact `--version` or a `--bundle` records a version pin. A pinned install
 keeps its version across a bare `upgrade` and background updates, and has
 background updates off. Rerunning the installer without an exact version or
-local package follows the selected channel and clears the pin. A new install that carries no pin, no `--no-auto-update` and no
+bundle file follows the selected channel and clears the pin. A new install that carries no pin, no `--no-auto-update` and no
 `PANCODE_AUTO_UPDATE=0` turns background updates on. A rerun without those
 inputs preserves the recorded choice.
 
@@ -247,24 +274,19 @@ inputs preserves the recorded choice.
 
 | Variable | Read by | Meaning |
 | --- | --- | --- |
-| `PANCODE_VERSION`, `PANCODE_CHANNEL`, `PANCODE_PACKAGE`, `PANCODE_NODE_VERSION`, `PANCODE_NODE_TARBALL`, `PANCODE_INSTALL_DIR`, `PANCODE_BIN_DIR`, `PANCODE_MODIFY_PATH`, `PANCODE_AUTO_UPDATE` | `install.sh`, `install.ps1` | Defaults for the options in the tables above. A flag beats the variable. |
+| `PANCODE_VERSION`, `PANCODE_CHANNEL`, `PANCODE_BUNDLE`, `PANCODE_INSTALL_DIR`, `PANCODE_BIN_DIR`, `PANCODE_MODIFY_PATH`, `PANCODE_AUTO_UPDATE` | `install.sh`, `install.ps1` | Defaults for the options in the tables above. A flag beats the variable. |
 | `PANCODE_HOME` | `install.sh`, `install.ps1` | Selects `$PANCODE_HOME/install` as the install root when no directory is given. |
 | `PANCODE_INSTALL_GUI` | `install.sh` | `1` or `0`, as `--gui` and `--no-gui`; unset asks on a terminal. Any other value stops the run with `PANCODE_INSTALL_GUI must be 1 or 0, got '<value>'`. |
 | `PANCODE_INSTALL_ALLOW_SUDO` | `install.sh` | Any non-empty value lets root install when `SUDO_USER` is set. Without it the installer refuses to run under `sudo`, because it installs into the invoking home directory. |
-| `PANCODE_NODE_MIRROR` | both | Base URL, `https://` or `file://`, laid out like `https://nodejs.org/dist`. |
-| `PANCODE_NODE_UNOFFICIAL_MIRROR` | `install.sh` | The same for `unofficial-builds.nodejs.org`. |
-| `PANCODE_NODE_SHASUMS` | both | `SHASUMS256.txt` for a local Node tarball kept elsewhere. |
-| `PANCODE_NODE_KEYRING` | both | A local copy of the Node.js release keyring. |
-| `PANCODE_REQUIRE_SIGNATURE` | both | `1` fails the install unless an OpenPGP signature on `SHASUMS256.txt` verified. Unset, both installers refuse a Node download in three cases: nodejs.org serves no `SHASUMS256.txt.asc`, a key outside the Node.js release keyring signed it, or the `SHASUMS256.txt.asc` nodejs.org served holds no signature the tool could verify. The error ends with `refusing to install. PANCODE_REQUIRE_SIGNATURE=0 relies on the checksum alone.`, and `0` accepts those three cases and installs on the HTTPS checksum. A signature that verifies as bad stops the install at any value. `install.ps1` verifies only when `gpgv` is on `PATH`. In every other case it states the reason before relying on the HTTPS checksum: `no gpgv on PATH`, `no SHASUMS256.txt.asc signature` (a mirror or a local zip), `the Node.js release keys could not be fetched` or `gpgv could not check the signature`, followed by `; verifying the checksum from SHASUMS256.txt over HTTPS`. |
-| `PANCODE_NODE_BUILD` | `install.sh` | Force a Node build: `linux-x64`, `linux-arm64`, `linux-x64-glibc-217`, `linux-x64-musl`, `linux-arm64-musl`, `darwin-x64` or `darwin-arm64`. |
+| `PANCODE_RELEASE_MIRROR` | both | Base URL of a mirror of the releases, laid out as `<base>/channel/<latest\|beta>` and `<base>/v<version>/<release asset>`. Both installers take `https://`, `http://` and `file://`. With it set, the channel file and every download come from the mirror. |
+| `PANCODE_TARGET` | `install.sh` | Force a bundle: `linux-x64`, `linux-arm64`, `linux-x64-glibc-217`, `linux-x64-musl`, `linux-arm64-musl`, `darwin-x64` or `darwin-arm64`. |
 | `PANCODE_INSTALL_MANAGER` | `native-install.cjs` | Records a wrapping package manager such as `winget` in the manifest. |
-| `npm_config_registry`, `https_proxy`, `http_proxy` | `npm`, `curl`, `wget` | A package registry mirror and proxies for the downloads. |
+| `https_proxy`, `http_proxy` | `curl`, `wget` | Proxies for the downloads. |
 
-The [HPC clusters](hpc-clusters.md) page covers mirrors, proxies and signature
-checks in context. Background updates and `pancode upgrade` set
-`PANCODE_NODE_VERSION` for the installer they run, and background updates also
-set `PANCODE_BACKGROUND_UPDATE` and `PANCODE_BACKGROUND_CURRENT`; see the
-[environment reference](environment-variables.md).
+The [HPC clusters](hpc-clusters.md) page covers mirrors, proxies and hosts
+without network access in context. Background updates set
+`PANCODE_BACKGROUND_UPDATE` and `PANCODE_BACKGROUND_CURRENT` for the installer
+they run; see the [environment reference](environment-variables.md).
 
 ### Lean install: the Claude Agent SDK
 
@@ -319,9 +341,9 @@ When none resolves:
 
 `pancode tools install claude-sdk` takes no extra arguments and no `--force`.
 It prints `Claude SDK component available at <path>`, or `{"id":"claude-sdk","path":"<path>"}`
-with `--json`, and does nothing when the component is already there. A managed install
-uses the npm paired with its own Node; an unmanaged Linux install may use an `npm` on
-`PATH`. PanCode never downloads Node or npm, so without one the command fails and
+with `--json`, and does nothing when the component is already there. An installer install
+uses the npm inside its bundle; an npm, pnpm, Bun or source install on Linux may use an `npm` on
+`PATH`. PanCode never downloads Node or npm for this, so without one the command fails and
 names `PANCODE_CLAUDE_SDK_DIR` as the other way in.
 
 ### Desktop app offer (Linux and WSL)
@@ -371,7 +393,7 @@ explicit `--gui` (or `PANCODE_INSTALL_GUI=1`) warns
 | Undo the last installer upgrade | `pancode upgrade --rollback` | Make the previous version current again and turn background updates off. A version pin moves to the restored version. |
 | Start configuration over | `pancode reset --settings` | Delete `settings.yaml`, keep credentials and history, then print `pancode configure` as the next step. |
 | Emulate a fresh user | `pancode reset --all` | Delete all four user roots and recreate the empty structure, then print `pancode configure` as the next step. |
-| Remove PanCode | `pancode uninstall` | Remove the config, data, state and cache roots. It also removes the launcher, and for an installer install the managed Node and every version. |
+| Remove PanCode | `pancode uninstall` | Remove the config, data, state and cache roots. It also removes the launcher, and for an installer install every installed version with the Node inside it. |
 
 Reset and uninstall preview their scope and ask for confirmation. Use
 `--dry-run` to inspect without changing anything. Use `reset --settings` when your intent
@@ -607,7 +629,7 @@ Runs a series of health sweeps across the environment:
 ### B. Upgrades (`pancode upgrade`)
 Replaces the package, refreshes state metadata and runs the installation checks.
 ```bash
-pancode upgrade [--dry-run] [--channel=<latest|beta>] [--refresh-runtime] [--restart] [--json]
+pancode upgrade [--dry-run] [--channel=<latest|beta>] [--restart] [--json]
 pancode upgrade --post-install [--dry-run] [--channel=<latest|beta>] [--json]
 pancode upgrade --rollback [--dry-run]
 ```
@@ -627,7 +649,8 @@ path and source update steps. Fetch tags, choose the desired release, and run
 
 For npm global installs, `upgrade` derives the prefix from the running package,
 including custom prefixes, and runs post-install checks through the exact installed
-entry. Another launcher on `PATH` cannot take over those checks. An older dist-tag
+entry. Another launcher on `PATH` cannot take over those checks. It asks the npm
+registry for `@akougkas/pancode`, and an older dist-tag
 does not trigger a downgrade. npm replaces the package in place, so on a prefix the
 current user can write, `upgrade` first checks for other processes of the install.
 While any other session, update lease or `pancode` process of the same root is
@@ -636,26 +659,26 @@ to rerun after they quit or to run `/upgrade` in a session to install after ever
 session quits, and exits 75. A held lease also stops a second `upgrade` from starting
 in parallel, and SIGINT or SIGTERM stops npm before it releases the lease.
 
-For an installer install, `upgrade` runs the installer that shipped with the
-running package against the same install root and launcher directory. The new
-version lands in a new prefix beside the old ones and must start before one
-atomic manifest write makes it current, so a candidate that fails its checks
-leaves the working version active. Post-install checks then run through the new
-entry. The managed Node stays as it is unless you pass `--refresh-runtime`, which
-moves to the newest Node LTS the installer picks.
+For an installer install, `upgrade` reads the channel file at
+`https://pancode.dev/channel/<channel>` and runs the installer that shipped with the
+running package against the same install root and launcher directory. The
+installer downloads the new version's bundle, verifies it and unpacks it into a
+new directory beside the old ones. The new version carries its own Node and must
+start before one atomic manifest write makes it current, so a candidate that
+fails its checks leaves the working version active. Post-install checks then run
+through the new entry.
 
 The installer upgrade passes the recorded channel, install root and launcher
-directory, a recorded version pin, `--no-auto-update` when background updates are
-off, and `--no-post-install`, because `upgrade` runs the post-install checks
-itself through the new entry. It sets `PANCODE_NODE_VERSION` to the recorded
-runtime unless `--refresh-runtime` is given. It does not pass
+directory, a recorded version pin, and `--no-post-install`, because `upgrade`
+runs the post-install checks itself through the new entry. The installer keeps
+the recorded background-update choice. `upgrade` does not pass
 `--include-claude-sdk`, and an SDK component already provisioned stays in place; see
 [Lean install](#lean-install-the-claude-agent-sdk).
 
 A bare `upgrade` honors a version pin from an exact installer `--version` or a
-local `--package`. An explicit `pancode upgrade --channel latest|beta`
+`--bundle` file. An explicit `pancode upgrade --channel latest|beta`
 clears that pin and follows the selected channel. Rerunning the installer with
-no exact version or local package also follows its channel and clears the pin;
+no exact version or bundle file also follows its channel and clears the pin;
 `--version latest|beta` is an explicit way to do so. Add `--auto-update`
 (`-AutoUpdate`) to turn background updates back on when they were disabled.
 Source: `src/cli/upgrade.ts` and `scripts/install.sh`.
@@ -693,8 +716,8 @@ records the upgrade. If the record cannot be written, a warning says the restore
 first. A failed installer run exits 1 with
 `Rollback failed; the active version is unchanged`. A version pin moves to the
 restored version, so the next bare `upgrade` keeps that version, and the second line then ends with
-`; pinned <version>`. `--rollback` cannot combine with `--post-install`,
-`--refresh-runtime` or `--restart`.
+`; pinned <version>`. `--rollback` cannot combine with `--post-install`
+or `--restart`.
 
 Inside the TUI, `/upgrade` offers the same replacement for installer installs and for
 an npm-global install it can replace, and an after-quit update for a user-writable
@@ -761,7 +784,7 @@ Without `--post-install`, a pnpm, Bun, Homebrew, WinGet, local, or unknown layou
 never replaced through npm. A real run prints the owning manager's command and
 exits 1 with `This installation needs a package-manager update; no package was replaced.`;
 a dry run prints the same and exits 0. The commands are
-`pnpm add -g pancode@<channel>`, `bun add -g pancode@<channel>`,
+`pnpm add -g @akougkas/pancode@<channel>`, `bun add -g @akougkas/pancode@<channel>`,
 `brew upgrade pancode` and `winget upgrade --id PanCode.PanCode --exact`; an unknown
 layout is told to use its original manager and then run
 `pancode upgrade --post-install`. Keep the original manager's global directory or
@@ -775,7 +798,7 @@ A `--post-install` run does the same, so an installer that runs it on its own
 restarts the app too; the post-install runs that `upgrade` starts leave the
 restart to it, so the app restarts once.
 
-Every installer upgrade lands in a new `versions/<version>` prefix, and two
+Every installer upgrade lands in a new `versions/<version>` directory, and two
 versions of one installer install count as one installation when the app is
 checked. A desktop app the previous version installed is therefore accepted by
 `pancode gui`, `gui background restart` (which also re-pins the app's launch
@@ -792,7 +815,7 @@ installed and the previous version stays available through `--rollback`.
 
 `pancode doctor`, `pancode paths` (the `tracking` row) and `pancode upgrade --dry-run`
 say what an installer install follows, for example `follows latest` or
-`pinned to 0.9.0 since 2026-11-24 (installed from a package file); release with pancode upgrade --channel latest`.
+`pinned to 0.9.0 since 2026-11-24 (installed from a bundle file); release with pancode upgrade --channel latest`.
 
 `pancode upgrade --post-install`, which every installer runs, tidies up after a move to
 another method:
@@ -816,16 +839,19 @@ background update made it.
 #### Quiet update hints
 
 Interactive sessions start an update monitor after the first full frame and a
-five-second delay. Registry requests have a 2.5-second timeout and are cached for
-24 hours, including failed attempts, so an offline session stays quiet. They go to
-the registry named by `npm_config_registry` or `NPM_CONFIG_REGISTRY` when it is an
+five-second delay. Version requests have a 2.5-second timeout and are cached for
+24 hours, including failed attempts, so an offline session stays quiet. An
+installer install reads the channel file the installer reads,
+`https://pancode.dev/channel/<channel>` or `<PANCODE_RELEASE_MIRROR>/channel/<channel>`
+when that variable names an `http` or `https` mirror, for the channel it recorded.
+Every other install asks the npm registry for `@akougkas/pancode`: the registry named by
+`npm_config_registry` or `NPM_CONFIG_REGISTRY` when it is an
 `http` or `https` URL, so a mirror announces the version its own `npm install`
-fetches, and to `registry.npmjs.org` otherwise. npm,
-pnpm, Bun, Homebrew, winget and installer installs, and a source checkout at a release
-version, check the `latest` tag. A release candidate also
-reads `beta`, and an installer install reads the channel it recorded instead.
+fetches, and `registry.npmjs.org` otherwise. npm,
+pnpm, Bun, Homebrew and winget installs, and a source checkout at a release
+version, check the `latest` tag, and a release candidate also reads `beta`.
 A source checkout on a `-dev` version, local or npx copies, unknown layouts and pinned
-installer installs skip registry checks. A source checkout's notice reads
+installer installs skip the check. A source checkout's notice reads
 `v<version> available · pancode upgrade prints the git steps`, because it updates
 through git. Installed files are also checked once a minute for
 a version change or a rebuild since this process started.
@@ -876,8 +902,8 @@ the installer that shipped with the running package for that release, at most
 once a day. The new version is installed beside the current one and activated
 for the next start; the running session keeps its version, and the footer says
 `Updated to v<version> · restart pancode to use it; this session keeps v<running>; upgrade --rollback undoes`.
-Background updates skip the post-install checks, never edit `PATH`, keep the
-managed Node, and need no administrator rights. If the install was pinned, opted
+Background updates skip the post-install checks, never edit `PATH`, and need no
+administrator rights. If the install was pinned, opted
 out, moved to another channel or updated by someone else while the update ran,
 the new version is not activated. An installer run that finds the install lock
 held (exit 75) is not recorded as a failure, and a later probe tries again.
@@ -987,9 +1013,9 @@ the desktop app. It refuses with exit 1 while a process runs from the root, nami
 (`pid N (launched from it)`, or `pid N@host` for another host). It also refuses while the
 desktop app's `server.json`, a `pancode-gui-*.service` unit or a `dev.pancode.*.desktop` entry
 still starts from the root, names that file, and advises
-`pancode gui background install --handover`. It cannot combine with a `--keep-*` flag. For an installer install, uninstall also removes the managed Node and
-every installed version: only what the installer created inside the install root
-(`runtime/`, `versions/`, `launchers/`, `.active/`, `install.json` and its ownership
+`pancode gui background install --handover`. It cannot combine with a `--keep-*` flag. For an installer install, uninstall also removes
+every installed version with the Node inside it: only what the installer created inside the install root
+(`versions/`, `launchers/`, `launcher.cjs`, `install.json` and its ownership
 marker), then the root itself if nothing else is left in it. It takes the
 installer's lock first and refuses while another session started from that
 install is still running (`Another native session (pid N) is still running; close it before uninstalling`).
@@ -1006,10 +1032,10 @@ edited. The candidates are the files `install.sh --modify-path` writes: `~/.bash
 absolute `$XDG_CONFIG_HOME` or `~/.config`. A file is reported when it contains `pancode` or
 `PANCODE`. On Windows, the user `PATH` entry `install.ps1` added is removed whenever its
 manifest records `pathAdded`. On Windows, where a running `node.exe`
-is locked, the launcher and runtime are removed a few seconds after the command exits.
+is locked, the launcher and the installed versions are removed a few seconds after the command exits.
 
 For an npm global install on Linux or macOS, uninstall runs
-`npm uninstall -g --prefix <prefix> pancode` last; `--keep-package` or
+`npm uninstall -g --prefix <prefix> @akougkas/pancode` last; `--keep-package` or
 `--keep-binary` keeps the package. 
 Every run ends with `Removed:` and `Kept, and why:` lists, which `--json` reports as `removed`
 and `kept`.
@@ -1166,7 +1192,8 @@ When executing tasks headlessly using `pancode run`, interactive permission prom
 
 ## 8. What the npm Package Ships
 
-The published package carries PanCode's own TypeScript source and code map so
+The published package, `@akougkas/pancode`, is also the package inside every
+bundle. It carries PanCode's own TypeScript source and code map so
 that it can answer questions about itself, but in compressed form:
 
 - **Packed source.** Every `.ts` file under `src/`, except the extension scaffold

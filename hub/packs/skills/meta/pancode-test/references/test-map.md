@@ -15,7 +15,7 @@ because contracts and extended tests are deliberately separate lanes.
 | `pnpm run test:full` | every root test file | yes, built from HEAD | everything, slowly |
 | `pnpm run check:gui` | GUI types and lint | no | GUI static |
 | `pnpm --filter pancode-gui verify` | extended GUI tests, Vite build, browser smoke | no | GUI app end to end; needs a browser |
-| `pnpm run release:preflight` | checks an unchanged qualified candidate | yes, qualified | not a replacement for qualification |
+| `pnpm run ci` | the checks beside a release build, the core, GUI and package tiers against the built tarball, the npm install check, then install, upgrade, rollback and uninstall of this machine's bundle | builds its own | the whole gate CI runs, on this machine's Node |
 
 No test script builds. `pretest:full` refuses a `dist/` built from another commit; it cannot see uncommitted edits. `pnpm run build` runs `scripts/build.ts`, `scripts/build-source-pack.ts` and the codewiki asset build.
 
@@ -63,4 +63,4 @@ validator; use PanCode's own validation as the authority for PanCode metadata.
 A docs-only correction needs source/command/link verification, not a fabricated
 runtime test. A runtime discovery change needs admission tests, including no-
 skills, hidden/disabled content, wrong repository, and restrictive policies.
-Release qualification is requested work; do not start it from a lane.
+`pnpm run ci` is requested work; do not start it from a lane.

@@ -2,11 +2,11 @@
 
 ## 0.9.0 - 2026-11-25
 
-PanCode 0.9.0 is the first release under the PanCode name: one npm package, `pancode`, that carries the harness and its family (PanHub, PanKit, PanStore and PanSDK). Panos, the orchestrator agent, works with you in the terminal, in the desktop app (alpha) or over ACP, and dispatches bounded workers whose results it checks before trusting them. Headless runs gain one versioned result, typed exit causes and per-run limits, so a script or another agent can depend on PanCode the way a person does. This release starts fresh: it reads no home, settings file or command spelling from earlier releases. See Breaking changes before you upgrade.
+PanCode 0.9.0 is the first release under the PanCode name: one npm package, `@akougkas/pancode`, that carries the harness and its family (PanHub, PanKit, PanStore and PanSDK). Panos, the orchestrator agent, works with you in the terminal, in the desktop app (alpha) or over ACP, and dispatches bounded workers whose results it checks before trusting them. Headless runs gain one versioned result, typed exit causes and per-run limits, so a script or another agent can depend on PanCode the way a person does. This release starts fresh: it reads no home, settings file or command spelling from earlier releases. See Breaking changes before you upgrade.
 
 ### Highlights
 
-- **One package, three commands.** `npm install -g pancode` (or the installer) puts `pancode`, `panstore` and `pankit` on your `PATH`. PanSDK ships inside the same package as `pancode/sdk/extension`, `pack`, `testing`, `tool` and `mcp-server`.
+- **One package, three commands.** The installer (or `npm install -g @akougkas/pancode`) puts `pancode`, `panstore` and `pankit` on your `PATH`. PanSDK ships inside the same package as `pancode/sdk/extension`, `pack`, `testing`, `tool` and `mcp-server`.
 - **PanHub.** `pancode hub`, `/hub` and `Alt+L` browse, install, pin and remove packs (plugins, extensions, skills, agents, prompts and playbooks) from the index bundled in the package, which records each pack's digest, publisher, tier and licence. Installs record their publisher, and revoked digests stop loading. Signed remote refresh of the index is planned: the verification code ships, but this build has no root key, so `hub refresh` refuses with `no-root-key` and `hub status` reads `root key: none in this build`.
 - **PanKit.** Seven MCP servers for HPC and scientific work (node facts, environment modules, Spack, Darshan, scientific data, a data catalog and the project store) run as PanCode's `builtin` MCP scope, and `pankit serve <id>` offers each one to any other MCP host.
 - **PanStore.** The project store keeps files as blobs in named tags outside the working tree, with provenance for each put. It gains several roots with frozen tag placement (`store.roots`, `store.placement`), a stable `store.projectId`, locks, reflink puts and the standalone `panstore` command.
@@ -21,7 +21,7 @@ PanCode 0.9.0 is the first release under the PanCode name: one npm package, `pan
 
 ### Breaking changes
 
-- **One npm package.** Only `pancode` is published. `@pancode/kit`, `@pancode/store`, `@pancode/sdk` and `@pancode/scidata` are private workspace packages bundled into it. Extensions import `pancode/sdk/extension` and `pancode/sdk/testing`; there is no `pancode/extensions` export.
+- **One npm package.** Only `@akougkas/pancode` is published. `@pancode/kit`, `@pancode/store`, `@pancode/sdk` and `@pancode/scidata` are private workspace packages bundled into it. Extensions import `pancode/sdk/extension` and `pancode/sdk/testing`; there is no `pancode/extensions` export.
 - **No compatibility readers for older homes.** PanCode 0.9.0 has no migration steps, retired-key tables or legacy readers. Configuration, data, state and cache directories written by earlier releases are not read or converted. A version 1 `settings.yaml` or credentials file fails validation, a key outside the current schema is reported as unknown, and `pancode doctor --fix` never renames or removes it. Set up again with `pancode configure`; a new home's `settings.yaml` is a short scaffold that sets no keys.
 - **License.** PanCode is source-available under the PanCode License 1.0: free for individuals, small organizations, and noncommercial research and teaching; larger organizations need a commercial license. PanSDK stays Apache-2.0. Read [LICENSE](LICENSE) for the terms.
 - **Release channels.** Channels are `latest` and `beta`. `--channel dev` and `pancode upgrade --skip-migrations` are gone.
@@ -162,7 +162,8 @@ Changed behaviour:
 
 ### Install and upgrade
 
-- Install with `npm install -g pancode` or the installer. The installer writes a launcher for every packaged command, so `panstore` and `pankit` are on `PATH`, and uninstall removes them.
+- Install with the installer (`curl -fsSL https://pancode.dev/install.sh | sh`) or `npm install -g @akougkas/pancode`. The installer downloads one bundle for your platform from the GitHub release, verifies its SHA-256 against the release's `SHA256SUMS` and unpacks it. A bundle holds PanCode, the Node.js it runs on and the dependency tree the release was tested with, so nothing is resolved from a package registry at install time.
+- The installer writes a launcher for every packaged command, so `panstore` and `pankit` are on `PATH`, and uninstall removes them.
 - After a package-manager update, run `pancode upgrade --post-install`, then `pancode doctor`. `pancode upgrade --rollback` switches back to the previous installed version.
 - `pancode doctor --fix` drops plugin or extension install records this build does not accept.
 - `pancode tools install browser` adds the browser runtime, and a `browser` verifier kind gates a page on console errors, failed requests or accessibility checks.

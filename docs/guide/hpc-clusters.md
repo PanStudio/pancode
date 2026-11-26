@@ -57,33 +57,40 @@ The installer ends with the next step for this account, for example
 [Connect a model](#connect-a-model) below takes it from there to a first answer.
 
 If pancode.dev is unreachable from the cluster, fetch the same script from the
-latest GitHub release:
-`https://github.com/akougkas/pancode/releases/latest/download/install.sh`.
+latest GitHub release,
+`https://github.com/akougkas/pancode/releases/latest/download/install.sh`, and
+name the version with `--version`: the channel files that say which version
+`latest` is live on pancode.dev, while the bundles and `SHA256SUMS` come from
+GitHub.
 
-The script (`scripts/install.sh`) is POSIX sh and needs `curl` or `wget`, `tar`
-with `xz` or `gzip`, and a SHA-256 tool (`sha256sum`, `shasum` or `openssl`). It
+The script (`scripts/install.sh`) is POSIX sh and needs `curl` or `wget`, `tar`,
+`gzip` and a SHA-256 tool (`sha256sum`, `shasum` or `openssl`). It
 never uses `module load`, the system `node`, or `sudo`, and it refuses to run
-under `sudo` because that would install into root's home. It picks a Node build
+under `sudo` because that would install into root's home. It downloads one
+bundle, an archive that holds PanCode, the Node.js it runs on and every
+dependency, so it asks no package registry for anything. It picks the bundle
 for the host:
 
-| Host | Node build |
+| Host | Bundle |
 | --- | --- |
-| Linux x64 or arm64, glibc 2.28 or newer (a glibc host that also carries the musl loader, as Debian's `musl` package installs, still gets this build) | Official `linux-x64` or `linux-arm64` from nodejs.org |
-| Linux x64, glibc 2.17 to 2.27 (RHEL/CentOS 7 class) | Unofficial `linux-x64-glibc-217` from unofficial-builds.nodejs.org |
-| Linux on musl (Alpine) | `linux-x64-musl` (official) or `linux-arm64-musl` (unofficial) |
-| macOS arm64 or x64 | Official `darwin-arm64` or `darwin-x64` |
-| Linux arm64 with glibc older than 2.28 | None exists; use conda-forge `nodejs` and `npm install -g pancode` with it |
+| Linux x64 or arm64, glibc 2.28 or newer (a glibc host that also carries the musl loader, as Debian's `musl` package installs, still gets this bundle) | `linux-x64` or `linux-arm64` |
+| Linux x64, glibc 2.17 to 2.27 (RHEL/CentOS 7 class) | `linux-x64-glibc-217` |
+| Linux on musl (Alpine) | `linux-x64-musl` or `linux-arm64-musl`; they need `libstdc++` and `libgcc` (`apk add libstdc++`) |
+| macOS arm64 or x64 | `darwin-arm64` or `darwin-x64` |
+| Linux arm64 with glibc older than 2.28 | None exists; use conda-forge `nodejs` and `npm install -g @akougkas/pancode` with it |
 
-`PANCODE_NODE_BUILD` forces a build when detection is wrong, for example
-`PANCODE_NODE_BUILD=linux-x64-glibc-217` on a node whose `getconf` reports a
+`PANCODE_TARGET` forces a bundle when detection is wrong, for example
+`PANCODE_TARGET=linux-x64-glibc-217` on a node whose `getconf` reports a
 newer glibc than its compute nodes run.
 
-Everything lands in your home directory: the runtime and package versions under
+Everything lands in your home directory: the installed versions under
 `~/.local/share/pancode-install` (or `--install-dir`), and the launcher in
-`~/.local/bin`. Node adds about 210 MB to a version. The installer skips the
+`~/.local/bin`. A bundle is about 85 MB to download and about 330 MB unpacked,
+in roughly 20,000 files and directories, and the install root keeps the current and the previous
+version. The installer skips the
 Claude Agent SDK, about 224 MB, unless `--include-claude-sdk` is passed, and when it is
 provisioned it lands under the data root (`~/.local/share/pancode`), not under
-`--install-dir`. The installer refuses to start with under about 732 MB free at the
+`--install-dir`. The installer refuses to start with under about 488 MB free at the
 install root. On a small home quota, put the install root on a project filesystem with
 `--install-dir /project/$USER/pancode` and keep the launcher in `~/.local/bin`. Compute nodes that mount the same home directory run
 the same launcher. `--dry-run` prints the plan without downloading anything. The
@@ -94,29 +101,23 @@ the installer prints the `export PATH=...` line to add yourself.
 
 ## How downloads are verified
 
-Every Node download is checked against `SHASUMS256.txt` from the same release,
-and a mismatch stops the install. For official builds, the script also checks the
-OpenPGP signature on `SHASUMS256.txt.asc` against the Node.js release team's
-keys, fetched from the `nodejs/release-keys` repository rather than from the
-download host, when `gpgv` or `gpg` is present. A bad signature always stops the
-install. The install also stops when nodejs.org serves no `SHASUMS256.txt.asc`,
-when a key outside that keyring signed the file, or when the
-`SHASUMS256.txt.asc` nodejs.org served holds no valid signature;
-`PANCODE_REQUIRE_SIGNATURE=0` accepts these three cases and installs on the
-checksum. A mirror or local tarball without a signature file, an unavailable
-keyring, a missing `gpg`, or a `gpg` that cannot read the keyring (gpgv 1.x and
-gpg 2.0, as on CentOS 7) is reported, and the install
-continues on the checksum alone unless `PANCODE_REQUIRE_SIGNATURE=1` is set.
-unofficial-builds.nodejs.org publishes no signatures, so the glibc-2.17 and musl
-arm64 builds are verified by checksum over HTTPS only.
+The installer reads the release's `SHA256SUMS` and compares the bundle's SHA-256
+with the line for it before unpacking anything. A mismatch stops the install and
+leaves the active version as it was. Every release asset also carries a GitHub
+build attestation, which a connected machine with the GitHub CLI can check:
 
-The npm package itself is fetched and checked by npm against the registry's
-integrity hashes, like any npm install.
+```bash
+gh attestation verify pancode-<version>-<target>.tar.gz --repo akougkas/pancode
+```
+
+The Node.js inside a bundle is pinned by SHA-256 in the repository, and the
+Node.js release signature is verified when that pin is written, so the installer
+needs no `gpg` on the cluster.
 
 ## Proxies
 
-`curl`, `wget` and npm all read `https_proxy` and `http_proxy` (and npm also
-reads `HTTPS_PROXY`). Export them before running the installer:
+`curl` and `wget` read `https_proxy` and `http_proxy`. Export them before
+running the installer:
 
 ```bash
 export https_proxy=http://proxy.example.org:3128
@@ -279,24 +280,30 @@ home is on.
 
 ## Airgapped and mirrored sites
 
-Point the installer at mirrors laid out like the upstream directories. A
-`file://` URL works for a mirror on a shared filesystem:
+On a cluster with no route out, install from a file. On a connected machine,
+download the bundle for the cluster's target and `install.sh` from the release
+page, `https://github.com/akougkas/pancode/releases`, copy both over, and run:
+
+```bash
+sh install.sh --bundle pancode-<version>-<target>.tar.gz
+```
+
+Nothing is fetched: the bundle holds Node.js, PanCode and its dependencies. An
+install from a bundle file is pinned to that version, so `pancode upgrade` and
+background updates leave it there, and the next version installs the same way.
+
+A site that mirrors the releases points the installer at the mirror:
 
 | Variable | Purpose |
 | --- | --- |
-| `PANCODE_NODE_MIRROR` | Base URL laid out like `https://nodejs.org/dist` (`index.tab`, `v<ver>/node-v<ver>-<build>.tar.xz`, `SHASUMS256.txt`, `SHASUMS256.txt.asc`) |
-| `PANCODE_NODE_UNOFFICIAL_MIRROR` | The same for unofficial-builds.nodejs.org |
-| `PANCODE_NODE_KEYRING` | A local copy of the release keyring (`gpg-only-active-keys/pubring.kbx` from `nodejs/release-keys`) |
-| `PANCODE_NODE_TARBALL` | One Node tarball by path, with its `SHASUMS256.txt` next to it or named by `PANCODE_NODE_SHASUMS` |
-| `PANCODE_PACKAGE` | A local `npm pack` tarball of `pancode` |
-| `npm_config_registry` | An npm registry mirror (Artifactory, Nexus, Verdaccio) for the package's dependencies. The update check reads release dist-tags from it too, when it is an `http` or `https` URL, so a mirror announces the version its own `npm install` would fetch |
+| `PANCODE_RELEASE_MIRROR` | Base URL of the mirror, laid out as `<base>/channel/<latest\|beta>` (one line naming a version) and `<base>/v<version>/<release asset>` (`SHA256SUMS` and the bundles). `https://`, `http://` and `file://` all work for the installer, so a mirror on a shared filesystem needs no web server. |
+| `PANCODE_BUNDLE` | One bundle by path, as `--bundle` |
 
-A local package tarball still needs its dependencies from a registry, so a fully
-offline site needs a registry mirror as well as the Node mirror. Without one,
-npm waits on its retries and then fails.
+The update check of an installed PanCode reads `<base>/channel/<channel>` from
+the same variable when it names an `http` or `https` mirror.
 
-The script itself fails closed on a bad signature or checksum, so a mirror that
-serves a modified file is refused rather than installed.
+The script fails closed on a checksum mismatch, so a mirror that
+serves a modified bundle is refused rather than installed.
 
 After install, a few optional assets download on first use: the Ruby and C#
 code map grammars and the HDF5, NetCDF-4 and Parquet readers of the `data` tool.
@@ -308,10 +315,8 @@ the `data` tool names the file to pre-seed; see
 
 | Option | Effect |
 | --- | --- |
-| `--version 0.9.0` or `PANCODE_VERSION` | Install that PanCode version or dist-tag |
+| `--version 0.9.0` or `PANCODE_VERSION` | Install that PanCode version, or `latest` or `beta` |
 | `--channel beta` or `PANCODE_CHANNEL` | Follow a release channel (`latest` or `beta`) |
-| `--node-version 24` or `PANCODE_NODE_VERSION` | Install the newest Node of a major, or an exact version |
-| `--refresh-runtime` | Download Node again even when the wanted one is present |
 | `--rollback` | Point the launcher back at the previous installed version |
 
 An exact version such as `--version 0.9.0` pins the install: `pancode upgrade`
@@ -323,9 +328,9 @@ installer does so with `--leave-prerelease`; in any other case name that version
 `--version` or use `--rollback`. `--rollback` moves a pin to the version it restores. The
 [installation guide](installation-and-lifecycle.md) has the details.
 
-`pancode upgrade` installs the next version beside the current one and keeps
-the managed Node unless you pass `--refresh-runtime`.
-`pancode uninstall` removes the launcher, the runtime, every installed
+`pancode upgrade` installs the next version, with the Node.js it runs on, beside
+the current one and switches the launcher.
+`pancode uninstall` removes the launcher, every installed
 version, and the config, data, state and cache roots; `--keep-config` and
 `--keep-data` preserve those two roots.
 

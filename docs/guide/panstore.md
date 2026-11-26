@@ -7,7 +7,7 @@ The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/l
 PanStore is the workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
 
 - `pancode store <command>` inside a PanCode project, with the roots, cache and placement from your settings.
-- `panstore <command>`, a command installed with the `pancode` npm package that runs the same commands without the harness.
+- `panstore <command>`, a command installed with PanCode, by the installer or the `@akougkas/pancode` npm package, that runs the same commands without the harness.
 - The model's `store` tool, and the PanKit `store` MCP server ([PanKit](pankit.md)).
 
 Every checkout and task worktree of one repository reaches the same store: the store is keyed by the main checkout's real path, so a task worktree and the checkout it came from share one project key. A project whose tracked settings set `store.projectId` is keyed by that id instead, so checkouts at different paths, on different hosts, reach one store ([Sharing a store across hosts](#sharing-a-store-across-hosts)).

@@ -26,7 +26,7 @@ in `bash`, because a load lives only in the shell that runs it.
 ## Other harnesses
 
 In a harness without PanCode's servers, declare
-`npx -y -p pancode pankit serve <id>` (`modules`, `spack` or `darshan`) as a
+`npx -y -p @akougkas/pancode pankit serve <id>` (`modules`, `spack` or `darshan`) as a
 stdio MCP server yourself, and the skills work the same. Without them, the
 skills use the fallback programs.
 

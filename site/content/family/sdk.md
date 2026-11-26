@@ -1,4 +1,4 @@
-PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers. It is licensed Apache-2.0, bundled into the `pancode` npm package and imported from five subpaths. PanKit's servers are built on it.
+PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers. It is licensed Apache-2.0, bundled into the `@akougkas/pancode` npm package and imported from five subpaths. PanKit's servers are built on it.
 
 | Import | Holds |
 | --- | --- |
@@ -10,10 +10,10 @@ PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP
 
 ## Install
 
-An extension made with `pancode extensions init` needs no install: its tsconfig points at the installed PanCode. Any other Node project adds the package as a dependency. Node 22.19 or later is required.
+An extension made with `pancode extensions init` needs no install: its tsconfig points at the installed PanCode. Any other Node project adds the package as a dependency under the name `pancode`, so the `pancode/sdk` imports resolve. Node 22.19 or later is required.
 
 ```bash
-npm install pancode
+npm install --save-dev pancode@npm:@akougkas/pancode
 ```
 
 ## Example
@@ -45,5 +45,5 @@ export default function activate(api: ExtensionApiV2): void {
 - [Write extensions and tools with PanSDK](/docs/guide/sdk.html)
 - [Write an extension with declared capabilities, a tutorial](/tutorials/write-an-extension-with-declared-capabilities.html)
 - [The PanSDK package and its source](../../../packages/sdk/README.md)
-- [pancode on npm](https://www.npmjs.com/package/pancode)
+- [@akougkas/pancode on npm](https://www.npmjs.com/package/@akougkas/pancode)
 :::

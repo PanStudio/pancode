@@ -16,7 +16,7 @@ pancode paths --json
 | `PANCODE_STATE_DIR` | Override the state directory |
 | `PANCODE_CACHE_DIR` | Override the cache directory |
 | `PANCODE_BIN_DIR` | Choose where the installer puts the `pancode` launcher (default `~/.local/bin`) |
-| `PANCODE_NODE_VERSION` | Choose the Node.js version the installer installs |
+| `PANCODE_RELEASE_MIRROR` | Read releases and the channel files from a mirror, for the installer and the update check |
 
 Individual directory overrides take precedence over the shared root. Separate state is useful for an isolated evaluation or a dedicated automation environment.
 

@@ -1,6 +1,6 @@
 ## Install without root
 
-The installer brings its own Node.js, so you do not need `module load nodejs` or a system Node. It never uses `sudo` and refuses to run under it.
+The installer downloads one bundle that holds PanCode, the Node.js it runs on and every dependency, so you do not need `module load nodejs`, a system Node or a package registry. It never uses `sudo` and refuses to run under it.
 
 ```sh
 curl -fsSL https://pancode.dev/install.sh | sh
@@ -8,7 +8,7 @@ export PATH="$HOME/.local/bin:$PATH"
 pancode doctor
 ```
 
-It needs `curl` or `wget`, `tar` with `xz` or `gzip`, and a SHA-256 tool. The runtime and package go under `~/.local/share/pancode-install` and the launcher under `~/.local/bin`. Compute nodes that mount the same home directory run the same launcher.
+It needs `curl` or `wget`, `tar`, `gzip` and a SHA-256 tool. The installed versions go under `~/.local/share/pancode-install` and the launcher under `~/.local/bin`. Compute nodes that mount the same home directory run the same launcher.
 
 ## Work on the cluster
 
@@ -25,9 +25,9 @@ Keep results out of Git with `pancode store put results run-042.h5`; every check
 
 ## Old glibc, proxies, and quotas
 
-The installer picks a Node build for the host. Official builds cover Linux with glibc 2.28 or newer, macOS, and Alpine on x64. Unofficial builds cover x64 hosts with glibc 2.17 to 2.27, the RHEL and CentOS 7 class, and Alpine on arm64. Linux arm64 with an older glibc has no build; use conda-forge Node and npm instead.
+The installer picks the bundle for the host. There are bundles for Linux on x64 and arm64 with glibc 2.28 or newer, for x64 hosts with glibc 2.17 to 2.27, the RHEL and CentOS 7 class, for Alpine on x64 and arm64, and for macOS. Linux arm64 with an older glibc has no bundle; use conda-forge Node and npm instead. `PANCODE_TARGET` forces a bundle when detection is wrong.
 
-Export `https_proxy` before running the installer behind a proxy. Node adds about 210 MB to a version, and the Claude Agent SDK, installed only with `--include-claude-sdk`, adds about 224 MB. The installer refuses to start with under about 732 MB free at the install root. On a small home quota, move the install root:
+Export `https_proxy` before running the installer behind a proxy. An installed version takes about 330 MB, and the Claude Agent SDK, installed only with `--include-claude-sdk`, adds about 224 MB. The installer refuses to start with under about 488 MB free at the install root. On a small home quota, move the install root:
 
 ```sh
 curl -fsSL https://pancode.dev/install.sh | sh -s -- --install-dir /project/$USER/pancode
@@ -35,14 +35,12 @@ curl -fsSL https://pancode.dev/install.sh | sh -s -- --install-dir /project/$USE
 
 ## Verified downloads
 
-Every Node download is checked against its release `SHASUMS256.txt`, and a mismatch stops the install. When `gpgv` or `gpg` is present, the installer also verifies the OpenPGP signature on official builds, and it stops when nodejs.org serves no signature or a key outside the Node.js release keyring signed it.
-
-A mirror without a signature file still installs on the checksum. Set `PANCODE_REQUIRE_SIGNATURE=1` to fail when no signature verifies.
+The installer compares the bundle's SHA-256 with the release's `SHA256SUMS`, and a mismatch stops the install. Every release file also has a GitHub build attestation, which `gh attestation verify <file> --repo akougkas/pancode` checks on a machine with the GitHub CLI.
 
 ## Airgapped sites and your own Node
 
-Point `PANCODE_NODE_MIRROR` at a mirror laid out like nodejs.org/dist, `PANCODE_NODE_UNOFFICIAL_MIRROR` at one for the unofficial builds, and `npm_config_registry` at a registry mirror for the package's dependencies. A Node mirror can be a `file://` URL on a shared filesystem.
+With no route out, download the bundle for the cluster and `install.sh` from the GitHub release on a connected machine, copy both over, and run `sh install.sh --bundle pancode-<version>-<target>.tar.gz`. Nothing else is fetched. A site that mirrors the releases sets `PANCODE_RELEASE_MIRROR` to the mirror's base URL, which can be a `file://` URL on a shared filesystem.
 
-If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
+If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g @akougkas/pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
 
-Pick versions with `--version` or `--channel`, and undo an upgrade with `--rollback`. The full guide covers the mirror variables; `sh install.sh --help` lists every option.
+Pick versions with `--version` or `--channel`, and undo an upgrade with `--rollback`. The full guide covers the mirror layout; `sh install.sh --help` lists every option.

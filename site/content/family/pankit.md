@@ -14,10 +14,11 @@ PanKit is a suite of MCP tool servers for HPC and scientific work. Every server 
 
 ## Install
 
-PanKit ships inside the `pancode` npm package. Installing PanCode also installs the `pankit` command.
+PanKit ships with PanCode. Installing PanCode, with the installer or from npm, also installs the `pankit` command.
 
 ```bash
-npm install -g pancode
+curl -fsSL https://pancode.dev/install.sh | sh
+npm install -g @akougkas/pancode   # or, with Node.js 22.19 or newer
 ```
 
 ## Example
@@ -34,7 +35,7 @@ An MCP host that reads the common `mcpServers` shape can start a server without 
 ```json
 {
 	"mcpServers": {
-		"node": { "command": "npx", "args": ["-y", "-p", "pancode", "pankit", "serve", "node"] }
+		"node": { "command": "npx", "args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"] }
 	}
 }
 ```
@@ -53,5 +54,5 @@ An MCP host that reads the common `mcpServers` shape can start a server without 
 ::: next Learn more
 - [Tool servers with PanKit](/docs/guide/pankit.html)
 - [The PanKit package and its source](../../../packages/kit/README.md)
-- [pancode on npm](https://www.npmjs.com/package/pancode)
+- [@akougkas/pancode on npm](https://www.npmjs.com/package/@akougkas/pancode)
 :::

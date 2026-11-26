@@ -5,19 +5,19 @@ node facts, I/O traces, scientific file formats, dataset catalogs and the projec
 one command, `pankit`, and every server speaks the Model Context Protocol over stdio, so any MCP host can run it.
 PanCode reaches the same servers through its MCP gateway as `builtin` servers.
 
-PanKit ships inside the `pancode` npm package, which installs `pankit` beside `pancode`. This workspace package,
+PanKit ships inside the `@akougkas/pancode` npm package, which installs `pankit` beside `pancode`. This workspace package,
 `@pancode/kit`, is private and never published on its own.
 
 ## Install
 
-`pankit` ships in the `pancode` npm package and needs Node 22.19 or later.
+`pankit` ships in the `@akougkas/pancode` npm package and needs Node 22.19 or later.
 
 ```bash
-npm install -g pancode      # installs pancode, panstore and pankit
+npm install -g @akougkas/pancode      # installs pancode, panstore and pankit
 pankit list
 ```
 
-Without a global install, `npx -y -p pancode pankit <command>` fetches the package and runs `pankit`.
+Without a global install, `npx -y -p @akougkas/pancode pankit <command>` fetches the package and runs `pankit`.
 
 ## Example
 
@@ -32,7 +32,7 @@ Serve the `node` server to any MCP host that reads the common `mcpServers` shape
 ```
 
 When `pankit` is not on the host's `PATH`, use `"command": "npx"` with
-`"args": ["-y", "-p", "pancode", "pankit", "serve", "node"]`, or the absolute path to the installed `pankit`.
+`"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"]`, or the absolute path to the installed `pankit`.
 Inside PanCode the servers are already there as `builtin` servers: `pancode mcp list` shows them and
 `pancode mcp test node --call node_memory` calls one.
 

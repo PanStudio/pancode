@@ -36,7 +36,7 @@ Rule ids are checked by `tests/boundaries/check-boundaries.ts`, which `pnpm run 
 - `pnpm run test` runs only the curated `coreTests` list in `scripts/ci-tests.mjs`, about one root test file in seven, and `pnpm run test:gui` the curated `guiTests` list. A new test file is added to a list there or no gate runs it.
 - Most regressions are caught by the extended tests, which only `pnpm run test:file -- <files>` and `pnpm run test:full` run. Find the tests that import what you changed, in every test directory, and run them with `test:file` from the repository root.
 - A test that spawns the built CLI sees the last build, not your edit; run `pnpm run build` first. Only `test:full` checks `dist/`, and it cannot see uncommitted edits.
-- While iterating, `pnpm run check` runs `typecheck` (tsrs) and Biome together in seconds. Before reporting, run `pnpm run typecheck`, `pnpm run lint` and the affected files with `test:file`. If `typecheck` surprises you, `pnpm run typecheck:compare` holds it against `tsc`, which is authoritative. The suites (`pnpm run test`, `test:gui`, `test:package`, `test:full`) are heavy and `pnpm run ci` is release qualification: run one only when the brief asks.
+- While iterating, `pnpm run check` runs `typecheck` (tsrs) and Biome together in seconds. Before reporting, run `pnpm run typecheck`, `pnpm run lint` and the affected files with `test:file`. If `typecheck` surprises you, `pnpm run typecheck:compare` holds it against `tsc`, which is authoritative. The suites (`pnpm run test`, `test:gui`, `test:package`, `test:full`) are heavy and `pnpm run ci` is the whole gate, which rebuilds `dist/`: run one only when the brief asks.
 - A change to a user-visible name, string or default also updates the tests that pin the old one: grep the test directories for it.
 - A run with skipped tests is missing evidence, and a red test is yours until the same file fails on your base commit.
 - No wall-clock thresholds, and never swap `process.stdout.write` across an `await`.
@@ -77,7 +77,7 @@ Rule ids are checked by `tests/boundaries/check-boundaries.ts`, which `pnpm run 
 - Work on a branch cut from the current version branch (`v` plus the digits of the `package.json` version, `v090` for 0.9.0); `main` moves only when a release ships.
 - Conventional commits; a tracked-issue fix ends with `fixes #N`, one issue per commit. Never hand-write attribution trailers or set the author: PanCode's commit hook appends its own trailers and authors worker and headless commits.
 - All worktrees share one `.git/config`, stash and object store: never `git stash`, never move a branch by relative ref, never amend a commit you did not just make, and unset `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and `GIT_PREFIX` for any command a git-driven runner such as `git bisect run` executes.
-- Publication is the maintainer's release flow in `scripts/release/README.md`; CI never publishes to npm.
+- Publication is the maintainer's release flow in `scripts/release/README.md`: only the `publish` job of the CI workflow publishes, after the maintainer approves it.
 
 ## Docs and prose
 - No `docs/` edits unless the brief includes docs, except the inventory rows lint demands; `CHANGELOG.md` belongs to release work. Put proposed changelog lines and deferred docs in your report.

@@ -1,6 +1,6 @@
 ## What PanSDK holds
 
-PanSDK is the contract for writing PanCode extensions, packs, tools and MCP servers. It ships inside the `pancode` npm package, licensed Apache-2.0, as five imports:
+PanSDK is the contract for writing PanCode extensions, packs, tools and MCP servers. It ships inside the `@akougkas/pancode` npm package, licensed Apache-2.0, as five imports:
 
 | Import | Holds |
 | --- | --- |
@@ -26,7 +26,7 @@ pancode extensions test .pancode/dev/extensions/lab-hello
 
 ## Write a tool server
 
-Any other Node project adds the `pancode` package as a dependency (Node 22.19 or later) and imports the subpaths:
+Any other Node project adds the package as a dependency with `npm install --save-dev pancode@npm:@akougkas/pancode` (Node 22.19 or later) and imports the subpaths:
 
 ```js
 import { serveStdio } from "pancode/sdk/mcp-server";

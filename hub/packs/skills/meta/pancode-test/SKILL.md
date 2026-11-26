@@ -6,7 +6,7 @@ triggers:
   - test PanCode context compaction or memory
   - verify PanCode skill activation
   - choose PanCode test gates
-version: 0.5.0
+version: 0.5.1
 license: LicenseRef-PanCode-1.0
 pancode:
   registry-id: akougkas/pancode
@@ -35,8 +35,9 @@ covers implementation.
 | `pnpm run test:full` | every root test file | yes, built from HEAD | everything, slowly |
 | `pnpm run check:gui` | GUI types and lint | no | GUI static |
 
-`pnpm run ci` is release qualification on a clean tree with two Node
-versions. It is not a routine check. Suites, builds and browser checks are
+`pnpm run ci` is the whole gate CI runs: a release build, the test tiers
+against it and an install of the built bundle, on this machine's Node. It
+rebuilds `dist/` and is not a routine check. Suites, builds and browser checks are
 heavy: run one at a time and follow the brief's lock rule.
 
 ## Pick checks from the diff

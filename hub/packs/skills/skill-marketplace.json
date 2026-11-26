@@ -281,7 +281,7 @@
 				"choose PanCode test gates"
 			],
 			"sourceUrl": "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/pancode-test",
-			"version": "0.5.0",
+			"version": "0.5.1",
 			"audit": "pass",
 			"category": "meta"
 		},

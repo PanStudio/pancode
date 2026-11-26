@@ -150,9 +150,9 @@ SSH nodes and delegated peers are separate execution paths. A delegated peer is 
 curl -fsSL https://pancode.dev/install.sh | sh
 ```
 
-The installer needs no root, refuses to run under sudo, and brings a private Node.js 24. On x64 login nodes with glibc from 2.17 to 2.27 it selects a compatible Node.js build. Behind a proxy, export `https_proxy` first; the cluster guide lists the variables for mirrored and offline installs.
+The installer needs no root, refuses to run under sudo, and downloads one bundle that carries its own Node.js. On x64 login nodes with glibc from 2.17 to 2.27 it selects the bundle built for them. Behind a proxy, export `https_proxy` first; the cluster guide lists the variables for mirrored and offline installs.
 
-That private Node.js is not added to `PATH`. A node installed this way already has PanCode, so skip `fleet nodes install` there and keep its version equal to your client's.
+That Node.js is not added to `PATH`. A node installed this way already has PanCode, so skip `fleet nodes install` there and keep its version equal to your client's.
 
 PanCode does not submit jobs for its own workers. The agent submits scheduler work through the scheduler clients in `bash`, under review; the [cluster guide](/docs/guide/hpc-clusters.html) covers it.
 

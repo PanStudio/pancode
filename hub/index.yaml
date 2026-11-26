@@ -441,9 +441,9 @@ entries:
     description: "HPC pack: Lmod and Spack software environments, parallel HDF5 and
       MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack
       and darshan servers with the cluster's own tools as the fallback."
-    version: 0.4.0
+    version: 0.4.1
     sourceUrl: packs/plugins/hpc
-    sha256: 5f1ae341f75312b9a19a72870000f8ba4b84b7419ace0bb53d1194ca4ceb4cc5
+    sha256: 90d2dcf0044dc348de46efecd0a10176565d75200a518ac2955cb6a58db58661
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -608,9 +608,9 @@ entries:
       - test PanCode context compaction or memory
       - verify PanCode skill activation
       - choose PanCode test gates
-    version: 0.5.0
+    version: 0.5.1
     sourceUrl: packs/skills/meta/pancode-test
-    sha256: 64e0d4fbc66b77ac9ce979d874bb247fe41623ca5fe7215ff6f0a2d081fd02f6
+    sha256: 20fa4ff57934318bc1124d4d08a52bce2286673f427986758dc8e5c12ce91651
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -763,9 +763,9 @@ entries:
       through PanCode's catalog server, keeps results in the store, reads HDF5,
       NetCDF, Parquet and CSV with PanCode's data tool first, and writes a
       read-only Python script through run_script only for analysis beyond it."
-    version: 0.4.0
+    version: 0.4.1
     sourceUrl: packs/plugins/science-data
-    sha256: a6fac1ca19db773089a9b6e97dbdb9975d7bc9918a519b5de5ec35d9d7e28fd7
+    sha256: 5653328b831c47c2d4a82e67b1f8c2e2483ed22e8409cbf72c9f77173ad45264
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

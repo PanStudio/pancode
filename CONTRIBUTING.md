@@ -58,7 +58,7 @@ Tests live in `tests/contracts/` (behavior contracts), `tests/extended/` (slower
    docs: clarify worker permission scope
    feat(cli): add target inspection option
    ```
-4. Before requesting review, run `pnpm run typecheck`, `pnpm run lint`, focused `pnpm run test:file` runs for the behavior you changed, and `pnpm run test`. `pnpm run ci` is release qualification, not a routine check.
+4. Before requesting review, run `pnpm run typecheck`, `pnpm run lint`, focused `pnpm run test:file` runs for the behavior you changed, and `pnpm run test`. `pnpm run ci` is the whole gate CI runs and takes several minutes; it is not a routine check.
 
 Every source file opens with two SPDX lines naming its license (`LicenseRef-PanCode-1.0`, or `Apache-2.0` under `packages/sdk/`) and the copyright holder. For a new file, run `node scripts/license-headers.mjs --write`; `pnpm run lint` fails on a file without them.
 
@@ -80,8 +80,9 @@ Contributions are accepted under the [Contributor License Agreement](CLA.md): yo
 | `pnpm run test` | Default contract selection. Needs a build. |
 | `pnpm run test:gui` | Default GUI selection. |
 | `pnpm run test:full` | Every root test file, including extended regressions. |
-| `pnpm run ci` | Local release qualification on Node 22 and 24, reused for the same clean commit. |
-| `pnpm run release:readiness` | Read-only package, website and media readiness check. |
+| `pnpm run ci` | The whole gate on this machine's Node: the checks beside a release build, the test tiers against the built tarball, the npm install check, then an install, upgrade, rollback and uninstall of this machine's bundle. CI runs the same steps on Node 22 and 24 and on every platform. |
+| `pnpm run release:build -- --out <dir>` | Build the release directory: the npm tarball, this machine's bundle, the installers and the website. |
+| `pnpm run release:smoke -- <dir>/assets` | Install the built bundle in a throwaway home and take it through upgrade, rollback and uninstall. |
 
 [scripts/README.md](scripts/README.md) lists every package script and the script file behind it.
 
@@ -91,7 +92,7 @@ Contributions are accepted under the [Contributor License Agreement](CLA.md): yo
 
 `tsc` stays authoritative:
 
-- Release preparation (`pnpm run ci` and the `prepare` job) runs `pnpm run typecheck:compare`, so the gate is `tsc`'s verdict, and it also fails when tsrs reports anything different.
+- The gate (`pnpm run ci` and the `check` job of `.github/workflows/ci.yml`) runs `pnpm run typecheck:compare`, so the gate is `tsc`'s verdict, and it also fails when tsrs reports anything different.
 - `tests/contracts/typecheck-corpus.test.ts` (core tier) holds `tsc`, tsrs and `tsrs --fast` to the diagnostics recorded in `tests/fixtures/typecheck-corpus/expected.txt`. The corpus injects errors under the options PanCode relies on: `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noImplicitOverride`, NodeNext `.js` specifiers, `paths` aliases, JSON modules, `isolatedModules`, TSX and declaration emit. It also covers the `file(line,col): error TSnnnn:` output agents parse, and the fallback.
 - The GUI keeps its own `tsc` in `pnpm run check:gui`.
 
@@ -190,4 +191,4 @@ in the guides; command-heavy material and agent orientation use foldable blocks.
 
 ## Releases
 
-Releases are cut by the maintainer with `pnpm run release`. The branch model, the release steps and the repository settings they need are in [scripts/release/README.md](scripts/release/README.md).
+The maintainer releases by dispatching `.github/workflows/ci.yml` with `release` checked and approving its `publish` job. The branch model, the release steps and the repository settings they need are in [scripts/release/README.md](scripts/release/README.md).

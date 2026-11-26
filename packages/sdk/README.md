@@ -2,16 +2,16 @@
 
 PanSDK, the contract for authoring PanCode extensions, packs, tools and MCP servers.
 It is part of PanCode, systems software for coding agents.
-It ships inside the `pancode` npm package as `pancode/sdk/<subpath>`. This workspace package, `@pancode/sdk`, is
+It ships inside the `@akougkas/pancode` npm package as `pancode/sdk/<subpath>`. This workspace package, `@pancode/sdk`, is
 private: PanCode bundles it at build time and never publishes it on its own.
 
 ## Install
 
-PanSDK comes with the `pancode` npm package, which needs Node 22.19 or later, and its source is licensed
+PanSDK comes with the `@akougkas/pancode` npm package, which needs Node 22.19 or later, and its source is licensed
 Apache-2.0.
 
 ```bash
-npm install pancode   # in a project that imports pancode/sdk/*
+npm install --save-dev pancode@npm:@akougkas/pancode   # in a project that imports pancode/sdk/*
 ```
 
 An extension package scaffolded with `pancode extensions init` needs no install: it resolves

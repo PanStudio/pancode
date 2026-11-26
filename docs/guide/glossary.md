@@ -36,7 +36,7 @@ The words you meet first, each in a sentence or two, with the guide that explain
 | Compaction | Shortening a long conversation into a summary so it fits the model's context window. See [Context continuity](context-continuity.md). |
 | PanStore | The project store: a place outside your working tree for result files and datasets, shared by every checkout of the project. See [PanStore](panstore.md). |
 | PanKit | PanCode's MCP tool servers for HPC and scientific work, run inside PanCode or by any MCP host with `pankit serve <id>`. See [PanKit](pankit.md). |
-| PanSDK | The contract for authoring extensions, packs, tools and MCP servers, shipped in the `pancode` package as `pancode/sdk/<subpath>`. See [PanSDK](sdk.md). |
+| PanSDK | The contract for authoring extensions, packs, tools and MCP servers, shipped in the `@akougkas/pancode` package as `pancode/sdk/<subpath>`. See [PanSDK](sdk.md). |
 | Research campaign | A loop where workers try changes that improve one measured number while every check still passes. See [Research and arena](research-and-arena.md). |
 | Model campaign | One seeded project run across a roster of models with `pancode campaign run`, each in a fresh copy, to compare how far each gets. |
 | Arena match | The same task given to several models and graded by the same check, so you can compare the results and vote blind. |

@@ -26,13 +26,13 @@ The licences are each package's `license` field: `Apache-2.0` for `@pancode/sdk`
 
 ## How they ship
 
-The four workspace packages are private: none is published to npm on its own. One npm package, `pancode`, carries them all, built from source into its `dist/`:
+The four workspace packages are private: none is published to npm on its own. One npm package, `@akougkas/pancode`, carries them all, built from source into its `dist/`:
 
 - the commands `pancode`, `panstore` and `pankit`;
 - the SDK subpaths `pancode/sdk/extension`, `pancode/sdk/pack`, `pancode/sdk/testing`, `pancode/sdk/tool` and `pancode/sdk/mcp-server`, with their declarations under `dist/sdk/`;
 - PanKit's policy manifest `packages/kit/servers.json`, and the first-party packs under `hub/`.
 
-So `npm install -g pancode` installs every product at one version, and a host that wants only PanKit runs `npx -y -p pancode pankit serve <id>`. Each package's README under `packages/` is its page in the repository; the guides are [PanStore](../guide/panstore.md), [PanKit](../guide/pankit.md), [PanHub](../guide/panhub.md) and [PanSDK](../guide/sdk.md).
+So the installer, or `npm install -g @akougkas/pancode`, installs every product at one version, and a host that wants only PanKit runs `npx -y -p @akougkas/pancode pankit serve <id>`. Each package's README under `packages/` is its page in the repository; the guides are [PanStore](../guide/panstore.md), [PanKit](../guide/pankit.md), [PanHub](../guide/panhub.md) and [PanSDK](../guide/sdk.md).
 
 ## How they plug into PanCode
 

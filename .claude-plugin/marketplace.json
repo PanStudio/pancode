@@ -130,7 +130,7 @@
 			"name": "hpc",
 			"source": "./hub/packs/plugins/hpc",
 			"description": "HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack and darshan servers with the cluster's own tools as the fallback.",
-			"version": "0.4.0",
+			"version": "0.4.1",
 			"license": "LicenseRef-PanCode-1.0",
 			"author": {
 				"name": "PanCode"
@@ -176,7 +176,7 @@
 			"name": "pancode-test",
 			"source": "./hub/packs/skills/meta/pancode-test",
 			"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
-			"version": "0.5.0",
+			"version": "0.5.1",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
 		},
@@ -224,7 +224,7 @@
 			"name": "science-data",
 			"source": "./hub/packs/plugins/science-data",
 			"description": "Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it.",
-			"version": "0.4.0",
+			"version": "0.4.1",
 			"license": "LicenseRef-PanCode-1.0",
 			"author": {
 				"name": "PanCode"
