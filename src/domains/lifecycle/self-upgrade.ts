@@ -57,19 +57,38 @@ export interface PlanSelfUpgradeOptions {
  * wrapper for after quit (#436). Of the rest, only an identified npm global
  * install has a stable package root and prefix after replacement, and an
  * install.sh install records its new prefix in its manifest; other pnpm and
- * Bun global stores keep the explicit manager handoff.
+ * Bun global stores keep the explicit manager handoff, once the channel has a
+ * newer version for it, and a lookup that brings no version is unavailable.
+ * Homebrew and WinGet get the handoff unasked: the registry is not theirs.
  */
 export async function planSelfUpgrade(options: PlanSelfUpgradeOptions): Promise<SelfUpgradePlan> {
 	const { installation, runningVersion, signal } = options;
 	// The target's version only names the package spec; this asks whether the layout qualifies.
 	const deferred = !installation.installer && deferredUpdateTarget(installation, runningVersion) !== null;
 	if (!deferred && !selfUpgradable(installation)) {
-		return {
-			status: "manual",
+		const manual = {
+			status: "manual" as const,
 			current: runningVersion,
 			installation,
 			command: installationCommand(installation, "upgrade"),
 		};
+		// A checkout updates through git, an unidentified layout has no package manager to ask about, and Homebrew and
+		// WinGet publish on their own schedule, so the npm registry says nothing about what they would install.
+		if (!["npm", "pnpm", "bun"].includes(installation.kind)) return manual;
+		// The owning package manager is named only when the channel has a newer version for it to install.
+		const available = await (options.fetchVersion ?? fetchReleaseVersion)(
+			upgradeChannel(installation),
+			signal,
+			"registry",
+		).catch(() => null);
+		signal?.throwIfAborted();
+		const comparison =
+			typeof available === "string" && parseReleaseVersion(available)
+				? compareReleaseVersions(available, runningVersion)
+				: null;
+		if (available === null || comparison === null)
+			return { status: "unavailable", current: runningVersion, installation };
+		return comparison <= 0 ? { status: "current", current: runningVersion, available, installation } : manual;
 	}
 	const pin = installation.installer?.versionPin;
 	if (pin) {

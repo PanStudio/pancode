@@ -49,7 +49,13 @@ import {
 import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
 import { remoteIndexRows } from "./hub-trust.js";
 import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
-import { type HubPackageValidationResult, isBundledServerPack, validateHubPackage } from "./hub-validation.js";
+import {
+	bundledServerPackDir,
+	type HubPackageValidationResult,
+	isBundledServerPack,
+	shippedServerPolicy,
+	validateHubPackage,
+} from "./hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory } from "./skills/bare-skill.js";
 
 export type HubEntry = HubPackageEntry;
@@ -640,6 +646,96 @@ export function resolveHubPackage(
 	if (parsePluginGithubSource(source))
 		throw new Error("remote plugin installation requires a catalog entry with version and full-tree sha256 pin");
 	throw new Error(`${source} is not a PanHub pack or a local pack directory; find the name with \`pancode hub search\``);
+}
+
+/**
+ * A server PanCode carries: its bundled row and the shipped policy its pack holds. It has no installed copy.
+ * `damaged` says why the pack's `server.json` cannot be described, and then `tools` and `environment` are empty;
+ * `revoked` is the revocation of the row's digest.
+ */
+export interface BuiltinHubServer {
+	ref: HubRequirementRef;
+	id: string;
+	version: string;
+	title: string;
+	tools: Array<{ name: string; actionClass: string }>;
+	environment: string[];
+	entry: HubEntry;
+	damaged?: string;
+	revoked?: string;
+}
+
+/**
+ * Whether a row is the canonical bundled core row of a server PanCode carries. The row decides it, so a pack that is
+ * damaged or missing stays built in and is reported rather than offered for install.
+ */
+export function isBuiltinServerRow(entry: HubEntry): boolean {
+	return (
+		entry.kind === "server" &&
+		entry.publisher === "pancode" &&
+		entry.tier === "core" &&
+		entry.source === undefined &&
+		path.resolve(entry.sourceUrl) === bundledServerPackDir(entry.name)
+	);
+}
+
+/** Why the bundled pack of a built-in server row cannot be described, or undefined when it matches its pin. */
+function builtinServerDamage(entry: HubEntry): string | undefined {
+	const root = bundledServerPackDir(entry.name);
+	if (!existsSync(root)) return `${root} is missing`;
+	const candidate = validateHubPackage(root);
+	if (!candidate.valid || !candidate.manifest) return `invalid pack: ${validationReasons(candidate)}`;
+	if ((candidate.manifest.pancode.kind ?? "plugin") !== "server" || candidate.manifest.name !== entry.name)
+		return `${root} is not the pack of server:${entry.name}`;
+	if (entry.sha256 && pluginContentDigest(root) !== entry.sha256)
+		return `plugin_pin_mismatch: ${entry.name}; ${root} differs from the row's pinned digest`;
+	const policy = shippedServerPolicy(root, entry.name);
+	return typeof policy === "string" ? policy : undefined;
+}
+
+/** The server a canonical built-in row names, with its shipped policy or why its pack cannot supply one. */
+export function builtinHubServer(entry: HubEntry): BuiltinHubServer | undefined {
+	if (!isBuiltinServerRow(entry)) return undefined;
+	const damaged = builtinServerDamage(entry);
+	const policy = damaged ?? shippedServerPolicy(bundledServerPackDir(entry.name), entry.name);
+	const revocation = entry.sha256 ? revokedHubDigests().get(entry.sha256) : undefined;
+	return {
+		ref: hubEntryRef(entry),
+		id: entry.name,
+		version: typeof policy === "string" ? (entry.version ?? "") : policy.version,
+		title: typeof policy === "string" ? entry.name : policy.title,
+		tools: typeof policy === "string" ? [] : policy.tools,
+		environment: typeof policy === "string" ? [] : policy.environment,
+		entry,
+		...(typeof policy === "string" ? { damaged: policy } : {}),
+		...(revocation ? { revoked: packRevokedMessage(entry.name, revocation) } : {}),
+	};
+}
+
+/**
+ * The built-in server a lifecycle reference names: `server:<id>`, a bare id no other pack shares, or the bundled
+ * pack directory itself, however the caller spells its path. Anything else is left to the ordinary resolver.
+ */
+export function builtinHubServerFor(
+	source: string,
+	options: { cwd?: string; catalog?: string } = {},
+): BuiltinHubServer | undefined {
+	const rows = bundledPluginCatalog([]).filter(isBuiltinServerRow);
+	const local = pluginLocalPath(source, options.cwd);
+	if (existsSync(local)) {
+		const row = rows.find((entry) => isBundledServerPack(local, entry.name));
+		return row ? builtinHubServer(row) : undefined;
+	}
+	const [kind, name] = source.includes(":") ? source.split(/:(.*)/su, 2) : [undefined, source];
+	if (kind !== undefined && kind !== "server") return undefined;
+	const row = rows.find((entry) => entry.name === name);
+	if (!row) return undefined;
+	if (
+		kind === undefined &&
+		!discoverHub(options).entries.every((item) => item.name !== name || hubEntryRef(item) === hubEntryRef(row))
+	)
+		return undefined;
+	return builtinHubServer(row);
 }
 
 export function planHubUpdate(

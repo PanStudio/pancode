@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { spawn } from "node:child_process";
-import { accessSync, appendFileSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, appendFileSync, constants, existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { initializePancodeHome, recordHomeDowngrade } from "../core/init.js";
@@ -156,7 +156,10 @@ function parseUpgradeArgs(argv: ReadonlyArray<string>): UpgradeOptions {
  * the installed version is the newest one.
  */
 type RegistryLookup =
-	| { asked: false; reason: "source checkout" | "post-install checks" }
+	| {
+			asked: false;
+			reason: "source checkout" | "post-install checks" | "package manager not identified" | "not in the npm registry";
+	  }
 	| { asked: true; version: string | null };
 
 /** An installer install follows the release's channel file; a package-manager install follows its registry. */
@@ -166,6 +169,7 @@ function releaseSource(method: Installation["kind"]): ReleaseSource {
 
 async function lookUpAvailableVersion(channel: Channel, method: Installation["kind"]): Promise<RegistryLookup> {
 	if (method === "source") return { asked: false, reason: "source checkout" };
+	if (method === "local" || method === "unknown") return { asked: false, reason: "package manager not identified" };
 	return { asked: true, version: await fetchReleaseVersion(channel, undefined, releaseSource(method)) };
 }
 
@@ -417,12 +421,25 @@ async function runPostInstallUpgrade(
 	for (const warning of report.warnings) presenter.warn(warning);
 }
 
+/** Whether the default background directory holds an app; a path that cannot be looked at says why. */
+function defaultBackground(owner: string): "present" | "absent" | { error: string } {
+	try {
+		lstatSync(owner);
+		return "present";
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		return code === "ENOENT" ? "absent" : { error: code ?? String(error) };
+	}
+}
+
 async function runBackgroundRestart(installation: Installation): Promise<string> {
-	const output = await runChild(
-		nodeFor(installation),
-		[installation.entry, "gui", "background", "restart", "--if-idle"],
-		"pancode gui background restart --if-idle",
-	);
+	const restart = ["gui", "background", "restart", "--if-idle"];
+	// An installer install restarts the app the way its launcher does, through the desktop host the manifest
+	// names, so a rollback to an older CLI still moves the app to the version now active.
+	const args = installation.installer
+		? [join(installation.root, "scripts", "native-install.cjs"), "launch", installation.installer.root, ...restart]
+		: [installation.entry, ...restart];
+	const output = await runChild(nodeFor(installation), args, "pancode gui background restart --if-idle");
 	const lines = output.trim().split(/\r?\n/).filter(Boolean);
 	if (lines.length !== 1) throw new Error("background restart did not return its one-line result");
 	return lines[0] ?? "";
@@ -559,6 +576,7 @@ export async function runUpgradeCommand(
 		if (CHANNELS.includes(recordedChannel as Channel)) opts.channel = recordedChannel as Channel;
 	}
 	const method = installation.kind;
+	const backgroundOwner = join(stateDir, "gui/background/owner.json");
 	if (opts.rollback) {
 		const record = installation.installer;
 		if (method !== "installer" || !record) {
@@ -659,6 +677,36 @@ export async function runUpgradeCommand(
 			presenter.warn(
 				`Could not record ${previousVersion} as this home's version (${downgradeError}); it asks before opening the home, and headless runs need PANCODE_ALLOW_OLDER=1`,
 			);
+		// The background app runs the version it started with until it restarts.
+		const found = defaultBackground(backgroundOwner);
+		const owner = found === "present" ? backgroundPackageRoot(stateDir) : null;
+		if (owner !== null && installIdentity(owner) !== installIdentity(installation.root))
+			presenter.note(`Left the desktop app running from ${shortenPath(owner)}, the installation it belongs to.`);
+		else if (found === "present") {
+			try {
+				presenter.note(await deps.runBackgroundRestart(installation));
+			} catch (error) {
+				presenter.warn(
+					`Rollback succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				presenter.commandAdvice(`Restart it when you want it on ${toLabel}:`, "pancode gui background restart --if-idle");
+			}
+		}
+		// Only the default location is known here; nothing records an app set up in another directory.
+		else if (found === "absent")
+			presenter.commandAdvice(
+				`No desktop app is set up in the default location. One set up with --directory keeps its version until it restarts; to move it to ${toLabel}:`,
+				"pancode gui background restart --if-idle --directory <dir>",
+			);
+		else {
+			presenter.warn(
+				`Could not look for a desktop app in ${shortenPath(dirname(backgroundOwner))} (${found.error}); one keeps the version it started with until it restarts`,
+			);
+			presenter.commandAdvice(
+				`To move it to ${toLabel}, restart it with --directory <dir> when it was set up elsewhere:`,
+				"pancode gui background restart --if-idle",
+			);
+		}
 		presenter.note(
 			`Sessions already running keep ${fromLabel}; run pancode --resume in this project to pick one up on ${toLabel}.`,
 		);
@@ -686,7 +734,6 @@ export async function runUpgradeCommand(
 		return version === null ? updateCommand : installationCommand(installation, "upgrade", version);
 	};
 	const sourceAdvice = () => presenter.commandAdvice(SOURCE_UPGRADE_LEAD, updateCommand);
-	const backgroundOwner = join(stateDir, "gui/background/owner.json");
 	const finish = async (): Promise<number> => {
 		if (!opts.dryRun && opts.postInstall) {
 			// The installer root a move to a checkout or a package manager left behind.
@@ -733,27 +780,91 @@ export async function runUpgradeCommand(
 			}
 		}
 		presenter.done("Done");
+		return relaunch("Upgrade complete, but relaunch failed");
+	};
+	// An install already current changes nothing, the desktop app included; a --restart still relaunches the CLI.
+	const unchanged = async (): Promise<number> => {
+		presenter.done("Done");
+		return relaunch("Relaunch failed");
+	};
+	const relaunch = async (failure: string): Promise<number> => {
 		if (!opts.restart || opts.dryRun) return 0;
 		try {
 			return await deps.runRestart(activeInstallation);
 		} catch (error) {
-			printError(
-				`Upgrade complete, but relaunch failed: ${error instanceof Error ? error.message : String(error)}. To continue, ${RESUME_HINT}.`,
-			);
+			printError(`${failure}: ${error instanceof Error ? error.message : String(error)}. To continue, ${RESUME_HINT}.`);
 			return 1;
 		}
 	};
 	presenter.setMethod(methodLabel);
 	if (!opts.postInstall && method !== "npm" && method !== "installer" && method !== "source") {
+		// The owning package manager is named only when the channel has a newer version for it to install. Homebrew
+		// and WinGet publish on their own schedule, so a newer npm version says nothing about theirs.
+		const lookup: RegistryLookup =
+			method === "homebrew" || method === "winget"
+				? { asked: false, reason: "not in the npm registry" }
+				: await deps.lookUpAvailableVersion(opts.channel, method);
+		const available = lookup.asked ? lookup.version : null;
+		const comparison = available === null ? null : compareReleaseVersions(available, before);
+		if (comparison !== null && comparison <= 0) {
+			presenter.step(`Installation method: ${methodLabel}`);
+			presenter.step(`Current version: ${before}`);
+			presenter.step(`Available version: ${available}`);
+			if (comparison < 0) presenter.note(`Installed ${before} is newer than ${opts.channel} (${available}); keeping it.`);
+			presenter.warn(`Already on ${before}. Nothing to do.`);
+			if (opts.dryRun && opts.restart) presenter.note(RELAUNCH_PREVIEW);
+			if (opts.dryRun) presenter.warn("Dry run: no changes made");
+			return unchanged();
+		}
+		const newer = comparison !== null && comparison > 0;
 		presenter.note(`Installation method: ${methodLabel}`);
 		presenter.note(`Package: ${installation.root}`);
-		presenter.commandAdvice(
-			"Update with the original package manager and its original global directory:",
-			await handRunCommand(null),
-		);
+		if (newer) presenter.note(`Available version: ${available}`);
+		else if (!lookup.asked) presenter.note(`Available version: not checked (${lookup.reason})`);
+		else
+			presenter.note(
+				`Available version: unknown (no version from ${releaseVersionUrl(opts.channel, releaseSource(method))})`,
+			);
+		if (newer)
+			presenter.commandAdvice(
+				"Update with the original package manager and its original global directory:",
+				await handRunCommand(available),
+			);
+		else if (method === "local" || method === "unknown")
+			presenter.commandAdvice("Ask the package manager that installed it for any newer release:", updateCommand);
+		else if (method === "homebrew" || method === "winget") {
+			presenter.commandAdvice(
+				`See whether ${method === "homebrew" ? "Homebrew" : "WinGet"} has a newer release; this changes nothing:`,
+				installationCommand(installation, "check", opts.channel),
+			);
+			presenter.commandAdvice(`If it names a version newer than ${before}, this updates the package:`, updateCommand);
+		} else if (opts.channel === "beta") {
+			presenter.commandAdvice(
+				"See the versions the latest and beta tags name; this changes nothing:",
+				installationCommand(installation, "check", opts.channel),
+			);
+			presenter.commandAdvice(
+				`If the newer of the two is newer than ${before}, put it in place of <version>; this replaces the installed package with it, from its original global directory:`,
+				installationCommand(installation, "upgrade", "<version>"),
+			);
+		} else {
+			presenter.commandAdvice(
+				"See which version the original package manager would install; this changes nothing:",
+				installationCommand(installation, "check", opts.channel),
+			);
+			presenter.commandAdvice(
+				`If it is newer than ${before}, this replaces the installed package with it, from its original global directory:`,
+				updateCommand,
+			);
+		}
 		presenter.commandAdvice("Then start pancode on the last session:", "pancode --continue");
 		if (opts.dryRun) presenter.warn("Dry run: no changes made");
-		else presenter.fail("This installation needs a package-manager update; no package was replaced.");
+		else
+			presenter.fail(
+				newer
+					? "This installation needs a package-manager update; no package was replaced."
+					: "PanCode could not tell whether a newer release is out; no package was replaced.",
+			);
 		presenter.finish();
 		return opts.dryRun ? 0 : 1;
 	}
@@ -834,7 +945,7 @@ export async function runUpgradeCommand(
 		if (method === "source") sourceAdvice();
 		if (opts.dryRun && opts.restart) presenter.note(RELAUNCH_PREVIEW);
 		if (opts.dryRun) presenter.warn("Dry run: no changes made");
-		return finish();
+		return unchanged();
 	}
 
 	const prepareInstall = async (): Promise<{ invocation: UpgradeInvocation; version: string | null }> => {
