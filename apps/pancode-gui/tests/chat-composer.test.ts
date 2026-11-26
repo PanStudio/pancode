@@ -33,6 +33,7 @@ import {
 	steerModeOffers,
 	submitIntent,
 	submitLabel,
+	takeBackLabel,
 	tokenRate,
 	turnOutcome,
 	unreachable,
@@ -383,6 +384,9 @@ test("with no turn running the queue reads as held for the next message, never a
 	assert.equal(queueRowLabel(first, true), "Now");
 	const three = projectQueue({ steer: ["a"], followUp: ["b", "c"] });
 	assert.equal(queueSummary(three, false), "3 messages held, nothing sent. They go ahead of your next message.");
+	assert.equal(takeBackLabel(one.length, false).label, "Take it back");
+	assert.equal(takeBackLabel(one.length, true).label, "Taking it back…");
+	assert.equal(takeBackLabel(three.length, false).label, "Take them back");
 	assert.doesNotMatch(queueSummary(three, false), /tool call/);
 });
 

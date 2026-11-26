@@ -642,6 +642,18 @@ export function queueSummary(messages: readonly QueuedMessage[], running: boolea
 	return `${parts.join(" · ")}.`;
 }
 
+/** The control that returns every waiting message to the field, worded for one message or several. */
+export function takeBackLabel(count: number, pending: boolean): { readonly label: string; readonly title: string } {
+	const them = count === 1 ? "it" : "them";
+	return {
+		label: pending ? `Taking ${them} back…` : `Take ${them} back`,
+		title:
+			count === 1
+				? "Take the waiting message back out of the queue and into this field."
+				: "Take every waiting message back out of the queue and into this field.",
+	};
+}
+
 /** A waiting message's mark: its slot while a turn runs, held once none does. */
 export function queueRowLabel(message: QueuedMessage, running: boolean): string {
 	if (!running) return "Held";
