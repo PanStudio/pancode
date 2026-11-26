@@ -322,6 +322,6 @@ function main() {
 	});
 }
 
-module.exports = { isSupportedNode: isSupportedNode, MIN_NODE: MIN_NODE };
+module.exports = { isSupportedNode: isSupportedNode, MIN_NODE: MIN_NODE, updatableRoot: updatableRoot };
 
 if (require.main === module) main();
