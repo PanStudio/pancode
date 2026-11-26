@@ -31,9 +31,9 @@ The family names follow the same rule in HTML: PanCode, PanStore, PanKit, PanHub
 `design-system.json` is the sole sanctioned colour source. `palette` lists every hex, `ramps` says what each ramp is for, and `themes` maps semantic roles to palette names for dark and light. `tokens.mjs` generates `css/brand.css`; the build rejects drift. New sanctioned colours require an explicit request and a documented reason here.
 
 - **Ground.** The dark page is true black, `#000000`, for AMOLED screens. Surfaces above it step through the `void` ramp, a near-neutral with a trace of green: `void1` raised, `void2` sunk and hover, `void3` overlay, `void4` hairline, `void5` strong line, `void6` control border.
-- **Brand green.** `green400` `#00e884` is the focal green on black and the colour of Pan in the wordmark. It marks the brand, links, the primary action, the focus ring, selection and the terminal prompt. It is never a state: green does not mean success here.
+- **Brand green.** The brand ramp is a teal-green at OKLCH hue 170. `green400` `#07e4b4` is the focal green on black and the colour of Pan in the wordmark, the mark and the terminal rails. It marks the brand, links, the primary action, the focus ring, selection and the terminal prompt. It is never a state: green does not mean success here.
 - **Azure secondary.** `azure400` `#4aa8ff` is the colour of Code in the wordmark. It is spent sparingly: section numbers and small mono labels, version tags, one highlight per view. It is never a fill behind running text and never an error or a warning.
-- **States.** Success is `jade`, warning is `amber`, error is `red`, info takes the `azure` ramp. Each has a foreground and a wash per theme. Jade is a blue-leaning green chosen so success never reads as the brand. Every state also carries a glyph or a word; colour alone never carries meaning.
+- **States.** Success is `leaf`, warning is `amber`, error is `red`, info takes the `azure` ramp. Each has a foreground and a wash per theme. Leaf is a true green at OKLCH hue 144, 26 degrees from the brand teal, so success never reads as the brand. Every state also carries a glyph or a word; colour alone never carries meaning.
 - **Text.** Dark uses the `ink` ramp, light uses `pine`. Primary text is not pure white: `ink1` is a warm ivory that avoids halation on black. `faint` is for decoration and disabled labels only, on the ground and the first raised surface.
 - **Light theme.** A warm off-white paper (`mist1`) with white raised surfaces. The focal green cannot carry text on a light ground, so links and focus use `green700` and the secondary uses `azure600`, and filled controls invert: a black fill with brand green text. Black slabs with green type are what keep the light theme PanCode.
 - **Code and terminal surfaces** stay dark in both themes and take the `--code-*` and `--syntax-*` tokens. Product captures keep their own surface and are never recoloured.
@@ -71,7 +71,7 @@ Favor rules and open layouts over nested panels and grids of interchangeable car
 
 ## Terminal
 
-PanCode in the terminal takes the same roles through `src/interactive/theme/tokens.ts`, the only place a terminal colour may be written. Truecolor uses the palette hex. `design-system.json.terminal` gives the nearest 256-colour indexes and the 16-colour names for each role in both themes. At 16 colours success is cyan and the brand is green, so the two stay apart with no ramp to lean on. A light terminal takes the light theme's roles: `green700` for the brand, `azure600` for the secondary. Glyphs carry state alongside colour at every depth.
+PanCode in the terminal takes the same roles through `src/interactive/theme/tokens.ts`, the only place a terminal colour may be written. Truecolor uses the palette hex. `design-system.json.terminal` gives the nearest 256-colour indexes and the 16-colour names for each role in both themes. At 16 colours the brand teal is cyan and success is green, so the two stay apart with no ramp to lean on. A light terminal takes the light theme's roles: `green700` for the brand, `azure600` for the secondary. Glyphs carry state alongside colour at every depth.
 
 ## Voice
 
