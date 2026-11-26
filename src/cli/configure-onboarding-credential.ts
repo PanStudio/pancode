@@ -120,8 +120,26 @@ export const CREDENTIAL_STEP: Step = {
 		const runtime = answers.runtime;
 		if (!runtime) return "back";
 		const stored = describeAuthStatus(runtime, answers.existing);
+		const hasStored = stored !== "none stored";
 		// A sign-in the operator stops with Esc asks this question again, so the loop.
 		while (runtime.auth === "oauth") {
+			const choices = [
+				{
+					value: "oauth-connect" as CredentialSource,
+					label: "Connect now",
+					// Worded per flow: only a device-code flow shows a code of its own; the others ask for the one the page shows.
+					hint: connectHint(runtime, canOpenBrowser()),
+				},
+				...(hasStored ? [{ value: "keep" as CredentialSource, label: "Keep what is there", hint: stored }] : []),
+				{
+					value: "oauth-skip" as CredentialSource,
+					label: "Later",
+					hint: wizard.host
+						? "connect it from Settings → Connections before the first turn"
+						: `ends setup with nothing saved; run \`pancode auth login ${runtime.id}\` later`,
+				},
+			];
+			const current = answers.credential ?? (hasStored ? "keep" : "oauth-connect");
 			const result = await wizard.select<CredentialSource>({
 				heading: [
 					"",
@@ -129,22 +147,11 @@ export const CREDENTIAL_STEP: Step = {
 					chalk.dim(`credential: ${stored}`),
 					"Sign-in stores credentials immediately; target settings wait for Save.",
 				],
-				choices: [
-					{
-						value: "oauth-connect",
-						label: "Connect now",
-						// Worded per flow: only a device-code flow shows a code of its own; the others ask for the one the page shows.
-						hint: connectHint(runtime, canOpenBrowser()),
-					},
-					{
-						value: "oauth-skip",
-						label: "Later",
-						hint: wizard.host
-							? "connect it from Settings → Connections before the first turn"
-							: `ends setup with nothing saved; run \`pancode auth login ${runtime.id}\` later`,
-					},
-				],
-				initialIndex: answers.credential === "oauth-skip" ? 1 : 0,
+				choices,
+				initialIndex: Math.max(
+					0,
+					choices.findIndex((choice) => choice.value === current),
+				),
 				railPrefix: wizard.rail,
 				backLabel: "back",
 				clearOnExit: true,
@@ -154,6 +161,10 @@ export const CREDENTIAL_STEP: Step = {
 			if (result.kind === "quit") return "quit";
 			if (result.kind === "back") return "back";
 			answers.credential = result.value;
+			if (result.value === "keep") {
+				wizard.answer("Credential", stored);
+				return "next";
+			}
 			if (result.value === "oauth-connect") {
 				const connected = await connectOAuth(wizard, runtime);
 				if (connected === "stopped") continue;
@@ -177,7 +188,7 @@ export const CREDENTIAL_STEP: Step = {
 			return "next";
 		}
 
-		const hasStored = answers.existing?.auth?.apiKeyRef !== undefined || stored !== "none stored";
+		const hasKey = answers.existing?.auth?.apiKeyRef !== undefined || hasStored;
 		const choices = [
 			{
 				value: "env" as CredentialSource,
@@ -189,7 +200,7 @@ export const CREDENTIAL_STEP: Step = {
 				label: "Store the key",
 				hint: `written to credentials.yaml, ${credentialFileProtection()}, not encrypted`,
 			},
-			...(hasStored ? [{ value: "keep" as CredentialSource, label: "Keep what is there", hint: stored }] : []),
+			...(hasKey ? [{ value: "keep" as CredentialSource, label: "Keep what is there", hint: stored }] : []),
 			{
 				value: "skip" as CredentialSource,
 				label: "No key",

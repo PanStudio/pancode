@@ -17,7 +17,7 @@ import { readSettings, updateSettings } from "../core/config.js";
 import type { OutputStyle } from "../core/defaults.js";
 import { configureGitCommitAttribution } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
-import { type RouteProvenance, resolveRouteProvenance, routeForSettingPath } from "../core/route-provenance.js";
+import { type RouteProvenance, resolveRouteProvenance } from "../core/route-provenance.js";
 import {
 	applyOverrides,
 	applyRoutingPatch,
@@ -233,16 +233,10 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 			settingsSourceFor(sources, path),
 		);
 	};
-	// Which layer set one setting's effective value, for the settings center's
-	// origin column: a route reads its live provenance, any other path is a
-	// session override or whichever file layer set it.
+	// Which layer set one setting's effective value, for the settings center's origin column: a session override or
+	// the file layer that set this key, never the layer that set a sibling field of its route (bt-deep 7).
 	const settingOrigin = (path: string): SettingsOrigin | "session" => {
-		const route = isRoutingPath(path) ? routeForSettingPath(path) : null;
-		if (route !== null) {
-			const source = routeProvenance().active[route];
-			return source === "chat" ? "built-in" : source;
-		}
-		// The cycle set lives in the session's routing state, not its overrides, and no route owns it.
+		// A session route change lives in the session's routing state, not its overrides.
 		if (
 			isRoutingPath(path) &&
 			JSON.stringify(getAtPath(getCurrentSettings(), path)) !==

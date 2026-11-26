@@ -211,8 +211,8 @@ export interface ChatPanelOptions {
 	getRunModel?: () => string | null;
 	/** What the current turn has spent on an operator-owned wait, which its receipt keeps apart from work. */
 	getHumanWaitMs?: () => number;
-	/** Keeps a settled run's operator wait in the session, so its resumed receipt can split the same way. */
-	recordTurnHumanWait?: (fields: { turnId: string; humanWaitMs: number }) => void;
+	/** Keeps a settled run's measured duration and operator wait in the session, so its resumed receipt reads the same. */
+	recordTurnTiming?: (fields: { turnId: string; elapsedMs: number; humanWaitMs?: number }) => void;
 	/** True while the transient Fleet band or visible Watch pane owns live per-worker progress. */
 	fleetOwnsLiveProgress?: () => boolean;
 	/** The telemetry read model's live view, whose turn quantities each turn's receipt reads (#434 §11.3). */
@@ -842,8 +842,8 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 						? [...workerEntries.values()].flatMap((entry) => (entry.state.pending ? [entry.state.runId] : []))
 						: (replayed.workerRunIdsRunning ?? []);
 				const humanWaitMs = replayed === undefined ? (options.getHumanWaitMs?.() ?? 0) : (replayed.humanWaitMs ?? 0);
-				if (replayed === undefined && humanWaitMs > 0 && turnId !== undefined) {
-					options.recordTurnHumanWait?.({ turnId, humanWaitMs });
+				if (replayed === undefined && elapsedMs !== undefined && turnId !== undefined) {
+					options.recordTurnTiming?.({ turnId, elapsedMs, ...(humanWaitMs > 0 ? { humanWaitMs } : {}) });
 				}
 				target.turnUsage = {
 					...(turnId === undefined ? {} : { turnId }),

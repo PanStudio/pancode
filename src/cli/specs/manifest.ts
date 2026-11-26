@@ -393,7 +393,7 @@ export const TOP_LEVEL_USAGE: Readonly<Record<string, string>> = {
 	config: "config inspect [--json]",
 	configure: "configure",
 	doctor: "doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <seconds>]]",
-	gui: "gui [--path </app/path>] [--open | --no-open] [--foreground]",
+	gui: "gui [--path </app/path>] [--open | --no-open] [--foreground | --reuse-background] [--port <0-65535>] [--idle-exit <milliseconds>] [--log-file <file>] [--token-stdin]",
 	models: "models [search] [--target <id>] [--json] [--offline]",
 	paths: "paths [--json]",
 	help: "help [<command> [<subcommand>...]] [--all] [--json] [--topics]",

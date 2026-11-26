@@ -70,7 +70,7 @@ import { readWorkerRunResultFactsForReplay } from "../session-control/worker-run
 import { toolResultPresentationText } from "../tools/result-disposition.js";
 import { budgetAlertNotice } from "./bus-notices.js";
 import type { ChatPanel, ReplayedRunFacts } from "./chat-panel.js";
-import { OPERATOR_COMMAND_ENTRY, renderOperatorCommandRows, TURN_HUMAN_WAIT_ENTRY } from "./command-output.js";
+import { OPERATOR_COMMAND_ENTRY, recordedTurnTimings, renderOperatorCommandRows } from "./command-output.js";
 import { showsContextResult } from "./context-operation-view.js";
 import { renderBranchSummaryEntry } from "./renderers/branch-summary.js";
 import { renderContextOperationResult } from "./renderers/context-operation.js";
@@ -839,13 +839,8 @@ function replayEntries(
 	const workerRunIdsRunningAt = (atMs: number): string[] =>
 		[...workerSpans].flatMap(([runId, span]) => (span.startedAtMs <= atMs && span.endedAtMs > atMs ? [runId] : []));
 	const placedAssignments = new Set<string>();
-	// What a settled run spent waiting on the operator, which only the live status clock could measure.
-	const turnHumanWaits = new Map<string, number>();
-	for (const entry of selected) {
-		if (entry.kind !== "custom" || entry.customType !== TURN_HUMAN_WAIT_ENTRY) continue;
-		const { turnId, humanWaitMs } = (entry.data ?? {}) as { turnId?: unknown; humanWaitMs?: unknown };
-		if (typeof turnId === "string" && typeof humanWaitMs === "number") turnHumanWaits.set(turnId, humanWaitMs);
-	}
+	// A settled run's duration and operator wait as the live clocks measured them, which ledger rows only approximate.
+	const turnTimings = recordedTurnTimings(selected);
 	// A run's settle waits for the next operator row or the end of the replay.
 	let pendingSettle: (() => void) | null = null;
 	// An attempt the ledger shows being retried reads as it did live: a turn still underway, not a failed one.
@@ -942,10 +937,12 @@ function replayEntries(
 						pendingSettle = null;
 						if (!continues && !retried) {
 							const endedAt = Date.parse(entry.timestamp);
+							const timing = runTurnId === undefined ? undefined : turnTimings.get(runTurnId);
 							const elapsedMs =
-								runStartedAtMs !== undefined && Number.isFinite(endedAt) && endedAt >= runStartedAtMs
+								timing?.elapsedMs ??
+								(runStartedAtMs !== undefined && Number.isFinite(endedAt) && endedAt >= runStartedAtMs
 									? endedAt - runStartedAtMs
-									: undefined;
+									: undefined);
 							const replayed: ReplayedRunFacts = {
 								...(elapsedMs === undefined ? {} : { elapsedMs }),
 								...(Number.isFinite(endedAt) ? { endedAtMs: endedAt } : {}),
@@ -956,8 +953,7 @@ function replayEntries(
 								replayed.workersRunning = workersRunning;
 								replayed.workerRunIdsRunning = workerRunIdsRunningAt(endedAt);
 							}
-							const humanWaitMs = runTurnId === undefined ? undefined : turnHumanWaits.get(runTurnId);
-							if (humanWaitMs !== undefined) replayed.humanWaitMs = humanWaitMs;
+							if (timing?.humanWaitMs !== undefined) replayed.humanWaitMs = timing.humanWaitMs;
 							const messages = runAssistantMessages;
 							const turnId = runTurnId;
 							pendingSettle = () => {

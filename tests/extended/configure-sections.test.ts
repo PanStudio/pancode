@@ -1007,6 +1007,34 @@ describe("contracts/configure-onboarding", () => {
 		}
 	});
 
+	it("offers to keep a stored sign-in, preselected, instead of only Connect now or Later (bt-deep 1)", async () => {
+		const testEnv = unconfiguredEnv();
+		try {
+			const codex = getRuntimeRegistry().get("openai-codex");
+			ok(codex);
+			const credential = { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000 };
+			writeFileSync(
+				join(testEnv.root, ".config", "pancode", "credentials.yaml"),
+				JSON.stringify({ version: 2, entries: { "openai-codex": credential } }),
+				{ mode: 0o600 },
+			);
+			const result = await runWizard(
+				testEnv.env,
+				[
+					{ waitFor: "Keep what is there", keys: [ENTER] },
+					{ waitFor: "Credential", keys: [CTRL_C] },
+				],
+				{ mode: "first", runtime: codex },
+			);
+			const screen = plainText(result.transcript());
+			ok(screen.includes("❯ Keep what is there"), screen);
+			match(screen, /Credential\s+stored oauth/u);
+			ok(screen.includes("Which model?"), screen);
+		} finally {
+			testEnv.cleanup();
+		}
+	});
+
 	it("degrades to the numbered prompts where no key can be read", async () => {
 		const testEnv = unconfiguredEnv();
 		try {
