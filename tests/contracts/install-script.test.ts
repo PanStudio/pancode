@@ -75,6 +75,9 @@ function writeBundle(scratch: string, directory: string, version: string): strin
 			'if (args[0] === "--version") console.log(`PanCode $' + '{require("../../package.json").version}`);',
 			'if (args[0] === "doctor") console.log(JSON.stringify({ findings: [] }));',
 			'if (args[0] === "tools") console.log(JSON.stringify({ ok: true, message: "pane host" }));',
+			// The desktop app another installation runs: install refuses it without --handover, as the GUI does.
+			'if (args[0] === "gui") { if (process.env.GUI_LOG) require("node:fs").appendFileSync(process.env.GUI_LOG, args.join(" ") + "\\n");',
+			'  if (!args.includes("--handover")) { console.error("pancode: Background setup belongs to another installation. Run: pancode gui background install --handover"); process.exitCode = 1; } }',
 			"",
 		].join("\n"),
 	);
@@ -205,7 +208,7 @@ describe("contracts/install-script", () => {
 		try {
 			const mirror = join(root, "mirror");
 			const home = join(root, "home");
-			const installRoot = join(root, "install");
+			const installRoot = join(root, "new", "install");
 			mkdirSync(home);
 			writeRelease(root, mirror, "0.9.0", "0".repeat(64));
 			mkdirSync(join(mirror, "v0.9.1"));
@@ -243,10 +246,58 @@ describe("contracts/install-script", () => {
 				/PanCode 0\.9\.7 is not published at file:\/\/\S+ \(it has no v0\.9\.7\/SHA256SUMS\); check the version, or leave out --version/u,
 			);
 			ok(!unpublished.stderr.includes("network"), unpublished.stderr);
-			strictEqual(readdirSync(join(installRoot, "versions")).length, 0);
-			ok(!existsSync(join(installRoot, "install.json")));
-			ok(!existsSync(join(installRoot, ".install-lock")), "a refused install releases its lock");
+			// A refused first install takes back the root and the parent it created, owner marker included.
+			ok(!existsSync(join(root, "new")), "a refused first install leaves no install root behind");
 			ok(!existsSync(join(root, "bin", "pancode")));
+			// A root that was there before stays, and holds nothing the refused run wrote.
+			mkdirSync(installRoot, { recursive: true });
+			strictEqual(install("0.9.7").code, 1);
+			strictEqual(readdirSync(installRoot).length, 0, "no lock, owner marker or versions directory is left");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("--gui leaves a desktop app another installation runs where it is and names the command that moves it", {
+		skip: !["linux", "darwin"].includes(process.platform) || !existsSync(NPM_SEMVER),
+	}, () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-install-gui-"));
+		try {
+			const mirror = join(root, "mirror");
+			const home = join(root, "home");
+			const bin = join(root, "bin");
+			const guiLog = join(root, "gui.log");
+			mkdirSync(home);
+			writeRelease(root, mirror, "0.9.0");
+			const result = spawnSync(
+				"sh",
+				[SCRIPT, "--gui", "--install-dir", join(root, "install"), "--bin-dir", bin, "--version", "0.9.0"],
+				{
+					cwd: root,
+					env: {
+						HOME: home,
+						PATH: "/usr/bin:/bin",
+						LANG: "C",
+						TMPDIR: root,
+						PANCODE_RELEASE_MIRROR: `file://${mirror}`,
+						PANCODE_TARGET: TARGET,
+						GUI_LOG: guiLog,
+					},
+					input: "",
+					encoding: "utf8",
+				},
+			);
+			const output = `${result.stdout}${result.stderr}`;
+			strictEqual(result.status, 0, output);
+			strictEqual(readFileSync(guiLog, "utf8"), "gui background install --json\n", "no handover is attempted");
+			match(
+				output,
+				new RegExp(
+					`desktop app runs from another installation and was left as it is; move it to this one with: ${join(bin, "pancode").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} gui background install --handover`,
+					"u",
+				),
+			);
+			ok(!output.includes("desktop app installed"), output);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

@@ -206,6 +206,11 @@ export type WizardView =
 	| { kind: "failed"; problem: string }
 	| { kind: "cancelled" };
 
+/** The saved step's lede for a model that answered the test request: `answered in 0.8 s` reads as its timing. */
+export function testedLede(tested: string): string {
+	return `The model answered a test message ${tested.replace(/^answered\s+/u, "")}.`;
+}
+
 export interface SignIn {
 	readonly url: string | null;
 	readonly code: string | null;

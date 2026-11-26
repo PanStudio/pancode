@@ -89,7 +89,7 @@ export function storeReplacedBlob(
 /**
  * Main checkout for a linked worktree, else `pancodeProjectRoot(cwd)`, so workers
  * in task worktrees key the same store as the session that dispatched them.
- * `storeMainCheckout` is the package's, so `panstore --project` keys the same way.
+ * `storeMainCheckout` is the package's, so the store server's `--project` keys the same way.
  * The same `.git` then `commondir` walk exists in `taskWorktreeOrigin`
  * (`src/core/task-worktree-claim.ts`) and `linkedWorktreeMainRoot`
  * (`src/domains/memory/operations.ts`); each also checks an ownership claim or

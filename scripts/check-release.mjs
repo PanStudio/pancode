@@ -60,7 +60,7 @@ if (values.tarball || values.report) {
 }
 const SHEBANG = "#!/usr/bin/env node";
 const packedBin = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).bin ?? {};
-// Every command in `bin` (pancode, panstore, pankit) plus the worker entry PanCode spawns itself.
+// Every command in `bin` (pancode, pankit) plus the worker entry PanCode spawns itself.
 const ENTRIES = [
 	...new Set([
 		"dist/cli/index.js",

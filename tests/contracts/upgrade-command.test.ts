@@ -249,18 +249,12 @@ test("a successful upgrade asks the installed CLI to restart an idle background 
 	assert.match(installer.stdout, /background app was left running because it is busy/);
 });
 
-test("post-install moves a background app another installation owns and names the installer root it left", async (t) => {
+test("post-install leaves a background app another installation owns where it is and names the installer root it left", async (t) => {
 	const f = installedFixture();
 	t.after(f.home.cleanup);
 	const background = join(f.home.dir, "state/gui/background");
 	mkdirSync(background, { recursive: true });
 	writeFileSync(join(background, "owner.json"), "{}\n");
-	const handover: Partial<UpgradeDependencies> = {
-		runBackgroundHandover: async (installation) => {
-			logLine(f.log, { handoverEntry: installation.entry });
-			return "Background app now runs from this installation.";
-		},
-	};
 	const installRoot = join(f.home.dir, "old-install");
 	const oldPrefix = join(installRoot, "versions", "0.6.2");
 	const oldPackage = join(oldPrefix, "lib/node_modules/pancode");
@@ -281,28 +275,25 @@ test("post-install moves a background app another installation owns and names th
 	writeFileSync(launcher, `#!/bin/sh\n# pancode-installer launcher\nexec "${oldPrefix}/bin/x"\n`, { mode: 0o755 });
 	writeFileSync(join(background, "server.json"), JSON.stringify({ packageRoot: oldPackage }));
 	const env = { PANCODE_INSTALL_DIR: installRoot, PATH: `${shadowDir}:${process.env.PATH}` };
-	const moved = await f.call(["--post-install"], handover, env);
+	const moved = await f.call(["--post-install"], {}, env);
 	assert.equal(moved.status, 0, moved.stderr + moved.stdout);
-	assert.deepEqual(f.calls().at(-1), { handoverEntry: f.entry });
-	assert.match(moved.stdout, /now runs from this installation/);
+	// No gui background command ran: the other installation's service and desktop entry are untouched.
+	assert.equal(existsSync(join(f.home.dir, "calls.jsonl")), false);
 	const said = (moved.stdout + moved.stderr).replace(/\s+/g, " ");
+	assert.match(said, /Left the desktop app running from \S*old-install\/versions\/0\.6\.2/);
+	assert.match(
+		said,
+		/Move it to this installation when you want it to follow: pancode gui background install --handover/,
+	);
 	assert.match(said, /old-install \(\d+ B\) is no longer used by this installation/);
 	assert.match(said, /shadow-bin\/pancode comes first on PATH and still starts the old installation/);
 	assert.match(moved.stdout, /pancode uninstall --inactive/);
 
 	// A newer version of the same installation restarts the app and never hands over.
 	writeFileSync(join(background, "server.json"), JSON.stringify({ packageRoot: f.root }));
-	const same = await f.call(
-		["--post-install"],
-		{
-			runBackgroundHandover: async () => {
-				throw new Error("must not hand over");
-			},
-		},
-		env,
-	);
+	const same = await f.call(["--post-install"], {}, env);
 	assert.equal(same.status, 0, same.stderr + same.stdout);
-	assert.doesNotMatch(same.stdout + same.stderr, /must not hand over/);
+	assert.doesNotMatch(same.stdout + same.stderr, /--handover/);
 	assert.deepEqual(f.calls().at(-1)?.args, ["gui", "background", "restart", "--if-idle"]);
 });
 
@@ -312,20 +303,17 @@ test("an installer post-install under --no-gui leaves the desktop app, its hando
 	const background = join(f.home.dir, "state/gui/background");
 	mkdirSync(background, { recursive: true });
 	writeFileSync(join(background, "owner.json"), "{}\n");
-	// Another installation owns the app, so a post-install would otherwise hand it over and rewrite its shortcut.
+	// Another installation owns the app; a post-install never hands it over or rewrites its shortcut.
 	writeFileSync(join(background, "server.json"), JSON.stringify({ packageRoot: join(f.home.dir, "elsewhere") }));
 	const untouched: Partial<UpgradeDependencies> = {
-		runBackgroundHandover: async () => {
-			throw new Error("must not hand over");
-		},
 		runBackgroundRestart: async () => {
 			throw new Error("must not restart");
 		},
 	};
 	const declined = await f.call(["--post-install"], untouched, { PANCODE_INSTALL_GUI: "0" });
 	assert.equal(declined.status, 0, declined.stderr + declined.stdout);
-	assert.doesNotMatch(declined.stdout + declined.stderr, /must not (hand over|restart)/);
-	assert.match(declined.stdout, /Left the desktop app as it was/);
+	assert.doesNotMatch(declined.stdout + declined.stderr, /must not restart/);
+	assert.match(declined.stdout, /Left the desktop app running from \S*elsewhere/);
 	assert.match(declined.stdout, /pancode gui background install --handover/);
 	// No child ran at all, so no `gui background install` could write a launcher or a Start Menu shortcut.
 	assert.equal(existsSync(join(f.home.dir, "calls.jsonl")), false);

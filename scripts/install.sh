@@ -19,7 +19,7 @@
 #   4. Writes a small launcher (default ~/.local/bin/pancode) that runs the
 #      new version, replacing it atomically and keeping the previous version
 #      for --rollback, and one beside it for each other command the package
-#      declares (panstore, pankit).
+#      declares (pankit).
 #
 # Shell startup files are edited only with --modify-path. Proxies are honored
 # through https_proxy/http_proxy (curl and wget both read them).
@@ -517,8 +517,9 @@ offer_gui() {
 		read -r answer </dev/tty || answer=n
 		case "$answer" in "" | [Yy]*) ;; *) return 0 ;; esac
 	fi
-	# The command's report is JSON for scripts; the installer states the outcome in its own words.
-	if "$node_bin" "$entry" gui background install --handover --json </dev/null >"$work/gui.out"; then
+	# The command's report is JSON for scripts; the installer states the outcome in its own words. It never
+	# passes --handover: an app another installation runs stays with it, and moving it is the person's choice.
+	if "$node_bin" "$entry" gui background install --json </dev/null >"$work/gui.out" 2>"$work/gui.err"; then
 		if "$node_bin" -e 'try { process.exit(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).windows?.status === "installed" ? 0 : 1); } catch { process.exit(1); }' "$work/gui.out"; then
 			ok "desktop app installed; open PanCode from the Windows Start Menu or your app menu, or run: pancode gui"
 		elif [ "$gui_os" = Darwin ]; then
@@ -529,7 +530,10 @@ offer_gui() {
 		gui_warning="$("$node_bin" -e 'try { const w=JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).windows; if(w?.status === "failed") process.stdout.write("Windows desktop setup failed: " + String(w.reason || "unknown error") + "; run pancode doctor --fix"); } catch { process.stdout.write("Could not read the desktop setup report; run pancode doctor"); }' "$work/gui.out")"
 		[ -z "$gui_warning" ] || warn "$gui_warning"
 		log "the desktop app uses PanCode's saved credentials; save a key that lives only in your shell with: pancode auth login <target>"
+	elif grep -q "belongs to another installation" "$work/gui.err" 2>/dev/null; then
+		warn "the desktop app runs from another installation and was left as it is; move it to this one with: $launcher gui background install --handover"
 	else
+		cat "$work/gui.err" >&2
 		warn "the desktop app was not set up. Retry with: pancode doctor --fix (verified service handover waits until active work finishes)"
 	fi
 }
@@ -626,6 +630,12 @@ reclaim_stale_install_lock() {
 
 acquire_install_lock() {
 	check_writable_dir "install dir" "$install_root" "--install-dir"
+	# The topmost directory this run creates; a run that ends with no installation removes it again.
+	probe="$install_root"
+	while [ ! -e "$probe" ]; do
+		created_top="$probe"
+		probe="$(dirname "$probe")"
+	done
 	mkdir -p "$install_root"
 	if ! mkdir "$install_root/.install-lock" 2>/dev/null && ! reclaim_stale_install_lock; then
 		# Only a lock directory that is there is another run's; any other mkdir failure is ours to report.
@@ -683,9 +693,21 @@ cleanup() {
 		kill -KILL "$unpack_pid" 2>/dev/null || true
 		wait "$unpack_pid" 2>/dev/null || true
 	fi
-	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
 	if [ -n "${work:-}" ]; then rm -rf "$work"; fi
 	if [ -n "${install_root:-}" ]; then rm -rf "$install_root/versions/.staging.$$"; fi
+	# A run that ends with no installation takes back only what it created, while it still holds the lock; rmdir
+	# never takes a directory that holds anything, so an existing root or a kept version stays as it was.
+	unclaimed=0
+	if [ "${lock_owned:-0}" = 1 ] && [ ! -f "$install_root/install.json" ]; then
+		unclaimed=1
+		if [ "${created_versions:-0}" = 1 ]; then rmdir "$install_root/versions" 2>/dev/null || true; fi
+		if [ "${created_owner:-0}" = 1 ]; then rm -f "$install_root/.installer-owner"; fi
+	fi
+	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
+	if [ "$unclaimed" = 1 ] && [ -n "${created_top:-}" ]; then
+		dir="$install_root"
+		while rmdir "$dir" 2>/dev/null && [ "$dir" != "$created_top" ]; do dir="$(dirname "$dir")"; done
+	fi
 	return 0
 }
 
@@ -831,7 +853,9 @@ main() {
 	if [ -f "$install_root/install.json" ] && ! grep -Eq '"schema": *3[,}]?$' "$install_root/install.json"; then
 		fail "$install_root holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another --install-dir, then rerun."
 	fi
+	[ -e "$install_root/.installer-owner" ] || created_owner=1
 	printf '%s\n' "$MANIFEST_KIND" >"$install_root/.installer-owner"
+	[ -e "$install_root/versions" ] || created_versions=1
 	mkdir -p "$install_root/versions" || fail "could not create $install_root"
 	available="$(free_kb "$install_root")"
 	case "$available" in

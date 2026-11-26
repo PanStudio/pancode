@@ -34,9 +34,9 @@ royalty-free, irrevocable license under any patent claim you can license that yo
 combined it with PanCode, would infringe. The license covers making, having made, using, selling, offering for sale,
 importing and otherwise transferring the Contribution and PanCode as it includes the Contribution.
 
-## 5. PanSDK
+## 5. The extension API
 
-PanSDK, the code under `packages/sdk/` in the repository, is published under the Apache License 2.0 alone. You agree
+The extension API, the code under `packages/sdk/` in the repository, is published under the Apache License 2.0 alone. You agree
 that a Contribution to `packages/sdk/` is also licensed to everyone under the Apache License 2.0. That outbound license
 is in addition to sections 3 and 4, which still apply to the same Contribution.
 

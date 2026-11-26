@@ -6,6 +6,7 @@ import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { initializePancodeHome, recordHomeDowngrade } from "../core/init.js";
 import { runCommandVector } from "../core/safe-exec.js";
+import { shellQuote } from "../core/shell-quote.js";
 import { pancodeDirLayoutProblems, resolvePancodeDirs } from "../core/xdg.js";
 import { createUpdateLog, deferredUpdateTarget, installHold } from "../domains/lifecycle/deferred-update.js";
 import { runDoctor } from "../domains/lifecycle/doctor.js";
@@ -16,6 +17,7 @@ import {
 	installationCommand,
 	installerPackageRoot,
 	installerUpgradeInvocation,
+	launcherPathFor,
 	npmUpgradeInvocation,
 	readInstallerRecord,
 } from "../domains/lifecycle/install-method.js";
@@ -426,14 +428,20 @@ async function runBackgroundRestart(installation: Installation): Promise<string>
 	return lines[0] ?? "";
 }
 
-/** Move the background app to this installation; the GUI refuses while it has active work. */
-async function runBackgroundHandover(installation: Installation): Promise<string> {
-	const output = await runChild(
-		nodeFor(installation),
-		[installation.entry, "gui", "background", "install", "--handover"],
-		"pancode gui background install --handover",
-	);
-	return output.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "The background app now runs from this installation.";
+/**
+ * The command that moves the background app to `installation`. It names this installation's own launcher
+ * unless that launcher is the `pancode` a shell finds first, since a bare `pancode` may start the other one.
+ */
+function handoverCommand(installation: Installation): string {
+	const launcher = launcherPathFor(installation);
+	if (!existsSync(launcher) || launcherWinsOnPath(launcher)) return "pancode gui background install --handover";
+	const windows = process.platform === "win32";
+	const command = (windows ? /^[A-Za-z0-9_.\\/:@=+-]+$/u : /^[A-Za-z0-9_./:@=+-]+$/u).test(launcher)
+		? launcher
+		: windows
+			? `& '${launcher.replaceAll("'", "''")}'`
+			: shellQuote(launcher);
+	return `${command} gui background install --handover`;
 }
 
 async function runRestart(installation: Installation): Promise<number> {
@@ -469,7 +477,6 @@ export interface UpgradeDependencies {
 	runDoctorFixAfterInstall: typeof runDoctorFixAfterInstall;
 	runPostInstallUpgrade: typeof runPostInstallUpgrade;
 	runBackgroundRestart: typeof runBackgroundRestart;
-	runBackgroundHandover: typeof runBackgroundHandover;
 	runRestart: typeof runRestart;
 	isInteractive: () => boolean;
 }
@@ -482,7 +489,6 @@ const DEFAULT_DEPENDENCIES: UpgradeDependencies = {
 	runDoctorFixAfterInstall,
 	runPostInstallUpgrade,
 	runBackgroundRestart,
-	runBackgroundHandover,
 	runRestart,
 	isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
 };
@@ -695,46 +701,35 @@ export async function runUpgradeCommand(
 				presenter.commandAdvice("To remove only it, run:", "pancode uninstall --inactive");
 			}
 		}
-		// An installer run with --no-gui touches no desktop step, the existing app's handover, restart and Windows
-		// shortcut included (F-C17); the app keeps running from where it was.
+		// An installer run with --no-gui touches no desktop step, the existing app's restart and Windows shortcut
+		// included (F-C17); the app keeps running from where it was.
 		const desktopDeclined = opts.postInstall && process.env.PANCODE_INSTALL_GUI === "0";
-		if (!opts.dryRun && desktopDeclined && existsSync(backgroundOwner)) {
+		// A post-install acts only on an app this installation owns. Another installation's app, a second install
+		// beside it included, stays where it is; moving it is the person's choice, by the one command named here.
+		const owner = opts.postInstall && existsSync(backgroundOwner) ? backgroundPackageRoot(stateDir) : null;
+		const foreignOwner = owner !== null && installIdentity(owner) !== installIdentity(activeInstallation.root);
+		if (!opts.dryRun && foreignOwner) {
+			presenter.note(`Left the desktop app running from ${shortenPath(owner)}, the installation it belongs to.`);
+			presenter.commandAdvice(
+				"Move it to this installation when you want it to follow:",
+				handoverCommand(activeInstallation),
+			);
+		} else if (!opts.dryRun && desktopDeclined && existsSync(backgroundOwner)) {
 			presenter.note("Left the desktop app as it was, as the installer's --no-gui asked.");
-			// The app of this same installation only needs a restart to load the new version; a handover is for an
-			// app another installation runs.
-			const owner = backgroundPackageRoot(stateDir);
-			if (owner !== null && installIdentity(owner) === installIdentity(activeInstallation.root))
-				presenter.commandAdvice("Restart it when you want it on this version:", "pancode gui background restart --if-idle");
-			else
-				presenter.commandAdvice(
-					"Move it to this installation when you want it to follow:",
-					"pancode gui background install --handover",
+			presenter.commandAdvice("Restart it when you want it on this version:", "pancode gui background restart --if-idle");
+		} else if (
+			!opts.dryRun &&
+			existsSync(backgroundOwner) &&
+			!(opts.postInstall && process.env.PANCODE_UPGRADE_PARENT === "1")
+		) {
+			// The new installation restarts an idle app itself, and an app 0.7.0 started at once; a busy one
+			// moves on the next pancode gui after its work is done. Under an upgrade, the upgrade does it.
+			try {
+				presenter.note(await deps.runBackgroundRestart(activeInstallation));
+			} catch (error) {
+				presenter.warn(
+					`Upgrade succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
 				);
-		} else if (!opts.dryRun && existsSync(backgroundOwner)) {
-			const owner = opts.postInstall ? backgroundPackageRoot(stateDir) : null;
-			if (owner !== null && installIdentity(owner) !== installIdentity(activeInstallation.root)) {
-				// The service still runs another installation's Node and server; it follows the active one.
-				try {
-					presenter.note(await deps.runBackgroundHandover(activeInstallation));
-				} catch (error) {
-					presenter.warn(
-						`The background app still runs from ${shortenPath(owner)}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-					presenter.commandAdvice(
-						"Move it to this installation once its work is finished:",
-						"pancode gui background install --handover",
-					);
-				}
-			} else if (!(opts.postInstall && process.env.PANCODE_UPGRADE_PARENT === "1")) {
-				// The new installation restarts an idle app itself, and an app 0.7.0 started at once; a busy one
-				// moves on the next pancode gui after its work is done. Under an upgrade, the upgrade does it.
-				try {
-					presenter.note(await deps.runBackgroundRestart(activeInstallation));
-				} catch (error) {
-					presenter.warn(
-						`Upgrade succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
 			}
 		}
 		presenter.done("Done");

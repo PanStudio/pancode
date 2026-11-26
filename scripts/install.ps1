@@ -64,12 +64,24 @@ function Install-Pancode {
 	function Warn([string]$Text) { Write-Warning $Text }
 	function Fail([string]$Text) { throw "[install] error: $Text" }
 
+	# file:// URLs are copied, so an airgapped mirror on a shared filesystem needs no web server.
 	function Get-File([string]$Url, [string]$Out) {
 		if ($Url.StartsWith("file://")) {
-			Copy-Item -LiteralPath ([uri]$Url).LocalPath -Destination $Out
+			$local = ([uri]$Url).LocalPath
+			if (-not (Test-Path -LiteralPath $local)) { throw [IO.FileNotFoundException]::new("not found", $local) }
+			Copy-Item -LiteralPath $local -Destination $Out
 			return
 		}
 		Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Out
+	}
+	# Why a download failed: "not found" when the server or mirror has no such file (HTTP 404), else the reason
+	# the downloader gave, as install.sh reports it.
+	function Get-DownloadFailure($Record) {
+		$e = $Record.Exception
+		$code = 0
+		try { if ($e.Response) { $code = [int]$e.Response.StatusCode } } catch { $code = 0 }
+		if ($code -eq 404 -or $e -is [IO.FileNotFoundException]) { return "not found" }
+		return ([string]$e.Message).Trim()
 	}
 
 	if ($Options.Channel -notin @("latest", "beta")) { Fail "-Channel must be latest or beta, got '$($Options.Channel)'" }
@@ -134,6 +146,16 @@ function Install-Pancode {
 
 	$manifestFile = Join-Path $installRoot "install.json"
 	if ($Options.Rollback -and -not (Test-Path -LiteralPath $manifestFile)) { Fail "no installer manifest at $manifestFile; nothing to roll back" }
+	# The topmost directories this run creates; a run that ends with no installation removes them again.
+	function Get-CreatedTop([string]$Path) {
+		$top = $null
+		while ($Path -and -not (Test-Path -LiteralPath $Path)) { $top = $Path; $Path = Split-Path -Parent $Path }
+		$top
+	}
+	$createdRootTop = Get-CreatedTop $installRoot
+	$createdBinTop = Get-CreatedTop $binDir
+	$createdOwner = $false
+	$createdVersions = $false
 	New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 	$lock = Join-Path $installRoot ".install-lock"
 	# A killed installer skips the finally block and leaves the lock and its
@@ -197,7 +219,9 @@ function Install-Pancode {
 	if ((Test-Path -LiteralPath $manifestFile) -and [int](Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json).schema -ne 3) {
 		Fail "$installRoot holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another -InstallDir, then rerun."
 	}
+	$createdOwner = -not (Test-Path -LiteralPath $owner)
 	[IO.File]::WriteAllText($owner, "pancode-installer")
+	$createdVersions = -not (Test-Path -LiteralPath (Join-Path $installRoot "versions"))
 	New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "versions"), $binDir | Out-Null
 	$work = Join-Path $installRoot (".work." + [guid]::NewGuid().ToString("N").Substring(0, 8))
 	New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -213,7 +237,7 @@ function Install-Pancode {
 			$resolved = $spec
 			if ($spec -in @("latest", "beta")) {
 				$channelFile = Join-Path $work "channel"
-				try { Get-File "$ChannelBase/$spec" $channelFile } catch { Fail "could not read $ChannelBase/$spec; check the network or proxy (HTTPS_PROXY), pass -Version <exact version>, or set PANCODE_RELEASE_MIRROR" }
+				try { Get-File "$ChannelBase/$spec" $channelFile } catch { Fail "could not read $ChannelBase/$spec ($(Get-DownloadFailure $_)); check the network or proxy (HTTPS_PROXY), pass -Version <exact version>, or set PANCODE_RELEASE_MIRROR" }
 				$resolved = ([string](Get-Content -LiteralPath $channelFile -TotalCount 1)).Trim()
 				if ($resolved -notmatch "^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") { Fail "$ChannelBase/$spec does not name a version" }
 				if ($previous) {
@@ -236,12 +260,20 @@ function Install-Pancode {
 			}
 			$asset = "pancode-$resolved-$build.tar.gz"
 			$sums = Join-Path $work "SHA256SUMS"
-			try { Get-File "$ReleaseBase/v$resolved/SHA256SUMS" $sums } catch { Fail "could not read $ReleaseBase/v$resolved/SHA256SUMS; PanCode $resolved may not exist, or the network or proxy (HTTPS_PROXY) blocks it" }
+			try { Get-File "$ReleaseBase/v$resolved/SHA256SUMS" $sums } catch {
+				$why = Get-DownloadFailure $_
+				# A missing release is an answer, not a network fault.
+				if ($why -eq "not found") {
+					$hint = if ($spec -eq $resolved) { "; check the version, or leave out -Version to install the latest release" } else { "" }
+					Fail "PanCode $resolved is not published at $ReleaseBase (it has no v$resolved/SHA256SUMS)$hint"
+				}
+				Fail "could not read $ReleaseBase/v$resolved/SHA256SUMS ($why); check the network or proxy (HTTPS_PROXY)"
+			}
 			$expected = (Get-Content -LiteralPath $sums | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($asset))$" } | Select-Object -First 1) -replace "\s.*$", ""
 			if (-not $expected) { Fail "PanCode $resolved ships no $build bundle" }
 			$bundleFile = Join-Path $work $asset
 			Say "downloading $asset"
-			Get-File "$ReleaseBase/v$resolved/$asset" $bundleFile
+			try { Get-File "$ReleaseBase/v$resolved/$asset" $bundleFile } catch { Fail "could not download $ReleaseBase/v$resolved/$asset ($(Get-DownloadFailure $_))" }
 			$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleFile).Hash.ToLowerInvariant()
 			if ($actual -ne $expected) { Fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed" }
 			Ok "verified $asset (sha256 $expected)"
@@ -367,9 +399,30 @@ function Install-Pancode {
 		# tree before the lock and staging go (#436).
 		Get-CimInstance Win32_Process -Filter "ParentProcessId=$PID" -ErrorAction SilentlyContinue |
 			ForEach-Object { & taskkill.exe /T /F /PID $_.ProcessId 2>$null | Out-Null }
-		Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
 		if ($work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 		Remove-Item -LiteralPath (Join-Path $installRoot "versions\.staging-$PID") -Recurse -Force -ErrorAction SilentlyContinue
+		# A run that ends with no installation takes back only what it created, while it still holds the lock; a
+		# directory that holds anything stays, so an existing root or a kept version is left as it was.
+		function Remove-IfEmpty([string]$Path) {
+			if ((Test-Path -LiteralPath $Path) -and -not (Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+				Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+				return -not (Test-Path -LiteralPath $Path)
+			}
+			$false
+		}
+		function Remove-CreatedChain([string]$Path, [string]$Top) {
+			while ($Top -and (Remove-IfEmpty $Path) -and $Path -ne $Top) { $Path = Split-Path -Parent $Path }
+		}
+		$unclaimed = -not (Test-Path -LiteralPath (Join-Path $installRoot "install.json"))
+		if ($unclaimed) {
+			if ($createdVersions) { Remove-IfEmpty (Join-Path $installRoot "versions") | Out-Null }
+			if ($createdOwner) { Remove-Item -LiteralPath (Join-Path $installRoot ".installer-owner") -Force -ErrorAction SilentlyContinue }
+		}
+		Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
+		if ($unclaimed) {
+			Remove-CreatedChain $installRoot $createdRootTop
+			Remove-CreatedChain $binDir $createdBinTop
+		}
 	}
 }
 

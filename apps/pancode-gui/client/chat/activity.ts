@@ -214,14 +214,10 @@ const counted =
 const DIGEST_PHRASES: Readonly<Record<string, Phrase>> = {
 	read: counted("read", "file"),
 	ls: counted("listed", "folder"),
-	bash: counted("ran", "command"),
-	run_script: counted("ran", "command"),
-	safe_exec: counted("ran", "command"),
+	command: counted("ran", "command"),
 	git: counted("ran", "git command"),
 	verify: counted("ran", "check"),
-	grep: counted("ran", "search", "searches"),
-	find: counted("ran", "search", "searches"),
-	code_nav: counted("ran", "search", "searches"),
+	search: counted("ran", "search", "searches"),
 	web_fetch: counted("fetched", "page"),
 	dispatch: counted("delegated", "task"),
 	finish: (count) => (count === 1 ? "declared completion" : `declared completion ${count} times`),
@@ -232,6 +228,15 @@ const DIGEST_PHRASES: Readonly<Record<string, Phrase>> = {
 	"change:stopped": (count) => `${plural(count, "change")} stopped`,
 	"change:open": (count) => `${plural(count, "change")} in progress`,
 	unknown: (count) => `${plural(count, "tool")} with no reported outcome`,
+};
+/** Tools that share one phrase share one tally, so a grep and a find read "ran 2 searches", not the phrase twice. */
+const DIGEST_KINDS: Readonly<Record<string, string>> = {
+	bash: "command",
+	run_script: "command",
+	safe_exec: "command",
+	grep: "search",
+	find: "search",
+	code_nav: "search",
 };
 const CHANGES = new Set(["edit", "write", "artifact"]);
 /** Kinds whose phrase counts distinct paths rather than calls, so rereading one file reads as one file. */
@@ -279,6 +284,7 @@ export function activityDigest(items: readonly TimelineItem[], decisions?: CallD
 		// A gateway op=call counts as the capability it ran, with that capability's own path.
 		const gateway = readGateway(item);
 		const title = gateway.name ?? toolNameOf(item) ?? "";
+		const kind = DIGEST_KINDS[title] ?? title;
 		const key =
 			item.status === "unknown"
 				? "unknown"
@@ -286,9 +292,9 @@ export function activityDigest(items: readonly TimelineItem[], decisions?: CallD
 					? "notice"
 					: CHANGES.has(title)
 						? changeKey(item, decisions)
-						: DIGEST_PHRASES[title] === undefined
+						: DIGEST_PHRASES[kind] === undefined
 							? "other"
-							: title;
+							: kind;
 		let tally = tallies.get(key);
 		if (tally === undefined) {
 			tally = { calls: 0, paths: new Set() };

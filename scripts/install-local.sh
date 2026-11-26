@@ -9,7 +9,7 @@ usage() {
 Usage: scripts/install-local.sh [--skip-deps] [--no-build] [--dry-run] [--force]
 
 Install PanCode from this source checkout by placing deterministic symlinks at:
-  ${PANCODE_BIN_DIR:-$HOME/.local/bin}/pancode, and beside it panstore and pankit
+  ${PANCODE_BIN_DIR:-$HOME/.local/bin}/pancode, and beside it pankit
 After linking, the script runs the installed CLI's post-install checks and
 structure repair so a fresh install passes plain pancode doctor.
 
@@ -17,7 +17,7 @@ Options:
   --skip-deps    Skip the frozen pnpm dependency sync.
   --no-build     Do not run pnpm run build; require an existing dist/cli/index.js.
   --dry-run      Print planned actions without changing files.
-  --force        Replace an existing pancode, panstore or pankit symlink even if it points outside this repo.
+  --force        Replace an existing pancode or pankit symlink even if it points outside this repo.
   -h, --help     Show this help.
 USAGE
 }
@@ -255,7 +255,7 @@ check_link() {
 	fi
 }
 
-# The package's other commands (panstore, pankit), from its bin map, so a source install offers what a
+# The package's other commands (pankit), from its bin map, so a source install offers what a
 # tarball install does. A command whose built file is missing is named and skipped.
 companions=()
 while IFS=$'\t' read -r name target; do

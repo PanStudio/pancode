@@ -7,7 +7,6 @@ export default defineConfig({
 		index: "src/index.ts",
 		"backend/index": "src/backend/index.ts",
 		"cli/index": "src/cli/index.ts",
-		"cli/main": "src/cli/main.ts",
 		"paths/index": "src/paths/index.ts",
 		"testing/index": "src/testing/index.ts",
 	},

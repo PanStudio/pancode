@@ -38,7 +38,6 @@
 	},
 	"bin": {
 		"pancode": "bin/pancode.cjs",
-		"panstore": "dist/store/cli.js",
 		"pankit": "dist/kit/cli.js"
 	},
 	"exports": {

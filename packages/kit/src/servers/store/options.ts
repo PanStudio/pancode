@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The store server's options, in the grammar of `panstore`, and the
+ * The store server's options, the ones `pancode store where` prints, and the
  * configuration they give. The server holds one configuration for its
  * process: `configure` sets it once before serving, and without a `--root`
  * there is none and every tool says so.
