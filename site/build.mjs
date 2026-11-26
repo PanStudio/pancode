@@ -235,6 +235,22 @@ for (const item of [
 	);
 }
 const partials = await read("partials.html");
+// Drawings under art/ are inlined where a template or partial names them with
+// <!-- art:<name> -->, so the page's classes and CSS variables colour them.
+const artDir = join(root, "art");
+const art = new Map(
+	await Promise.all(
+		(await readdir(artDir).catch(() => []))
+			.filter((name) => name.endsWith(".svg"))
+			.map(async (name) => [name.slice(0, -4), (await readFile(join(artDir, name), "utf8")).trim()]),
+	),
+);
+function inlineArt(html, path) {
+	return html.replace(/<!--\s*art:([a-z0-9-]+)\s*-->/g, (_, name) => {
+		if (!art.has(name)) throw new Error(`${path} names art:${name}, but site/art/${name}.svg does not exist.`);
+		return art.get(name);
+	});
+}
 const mast = partials.match(/<header class="mast">[\s\S]*?<\/header>/)[0];
 const footer = partials.match(/<footer class="colophon[\s\S]*?<\/footer>/)[0];
 const urls = [];
@@ -473,7 +489,7 @@ function head(
 <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}"><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="${escapeHtml(brand.defaultTheme)}">${themeColors}
 <link rel="canonical" href="${url}"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png" sizes="180x180"><link rel="author" href="/humans.txt">
 ${path === "/404.html" ? "" : brand.type.preload.map((name) => `<link rel="preload" href="/assets/fonts/${name}" as="font" type="font/woff2" crossorigin>`).join("")}
-<link rel="stylesheet" href="/css/site.css"><script>${themeScript}</script>${cast ? `<script src="/js/cast.js" data-player-src="/assets/player/asciinema-player.min.js" data-player-css="/assets/player/asciinema-player.css" data-cast-css="/css/cast.css" defer></script>` : ""}
+<link rel="stylesheet" href="/css/site.css"><link rel="stylesheet" href="/css/art.css"><script>${themeScript}</script>${cast ? `<script src="/js/cast.js" data-player-src="/assets/player/asciinema-player.min.js" data-player-css="/assets/player/asciinema-player.css" data-cast-css="/css/cast.css" defer></script>` : ""}
 <meta property="og:locale" content="en_US"><meta property="og:site_name" content="${escapeHtml(product.name)}"><meta property="og:type" content="${type === "Article" || type === "TechArticle" ? "article" : "website"}"><meta property="og:url" content="${url}"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${imageUrl}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="${image.width}"><meta property="og:image:height" content="${image.height}"><meta property="og:image:alt" content="${escapeHtml(imageAlt)}">${published && type !== "WebPage" ? `<meta property="article:published_time" content="${published}">` : ""}${lastmod && type !== "WebPage" ? `<meta property="article:modified_time" content="${lastmod}">` : ""}
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${escapeHtml(title)}"><meta name="twitter:description" content="${escapeHtml(description)}"><meta name="twitter:image" content="${imageUrl}"><meta name="twitter:image:alt" content="${escapeHtml(imageAlt)}">
 <meta name="robots" content="${path === "/404.html" ? "noindex" : "index,follow,max-image-preview:large,max-snippet:-1"}"><script type="application/ld+json">${JSON.stringify(graph).replace(/</g, "\\u003c")}</script>`;
@@ -486,10 +502,8 @@ function shell(html, path, title, description, type, options) {
 		href === active ? `${all} aria-current="page"` : all,
 	);
 	let number = 0;
-	const result = html
+	const result = inlineArt(html.replace("<!-- site-header -->", header).replace("<!-- site-footer -->", footer), path)
 		.replace("<!-- site-head -->", head(path, title, description, type, options))
-		.replace("<!-- site-header -->", header)
-		.replace("<!-- site-footer -->", footer)
 		.replaceAll("<!-- version -->", escapeHtml(product.version))
 		.replaceAll("<!-- published-version -->", escapeHtml(product.publishedVersion))
 		.replace("<!-- version-source -->", `${repository}/tree/${ref}`)
@@ -741,7 +755,7 @@ async function writePage(path, html, title, description, type, { sources = [], p
 		cast,
 		...(preview ? { preview } : {}),
 	});
-	if (/<!--\s*(?:site-|doc-|tutorial-|source-|hub-|version)/.test(result))
+	if (/<!--\s*(?:site-|doc-|tutorial-|source-|hub-|version|art:)/.test(result))
 		throw new Error(`Unresolved template slot in ${path}`);
 	await writeFile(file, result);
 	if (path !== "/404.html") urls.push({ path, lastmod });
@@ -811,6 +825,7 @@ await mkdir(join(out, "css"));
 // the order the two separate files cascaded.
 await writeFile(join(out, "css/site.css"), minifyCss(`${await read("css/brand.css")}\n${await read("css/site.css")}`));
 await writeFile(join(out, "css/landing.css"), minifyCss(await read("css/landing.css")));
+await writeFile(join(out, "css/art.css"), minifyCss(await read("css/art.css")));
 await mkdir(join(out, "js"));
 for (const name of ["site.js", "docs.js", "redirect.js", "hub.js"])
 	await cp(join(root, "js", name), join(out, "js", name));

@@ -38,6 +38,20 @@ export async function checkPolicy() {
 				errors.push(`css/${file}: color declaration must use a semantic token: ${match[1].trim()}`);
 		}
 	}
+	// Inlined drawings take every colour from art.css through their classes.
+	for (const file of (await readdir(join(root, "art")).catch(() => [])).filter((name) => name.endsWith(".svg"))) {
+		const svg = (await readFile(join(root, "art", file), "utf8")).replace(/<!--[\s\S]*?-->/g, "");
+		if (/\bstyle\s*=|<style\b/i.test(svg))
+			errors.push(`art/${file}: inline styles are forbidden; style it in css/art.css`);
+		if (/<script\b|\bon[a-z]+\s*=/i.test(svg)) errors.push(`art/${file}: scripts are forbidden in art`);
+		if (
+			/\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i.test(svg) ||
+			/\b(?:fill|stroke|stop-color|flood-color|lighting-color|color)\s*=\s*["'](?!(?:none|currentColor|transparent|inherit)["']|url\()/i.test(
+				svg,
+			)
+		)
+			errors.push(`art/${file}: literal colours are forbidden; use a class and a token in css/art.css`);
+	}
 	const templates = [
 		"index.html",
 		"learn.html",

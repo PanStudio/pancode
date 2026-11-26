@@ -30,7 +30,8 @@ PanCode is one platform: the site has no product family, no page for PanStore, P
 - `tokens.mjs` generates `css/brand.css`; component CSS cannot introduce literal colors.
 - `DESIGN.md` documents the PanCode identity, naming, writing, copyright, and accessibility rules.
 - `partials.html` supplies one header and footer. Primary navigation is Overview, Docs, Tutorials, Research, PanHub.
-- `policy.mjs` runs on every build and checks palette drift, color declarations, motion tokens, public copy length, disallowed phrases, navigation, attribution, and documentation boundaries.
+- `art/<name>.svg` is a drawing the build inlines wherever a template or partial writes `<!-- art:<name> -->`; a missing file fails the build. Drawings carry classes only, coloured by `css/art.css`, so they follow the theme. `policy.mjs` rejects inline styles, literal colours and scripts in them.
+- `policy.mjs` runs on every build and checks palette drift, color declarations, art, motion tokens, public copy length, disallowed phrases, navigation, attribution, and documentation boundaries.
 
 The identity is true black with a brand green, an azure secondary and warm ivory ink. The wordmark sets Pan in the green and Code in the azure. The mark is the P of the wordmark in the green on a black tile; its hand-written SVG source is `assets/brand/pancode-mark.svg` at the repository root, `node site/render-brand.mjs` renders it into `site/assets/brand/`, and the provenance file there records the rendered hash and dimensions.
 
