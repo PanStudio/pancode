@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
+import { heldSessionQuery } from "../api/session-query.js";
 import { Icon } from "../design/icons.js";
 import { DeferredViewBoundary } from "../interaction/DeferredView.js";
 import { KEYBINDINGS, matchesKeybinding } from "../interaction/keybindings.js";
@@ -107,9 +108,7 @@ export const SessionPane = memo(function SessionPane({
 	}, [open, view, headId]);
 
 	const pane = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: selectPaneSession,
 	}).data;
 	const capabilities = useQuery({
@@ -121,9 +120,7 @@ export const SessionPane = memo(function SessionPane({
 		retry: false,
 	});
 	const legacy = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: selectSessionPanel,
 	}).data;
 	// Only the slide-over is modal. The docked pane renders its dialog already open, because
@@ -443,9 +440,7 @@ export const PaneToggles = memo(function PaneToggles({
 	onToggle: (view: PaneView, trigger: string) => void;
 }) {
 	const pane = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: selectPaneSession,
 	}).data;
 	const changes = useMemo(

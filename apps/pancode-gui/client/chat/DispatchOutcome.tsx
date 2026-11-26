@@ -4,9 +4,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { TimelineItem } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
+import { heldSessionQuery } from "../api/session-query.js";
 import { StatusMark } from "../design/status.js";
 import { dispatchOutcome, dispatchRunIds } from "./dispatch-outcome-model.js";
 import { foldFleetRuns } from "./fleet-facts.js";
@@ -23,9 +23,7 @@ export function DispatchOutcome({
 }) {
 	const runIds = useMemo(() => dispatchRunIds(item), [item]);
 	const outcome = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: () => client.call(routes.session, { params: { id: sessionId }, query: {}, body: {} }),
-		enabled: false,
+		...heldSessionQuery(client, sessionId),
 		select: (snapshot) => (runIds.length === 0 ? null : dispatchOutcome(runIds, foldFleetRuns(snapshot.fleet))),
 	}).data;
 	return outcome ? (

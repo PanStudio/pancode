@@ -48,3 +48,12 @@ export function sessionQuery(client: Client, id: string) {
 		refetchOnReconnect: false,
 	});
 }
+
+/**
+ * A component that only reads the snapshot the conversation already holds. Every observer of the session shares
+ * `sessionQuery`'s function: an observer's options replace the query's, so a raw read here made the next refetch skip
+ * the session buffer and store a snapshot older than the deltas already folded, which no later delta corrected.
+ */
+export function heldSessionQuery(client: Client, id: string) {
+	return queryOptions({ ...sessionQuery(client, id), enabled: false });
+}

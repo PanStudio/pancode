@@ -11,6 +11,7 @@ import type { SessionConfig } from "../../contracts/session-config.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import { ApiProblem, type Client } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
+import { sessionQuery } from "../api/session-query.js";
 import { Icon } from "../design/icons.js";
 import { TONE_GLYPHS } from "../design/status.js";
 import { announce } from "../interaction/announcer.js";
@@ -209,8 +210,7 @@ function RouteForm({
 		mutationFn: async () => {
 			await queries.cancelQueries({ queryKey: ["session", sessionId], exact: true });
 			return queries.fetchQuery({
-				queryKey: ["session", sessionId],
-				queryFn: ({ signal }) => client.call(routes.session, input, undefined, signal),
+				...sessionQuery(client, sessionId),
 				staleTime: 0,
 				retry: false,
 			});
