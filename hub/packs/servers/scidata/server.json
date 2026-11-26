@@ -1,0 +1,226 @@
+{
+	"id": "scidata",
+	"version": "0.1.0",
+	"title": "Scientific data",
+	"environment": [],
+	"tools": [
+		{
+			"name": "scidata_inspect",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"description": "The data file, Zarr store or ADIOS2 .bp directory; relative to the server's working directory or absolute."
+					},
+					"format": {
+						"type": "string",
+						"enum": ["csv", "tsv", "json", "jsonl", "hdf5", "netcdf", "parquet", "zarr", "adios2"],
+						"description": "The format when the extension or content does not say: csv, tsv, json, jsonl, hdf5, netcdf, parquet, zarr, adios2."
+					},
+					"variable": {
+						"type": "string",
+						"description": "HDF5, NetCDF and Zarr: the variable or group path; ADIOS2: the variable name; Parquet stats: the column."
+					},
+					"delimiter": {
+						"type": "string",
+						"description": "CSV and TSV: the one delimiter character, or \\t."
+					},
+					"header": {
+						"type": ["boolean", "string"],
+						"enum": [true, false, "auto"],
+						"description": "CSV and TSV: \"auto\" (default) detects a header row; true or false forces it."
+					},
+					"sample_rows": {
+						"type": "integer",
+						"minimum": 0,
+						"description": "Rows or top-level members kept as the sample: default 10, at most 1000."
+					},
+					"max_rows": {
+						"type": ["integer", "null"],
+						"minimum": 1,
+						"description": "Rows scanned before the view becomes sampled: default 100000; null scans the whole file."
+					}
+				},
+				"required": ["path"],
+				"additionalProperties": false
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "scidata_select",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"description": "The data file, Zarr store or ADIOS2 .bp directory; relative to the server's working directory or absolute."
+					},
+					"format": {
+						"type": "string",
+						"enum": ["csv", "tsv", "json", "jsonl", "hdf5", "netcdf", "parquet", "zarr", "adios2"],
+						"description": "The format when the extension or content does not say: csv, tsv, json, jsonl, hdf5, netcdf, parquet, zarr, adios2."
+					},
+					"variable": {
+						"type": "string",
+						"description": "HDF5, NetCDF and Zarr: the variable or group path; ADIOS2: the variable name; Parquet stats: the column."
+					},
+					"start": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 0
+						},
+						"minItems": 1,
+						"description": "HDF5, NetCDF and Zarr: the 0-based first index per dimension (default 0)."
+					},
+					"count": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"minItems": 1,
+						"description": "HDF5, NetCDF and Zarr: elements per dimension (default: the rest of each dimension)."
+					},
+					"stride": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"minItems": 1,
+						"description": "HDF5, NetCDF and Zarr: the step per dimension (default 1)."
+					},
+					"offset": {
+						"type": "integer",
+						"minimum": 0,
+						"description": "The 0-based first row, record or array element; Parquet stats: the first row."
+					},
+					"limit": {
+						"type": "integer",
+						"minimum": 1,
+						"description": "Rows returned: default 50, at most 1000; Parquet stats: rows summarized (default all)."
+					},
+					"columns": {
+						"type": "array",
+						"items": {
+							"type": ["string", "integer"]
+						},
+						"minItems": 1,
+						"description": "CSV and TSV: header names or 0-based indices to project; Parquet: column names."
+					},
+					"pointer": {
+						"type": "string",
+						"description": "JSON: an RFC 6901 pointer to the value to return; \"\" is the whole document."
+					},
+					"delimiter": {
+						"type": "string",
+						"description": "CSV and TSV: the one delimiter character, or \\t."
+					},
+					"header": {
+						"type": ["boolean", "string"],
+						"enum": [true, false, "auto"],
+						"description": "CSV and TSV: \"auto\" (default) detects a header row; true or false forces it."
+					}
+				},
+				"required": ["path"],
+				"additionalProperties": false
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "scidata_stats",
+			"actionClass": "read",
+			"pathArguments": {
+				"path": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"minLength": 1,
+						"description": "The data file, Zarr store or ADIOS2 .bp directory; relative to the server's working directory or absolute."
+					},
+					"format": {
+						"type": "string",
+						"enum": ["csv", "tsv", "json", "jsonl", "hdf5", "netcdf", "parquet", "zarr", "adios2"],
+						"description": "The format when the extension or content does not say: csv, tsv, json, jsonl, hdf5, netcdf, parquet, zarr, adios2."
+					},
+					"variable": {
+						"type": "string",
+						"description": "HDF5, NetCDF and Zarr: the variable or group path; ADIOS2: the variable name; Parquet stats: the column."
+					},
+					"start": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 0
+						},
+						"minItems": 1,
+						"description": "HDF5, NetCDF and Zarr: the 0-based first index per dimension (default 0)."
+					},
+					"count": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"minItems": 1,
+						"description": "HDF5, NetCDF and Zarr: elements per dimension (default: the rest of each dimension)."
+					},
+					"stride": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"minItems": 1,
+						"description": "HDF5, NetCDF and Zarr: the step per dimension (default 1)."
+					},
+					"offset": {
+						"type": "integer",
+						"minimum": 0,
+						"description": "The 0-based first row, record or array element; Parquet stats: the first row."
+					},
+					"limit": {
+						"type": "integer",
+						"minimum": 1,
+						"description": "Rows returned: default 50, at most 1000; Parquet stats: rows summarized (default all)."
+					},
+					"max_bytes": {
+						"type": "integer",
+						"minimum": 1,
+						"description": "Raw bytes read before the pass stops and reports itself partial: default 268435456, at most 8 GiB."
+					}
+				},
+				"required": ["path"],
+				"additionalProperties": false
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		}
+	]
+}
