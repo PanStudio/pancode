@@ -852,31 +852,31 @@
   "assets/brand/pancode-mark.webp": {
     "width": 512,
     "height": 512,
-    "sha256": "9a352249cd06ba5595ff92209f20e530ffcfb50bc5816444d233523ba2031c16",
+    "sha256": "aaa67db4aedaaf0b88c0296f8e135231b2d3f8596e97987bf605a2704008ea55",
     "variants": [
       {
         "path": "assets/responsive/pancode-mark-32.webp",
         "width": 32,
         "height": 32,
-        "sha256": "ae4e0448c7d24d7709f133d53c842681ab751dcfec2356c52ab3cbaa759e0b59"
+        "sha256": "a7d34b1cdbc565d36b324109404beb2089aa449956c74dc62fd9c0569fb3a1bf"
       },
       {
         "path": "assets/responsive/pancode-mark-48.webp",
         "width": 48,
         "height": 48,
-        "sha256": "c9a4ca13b3c0e6a30186b66e17d30b00752694d842d82c5808b597131fdf9676"
+        "sha256": "79fa4b2ba4a841ea4f8dbe42f5b97a248dfe058d2b5bad072173c7bdbf94074b"
       },
       {
         "path": "assets/responsive/pancode-mark-64.webp",
         "width": 64,
         "height": 64,
-        "sha256": "5b4233b1b2343a79fe50a64ed4e8b2e42c1ab78680bf47b17de7084ca8df4312"
+        "sha256": "181aab2ef5ad60cf771c677d159b312a1e855de141c5e7b28c6fb25de5e4b102"
       },
       {
         "path": "assets/responsive/pancode-mark-128.webp",
         "width": 128,
         "height": 128,
-        "sha256": "89dfb53018007f2c6153d94a7ffd17d2b8d3da805777b39322a9360c0ab50117"
+        "sha256": "cde02aa11e08cec128c63316dfae7804050ce6dfcac2283f5d906cbcc86d71a0"
       }
     ]
   }
