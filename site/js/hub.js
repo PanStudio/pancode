@@ -18,7 +18,7 @@
 		for (const group of groups) {
 			let inGroup = 0;
 			for (const row of group.querySelectorAll("[data-hub-text]")) {
-				const text = row.getAttribute("data-hub-text");
+				const text = row.getAttribute("data-hub-text").toLowerCase();
 				const match = (!kind || row.dataset.hubKind === kind) && words.every((word) => text.includes(word));
 				row.hidden = !match;
 				if (match) inGroup++;

@@ -1033,9 +1033,8 @@ const hubSource = (row) => {
 };
 const hubRow = (row) => {
 	const id = `${row.kind}-${row.name}`;
-	const text = [row.kind, row.name, row.publisher, row.tier, row.licence, row.category ?? "", row.description]
-		.join(" ")
-		.toLowerCase();
+	// The filter text keeps its case, so a product name is never printed as a lowercase command; hub.js folds case.
+	const text = [row.kind, row.name, row.publisher, row.tier, row.licence, row.category ?? "", row.description].join(" ");
 	const meta = [
 		["Publisher", escapeHtml(row.publisher)],
 		["Licence", escapeHtml(row.licence)],
