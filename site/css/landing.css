@@ -4,48 +4,34 @@
 	.landing [hidden] {
 		display: none;
 	}
-	/* The install panel sits in the hero. Method tabs on paper, shell tabs as a
-	   quieter second row, and each command on the dark code surface. */
+	/* Install methods are tabs on paper; each command sits on the dark code surface. */
 	.installer {
-		margin-block-start: 2rem;
-		max-inline-size: 42rem;
 		border: 1px solid var(--line-control);
 		border-radius: var(--radius);
 		background: var(--paper-raised);
 	}
-	.installer > :is(.installer-method, .installer-next) {
-		padding: 1rem 1.25rem;
+	.installer > .installer-method {
+		padding: var(--space-4) var(--space-5);
 	}
 	.installer:not([data-tabs-ready]) .installer-method + .installer-method {
 		border-block-start: 1px solid var(--line);
 	}
-	.installer-shells:not([data-tabs-ready]) .installer-shell + .installer-shell {
-		margin-block-start: 1.25rem;
-	}
-	:is(.installer-note, .installer-next) code {
+	.installer-note code {
 		white-space: nowrap;
 	}
 	.installer .tab-label {
-		margin-block-end: 0.75rem;
-		font: 500 0.8rem / 1.4 var(--font-mono);
+		margin-block-end: var(--space-3);
+		font: var(--type-label);
 		color: var(--ink);
 	}
 	.installer > .tab-list {
-		padding-inline: 1.25rem;
-	}
-	.installer-shells > .tab-list {
-		gap: 0 1.25rem;
-		margin-block: -0.25rem 1rem;
-	}
-	.installer-shells > .tab-list button {
-		min-block-size: 2.5rem;
-		font-size: 0.72rem;
+		padding-inline: var(--space-5);
 	}
 	.installer-command {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
-		padding: 0.4rem 0.4rem 0.4rem 1rem;
+		gap: var(--space-4);
+		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
 		border: 1px solid var(--code-border);
 		border-radius: var(--radius);
 		background: var(--code);
@@ -54,10 +40,10 @@
 	.installer-command code {
 		flex: 1;
 		min-inline-size: 0;
-		padding-block: 0.35rem;
+		padding-block: var(--space-1);
 		background: transparent;
 		color: inherit;
-		font: 0.85rem / 1.5 var(--font-mono);
+		font: var(--type-code);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
@@ -72,8 +58,8 @@
 		display: inline-grid;
 		place-items: center;
 		align-self: start;
-		inline-size: 2.25rem;
-		block-size: 2.25rem;
+		inline-size: calc(var(--space-6) + var(--space-1));
+		block-size: calc(var(--space-6) + var(--space-1));
 		min-inline-size: 0;
 		min-block-size: 0;
 		padding: 0;
@@ -107,61 +93,25 @@
 	}
 	@media (pointer: coarse) {
 		.copy-icon-button {
-			inline-size: 2.75rem;
-			block-size: 2.75rem;
-		}
-		.installer-shells > .tab-list button {
-			min-block-size: 2.75rem;
+			inline-size: calc(var(--space-7) - var(--space-1));
+			block-size: calc(var(--space-7) - var(--space-1));
 		}
 	}
 	.copy-icon-button[data-copy-state="error"] {
 		color: var(--syntax-removed);
 		border-color: var(--syntax-removed);
 	}
-	.installer-note,
-	.installer-next {
-		margin-block-start: 0.75rem;
+	.installer-note {
+		margin-block-start: var(--space-3);
 		color: var(--muted);
-		font-size: 0.8rem;
+		font: var(--type-caption);
 	}
 	.installer-status {
-		margin-block-end: 0.75rem;
-		padding-inline-start: 0.75rem;
+		margin-block-start: var(--space-3);
+		padding-inline-start: var(--space-3);
 		border-inline-start: 2px solid var(--warning);
 		color: var(--ink-soft);
-		font-size: 0.8rem;
-	}
-	.installer-next {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0.25rem 1rem;
-		margin: 0;
-		border-block-start: 1px solid var(--line);
-	}
-	.installer-next .text-link {
-		font-size: 0.8rem;
-	}
-	.chapter-links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-3) var(--space-6);
-		margin-block-start: var(--space-6);
-	}
-	.chapter-links .text-link {
-		margin: 0;
-	}
-	/* The caption mixes text and code, so it flows as one line of prose. */
-	.result-capture .stage-caption {
-		display: block;
-	}
-	.result-capture {
-		margin-block: 2.5rem 1.5rem;
-		box-shadow: none;
-		animation: none;
-	}
-	.landing .project-section {
-		gap: clamp(3rem, 7vw, 7rem);
+		font: var(--type-caption);
 	}
 	.landing-hero {
 		display: grid;
@@ -237,8 +187,8 @@
 		gap: var(--space-2);
 	}
 	.term-dots span {
-		inline-size: 0.5rem;
-		block-size: 0.5rem;
+		inline-size: var(--space-2);
+		block-size: var(--space-2);
 		border: 1px solid var(--code-control);
 		border-radius: 50%;
 	}
@@ -274,7 +224,7 @@
 		color: var(--code-muted);
 	}
 	.t-sub {
-		padding-inline-start: 1.25rem;
+		padding-inline-start: calc(var(--space-4) + var(--space-1));
 	}
 	.t-glyph {
 		color: var(--syntax-prompt);
@@ -289,7 +239,7 @@
 	.t-answer {
 		color: var(--code-ink);
 		margin-block: var(--space-3);
-		padding-inline-start: 1.25rem;
+		padding-inline-start: calc(var(--space-4) + var(--space-1));
 		white-space: normal;
 	}
 	.t-status {
@@ -324,10 +274,42 @@
 		opacity: 0;
 	}
 
+	.what-body {
+		display: grid;
+		grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+		gap: var(--space-8);
+		align-items: start;
+		margin-block-start: var(--space-7);
+	}
+	.what-steps {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.what-steps > li {
+		padding-block: var(--space-5);
+		border-block-start: 1px solid var(--line-strong);
+	}
+	.what-steps > li:first-child {
+		padding-block-start: var(--space-4);
+	}
+	.what-steps h3 {
+		font: var(--type-title);
+		letter-spacing: var(--tracking-title);
+		margin: var(--space-2) 0;
+	}
+	.what-steps p {
+		color: var(--ink-soft);
+		margin: 0 0 var(--space-3);
+	}
+	.premise-intro {
+		margin-block: var(--space-8) 0;
+		color: var(--ink-soft);
+	}
 	.premise-list {
 		list-style: none;
 		padding: 0;
-		margin: var(--space-7) 0 0;
+		margin: var(--space-4) 0 0;
 		display: grid;
 		grid-template-columns: repeat(5, minmax(0, 1fr));
 	}
@@ -337,7 +319,7 @@
 	}
 	.premise-list a {
 		display: block;
-		min-block-size: 2.75rem;
+		min-block-size: calc(var(--space-7) - var(--space-1));
 		text-decoration: none;
 	}
 	.premise-q {
@@ -351,84 +333,44 @@
 		color: var(--accent);
 	}
 
-	.reach-body {
+	/* Each pillar is the same shape: the words on the left, its one screen on the right. */
+	.pillar {
 		display: grid;
 		grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
 		gap: var(--space-8);
 		align-items: center;
-		margin-block-start: var(--space-7);
 	}
-	.reach-panel > p {
-		max-inline-size: 30rem;
+	.pillar-text > p:not(.eyebrow, .actions) {
+		max-inline-size: var(--measure);
 	}
-	.reach-panel > p + p {
-		margin-block-start: var(--space-4);
-	}
-	.reach-names {
-		font: var(--type-small);
-		font-family: var(--font-mono);
-		color: var(--muted);
-	}
-	.reach-art {
-		max-inline-size: 35rem;
-		justify-self: end;
-		inline-size: 100%;
-	}
-	.reach-tabs:not([data-tabs-ready]) .reach-panel + .reach-panel {
-		margin-block-start: var(--space-6);
-	}
-	.reach-proof {
-		margin-block-start: var(--space-7);
-	}
-	.reach-proof > .actions {
-		margin-block-start: var(--space-5);
-	}
-
-	.flow-steps {
-		margin-block-start: var(--space-7);
-	}
-	.flow-steps > .tab-list {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 0;
-		counter-reset: stage;
-	}
-	.flow-steps > .tab-list button {
-		text-align: start;
-		padding: var(--space-3) var(--space-3) var(--space-4) 0;
-		font: var(--type-title);
-	}
-	.flow-steps > .tab-list button::before {
-		counter-increment: stage;
-		content: counter(stage, decimal-leading-zero) " /";
-		display: block;
-		font: var(--type-label);
-		letter-spacing: var(--tracking-label);
-		color: var(--secondary);
-		margin-block-end: var(--space-2);
-	}
-	.flow-panel {
-		display: grid;
-		grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-		gap: var(--space-8);
+	.pillar-links {
+		flex-direction: column;
 		align-items: start;
-		padding-block-start: var(--space-7);
-		min-block-size: 24rem;
-	}
-	.flow-panel > .tab-label {
-		grid-column: 1 / -1;
-	}
-	.flow-text h3 {
-		font: var(--type-headline);
-		letter-spacing: var(--tracking-headline);
-		font-size: 1.75rem;
-		margin: 0 0 var(--space-4);
-	}
-	.flow-text > p {
-		color: var(--ink-soft);
-	}
-	.flow-text > .actions {
+		gap: var(--space-2);
 		margin-block-start: var(--space-5);
+	}
+	.pillar-links .text-link {
+		margin: 0;
+	}
+	.pillar-shot {
+		margin: 0;
+	}
+	.pillar-shot > a {
+		display: block;
+		padding: var(--space-3);
+		background: var(--code);
+		border: 1px solid var(--line-control);
+		border-radius: var(--radius);
+	}
+	.pillar-shot img {
+		display: block;
+		inline-size: 100%;
+		block-size: auto;
+	}
+	.pillar-shot figcaption {
+		margin-block-start: var(--space-3);
+		font: var(--type-caption);
+		color: var(--muted);
 	}
 	.evidence .t-status {
 		margin-block-start: var(--space-3);
@@ -455,69 +397,58 @@
 		font: var(--type-caption);
 		color: var(--code-muted);
 	}
-	.flow-facts {
-		margin: 0;
-	}
-	.flow-facts > div {
-		display: grid;
-		grid-template-columns: 12rem minmax(0, 1fr);
-		gap: var(--space-5);
-		padding-block: var(--space-4);
-		border-block-start: 1px solid var(--line);
-	}
-	.flow-facts > div:last-child {
-		border-block-end: 1px solid var(--line);
-	}
-	.flow-facts dt {
-		font-weight: 600;
-	}
-	.flow-facts dd {
-		margin: 0;
-		color: var(--muted);
-	}
-	.flow-steps:not([data-tabs-ready]) .flow-panel {
-		min-block-size: 0;
-		border-block-start: 1px solid var(--line);
-	}
 
-	.product-stage {
-		margin: var(--space-7) 0 var(--space-6);
-	}
-	.product .interface-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: var(--space-6);
-	}
-	.journey-list {
-		list-style: none;
-		padding: 0;
-		margin: var(--space-7) 0 0;
+	.cost-terms {
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: var(--space-6);
+		margin: var(--space-7) 0 var(--space-6);
 	}
-	.journey-list > li {
-		padding: var(--space-5) var(--space-6) var(--space-5) 0;
+	.cost-terms > div {
+		padding-block-start: var(--space-4);
 		border-block-start: 1px solid var(--line-strong);
 	}
-	.journey-list > li + li {
-		padding-inline-start: var(--space-6);
-		border-inline-start: 1px solid var(--line);
-	}
-	.journey-list > .journey-build {
-		border-block-start-color: var(--accent);
-	}
-	.journey-list h3 {
+	.cost-terms dt {
 		font: var(--type-title);
-		margin: var(--space-3) 0 var(--space-2);
+		letter-spacing: var(--tracking-title);
+		margin-block-end: var(--space-2);
 	}
-	.journey-list p {
-		color: var(--muted);
-		margin: 0 0 var(--space-4);
+	.cost-terms dd {
+		margin: 0;
+		color: var(--ink-soft);
 	}
-	.journey-more {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-2) var(--space-6);
+
+	/* Install: the method tabs on the left, the commands that follow on the right,
+	   under the heading rather than in the side column site.css gives .start-section. */
+	.landing .start-section {
+		display: block;
+	}
+	.install-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+		gap: var(--space-6);
+		align-items: start;
+		margin-block-start: var(--space-6);
+	}
+	.install-grid .installer {
+		margin: 0;
+		max-inline-size: none;
+	}
+	.installer-method .installer-command + .installer-command {
+		margin-block-start: var(--space-2);
+	}
+	.install-then {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: var(--space-4);
+	}
+	.install-then .step-number {
+		display: block;
+		margin-block-end: var(--space-2);
+	}
+	.install-links {
 		margin-block-start: var(--space-6);
 	}
 	/* The questions sit in two columns under their heading, not in the side column site.css gives .faq. */
@@ -529,78 +460,38 @@
 		columns: 2;
 		column-gap: var(--space-8);
 	}
-	.start-section .install-steps {
-		max-inline-size: 52rem;
-	}
-	.install-steps .installer {
-		margin-block: 0.75rem 1rem;
-	}
-	.install-steps p + p {
-		margin-block-start: 0.75rem;
-	}
 	.faq .faq-items details {
 		break-inside: avoid;
 	}
 	@media (max-width: 1023px) {
 		.landing-hero,
-		.reach-body,
-		.flow-panel {
+		.what-body,
+		.pillar,
+		.install-grid {
 			grid-template-columns: minmax(0, 1fr);
 			gap: var(--space-6);
 		}
-		.reach-art {
-			order: -1;
-			justify-self: center;
-		}
-		.flow-steps > .tab-list {
-			grid-template-columns: repeat(4, max-content);
-			overflow-x: auto;
-			gap: var(--space-5);
-		}
-		.flow-panel {
-			min-block-size: 0;
+		.cost-terms {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 	}
 	@media (max-width: 1099px) {
-		.premise-list,
-		.journey-list {
+		.premise-list {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-		.journey-list > li:nth-child(odd) {
-			padding-inline-start: 0;
-			border-inline-start: 0;
 		}
 	}
 	@media (max-width: 767px) {
-		.product .interface-grid {
-			grid-template-columns: minmax(0, 1fr);
-		}
 		.landing .faq .faq-items {
 			columns: 1;
-		}
-		.flow-facts > div {
-			grid-template-columns: minmax(0, 1fr);
-			gap: var(--space-1);
 		}
 	}
 	@media (max-width: 599px) {
 		.premise-list,
-		.journey-list {
+		.cost-terms {
 			grid-template-columns: minmax(0, 1fr);
-		}
-		.journey-list > li + li {
-			padding-inline-start: 0;
-			border-inline-start: 0;
 		}
 	}
 	@media (max-width: 600px) {
-		.chapter-links {
-			flex-direction: column;
-			align-items: start;
-		}
-		.landing .project-section {
-			gap: 2rem;
-		}
 		.hero-field {
 			margin-inline: 0;
 		}
@@ -625,7 +516,7 @@
 	/* Action links get a full touch target where fingers do the tapping. */
 	@media (max-width: 767px), (pointer: coarse) {
 		.landing main .text-link {
-			min-block-size: 2.75rem;
+			min-block-size: calc(var(--space-7) - var(--space-1));
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
