@@ -1018,10 +1018,11 @@ const fact = (label, value) => `<div><dt class="eyebrow">${label}</dt><dd>${valu
 // The PanHub catalog: the rows of the bundled hub/index.yaml as hub-catalog.mjs
 // validated them, so the page lists exactly what this release installs.
 const hubCommit = source.commit ?? values.revision ?? null;
-const hubKinds = ["plugin", "extension", "skill", "agent", "prompt", "playbook"];
+const hubKinds = ["plugin", "extension", "server", "skill", "agent", "prompt", "playbook"];
 const hubPlural = {
 	plugin: "Plugins",
 	extension: "Extensions",
+	server: "Servers",
 	skill: "Skills",
 	agent: "Agents",
 	prompt: "Prompts",
@@ -1038,9 +1039,8 @@ const hubSource = (row) => {
 };
 const hubRow = (row) => {
 	const id = `${row.kind}-${row.name}`;
-	const text = [row.kind, row.name, row.publisher, row.tier, row.licence, row.category ?? "", row.description]
-		.join(" ")
-		.toLowerCase();
+	// The filter text keeps its case, so a product name is never printed as a lowercase command; hub.js folds case.
+	const text = [row.kind, row.name, row.publisher, row.tier, row.licence, row.category ?? "", row.description].join(" ");
 	const meta = [
 		["Publisher", escapeHtml(row.publisher)],
 		["Licence", escapeHtml(row.licence)],
@@ -1051,18 +1051,31 @@ const hubRow = (row) => {
 		.join("");
 	return `<li class="hub-row" id="${escapeHtml(id)}" data-hub-text="${escapeHtml(text)}" data-hub-kind="${escapeHtml(row.kind)}"><div class="hub-row-head"><h3>${escapeHtml(row.name)}</h3><span class="tag">v${escapeHtml(row.version)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><details class="hub-row-more"><summary>${escapeHtml(row.description)}</summary><dl class="hub-meta">${meta}</dl></details>${hubCommand(row)}</li>`;
 };
-const hubCommand = (row) =>
-	`<div class="command-line"><code>${escapeHtml(row.install)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(row.install)}" aria-label="Copy the install command for ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+// A core server is built into PanCode, so its row gives the command another agent host runs to serve it.
+const hubBuiltIn = (row) => row.kind === "server" && row.tier === "core";
+const hubServe = (row) => `npx -y -p @akougkas/pancode pankit serve ${row.name}`;
+const hubCommand = (row) => {
+	const command = hubBuiltIn(row) ? hubServe(row) : row.install;
+	const label = hubBuiltIn(row) ? "Copy the command that serves" : "Copy the install command for";
+	return `<div class="command-line"><code>${escapeHtml(command)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(command)}" aria-label="${label} ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+};
 // The packs a newcomer starts with, in hub-featured.json order, above the full catalog.
 const hubFeatured = JSON.parse(await read("hub-featured.json")).map((key) => {
 	const row = hubCatalog.rows.find((item) => `${item.kind}:${item.name}` === key);
 	if (!row) throw new Error(`hub-featured.json names ${key}, which is not in the PanHub catalog.`);
 	return `<li class="hub-featured-row"><div class="hub-row-head"><h3><a href="#${escapeHtml(`${row.kind}-${row.name}`)}">${escapeHtml(row.name)}</a></h3><span class="tag">${escapeHtml(row.kind)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><p>${escapeHtml(row.description)}</p>${hubCommand(row)}</li>`;
 });
-const hubGroups = [...hubKinds, ...new Set(hubCatalog.rows.map((row) => row.kind))]
+const hubKindRows = [...hubKinds, ...new Set(hubCatalog.rows.map((row) => row.kind))]
 	.filter((kind, i, all) => all.indexOf(kind) === i)
 	.map((kind) => [kind, hubCatalog.rows.filter((row) => row.kind === kind)])
-	.filter(([, rows]) => rows.length)
+	.filter(([, rows]) => rows.length);
+const hubChips = hubKindRows
+	.map(
+		([kind]) =>
+			`<button type="button" class="hub-chip" data-hub-kind="${escapeHtml(kind)}" aria-pressed="false">${hubPlural[kind] ?? escapeHtml(kind)}</button>`,
+	)
+	.join("");
+const hubGroups = hubKindRows
 	.map(
 		([kind, rows]) =>
 			`<section class="hub-group" aria-labelledby="hub-${kind}" data-hub-group><h2 id="hub-${kind}">${hubPlural[kind] ?? escapeHtml(kind)} <span class="hub-group-count" data-hub-group-count>${rows.length}</span></h2><ul class="hub-rows">${rows.map(hubRow).join("")}</ul></section>`,
@@ -1079,7 +1092,7 @@ const hubSlots = {
 		fact("Command", "<code>pancode hub</code>"),
 		fact("Packs", String(hubCatalog.rows.length)),
 	].join(""),
-	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><div class="hub-chips" role="group" aria-label="Kind"><button type="button" class="hub-chip" data-hub-kind="" aria-pressed="true">All</button><button type="button" class="hub-chip" data-hub-kind="plugin" aria-pressed="false">Plugins</button><button type="button" class="hub-chip" data-hub-kind="extension" aria-pressed="false">Extensions</button><button type="button" class="hub-chip" data-hub-kind="skill" aria-pressed="false">Skills</button></div><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
+	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><div class="hub-chips" role="group" aria-label="Kind"><button type="button" class="hub-chip" data-hub-kind="" aria-pressed="true">All</button>${hubChips}</div><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
 	"hub-featured": `<section class="hub-featured" aria-labelledby="hub-featured-title" data-hub-featured><h2 id="hub-featured-title">Start with these</h2><ul class="hub-featured-rows">${hubFeatured.join("")}</ul></section>`,
 	"hub-groups": hubGroups,
 	"hub-source": `Bundled with PanCode v${escapeHtml(product.version)}: ${hubIndexLink} at ${hubAt}, sha256 <code class="hub-sha" data-hub-sha256>${hubCatalog.source.sha256}</code>.`,
@@ -1337,7 +1350,7 @@ const hubMarkdown = () =>
 		hubCatalog.rows
 			.map(
 				(row) =>
-					`- \`${row.kind}:${row.name}\` v${row.version}, ${row.tier}, ${row.publisher}, ${row.licence}: ${row.description} Install: \`${row.install}\``,
+					`- \`${row.kind}:${row.name}\` v${row.version}, ${row.tier}, ${row.publisher}, ${row.licence}: ${row.description} ${hubBuiltIn(row) ? `Built into PanCode; on another agent host: \`${hubServe(row)}\`` : `Install: \`${row.install}\``}`,
 			)
 			.join("\n"),
 	].join("\n\n");

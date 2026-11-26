@@ -462,10 +462,18 @@ catalog = json.loads((site / 'content/hub-catalog.json').read_text())
 hub_page = (root / 'hub.html').read_text() if (root / 'hub.html').is_file() else ''
 listed = re.findall(r'<li class="hub-row" id="([^"]+)".*?<code>([^<]+)</code><button', hub_page, re.S)
 # build.mjs groups the rows by kind in this order, any other kind after them.
-kinds = ['plugin', 'extension', 'skill', 'agent', 'prompt', 'playbook']
+kinds = ['plugin', 'extension', 'server', 'skill', 'agent', 'prompt', 'playbook']
 expected = sorted(catalog['rows'], key=lambda row: (kinds.index(row['kind']) if row['kind'] in kinds else len(kinds), row['kind'], row['name']))
-if listed != [(f"{row['kind']}-{row['name']}", row['install']) for row in expected]:
-    errors.append(f"/hub.html does not list exactly the {len(catalog['rows'])} rows of hub-catalog.json with their install commands")
+# A core server is built in; its row gives the command another agent host runs to serve it.
+def hub_command(row):
+    if row['kind'] == 'server' and row['tier'] == 'core':
+        return f"npx -y -p @akougkas/pancode pankit serve {row['name']}"
+    return row['install']
+if listed != [(f"{row['kind']}-{row['name']}", hub_command(row)) for row in expected]:
+    errors.append(f"/hub.html does not list exactly the {len(catalog['rows'])} rows of hub-catalog.json with their commands")
+chips = re.findall(r'<button type="button" class="hub-chip" data-hub-kind="([^"]+)"', hub_page)
+if chips != list(dict.fromkeys(row['kind'] for row in expected)):
+    errors.append('/hub.html needs one kind chip per listed kind, in group order')
 if f'<code class="hub-sha" data-hub-sha256>{catalog["source"]["sha256"]}</code>' not in hub_page:
     errors.append('/hub.html does not show the sha256 of the bundled hub/index.yaml')
 if errors:
