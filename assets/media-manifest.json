@@ -12,10 +12,7 @@
 				"height": 750
 			},
 			"role": "Lossless brand banner master",
-			"channels": [
-				"repository",
-				"press"
-			],
+			"channels": ["repository", "press"],
 			"altTextSeed": "PanCode: systems software for coding agents.",
 			"representation": "brand-artwork",
 			"copies": []
@@ -30,53 +27,40 @@
 				"height": 750
 			},
 			"role": "Web brand banner",
-			"channels": [
-				"repository",
-				"website"
-			],
+			"channels": ["repository", "website"],
 			"altTextSeed": "PanCode: systems software for coding agents.",
 			"representation": "brand-artwork",
-			"copies": [
-				"site/assets/banner.webp"
-			]
+			"copies": ["site/assets/banner.webp"]
 		},
 		{
 			"id": "gui-icon-192",
 			"source": "assets/pancode-app-icon-192.png",
-			"sha256": "0c58ad0ebeee7f3f916678627d2cb795c8b64d7b6d7177c22c286d0f6f0cc16b",
+			"sha256": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
 			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 192,
 				"height": 192
 			},
 			"role": "GUI PWA application icon",
-			"channels": [
-				"gui"
-			],
+			"channels": ["gui"],
 			"altTextSeed": "PanCode application icon.",
 			"representation": "brand-artwork",
-			"copies": [
-				"apps/pancode-gui/client/public/icon-192.png"
-			]
+			"copies": ["apps/pancode-gui/client/public/icon-192.png"]
 		},
 		{
 			"id": "gui-icon-512",
 			"source": "assets/pancode-app-icon-512.png",
-			"sha256": "19cf57dc070e34882506195104ffb517222014c081cfb320e87df13d6134b1bd",
+			"sha256": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9",
 			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 512,
 				"height": 512
 			},
 			"role": "GUI PWA application icon",
-			"channels": [
-				"gui"
-			],
+			"channels": ["gui"],
 			"altTextSeed": "PanCode application icon.",
 			"representation": "brand-artwork",
-			"copies": [
-				"apps/pancode-gui/client/public/icon-512.png"
-			]
+			"copies": ["apps/pancode-gui/client/public/icon-512.png"]
 		},
 		{
 			"id": "terminal-session-png",
@@ -88,15 +72,10 @@
 				"height": 2104
 			},
 			"role": "Full-resolution terminal product capture",
-			"channels": [
-				"repository",
-				"website"
-			],
+			"channels": ["repository", "website"],
 			"altTextSeed": "A PanCode terminal session showing a failing numerical test, diagnosis, a two-line solver edit, and the passing test run.",
 			"representation": "real-product-capture",
-			"copies": [
-				"site/assets/session.png"
-			]
+			"copies": ["site/assets/session.png"]
 		},
 		{
 			"id": "terminal-session-webp",
@@ -108,14 +87,10 @@
 				"height": 1052
 			},
 			"role": "Inline website terminal capture",
-			"channels": [
-				"website"
-			],
+			"channels": ["website"],
 			"altTextSeed": "A PanCode terminal session showing a failing numerical test, diagnosis, a two-line solver edit, and the passing test run.",
 			"representation": "real-product-capture",
-			"copies": [
-				"site/assets/session.webp"
-			]
+			"copies": ["site/assets/session.webp"]
 		},
 		{
 			"id": "tui-boot-png",
@@ -127,15 +102,10 @@
 				"height": 1308
 			},
 			"role": "Terminal at start with the workspace, its Git state, the selected model, and the composer",
-			"channels": [
-				"repository",
-				"website"
-			],
+			"channels": ["repository", "website"],
 			"altTextSeed": "PanCode terminal at start with the workspace, its Git state, the selected model, and the composer",
 			"representation": "real-product-capture",
-			"copies": [
-				"site/assets/tui-boot.png"
-			],
+			"copies": ["site/assets/tui-boot.png"],
 			"capturedVersion": "0.9.0-dev"
 		},
 		{
@@ -148,15 +118,10 @@
 				"height": 1308
 			},
 			"role": "Terminal at start with the workspace, its Git state, the selected model, and the composer",
-			"channels": [
-				"repository",
-				"website"
-			],
+			"channels": ["repository", "website"],
 			"altTextSeed": "PanCode terminal at start with the workspace, its Git state, the selected model, and the composer",
 			"representation": "real-product-capture",
-			"copies": [
-				"site/assets/tui-boot.webp"
-			],
+			"copies": ["site/assets/tui-boot.webp"],
 			"capturedVersion": "0.9.0-dev"
 		},
 		{
@@ -169,9 +134,7 @@
 				"height": 1000
 			},
 			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop conversation reporting seven passing calibration tests and a reference-temperature table",
 			"representation": "real-product-capture",
 			"copies": [],
@@ -188,9 +151,7 @@
 				"height": 1000
 			},
 			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop conversation reporting seven passing calibration tests and a reference-temperature table",
 			"representation": "real-product-capture",
 			"copies": [],
@@ -207,9 +168,7 @@
 				"height": 1000
 			},
 			"role": "Desktop overview with a temperature-calibration conversation ready to resume",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume",
 			"representation": "real-product-capture",
 			"copies": [],
@@ -226,9 +185,7 @@
 				"height": 1000
 			},
 			"role": "Desktop overview with a temperature-calibration conversation ready to resume",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume",
 			"representation": "real-product-capture",
 			"copies": [],
@@ -238,40 +195,32 @@
 		{
 			"id": "gui-pancode-mark",
 			"source": "assets/pancode-mark-gui.webp",
-			"sha256": "a5036c8164c0d10ecedbfb83602519d9f0ea99cf0e12faf0016246c2730e6401",
+			"sha256": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 128,
 				"height": 128
 			},
 			"role": "GUI canonical PanCode mark",
-			"channels": [
-				"gui"
-			],
+			"channels": ["gui"],
 			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
 			"representation": "brand-artwork",
-			"copies": [
-				"apps/pancode-gui/client/public/pancode-logo.webp"
-			]
+			"copies": ["apps/pancode-gui/client/public/pancode-logo.webp"]
 		},
 		{
 			"id": "gui-favicon",
 			"source": "assets/pancode-app-favicon.png",
-			"sha256": "22f154abe875fd4284ba2b9de0efd794360f0c2e7fa2620fe3961dd3bf2abfa4",
+			"sha256": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 32,
 				"height": 32
 			},
 			"role": "GUI favicon",
-			"channels": [
-				"gui"
-			],
+			"channels": ["gui"],
 			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
 			"representation": "brand-artwork",
-			"copies": [
-				"apps/pancode-gui/client/public/favicon.png"
-			]
+			"copies": ["apps/pancode-gui/client/public/favicon.png"]
 		},
 		{
 			"id": "gui-trace-png",
@@ -282,9 +231,7 @@
 				"height": 1000
 			},
 			"role": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
 			"representation": "real-product-capture",
 			"capturedVersion": "0.5.7",
@@ -301,9 +248,7 @@
 				"height": 1000
 			},
 			"role": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "Recorded session trace with actual token usage, unknown cost, and phase selection.",
 			"representation": "real-product-capture",
 			"capturedVersion": "0.5.7",
@@ -320,9 +265,7 @@
 				"height": 1000
 			},
 			"role": "Desktop conversation with a successful verify result in the Artifacts inspector",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop conversation with a successful verify result in the Artifacts inspector",
 			"representation": "real-product-capture",
 			"capturedVersion": "0.5.7",
@@ -339,9 +282,7 @@
 				"height": 1000
 			},
 			"role": "Desktop conversation with a successful verify result in the Artifacts inspector",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop conversation with a successful verify result in the Artifacts inspector",
 			"representation": "real-product-capture",
 			"capturedVersion": "0.5.7",
@@ -358,9 +299,7 @@
 				"height": 1000
 			},
 			"role": "Desktop overview with a temperature-calibration conversation ready to resume in the light theme",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume in the light theme",
 			"representation": "real-product-capture",
 			"copies": [],
@@ -376,9 +315,7 @@
 				"height": 1000
 			},
 			"role": "Desktop overview with a temperature-calibration conversation ready to resume in the light theme",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"altTextSeed": "PanCode desktop overview with a temperature-calibration conversation ready to resume in the light theme",
 			"representation": "real-product-capture",
 			"copies": [],
@@ -388,9 +325,7 @@
 		{
 			"id": "gui-conversation-light-png",
 			"source": "assets/screenshots/gui-conversation-light.png",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"representation": "real-product-capture",
 			"copies": [],
 			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table in the light theme",
@@ -406,9 +341,7 @@
 		{
 			"id": "gui-conversation-light-webp",
 			"source": "assets/screenshots/gui-conversation-light.webp",
-			"channels": [
-				"repository"
-			],
+			"channels": ["repository"],
 			"representation": "real-product-capture",
 			"copies": [],
 			"role": "Desktop conversation reporting seven passing calibration tests and a reference-temperature table in the light theme",
@@ -424,10 +357,7 @@
 		{
 			"id": "gui-artifacts-light-png",
 			"source": "assets/screenshots/gui-artifacts-light.png",
-			"channels": [
-				"repository",
-				"website"
-			],
+			"channels": ["repository", "website"],
 			"representation": "real-product-capture",
 			"copies": [],
 			"role": "Desktop conversation with a successful verify result in the Artifacts inspector in the light theme",
@@ -443,10 +373,7 @@
 		{
 			"id": "gui-artifacts-light-webp",
 			"source": "assets/screenshots/gui-artifacts-light.webp",
-			"channels": [
-				"repository",
-				"website"
-			],
+			"channels": ["repository", "website"],
 			"representation": "real-product-capture",
 			"copies": [],
 			"role": "Desktop conversation with a successful verify result in the Artifacts inspector in the light theme",
@@ -469,10 +396,7 @@
 				"height": 694
 			},
 			"role": "Fix a test",
-			"channels": [
-				"repository",
-				"readme"
-			],
+			"channels": ["repository", "readme"],
 			"altTextSeed": "Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin <= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s.",
 			"representation": "captured-recording",
 			"copies": []
@@ -487,10 +411,7 @@
 				"height": 694
 			},
 			"role": "Switch models",
-			"channels": [
-				"repository",
-				"readme"
-			],
+			"channels": ["repository", "readme"],
 			"altTextSeed": "Fullscreen terminal recording of the /model picker in PanCode on GitHub Copilot: the session starts on gpt-6-luna, the picker lists 26 models on the copilot target, and claude-sonnet-5.5 and gemini-4-argon are chosen in turn by typing part of the name, each changing the status bar's model and context size, before the session returns to gpt-6-luna.",
 			"representation": "captured-recording",
 			"copies": []
@@ -518,12 +439,7 @@
 				"height": 630
 			},
 			"role": "Dark landscape social preview",
-			"channels": [
-				"open-graph",
-				"x",
-				"linkedin",
-				"release"
-			],
+			"channels": ["open-graph", "x", "linkedin", "release"],
 			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
 			"representation": "illustrative"
 		},
@@ -548,12 +464,7 @@
 				"height": 630
 			},
 			"role": "Light landscape social preview",
-			"channels": [
-				"open-graph",
-				"x",
-				"linkedin",
-				"release"
-			],
+			"channels": ["open-graph", "x", "linkedin", "release"],
 			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
 			"representation": "illustrative"
 		},
@@ -578,12 +489,7 @@
 				"height": 1080
 			},
 			"role": "Dark square social preview",
-			"channels": [
-				"mastodon",
-				"bluesky",
-				"instagram",
-				"release"
-			],
+			"channels": ["mastodon", "bluesky", "instagram", "release"],
 			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
 			"representation": "illustrative"
 		},
@@ -608,12 +514,7 @@
 				"height": 1080
 			},
 			"role": "Light square social preview",
-			"channels": [
-				"mastodon",
-				"bluesky",
-				"instagram",
-				"release"
-			],
+			"channels": ["mastodon", "bluesky", "instagram", "release"],
 			"altTextSeed": "PanCode: Good science. Better software. Systems software for coding agents, for desktop and terminal, with the model you choose.",
 			"representation": "illustrative"
 		}

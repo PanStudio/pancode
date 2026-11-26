@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
 /* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
 /* The canonical PanCode mark and the activity indicator. Both are still: the logo is the mark at rest, busy is a
-   blue live dot beside the words that name the work, and a reported completion is a jade check. */
+   blue live dot beside the words that name the work, and a reported completion is a leaf check. */
 .pancode-mark,
 .pancode-logo__art {
 	display: block;
