@@ -208,6 +208,13 @@ for url in [*urls, origin + '/404.html']:
     # An unmatched </div> closes the nearest open layout container and pushes the article out of it.
     if len(re.findall(r'<div[\s>]', source)) != source.count('</div>'):
         errors.append(f'{path}: div open and close tags do not balance, so the page layout breaks')
+    # Numbered steps belong to a section of their own, never to the closed "Before you start" one.
+    for steps in re.finditer(r'<ol class="guide-steps">', source):
+        before = source[:steps.start()]
+        heading = max((h.start() for h in re.finditer(r'<h2 id="', before)), default=-1)
+        needs = max((n.end() for n in re.finditer(r'<section class="guide-needs">.*?</section>', before, re.S)), default=-1)
+        if heading < needs or heading < 0:
+            errors.append(f'{path}: numbered steps follow no section heading of their own, so the contents list skips them')
     if public_copyright not in source:
         errors.append(f'{path}: public copyright wording is missing')
     policy = re.search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', source)

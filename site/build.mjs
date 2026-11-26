@@ -621,7 +621,8 @@ function directive(name, args, inner, render) {
 			const steps = render(inner)
 				.split(/(?=<h3 )/)
 				.filter((part) => part.trim());
-			return `<ol class="guide-steps">${steps.map((step, index) => `<li class="guide-step"><span class="step-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div>${step}</div></li>`).join("")}</ol>`;
+			// A titled steps group opens its own section, so the contents list and its tracker reach the steps.
+			return `${args ? render(`## ${args}`) : ""}<ol class="guide-steps">${steps.map((step, index) => `<li class="guide-step"><span class="step-number" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div>${step}</div></li>`).join("")}</ol>`;
 		}
 		case "prompt":
 			return `<figure class="guide-prompt"><figcaption class="eyebrow"><span class="chapter">${escapeHtml(args || "Ask PanCode")}</span></figcaption><blockquote>${render(inner)}</blockquote><button type="button" class="copy" data-copy="${escapeHtml(plain(inner))}" aria-label="Copy the request">Copy</button></figure>`;

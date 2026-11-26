@@ -1604,7 +1604,7 @@
 			min-block-size: 2.75rem;
 		}
 	}
-	/* Over an unlabelled block the button sits on the code, so a long line passes beneath it, not through it. */
+	/* Where the button sits over a line, that line passes beneath it, not through it. */
 	:where(.code-block > pre:first-child) ~ .code-copy {
 		background: var(--code);
 	}
@@ -1887,6 +1887,10 @@
 @layer docs {
 	.doc .code-block pre {
 		margin-block: 0;
+	}
+	/* An unlabelled block keeps a band above its first line for the copy button, as a label band does. */
+	.doc .code-block > pre:first-child {
+		padding-block-start: calc(0.6rem + 2.5rem + var(--space-2));
 	}
 	.docs-menu:not([open]) > summary {
 		display: list-item;
