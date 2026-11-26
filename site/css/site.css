@@ -779,6 +779,14 @@
 		color: var(--ink-soft);
 		font-size: 1.15rem;
 	}
+	.not-found {
+		display: grid;
+		justify-items: start;
+	}
+	.not-found-art {
+		inline-size: min(30rem, 100%);
+		margin-block-end: var(--space-6);
+	}
 	.tutorial-grid {
 		display: grid;
 		grid-template-columns: repeat(2, 1fr);
