@@ -28,6 +28,7 @@ import {
 	resolutionSummary,
 	SAFETY_POSTURE,
 	safetyFacts,
+	sessionScopeRows,
 	waitedSentence,
 	workerAskRows,
 } from "../client/chat/approval-model.js";
@@ -890,6 +891,35 @@ test("an ask with no tool row, like the report-bundle consent, still raises a ca
 	assert.equal(published[0]?.[1].kind, "other");
 	permissions.decide(published[0]?.[1].id ?? "", "allow-once");
 	assert.deepEqual(await response, { outcome: { outcome: "selected", optionId: "allow-once" } });
+});
+
+test("a sandbox escape's session option is drawn with its scope and answers with the agent's own id", async () => {
+	const { permissions, published } = bridge();
+	const scope = "script /repo/check.sh (sha256:0123456789ab) · cwd /repo · no env assignments";
+	const options = [
+		...CHOICES,
+		{ optionId: "allow-session-scope", kind: "allow_always", name: `Approve for this session: ${scope}` },
+	];
+	const response = permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: {}, options }, ROW);
+	const card = published[0]?.[1];
+	assert.equal(card?.sessionScope, scope);
+	assert.deepEqual(
+		approvalActions(card ?? { canStopTurn: false }).map((action) => action.decision),
+		["reject", "allow-session-scope", "allow-once"],
+	);
+	assert.match(sessionScopeRows(card?.sessionScope)[0]?.value ?? "", /rerun of script \/repo\/check\.sh/);
+	permissions.decide(card?.id ?? "", "allow-session-scope");
+	assert.equal(published.at(-1)?.[1].status, "allowed");
+	assert.deepEqual(await response, { outcome: { outcome: "selected", optionId: "allow-session-scope" } });
+
+	// An ask without the option draws no session answer, and sending one is refused rather than allowed once.
+	const plain = permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: {}, options: CHOICES }, ROW);
+	const plainCard = published.at(-1)?.[1];
+	assert.equal(plainCard?.sessionScope, undefined);
+	assert.deepEqual(approvalActions(plainCard ?? { canStopTurn: false }).length, 2);
+	assert.throws(() => permissions.decide(plainCard?.id ?? "", "allow-session-scope"), /did not offer a session/);
+	permissions.decide(plainCard?.id ?? "", "reject");
+	await plain;
 });
 
 test("an ask the app cannot present is declined as cancelled and says why", async () => {
