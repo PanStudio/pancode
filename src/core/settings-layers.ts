@@ -46,7 +46,7 @@ import {
 } from "./config.js";
 import { DEFAULT_SETTINGS } from "./defaults.js";
 import { pancodeProjectRoot } from "./project-root.js";
-import { isProjectKeyVariableName, noteProjectTargets } from "./project-target-urls.js";
+import { isProjectKeyVariableName, markProjectTarget, noteProjectTargets } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
@@ -957,12 +957,15 @@ function prepareProjectLayers(
 export const PROJECT_TARGETS_REPLACE_USER_TARGETS =
 	"replaces the targets list in your user settings; this checkout uses only the targets this file declares, and no stored credential attaches to them";
 
-function declaresCredential(target: Record<string, unknown>): boolean {
-	const auth = target.auth;
-	if (!isRecord(auth)) return false;
-	return ["apiKeyRef", "oauthProfile", "apiKeyEnvVar"].some(
-		(key) => typeof auth[key] === "string" && (auth[key] as string).trim().length > 0,
-	);
+/** What each of the user's own targets names for its credential, by validated id. */
+function userTargetCredentials(userBlob: Record<string, unknown> | undefined): Map<string, "stored" | "key-variable"> {
+	const credentials = new Map<string, "stored" | "key-variable">();
+	if (!Array.isArray(userBlob?.targets)) return credentials;
+	for (const target of validateSettings({ targets: userBlob.targets }).settings.targets) {
+		if (target.auth?.apiKeyRef?.trim() || target.auth?.oauthProfile?.trim()) credentials.set(target.id, "stored");
+		else if (target.auth?.apiKeyEnvVar?.trim()) credentials.set(target.id, "key-variable");
+	}
+	return credentials;
 }
 
 /**
@@ -1041,12 +1044,13 @@ function validateLayerStack(
 	// Arrays replace wholesale, so a project layer that sets `targets` supplied every entry.
 	if (sources.targets === "project" || sources.targets === "project.local") {
 		const file = sources.targets === "project" ? prepared.projectFile : prepared.localFile;
-		const userTargets = (Array.isArray(user.blob?.targets) ? user.blob.targets : []).filter(isRecord);
-		const userCredentialIds = new Set(
-			userTargets.filter(declaresCredential).flatMap((entry) => (typeof entry.id === "string" ? [entry.id] : [])),
-		);
-		noteProjectTargets(validation.settings.targets, { file, userCredentialIds });
-		if (userTargets.length > 0)
+		const userCredentials = userTargetCredentials(user.blob);
+		noteProjectTargets(validation.settings.targets);
+		for (const target of validation.settings.targets) {
+			const userCredential = userCredentials.get(target.id);
+			markProjectTarget(target, { file, ...(userCredential !== undefined ? { userCredential } : {}) });
+		}
+		if (Array.isArray(user.blob?.targets) && user.blob.targets.length > 0)
 			issues.push({ origin: sources.targets, path: "targets", message: PROJECT_TARGETS_REPLACE_USER_TARGETS });
 		const removed = downgradeProjectRemovedTargets(merged, user.blob, validation, sources.targets);
 		downgraded = removed.paths;

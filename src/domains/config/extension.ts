@@ -5,6 +5,7 @@ import { writeDiagnostic } from "../../core/diagnostics.js";
 import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
 import { configureGitCommitAttribution } from "../../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../../core/guardrails.js";
+import { keepProjectTargetOrigins } from "../../core/project-target-urls.js";
 import { pinRunSettings } from "../../core/run-overrides.js";
 import { formatSettingsLayerWarning } from "../../core/settings-layer-diagnostics.js";
 import {
@@ -149,7 +150,9 @@ export function createConfigBundle(
 	const extension: DomainExtension = {
 		async start() {
 			if (initialSettings) {
-				snapshot = pinRunSettings(structuredClone(initialSettings) as PancodeSettings);
+				const owned = structuredClone(initialSettings) as PancodeSettings;
+				keepProjectTargetOrigins(initialSettings.targets, owned.targets);
+				snapshot = pinRunSettings(owned);
 				projectWarning = formatSettingsLayerWarning(readLayeredSettings(process.cwd()));
 			} else {
 				const layered = readStrictLayeredSettings(process.cwd());

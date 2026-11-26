@@ -19,6 +19,7 @@
  */
 
 import type { PancodeSettings } from "./config.js";
+import { keepProjectTargetOrigins } from "./project-target-urls.js";
 
 type SessionThinkingLevel = PancodeSettings["chat"]["thinkingLevel"];
 
@@ -90,6 +91,7 @@ export function seedSessionRouting(saved: Readonly<PancodeSettings>): SessionRou
  */
 export function applySessionRouting(saved: Readonly<PancodeSettings>, routing: SessionRoutingState): PancodeSettings {
 	const view = structuredClone(saved) as PancodeSettings;
+	keepProjectTargetOrigins(saved.targets, view.targets);
 	view.chat.target = routing.orchestrator.target;
 	view.chat.model = routing.orchestrator.model;
 	view.chat.thinkingLevel = routing.orchestrator.thinkingLevel;
@@ -293,6 +295,7 @@ export function setAtPath(target: PancodeSettings, path: string, value: unknown)
 export function applyOverrides(base: Readonly<PancodeSettings>, overrides: SessionOverrides): PancodeSettings {
 	if (overrides.size === 0) return base as PancodeSettings;
 	const view = structuredClone(base) as PancodeSettings;
+	keepProjectTargetOrigins(base.targets, view.targets);
 	for (const [path, value] of overrides) setAtPath(view, path, value);
 	return view;
 }

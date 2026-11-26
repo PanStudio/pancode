@@ -27,7 +27,7 @@ import {
 } from "../../core/owner-only-acl.js";
 import { readPancodeVersion } from "../../core/package-root.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
-import { REDECLARED_TARGET_FIX, unsetKeyVariableSentence } from "../../core/project-target-urls.js";
+import { REDECLARED_TARGET_FIX_LEAD, unsetKeyVariableSentence } from "../../core/project-target-urls.js";
 import type { SettingsScalarRepair } from "../../core/settings-issues.js";
 import { formatSettingsIssues } from "../../core/settings-issues.js";
 import { formatSettingsLayerIssue } from "../../core/settings-layer-diagnostics.js";
@@ -949,7 +949,7 @@ export function withDoctorCommand(finding: DoctorFinding): DoctorFinding {
 		// The setup-status sentence names its command as plain "Run: pancode ...", and a project trust notice as
 		// "Review with pancode config trust <surface>".
 		/\b(?:Run:|Review with) pancode /.test(finding.detail) ||
-		finding.detail.includes(REDECLARED_TARGET_FIX.replace(/\.$/u, ""))
+		finding.detail.includes(REDECLARED_TARGET_FIX_LEAD)
 	)
 		return finding;
 	const name = finding.name;

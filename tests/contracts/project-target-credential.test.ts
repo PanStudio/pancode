@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { classifyCallFailure } from "../../src/core/call-failure.js";
 import { redeclaredTargetSentence } from "../../src/core/project-target-urls.js";
+import { applySessionRouting, seedSessionRouting } from "../../src/core/session-routing.js";
 import {
 	PROJECT_TARGETS_REPLACE_USER_TARGETS,
 	readLayeredSettings,
@@ -131,12 +132,27 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	const url = "http://192.0.2.10:4000/v1";
 	writeFileSync(
 		join(configDir, "settings.yaml"),
-		`targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n    auth:\n      apiKeyRef: litellm-key\n`,
+		[
+			"targets:",
+			"  - id: litellm",
+			"    runtime: litellm",
+			`    url: ${url}`,
+			"    auth:",
+			"      apiKeyRef: litellm-key",
+			"  - id: ' work '",
+			"    runtime: github-copilot",
+			"    auth:",
+			"      oauthProfile: work-login",
+			"",
+		].join("\n"),
 	);
 	const workspace = join(home.dir, "workspace");
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	const localFile = join(workspace, ".pancode", "settings.local.yaml");
-	writeFileSync(localFile, `targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n`);
+	writeFileSync(
+		localFile,
+		`targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n  - id: work\n    runtime: github-copilot\n    auth:\n      apiKeyEnvVar: WORK_KEY\n`,
+	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
 	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
@@ -155,7 +171,25 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	strictEqual(resolveAuthTarget(target, litellm).credentialRefusal, refusal);
 	const status = bootAuthStatus(target, litellm);
 	strictEqual(status.available, false);
-	strictEqual(status.redeclaredIn, localFile);
+	strictEqual(status.redeclared, refusal);
+	// The session's routed view is a clone; the file still comes from this snapshot.
+	const view = applySessionRouting(layered.settings, seedSessionRouting(layered.settings));
+	const routed = view.targets.find((entry) => entry.id === "litellm");
+	ok(routed);
+	strictEqual(resolveAuthTarget(routed, litellm).credentialRefusal, refusal);
+	// A copy that lost its origin is still refused, never sent the placeholder.
+	match(
+		resolveAuthTarget(structuredClone(target), litellm).credentialRefusal ?? "",
+		/redeclared in a project settings file/,
+	);
+	// A sign-in runtime ignores the project's key variable, and its fix names no key variable; the user id was trimmed.
+	const work = layered.settings.targets.find((entry) => entry.id === "work");
+	ok(work);
+	const copilot: RuntimeAuthMetadata = { id: "github-copilot", tier: "cloud", auth: "oauth" };
+	const signIn = resolveAuthTarget(work, copilot).credentialRefusal ?? "";
+	strictEqual(signIn, redeclaredTargetSentence("work", localFile, true));
+	strictEqual(signIn.includes("apiKeyEnvVar"), false);
+	strictEqual(bootAuthStatus(work, copilot).available, false);
 	const auth = openAuthStorage();
 	auth.setApiKey("litellm-key", "sk-stored-canary");
 	const resolved = await auth.resolveForTarget(resolveAuthTarget(target, litellm));
@@ -164,6 +198,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 });
 
 test("a refused credential and a placeholder-key 401 each name their real cause, not a key to replace", () => {
+	const signInRefusal = redeclaredTargetSentence("work", "/w/.pancode/settings.yaml", true);
 	const refused = classifyCallFailure(
 		new Error(redeclaredTargetSentence("litellm", "/w/.pancode/settings.local.yaml")),
 		{
@@ -185,6 +220,14 @@ test("a refused credential and a placeholder-key 401 each name their real cause,
 	ok(placeholder);
 	strictEqual(providerFailureHeadline(placeholder), "The endpoint asks for a credential; this target sends none.");
 	match(providerFailureAdvice(placeholder), /^pancode configure --id bare adds one /);
+	// A project's list replaces the user's, so its own target's fix is that file, not configure.
+	const projectOnly = readProviderFailureRoute({ ...placeholder, projectFile: "/w/.pancode/settings.yaml" });
+	ok(projectOnly);
+	strictEqual(
+		providerFailureAdvice(projectOnly).startsWith("Give bare auth.apiKeyEnvVar in /w/.pancode/settings.yaml "),
+		true,
+	);
+	strictEqual(classifyCallFailure(new Error(signInRefusal), { invoked: false }).errorClass, "credential_refused");
 	// A real key the endpoint refused keeps the old wording.
 	const sent = { targetId: "bare", stage: "auth", errorClass: "http_401" };
 	strictEqual(providerFailureHeadline(sent), "The provider refused the credential.");

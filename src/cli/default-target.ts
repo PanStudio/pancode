@@ -76,7 +76,7 @@ function setupFactsFor(settings: Readonly<PancodeSettings>): SetupFacts {
 			provider: auth.providerId,
 			...(envVariable ? { envVariable } : {}),
 			...(projectUrl !== null ? { projectUrl } : {}),
-			...(auth.redeclaredIn !== undefined ? { redeclaredIn: auth.redeclaredIn } : {}),
+			...(auth.redeclared !== undefined ? { redeclared: auth.redeclared } : {}),
 		};
 	}
 	return { chat: settings.chat, target: facts };

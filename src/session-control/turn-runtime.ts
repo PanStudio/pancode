@@ -16,6 +16,7 @@ import { classifyCallFailure, trackCallFetch } from "../core/call-failure.js";
 import { gatewayRoutingObservationFromRecord, gatewayRoutingObservationLabel } from "../core/gateway-routing.js";
 import { isHostAuthored, rememberMessageCalls } from "../core/message-accounting.js";
 import { applyModelAdmission, type ModelAdmissionEvent } from "../core/model-admission.js";
+import { projectTargetOrigin } from "../core/project-target-urls.js";
 import { type ModelRouteRefusal, modelRouteGuarded, modelRouteRefusalMessage } from "../core/response-model-id.js";
 import { requestedThinking } from "../core/telemetry/call-effort.js";
 import { mainAgent } from "../core/telemetry/context.js";
@@ -209,6 +210,12 @@ function isCollectedBatchResult(toolName: string, result: unknown): boolean {
 		details.complete === true &&
 		details.collected === true
 	);
+}
+
+/** The project file a target's entry came from, for a remedy user settings cannot apply. */
+function projectFileOf(target: object): { projectFile?: string } {
+	const file = projectTargetOrigin(target)?.file;
+	return file !== undefined ? { projectFile: file } : {};
 }
 
 export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
@@ -2030,6 +2037,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 								errorClass: failure.errorClass,
 								partialReply: extractText(message).length > 0,
 								...(failure.stage === "auth" && placeholderKeySent ? { noCredential: true } : {}),
+								...(failure.stage === "auth" && placeholderKeySent ? projectFileOf(localRuntime.runtimeResolution.target) : {}),
 							},
 						});
 					const retryAfterMs = callTracking?.retryAfterMs();

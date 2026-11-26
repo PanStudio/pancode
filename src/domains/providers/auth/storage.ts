@@ -5,7 +5,7 @@ import {
 	projectChosenTargetUrl,
 	projectTargetKeyVariable,
 	redeclaredTargetSentence,
-	redeclaredUserTargetFile,
+	redeclaredUserTarget,
 	unsetKeyVariableSentence,
 } from "../../../core/project-target-urls.js";
 import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
@@ -343,9 +343,9 @@ export function resolveAuthTarget(target: TargetDescriptor, runtime: RuntimeAuth
 	if (explicitEnvVar) authTarget.explicitEnvVar = explicitEnvVar;
 	const targetEnvVar = target.auth?.apiKeyRef?.trim() ? undefined : targetKeyEnvVar?.trim();
 	if (targetEnvVar) authTarget.targetEnvVar = targetEnvVar;
-	const redeclaredIn = runtime.auth === "api-key" ? redeclaredUserTargetFile(target) : null;
-	if (redeclaredIn !== null) {
-		authTarget.credentialRefusal = redeclaredTargetSentence(target.id, redeclaredIn);
+	const redeclared = redeclaredUserTarget(target, runtime.auth);
+	if (redeclared !== null) {
+		authTarget.credentialRefusal = redeclaredTargetSentence(target.id, redeclared.file, redeclared.signIn);
 		return authTarget;
 	}
 	const projectUrl = projectChosenTargetUrl(target, targetRequiresAuth(target, runtime));
@@ -373,7 +373,7 @@ export function targetRequiresAuth(target: TargetDescriptor, runtime: RuntimeAut
 	if (runtime.auth !== "api-key") return false;
 	if (target.auth?.apiKeyEnvVar || target.auth?.apiKeyRef || target.auth?.oauthProfile) return true;
 	// A project's redeclaration of a credentialed user target still needs that credential; it is refused, not skipped.
-	if (redeclaredUserTargetFile(target) !== null) return true;
+	if (redeclaredUserTarget(target, runtime.auth) !== null) return true;
 	return runtime.tier === "cloud" || Boolean(runtime.credentialsEnvVar);
 }
 

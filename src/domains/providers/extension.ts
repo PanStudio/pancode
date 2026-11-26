@@ -4,6 +4,7 @@ import { type PancodeSettings, readSettings } from "../../core/config.js";
 import { writeDiagnostic } from "../../core/diagnostics.js";
 import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
 import { runtimeModelInfo } from "../../core/model-tier.js";
+import { keepProjectTargetOrigins } from "../../core/project-target-urls.js";
 import { ensurePiAiRegistered } from "../../engine/ai.js";
 import { registerPancodeApiProviders, setGlobalDefaultMaxOutputTokens } from "../../engine/apis/index.js";
 import { releaseModelsLoadedDuring, releaseScopeFor } from "../../engine/apis/residency.js";
@@ -529,7 +530,9 @@ export function createProvidersBundle(
 		options?.signal?.throwIfAborted();
 		if (stopped) return null;
 		// A probe owns the descriptor it started with across asynchronous I/O.
-		target = structuredClone(target);
+		const owned = structuredClone(target);
+		keepProjectTargetOrigins([target], [owned]);
+		target = owned;
 		const previous = statuses.get(target.id);
 		const desc = registry.get(target.runtime);
 		if (!desc) {
@@ -763,6 +766,7 @@ export function createProvidersBundle(
 		const configuredTarget = settings.targets.find((ep) => ep.id === targetId);
 		if (!configuredTarget) return null;
 		const target = structuredClone(configuredTarget);
+		keepProjectTargetOrigins([configuredTarget], [target]);
 		const desc = registry.get(target.runtime);
 		if (!desc || typeof desc.probeReasoning !== "function") return null;
 		const cached = reasoningCache.get(reasoningCacheKey(targetId, modelId)) ?? null;

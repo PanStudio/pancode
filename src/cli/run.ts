@@ -10,6 +10,7 @@ import { setAutonomousCommitProcess } from "../core/git-commit-attribution.js";
 import { parseJsonObjectPayload } from "../core/json-payload.js";
 import { readPancodeVersion } from "../core/package-root.js";
 import { relativePathEscapes } from "../core/path-containment.js";
+import { keepProjectTargetOrigins } from "../core/project-target-urls.js";
 import { requirePricedRefusal, withRunOverrides } from "../core/run-overrides.js";
 import { readStrictLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
@@ -927,6 +928,7 @@ async function runDispatch(
 	// throw site.
 	configureRunEventJournal(baseSettings.fleet.history.journal);
 	effectiveSettings = structuredClone(baseSettings);
+	keepProjectTargetOrigins(baseSettings.targets, effectiveSettings.targets);
 	// D1: headless takes yolo only from --autonomy on the command line, and the
 	// parser rejects --autonomy with --agent, so this path never takes it. Pin
 	// the clone to default so a settings-file yolo cannot reach it either.

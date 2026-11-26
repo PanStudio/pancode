@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { redeclaredTargetSentence, unsetKeyVariableSentence } from "../../core/project-target-urls.js";
+import { unsetKeyVariableSentence } from "../../core/project-target-urls.js";
 
 /**
  * One answer to "can this home chat, and if not, what is the one missing thing?".
@@ -25,17 +25,19 @@ export type Missing =
 	 * No stored key or sign-in for the provider the target authenticates as. With `projectUrl` the target points at
 	 * an address a project chose, which never receives the operator's keys, so only defining it in user settings helps.
 	 * No key variable is suggested for it: the project picked the address, so naming the variable its settings or the
-	 * runtime read would steer the operator's real key there. With `redeclaredIn` that project settings file redeclared
-	 * a target the user settings give a credential, and the redeclaration carries none. With `sendsNone` the target
-	 * declares no credential, so its endpoint got PanCode's local placeholder key and refused it.
+	 * runtime read would steer the operator's real key there. `redeclared` is the refusal for a project's redeclaration
+	 * of a target the user settings give a credential, naming that project file. With `sendsNone` the target declares
+	 * no credential, so its endpoint got PanCode's local placeholder key and refused it; `projectFile` is the project
+	 * settings file that declares the target, which user settings cannot change.
 	 */
 	| {
 			kind: "credential";
 			target: string;
 			provider: string;
 			projectUrl?: string;
-			redeclaredIn?: string;
+			redeclared?: string;
 			sendsNone?: true;
+			projectFile?: string;
 	  }
 	/**
 	 * The target names the environment variable its key comes from, and it is not set. `projectFile` is the project
@@ -78,7 +80,7 @@ export interface SetupTargetFacts {
 		provider: string;
 		envVariable?: string;
 		projectUrl?: string;
-		redeclaredIn?: string;
+		redeclared?: string;
 	};
 	/** The last reachability check, when one ran. */
 	probe?: { ok: true } | { ok: false; detail: string };
@@ -121,12 +123,12 @@ export function setupStatus<TargetDraft = unknown>(facts: SetupFacts<TargetDraft
 		const credential = target.credential;
 		if (credential !== undefined && !credential.available) {
 			missing.push(
-				credential.redeclaredIn !== undefined
+				credential.redeclared !== undefined
 					? {
 							kind: "credential",
 							target: target.id,
 							provider: credential.provider,
-							redeclaredIn: credential.redeclaredIn,
+							redeclared: credential.redeclared,
 						}
 					: credential.projectUrl !== undefined
 						? {
@@ -166,14 +168,14 @@ export function describeMissing(
 	switch (missing.kind) {
 		case "credential": {
 			if (missing.sendsNone === true) {
+				const cause = `${missing.target} declares no credential, so PanCode sent none, and its endpoint asks for one.`;
+				// The project's list replaces the user's, so configure cannot reach this entry.
+				if (missing.projectFile !== undefined)
+					return { sentence: `${cause} Give ${missing.target} auth.apiKeyEnvVar in ${missing.projectFile}.` };
 				const command = `pancode configure --id ${missing.target}`;
-				return {
-					sentence: `${missing.target} declares no credential, so PanCode sent none, and its endpoint asks for one. Run: ${command}`,
-					command,
-				};
+				return { sentence: `${cause} Run: ${command}`, command };
 			}
-			if (missing.redeclaredIn !== undefined)
-				return { sentence: redeclaredTargetSentence(missing.target, missing.redeclaredIn) };
+			if (missing.redeclared !== undefined) return { sentence: missing.redeclared };
 			if (missing.projectUrl !== undefined)
 				return {
 					sentence: `${missing.target} points at ${missing.projectUrl}, an address this project chose, so PanCode sends it none of your keys. To use it, define ${missing.target} in your user settings with its own key variable (auth.apiKeyEnvVar).`,
@@ -237,9 +239,16 @@ export function missingFromFailedCall(route: {
 	errorClass?: string;
 	partialReply?: boolean;
 	noCredential?: boolean;
+	projectFile?: string;
 }): Missing | null {
 	if (route.stage === "auth" && route.noCredential === true && /^http_\d{3}$/u.test(route.errorClass ?? ""))
-		return { kind: "credential", target: route.targetId, provider: route.targetId, sendsNone: true };
+		return {
+			kind: "credential",
+			target: route.targetId,
+			provider: route.targetId,
+			sendsNone: true,
+			...(route.projectFile !== undefined ? { projectFile: route.projectFile } : {}),
+		};
 	if (route.stage !== "transport" || route.url === undefined || route.partialReply === true) return null;
 	if (route.errorClass !== "network_error" && route.errorClass !== "timeout") return null;
 	const detail = route.errorClass === "timeout" ? "timed out" : "connection failed";

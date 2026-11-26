@@ -167,6 +167,8 @@ export interface ProviderFailureRoute {
 	partialReply?: boolean;
 	/** The call carried no credential: the target declares none, so the endpoint got PanCode's local placeholder key. */
 	noCredential?: boolean;
+	/** The project settings file whose targets list declares the target; `pancode configure` cannot change that entry. */
+	projectFile?: string;
 }
 
 export function readProviderFailureRoute(value: unknown): ProviderFailureRoute | null {
@@ -178,6 +180,7 @@ export function readProviderFailureRoute(value: unknown): ProviderFailureRoute |
 				errorClass?: unknown;
 				partialReply?: unknown;
 				noCredential?: unknown;
+				projectFile?: unknown;
 		  }
 		| null
 		| undefined;
@@ -189,6 +192,7 @@ export function readProviderFailureRoute(value: unknown): ProviderFailureRoute |
 		...(typeof route.errorClass === "string" ? { errorClass: route.errorClass } : {}),
 		...(route.partialReply === true ? { partialReply: true } : {}),
 		...(route.noCredential === true ? { noCredential: true } : {}),
+		...(typeof route.projectFile === "string" && route.projectFile.length > 0 ? { projectFile: route.projectFile } : {}),
 	};
 }
 
@@ -279,7 +283,11 @@ export function providerFailureRailFacts(
 		if (errorClass === "credential_refused") return { cause: { text: "credential withheld", short: "not sent" } };
 		const way = { text: `pancode configure --id ${route.targetId}` };
 		if (status !== null && route.noCredential === true)
-			return { cause: { text: "needs a credential", short: "needs key" }, way };
+			return {
+				cause: { text: "needs a credential", short: "needs key" },
+				way:
+					route.projectFile !== undefined ? { text: "auth.apiKeyEnvVar in its project file", short: "project file" } : way,
+			};
 		if (status !== null) return { cause: { text: "credential refused", short: "key refused" }, way };
 		return {
 			cause:
@@ -316,7 +324,9 @@ export function providerFailureAdvice(route: ProviderFailureRoute, text?: string
 	if (route.stage === "auth") {
 		if (errorClass === "credential_refused") return `${SWITCH_ROUTE}.`;
 		if (route.noCredential === true && httpStatusOf(errorClass) !== null)
-			return `${configure} adds one ${GLYPH.sep} ${SWITCH_ROUTE}.`;
+			return route.projectFile !== undefined
+				? `Give ${route.targetId} auth.apiKeyEnvVar in ${route.projectFile} ${GLYPH.sep} ${SWITCH_ROUTE}.`
+				: `${configure} adds one ${GLYPH.sep} ${SWITCH_ROUTE}.`;
 		// The setup status's sentence for a route with no credential, so the banner, `run` and `doctor` read the same.
 		const provider = /No API key for provider: (\S+?)\.?(?:\s|$)/u.exec(text ?? "")?.[1];
 		if (provider !== undefined && errorClass !== "credential_expired" && httpStatusOf(errorClass) === null)

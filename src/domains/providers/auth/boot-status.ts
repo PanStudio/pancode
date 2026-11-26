@@ -8,7 +8,8 @@ import { parse as parseYaml } from "yaml";
 import {
 	projectChosenTargetUrl,
 	projectTargetKeyVariable,
-	redeclaredUserTargetFile,
+	redeclaredTargetSentence,
+	redeclaredUserTarget,
 } from "../../../core/project-target-urls.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
 import { findEngineEnvKeys, getEngineEnvApiKey } from "../../../engine/env-api-keys.js";
@@ -51,8 +52,8 @@ export interface BootAuthStatus {
 	providerId: string;
 	required: boolean;
 	available: boolean;
-	/** The project settings file whose redeclaration of this credentialed user target withholds every credential. */
-	redeclaredIn?: string;
+	/** Why a project's redeclaration of this credentialed user target withholds every credential, naming its file. */
+	redeclared?: string;
 }
 
 export function bootAuthStatus(target: TargetDescriptor, runtime: RuntimeAuthMetadata): BootAuthStatus {
@@ -64,8 +65,14 @@ export function bootAuthStatus(target: TargetDescriptor, runtime: RuntimeAuthMet
 				Boolean(runtime.credentialsEnvVar)));
 	const providerId =
 		target.auth?.oauthProfile?.trim() || target.auth?.apiKeyRef?.trim() || runtime.oauthProviderId || runtime.id;
-	const redeclaredIn = runtime.auth === "api-key" ? redeclaredUserTargetFile(target) : null;
-	if (redeclaredIn !== null) return { providerId, required: true, available: false, redeclaredIn };
+	const redeclared = redeclaredUserTarget(target, runtime.auth);
+	if (redeclared !== null)
+		return {
+			providerId,
+			required: true,
+			available: false,
+			redeclared: redeclaredTargetSentence(target.id, redeclared.file, redeclared.signIn),
+		};
 	if (!required) return { providerId, required: false, available: true };
 	const projectKey = runtime.auth === "oauth" ? null : projectTargetKeyVariable(target);
 	if (projectChosenTargetUrl(target, true)) {
