@@ -9,12 +9,36 @@
 	height: 100%;
 	overflow: visible;
 }
-/* The artwork's own colours in both themes; the mark is never recoloured. */
-.pancode-mark__tile {
-	fill: var(--pancode-black);
+/* The artwork's own colours, never recoloured: each stop or flat facet carries its dark-ground paint and its
+   light-ground paint (PancodeMark.tsx), and the theme picks one. Flat facets (below 32 px) have no light file, so
+   on light they take the 700 steps of the same ramps, as the site's lockup does. */
+.pancode-mark__stop,
+.pancode-mark__flat {
+	--mark-paint: var(--mark-light, var(--mark-dark));
 }
-.pancode-mark__glyph {
-	fill: var(--pancode-green400);
+.pancode-mark__flat--left,
+.pancode-mark__flat--top {
+	--mark-light: var(--pancode-green700);
+}
+.pancode-mark__flat--right {
+	--mark-light: var(--pancode-teal700);
+}
+.pancode-mark__flat--point {
+	--mark-light: var(--pancode-orange700);
+}
+:root[data-theme="dark"] :is(.pancode-mark__stop, .pancode-mark__flat) {
+	--mark-paint: var(--mark-dark);
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) :is(.pancode-mark__stop, .pancode-mark__flat) {
+		--mark-paint: var(--mark-dark);
+	}
+}
+.pancode-mark__stop {
+	stop-color: var(--mark-paint);
+}
+.pancode-mark__flat {
+	fill: var(--mark-paint);
 }
 .pancode-logo {
 	display: inline-block;
@@ -59,10 +83,10 @@
 	stroke-linejoin: round;
 }
 @media (forced-colors: active) {
-	.pancode-mark__tile {
-		fill: Canvas;
+	.pancode-mark__stop {
+		stop-color: CanvasText;
 	}
-	.pancode-mark__glyph {
+	.pancode-mark__flat {
 		fill: CanvasText;
 	}
 	.pancode-pulse__live {

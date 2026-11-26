@@ -43,8 +43,8 @@
 		{
 			"id": "gui-icon-192",
 			"source": "assets/pancode-app-icon-192.png",
-			"sha256": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
-			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
+			"sha256": "77186db0b7965fff669966f55d299ab1b9674eb15753a26ff05b4f4339079b8b",
+			"provenance": "Canonical PanCode mark from site/export-brand.mjs at 80% of the canvas on the palette black, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 192,
 				"height": 192
@@ -53,7 +53,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode application icon.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/icon-192.png"
@@ -62,8 +62,8 @@
 		{
 			"id": "gui-icon-512",
 			"source": "assets/pancode-app-icon-512.png",
-			"sha256": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9",
-			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
+			"sha256": "354778f2100c6e5d86f4744d6729e369e2372ad8f3c228ad363ff94dd80044bc",
+			"provenance": "Canonical PanCode mark from site/export-brand.mjs at 80% of the canvas on the palette black, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 512,
 				"height": 512
@@ -72,7 +72,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode application icon.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/icon-512.png"
@@ -238,7 +238,7 @@
 		{
 			"id": "gui-pancode-mark",
 			"source": "assets/pancode-mark-gui.webp",
-			"sha256": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
+			"sha256": "73597b4374627c7e0fba52d46e1dc1227835d9c30940c0676c911eeadfb4e9d7",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 128,
@@ -248,7 +248,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/pancode-logo.webp"
@@ -257,7 +257,7 @@
 		{
 			"id": "gui-favicon",
 			"source": "assets/pancode-app-favicon.png",
-			"sha256": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
+			"sha256": "2a0c2bdbb86356a286d69c2ce899a6476bfcf03a0287055b2bebe4322ee27b93",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 32,
@@ -267,7 +267,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/favicon.png"

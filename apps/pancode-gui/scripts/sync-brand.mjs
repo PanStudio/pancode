@@ -79,6 +79,15 @@ const theme = (name) => {
 		"color-scrim": name === "dark" ? "72%" : "52%",
 	});
 };
+// Every palette colour the mark's cuts name, so PancodeMark paints the artwork from the palette, not from copies.
+const markColours = new Set();
+for (const cut of ["pancode-mark", "pancode-mark-light", "pancode-mark-small"])
+	for (const [, name] of (await readFile(file(`../../../assets/brand/${cut}.svg`), "utf8")).matchAll(
+		/var\(--palette-([\w-]+)/g,
+	))
+		markColours.add(name);
+markColours.delete("black");
+markColours.delete("green400");
 const { code, type } = design;
 const family = (role) => `"${type.families[role].family}", ${type.families[role].fallback}`;
 const codeColors = {
@@ -102,6 +111,7 @@ ${type.faces.map(({ family, style, weight, file }) => `@font-face { font-family:
 	--pancode-black: ${hex("black")};
 	--pancode-green400: ${hex("green400")};
 	--pancode-pine1: ${hex("pine1")};
+${lines(Object.fromEntries([...markColours].sort().map((name) => [`pancode-${name}`, hex(name)])))}
 	--font-ui: ${family("text")};
 	--font-editorial: ${family("display")};
 	--font-mono: ${family("mono")};

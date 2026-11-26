@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Cache only the public recovery page. Conversations, API responses, tokens and mutations never enter this cache.
-const cacheName = "pancode-recovery-v11";
+const cacheName = "pancode-recovery-v12";
 const recoveryAssets = ["/offline.html", "/offline.css", "/offline.js", "/icon-192.png"];
 self.addEventListener("install", (event) => {
 	event.waitUntil(

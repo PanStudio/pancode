@@ -3,7 +3,7 @@
 		{
 			"name": "pancode-mark",
 			"source": "assets/brand/pancode-mark.svg",
-			"sha256": "d9693e716c0a01be37d52a24484f8c66b01cd19c8011f4b962b222fe8de568c4",
+			"sha256": "f9e1f655ce726ffa391c47ebdfe5412fe7a21d905c864598db421671f590d522",
 			"dimensions": [
 				512,
 				512
@@ -12,25 +12,34 @@
 	],
 	"projection": {
 		"source": "site/export-brand.mjs",
-		"designSha256": "7b4537617b8e0a284ed19e4edb8ddc5f66a73c2a84c782b52be7ed78a9f69448",
+		"designSha256": "516a45001f7eeead1b893c003d90a9b90e1ca3dfa90c4d806ac59325c30634e2",
 		"encoders": {
 			"pngquant": "2.18.0",
 			"Pillow": "12.1.0",
 			"libwebp": "1.6.0"
 		},
-		"padding": "Square app icons center the mark within a 94% safe area; the header mark is unchanged.",
+		"padding": "The favicon is the mark on a transparent ground; the app icons set it at 80% on the palette black, which is also maskable-safe; the header mark is unchanged.",
 		"iconTreatment": {
 			"source": "site/assets/brand/pancode-mark.png",
-			"safeArea": 0.94,
+			"scale": {
+				"favicon.png": 1,
+				"icon-192.png": 0.8,
+				"icon-512.png": 0.8
+			},
+			"ground": {
+				"favicon.png": null,
+				"icon-192.png": "black",
+				"icon-512.png": "black"
+			},
 			"resampling": "Pillow Image.Resampling.LANCZOS",
 			"alpha": "Preserved from the canonical mark before resizing.",
 			"optimization": "pngquant 2.18.0, quality 90-100, speed 1; palette quantization after resizing."
 		},
 		"sha256": {
-			"pancode-logo.webp": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
-			"favicon.png": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
-			"icon-192.png": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
-			"icon-512.png": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9"
+			"pancode-logo.webp": "73597b4374627c7e0fba52d46e1dc1227835d9c30940c0676c911eeadfb4e9d7",
+			"favicon.png": "2a0c2bdbb86356a286d69c2ce899a6476bfcf03a0287055b2bebe4322ee27b93",
+			"icon-192.png": "77186db0b7965fff669966f55d299ab1b9674eb15753a26ff05b4f4339079b8b",
+			"icon-512.png": "354778f2100c6e5d86f4744d6729e369e2372ad8f3c228ad363ff94dd80044bc"
 		}
 	}
 }

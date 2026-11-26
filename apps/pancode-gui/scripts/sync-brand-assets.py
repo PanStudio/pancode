@@ -47,10 +47,11 @@ provenance["projection"] = {
     "source": "site/export-brand.mjs",
     "designSha256": hashlib.sha256((args.kit / "design-system.json").read_bytes()).hexdigest(),
     "encoders": encoders,
-    "padding": "Square app icons center the mark within a 94% safe area; the header mark is unchanged.",
+    "padding": "The favicon is the mark on a transparent ground; the app icons set it at 80% on the palette black, which is also maskable-safe; the header mark is unchanged.",
     "iconTreatment": {
         "source": "site/assets/brand/pancode-mark.png",
-        "safeArea": 0.94,
+        "scale": {"favicon.png": 1, "icon-192.png": 0.8, "icon-512.png": 0.8},
+        "ground": {"favicon.png": None, "icon-192.png": "black", "icon-512.png": "black"},
         "resampling": "Pillow Image.Resampling.LANCZOS",
         "alpha": "Preserved from the canonical mark before resizing.",
         "optimization": f"pngquant {pngquant_version}, quality 90-100, speed 1; palette quantization after resizing.",
@@ -61,13 +62,16 @@ header = image.copy()
 header.thumbnail((128, 128), Image.Resampling.LANCZOS)
 header.save(public / "pancode-logo.webp", quality=90, method=6)
 treatment = provenance["projection"]["iconTreatment"]
+palette = json.loads((args.kit / "design-system.json").read_text())["palette"]
 for size in [32, 192, 512]:
+    name = "favicon.png" if size == 32 else f"icon-{size}.png"
     resized = image.copy()
-    edge = round(size * treatment["safeArea"])
+    edge = round(size * treatment["scale"][name])
     resized.thumbnail((edge, edge), Image.Resampling.LANCZOS)
-    square = Image.new("RGBA", (size, size))
+    ground = treatment["ground"][name]
+    square = Image.new("RGBA", (size, size), (*bytes.fromhex(palette[ground][1:]), 255) if ground else (0, 0, 0, 0))
     square.alpha_composite(resized, ((size-resized.width)//2, (size-resized.height)//2))
-    output = public / ("favicon.png" if size == 32 else f"icon-{size}.png")
+    output = public / name
     square.save(output, optimize=True)
     subprocess.run([pngquant, "--quality", "90-100", "--speed", "1", "--force", "--output", str(output), str(output)], check=True)
 provenance["projection"]["sha256"] = {
