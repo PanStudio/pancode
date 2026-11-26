@@ -101,7 +101,7 @@ An automatic compaction and `/context compact` each emit one canonical compactio
 
 The settled `Context compact` card in the transcript adds `· no summary` when the run completed without a summarizer checkpoint, so an eviction pass, whose output stays recallable, does not read like a summary (`src/interactive/context-operation-view.ts`).
 
-A compaction that reduces nothing leaves no transcript card. Its rail above the composer settles as `Context compact · no change`, and the rail's message row leads with the measured context size before the reason, for example `141.9k tokens · nothing older than the protected skill turn to summarize`.
+A compaction that reduces nothing leaves no transcript card. Its rail above the composer settles as `Context compact · no change`, and the rail's message row leads with the measured context size before the reason, for example `142k tokens · nothing older than the protected skill turn to summarize`.
 
 | Reason | Meaning |
 | --- | --- |
