@@ -20,10 +20,19 @@ export async function processServer(env: NodeJS.ProcessEnv) {
 		},
 	);
 	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+	const close = async (signal: "SIGTERM" | "SIGKILL" = "SIGTERM") => {
+		if (child.exitCode !== null || child.signalCode !== null) return;
+		child.kill(signal);
+		await exited;
+	};
+	// This hook runs before the test's own `t.after`. It asks first: a server killed outright never ends its
+	// ACP children, and they went on writing into a home the test was already removing.
 	closeWithTest(async () => {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
-			await exited;
+		const unanswered = setTimeout(() => child.kill("SIGKILL"), 20_000);
+		try {
+			await close();
+		} finally {
+			clearTimeout(unanswered);
 		}
 	});
 	let stdout = "",
@@ -82,9 +91,6 @@ export async function processServer(env: NodeJS.ProcessEnv) {
 		pid: child.pid ?? 0,
 		request,
 		post: (path: string, body: unknown = {}) => request(path, "POST", body),
-		async close(signal: "SIGTERM" | "SIGKILL" = "SIGTERM") {
-			child.kill(signal);
-			await exited;
-		},
+		close,
 	};
 }
