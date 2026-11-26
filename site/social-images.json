@@ -34,7 +34,7 @@
 			"path": "assets/social/cli-diffusion-mercury.png",
 			"width": 1200,
 			"height": 630,
-			"sha256": "5a3ac6cc1dc40d7bda9b7c2d1273fb97a468ab6d678e9cd54c2eda9723b49594"
+			"sha256": "582c71f732a77e357551fd43a5441c7e748ece1dfd7cf96509e87f6095eae04f"
 		},
 		"cli-extension-validate": {
 			"source": "assets/guides/cli-extension-validate.png",
@@ -90,21 +90,21 @@
 			"path": "assets/social/cli-report-preview.png",
 			"width": 1200,
 			"height": 630,
-			"sha256": "72b21d4e51f107e84bfa32f59691d01e558e3dab1be12e8eb27cdbe6d9f7f61c"
+			"sha256": "f215e060a327730acb4e8fdefcd76f5de43f73189c9f0a2d084c129995b59570"
 		},
 		"cli-store-stat": {
 			"source": "assets/guides/cli-store-stat.png",
 			"path": "assets/social/cli-store-stat.png",
 			"width": 1200,
 			"height": 630,
-			"sha256": "3d1ef6a887af9e1fb81f120541c72a29d1b09854ad2a73d5c4840a7967769b78"
+			"sha256": "25fb3c4999ca9a19ebd3aec4dbc7862077fa3c62a1e2649b8d232a45089f4647"
 		},
 		"gui-task": {
 			"source": "assets/gui-task.png",
 			"path": "assets/social/gui-task.png",
 			"width": 1200,
 			"height": 630,
-			"sha256": "b82b5f565f039fbca9cb59594c23d61862a0e9c5a4f38f15148daaa4d896fbd6"
+			"sha256": "0301ef942300365f1bb07c6a3c498964795509725da61da2ab758bf7291d8520"
 		},
 		"tui-configure-saved": {
 			"source": "assets/guides/tui-configure-saved.png",

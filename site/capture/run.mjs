@@ -9,14 +9,14 @@
 //   node site/capture/run.mjs --scratch <dir> --release <version> [--package <tarball>] [--components <dir>] [--publish]
 //
 // --release re-records every scenario from a release: it installs
-// @akougkas/pancode@<version> (or --package, a packed candidate of that version)
+// @panstudio/pancode@<version> (or --package, a packed candidate of that version)
 // into <scratch>/npm-<version>, rewrites version literals in each alt and caption
 // to that version, runs quote-check.mjs at the end, and writes wall times per
 // capture to <scratch>/timings.json. It lists Terminal captures in
 // content/captures.json that no scenario re-records.
 //
 // --pancode names the build to record: a repository checkout with dist/ built, or a
-// prefix from `npm install -g --prefix <dir> @akougkas/pancode@beta` (or a packed
+// prefix from `npm install -g --prefix <dir> @panstudio/pancode@beta` (or a packed
 // candidate), which doctor reports as an npm global install. --build-note says
 // where a build that is not a release came from.
 // A scenario with `profile: "configured"` has one target, spec.copilot: the
@@ -137,8 +137,8 @@ const installed =
 // An npm install runs through its own bin link, so doctor sees one pancode on PATH;
 // a repository build has no bin link and runs through a home shim.
 const pancodeBin = {
-	"lib/node_modules/@akougkas/pancode": "/opt/pancode/bin",
-	"node_modules/@akougkas/pancode": "/opt/pancode/node_modules/.bin",
+	"lib/node_modules/@panstudio/pancode": "/opt/pancode/bin",
+	"node_modules/@panstudio/pancode": "/opt/pancode/node_modules/.bin",
 }[pancode.packageDir];
 const nodePrefix = dirname(dirname(process.execPath));
 const node = `/opt/node/${relative(nodePrefix, process.execPath)}`;
@@ -153,7 +153,7 @@ function installRelease(version, tarball) {
 	const begin = Date.now();
 	const prefix = releasePrefix(version);
 	rmSync(prefix, { recursive: true, force: true });
-	console.log(`release ${version}: installing ${tarball ? resolve(tarball) : `@akougkas/pancode@${version}`}`);
+	console.log(`release ${version}: installing ${tarball ? resolve(tarball) : `@panstudio/pancode@${version}`}`);
 	execFileSync(
 		"npm",
 		[
@@ -163,7 +163,7 @@ function installRelease(version, tarball) {
 			prefix,
 			"--no-audit",
 			"--no-fund",
-			tarball ? resolve(tarball) : `@akougkas/pancode@${version}`,
+			tarball ? resolve(tarball) : `@panstudio/pancode@${version}`,
 		],
 		{ stdio: ["ignore", "ignore", "inherit"] },
 	);
@@ -171,9 +171,9 @@ function installRelease(version, tarball) {
 }
 
 function resolvePancode(path) {
-	for (const packageDir of [".", "lib/node_modules/@akougkas/pancode", "node_modules/@akougkas/pancode"])
+	for (const packageDir of [".", "lib/node_modules/@panstudio/pancode", "node_modules/@panstudio/pancode"])
 		if (existsSync(join(path, packageDir, "dist/cli/index.js"))) return { root: path, packageDir };
-	throw new Error(`${path} has no dist/cli/index.js: build it or install @akougkas/pancode under it.`);
+	throw new Error(`${path} has no dist/cli/index.js: build it or install @panstudio/pancode under it.`);
 }
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
