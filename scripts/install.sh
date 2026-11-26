@@ -795,6 +795,9 @@ main() {
 	if [ ! -f "$install_root/install.json" ] && [ ! -f "$install_root/.installer-owner" ]; then
 		[ ! -e "$install_root/versions" ] || fail "refusing to claim an existing versions directory without installer ownership"
 	fi
+	if [ -f "$install_root/install.json" ] && ! grep -Eq '"schema": *3[,}]?$' "$install_root/install.json"; then
+		fail "$install_root holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another --install-dir, then rerun."
+	fi
 	printf '%s\n' "$MANIFEST_KIND" >"$install_root/.installer-owner"
 	mkdir -p "$install_root/versions" || fail "could not create $install_root"
 	available="$(free_kb "$install_root")"

@@ -194,6 +194,9 @@ function Install-Pancode {
 	if (-not (Test-Path -LiteralPath (Join-Path $installRoot "install.json")) -and -not (Test-Path -LiteralPath $owner)) {
 		if (Test-Path -LiteralPath (Join-Path $installRoot "versions")) { Fail "refusing to claim an existing versions directory without installer ownership" }
 	}
+	if ((Test-Path -LiteralPath $manifestFile) -and [int](Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json).schema -ne 3) {
+		Fail "$installRoot holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another -InstallDir, then rerun."
+	}
 	[IO.File]::WriteAllText($owner, "pancode-installer")
 	New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "versions"), $binDir | Out-Null
 	$work = Join-Path $installRoot (".work." + [guid]::NewGuid().ToString("N").Substring(0, 8))
