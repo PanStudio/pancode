@@ -14,7 +14,7 @@
  * lets `tests/chat-composer.test.ts` run it under plain node:test.
  */
 
-import { usageDisplay, usageKnownAmount } from "../../../../src/core/views/usage-words.js";
+import { usageDisplay, usageFigure, usageKnownAmount } from "../../../../src/core/views/usage-words.js";
 import type { AgentCapabilities } from "../../contracts/capabilities.js";
 import { QUEUE_MAX_ENTRIES, STEER_TEXT_MAX_BYTES } from "../../contracts/runtime.js";
 import type { SessionSnapshot, Turn, Usage } from "../../contracts/sessions.js";
@@ -1082,7 +1082,8 @@ export function turnOutcome(turn: Turn, activity: TurnActivity | number): TurnOu
 		breakdown.push({ group: "Context", label: "Compactions", value: String(counted.compactions) });
 		nerd.push({ label: "Compactions", value: String(counted.compactions) });
 	}
-	const usageLabel = quantities ? `${usageDisplay(quantities.prompt)} in · ${quantities.output.display} out` : null;
+	// The line is a glance: each figure keeps its mark but not the read model's coverage clause, which the breakdown says.
+	const usageLabel = quantities ? `${usageFigure(quantities.prompt)} in · ${usageFigure(quantities.output)} out` : null;
 	if (usageLabel !== null && quantities && usageKnownAmount(quantities.output) !== null) facts.push(usageLabel);
 	if (quantities && usageKnownAmount(quantities.usd) !== null) facts.push(quantities.usd.display);
 	if (toolCount > 0) facts.push(`${toolCount} tool ${toolCount === 1 ? "call" : "calls"}`);

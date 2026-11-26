@@ -546,6 +546,19 @@ test("a completed turn footer carries its time, tokens and tool count, and an un
 		0,
 	);
 	assert.deepEqual(priced.facts, ["12s", "12,436 in · 678 out", "$0.0123"], "a known cost is said once");
+	const partial = turnOutcome(
+		turn({
+			usage: {
+				quantities: {
+					...(usage.quantities as NonNullable<Usage["quantities"]>),
+					prompt: quantity("≥~13,486 (1 call unknown)", 13486),
+					output: quantity("≥~250 (1 call unknown)", 250),
+				},
+			},
+		}),
+		0,
+	);
+	assert.equal(partial.usageLabel, "≥~13,486 in · ≥~250 out", "the coverage clause stays in the breakdown");
 	assert.equal(view.usage, usage, "the full reported accounting stays reachable from the compact outcome");
 	assert.equal(view.detail, null);
 	assert.equal(view.stopReason, null, "a stop reason on a successful turn is noise");
