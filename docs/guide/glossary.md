@@ -35,7 +35,7 @@ The words you meet first, each in a sentence or two, with the guide that explain
 | Memory | Notes PanCode keeps while you work, such as your requirements and what failed, so it can remind the agent later. See [Proactive memory](proactive-memory.md). |
 | Compaction | Shortening a long conversation into a summary so it fits the model's context window. See [Context continuity](context-continuity.md). |
 | PanStore | The project store: a place outside your working tree for result files and datasets, shared by every checkout of the project. See [PanStore](panstore.md). |
-| Built-in MCP server | One of the MCP tool servers for HPC and scientific work that ship inside PanCode, run in a session or by any MCP host with `pancode mcp serve <id>`. See [Built-in MCP servers](pankit.md). |
+| PanKit | PanCode's agent toolkit: MCP tool servers for HPC and scientific work, run inside PanCode or shared with any other MCP host through `pankit serve <id>`. See [PanKit](pankit.md). |
 | Extension API | The contract for authoring extensions, packs, tools and MCP servers, shipped in the `@akougkas/pancode` package as `pancode/sdk/<subpath>`. Unstable until PanCode defines it. See [Extension API (unstable)](sdk.md). |
 | Research campaign | A loop where workers try changes that improve one measured number while every check still passes. See [Research and arena](research-and-arena.md). |
 | Model campaign | One seeded project run across a roster of models with `pancode campaign run`, each in a fresh copy, to compare how far each gets. |

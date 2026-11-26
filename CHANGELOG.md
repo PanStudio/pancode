@@ -4,7 +4,8 @@
 
 ### Changed
 
-- The `panstore` and `pankit` commands are removed. The project store is `pancode store <command>`, a built-in MCP server runs for another MCP host with `pancode mcp serve <id>`, and `pancode mcp list` lists the built-in servers.
+- The `panstore` command is removed; the project store's commands are `pancode store <command>`. `pancode store where` now ends with the `pankit serve store` line that serves the project's store over MCP from any directory, and `PANSTORE_PROJECT_ID` is gone: a project's `store.projectId` keys its store.
+- The SDK is documented as PanCode's extension API, unstable until PanCode defines it; its `pancode/sdk/<subpath>` imports are unchanged.
 
 ### Fixes
 

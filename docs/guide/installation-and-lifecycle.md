@@ -119,7 +119,11 @@ pancode upgrade --channel beta
 `pancode upgrade` resolves `beta` to the newest of `beta` and `latest` by SemVer
 precedence. The installers read one channel file: a stable release moves `channel/beta` as well as
 `channel/latest`, so `beta` always names the newest release of either kind. npm
-and Bun use the dist-tag you select. A bare upgrade follows the installer
+and Bun install the dist-tag you name, and the registry carries a `beta` tag only
+while a pre-release is current, so `npm install -g @akougkas/pancode@beta` or
+`bun add -g @akougkas/pancode@beta` can fail with `ETARGET` or install an older
+pre-release. When no pre-release is current, install `@latest` instead, or run
+`pancode upgrade --channel beta`, which resolves the newer of the two. A bare upgrade follows the installer
 install's recorded channel, or uses `latest` for a package-manager installation.
 
 A channel that resolves to a version older than the active one is refused before
@@ -782,7 +786,8 @@ Without `--post-install`, a pnpm, Bun, Homebrew, WinGet, local, or unknown layou
 never replaced through npm. A real run prints the owning manager's command and
 exits 1 with `This installation needs a package-manager update; no package was replaced.`;
 a dry run prints the same and exits 0. The commands are
-`pnpm add -g @akougkas/pancode@<channel>`, `bun add -g @akougkas/pancode@<channel>`,
+`pnpm add -g @akougkas/pancode@<channel>`, `bun add -g @akougkas/pancode@<channel>`
+(on the `beta` channel these name the version `beta` resolves to, not the dist-tag),
 `brew upgrade pancode` and `winget upgrade --id PanCode.PanCode --exact`; an unknown
 layout is told to use its original manager and then run
 `pancode upgrade --post-install`. Keep the original manager's global directory or

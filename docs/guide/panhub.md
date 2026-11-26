@@ -285,7 +285,7 @@ Run `/reload hub` in a running session afterwards.
 
 **Life science.** Each skill answers from a live GET request and stamps the answer with the source's entry revision or release. Offline, each skill says the source could not be reached instead of answering from memory.
 
-The builtin servers ship inside PanCode; their tools, action classes, configuration and limits are in [Built-in MCP servers](pankit.md).
+The builtin servers ship inside PanCode as PanKit; their tools, action classes, configuration and limits are in [PanKit](pankit.md).
 
 **Launcher pins.** A pack's digest covers its `mcp.json`, not what the launcher fetches. A `uvx` or `npx` version pin, such as `uvx --from cite-nexus-mcp==0.2.5`, fixes the launcher's input, not the bytes it downloads: uv or npm resolves the package and its dependencies from its registry on first launch.
 

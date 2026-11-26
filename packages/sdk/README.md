@@ -112,7 +112,7 @@ await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo, sav
 - `policyManifest(server)` returns the server's tools, classes and path arguments as stable JSON.
 
 What a server says about itself is a hint to any host. PanCode decides a tool's class from the operator's approval or
-from policy it ships, never from what a running server reports. PanCode's built-in MCP servers are built this way.
+from policy it ships, never from what a running server reports. PanKit's servers are built this way.
 
 ## Limits
 
@@ -124,6 +124,6 @@ A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/test
 
 - Extension API guide, with every entry point and the authoring commands: https://pancode.dev/docs/guide/sdk.html
 - Extensions and runtime api 2: https://pancode.dev/docs/guide/harness-extensions.html
-- PanCode's built-in MCP servers, built on `pancode/sdk/tool`: https://pancode.dev/docs/guide/pankit.html
+- PanKit, PanCode's agent toolkit, built on this API: https://pancode.dev/docs/guide/pankit.html
 - Source: https://github.com/akougkas/pancode/tree/main/packages/sdk
 - PanCode: https://github.com/akougkas/pancode

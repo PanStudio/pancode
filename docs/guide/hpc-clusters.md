@@ -360,7 +360,7 @@ node can be inspected before a workspace validation contract names any of them
 
 The `hpc` pack in PanHub collects skills for cluster work. It is content
 only: installing it starts nothing and declares no MCP server. Its skills use
-the `modules`, `spack` and `darshan` servers PanCode ships ([Built-in MCP servers](pankit.md)),
+the `modules`, `spack` and `darshan` servers PanCode ships ([PanKit](pankit.md)),
 and run the cluster's own programs over `bash` when a server cannot work on
 this host. `pancode doctor` shows which of those servers this host can serve.
 

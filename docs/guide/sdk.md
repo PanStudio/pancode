@@ -18,7 +18,7 @@ The extension API lives in the private workspace package `@pancode/sdk`, license
 | `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
 | `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio with no runtime dependencies. |
 
-PanCode's [built-in MCP servers](pankit.md) are built on `pancode/sdk/tool` and `pancode/sdk/mcp-server`.
+[PanKit](pankit.md)'s servers are built on `pancode/sdk/tool` and `pancode/sdk/mcp-server`.
 
 ## Using the extension API
 

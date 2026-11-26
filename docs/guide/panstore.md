@@ -8,7 +8,7 @@ Its code is the private workspace package `@pancode/store`, bundled into PanCode
 
 - `pancode store <command>` inside a PanCode project, with the roots, cache and placement from your settings.
 - The model's `store` tool.
-- The built-in `store` MCP server ([Built-in MCP servers](pankit.md)).
+- The PanKit `store` MCP server ([PanKit](pankit.md)).
 
 Every checkout and task worktree of one repository reaches the same store: the store is keyed by the main checkout's real path, so a task worktree and the checkout it came from share one project key. A project whose tracked settings set `store.projectId` is keyed by that id instead, so checkouts at different paths, on different hosts, reach one store ([Sharing a store across hosts](#sharing-a-store-across-hosts)).
 
@@ -28,7 +28,7 @@ Each command below runs as `pancode store <command>`.
 | `rm <tag>:<blob> --yes` | Delete one blob and append a remove record. Without `--yes` it deletes nothing, prints what it would delete and exits 0. |
 | `rm-tag <tag> --yes` | Delete a tag. Without `--yes` it deletes nothing, prints what it would delete and exits 0. |
 | `adopt [<projectKey>]` | Without a key, list store directories whose project root no longer exists and that carry no project id. With a key, move that store to this project; refuses when this project already has one. |
-| `where` | Print the store root, project root, project id, project key, project directory, each root's id and the `panstore` command line that reaches this store. With a project id, it also names a store still left under the path key, which `adopt <key>` moves. |
+| `where` | Print the store root, project root, project id, project key, project directory, each root's id and the `pankit serve store` command line that serves this store over MCP from any directory. With a project id, it also names a store still left under the path key, which `adopt <key>` moves. |
 | `usage [tag]` | Count blobs and bytes per tag and per root by walking the store, with each root's file system free space. |
 | `locks` | List the project's store locks: each holder's key, pid, host and time, and its state (see [Locks](#locks)). |
 | `locks break <id> --yes` | Remove a lock that is not `live`. Without `--yes` it removes nothing, prints what it would remove and exits 0. It never touches a blob or a record. |
@@ -44,6 +44,20 @@ pancode store put results data.csv --note "first run"
 pancode store get results:data.csv
 pancode store where
 ```
+
+`where` ends with the `pankit serve store` line that serves this project's store over MCP from any directory, so an MCP host on this machine can reach the store PanCode uses:
+
+```text
+store root   /home/me/.local/share/pancode/data/store
+project root /home/me/src/sim
+project id   (none)
+project key  cb6fe116fff133e1
+project dir  /home/me/.local/share/pancode/data/store/projects/cb6fe116fff133e1
+root default  /home/me/.local/share/pancode/data/store  id 6f1c2a9e-5b7d-4e8a-9c3f-2d4b6a8e0f17
+store server pankit serve store --root /home/me/.local/share/pancode/data/store --cache /home/me/.cache/pancode --project /home/me/src/sim
+```
+
+The line names no `--write-tag`, so that server only reads.
 
 ## Records and actors
 
@@ -115,7 +129,7 @@ store:
   projectId: sim
 ```
 
-`store.projectId` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit. It is read only from the tracked project file, and only while you trust the project's settings, so an untrusted checkout cannot name another project's store; set in user settings or in the private local file it is ignored with a settings issue. The project key becomes the first 16 hex of the SHA-256 of `project-id:<id>`, so every checkout with that id reaches one project directory, whatever its path. A store already written under the path key stays where it is: `where` names it and `adopt <key>` moves it. `panstore` and the PanKit `store` server take the id as `--project-id`, and `where` prints it in the `panstore` line.
+`store.projectId` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit. It is read only from the tracked project file, and only while you trust the project's settings, so an untrusted checkout cannot name another project's store; set in user settings or in the private local file it is ignored with a settings issue. The project key becomes the first 16 hex of the SHA-256 of `project-id:<id>`, so every checkout with that id reaches one project directory, whatever its path. A store already written under the path key stays where it is: `where` names it and `adopt <key>` moves it. The PanKit `store` server takes the id as `--project-id`, and `where` prints it in the `store server` line.
 
 Each host lists the shared roots in its own `store.roots`; the mount paths may differ, since root ids match them. The primary must be shared as well, because it holds the records and the locks.
 
@@ -148,7 +162,7 @@ An MCP server's declared path argument can name a blob instead of a file with th
 
 Admission judges each reference as the `store` call it stands for, so a reference to a records tag or a malformed reference is refused, and a worker writes only the tags its dispatch granted.
 
-The built-in `store` server is launched by PanCode with this session's roots, cache, project and writable tags as launch arguments, outside the server's declaration digest; when the session may write a tag created after launch, the server is relaunched once. Its `store_put` and `store_note` are admitted as the `store` tool's own put and note into that tag. Its tools are listed in [Built-in MCP servers](pankit.md#store).
+The builtin PanKit `store` server is launched by PanCode with this session's roots, cache, project and writable tags as launch arguments, outside the server's declaration digest; when the session may write a tag created after launch, the server is relaunched once. Its `store_put` and `store_note` are admitted as the `store` tool's own put and note into that tag. Its tools are listed in [PanKit](pankit.md#store).
 
 ## Limits
 
