@@ -906,8 +906,9 @@ export function createTurnContextCompaction(shared: TurnContextScope) {
 			sessionId: originSession,
 		});
 		decision.committed({ tokensBefore, tokensAfter });
-		// The reducer reports selected ledger rows, not just message rows.
-		compactionFacts.push({ kind: "summarized", unit: "entries", count: result.messagesSummarized });
+		// The card states the notice's count in conversation messages; ledger entries also hold tool-call rows and
+		// bookkeeping, so an entry count disagreed with the notice beside it.
+		compactionFacts.push({ kind: "summarized", unit: "messages", count: result.conversationMessagesSummarized });
 		compactionTokens = { before: tokensBefore, after: tokensAfter, basis: "runtime-estimate" };
 		emitCompactionActivity("completed", "context compaction complete");
 		shared.autoCompactFailures = 0;
