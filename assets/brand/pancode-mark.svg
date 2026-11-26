@@ -2,7 +2,7 @@
 	<title>PanCode</title>
 	<style>
 		.tile { fill: var(--palette-black, #000000); }
-		.glyph { fill: var(--palette-green400, #00e884); }
+		.glyph { fill: var(--palette-green400, #07e4b4); }
 	</style>
 	<rect width="16" height="16" rx="3" class="tile"/>
 	<!-- The P of the wordmark: cap height 10 units, stem on whole units. -->

@@ -332,6 +332,9 @@ describe("headless no-op contract through the built binary", () => {
 			{ code: causes[0]?.code, limit: causes[0]?.limit, observed: causes[0]?.observed },
 			{ code: "max_tool_calls", limit: 1, observed: 2 },
 		);
+		// The call the cap refused counts as refused, not as a call that ran and failed.
+		const tools = lastJson(turn.stdout).tools as { calls?: number; refused?: number } | undefined;
+		deepStrictEqual({ calls: tools?.calls, refused: tools?.refused }, { calls: 2, refused: 1 });
 	});
 
 	test("an --output the run never writes refuses the first finish(done), then seals partly_done: exit 1, cause missing_output (M-4)", async () => {

@@ -54,6 +54,7 @@
 			"!**/*.html",
 			"!tests/fixtures/telemetry/golden",
 			"!tests/fixtures/typecheck-corpus",
+			"!assets/media-manifest.json",
 			"!tmp"
 		]
 	},
