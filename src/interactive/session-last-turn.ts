@@ -11,8 +11,9 @@
  *
  * The fold reads the same lineage the reseed does, through
  * `filterEntriesToActivePath`, and reports only what the ledger recorded: the
- * persisted stop reason, the tool result rows the turn produced, and the wall
- * time between the user message that opened the turn and the last row it wrote.
+ * persisted stop reason, the tool result rows the turn produced, and the duration
+ * the live run recorded, else the wall time between the user message that opened
+ * the turn and the last row it wrote.
  * Fields the ledger does not carry are left at their neutral value rather than
  * reconstructed: the watchdog peak is zero. The turn's tokens and reasoning are
  * the read model's, which the footer reads beside this line.
@@ -25,6 +26,7 @@ import type { MessageEntry, SessionEntry, SessionUsageDefaults } from "../domain
 import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
 import type { AgentMessage } from "../engine/types.js";
 import { classifyTurnEnding, endedOnCancelledInterview } from "../session-control/chat-loop-messages.js";
+import { recordedTurnTimings } from "./command-output.js";
 import type { TurnStopReason, TurnSummary } from "./status/index.js";
 import { turnFailureFacts } from "./status/summary.js";
 
@@ -64,6 +66,8 @@ function millisBetween(startIso: string, endIso: string): number {
 /** The message rows of the newest turn on the branch, plus the target it ran under. */
 interface BranchTurn {
 	rows: MessageEntry[];
+	/** The turn id of the user message that opened the turn; null for a turn with none. */
+	promptTurnId: string | null;
 	startedAt: string;
 	targetId: string | null;
 	modelId: string | null;
@@ -88,14 +92,14 @@ function newestTurnOnBranch(entries: ReadonlyArray<SessionEntry>, defaults: Sess
 		}
 		if (entry.kind !== "message") continue;
 		if (entry.role === "user") {
-			turn = { rows: [], startedAt: entry.timestamp, targetId: target, modelId: model };
+			turn = { rows: [], promptTurnId: entry.turnId, startedAt: entry.timestamp, targetId: target, modelId: model };
 			continue;
 		}
 		if (entry.role !== "assistant" && entry.role !== "tool_call" && entry.role !== "tool_result") continue;
 		// A ledger whose first rows predate any user message (an imported or
 		// repaired session) still has a turn to report; it just starts where the
 		// assistant does.
-		if (!turn) turn = { rows: [], startedAt: entry.timestamp, targetId: target, modelId: model };
+		if (!turn) turn = { rows: [], promptTurnId: null, startedAt: entry.timestamp, targetId: target, modelId: model };
 		if (entry.role === "assistant") {
 			turn.targetId = target;
 			turn.modelId = model;
@@ -174,8 +178,10 @@ export function lastTurnSummaryFromLedger(
 		stopReason = "cancelled";
 
 	const lastRow = turn.rows[turn.rows.length - 1];
+	const timing = turn.promptTurnId === null ? undefined : recordedTurnTimings(scoped).get(turn.promptTurnId);
 	return {
-		elapsedMs: lastRow ? millisBetween(turn.startedAt, lastRow.timestamp) : 0,
+		elapsedMs: timing?.elapsedMs ?? (lastRow ? millisBetween(turn.startedAt, lastRow.timestamp) : 0),
+		...(timing?.humanWaitMs === undefined ? {} : { humanWaitMs: timing.humanWaitMs }),
 		modelId: modelId ?? "unknown",
 		targetId: targetId ?? "unknown",
 		toolCount,

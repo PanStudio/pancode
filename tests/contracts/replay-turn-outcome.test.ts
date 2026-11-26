@@ -17,13 +17,14 @@ import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
 import { stripTerminalSequences } from "../../src/engine/tui.js";
 import { createChatPanel } from "../../src/interactive/chat-panel.js";
 import { buildReplayAgentMessagesFromTurns, rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
-import { appendOperatorCommand } from "../../src/interactive/command-output.js";
+import { appendOperatorCommand, TURN_TIMING_ENTRY } from "../../src/interactive/command-output.js";
 import { renderSessionHtml } from "../../src/interactive/export-html/index.js";
 import {
 	createInteractiveSlashRuntime,
 	type InteractiveSlashRuntimeDeps,
 } from "../../src/interactive/interactive-slash-runtime.js";
 import { createInteractiveSubscriptions } from "../../src/interactive/interactive-subscriptions.js";
+import { lastTurnSummaryFromLedger } from "../../src/interactive/session-last-turn.js";
 import { turnSpend } from "../../src/interactive/turn-spend.js";
 import type { WorkerRunEntryFields, WorkerSettledFields } from "../../src/interactive/worker-replay.js";
 import { type ChatLoopEvent, type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
@@ -595,6 +596,59 @@ test("a replayed receipt states the duration, cold-cache reasons and end time th
 		},
 	] as SessionEntry[]);
 	assert.equal(plainRows(warm).at(-1), "✓ Done · 1m36s · in 7 · out 5 · cached 68.6k · Sep 16 19:01");
+});
+
+test("a resumed receipt states the duration the live run measured, not the gap between its ledger rows (bt-deep 8)", (t) => {
+	pinZone(t, "UTC");
+	const final = { role: "assistant" as const, content: [{ type: "text", text: "Answer" }], stopReason: "stop", usage };
+	const receipt = (panel: ReturnType<typeof createChatPanel>) =>
+		panel
+			.render(120)
+			.map(stripTerminalSequences)
+			.filter((line) => line.length > 0)
+			.at(-1);
+	let clock = Date.parse("2026-09-17T12:00:00.000Z");
+	const recorded: Array<{ turnId: string; elapsedMs: number }> = [];
+	const live = createChatPanel({ now: () => clock, recordTurnTiming: (fields) => recorded.push(fields) });
+	live.appendUser("Question");
+	live.applyEvent({ type: "agent_start", turnId: "u" } as ChatLoopEvent);
+	live.applyEvent({ type: "message_start", message: { role: "assistant", content: [] } } as unknown as ChatLoopEvent);
+	live.applyEvent({ type: "message_end", message: final } as unknown as ChatLoopEvent);
+	clock += 5_900;
+	live.applyEvent({ type: "agent_end", messages: [final] } as unknown as ChatLoopEvent);
+	assert.deepEqual(recorded, [{ turnId: "u", elapsedMs: 5_900 }]);
+	const ledger = [
+		{
+			turnId: "u",
+			parentTurnId: null,
+			timestamp: "2026-09-17T12:00:00.100Z",
+			kind: "message",
+			role: "user",
+			payload: { text: "Question" },
+		},
+		{
+			turnId: "a",
+			parentTurnId: "u",
+			timestamp: "2026-09-17T12:00:05.800Z",
+			kind: "message",
+			role: "assistant",
+			payload: final,
+		},
+		{
+			turnId: "t",
+			parentTurnId: "a",
+			timestamp: "2026-09-17T12:00:05.900Z",
+			kind: "custom",
+			customType: TURN_TIMING_ENTRY,
+			display: false,
+			data: recorded[0],
+		},
+	] as SessionEntry[];
+	const resumed = createChatPanel({ now: () => Date.parse("2026-09-17T13:00:00Z") });
+	rehydrateChatPanelFromTurns(resumed, ledger);
+	assert.equal(receipt(resumed), receipt(live));
+	assert.match(receipt(live) ?? "", /Done · 5\.9s/u);
+	assert.equal(lastTurnSummaryFromLedger(ledger)?.elapsedMs, 5_900);
 });
 
 test("a receipt's clock follows the time locale, and a receipt rendered before midnight gains its date after", (t) => {

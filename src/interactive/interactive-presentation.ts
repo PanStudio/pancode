@@ -183,7 +183,7 @@ export interface InteractivePresentationDeps {
 	resources?: Pick<ResourcesContract, "skillsForDisplay" | "promptsForDisplay">;
 	agents?: Pick<AgentsContract, "listSpecs">;
 	session?: Pick<SessionContract, "current">;
-	recordTurnHumanWait?: (fields: { turnId: string; humanWaitMs: number }) => void;
+	recordTurnTiming?: (fields: { turnId: string; elapsedMs: number; humanWaitMs?: number }) => void;
 	jobs?: Pick<JobOperations, "list" | "subscribe">;
 	getSessionId?: () => string | null;
 	getTaskBoard?: () => TaskBoardSnapshot | null;
@@ -503,7 +503,7 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 			return status.phase === "cancelling" ? (status.cancelRequestedAt ?? null) : null;
 		},
 		getHumanWaitMs: () => humanWaitTotalMs(statusController.current(), Date.now()),
-		...(deps.recordTurnHumanWait ? { recordTurnHumanWait: deps.recordTurnHumanWait } : {}),
+		...(deps.recordTurnTiming ? { recordTurnTiming: deps.recordTurnTiming } : {}),
 		...(deps.adoptLiveWorker ? { adoptLiveWorker: deps.adoptLiveWorker } : {}),
 		requestRender,
 		...(renderTrace ? { onRenderMetrics: (metrics) => renderTrace.recordPanelRender(metrics) } : {}),
