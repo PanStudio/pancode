@@ -44,6 +44,8 @@ const httpModules = new Map([
 	["src/core/process-identity.ts", new Set(["processAlive", "processBirthToken"])],
 	["src/domains/lifecycle/install-method.ts", new Set(["readInstallerRecord"])],
 	["src/domains/lifecycle/version.ts", new Set(["getVersionInfo"])],
+	// The approval card reads the scope out of the session option the engine names with this prefix.
+	["src/domains/safety/escape-scope.ts", new Set(["ESCAPE_SCOPE_OPTION_PREFIX"])],
 	// A file preview withholds the same secret names the agent's read tool and shell sandbox refuse.
 	["src/domains/safety/secret-paths.ts", new Set(["WORKSPACE_SECRET_PATHS"])],
 ]);

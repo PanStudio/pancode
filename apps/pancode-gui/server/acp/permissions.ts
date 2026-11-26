@@ -12,14 +12,12 @@ import {
 import { boundedText } from "../../contracts/session-projection.js";
 import type { TimelineItem } from "../../contracts/sessions.js";
 import { ACP_DECISION_META_KEY, ACP_DISPATCH_PLAN_META_KEY, ACP_WORKER_ASK_META_KEY } from "../../contracts/wire.js";
-import type { AcpRequestPermissionResponse } from "../pancode/http-shims.js";
+import { type AcpRequestPermissionResponse, ESCAPE_SCOPE_OPTION_PREFIX } from "../pancode/http-shims.js";
 import { AppProblem } from "../services/problem.js";
 import { record } from "./client.js";
 
 export type PermissionTimers = { escalateMs: number; budgetMs: number };
 export const PERMISSION_TIMERS: PermissionTimers = { escalateMs: 45000, budgetMs: 600000 };
-/** How the agent's session option names start (src/domains/safety/escape-scope.ts ESCAPE_SCOPE_OPTION_PREFIX). */
-const SESSION_SCOPE_PREFIX = "Approve for this session:";
 type Pending = {
 	value: Permission;
 	allow: string;
@@ -101,7 +99,7 @@ export class Permissions {
 			(option) => option.optionId === "allow-session-scope" && option.kind === "allow_always",
 		);
 		const scopeName =
-			typeof scopeOption?.name === "string" ? scopeOption.name.replace(SESSION_SCOPE_PREFIX, "").trim() : "";
+			typeof scopeOption?.name === "string" ? scopeOption.name.replace(ESCAPE_SCOPE_OPTION_PREFIX, "").trim() : "";
 		// Declining is the only answer this app gives on its own, and the session keeps running after it.
 		const decline = (reason: string) => {
 			this.declined(reason);
