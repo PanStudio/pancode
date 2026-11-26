@@ -171,7 +171,7 @@ for (const columns of [80, 120, 160]) {
 		const opened = plain(body.render(width)).join(" ");
 		ok(opened.includes("Hard-blocked actions remain blocked."));
 		ok(opened.includes("Approval allows this one call to write, which writes files."));
-		ok(opened.includes("Reversible: yes."));
+		ok(opened.includes("Reversible: not guaranteed."));
 		body.toggleTerms();
 		strictEqual(body.isShowingTerms(), false);
 	});

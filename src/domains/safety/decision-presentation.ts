@@ -111,8 +111,8 @@ function actionConsequence(
 		case "read":
 			return { affectedScope: reach, reversibility: "reversible" };
 		case "write":
-			// Only a workspace change is one the operator can review and revert.
-			return { affectedScope: reach, reversibility: reach === "workspace" ? "reversible" : "limited" };
+			// No fact on the ask says a snapshot covers the file (an untracked one may have none), so no undo is promised.
+			return { affectedScope: reach, reversibility: "limited" };
 		case "execute":
 		case "dispatch":
 			return { affectedScope: reach, reversibility: "limited" };
