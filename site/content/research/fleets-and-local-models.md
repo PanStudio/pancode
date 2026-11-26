@@ -9,7 +9,7 @@ The fleet features on this page have shipped. This page has no comparative resul
 - **Multi-agent value.** Per dollar and per hour, when does compete or council beat one agent on the same task?
 - **Local capability.** Which coding tasks can a model on one workstation finish, and where does it fail?
 - **Heterogeneous fleets.** Does a mix of a strong planner and small workers beat a uniform fleet of either?
-- **Other model families.** Do diffusion language models hold up on long agentic work?
+- **Other kinds of model.** Do diffusion language models hold up on long agentic work?
 
 ## What is known so far
 

@@ -38,7 +38,7 @@ Does a graded fleet finish more work per token than one agent on the same tasks?
 These are facts about the design, read from source. They are not study results.
 
 - One policy is enforced for PanCode's own workers, the Claude SDK, and agents reached through mediated ACP. Other agent command lines receive the closest flags they support, and OpenCode cannot enforce read-only.
-- Whether a reviewer is independent of the builder (a different agent and model family) is recorded and never enforced.
+- Whether a reviewer is independent of the builder (a different agent and model lineage) is recorded and never enforced.
 - Candidates in compete mode share one model, so their diversity comes from short prompts.
 - Matching a worker's claim to a command that ran is text matching.
 - Adaptive routing from past results is off by default.
@@ -79,7 +79,7 @@ Nobody has run this protocol. If you do, your numbers are the first this page ha
 
 Choose ten tasks with a hidden check each, half of them hard enough that a single agent often fails. Run each task three ways: one builder, one builder behind a review gate, and compete mode with a judge. Record the pass rate on the hidden check, the runs that reported success and failed it, and tokens per passed task.
 
-Vary the reviewer's model family in a second round. That measures whether independence, which the record already tracks, changes the outcome.
+Vary the reviewer's model lineage in a second round. That measures whether independence, which the record already tracks, changes the outcome.
 
 ## Open questions
 

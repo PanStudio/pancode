@@ -12,7 +12,7 @@ Read three rows first: `chat` names your route and what is missing, each `connec
 
 | Flag | Effect |
 | --- | --- |
-| `--verbose` | Print every row instead of folding quiet families |
+| `--verbose` | Print every row, including the checks that passed |
 | `--json` | Emit findings as JSON on stdout |
 | `--deep` | Add the live tool probe and validation dry run |
 | `--tools-timeout <seconds>` | Bound each tool probe; default 120, needs `--deep` |

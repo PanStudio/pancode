@@ -38,24 +38,21 @@ export async function checkPolicy() {
 				errors.push(`css/${file}: color declaration must use a semantic token: ${match[1].trim()}`);
 		}
 	}
-	for (const file of [
+	const templates = [
 		"index.html",
 		"learn.html",
 		"research.html",
 		"partials.html",
 		"docs.html",
 		"tutorial.html",
-		"family.html",
 		"hub.html",
 		"404.html",
 		...articleFiles,
-		...(await readdir(join(root, "content/family")))
-			.filter((name) => name.endsWith(".md"))
-			.map((name) => `content/family/${name}`),
 		...(await readdir(join(root, "content/drafts")))
 			.filter((name) => name.endsWith(".md"))
 			.map((name) => `content/drafts/${name}`),
-	]) {
+	];
+	for (const file of templates) {
 		const text = await readFile(join(root, file), "utf8");
 		if (/\bstyle\s*=|<style\b/i.test(text)) errors.push(`${file}: inline styles are forbidden`);
 		const plain = text.replace(/<[^>]+>/g, " ").replace(/&\w+;/g, " ");
@@ -91,47 +88,48 @@ export async function checkPolicy() {
 	const partials = await readFile(join(root, "partials.html"), "utf8");
 	for (const label of ["Primary", "Mobile"]) {
 		const nav = partials.match(new RegExp(`<nav[^>]*aria-label="${label}"[^>]*>([\\s\\S]*?)<\\/nav>`))?.[1] ?? "";
-		const links = [...nav.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].slice(0, 4);
+		const links = [...nav.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].slice(0, 5);
 		if (
-			JSON.stringify(links.map((link) => [link[1], link[2]])) !==
-			JSON.stringify([
-				["/", "Overview"],
-				["/docs.html", "Docs"],
-				["/learn.html", "Tutorials"],
-				["/research.html", "Research"],
-			])
+			JSON.stringify(links.map((link) => [link[1], link[2]]).slice(0, 4)) !==
+				JSON.stringify([
+					["/", "Overview"],
+					["/docs.html", "Docs"],
+					["/learn.html", "Tutorials"],
+					["/research.html", "Research"],
+				]) ||
+			(links[4] && links[4][1] !== "/hub.html")
 		)
-			errors.push(`${label} navigation must start with Overview, Docs, Tutorials, Research`);
+			errors.push(`${label} navigation must start with Overview, Docs, Tutorials, Research, then PanHub`);
 	}
-	// The Family navigation: build.mjs fills both slots from family.json, so the
-	// header row and the Menu list the same five names in the same order.
-	const family = JSON.parse(await readFile(join(root, "family.json"), "utf8"));
-	const familyNames = ["PanCode", "PanStore", "PanKit", "PanHub", "PanSDK"];
-	if (JSON.stringify(family.map((item) => item.name)) !== JSON.stringify(familyNames))
-		errors.push(`family.json must list exactly ${familyNames.join(", ")}, in that order`);
-	const mast = partials.match(/<header class="mast">([\s\S]*?)<\/header>/)?.[1] ?? "";
-	if (!/^\s*<!-- family-nav -->\s*<div class="mast-row/.test(mast))
-		errors.push("The Family navigation slot must open the header, above the masthead row");
-	const mobile = partials.match(/<nav[^>]*aria-label="Mobile"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? "";
-	if (!/<a href="\/research.html">Research<\/a><!-- family-menu -->/.test(mobile))
-		errors.push("The Menu must list the Family navigation right after the primary links");
-	for (const item of family) {
-		if (!/^[a-z]+$/.test(item.id) || !/^\/(?:[a-z]+\.html)?$/.test(item.page))
-			errors.push(`family.json ${item.name}: invalid id or page`);
-		for (const key of ["package", "install", "command", "guide", "summary", "licence"])
-			if (!item[key]) errors.push(`family.json ${item.name}: missing ${key}`);
-		if (/@pancode\//.test(JSON.stringify(item)))
-			errors.push(`family.json ${item.name}: the family ships in the pancode package; do not name @pancode packages`);
-		if (item.page === "/") continue;
-		if (!item.title || item.title.length > 65)
-			errors.push(`family.json ${item.name}: title missing or over 65 characters`);
-		if (!item.description || item.description.length < 70 || item.description.length > 160)
-			errors.push(`family.json ${item.name}: description must be 70 to 160 characters`);
-		const source =
-			item.page === "/hub.html" ? "hub.html" : `content/family/${item.page.slice(1).replace(/\.html$/, ".md")}`;
-		await readFile(join(root, source)).catch(() => errors.push(`family.json ${item.name}: ${source} does not exist`));
+	// One platform: PanStore, PanHub and PanKit are parts of PanCode. Nothing a
+	// visitor or crawler reads names PanSDK, a product family or the removed
+	// panstore command.
+	const summaries = (await readdir(join(root, "content/doc-summaries")))
+		.filter((name) => name.endsWith(".md"))
+		.map((name) => `content/doc-summaries/${name}`);
+	for (const file of [
+		...templates,
+		...summaries,
+		"public-docs.json",
+		"product.json",
+		"redirects.json",
+		"content/tutorials.json",
+		"content/research.json",
+		"content/paths.json",
+		"content/captures.json",
+	]) {
+		const text = (await readFile(join(root, file), "utf8")).replace(/\bfont-family\b/g, "");
+		if (/\bPanSDK\b/i.test(text)) errors.push(`${file}: PanSDK is not a public name; say the extension API`);
+		if (/\bfamil(?:y|ies)\b/i.test(text)) errors.push(`${file}: PanCode is one platform; do not write "family"`);
+		if (/(?<![\w/.~-])panstore(?![\w/.-])/.test(text))
+			errors.push(`${file}: there is no panstore command; PanStore's command is pancode store`);
 	}
 
+	const product = JSON.parse(await readFile(join(root, "product.json"), "utf8"));
+	if (!product.hub?.title || product.hub.title.length > 65)
+		errors.push("product.json hub: title missing or over 65 characters");
+	if (!product.hub?.description || product.hub.description.length < 70 || product.hub.description.length > 160)
+		errors.push("product.json hub: description must be 70 to 160 characters");
 	if (!partials.includes(rules.copyright)) errors.push("Footer must use the sanctioned public copyright wording");
 	const captures = JSON.parse(await readFile(join(root, "content/captures.json"), "utf8")).captures;
 	for (const [id, item] of Object.entries(captures))

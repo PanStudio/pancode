@@ -38,7 +38,6 @@ if (values.review)
 		tutorials.push({ ...item, draft: true });
 const research = JSON.parse(await read("content/research.json"));
 const paths = JSON.parse(await read("content/paths.json")).paths;
-const family = JSON.parse(await read("family.json"));
 const hubCatalog = JSON.parse(await read("content/hub-catalog.json"));
 const collections = [
 	{
@@ -133,9 +132,6 @@ for (const item of articles)
 	if (item.cover && !social.images[item.cover])
 		throw new Error(`Article ${item.slug} has no social preview; run python3 site/image-variants.py --social.`);
 if (!social.images[social.default]) throw new Error("The default social preview is missing.");
-for (const member of family)
-	if (member.preview && !social.images[member.preview])
-		throw new Error(`Family page ${member.page} names a missing social preview: ${member.preview}`);
 // Sitemap lastmod and article dateModified come from the last commit that
 // touched a page's sources. Without Git history (a deploy snapshot) they are omitted.
 // product.json counts only when its version changes, the one field page text shows.
@@ -203,9 +199,6 @@ for (const [path, target] of Object.entries(redirects)) {
 const escapeHtml = (text) =>
 	String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const docUrl = (path) => (path === "README.md" ? "/docs.html" : `/docs/${path.replace(/\.md$/, ".html")}`);
-// A family name is set like the wordmark: Pan in the brand green, the rest in the secondary azure.
-const familyName = (name) =>
-	`<span class="brand-pan">Pan</span><span class="brand-code">${escapeHtml(name.replace(/^Pan/, ""))}</span>`;
 const source = manifest.source;
 if (source.version !== product.version) throw new Error("Documentation and site source versions differ.");
 if (source.mode === "tree" ? source.commit !== undefined : !/^[a-f0-9]{40}$/.test(source.commit))
@@ -475,28 +468,6 @@ function head(
 		});
 		graph["@graph"].push({ "@type": "FAQPage", "@id": `${url}#questions`, mainEntity: faq });
 	}
-	const member = path === "/" ? null : family.find((item) => item.page === path);
-	if (member) {
-		graph["@graph"].push({
-			"@type": "SoftwareApplication",
-			"@id": `${url}#application`,
-			name: member.name,
-			url,
-			description,
-			applicationCategory: "DeveloperApplication",
-			isPartOf: { "@id": `${product.origin}/#site` },
-			...(product.publishedVersion ? { softwareVersion: product.publishedVersion } : {}),
-			downloadUrl: `https://www.npmjs.com/package/${member.package}`,
-			softwareHelp: { "@type": "CreativeWork", url: `${product.origin}${docUrl(member.guide)}` },
-			license: `${repository}/blob/main/${member.licence.path}`,
-			isAccessibleForFree: true,
-			author: { "@id": publisher["@id"] },
-			publisher: { "@id": publisher["@id"] },
-			image: imageUrl,
-		});
-		page.about = { "@id": `${url}#application` };
-	}
-
 	return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="${cast ? castContentSecurityPolicy : contentSecurityPolicy}"><meta name="referrer" content="strict-origin-when-cross-origin">
 <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}"><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="${escapeHtml(brand.defaultTheme)}">${themeColors}
@@ -511,20 +482,9 @@ function shell(html, path, title, description, type, options) {
 	const active = path.startsWith("/docs/")
 		? "/docs.html"
 		: (articles.find((item) => item.url === path)?.collection.listing ?? path);
-	const familyLinks = family
-		.map(
-			(item) => `<a href="${item.page}"${item.page === path ? ' aria-current="page"' : ""}>${familyName(item.name)}</a>`,
-		)
-		.join("");
-	const header = mast
-		.replace(/href="(\/|\/docs.html|\/learn.html|\/research.html)"/g, (all, href) =>
-			href === active ? `${all} aria-current="page"` : all,
-		)
-		.replace(
-			"<!-- family-nav -->",
-			`<nav class="family" aria-label="Family"><div class="family-row page">${familyLinks}</div></nav>`,
-		)
-		.replace("<!-- family-menu -->", `<div class="nav-family" role="group" aria-label="Family">${familyLinks}</div>`);
+	const header = mast.replace(/href="(\/|\/docs.html|\/learn.html|\/research.html|\/hub.html)"/g, (all, href) =>
+		href === active ? `${all} aria-current="page"` : all,
+	);
 	let number = 0;
 	const result = html
 		.replace("<!-- site-head -->", head(path, title, description, type, options))
@@ -781,7 +741,7 @@ async function writePage(path, html, title, description, type, { sources = [], p
 		cast,
 		...(preview ? { preview } : {}),
 	});
-	if (/<!--\s*(?:site-|doc-|tutorial-|source-|family-|hub-|version)/.test(result))
+	if (/<!--\s*(?:site-|doc-|tutorial-|source-|hub-|version)/.test(result))
 		throw new Error(`Unresolved template slot in ${path}`);
 	await writeFile(file, result);
 	if (path !== "/404.html") urls.push({ path, lastmod });
@@ -1028,42 +988,10 @@ for (const item of articles) {
 	});
 }
 
-// Family pages: one per product in family.json with a page of its own. The
-// overview is PanCode's page and the catalog is PanHub's.
 const fact = (label, value) => `<div><dt class="eyebrow">${label}</dt><dd>${value}</dd></div>`;
-const familyFacts = (member) =>
-	[
-		fact("Ships in", `<code>${escapeHtml(member.package)}</code> v${escapeHtml(product.version)}`),
-		fact(member.command.includes("/") ? "Import" : "Command", `<code>${escapeHtml(member.command)}</code>`),
-		fact("Licence", `<a href="${repository}/blob/${ref}/${member.licence.path}">${escapeHtml(member.licence.name)}</a>`),
-	].join("");
-const familyTemplate = await read("family.html");
-for (const member of family.filter((item) => item.page !== "/" && item.page !== "/hub.html")) {
-	const sourcePath = `content/family/${member.page.slice(1).replace(/\.html$/, ".md")}`;
-	const markdown = await read(sourcePath);
-	const content = renderMarkdown(markdown, `site/${sourcePath}`, true);
-	const headings = [...content.matchAll(/<h2 id="([^"]+)">([\s\S]*?)<\/h2>/g)];
-	const toc = headings.map(([, id, text]) => `<a href="#${id}">${text.replace(/<[^>]+>/g, "")}</a>`).join("\n");
-	const slots = {
-		"family-command": escapeHtml(member.command),
-		"family-title": familyName(member.name),
-		"family-summary": escapeHtml(member.summary),
-		"family-facts": `${familyFacts(member)}<!-- updated-fact -->`,
-		"family-toc-mobile": toc ? `<details class="doc-toc-mobile"><summary>On this page</summary>${toc}</details>` : "",
-		"family-content": content,
-		"family-toc": toc ? `<h2>On this page</h2>${toc}` : "",
-	};
-	let html = familyTemplate;
-	for (const [name, value] of Object.entries(slots)) html = html.replaceAll(`<!-- ${name} -->`, value);
-	await writePage(member.page, html, member.title, member.description, "WebPage", {
-		sources: [sourcePath, "family.json", "product.json"],
-		...(member.preview ? { preview: member.preview } : {}),
-	});
-}
 
 // The PanHub catalog: the rows of the bundled hub/index.yaml as hub-catalog.mjs
 // validated them, so the page lists exactly what this release installs.
-const hubMember = family.find((item) => item.page === "/hub.html");
 const hubCommit = source.commit ?? values.revision ?? null;
 const hubKinds = ["plugin", "extension", "skill", "agent", "prompt", "playbook"];
 const hubPlural = {
@@ -1115,7 +1043,7 @@ const hubSlots = {
 	"hub-count": String(hubCatalog.rows.length),
 	"hub-facts": [
 		fact("Ships in", `<code>pancode</code> v${escapeHtml(product.version)}`),
-		fact("Command", `<code>${escapeHtml(hubMember.command)}</code>`),
+		fact("Command", "<code>pancode hub</code>"),
 		fact("Packs", String(hubCatalog.rows.length)),
 	].join(""),
 	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
@@ -1124,9 +1052,8 @@ const hubSlots = {
 };
 let hubHtml = await read("hub.html");
 for (const [name, value] of Object.entries(hubSlots)) hubHtml = hubHtml.replaceAll(`<!-- ${name} -->`, value);
-await writePage("/hub.html", hubHtml, hubMember.title, hubMember.description, "WebPage", {
-	sources: ["content/hub-catalog.json", "hub.html", "family.json"],
-	...(hubMember.preview ? { preview: hubMember.preview } : {}),
+await writePage("/hub.html", hubHtml, product.hub.title, product.hub.description, "WebPage", {
+	sources: ["content/hub-catalog.json", "hub.html", "product.json"],
 });
 
 for (const collection of collections) {
@@ -1306,7 +1233,6 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - Install with npm (Node.js 22.19 or newer): \`npm install -g @akougkas/pancode\`
 - Connect a model in a project: \`pancode configure\`; then run \`pancode\` for the terminal or \`pancode gui --open\` for the desktop alpha.
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
-const familyPages = family.filter((member) => member.page !== "/");
 const hubMarkdown = () =>
 	[
 		`The ${hubCatalog.rows.length} packs bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
@@ -1329,7 +1255,7 @@ await writeFile(
 					.map((doc) => llmsLink(doc.title, docUrl(doc.path), doc.excerpt))
 					.join("\n")}`,
 		),
-		`## Family pages\n\n${familyPages.map((member) => llmsLink(member.name, member.page, member.description)).join("\n")}`,
+		`## PanHub\n\n${llmsLink("PanHub", "/hub.html", product.hub.description)}`,
 		...collections.map(
 			(collection) =>
 				`## ${collection.label}\n\n${published
@@ -1341,7 +1267,7 @@ await writeFile(
 			llmsLink(
 				"Full text",
 				"/llms-full.txt",
-				"every guide, family page, tutorial, and research page above as Markdown in one file",
+				"every guide, the PanHub catalog, and every tutorial and research page above as Markdown in one file",
 			),
 			llmsLink("Overview", "/", "capabilities, models, installation, and common questions"),
 			llmsLink("Source repository", repository, "code, issues, and the full upstream guides"),
@@ -1355,17 +1281,9 @@ for (const item of index) {
 	const url = absolute(docUrl(item.path));
 	fullSections.push({ url, text: llmMarkdown(await read(`content/docs/${item.path}`), item.source, url) });
 }
-for (const member of familyPages) {
-	const url = absolute(member.page);
-	const text =
-		member.page === "/hub.html"
-			? hubMarkdown()
-			: llmMarkdown(
-					await read(`content/family/${member.page.slice(1).replace(/\.html$/, ".md")}`),
-					`site/content/family/${member.page.slice(1).replace(/\.html$/, ".md")}`,
-					url,
-				);
-	fullSections.push({ url, text: `# ${member.name}\n\n> ${member.description}\n\n${text}` });
+{
+	const url = absolute("/hub.html");
+	fullSections.push({ url, text: `# PanHub\n\n> ${product.hub.description}\n\n${hubMarkdown()}` });
 }
 for (const item of published) {
 	const url = absolute(item.url);
@@ -1374,7 +1292,7 @@ for (const item of published) {
 }
 const llmsFull = `${llmsSummary}
 
-This file holds the public PanCode guides (documentation for v${source.version}), the family pages, tutorials, and research pages as Markdown. Each section names the page it comes from.
+This file holds the public PanCode guides (documentation for v${source.version}), the PanHub catalog, tutorials, and research pages as Markdown. Each section names the page it comes from.
 
 ${fullSections.map(({ url, text }) => `---\n\nSource: ${url}\n\n${text}`).join("\n\n")}
 `;

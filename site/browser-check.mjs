@@ -31,13 +31,14 @@ const catalog = JSON.parse(await readFile(join(site, "public-docs.json"), "utf8"
 const docs = catalog.map((item) =>
 	item.path === "README.md" ? "/docs.html" : `/docs/${item.path.replace(/\.md$/, ".html")}`,
 );
-const family = JSON.parse(await readFile(join(site, "family.json"), "utf8"));
+// The header shows the Menu in place of the navigation at this width and below.
+const menuBreakpoint = 600;
 const primary = [
 	"/",
 	"/docs.html",
 	"/learn.html",
 	"/research.html",
-	...family.map((item) => item.page).filter((path) => path !== "/"),
+	"/hub.html",
 	...JSON.parse(await readFile(join(site, "content/research.json"), "utf8")).map(
 		(item) => `/research/${item.slug}.html`,
 	),
@@ -121,44 +122,43 @@ try {
 		if ((results.length + failures.length) % 10 === 0)
 			console.log(`Browser layouts passed: ${results.length}; failures: ${failures.length}; total: ${cases.length}`);
 	}
-	// The Family navigation is reachable by keyboard at every width: in the header
-	// row above 600px, and in the Menu, opened from the keyboard, below it.
+	// The primary navigation, PanHub included, is reachable by keyboard at every
+	// width: in the header above the Menu breakpoint, and in the Menu below it.
+	// No page carries a second navigation row above the header.
+	const navigation = ["/", "/docs.html", "/learn.html", "/research.html", "/hub.html"];
 	for (const width of [320, 390, 768, 850, 1024, 1440]) {
-		const familyContext = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
-		const familyPage = await familyContext.newPage();
-		await familyPage.goto(`${values.url}/hub.html?__static=1`);
-		const menu = width <= 600;
+		const navContext = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+		const navPage = await navContext.newPage();
+		await navPage.goto(`${values.url}/hub.html?__static=1`);
+		assert.equal(await navPage.locator(".mast nav").first().getAttribute("aria-label"), "Primary");
+		const menu = await navPage.locator(".nav-more").isVisible();
+		assert.equal(menu, width <= menuBreakpoint, `The Menu replaces the navigation at ${menuBreakpoint}px and below`);
 		if (menu) {
-			await familyPage.locator(".nav-more summary").focus();
-			await familyPage.keyboard.press("Enter");
+			await navPage.locator(".nav-more summary").focus();
+			await navPage.keyboard.press("Enter");
 			assert.equal(
-				await familyPage.locator(".nav-more").getAttribute("open"),
+				await navPage.locator(".nav-more").getAttribute("open"),
 				"",
 				`Menu opens from the keyboard at ${width}px`,
 			);
 		}
+		const scope = menu ? 'nav[aria-label="Mobile"]' : 'nav[aria-label="Primary"]';
 		const reached = [];
-		for (let step = 0; step < 40 && reached.length < family.length; step++) {
-			await familyPage.keyboard.press("Tab");
-			const href = await familyPage.evaluate(
-				(selector) => {
-					const element = document.activeElement;
-					return element?.closest(selector) && element.checkVisibility() ? element.getAttribute("href") : null;
-				},
-				menu ? ".nav-family" : "nav.family",
-			);
+		for (let step = 0; step < 40 && reached.length < navigation.length; step++) {
+			await navPage.keyboard.press("Tab");
+			const href = await navPage.evaluate((selector) => {
+				const element = document.activeElement;
+				return element?.closest(selector) && element.checkVisibility() ? element.getAttribute("href") : null;
+			}, scope);
 			if (href && !reached.includes(href)) reached.push(href);
 		}
 		assert.deepEqual(
 			reached,
-			family.map((item) => item.page),
-			`Family navigation is reachable by keyboard ${menu ? "in the Menu" : "in the header"} at ${width}px`,
+			navigation,
+			`The navigation is reachable by keyboard ${menu ? "in the Menu" : "in the header"} at ${width}px`,
 		);
-		assert.equal(
-			await familyPage.locator(`${menu ? ".nav-family" : "nav.family"} a[aria-current="page"]`).getAttribute("href"),
-			"/hub.html",
-		);
-		await familyContext.close();
+		assert.equal(await navPage.locator(`${scope} a[aria-current="page"]`).getAttribute("href"), "/hub.html");
+		await navContext.close();
 	}
 	// The catalog filter narrows the rows, says how many match, and clears with Escape.
 	const hubContext = await browser.newContext({ viewport: { width: 1024, height: 900 } });
@@ -209,6 +209,10 @@ try {
 	await page.waitForURL("**/docs/guide/tool-usage.html");
 	await page.goto(`${values.url}/start.html`);
 	await page.waitForURL("**/#start");
+	for (const name of ["panstore", "pankit", "sdk"]) {
+		await page.goto(`${values.url}/${name}.html`);
+		await page.waitForURL(`**/docs/guide/${name}.html`);
+	}
 	const missing = await page.goto(`${values.url}/does-not-exist`);
 	assert.equal(missing.status(), 404);
 	assert.match(await page.locator("h1").innerText(), /back/);
@@ -434,8 +438,8 @@ try {
 	await plainPage.locator(".nav-more summary").click();
 	assert.ok(await plainPage.locator(".nav-more a").first().isVisible());
 	assert.ok(
-		await plainPage.locator(".nav-family a").first().isVisible(),
-		"The Menu lists the family without JavaScript",
+		await plainPage.locator('.nav-more a[href="/hub.html"]').isVisible(),
+		"The Menu lists PanHub without JavaScript",
 	);
 	await plainPage.goto(`${values.url}/hub.html`);
 	assert.equal(await plainPage.locator("[data-hub-filter]").isVisible(), false, "The filter needs JavaScript");
@@ -448,7 +452,7 @@ try {
 	await plain.close();
 	console.log(`Recorded captures checked: ${recordings} recordings on ${pages / 2} pages.`);
 	console.log(
-		"Interactions passed: Family navigation keyboard at every width, catalog filter, menu keyboard, theme persistence, repeated copying, FAQ, screenshot viewer, search keyboard, active contents, redirects, runtime reduced motion, touch tablet rotation, 404, no-JavaScript navigation, and recordings.",
+		"Interactions passed: navigation keyboard at every width, catalog filter, menu keyboard, theme persistence, repeated copying, FAQ, screenshot viewer, search keyboard, active contents, redirects, runtime reduced motion, touch tablet rotation, 404, no-JavaScript navigation, and recordings.",
 	);
 } finally {
 	await browser.close();

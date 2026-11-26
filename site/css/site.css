@@ -35,7 +35,7 @@
 @layer base {
 	html {
 		scroll-behavior: smooth;
-		scroll-padding-block-start: calc(var(--header) + var(--family-row) + 1rem);
+		scroll-padding-block-start: calc(var(--header) + 1rem);
 	}
 	body {
 		background: var(--paper);
@@ -910,9 +910,9 @@
 	.docs-sidebar,
 	.docs-toc {
 		position: sticky;
-		inset-block-start: calc(var(--header) + var(--family-row) + 1.5rem);
+		inset-block-start: calc(var(--header) + 1.5rem);
 		block-size: fit-content;
-		max-block-size: calc(100dvh - var(--header) - var(--family-row) - 3rem);
+		max-block-size: calc(100dvh - var(--header) - 3rem);
 		overflow: auto;
 		scrollbar-width: thin;
 	}
@@ -2381,50 +2381,8 @@
 		}
 	}
 }
-/* The family row: one line above the main row of the header naming every
-   product, each set like the wordmark. Below 600px the Menu carries it. */
-@layer shell {
-	.family {
-		border-block-end: 1px solid var(--line);
-	}
-	.family-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-6);
-		min-block-size: var(--family-row);
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	.family a,
-	.nav-family a {
-		font: 700 0.8rem / 1 var(--font-display);
-		letter-spacing: -0.01em;
-		text-decoration: none;
-		white-space: nowrap;
-	}
-	.family a {
-		padding-block: 0.35rem;
-		text-underline-offset: 0.4rem;
-	}
-	.family a:hover,
-	.family a[aria-current] {
-		text-decoration: underline;
-		text-decoration-color: var(--line-control);
-	}
-	.family a[aria-current] {
-		text-decoration-color: var(--accent);
-	}
-	.nav-family {
-		margin-block-start: 0.5rem;
-		padding-block-start: 0.5rem;
-		border-block-start: 1px solid var(--line);
-	}
-	.nav-more nav .nav-family a[aria-current] {
-		background: var(--accent-soft);
-	}
-}
 @layer docs {
-	.family-title {
+	.hub-title {
 		letter-spacing: -0.04em;
 	}
 	.hub-intro {
@@ -2548,15 +2506,5 @@
 	.hub-source {
 		margin-block-start: var(--space-8);
 		overflow-wrap: anywhere;
-	}
-}
-@layer responsive {
-	@media (max-width: 600px) {
-		:root {
-			--family-row: 0px;
-		}
-		.family {
-			display: none;
-		}
 	}
 }

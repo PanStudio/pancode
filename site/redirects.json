@@ -45,5 +45,8 @@
 	"/docs/guide/authoring-plugins.html": "/docs/guide/plugins.html",
 	"/docs/guide/extensions-and-sharing.html": "/docs/guide/harness-extensions.html",
 	"/docs/guide/slurm.html": "/docs/guide/hpc-clusters.html",
-	"/tutorials/submit-a-slurm-job.html": "/docs/guide/hpc-clusters.html"
+	"/tutorials/submit-a-slurm-job.html": "/docs/guide/hpc-clusters.html",
+	"/panstore.html": "/docs/guide/panstore.html",
+	"/pankit.html": "/docs/guide/pankit.html",
+	"/sdk.html": "/docs/guide/sdk.html"
 }

@@ -417,7 +417,7 @@
 	}
 	.chapter-visual .scene-slot {
 		position: sticky;
-		inset-block-start: calc(var(--header) + var(--family-row) + 3rem);
+		inset-block-start: calc(var(--header) + 3rem);
 		max-inline-size: 320px;
 	}
 	.chapter-visual .scene-mark {
