@@ -694,7 +694,12 @@ function renderMarkdown(markdown, sourcePath, guide = false) {
 		const base = slug(text);
 		const count = ids.get(base) ?? 0;
 		ids.set(base, count + 1);
-		return `<h${depth} id="${escapeHtml(base + (count ? `-${count}` : ""))}">${text}</h${depth}>\n`;
+		const id = escapeHtml(base + (count ? `-${count}` : ""));
+		// A numbered section ("1. Install PanCode") sets its number apart; the heading text stays as written.
+		const numbered = depth === 2 && text.match(/^(\d+\.)\s+([\s\S]+)$/);
+		if (numbered)
+			return `<h2 id="${id}" class="numbered-section"><span class="step-number">${numbered[1]}</span> <span>${numbered[2]}</span></h2>\n`;
+		return `<h${depth} id="${id}">${text}</h${depth}>\n`;
 	};
 	renderer.link = function ({ href, tokens, title }) {
 		if (/^(?:javascript|data|vbscript):/i.test(href)) return this.parser.parseInline(tokens);
@@ -864,7 +869,7 @@ for (const item of index) {
 		? `\n\n## Related ${kinds}\n\n::: next Related ${kinds}\n${examples.map((article) => `- [${article.title}](${article.url})`).join("\n")}\n:::\n`
 		: "";
 	const rendered = renderMarkdown(markdown + relatedBlock, item.source, true);
-	const headings = [...rendered.matchAll(/<h2 id="([^"]+)">([\s\S]*?)<\/h2>/g)];
+	const headings = [...rendered.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
 	const toc = headings.map(([, id, text]) => `<a href="#${id}">${text.replace(/<[^>]+>/g, "")}</a>`).join("\n");
 	const nav = groups
 		.map(
@@ -936,7 +941,7 @@ for (const item of articles) {
 	const folder = item.folder;
 	const markdown = await read(`${folder}/${item.source}`);
 	const content = renderMarkdown(markdown, `site/${folder}/${item.source}`, true);
-	const headings = [...content.matchAll(/<h2 id="([^"]+)">([\s\S]*?)<\/h2>/g)];
+	const headings = [...content.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
 	const toc = headings.map(([, id, text]) => `<a href="#${id}">${text.replace(/<[^>]+>/g, "")}</a>`).join("\n");
 	const facts = [
 		["Written for", `v${item.versionScope ?? product.version}`],

@@ -1180,12 +1180,12 @@
 	}
 	.doc h2 {
 		font-size: 1.6rem;
-		margin-block: 2.5rem 1rem;
+		margin-block: var(--space-8) var(--space-4);
 		line-height: 1.2;
 		letter-spacing: -0.03em;
 	}
 	.doc h3 {
-		margin-block: 1.75rem 0.75rem;
+		margin-block: var(--space-6) var(--space-3);
 	}
 	.doc h4 {
 		margin-block: 1.5rem 0.5rem;
@@ -1194,11 +1194,11 @@
 	.doc ul,
 	.doc ol,
 	.doc dl {
-		margin-block: 1rem;
+		margin-block: var(--space-4);
 		color: var(--ink-soft);
 	}
 	.doc li {
-		margin-block: 0.4rem;
+		margin-block: var(--space-2);
 	}
 	.doc a {
 		color: var(--accent);
@@ -1213,7 +1213,7 @@
 	.doc pre {
 		max-inline-size: 100%;
 		font-size: 0.75rem;
-		margin-block: 1.5rem;
+		margin-block: var(--space-5);
 	}
 	.doc img {
 		border-radius: var(--radius);
@@ -1232,7 +1232,7 @@
 	.doc-table {
 		overflow: auto;
 		max-inline-size: 100%;
-		margin-block: 1.5rem;
+		margin-block: var(--space-5);
 	}
 	.doc table {
 		border-collapse: collapse;
@@ -1572,7 +1572,7 @@
 		margin-block: 0;
 	}
 	.doc .code-block {
-		margin-block: 1.5rem;
+		margin-block: var(--space-5);
 	}
 	.install-steps .code-block {
 		margin-block: 0.75rem;
@@ -1809,7 +1809,8 @@
 		.doc pre {
 			padding-block: 1.2rem;
 		}
-		.code-block pre {
+		/* Only an unlabelled block carries its copy button over the code; a label band holds it otherwise. */
+		.code-block > pre:first-child {
 			padding-block-start: 3.5rem;
 		}
 		.nav-more nav a,
@@ -2092,29 +2093,38 @@
 	.guide-body {
 		padding-block-start: 0;
 	}
-	.guide-body
-		> :where(
-			p,
-			ul,
-			ol:not(.guide-steps),
-			h2,
-			h3,
-			blockquote,
-			.code-block,
-			.doc-table,
-			.guide-note,
-			.guide-needs,
-			.guide-result,
-			.guide-limits,
-			.guide-prompt,
-			.guide-next,
-			details
-		) {
+	/* Running text in every article keeps to the measure; captures and diagrams use the full column. */
+	.doc
+	> :where(
+		p,
+		ul,
+		ol:not(.guide-steps),
+		h2,
+		h3,
+		blockquote,
+		.code-block,
+		.doc-table,
+		.guide-note,
+		.guide-needs,
+		.guide-result,
+		.guide-limits,
+		.guide-prompt,
+		.guide-next,
+		details
+	) {
 		max-inline-size: var(--measure);
 	}
 	.guide-body > h2 {
 		padding-block-start: var(--space-5);
 		border-block-start: 1px solid var(--line);
+	}
+	/* A numbered section heading carries its number to the left of the title. */
+	.doc .numbered-section {
+		display: grid;
+		grid-template-columns: var(--space-7) minmax(0, 1fr);
+		align-items: baseline;
+		font: var(--type-headline);
+		font-size: 2rem;
 	}
 	/* A labelled code block: the label band also holds the copy control. */
 	.code-block .code-label {
@@ -2139,7 +2149,7 @@
 	.guide-capture,
 	.guide-sequence,
 	.guide-diagram {
-		margin-block: var(--space-7);
+		margin-block: var(--space-5);
 	}
 	.capture-frame {
 		display: block;
@@ -2536,6 +2546,16 @@
 	@media (max-width: 1100px) {
 		.guide-layout {
 			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+	@media (max-width: 767px) {
+		.doc .numbered-section {
+			display: block;
+			font-size: 2rem;
+		}
+		.numbered-section .step-number {
+			display: block;
+			margin-block-end: var(--space-2);
 		}
 	}
 	@media (max-width: 850px) {
