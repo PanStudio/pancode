@@ -25,7 +25,7 @@ Three descriptor fields carry behavior beyond the template. `tier` contributes a
 
 Endpoint capacity counts streams per endpoint key ([endpoint-capacity.ts](../../src/domains/providers/endpoint-capacity.ts)). The `litellm` and `openrouter` runtimes are model-routed gateways ([model-routed-gateway.ts](../../src/domains/providers/model-routed-gateway.ts)): each model runs on its own backend deployment, so `modelEndpointKey` keys a stream as `<url>#model=<id>` and also counts it under the plain gateway URL. Dispatch admission and the settings endpoint rows read the gateway key and see unchanged totals, while background memory on a gateway with no declared or discovered capacity admits against its own model's key, so a turn on another model does not mark it busy. Every other runtime, `openai-compat` included, keeps the plain URL as its key, because a generic protocol endpoint is often one local server that answers any model name.
 
-For an in-tree adapter alongside `src/domains/providers/runtimes/local-native/vllm.ts`, use erased engine types. Only `src/engine/**` imports Pi packages, including type-only imports ([check-boundaries.ts](https://github.com/akougkas/pancode/blob/main/tests/boundaries/check-boundaries.ts)). The descriptor skeleton is:
+For an in-tree adapter alongside `src/domains/providers/runtimes/local-native/vllm.ts`, use erased engine types. Only `src/engine/**` imports Pi packages, including type-only imports ([check-boundaries.ts](https://github.com/PanStudio/pancode/blob/main/tests/boundaries/check-boundaries.ts)). The descriptor skeleton is:
 
 ```typescript
 import type { Api, Model } from "../../../../engine/types.js";
@@ -184,7 +184,7 @@ prefix. On Codex the changed `tool_choice` makes Pi send a full frame rather tha
 delta. If the provider rejects the named choice before any output, the round is retried once with
 `"auto"` over the same full list, and that rejection is remembered per target and model. A text-only
 `none` is accepted.
-[thinking-off-wire.test.ts](https://github.com/akougkas/pancode/blob/main/tests/extended/thinking-off-wire.test.ts) locks the local LM Studio and
+[thinking-off-wire.test.ts](https://github.com/PanStudio/pancode/blob/main/tests/extended/thinking-off-wire.test.ts) locks the local LM Studio and
 llama.cpp controls used when thinking is off. Anthropic request assembly is
 inherited from the pinned Pi dependency, and no PanCode test reconstructs Pi's whole adaptive or
 budget payload.

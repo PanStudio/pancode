@@ -7,7 +7,7 @@ triggers:
   - architecture for this feature
   - decide the engineering approach
   - compare architecture options
-version: 0.4.5
+version: 0.4.6
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -21,8 +21,8 @@ allowed-tools:
   - write
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/architecture
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/architecture
   audit: pass
   model-size: large
   agents:

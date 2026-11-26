@@ -3,16 +3,16 @@
 PanCode's extension API: the contract for authoring PanCode extensions, packs, tools and MCP servers.
 The extension API is unstable: its entry points, types, validators and limits can change in any release until
 PanCode defines it.
-It ships inside the `@akougkas/pancode` npm package as `pancode/sdk/<subpath>`. This workspace package, `@pancode/sdk`, is
+It ships inside the `@panstudio/pancode` npm package as `pancode/sdk/<subpath>`. This workspace package, `@pancode/sdk`, is
 private: PanCode bundles it at build time and never publishes it on its own.
 
 ## Install
 
-The extension API comes with the `@akougkas/pancode` npm package, which needs Node 22.19 or later, and its source is licensed
+The extension API comes with the `@panstudio/pancode` npm package, which needs Node 22.19 or later, and its source is licensed
 Apache-2.0.
 
 ```bash
-npm install --save-dev pancode@npm:@akougkas/pancode   # in a project that imports pancode/sdk/*
+npm install --save-dev pancode@npm:@panstudio/pancode   # in a project that imports pancode/sdk/*
 ```
 
 An extension package scaffolded with `pancode extensions init` needs no install: it resolves
@@ -125,5 +125,5 @@ A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/test
 - Extension API guide, with every entry point and the authoring commands: https://pancode.dev/docs/guide/sdk.html
 - Extensions and runtime api 2: https://pancode.dev/docs/guide/harness-extensions.html
 - PanKit, PanCode's agent toolkit, built on this API: https://pancode.dev/docs/guide/pankit.html
-- Source: https://github.com/akougkas/pancode/tree/main/packages/sdk
-- PanCode: https://github.com/akougkas/pancode
+- Source: https://github.com/PanStudio/pancode/tree/main/packages/sdk
+- PanCode: https://github.com/PanStudio/pancode

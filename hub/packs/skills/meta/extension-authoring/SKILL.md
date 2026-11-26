@@ -6,7 +6,7 @@ triggers:
   - add an extension hook
   - create an extension workspace
   - debug extension reload
-version: 0.1.7
+version: 0.1.8
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -15,8 +15,8 @@ allowed-tools:
   - edit
   - bash
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/extension-authoring
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/extension-authoring
   audit: pass
   model-size: large
 ---

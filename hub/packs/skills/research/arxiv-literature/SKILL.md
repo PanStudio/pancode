@@ -8,7 +8,7 @@ triggers:
   - find recent research papers
   - build a literature survey
   - bibtex for this arxiv paper
-version: 0.6.3
+version: 0.6.4
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - web_fetch
@@ -22,8 +22,8 @@ allowed-tools:
   - find
   - ls
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/arxiv-literature
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/arxiv-literature
   audit: pass
   model-size: any
   agents:

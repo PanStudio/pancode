@@ -8,7 +8,7 @@ triggers:
   - permission denied
   - add a secret
   - secret leaked
-version: 0.2.2
+version: 0.2.3
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -19,8 +19,8 @@ allowed-tools:
   - ask_user
   - credential_present
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/credentials
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/credentials
   audit: pass
   model-size: any
 ---

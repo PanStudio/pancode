@@ -7,7 +7,7 @@ triggers:
   - install a skill
   - add an agent skill
   - search the skills marketplace
-version: 0.3.3
+version: 0.3.4
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - bash
@@ -16,8 +16,8 @@ allowed-tools:
   - ls
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/find-skills
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/find-skills
   audit: pass
   model-size: any
 ---

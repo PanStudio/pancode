@@ -274,7 +274,7 @@ jobs:
         with:
           name: release
           path: ${{ runner.temp }}/release
-      # Build provenance for every release asset, verifiable with `gh attestation verify <file> --repo akougkas/pancode`.
+      # Build provenance for every release asset, verifiable with `gh attestation verify <file> --repo PanStudio/pancode`.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: ${{ runner.temp }}/release/assets/SHA256SUMS
@@ -285,7 +285,7 @@ jobs:
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: akougkas
+          owner: PanStudio
           repositories: pancode
           permission-contents: write
           permission-workflows: write

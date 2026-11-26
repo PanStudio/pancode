@@ -1,5 +1,5 @@
 {
-	"name": "@akougkas/pancode",
+	"name": "@panstudio/pancode",
 	"version": "0.9.1",
 	"description": "PanCode is systems software for coding agents. It drives the models you have, sandboxes commands, bounds workers and checks finished work against what ran.",
 	"keywords": [
@@ -28,10 +28,10 @@
 	"license": "SEE LICENSE IN LICENSE",
 	"author": "Anthony Kougkas <a.kougkas@gmail.com> (https://github.com/akougkas)",
 	"homepage": "https://pancode.dev",
-	"bugs": "https://github.com/akougkas/pancode/issues",
+	"bugs": "https://github.com/PanStudio/pancode/issues",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/akougkas/pancode.git"
+		"url": "git+https://github.com/PanStudio/pancode.git"
 	},
 	"engines": {
 		"node": ">=22.19.0"

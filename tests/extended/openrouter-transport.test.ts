@@ -145,7 +145,7 @@ describe("OpenRouter catalog transport", () => {
 						strictEqual(request.url.split("?")[0], fixture.base + fixture.path);
 						strictEqual(request.headers.get("x-contract"), "transport");
 						strictEqual(request.headers.get("x-openrouter-title"), "Contract title");
-						strictEqual(request.headers.get("http-referer"), "https://github.com/akougkas/pancode");
+						strictEqual(request.headers.get("http-referer"), "https://github.com/PanStudio/pancode");
 						payload = (await request.json()) as Record<string, unknown>;
 						return response(fixture.api === "anthropic-messages");
 					},

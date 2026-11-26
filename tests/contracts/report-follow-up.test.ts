@@ -26,7 +26,7 @@ test("report follow-up: the reply check is opt-in and daily, and the thank-you s
 		route: "issue",
 		transport: "gh",
 		state: "sent",
-		url: "https://github.com/akougkas/pancode/issues/452",
+		url: "https://github.com/PanStudio/pancode/issues/452",
 		number: 452,
 		sentAt: "2026-11-01T00:00:00.000Z",
 	});

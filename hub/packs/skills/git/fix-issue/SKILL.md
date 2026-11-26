@@ -7,7 +7,7 @@ triggers:
   - resolve the bug in issue
   - implement this tracker issue
   - fix a GitHub issue end to end
-version: 0.3.3
+version: 0.3.4
 license: LicenseRef-PanCode-1.0
 compatibility: git >=2.30.0, gh CLI >=2.0.0 (authenticated for issue viewing), POSIX-compatible shell
 allowed-tools:
@@ -25,8 +25,8 @@ allowed-tools:
   - write
   - edit
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/fix-issue
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/fix-issue
   audit: pass
   model-size: any
   agents:
@@ -51,7 +51,7 @@ Arguments are passed in the user invocation message. Interpret them structurally
 ### Examples
 - `/skill:fix-issue 42`
 - `/skill:fix-issue #105`
-- `/skill:fix-issue https://github.com/akougkas/pancode/issues/271`
+- `/skill:fix-issue https://github.com/PanStudio/pancode/issues/271`
 - `/skill:fix-issue --repo acme/widgets 88`
 
 ### Positional Arguments

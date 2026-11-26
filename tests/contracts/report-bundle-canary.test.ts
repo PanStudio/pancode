@@ -718,7 +718,7 @@ test("report --bundle mechanics shows its consent text, keeps the bundle only on
 			if (args.includes("user")) return reply("octo\n");
 			if (args.includes("search/issues")) return reply("[]");
 			if (args.some((arg) => arg.endsWith("releases/latest"))) return reply("v0.0.1\n");
-			if (args[0] === "issue" && args[1] === "create") return reply("https://github.com/akougkas/pancode/issues/452\n");
+			if (args[0] === "issue" && args[1] === "create") return reply("https://github.com/PanStudio/pancode/issues/452\n");
 			return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
 		};
 		const deps: ReportCliDeps = {
@@ -829,7 +829,7 @@ test("report --share is turned off, and forget deletes a sent report's bundle", 
 			if (args.some((arg) => arg.endsWith("releases/latest"))) return reply("v0.0.1\n");
 			if (args[0] === "issue" && args[1] === "create") {
 				posted = readFileSync(args[args.indexOf("--body-file") + 1] ?? "", "utf8");
-				return reply("https://github.com/akougkas/pancode/issues/452\n");
+				return reply("https://github.com/PanStudio/pancode/issues/452\n");
 			}
 			return { exitCode: 1, stdout: "", stderr: "unexpected", timedOut: false };
 		};

@@ -7,7 +7,7 @@ triggers:
   - problem-first PRD
   - define a falsifiable product hypothesis
   - greenfield product intent
-version: 0.4.5
+version: 0.4.6
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -19,8 +19,8 @@ allowed-tools:
   - write
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/product-intent
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/product-intent
   audit: pass
   model-size: large
   agents:

@@ -7,7 +7,7 @@ triggers:
   - build the backlog
   - decompose this plan into tickets
   - create GitHub issues from this architecture
-version: 0.4.5
+version: 0.4.6
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -18,8 +18,8 @@ allowed-tools:
   - tasks
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/backlog
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/backlog
   audit: pass
   model-size: any
   agents:

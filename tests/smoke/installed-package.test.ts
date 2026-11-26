@@ -799,7 +799,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				t.signal,
 			);
 
-			const packageRoot = join(prefix, "node_modules", "@akougkas", "pancode");
+			const packageRoot = join(prefix, "node_modules", "@panstudio", "pancode");
 			const bin = join(packageRoot, "dist", "cli", "index.js");
 			const sdkChunks = emittedFilesContaining(packageRoot, "async function ensureClaudeAgentSdk(");
 			strictEqual(sdkChunks.size, 1);
@@ -1373,7 +1373,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 					ok(existsSync(join(packageRoot, file)), `installed extension author file ${file} exists`);
 					match(readFileSync(join(packageRoot, file), "utf8"), /^\/\/ SPDX-License-Identifier: Apache-2\.0\n/u, file);
 				}
-			const sdkImport = `await Promise.all(${JSON.stringify(sdkSubpaths.map((subpath) => `@akougkas/pancode/sdk/${subpath}`))}.map((s) => import(s)));`;
+			const sdkImport = `await Promise.all(${JSON.stringify(sdkSubpaths.map((subpath) => `@panstudio/pancode/sdk/${subpath}`))}.map((s) => import(s)));`;
 			execFileSync(process.execPath, ["--input-type=module", "-e", sdkImport], {
 				cwd: prefix,
 				env: isolatedEnv(home),

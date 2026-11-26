@@ -7,11 +7,11 @@ triggers:
   - change PanCode context or session lifecycle
   - edit PanCode skills tools or prompts
   - work a PanCode lane brief or spec
-version: 0.7.2
+version: 0.7.3
 license: LicenseRef-PanCode-1.0
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/meta/pancode-dev
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-dev
   audit: pass
   model-size: any
 ---

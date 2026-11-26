@@ -18,10 +18,10 @@ import { ProblemReportsService } from "../server/services/problem-reports.js";
 const view = (gates: string[]): ProblemReportView => ({
 	draftId: "rpt_01JZ0000000000000000000000",
 	state: "draft",
-	headline: "Public, posted from your gh account to github.com/akougkas/pancode",
+	headline: "Public, posted from your gh account to github.com/PanStudio/pancode",
 	plan: {
 		postedAs: "posted from your gh account",
-		destination: "github.com/akougkas/pancode",
+		destination: "github.com/PanStudio/pancode",
 		rendered: { title: "A title long enough", body: "body\n" },
 		maskSummary: "Masked by PanCode: nothing.",
 		actions: ["search", "post"],

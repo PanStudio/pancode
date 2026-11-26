@@ -2005,7 +2005,7 @@ test("ACP session/new carries the workspace view and an edit that dirties the tr
 				ahead: 0,
 				behind: null,
 				recentCommits: [{ sha: "abc", subject: "private subject" }],
-				remoteUrl: "https://user:secret-token@github.com/akougkas/pancode",
+				remoteUrl: "https://user:secret-token@github.com/PanStudio/pancode",
 				projectType: "unknown",
 				capturedAt: new Date().toISOString(),
 			};
@@ -2039,7 +2039,7 @@ test("ACP session/new carries the workspace view and an edit that dirties the tr
 	const view = created._meta["pancode/workspace"];
 	strictEqual(view?.dirty, false);
 	strictEqual(view?.branch, "v060");
-	strictEqual(view?.remoteUrl, "https://github.com/akougkas/pancode");
+	strictEqual(view?.remoteUrl, "https://github.com/PanStudio/pancode");
 	strictEqual(view?.recentCommits, undefined);
 	strictEqual(probes, 1);
 	await call("session/prompt", { sessionId: created.sessionId, prompt: [{ type: "text", text: "edit" }] });

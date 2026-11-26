@@ -344,7 +344,7 @@ function noTerminalHint(output: string): string | null {
  * versions.
  */
 export function pancodeIssueNudge(command: string): string {
-	if (!PANCODE_ISSUE_COMMAND.test(command) || !command.includes("akougkas/pancode")) return "";
+	if (!PANCODE_ISSUE_COMMAND.test(command) || !/PanStudio\/pancode/iu.test(command)) return "";
 	return `${TOOL_RESULT_NOTES_SEPARATOR}${toolResultNote("info", PANCODE_REPORT_NUDGE)}`;
 }
 

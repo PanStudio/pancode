@@ -122,7 +122,7 @@ test("a draft resumed elsewhere still masks the machine it was composed on (R2-s
 
 test("a rendered report is a fixed point of the scrubber, hostile prose included", () => {
 	const hostile = [
-		"see https://example.com/home/alice/x?p=/home/alice/y and https://github.com/akougkas/pancode/issues/445.",
+		"see https://example.com/home/alice/x?p=/home/alice/y and https://github.com/PanStudio/pancode/issues/445.",
 		"(/home/alice/a.ts:12), path:/srv/data/x, ~/notes/today.md; C:\\Users\\alice\\x.txt",
 		"alicewonder kept, alice's name and Alice masked, acme-app/src kept as project, 10.1.2.3:8080 and 127.0.0.1",
 		"/opt/pkgs/node_modules/pancode/dist/cli/index.js crashed; user@host.example:team/repo.git",
@@ -131,7 +131,7 @@ test("a rendered report is a fixed point of the scrubber, hostile prose included
 	ok(isFixedPoint(rendered, identity));
 	ok(rendered.body.includes("alicewonder kept"));
 	ok(rendered.body.includes("pancode/dist/cli/index.js crashed"));
-	ok(rendered.body.includes("https://github.com/akougkas/pancode/issues/445."));
+	ok(rendered.body.includes("https://github.com/PanStudio/pancode/issues/445."));
 	ok(!/alice\b|lab-node7|10\.1\.2\.3|\/srv\/data/u.test(rendered.body.replace("alicewonder", "")));
 	ok(rendered.body.includes("The last turn ended (`error`) on `internal` at stage `send` after 2 retries."));
 	strictEqual(rendered.title, "fix(dispatch): the loop stopped early on <host>");

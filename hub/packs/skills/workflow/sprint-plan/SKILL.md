@@ -7,7 +7,7 @@ triggers:
   - make this plan executable
   - turn this milestone into a sprint
   - write dependency-ordered vertical slices
-version: 0.4.4
+version: 0.4.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -20,8 +20,8 @@ allowed-tools:
   - write
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/sprint-plan
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/sprint-plan
   audit: pass
   model-size: any
   agents:

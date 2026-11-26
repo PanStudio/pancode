@@ -139,7 +139,7 @@ export function matchMarketplaceSkills(
  * This gates the promotion flow only. Operator-driven installs through
  * `pancode hub install <url>` keep their existing behavior.
  */
-export const OWN_MARKETPLACE_URL_PREFIX = "https://github.com/akougkas/pancode/";
+export const OWN_MARKETPLACE_URL_PREFIX = "https://github.com/PanStudio/pancode/";
 
 export function isOwnMarketplaceSource(entry: Pick<MarketplaceSkill, "origin" | "sourceUrl">): boolean {
 	const source = entry.sourceUrl.trim();

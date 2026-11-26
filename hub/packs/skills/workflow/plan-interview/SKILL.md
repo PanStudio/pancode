@@ -7,7 +7,7 @@ triggers:
   - stress-test this design
   - poke holes in this idea
   - clarify this plan one question at a time
-version: 0.5.6
+version: 0.5.7
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -19,8 +19,8 @@ allowed-tools:
   - code_nav
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/plan-interview
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/plan-interview
   audit: pass
   model-size: large
 ---

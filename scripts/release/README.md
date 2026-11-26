@@ -8,7 +8,7 @@ One commit, built once, published to four places:
 
 | Where | What |
 | --- | --- |
-| npm | `@akougkas/pancode@<version>`, for people who bring their own Node.js |
+| npm | `@panstudio/pancode@<version>`, for people who bring their own Node.js |
 | GitHub release `v<version>` | One bundle per platform (`pancode-<version>-<target>.tar.gz`), the npm tarball, `install.sh`, `install.ps1`, `install.cmd` and `SHA256SUMS` over all of them |
 | `main` | Fast-forwarded to the released commit (stable releases) |
 | `gh-pages` | The website (stable releases) and `channel/latest` and `channel/beta`, one line each naming a version |
@@ -41,22 +41,22 @@ A version with no suffix (`0.9.0`) is stable: npm `latest`, a GitHub release mar
 5. Dispatch the release from the version branch:
 
    ```bash
-   gh workflow run ci.yml --repo akougkas/pancode --ref v090 -f release=true
+   gh workflow run ci.yml --repo PanStudio/pancode --ref v090 -f release=true
    ```
 
 6. When every job has passed, the `publish` job waits. Approve the `release` environment in the run's page. That approval is the release decision; nothing else in the pipeline can publish.
 
-`publish` then runs in this order: npm, the GitHub release and its tag, `main`, `gh-pages`. The channel file moves last, so no installer or update check hears about a version before its bundle can be downloaded. Each step first reads what is already published. If the job fails, fix the cause and rerun it with `gh run rerun <run id> --failed --repo akougkas/pancode`; it asks for approval again and completes only the open steps. Bytes that differ from what an earlier run published stop it.
+`publish` then runs in this order: npm, the GitHub release and its tag, `main`, `gh-pages`. The channel file moves last, so no installer or update check hears about a version before its bundle can be downloaded. Each step first reads what is already published. If the job fails, fix the cause and rerun it with `gh run rerun <run id> --failed --repo PanStudio/pancode`; it asks for approval again and completes only the open steps. Bytes that differ from what an earlier run published stop it.
 
 After a stable release, create the next version branch from `main` and set the next development version.
 
 ### The first release of a package name
 
-npm trusted publishing cannot create a package, so the first version of `@akougkas/pancode` is published by hand, from the files the run built:
+npm trusted publishing cannot create a package, so the first version of `@panstudio/pancode` is published by hand, from the files the run built:
 
 ```bash
-gh run download <run id> --repo akougkas/pancode --name release --dir <dir>
-npm publish <dir>/assets/akougkas-pancode-<version>.tgz --access public
+gh run download <run id> --repo PanStudio/pancode --name release --dir <dir>
+npm publish <dir>/assets/panstudio-pancode-<version>.tgz --access public
 ```
 
 Do this while `publish` waits for approval, then approve. The job finds that npm already serves those bytes and continues with GitHub, `main` and the website. Then attach the trusted publisher, described under Owner configuration, so later releases need only the approval.
@@ -84,7 +84,7 @@ It rewrites `scripts/release/node-runtime.json` with the archive URL and SHA-256
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-gh attestation verify pancode-<version>-<target>.tar.gz --repo akougkas/pancode
+gh attestation verify pancode-<version>-<target>.tar.gz --repo PanStudio/pancode
 npm audit signatures
 ```
 
@@ -92,19 +92,19 @@ Every release asset carries a GitHub build attestation naming this repository an
 
 ## Owner configuration
 
-Configured once on `akougkas/pancode`.
+Configured once on `PanStudio/pancode`, a repository of the GitHub organization PanStudio.
 
-**npm.** After the first version exists:
+**npm.** The scope `@panstudio` is the npm organization `panstudio`. After the first version exists:
 
 ```bash
-npm trust github @akougkas/pancode --file ci.yml --repo akougkas/pancode --env release --allow-publish
+npm trust github @panstudio/pancode --file ci.yml --repo PanStudio/pancode --env release --allow-publish
 ```
 
 Then set the package to require two-factor authentication and disallow tokens. No workflow holds an npm token; `publish` authenticates with the run's OIDC identity, which npm accepts only from `ci.yml` in the `release` environment.
 
-**The `release` environment** has the owner as required reviewer and admits a Tag rule `v*` and a Branch rule `v[0-9][0-9][0-9]`, so only a version branch reaches the approval. It holds the variable `RELEASE_APP_ID` and the secret `RELEASE_APP_PRIVATE_KEY`. GitHub enforces required reviewers on a personal account only for a public repository. Leave Prevent self-review unchecked, because the owner also dispatches releases.
+**The `release` environment** has the owner as required reviewer and admits a Tag rule `v*` and a Branch rule `v[0-9][0-9][0-9]`, so only a version branch reaches the approval. It holds the variable `RELEASE_APP_ID` and the secret `RELEASE_APP_PRIVATE_KEY`. On the GitHub Free and Team plans, GitHub enforces required reviewers only for a public repository. Leave Prevent self-review unchecked, because the owner also dispatches releases.
 
-**The GitHub App `pancode-release`** has Contents read and write, Workflows read and write and Metadata read, no webhook, and is installed on this repository only. `publish` mints its installation token after approval and uses it for the release, the tag, `main` and `gh-pages`. Workflows permission lets the `main` promotion carry workflow changes, and the App's `gh-pages` push starts the Pages build, which a `GITHUB_TOKEN` push does not.
+**The GitHub App `pancode-release`** has Contents read and write, Workflows read and write and Metadata read, no webhook, is owned by the PanStudio organization and is installed on this repository only. `publish` mints its installation token after approval and uses it for the release, the tag, `main` and `gh-pages`. Workflows permission lets the `main` promotion carry workflow changes, and the App's `gh-pages` push starts the Pages build, which a `GITHUB_TOKEN` push does not.
 
 **Rulesets.** `main` cannot be deleted or force-pushed by anyone. Changes reach `main` by pull request with `ci (22)` and `ci (24)`, and the App bypasses that to promote a release whose run passed them. Only the App creates `v*` tags. Nobody updates or deletes a `v*` tag.
 
@@ -122,7 +122,7 @@ comments on the pull request; it writes no file, branch or commit in this
 repository. Set it up before the repository is made public:
 
 1. Publish the text of `CLA.md` as a public gist owned by `akougkas`.
-2. Sign in at cla-assistant.io as `akougkas` and link `akougkas/pancode` to that
+2. Sign in at cla-assistant.io as `akougkas` and link `PanStudio/pancode` to that
    gist.
 3. Allowlist the release GitHub App, so its pull requests and pushes need no
    signature.

@@ -7,7 +7,7 @@ triggers:
   - turn this into a reusable workflow
   - distill this repeated process
   - create a skill from this session
-version: 0.4.7
+version: 0.4.8
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -20,8 +20,8 @@ allowed-tools:
 requires:
   - skill:skill-authoring
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/workflow/workflow-capture
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/workflow/workflow-capture
   audit: pass
   model-size: large
 ---

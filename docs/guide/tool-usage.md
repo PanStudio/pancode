@@ -1054,7 +1054,7 @@ The arXiv and repository-tree summaries apply only to a bodiless `GET` with no c
 
 ```text
 gateway(op="call", capability="web_fetch", args={url: "https://arxiv.org/abs/2303.17564"})
-gateway(op="call", capability="web_fetch", args={url: "https://github.com/akougkas/pancode/tree/main/docs"})
+gateway(op="call", capability="web_fetch", args={url: "https://github.com/PanStudio/pancode/tree/main/docs"})
 gateway(op="call", capability="web_fetch", args={url: "https://example.com", format: "raw"})
 ```
 
@@ -1405,7 +1405,7 @@ Reached through the gateway in the main session only; workers never get it. Sour
 - `action: "draft"` takes `kind` (`bug`, `feature` or `question`), `title`, `happened`, `not_known` (required, `[]` when everything was verified) and optional `operator_words`, `expected`, `reproduce` and `area`. PanCode adds versions and what it recorded, drops escape sequences and hidden characters, scrubs the text and saves the draft: one per session, three unsent per install. The TUI raises a notice instead of opening the review mid-turn, and the result tells the agent it cannot send the draft. Only the operator's own review sends an agent's draft: never `report send --yes`, a session's `bash` or ACP.
 - `action: "offer"` asks the operator once through `ask_user` (Draft it, Not now, Don't ask again) under the same budget as PanCode's own suggestions. A no tells the agent not to raise it again, and "Don't ask again" sets `report.offers: off`.
 
-A `bash` command that files a `gh` issue against akougkas/pancode still runs, and its result gains a note naming `/report`. See [Report a problem to the maintainers](troubleshooting.md#report-a-problem-to-the-maintainers).
+A `bash` command that files a `gh` issue against PanStudio/pancode still runs, and its result gains a note naming `/report`. See [Report a problem to the maintainers](troubleshooting.md#report-a-problem-to-the-maintainers).
 
 ## artifact: plans, reviews, and reports
 

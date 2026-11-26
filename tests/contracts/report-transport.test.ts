@@ -45,19 +45,19 @@ function runner(
 test("gh creates the issue from a body file under the reports directory; argv never carries the body", async () => {
 	const stateDir = mkdtempSync(join(tmpdir(), "report-transport-"));
 	const report = rendered("The loop stopped with `rm -rf $(pwd)` in a 'quoted'\nline.");
-	const fake = runner(() => ({ exitCode: 0, stdout: "https://github.com/akougkas/pancode/issues/501\n" }));
+	const fake = runner(() => ({ exitCode: 0, stdout: "https://github.com/PanStudio/pancode/issues/501\n" }));
 	const result = await sendReport(report, routeFor("bug"), gh, { kind: "create" }, { stateDir, run: fake.run });
 
 	deepStrictEqual(result, {
 		status: "sent",
-		url: "https://github.com/akougkas/pancode/issues/501",
+		url: "https://github.com/PanStudio/pancode/issues/501",
 		number: 501,
 		adopted: false,
 	});
 	strictEqual(fake.calls.length, 1);
 	const argv = fake.calls[0] ?? [];
 	ok(!argv.some((arg) => arg.includes("The loop stopped")));
-	ok(argv.includes("github.com/akougkas/pancode") && argv.includes(`--title=${report.title}`));
+	ok(argv.includes("github.com/PanStudio/pancode") && argv.includes(`--title=${report.title}`));
 	const bodyFile = argv[argv.indexOf("--body-file") + 1] ?? "";
 	ok(bodyFile.startsWith(join(stateDir, "reports", "drafts")));
 	strictEqual(readFileSync(bodyFile, "utf8"), report.body);
@@ -73,14 +73,14 @@ test("a create cut off before the outbox update is retried by adopting the issue
 	strictEqual(outboxEntry(stateDir, report.id)?.state, "sending");
 
 	const retry = runner((args) =>
-		args.includes("repos/akougkas/pancode/issues")
-			? { exitCode: 0, stdout: "https://github.com/akougkas/pancode/issues/502\n" }
-			: { exitCode: 0, stdout: "https://github.com/akougkas/pancode/issues/999\n" },
+		args.includes("repos/PanStudio/pancode/issues")
+			? { exitCode: 0, stdout: "https://github.com/PanStudio/pancode/issues/502\n" }
+			: { exitCode: 0, stdout: "https://github.com/PanStudio/pancode/issues/999\n" },
 	);
 	const second = await sendReport(report, routeFor("bug"), gh, { kind: "create" }, { stateDir, run: retry.run });
 	deepStrictEqual(second, {
 		status: "sent",
-		url: "https://github.com/akougkas/pancode/issues/502",
+		url: "https://github.com/PanStudio/pancode/issues/502",
 		number: 502,
 		adopted: true,
 	});
@@ -92,17 +92,17 @@ test("a create cut off before the outbox update is retried by adopting the issue
 test("a question files an issue from the question template like every other report kind", async () => {
 	const stateDir = mkdtempSync(join(tmpdir(), "report-transport-"));
 	const report = rendered("The question lost its answer after a restart.");
-	const fake = runner(() => ({ exitCode: 0, stdout: "https://github.com/akougkas/pancode/issues/77\n" }));
+	const fake = runner(() => ({ exitCode: 0, stdout: "https://github.com/PanStudio/pancode/issues/77\n" }));
 	const result = await sendReport(report, routeFor("question"), gh, { kind: "create" }, { stateDir, run: fake.run });
 	deepStrictEqual(result, {
 		status: "sent",
-		url: "https://github.com/akougkas/pancode/issues/77",
+		url: "https://github.com/PanStudio/pancode/issues/77",
 		number: 77,
 		adopted: false,
 	});
 	deepStrictEqual(fake.calls[0]?.slice(0, 2), ["issue", "create"]);
 	const link = prefillLink(report, routeFor("question"));
-	ok(link?.url.startsWith("https://github.com/akougkas/pancode/issues/new?template=question.yml&"));
+	ok(link?.url.startsWith("https://github.com/PanStudio/pancode/issues/new?template=question.yml&"));
 });
 
 test("the prefilled link stays under its budget and keeps the title and the start of the problem", () => {

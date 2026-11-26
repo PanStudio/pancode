@@ -193,7 +193,7 @@ Default chat settings control interactive conversation routing, reasoning effort
 | `integrations.hub.remote` | `null` | Git remote URL the catalog syncs with, or `null` to keep PanHub local. | next turn |
 | `integrations.hub.confirmedRemote` | `null` | The remote the operator approved. Written by PanCode, read-only in the UI. | next turn |
 | `integrations.hub.sync` | `false` | Boolean. Whether `pancode hub sync` and `push` may contact the remote. | next turn |
-| `integrations.hub.index` | `"https://github.com/akougkas/pancode/releases/download/hub-index/"` | Base URL holding `signing.json`, `index.envelope.json` and `index.yaml` for the signed PanHub index. Empty keeps the bundled index only. 0.9.0 has no root key, so it always uses the bundled index. | next turn |
+| `integrations.hub.index` | `"https://github.com/PanStudio/pancode/releases/download/hub-index/"` | Base URL holding `signing.json`, `index.envelope.json` and `index.yaml` for the signed PanHub index. Empty keeps the bundled index only. 0.9.0 has no root key, so it always uses the bundled index. | next turn |
 | `integrations.git.commitAttribution` | `true` | Boolean. Evidence-backed role trailers on commits created through PanCode. | hot reload |
 | `integrations.git.commitAuthor` | `"auto"` | `auto` or `human`. Who authors an autonomous commit; see [Commit authorship](#commit-authorship). Ignored when `commitAttribution` is `false`. | hot reload |
 | `integrations.music.enabled` | `false` | Boolean. Allows `/music` to open cliamp in a Herdr dock. Needs Herdr panes and cliamp. | hot reload |

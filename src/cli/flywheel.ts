@@ -26,7 +26,7 @@ so and exit 2. What stays is the maintainers' local intake store (--store,
 default ~/.local/share/pancode-intake/store), which holds the bundles shares
 delivered.
 
---sweep reads akougkas/pancode's latest 1000 has-bundle issues through your gh:
+--sweep reads PanStudio/pancode's latest 1000 has-bundle issues through your gh:
 a report's own "Please delete the diagnostic bundle for report <id>." comment
 from the reporter forgets that bundle, and a debug-only bundle is deleted and
 marked expired once its issue has been closed ${INTAKE_CLOSED_RETENTION_DAYS} days or it is ${INTAKE_MAX_AGE_DAYS} days old. Bundles
@@ -35,7 +35,7 @@ marks it forgotten, adds it to exclusions.txt so no later dataset takes it, and
 prints the confirmation to post. --forget needs no gh.
 `;
 
-const CODER_REPOSITORY = "akougkas/pancode";
+const CODER_REPOSITORY = "PanStudio/pancode";
 
 export interface FlywheelDeps {
 	run?: ReportCommandRunner;

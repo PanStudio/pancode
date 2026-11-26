@@ -17,7 +17,7 @@ docs/
 └── architecture/    Runtime architecture and contracts
 ```
 
-The same Markdown ships in the `@akougkas/pancode` package, so PanCode answers questions
+The same Markdown ships in the `@panstudio/pancode` package, so PanCode answers questions
 about itself from these pages without a network request (see
 [Where PanCode finds these docs](#where-pancode-finds-these-docs-when-it-is-running-in-someone-elses-project)).
 The website publishes the guides listed in `site/public-docs.json`. When a page
@@ -179,7 +179,7 @@ reference data, and review define the acceptance criteria for a change.
 ## Developer quick start
 
 ```bash
-git clone https://github.com/akougkas/pancode.git
+git clone https://github.com/PanStudio/pancode.git
 cd pancode
 corepack enable pnpm
 pnpm install --frozen-lockfile
@@ -197,7 +197,7 @@ pancode --version
 ```
 
 Use `pnpm run dev` for a watch build. Choose the smallest check that exercises
-the change; the contributor handbook, [PANCODE-DEV.md](https://github.com/akougkas/pancode/blob/main/PANCODE-DEV.md),
+the change; the contributor handbook, [PANCODE-DEV.md](https://github.com/PanStudio/pancode/blob/main/PANCODE-DEV.md),
 lists them. `pnpm run ci` runs the whole gate (a release build, the test tiers
 and an install of the built bundle), so keep it for packaging and release work.
 

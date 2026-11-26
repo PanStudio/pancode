@@ -13,8 +13,8 @@ Please do **not** open a public GitHub issue or pull request for a
 security problem, and do not send one with `/report bug`.
 
 Report it through GitHub private vulnerability reporting on
-`akougkas/pancode`: open a draft advisory at
-<https://github.com/akougkas/pancode/security/advisories/new>. Only the
+`PanStudio/pancode`: open a draft advisory at
+<https://github.com/PanStudio/pancode/security/advisories/new>. Only the
 maintainer and you can see it. `pancode report security` prints the same
 link and files nothing public.
 

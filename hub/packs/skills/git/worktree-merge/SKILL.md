@@ -6,7 +6,7 @@ triggers:
   - integrate these worktree branches
   - combine parallel branches
   - land finished worktrees
-version: 0.6.2
+version: 0.6.3
 license: LicenseRef-PanCode-1.0
 compatibility: git >=2.30.0, POSIX-compatible shell
 allowed-tools:
@@ -18,8 +18,8 @@ allowed-tools:
   - tasks
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/worktree-merge
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/worktree-merge
   audit: pass
   model-size: any
   agents:

@@ -11,7 +11,7 @@ import type { TargetDescriptor } from "../../types/target-descriptor.js";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_HEADERS = {
-	"HTTP-Referer": "https://github.com/akougkas/pancode",
+	"HTTP-Referer": "https://github.com/PanStudio/pancode",
 	"X-OpenRouter-Title": "PanCode",
 	"X-OpenRouter-Categories": "cli-agent",
 };

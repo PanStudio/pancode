@@ -7,7 +7,7 @@ triggers:
   - commit and open the PR
   - push and open a pull request
   - get this up for review
-version: 0.5.4
+version: 0.5.5
 license: LicenseRef-PanCode-1.0
 compatibility: git >=2.30.0, gh CLI >=2.0.0 (required for pr mode), POSIX-compatible shell
 allowed-tools:
@@ -20,8 +20,8 @@ allowed-tools:
   - tasks
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/ship
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/ship
   audit: pass
   model-size: any
   agents:

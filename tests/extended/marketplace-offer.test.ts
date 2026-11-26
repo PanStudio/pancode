@@ -157,7 +157,7 @@ describe("contracts/marketplace-offer own-marketplace gate", () => {
 		ok(isOwnMarketplaceSource(entry()));
 		ok(
 			isOwnMarketplaceSource(
-				entry({ origin: "index", sourceUrl: "https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/ship" }),
+				entry({ origin: "index", sourceUrl: "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/ship" }),
 			),
 		);
 	});

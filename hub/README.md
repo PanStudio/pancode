@@ -54,12 +54,12 @@ The same sources are usable by Claude Code and Codex with no converted copy and 
 
 ```bash
 # Claude Code: the repository is a standard marketplace
-claude plugin marketplace add akougkas/pancode
+claude plugin marketplace add PanStudio/pancode
 claude plugin install tdd@pancode
 claude plugin install pankit@pancode   # six PanKit MCP servers
 
 # Codex: run a PanKit server as a stdio MCP server
-codex mcp add node -- npx -y -p @akougkas/pancode pankit serve node
+codex mcp add node -- npx -y -p @panstudio/pancode pankit serve node
 
 # Codex: the checkout ships no .agents/skills links, so create them. This gives
 # every repository the curated skills and the hpc plugin's skills.

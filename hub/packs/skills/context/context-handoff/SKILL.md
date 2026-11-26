@@ -7,7 +7,7 @@ triggers:
   - handoff to another agent
   - context is about to be lost
   - write a continuation brief
-version: 0.5.7
+version: 0.5.8
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -20,8 +20,8 @@ allowed-tools:
   - bash
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/context/context-handoff
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/context/context-handoff
   audit: pass
   model-size: any
 ---

@@ -37,7 +37,7 @@ function fixture(t: { after(fn: () => void): void }) {
 	const prefix = (version: string) => {
 		const dir = join(root, "versions", version);
 		mkdirSync(join(dir, suffix), { recursive: true });
-		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version }));
+		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@panstudio/pancode", version }));
 		utimesSync(dir, 1, 1);
 		return dir;
 	};
@@ -335,7 +335,7 @@ test("every command the package declares gets a launcher, and rollback and the n
 			mkdirSync(dirname(join(dir, suffix, file)), { recursive: true });
 			writeFileSync(join(dir, suffix, file), `console.log(${JSON.stringify(`${name} ${version}`)}, process.argv[2]);`);
 		}
-		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@akougkas/pancode", version, bin }));
+		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@panstudio/pancode", version, bin }));
 		const result = f.run("activate", dir, f.record.launcher, "latest", "-", "0", "0");
 		assert.equal(result.status, 0, result.stderr);
 		return result;

@@ -6,9 +6,9 @@ PanCode is pre-1.0, so public interfaces can change between minor releases. User
 
 ## Ways to contribute
 
-- **Report a problem or ask for a feature.** Inside PanCode, `/report bug`, `/report feature` or `/report question` drafts the report, masks paths, host names and secrets, and shows you the exact text before anything is sent. `pancode report` does the same from a shell. You can also open an [issue](https://github.com/akougkas/pancode/issues/new/choose) by hand.
-- **Ask a question.** Open a [question](https://github.com/akougkas/pancode/issues/new?template=question.yml) issue.
-- **Share how a model or machine worked.** Local models, cluster login nodes and unusual terminals are where reports help most. Open a [question](https://github.com/akougkas/pancode/issues/new?template=question.yml) issue and say what you ran.
+- **Report a problem or ask for a feature.** Inside PanCode, `/report bug`, `/report feature` or `/report question` drafts the report, masks paths, host names and secrets, and shows you the exact text before anything is sent. `pancode report` does the same from a shell. You can also open an [issue](https://github.com/PanStudio/pancode/issues/new/choose) by hand.
+- **Ask a question.** Open a [question](https://github.com/PanStudio/pancode/issues/new?template=question.yml) issue.
+- **Share how a model or machine worked.** Local models, cluster login nodes and unusual terminals are where reports help most. Open a [question](https://github.com/PanStudio/pancode/issues/new?template=question.yml) issue and say what you ran.
 - **Fix the docs.** The guides under `docs/guide/` ship in the npm package and are what PanCode reads to answer questions about itself, so a correction there reaches every user.
 - **Change the code.** Set up a checkout as below, keep the change focused, and open a pull request against the current version branch.
 
@@ -22,7 +22,7 @@ Requirements:
 - Linux or macOS. Native Windows is best effort.
 
 ```bash
-git clone https://github.com/akougkas/pancode.git
+git clone https://github.com/PanStudio/pancode.git
 cd pancode
 corepack enable pnpm
 pnpm install --frozen-lockfile

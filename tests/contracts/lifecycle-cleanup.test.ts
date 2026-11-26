@@ -17,7 +17,7 @@ function fixture() {
 	const root = join(home.dir, "terminal-only-package");
 	mkdirSync(join(state, "gui"), { recursive: true });
 	mkdirSync(root);
-	writeFileSync(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.4"}');
+	writeFileSync(join(root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.4"}');
 	writeFileSync(history, "history must survive previews and failures");
 	writeFileSync(join(state, "home.json"), "{}\n");
 	function run(command: "reset" | "uninstall", args: string[]) {

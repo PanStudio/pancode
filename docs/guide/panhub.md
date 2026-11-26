@@ -226,7 +226,7 @@ The bundled index is fixed at release time.
 
 **0.9.0 ships no root key.** The root key list in [hub-keys.ts](../../src/domains/resources/hub-keys.ts) is empty and no key certificate or remote index is published, so `pancode hub refresh` refuses with `no-root-key` without a network request, `hub status` reads `root key: none in this build`, and the bundled index is the index every client uses. The rest of this section describes the planned remote refresh, whose verification code ships in this build.
 
-A newer index is to be published as the assets of the `hub-index` GitHub release, at `integrations.hub.index` (default `https://github.com/akougkas/pancode/releases/download/hub-index/`; blank turns the remote index off). The base URL serves three files:
+A newer index is to be published as the assets of the `hub-index` GitHub release, at `integrations.hub.index` (default `https://github.com/PanStudio/pancode/releases/download/hub-index/`; blank turns the remote index off). The base URL serves three files:
 
 - `signing.json`, a key certificate signed by the PanHub root key compiled into PanCode, naming the CI keys allowed to sign;
 - `index.envelope.json`, a statement signed by a certified key that pins the index's SHA-256, its sequence, its commit and its expiry;
@@ -346,7 +346,7 @@ Every distributable byte is pinned by SHA-256, and the pins are generated, never
 
 `hub validate` and `hub:pin` also check skill authoring: a missing linked local file is an error; missing bare companion paths, unknown skills in routing clauses and a body over 120 lines are warnings. An optional `pancode.verified-at` must be a valid date; a future date or one older than 180 days warns. A catalog skill carries `name`, `description`, `version` and `license` frontmatter and a `pancode:` block with `registry-id`, `source-url` and `audit: pass`. Every bundled skill also declares `triggers`, a list of the requests it serves: the skill reminder offers a skill with triggers only when the operator names it or reaches two thirds of one trigger's terms, and offers a skill without them on lexical rank alone.
 
-The marketplace projection makes packs installable from the repository with `claude plugin marketplace add akougkas/pancode`, then `claude plugin install <name>@pancode`. A pack is published there only when a peer host would load a real skill surface from it and nothing it would scan into a native component; `hub:pin` prints each pack it leaves out and why. See [coding agent interoperability](interop.md).
+The marketplace projection makes packs installable from the repository with `claude plugin marketplace add PanStudio/pancode`, then `claude plugin install <name>@pancode`. A pack is published there only when a peer host would load a real skill surface from it and nothing it would scan into a native component; `hub:pin` prints each pack it leaves out and why. See [coding agent interoperability](interop.md).
 
 ## Attended install rule
 
@@ -366,7 +366,7 @@ A marketplace offer is the unsolicited path, and it is local: the matcher in [pr
 
 - A whole-phrase match on an authored `triggers` entry (at least 4 characters), or an overlap of at least 3 distinctive name and description tokens, produces a `[Marketplace]` reminder. The model then asks with `ask_user` (header "Install skill"), offering exactly "Install for this project", "Install globally", "Not now" and "Never offer this skill". PanCode acts only on an answer bound to the offer and performs the install itself.
 - Each skill is offered at most once per session. "Not now" pauses offers for the session; "Never offer this skill" persists in `<configDir>/skill-promotion-declines.json`, keyed by name and catalog version. A turn with narrowed tools, disabled skills, or `answer` or `proposal` mode gets no offer.
-- A consented install passes `assertPromotionInstallSource`, which accepts only PanCode's own packs: the shipped index or `https://github.com/akougkas/pancode/` URLs.
+- A consented install passes `assertPromotionInstallSource`, which accepts only PanCode's own packs: the shipped index or `https://github.com/PanStudio/pancode/` URLs.
 - Headless runs and ACP sessions get passive guidance (`install with pancode hub install <name>`) and no question. Workers never see offers.
 
 ## Operator ownership of installed skills

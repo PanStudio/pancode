@@ -7,7 +7,7 @@ triggers:
   - define this feature
   - structure this product brain dump
   - create milestone prompts
-version: 0.4.4
+version: 0.4.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -21,8 +21,8 @@ allowed-tools:
   - edit
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/planning/prd
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/planning/prd
   audit: pass
   model-size: large
 ---

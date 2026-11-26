@@ -9,7 +9,7 @@ const { pathToFileURL } = require("node:url");
 const crypto = require("node:crypto");
 const os = require("node:os");
 const MARK = "# pancode-installer launcher";
-const PACKAGE_NAME = "@akougkas/pancode";
+const PACKAGE_NAME = "@panstudio/pancode";
 const SCHEMA = 3;
 
 /** The host id install.sh records in `.install-lock/host`, so it can reclaim a lock this process leaves behind. */

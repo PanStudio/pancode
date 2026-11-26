@@ -37,7 +37,7 @@ async function fixture(t: TestContext, worktree = false) {
 	else mkdirSync(path.join(cwd, ".git"));
 	writeFileSync(
 		path.join(cwd, "package.json"),
-		JSON.stringify({ name: "@akougkas/pancode", repository: "https://github.com/akougkas/pancode" }),
+		JSON.stringify({ name: "@panstudio/pancode", repository: "https://github.com/PanStudio/pancode" }),
 	);
 	for (const marker of [
 		"src/entry/orchestrator.ts",

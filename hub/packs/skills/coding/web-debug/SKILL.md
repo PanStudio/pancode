@@ -9,7 +9,7 @@ triggers:
   - check the page in a browser
   - playwright step file
   - screenshot the web app
-version: 0.1.0
+version: 0.1.1
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - bash
@@ -22,8 +22,8 @@ allowed-tools:
   - ls
   - vision
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/coding/web-debug
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/coding/web-debug
   audit: pass
   model-size: any
   agents:

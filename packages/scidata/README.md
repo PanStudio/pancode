@@ -40,9 +40,9 @@ The package has no runtime dependencies.
 
 PanCode's `data` tool and PanKit's `scidata` MCP server both read files through this package. The `data` tool is
 described in [Tool usage](https://pancode.dev/docs/guide/tool-usage.html) and the server in
-[PanKit](https://pancode.dev/docs/guide/pankit.html); both ship in the `@akougkas/pancode` npm package
-(`npm install -g @akougkas/pancode`). The source is
-[packages/scidata](https://github.com/akougkas/pancode/tree/main/packages/scidata).
+[PanKit](https://pancode.dev/docs/guide/pankit.html); both ship in the `@panstudio/pancode` npm package
+(`npm install -g @panstudio/pancode`). The source is
+[packages/scidata](https://github.com/PanStudio/pancode/tree/main/packages/scidata).
 
 ## Limits
 

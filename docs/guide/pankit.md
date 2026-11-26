@@ -4,7 +4,7 @@ PanKit is PanCode's agent toolkit: MCP tool servers for HPC and scientific work 
 
 The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the commands are in [cli.ts](../../packages/kit/src/cli.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
 
-PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@akougkas/pancode` npm package ships it as the `pankit` command, beside `pancode`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/akougkas/pancode/blob/main/packages/kit/README.md).
+PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@panstudio/pancode` npm package ships it as the `pankit` command, beside `pancode`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/PanStudio/pancode/blob/main/packages/kit/README.md).
 
 ## Servers
 
@@ -212,12 +212,12 @@ In a sandboxed fleet worker a server starts without network. `pancode mcp trust 
 
 ## PanKit in another MCP host
 
-A host launches `pankit serve <server>` as a stdio server. Without a global install, `npx -y -p @akougkas/pancode pankit serve <server>` fetches the `@akougkas/pancode` package and runs its `pankit`. For a host that reads the common `mcpServers` shape:
+A host launches `pankit serve <server>` as a stdio server. Without a global install, `npx -y -p @panstudio/pancode pankit serve <server>` fetches the `@panstudio/pancode` package and runs its `pankit`. For a host that reads the common `mcpServers` shape:
 
 ```json
 {
 	"mcpServers": {
-		"node": { "command": "npx", "args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"] },
+		"node": { "command": "npx", "args": ["-y", "-p", "@panstudio/pancode", "pankit", "serve", "node"] },
 		"scidata": { "command": "pankit", "args": ["serve", "scidata", "--cache", "/scratch/pankit-readers"] }
 	}
 }

@@ -124,5 +124,5 @@ test("the title query drops the prefix, stop words, placeholders and redaction m
 	deepStrictEqual(titleTokens(scrubbed), ["config", "stalls", "loop"]);
 	const canned = github({ title: [] });
 	await findRelated(draft("0.7.1"), { title: scrubbed }, gh, { run: canned.run, changelog: null, now });
-	deepStrictEqual(canned.queries, ["q=repo:akougkas/pancode is:issue config stalls loop"]);
+	deepStrictEqual(canned.queries, ["q=repo:PanStudio/pancode is:issue config stalls loop"]);
 });

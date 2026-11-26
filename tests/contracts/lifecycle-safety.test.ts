@@ -169,7 +169,7 @@ test("an empty or relative XDG base directory reads as unset", () => {
 });
 
 test("self-upgrade plans automatic replacement only for a newer npm release", async () => {
-	const root = "/opt/pancode/node_modules/@akougkas/pancode";
+	const root = "/opt/pancode/node_modules/@panstudio/pancode";
 	const installation = npmInstallation(root);
 	deepStrictEqual(await planSelfUpgrade({ installation, runningVersion: "0.5.7", fetchVersion: async () => "0.5.8" }), {
 		status: "available",
@@ -221,7 +221,7 @@ test("approved self-upgrade trusts success only after the installed package is v
 		join(root, "dist", "cli", "index.js"),
 		`if (process.argv.slice(2).join(" ") !== "upgrade --json --channel=latest") process.exit(19);\nconsole.log(JSON.stringify({status:"success",errors:[]}));\n`,
 	);
-	await writeFile(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.8"}\n');
+	await writeFile(join(root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.8"}\n');
 	const plan: Extract<SelfUpgradePlan, { status: "available" }> = {
 		status: "available",
 		current: "0.5.7",
@@ -229,7 +229,7 @@ test("approved self-upgrade trusts success only after the installed package is v
 		installation: npmInstallation(root),
 	};
 	deepStrictEqual(await runApprovedSelfUpgrade({ plan }), { from: "0.5.7", to: "0.5.8" });
-	await writeFile(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.7"}\n');
+	await writeFile(join(root, "package.json"), '{"name":"@panstudio/pancode","version":"0.5.7"}\n');
 	await rejects(() => runApprovedSelfUpgrade({ plan }), /installed version is 0\.5\.7/u);
 	ok((await readFile(join(root, "package.json"), "utf8")).includes("0.5.7"));
 });

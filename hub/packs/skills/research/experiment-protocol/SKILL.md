@@ -8,7 +8,7 @@ triggers:
   - define numerical tolerances
   - reproduce these results
   - compare solver accuracy
-version: 0.3.4
+version: 0.3.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -21,8 +21,8 @@ allowed-tools:
   - code_nav
   - bash
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/experiment-protocol
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/experiment-protocol
   audit: pass
   model-size: any
 ---

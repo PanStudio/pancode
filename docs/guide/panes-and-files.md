@@ -75,7 +75,7 @@ install command. `doctor` reports the same dependencies. Downloads occur only
 through the explicit install commands:
 
 ```bash
-npm install -g @akougkas/pancode
+npm install -g @panstudio/pancode
 pancode configure
 pancode tools install herdr     # the installers and `pancode panes install` do this for you
 pancode tools install yazi

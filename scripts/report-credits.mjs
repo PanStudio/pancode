@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const REPOSITORY = "akougkas/pancode";
+const REPOSITORY = "PanStudio/pancode";
 const BLOCK_TAG = "pancode-report";
 export const CHAMPIONS_HEADER =
 	"# Champions\n\nThank you to everyone who reported a problem and asked to be credited. Every report made PanCode better.\n\n";

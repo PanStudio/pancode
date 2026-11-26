@@ -37,10 +37,10 @@ function readPackageJson(root: string): PackageJsonShape | null {
 }
 
 function repositoryMatches(value: unknown): boolean {
-	if (typeof value === "string") return value.includes("akougkas/pancode");
+	if (typeof value === "string") return value.includes("PanStudio/pancode");
 	if (!value || typeof value !== "object") return false;
 	const url = (value as { url?: unknown }).url;
-	return typeof url === "string" && url.includes("akougkas/pancode");
+	return typeof url === "string" && url.includes("PanStudio/pancode");
 }
 
 function hasGitMarker(root: string): boolean {

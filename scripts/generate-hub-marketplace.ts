@@ -96,7 +96,7 @@ const HOST_SCANNED_ROOTS = ["agents", "commands", "hooks", "output-styles", ".mc
 
 /**
  * The one pack published for its root `.mcp.json` alone. Its servers are
- * PanKit's own, launched through `npx -y -p @akougkas/pancode pankit serve <id>`,
+ * PanKit's own, launched through `npx -y -p @panstudio/pancode pankit serve <id>`,
  * so the host-native MCP component it presents is exactly what it is. PanCode
  * reads `mcp.json`, never `.mcp.json`, so the same pack declares nothing there.
  */

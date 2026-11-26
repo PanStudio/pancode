@@ -2,10 +2,10 @@
 
 This pack gives Claude Code six of PanKit's MCP servers. PanKit is PanCode's agent toolkit: tool servers for HPC
 and scientific work. Each server here is a stdio MCP server that Claude Code starts with
-`npx -y -p @akougkas/pancode pankit serve <id>`.
+`npx -y -p @panstudio/pancode pankit serve <id>`.
 
 ```bash
-claude plugin marketplace add akougkas/pancode
+claude plugin marketplace add PanStudio/pancode
 claude plugin install pankit@pancode
 ```
 
@@ -25,7 +25,7 @@ valid catalog file for the `catalog` server.
 
 ## Versions and downloads
 
-The command names no version. On the first launch npx downloads the version of `@akougkas/pancode` npm resolves
+The command names no version. On the first launch npx downloads the version of `@panstudio/pancode` npm resolves
 then (51 MB unpacked for 0.9.0) and later launches reuse its cache. With PanCode installed, `pankit` is already on
 `PATH`; a server entry of `{"command": "pankit", "args": ["serve", "<id>"]}` added by hand runs the installed
 version instead.
@@ -35,10 +35,10 @@ version instead.
 `store` is not in this pack: it serves one project's PanStore and needs a `--root` for it. In that project, run
 `pancode store where`. The line labelled `store server` holds the complete `pankit serve store ...`
 command for that store, with every `--root` and, when the project has one, its `--project-id`. Copy that command
-as printed, quoting included, and put `claude mcp add store -- npx -y -p @akougkas/pancode` in front of it:
+as printed, quoting included, and put `claude mcp add store -- npx -y -p @panstudio/pancode` in front of it:
 
 ```bash
-claude mcp add store -- npx -y -p @akougkas/pancode <the pankit serve store command that line prints>
+claude mcp add store -- npx -y -p @panstudio/pancode <the pankit serve store command that line prints>
 ```
 
 Without a `--write-tag` option the server only reads.

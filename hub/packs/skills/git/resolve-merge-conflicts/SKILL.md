@@ -7,7 +7,7 @@ triggers:
   - finish the merge
   - finish the rebase
   - resolve conflict markers
-version: 0.4.2
+version: 0.4.3
 license: LicenseRef-PanCode-1.0
 compatibility: git >=2.30.0, POSIX-compatible shell
 allowed-tools:
@@ -22,8 +22,8 @@ allowed-tools:
   - tasks
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/resolve-merge-conflicts
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/resolve-merge-conflicts
   audit: pass
   model-size: any
   agents:

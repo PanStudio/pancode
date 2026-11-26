@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "tdd",
-	"version": "0.4.2",
+	"version": "0.4.3",
 	"description": "Builds a feature or fix test-first, red to green at pre-agreed public seams, one vertical slice at a time. Not for designing benchmark criteria; use experiment-protocol.",
 	"license": "LicenseRef-PanCode-1.0",
 	"extensions": {

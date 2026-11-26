@@ -7,7 +7,7 @@ triggers:
   - remove merged worktree
   - closeout branch
   - branch-closeout
-version: 0.1.2
+version: 0.1.3
 license: LicenseRef-PanCode-1.0
 compatibility: git >=2.30.0, gh CLI >=2.0.0 (optional for remote PR verification), POSIX-compatible shell
 allowed-tools:
@@ -19,8 +19,8 @@ allowed-tools:
   - tasks
   - ask_user
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/git/branch-closeout
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/git/branch-closeout
   audit: pass
   model-size: any
   agents:

@@ -27,7 +27,7 @@ import { parseArgs } from "node:util";
 import { releaseVersionErrors } from "../release-version-policy.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
-const REPOSITORY = "akougkas/pancode";
+const REPOSITORY = "PanStudio/pancode";
 const REGISTRY = "https://registry.npmjs.org/";
 
 const sha256 = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");

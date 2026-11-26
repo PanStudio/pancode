@@ -8,7 +8,7 @@ triggers:
   - migrate the scientific build system
   - create a maintained fork
   - preserve scientific parity
-version: 0.4.5
+version: 0.4.6
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -21,8 +21,8 @@ allowed-tools:
   - code_nav
   - bash
 pancode:
-  registry-id: akougkas/pancode
-  source-url: https://github.com/akougkas/pancode/tree/main/hub/packs/skills/research/scientific-modernization
+  registry-id: PanStudio/pancode
+  source-url: https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/research/scientific-modernization
   audit: pass
   model-size: large
 ---
