@@ -15,6 +15,7 @@ The mark is a stone of four facets, and the channel between them is the for-all 
 - The left facet runs `green300` to `green500`, the top `green400` to `teal400`, the right `teal400` to `azure400`, and the point `orange400` to `amber300`. Green leads, the azure of the name closes the right side, and the point is the one warm note. Never recolour, outline, rotate, skew or add effects to the artwork.
 - `pancode-mark-small.svg` is the cut for 16 to 24 px: flat `green400`, `green400`, `teal400` and `orange400`, with the channel widened to 7.2 units. The favicon and the 16 px icon use it. Minimum size is 16 px.
 - `pancode-mark-light.svg` is the cut for light grounds, in the 600 to 800 steps of the same ramps.
+- Fill follows size: below 32 px the mark is flat (the small cut to 24 px, the full cut in flat colour from 25 to 31 px, as in the 28 px header lockup), and from 32 px it is graded. An inline drawing that carries gradients prefixes their ids with its file name and is named once per page; `site/art/mark.svg` carries none.
 - The stone is its own container and has no tile. On black and on paper it stands directly on the ground. App icons set it at 80% on a black ground. Clear space is a quarter of the mark's width on every side.
 - Single-colour contexts (`assets/acp-registry/icon.svg`) draw the four facets of the small cut in the current colour.
 - In the terminal the mark is three cells, `▐∀▌`: the sign in the on-accent ink on a brand green tile, and `[V]` in ASCII mode. Where one cell is all there is, it is `∀` (U+2200) in the brand green.

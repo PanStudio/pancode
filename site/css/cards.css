@@ -29,18 +29,8 @@ main {
 	align-items: center;
 	min-height: 46px;
 }
-.brand img {
-	margin-right: 14px;
-}
-:where(.brand) span {
-	font: 700 40px / 1 var(--font-display);
-	letter-spacing: -0.04em;
-}
-.brand .pan {
-	color: var(--accent);
-}
-.brand .code {
-	color: var(--secondary);
+.brand .mark {
+	margin-right: 16px;
 }
 .kicker {
 	color: var(--secondary);

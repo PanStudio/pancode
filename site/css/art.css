@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
 /* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
-/* The mark at interface sizes: the full cut of assets/brand/pancode-mark.svg in flat colour. */
+/* Below 32 px the mark is flat: mark.svg is the full cut in flat colour for the 28 px lockup. From 32 px the
+   stone inside a drawing is graded through gradients whose ids start with the drawing's file name, so two
+   drawings on one page never share an id. mark.svg carries no id and may be inlined any number of times. */
 .mark-left,
 .mark-top {
 	fill: var(--pancode-green400);
@@ -20,6 +22,49 @@ html[data-theme="light"] .mark-right {
 }
 html[data-theme="light"] .mark-point {
 	fill: var(--pancode-orange700);
+}
+.mark-stop-left-a {
+	stop-color: var(--pancode-green300);
+}
+.mark-stop-left-b {
+	stop-color: var(--pancode-green500);
+}
+.mark-stop-top-a {
+	stop-color: var(--pancode-green400);
+}
+.mark-stop-top-b,
+.mark-stop-right-a {
+	stop-color: var(--pancode-teal400);
+}
+.mark-stop-right-b {
+	stop-color: var(--pancode-azure400);
+}
+.mark-stop-point-a {
+	stop-color: var(--pancode-orange400);
+}
+.mark-stop-point-b {
+	stop-color: var(--pancode-amber300);
+}
+html[data-theme="light"] .mark-stop-left-a {
+	stop-color: var(--pancode-green600);
+}
+html[data-theme="light"] .mark-stop-left-b {
+	stop-color: var(--pancode-green800);
+}
+html[data-theme="light"] .mark-stop-top-a {
+	stop-color: var(--pancode-green700);
+}
+html[data-theme="light"] :is(.mark-stop-top-b, .mark-stop-right-a) {
+	stop-color: var(--pancode-teal700);
+}
+html[data-theme="light"] .mark-stop-right-b {
+	stop-color: var(--pancode-azure600);
+}
+html[data-theme="light"] .mark-stop-point-a {
+	stop-color: var(--pancode-orange700);
+}
+html[data-theme="light"] .mark-stop-point-b {
+	stop-color: var(--pancode-amber700);
 }
 /* The PAN field: routes from the mark to named models, agents and surfaces. A container sets
    data-pan="pending" before the drawing is seen and "live" while it is in view. */
