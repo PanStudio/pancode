@@ -103,10 +103,19 @@ function shippedKitServers(): Record<string, unknown>[] | string {
  */
 export function isBundledServerPack(root: string, id: string): boolean {
 	try {
-		return realpathSync(root) === realpathSync(path.join(resolvePackageRoot(), "hub", "packs", "servers", id));
+		const bundled = bundledServerPackDir(id);
+		if (realpathSync(root) === realpathSync(bundled)) return true;
+		// A case-insensitive filesystem can keep the caller's spelling in the real path, so compare the directory itself.
+		const [a, b] = [statSync(root, { bigint: true }), statSync(bundled, { bigint: true })];
+		return a.isDirectory() && a.ino !== 0n && a.ino === b.ino && a.dev === b.dev;
 	} catch {
 		return false;
 	}
+}
+
+/** Where this PanCode package keeps the first-party pack of server `id`. */
+export function bundledServerPackDir(id: string): string {
+	return path.join(resolvePackageRoot(), "hub", "packs", "servers", id);
 }
 
 /** The facts of one server PanKit ships, as its policy manifest states them. */

@@ -18,7 +18,6 @@ import {
 } from "../domains/plugins/index.js";
 import {
 	type BuiltinHubServer,
-	builtinHubServer,
 	builtinHubServerFor,
 	confirmHubRemote,
 	type HubEntry,
@@ -26,6 +25,7 @@ import {
 	hubEntryPublisher,
 	hubEntryRef,
 	hubWorkspace,
+	isBuiltinServerRow,
 	pinHubEntry,
 	planHubInstall,
 	registerHubPackage,
@@ -482,7 +482,10 @@ function builtinInspectView(server: BuiltinHubServer): InspectView {
 		version: entry.version ?? server.version,
 		description: entry.description || server.title,
 		facts: [
-			["state", server.revoked ? "built in, revoked" : "built in; pancode mcp list shows it"],
+			[
+				"state",
+				server.revoked ? "built in, revoked" : server.damaged ? "built in, damaged" : "built in; pancode mcp list shows it",
+			],
 			["origin", "bundled"],
 			["trust", trustLabel({ ...entry, publisher: hubEntryPublisher(entry) })],
 			["environment", server.damaged ? undefined : server.environment.join(", ") || "none"],
@@ -706,7 +709,10 @@ function builtinLifecycleAnswer(
 				operation,
 				ref: parsed.positional[0] as string,
 				cwd: process.cwd(),
+				...(parsed.scope ? { scope: parsed.scope } : {}),
 				...(discoveryOptions.catalog || parsed.from ? { catalog: parsed.from ?? discoveryOptions.catalog } : {}),
+				force: parsed.force,
+				withRequirements: parsed.withRequirements,
 			});
 			const apply = applyHubLifecycle(plan, { dryRun: parsed.dryRun });
 			process.stdout.write(`${JSON.stringify({ ...lifecycleJson(operation, plan, apply, true), ...ref }, null, 2)}\n`);
@@ -872,7 +878,7 @@ async function executeHubCommand(
 								...(record.format ? { format: record.format } : {}),
 								...(record.provides ? { provides: record.provides } : {}),
 								publisher: hubEntryPublisher(entry),
-								...(builtinHubServer(entry) ? { builtIn: true } : {}),
+								...(isBuiltinServerRow(entry) ? { builtIn: true } : {}),
 							},
 						]
 					: [];

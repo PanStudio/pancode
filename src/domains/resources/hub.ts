@@ -50,6 +50,7 @@ import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
 import { remoteIndexRows } from "./hub-trust.js";
 import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
 import {
+	bundledServerPackDir,
 	type HubPackageValidationResult,
 	isBundledServerPack,
 	shippedServerPolicy,
@@ -664,17 +665,39 @@ export interface BuiltinHubServer {
 	revoked?: string;
 }
 
-/** The server a row names when it is the canonical bundled core row of one PanCode carries. */
+/**
+ * Whether a row is the canonical bundled core row of a server PanCode carries. The row decides it, so a pack that is
+ * damaged or missing stays built in and is reported rather than offered for install.
+ */
+export function isBuiltinServerRow(entry: HubEntry): boolean {
+	return (
+		entry.kind === "server" &&
+		entry.publisher === "pancode" &&
+		entry.tier === "core" &&
+		entry.source === undefined &&
+		path.resolve(entry.sourceUrl) === bundledServerPackDir(entry.name)
+	);
+}
+
+/** Why the bundled pack of a built-in server row cannot be described, or undefined when it matches its pin. */
+function builtinServerDamage(entry: HubEntry): string | undefined {
+	const root = bundledServerPackDir(entry.name);
+	if (!existsSync(root)) return `${root} is missing`;
+	const candidate = validateHubPackage(root);
+	if (!candidate.valid || !candidate.manifest) return `invalid pack: ${validationReasons(candidate)}`;
+	if ((candidate.manifest.pancode.kind ?? "plugin") !== "server" || candidate.manifest.name !== entry.name)
+		return `${root} is not the pack of server:${entry.name}`;
+	if (entry.sha256 && pluginContentDigest(root) !== entry.sha256)
+		return `plugin_pin_mismatch: ${entry.name}; ${root} differs from the row's pinned digest`;
+	const policy = shippedServerPolicy(root, entry.name);
+	return typeof policy === "string" ? policy : undefined;
+}
+
+/** The server a canonical built-in row names, with its shipped policy or why its pack cannot supply one. */
 export function builtinHubServer(entry: HubEntry): BuiltinHubServer | undefined {
-	if (
-		entry.kind !== "server" ||
-		entry.publisher !== "pancode" ||
-		entry.tier !== "core" ||
-		entry.source !== undefined ||
-		!isBundledServerPack(entry.sourceUrl, entry.name)
-	)
-		return undefined;
-	const policy = shippedServerPolicy(entry.sourceUrl, entry.name);
+	if (!isBuiltinServerRow(entry)) return undefined;
+	const damaged = builtinServerDamage(entry);
+	const policy = damaged ?? shippedServerPolicy(bundledServerPackDir(entry.name), entry.name);
 	const revocation = entry.sha256 ? revokedHubDigests().get(entry.sha256) : undefined;
 	return {
 		ref: hubEntryRef(entry),
@@ -689,31 +712,30 @@ export function builtinHubServer(entry: HubEntry): BuiltinHubServer | undefined 
 	};
 }
 
-/** Every server PanCode carries, in the bundled index's order. */
-function builtinHubServers(): BuiltinHubServer[] {
-	return bundledPluginCatalog([]).flatMap((entry) => builtinHubServer(entry) ?? []);
-}
-
 /**
  * The built-in server a lifecycle reference names: `server:<id>`, a bare id no other pack shares, or the bundled
- * pack directory itself. Anything else is left to the ordinary resolver.
+ * pack directory itself, however the caller spells its path. Anything else is left to the ordinary resolver.
  */
 export function builtinHubServerFor(
 	source: string,
 	options: { cwd?: string; catalog?: string } = {},
 ): BuiltinHubServer | undefined {
+	const rows = bundledPluginCatalog([]).filter(isBuiltinServerRow);
 	const local = pluginLocalPath(source, options.cwd);
 	if (existsSync(local)) {
-		const id = path.basename(local);
-		return isBundledServerPack(local, id) ? builtinHubServers().find((server) => server.id === id) : undefined;
+		const row = rows.find((entry) => isBundledServerPack(local, entry.name));
+		return row ? builtinHubServer(row) : undefined;
 	}
 	const [kind, name] = source.includes(":") ? source.split(/:(.*)/su, 2) : [undefined, source];
 	if (kind !== undefined && kind !== "server") return undefined;
-	const server = builtinHubServers().find((item) => item.id === name);
-	if (!server || kind !== undefined) return server;
-	return discoverHub(options).entries.every((item) => item.name !== name || hubEntryRef(item) === server.ref)
-		? server
-		: undefined;
+	const row = rows.find((entry) => entry.name === name);
+	if (!row) return undefined;
+	if (
+		kind === undefined &&
+		!discoverHub(options).entries.every((item) => item.name !== name || hubEntryRef(item) === hubEntryRef(row))
+	)
+		return undefined;
+	return builtinHubServer(row);
 }
 
 export function planHubUpdate(

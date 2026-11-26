@@ -18,7 +18,7 @@ import { bundledHubIndexPath, parsePluginGithubSource } from "../plugins/catalog
 import { withPluginDiscoveryPass } from "../plugins/index.js";
 import type { InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
 import type { ResourceDiagnostic } from "./collision.js";
-import { builtinHubServer, discoverHub } from "./hub.js";
+import { discoverHub, isBuiltinServerRow } from "./hub.js";
 import {
 	hubCopySourceId,
 	hubNamespace,
@@ -989,7 +989,7 @@ function readHubInventoryInPass(options: HubInventoryOptions): HubInventory {
 					...(copy.update ? { update: copy.update } : {}),
 				})),
 				...(refusal ? { refusal } : {}),
-				...(builtinHubServer(entry) ? { builtIn: true as const } : {}),
+				...(isBuiltinServerRow(entry) ? { builtIn: true as const } : {}),
 			};
 			// discoverHub already sorts by ref; selection is applied before the cap.
 			if (packageMatches(record, options, selection, entry.triggers) && !packages.push(record)) break;

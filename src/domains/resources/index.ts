@@ -39,6 +39,7 @@ export {
 	hubEntryRef,
 	hubInstallPath,
 	installHubPlan,
+	isBuiltinServerRow,
 	pinHubEntry,
 	planHubInstall,
 	planHubUpdate,

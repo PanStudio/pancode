@@ -430,9 +430,9 @@ export function builtinServerAnswer(
 	operation: HubOperation,
 	server: BuiltinHubServer,
 ): { ok: boolean; message: string } {
-	// A revoked row gets no successful answer, the same as discovery no longer offering it.
-	if (server.revoked && (operation === "install" || operation === "update"))
-		return { ok: false, message: server.revoked };
+	// A revoked row gets no successful answer, the same as discovery no longer offering it; nor does a damaged pack.
+	if ((server.revoked || server.damaged) && (operation === "install" || operation === "update"))
+		return { ok: false, message: server.revoked ?? `server:${server.id} is damaged: ${server.damaged}` };
 	if (operation === "install" || operation === "update")
 		return {
 			ok: true,
