@@ -2729,6 +2729,46 @@ test("the exit summary counts a finished worker whose validation failed as Fleet
 	strictEqual(detail.match(/verifier validation failed/gu)?.length, 2, "the timeline says what each run's record says");
 });
 
+test("the exit summary reads a review's failing verdict as what it found, not as a failed validation", async () => {
+	const { composeTrustStatus } = await import("../../src/domains/evidence/trust-status.js");
+	const { renderExitSummary } = await import("../../src/interactive/exit-summary.js");
+	const { createExitSummaryCollector } = await import("../../src/interactive/exit-summary-collector.js");
+	const { telemetryViewOf } = await import("../harness/telemetry-view.js");
+	const bus = createTelemetryHub();
+	const collector = createExitSummaryCollector({
+		bus,
+		telemetry: {
+			subscribe: () => () => {},
+			read: { live: () => telemetryViewOf("session-1", []), subscribe: () => () => {} },
+		} as never,
+		dispatch: {},
+		session: { current: () => ({ id: "session-1", hasModelTurn: true }) } as never,
+		getTurns: () => 1,
+		getToolCounts: () => new Map(),
+		getModel: () => null,
+	});
+	const trust = composeTrustStatus({
+		artifactIntegrity: {
+			state: "verified",
+			source: { kind: "run_seal", id: "run" },
+			authority: { kind: "pancode", id: "receipt-integrity" },
+			artifacts: [],
+		},
+		validationGrounding: {
+			state: "failed",
+			source: { kind: "run_record", id: "run" },
+			authority: { kind: "validator", id: "result-quality" },
+			artifacts: [],
+		},
+	});
+	bus.emit("run.started", { runId: "run-r", agentId: "verifier", targetId: "mini", wireModelId: "m" } as never);
+	bus.emit("run.completed", { runId: "run-r", agentId: "verifier", outcome: "succeeded" } as never);
+	collector.observeRunResult("run-r", { outcome: "succeeded", trust, toolCalls: 3, reviewFindings: 1 });
+	const detail = renderExitSummary(collector.snapshot(), "on", 120, false, "detailed").join("\n");
+	doesNotMatch(detail, /failed validation|validation failed/u, detail);
+	match(detail, /verifier run-r review found 1 issue/u, detail);
+});
+
 test("the exit summary counts a failed-over council member once, by its last attempt, and the sealed report not at all", async () => {
 	const { renderExitSummary } = await import("../../src/interactive/exit-summary.js");
 	const { createExitSummaryCollector } = await import("../../src/interactive/exit-summary-collector.js");
