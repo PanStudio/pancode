@@ -20,9 +20,9 @@ test("every other home path is refused", () => {
 		);
 });
 
-test("the bundled packs' publisher column and repository slug are allowed; the same name elsewhere is refused", () => {
-	assert.deepEqual(privacyHits("plugin:wtfp  0.9.0  available  bundled  akougkas verified MIT", ["akougkas"]), []);
-	assert.deepEqual(privacyHits("posted from your gh account to github.com/akougkas/pancode", ["akougkas"]), []);
+test("the project's repository URL is allowed; another repository URL and the operator's name are refused", () => {
+	assert.deepEqual(privacyHits("filed at https://github.com/PanStudio/pancode/issues/12", ["akougkas"]), []);
+	assert.ok(privacyHits("filed at https://github.com/akougkas/pancode/issues/12")[0]?.startsWith("a URL"));
 	assert.deepEqual(privacyHits("Uses your GitHub Copilot subscription as akougkas on github.com", ["akougkas"]), [
 		"an operator secret or path",
 	]);

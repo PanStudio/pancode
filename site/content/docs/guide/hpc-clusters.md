@@ -39,12 +39,12 @@ curl -fsSL https://pancode.dev/install.sh | sh -s -- --install-dir /project/$USE
 
 ## Verified downloads
 
-The installer compares the bundle's SHA-256 with the release's `SHA256SUMS`, and a mismatch stops the install. Every release file also has a GitHub build attestation, which `gh attestation verify <file> --repo akougkas/pancode` checks on a machine with the GitHub CLI.
+The installer compares the bundle's SHA-256 with the release's `SHA256SUMS`, and a mismatch stops the install. Every release file also has a GitHub build attestation, which `gh attestation verify <file> --repo PanStudio/pancode` checks on a machine with the GitHub CLI.
 
 ## Airgapped sites and your own Node
 
 With no route out, download the bundle for the cluster and `install.sh` from the GitHub release on a connected machine, copy both over, and run `sh install.sh --bundle pancode-<version>-<target>.tar.gz`. Nothing else is fetched. A site that mirrors the releases sets `PANCODE_RELEASE_MIRROR` to the mirror's base URL, which can be a `file://` URL on a shared filesystem.
 
-If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g @akougkas/pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
+If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g @panstudio/pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
 
 Pick versions with `--version` or `--channel`, and undo an upgrade with `--rollback`. The full guide covers the mirror layout; `sh install.sh --help` lists every option.

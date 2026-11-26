@@ -25,7 +25,7 @@ const patterns = [
 	[/\b10\.\d+\.\d+\.\d+\b/, "a private address"],
 	[/\b(?:sk|ghp|gho|github_pat|xox[bp]|AKIA)[-_][A-Za-z0-9_-]{12,}/, "a key shape"],
 	[
-		/\b[a-z][a-z0-9+.-]*:\/\/(?!(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|\b)|(?:[a-z0-9-]+\.)*pancode\.dev\b|github\.com\/akougkas\/pancode\b)\S+/i,
+		/\b[a-z][a-z0-9+.-]*:\/\/(?!(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|\b)|(?:[a-z0-9-]+\.)*pancode\.dev\b|github\.com\/panstudio\/pancode\b)\S+/i,
 		"a URL",
 	],
 ];
@@ -36,15 +36,10 @@ const patterns = [
 // control sequences may follow it in that chunk), is a streamed tool argument followed by the preparing spinner ("/home/resea ◌"),
 // or is cut by the end of a clipped code span,
 // and the text after it does not continue the name. Every other home path is refused.
-// The project's public identity, which the product itself prints: the publisher
-// column of PanHub's bundled packs and the project's own repository slug, where
-// report bug posts. The same name anywhere else is refused.
-const PUBLIC = /\bakougkas(?= verified\b|\/pancode\b)/g;
 
 export function privacyHits(text, secrets = [], ends = new Set()) {
-	const named = text.replace(PUBLIC, "");
 	const hits = secrets
-		.filter((value) => value && value.length >= 3 && named.includes(value))
+		.filter((value) => value && value.length >= 3 && text.includes(value))
 		.map(() => "an operator secret or path");
 	const chunkEnds = [...ends].sort((a, b) => a - b);
 	const endsChunk = (at) => {

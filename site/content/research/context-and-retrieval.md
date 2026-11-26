@@ -98,7 +98,7 @@ Needs: any chat route, and a session long enough to reduce. A local model server
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 ::: limits Boundaries
 - A probe measures recall on request. An agent may still fail to apply a fact it can recite.

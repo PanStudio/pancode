@@ -88,4 +88,4 @@ Record approval cards per task, calls admitted that the planted instruction aske
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
