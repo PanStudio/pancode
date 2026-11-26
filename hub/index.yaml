@@ -620,6 +620,17 @@ entries:
           each test tier proves, keep runs isolated, verify behaviour live in a
           candidate build and report evidence without claiming unrun coverage.
           Use when developing or diagnosing PanCode itself."
+  - kind: plugin
+    publisher: pancode
+    name: pankit
+    description: "PanKit for Claude Code: the node, modules, darshan, spack, scidata
+      and catalog MCP servers of PanCode's toolkit, each started with npx from
+      the @akougkas/pancode package."
+    version: 0.1.0
+    sourceUrl: packs/plugins/pankit
+    sha256: 5c8dfc054ea31f45d4627bf8c560e62fa488d2addfe82e94b96e0de23de89f0e
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: skill
     publisher: pancode
     name: plan-interview

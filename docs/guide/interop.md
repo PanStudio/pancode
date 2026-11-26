@@ -357,14 +357,15 @@ claude plugin marketplace add ./path/to/pancode
 claude plugin marketplace add "$(npm root -g)/pancode"
 ```
 
-The marketplace publishes 38 entries: the 34 curated skill packs and the four
-science packs (`hpc`, `science-data`, `literature`, `life-science`). What each
-entry becomes on the Claude Code side:
+The marketplace publishes 39 entries: the 34 curated skill packs, the four
+science packs (`hpc`, `science-data`, `literature`, `life-science`) and `pankit`.
+What each entry becomes on the Claude Code side:
 
 | Source layout | What Claude Code loads |
 | --- | --- |
 | `hub/packs/skills/<category>/<name>/` with a root `SKILL.md` | One skill, named by the `SKILL.md` frontmatter, with its `references/` companions |
 | `hub/packs/plugins/<pack>/` for a science pack | The pack's skills from its `skills/` directory. A pack's `mcp.json` is the Agent Plugins file PanCode reads, not the `.mcp.json` Claude Code scans, so Claude Code starts none of its servers. |
+| `hub/packs/plugins/pankit/` | Six PanKit MCP servers (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`) from its root `.mcp.json`, each started as `npx -y -p @akougkas/pancode pankit serve <id>`. `claude plugin install pankit@pancode` installs it. |
 
 Nothing is converted and no component body is duplicated. The packs carry their
 portable Agent Plugins `plugin.json`, which Claude Code does not read; the
@@ -380,7 +381,8 @@ component. Claude Code scans a plugin root for `agents/`, `commands/`, `hooks/`,
 `output-styles/` and `.mcp.json` without being asked, so a pack that keeps
 PanCode agents in a top-level `agents/` directory would have them shown as
 native Claude agents. The generator excludes packs with those conflicting roots, and
-`pnpm run hub:pin` prints the reason.
+`pnpm run hub:pin` prints the reason. The one exception is `pankit`, which is
+published for its root `.mcp.json` alone: its servers are PanKit's own.
 
 Those packs remain valid first-class PanHub packs, and agent-, prompt- and
 playbook-only packs are normal contributions. They simply have no peer-host

@@ -1,0 +1,28 @@
+{
+	"mcpServers": {
+		"node": {
+			"command": "npx",
+			"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"]
+		},
+		"modules": {
+			"command": "npx",
+			"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "modules"]
+		},
+		"darshan": {
+			"command": "npx",
+			"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "darshan"]
+		},
+		"spack": {
+			"command": "npx",
+			"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "spack"]
+		},
+		"scidata": {
+			"command": "npx",
+			"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "scidata"]
+		},
+		"catalog": {
+			"command": "npx",
+			"args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "catalog"]
+		}
+	}
+}
