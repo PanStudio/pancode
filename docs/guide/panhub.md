@@ -129,7 +129,7 @@ pancode hub install plugin:lab-workflow --project
 
 ## Interactive PanHub
 
-**Alt+L** (`pancode.hub.toggle`) or `/hub` opens the fullscreen PanHub browser, and Alt+L inside it returns to the composer draft. `/hub skills`, `/hub agents`, `/hub prompts`, `/hub playbooks`, `/hub plugins` and `/hub extensions` open it on that tab; bare `/hub` opens on Plugins. `/hub interop` opens local-agent discovery and reviewed adoption. Keybinding overrides are in [commands-and-modes.md](commands-and-modes.md).
+**Alt+L** (`pancode.hub.toggle`) or `/hub` opens the fullscreen PanHub browser, and Alt+L inside it returns to the composer draft. `/hub skills`, `/hub agents`, `/hub prompts`, `/hub playbooks`, `/hub plugins`, `/hub extensions` and `/hub servers` open it on that tab; bare `/hub` opens on Plugins. The Servers tab lists the seven PanKit servers PanCode carries under Built in, in Browse and in Installed; they offer no install, update, enable or remove key, and their detail says why. `/hub interop` opens local-agent discovery and reviewed adoption. Keybinding overrides are in [commands-and-modes.md](commands-and-modes.md).
 
 | Key | Action |
 | --- | --- |
