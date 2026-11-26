@@ -123,13 +123,14 @@ def generate_icons():
         canvas.alpha_composite(fitted, ((size-fitted.width)//2, (size-fitted.height)//2))
         return canvas
 
-    for size in ICON_SIZES:
-        fit(size, .9).save(SITE / f"assets/responsive/pancode-icon-{size}.png", optimize=True)
-    # A maskable icon is cropped to a circle by the platform: a full black ground,
-    # with the glyph inside the central safe zone.
     brand = json.loads((SITE / "design-system.json").read_text())
     black = Image.new("RGB", (1, 1), brand["palette"]["black"]).getpixel((0, 0))
-    fit(512, .8, (*black, 255)).save(SITE / "assets/responsive/pancode-icon-maskable-512.png", optimize=True)
+    # App icons set the stone at 80% on a black ground (DESIGN.md, Mark); only favicons stay transparent.
+    for size in ICON_SIZES:
+        fit(size, .8, (*black, 255)).save(SITE / f"assets/responsive/pancode-icon-{size}.png", optimize=True)
+    # A maskable icon is cropped to a circle by the platform: a full black ground, with every painted
+    # pixel inside the safe circle of radius 40% of the canvas (check() measures it).
+    fit(512, .74, (*black, 255)).save(SITE / "assets/responsive/pancode-icon-maskable-512.png", optimize=True)
     # The 16 pixel image takes the small cut, whose wider channel survives at that size.
     small = [fit(48, 1), fit(32, 1), fit(16, 1, source=small_cut)]
     small[0].save(SITE / "assets/responsive/favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)], append_images=small[1:])
@@ -147,8 +148,17 @@ def check():
     for size in ICON_SIZES:
         if Image.open(SITE / f"assets/responsive/pancode-icon-{size}.png").size != (size, size):
             raise ValueError("square application icon dimensions differ")
-    if Image.open(SITE / "assets/responsive/pancode-icon-maskable-512.png").size != (512, 512):
+    maskable = Image.open(SITE / "assets/responsive/pancode-icon-maskable-512.png").convert("RGBA")
+    if maskable.size != (512, 512):
         raise ValueError("maskable application icon dimensions differ")
+    black = Image.new("RGB", (1, 1), json.loads((SITE / "design-system.json").read_text())["palette"]["black"]).getpixel((0, 0))
+    pixels = maskable.load()
+    if any(pixels[x, y][3] != 255 for y in range(512) for x in range(512)):
+        raise ValueError("maskable application icon ground is not fully opaque")
+    # Any pixel that differs from the black ground, however dim its antialiasing, is painted.
+    painted = [(x, y) for y in range(512) for x in range(512) if pixels[x, y][:3] != black]
+    if any((x + .5 - 256) ** 2 + (y + .5 - 256) ** 2 > (512 * .4) ** 2 for x, y in painted):
+        raise ValueError("maskable application icon paints outside its safe circle")
     if sorted(Image.open(SITE / "assets/responsive/favicon.ico").info["sizes"]) != [(16, 16), (32, 32), (48, 48)]:
         raise ValueError("favicon.ico must carry 16, 32 and 48 pixel images")
     social = json.loads(SOCIAL_MANIFEST.read_text())
