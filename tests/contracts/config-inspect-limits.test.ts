@@ -32,14 +32,18 @@ test("config inspection includes effective safety limits for defaults and config
 	}
 });
 
-test("config inspection says what the seeded worker thinking level off does (bt-20)", async () => {
+test("config inspection says what a worker thinking level of off does, and lists it only where a layer set it (bt-20)", async () => {
 	const scratch = await isolatePancodeEnv("pancode-inspect-thinking-");
 	try {
 		const workspace = join(scratch.dir, "workspace");
 		mkdirSync(workspace);
-		// The settings file setup seeds, which is where the operator meets this value as a [user] setting.
+		const thinkingRow = () =>
+			buildCustomizationGraph(workspace).settings.find((entry) => entry.key === "fleet.default.thinkingLevel");
+		// Setup seeds only the version, so the built-in off is no layer's setting.
 		initializePancodeHome();
-		const row = buildCustomizationGraph(workspace).settings.find((entry) => entry.key === "fleet.default.thinkingLevel");
+		strictEqual(thinkingRow(), undefined);
+		writeFileSync(settingsPath(), "version: 2\nfleet:\n  default:\n    thinkingLevel: off\n");
+		const row = thinkingRow();
 		strictEqual(row?.value, "off");
 		strictEqual(row.source, "user");
 		const note = row.note ?? "";

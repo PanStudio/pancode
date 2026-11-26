@@ -119,16 +119,17 @@ function inspectSettings(cwd: string, graph: CustomizationGraph): void {
 }
 
 /**
- * Setup seeds settings.yaml with the defaults, so a worker thinking level of off reads as the operator's own choice
- * while a route that cannot turn thinking off, such as copilot-sdk, runs workers at another level (bt-20).
+ * A worker thinking level of off that a layer sets reads as a choice, while a route that cannot turn thinking off,
+ * such as copilot-sdk, runs workers at another level (bt-20). Setup seeds only `version`, so the row lists only
+ * when a layer really holds the key.
  */
 function settingNote(key: string, value: unknown): string | undefined {
 	if (key !== "fleet.default.thinkingLevel" || value !== "off") return undefined;
-	const seeded =
+	const builtIn =
 		value === DEFAULT_SETTINGS.fleet.default.thinkingLevel
-			? " off is the built-in default, which setup writes into settings.yaml."
+			? " off is also the built-in default, so removing the key keeps it."
 			: "";
-	return `workers run without thinking where their route allows it; a route that cannot turn thinking off runs at its default or lowest level, and the dispatch result names it in a route_warning.${seeded}`;
+	return `workers run without thinking where their route allows it; a route that cannot turn thinking off runs at its default or lowest level, and the dispatch result names it in a route_warning.${builtIn}`;
 }
 
 function inspectPancodeMd(cwd: string, graph: CustomizationGraph): void {
