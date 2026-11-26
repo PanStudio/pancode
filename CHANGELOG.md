@@ -33,6 +33,7 @@ PanCode 0.9.1 is the first release published by PanStudio, as `@panstudio/pancod
 - Headless runs count each call a `--max-tool-calls` cap refuses as refused, and a review's failing verdict counts as a finished run.
 - `pancode hub install --dry-run` of a pack missing its requirements says the install would be refused and names `--with-requirements`.
 - `write` and `edit` say "Nothing was published" once when a publish fails.
+- Redaction no longer hides values named by `author` or `authority`: `?author=Austen`, `GIT_AUTHOR_NAME=Jane` and an `author` argument keep their values on an approval card, while `auth`, `authorization` and `oauth` names still mask theirs.
 - The compaction card counts the same conversation messages as its notice, and a reopened session no longer shows a thinking-level line for each compaction that left the level unchanged.
 - Desktop app: a steer or follow-up appears at its place in the turn; live refusals read as refused; the session approval for a sandbox escape is offered; a turn's token line leaves the coverage gap to its breakdown, and tools that share a phrase share one tally; an interview question's markdown renders on the review page; a desktop entry clash names the command that clears it; setup and queue wording, focus rings and layout fixes; the new-task page fits a 713 px window.
 
