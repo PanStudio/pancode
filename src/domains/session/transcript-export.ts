@@ -14,6 +14,7 @@
 
 import { join, relative, resolve } from "node:path";
 import { assistantModelLabel } from "../../core/assistant-model.js";
+import { pageColorVars } from "../../core/page-palette.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { ensureProjectIgnore } from "../../core/project-root.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
@@ -231,9 +232,18 @@ const escapeHtml = (text: string): string =>
 						: "&#39;",
 	);
 
+const TRANSCRIPT_COLORS = {
+	paper: "ground",
+	ink: "ink",
+	muted: "muted",
+	line: "line",
+	well: "well",
+	fail: "alert",
+} as const;
+
 const HTML_STYLE = `
-:root{color-scheme:light dark;--paper:#f7f3ea;--ink:#1d1b17;--muted:#6b645a;--line:#d8d0c2;--well:#efe8da;--fail:#8c3a32}
-@media (prefers-color-scheme:dark){:root{--paper:#111;--ink:#ece6da;--muted:#a59d90;--line:#3a352e;--well:#1c1a17;--fail:#e0897f}}
+:root{color-scheme:light dark;${pageColorVars(TRANSCRIPT_COLORS, "light")}}
+@media (prefers-color-scheme:dark){:root{${pageColorVars(TRANSCRIPT_COLORS, "dark")}}}
 body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
 main,header{max-width:52rem;margin:0 auto;padding:1.5rem 1rem}
 header{border-bottom:1px solid var(--line)}

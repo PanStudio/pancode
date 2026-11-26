@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { pageHex } from "../../core/page-palette.js";
+import type { SemanticRole, ThemeBackground } from "../theme/tokens.js";
+import { roleHex } from "../theme/tokens.js";
 import { escapeHtml } from "./ansi-to-html.js";
 
 export interface HtmlTemplateInput {
@@ -7,6 +10,25 @@ export interface HtmlTemplateInput {
 	exportedAt: string;
 	transcriptHtml: string;
 	truncated: boolean;
+}
+
+const PAGE_ROLES = {
+	card: "raisedSurface",
+	text: "body",
+	muted: "annotation",
+	frame: "border",
+	rail: "transcriptRule",
+	accent: "wordmark",
+	warning: "warning",
+	"warning-rule": "attentionRail",
+} as const satisfies Record<string, SemanticRole>;
+
+/** The brand page ground under the terminal theme's own colours, so an export reads like the session it came from. */
+function pageColors(background: ThemeBackground): string {
+	return [
+		`--page: ${pageHex("ground", background)};`,
+		...Object.entries(PAGE_ROLES).map(([name, role]) => `--${name}: ${roleHex(role, background)};`),
+	].join(" ");
 }
 
 /** A self-contained document: no scripts, fonts, stylesheets, or remote URLs. */
@@ -19,7 +41,7 @@ export function htmlTemplate(input: HtmlTemplateInput): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
   <style>
-    :root { color-scheme: dark; --page: rgb(16,23,25); --card: rgb(23,33,36); --tool: rgb(18,28,31); --text: rgb(220,231,233); --muted: rgb(138,153,164); --frame: rgb(47,93,90); --accent: rgb(70,229,208); }
+    :root { color-scheme: dark; ${pageColors("dark")} }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
     main { width: min(112ch, calc(100% - 32px)); margin: 32px auto; }
@@ -29,9 +51,9 @@ export function htmlTemplate(input: HtmlTemplateInput): string {
     .transcript { white-space: pre-wrap; overflow-wrap: anywhere; }
     .ansi-line { min-height: 1.45em; }
     .transcript-row { padding: 0 12px; }
-    .tool-row { margin: 8px 0; padding: 9px 12px; border-left: 2px solid var(--frame); border-radius: 0 7px 7px 0; background: var(--tool); }
-    .truncated { margin-top: 18px; padding: 10px 12px; border: 1px solid rgb(128,96,52); border-radius: 7px; color: rgb(255,180,84); }
-    @media print { :root { color-scheme: light; --page: rgb(255,255,255); --card: rgb(244,247,247); --tool: rgb(247,249,249); --text: rgb(23,33,36); --muted: rgb(82,96,103); --frame: rgb(145,170,168); --accent: rgb(8,125,114); } main { width: 100%; margin: 0; } }
+    .tool-row { margin: 8px 0; padding: 9px 12px; border-left: 2px solid var(--rail); border-radius: 0 7px 7px 0; background: var(--card); }
+    .truncated { margin-top: 18px; padding: 10px 12px; border: 1px solid var(--warning-rule); border-radius: 7px; color: var(--warning); }
+    @media print { :root { color-scheme: light; ${pageColors("light")} } main { width: 100%; margin: 0; } }
   </style>
 </head>
 <body>

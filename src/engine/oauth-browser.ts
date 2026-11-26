@@ -17,6 +17,7 @@ import { createServer, type RequestListener, type Server } from "node:http";
 import { join } from "node:path";
 import type { AuthPrompt, OAuthCredentials, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { resolvePackageRoot } from "../core/package-root.js";
+import { pageColorVars } from "../core/page-palette.js";
 
 const CALLBACK_HOST = "127.0.0.1";
 // The redirect names `localhost`, which also resolves to ::1; PanCode holds both so no other local process can take the IPv6 side.
@@ -48,6 +49,9 @@ function escapeHtml(value: string): string {
 		.replaceAll("'", "&#39;");
 }
 
+/** True black in either browser preference, like the mark it frames. */
+const SIGN_IN_COLORS = { paper: "ground", ink: "ink", muted: "muted", success: "success", alert: "alert" } as const;
+
 function renderPage(ok: boolean, message: string, details?: string): string {
 	return `<!doctype html>
 <html lang="en">
@@ -56,11 +60,11 @@ function renderPage(ok: boolean, message: string, details?: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PanCode</title>
 <style>
-:root{color-scheme:dark;--paper:#000000;--ink:#f1eee6;--muted:#a6a297;--accent:#07e4b4;--alert:#ff6b60}
-@media (prefers-color-scheme: light){:root{color-scheme:light;--paper:#f5f3ee;--ink:#0f0e0c;--muted:#53514b;--accent:#00755b;--alert:#ac0512}}
+:root{color-scheme:dark;${pageColorVars(SIGN_IN_COLORS, "dark")}}
 body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:var(--paper);color:var(--ink);font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-align:center}
 main{max-width:520px}
 img{display:block;height:64px;width:auto;margin:0 auto 20px}
+h1{color:var(--success)}
 .failed h1{color:var(--alert)}
 h1{margin:0 0 8px;font-size:26px;font-weight:700;letter-spacing:-0.03em}
 p{margin:0;color:var(--muted)}
