@@ -628,7 +628,7 @@ entries:
       the @akougkas/pancode package."
     version: 0.1.0
     sourceUrl: packs/plugins/pankit
-    sha256: 5c8dfc054ea31f45d4627bf8c560e62fa488d2addfe82e94b96e0de23de89f0e
+    sha256: 02ccb33e9614d1af9aa06f6ce53c046fc2026d9810297c66435c8d99d23a3ad6
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: skill
