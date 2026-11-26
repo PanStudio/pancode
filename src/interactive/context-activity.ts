@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ContextOperationOutcome } from "../core/context-operation.js";
+import { formatCount } from "../core/format-time.js";
 import { tierPolicy } from "../core/presentation-tier.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type {
@@ -11,7 +12,6 @@ import type {
 } from "../core/telemetry/live-events.js";
 import type { Component } from "../engine/tui.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
-import { footerTokens } from "../session-control/compaction-lines.js";
 import {
 	CONTEXT_KIND_TITLES,
 	outcomeTone,
@@ -207,7 +207,7 @@ export function formatContextActivityRailLines(
 	// is busy, so a narrow rail gives it the row before the progress detail.
 	const hint = !settled && options.admission ? plain(options.admission) : "";
 	const hintRoom = hint ? visibleWidth(hint) + 3 : 0;
-	// A cut detail ends on a whole word: `36.6K tokens of sess…` left a fragment where `session history` was.
+	// A cut detail ends on a whole word: `36.6k tokens of sess…` left a fragment where `session history` was.
 	const fitted = (room: number): string => padAnsi(theme.fg("annotation", wholeWords(text, room)), room);
 	if (hint && width - hintRoom >= 16) {
 		rows.push(`${fitted(width - hintRoom)}${theme.fg("separator", sep)}${theme.fg("harnessAction", hint)}`);
@@ -227,10 +227,10 @@ export function formatContextActivityRailLines(
 function tokenMeasure(activity: ContextActivitySnapshot): string {
 	if (activity.unit !== "tokens") return "";
 	if (activity.current === null) return "no output yet";
-	const written = footerTokens(activity.current);
+	const written = formatCount(activity.current);
 	if (activity.total !== null && activity.total > 0) {
 		// Padded to the cap's own width, so the bar keeps its length as the count grows.
-		const cap = footerTokens(activity.total);
+		const cap = formatCount(activity.total);
 		return `${written.padStart(cap.length)} of ${cap} tokens`;
 	}
 	return `${written} ${activity.current === 1 ? "token" : "tokens"}, no limit`;
