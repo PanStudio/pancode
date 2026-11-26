@@ -400,9 +400,9 @@ export async function recoverySteps(run: SmokeRun) {
 			await second.getByText("already used or has expired").waitFor();
 			const placeholder = await second.getByLabel("Launch link", { exact: true }).getAttribute("placeholder");
 			assert.ok(placeholder?.startsWith(await second.evaluate(() => location.origin)), `placeholder ${placeholder}`);
-			// A new install paints the brand's black ground even when the device asks for light.
+			// A new install paints the brand's graphite ground even when the device asks for light.
 			assert.equal(await second.locator("html").getAttribute("data-theme"), "dark");
-			assert.equal(await second.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(0, 0, 0)");
+			assert.equal(await second.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(14, 17, 19)");
 			const gaps = await second.evaluate(() => {
 				const card = document.querySelector(".reconnect")?.getBoundingClientRect();
 				const main = document.querySelector("main")?.getBoundingClientRect();
