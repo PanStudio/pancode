@@ -39,6 +39,7 @@ const primary = [
 	"/learn.html",
 	"/research.html",
 	"/hub.html",
+	"/privacy.html",
 	...JSON.parse(await readFile(join(site, "content/research.json"), "utf8")).map(
 		(item) => `/research/${item.slug}.html`,
 	),
@@ -52,6 +53,10 @@ const primary = [
 			)
 		: []),
 ];
+// Pages fetch from this site only, except Google's tag loader and the
+// google-analytics.com collection endpoints, which run when a GA4 id is set.
+const sanctioned =
+	/^https:\/\/(?:www\.googletagmanager\.com|(?:[a-z0-9-]+\.)*(?:google-analytics\.com|analytics\.google\.com))\//;
 const cases = [
 	...["dark", "light"].flatMap((theme) =>
 		[320, 390, 768, 850, 1024, 1440].flatMap((width) => primary.map((path) => ({ path, theme, width }))),
@@ -76,12 +81,27 @@ try {
 		page.on("console", (message) => {
 			if (message.type() === "error") errors.push(message.text());
 		});
+		page.on("request", (request) => {
+			const url = request.url();
+			if (url.startsWith(values.url) || url.startsWith("data:") || request.frame() !== page.mainFrame()) return;
+			if (
+				!sanctioned.test(url) ||
+				(request.resourceType() === "script" && !url.startsWith("https://www.googletagmanager.com/"))
+			)
+				errors.push(`Unsanctioned remote request ${url}`);
+		});
 		try {
 			const response = await page.goto(`${values.url}${path}?theme=${theme}&__static=1`, { waitUntil: "load" });
 			assert.equal(response.status(), 200);
 			await page.evaluate(() => document.fonts.ready);
 			const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
 			assert.equal(overflow, false, `Horizontal overflow at ${width}px`);
+			// With a GA4 id the consent banner asks first and stays inside the viewport.
+			const consent = page.locator("[data-consent]");
+			if (await consent.count()) {
+				const box = await consent.boundingBox();
+				assert.ok(box && box.x >= 0 && box.x + box.width <= width && box.y + box.height <= 960, "Consent banner in view");
+			}
 			assert.equal(await page.locator("main h1").count(), 1, "One main heading");
 			assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
 			const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
