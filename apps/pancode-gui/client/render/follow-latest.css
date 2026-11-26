@@ -62,6 +62,8 @@
 	background: currentColor;
 }
 
-.jump-to-latest:hover {
+/* Outranks the global button:hover:not(:disabled) so the hover ground stays the well,
+   where the accent label keeps its contrast, rather than the translucent shell wash. */
+.jump-to-latest:hover:not(:disabled) {
 	background: var(--inset);
 }
