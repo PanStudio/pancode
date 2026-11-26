@@ -1,5 +1,5 @@
 Fixing a failing test in PanCode with GPT-6 Luna
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
@@ -7,8 +7,8 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /model switches the chat model.
 
 
 
@@ -32,7 +32,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
+  ∀  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
 
 == asked
 
@@ -47,8 +47,8 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /model switches the chat model.
 
 
 
@@ -65,7 +65,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Why does the absolute-zero test fail?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
 
 == edited
 
@@ -79,26 +79,26 @@ Why does the absolute-zero test fail?
 
 
 
-
-
-
-
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ● waiting for model · 0s · Esc stops
-  P  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+  ∀  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == checked
 
@@ -111,27 +111,27 @@ Why does the absolute-zero test fail?
 
 
 
-
-
-
-
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
-$ checked test · exit 0 · 24 lines ✓
+$ checked test · exit 0 · 19 lines ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ● waiting for model · 0s · Esc stops
-  P  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+  ∀  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == done
 
@@ -139,29 +139,29 @@ $ checked test · exit 0 · 24 lines ✓
 
 
 
-
-
-
-
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
-$ checked test · exit 0 · 24 lines ✓
+$ checked test · exit 0 · 19 lines ✓
 
-  The absolute-zero test failed because kelvinToCelsius rejected kelvin <= 0, treating exactly 0 K
-  as below absolute zero. Changed the check to reject only values below 0 K. The test check passes:
-  all 7 tests passed.
+  Found it: kelvinToCelsius rejected 0 K because its absolute-zero check used <= 0, although
+  absolute zero is valid. Changed it to reject only values below zero. The test check passes: all 7
+  tests passed.
 
-✓ Done · 9.1s · 13:51
+✓ Done · 11s · 12:35
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main* │ ✓ ready               ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main* │ ✓ ready               ctx ▰▱▱▱▱▱ 6% · low · gpt-6-luna · ?

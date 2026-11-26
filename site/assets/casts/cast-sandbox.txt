@@ -1,5 +1,5 @@
 PanCode refuses to read a project secret
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
@@ -8,12 +8,12 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-   ██████   ██████  ███   ██
-   ██   ██ ██    ██ ████  ██
-   ██████  ████████ ██ ██ ██
+   ██████  ██    ██ ███   ██
+   ██   ██ ████████ ████  ██
+   ██████  ██    ██ ██ ██ ██
    ██      ██    ██ ██  ████
-   ██      ██    ██ ██   ███       ▐P▌ PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                                   /rewind undoes file changes.
+   ██       ██████  ██   ███       ▐∀▌ PanCode 0.9.1 · Systems software for coding agents
+                                   /model switches the chat model.
  ██████  ██████  ██████  ███████
 ██      ██    ██ ██   ██ ██
 ██      ██    ██ ██   ██ █████
@@ -28,7 +28,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- ▐P▌ default · projects/calibration-lab · main* │ ✓ ready                               ctx 272k · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · main* │ ✓ ready                               ctx 272k · low · gpt-6-luna · ?
 
 == blocked
 
@@ -39,7 +39,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ How many bytes is .env? Run wc -c .env with bash and tell me exactly what happens. If it is blocked, name the rule.
 
@@ -48,16 +48,16 @@ $ bash `wc -c .env` · runs a command ✗ blocked
   │ rule: secret_path_bash
   │ This is a hard block; confirmation cannot override it.
 
-■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches a zero-access path. The command did not run,
-  so I can’t report its byte count.
+■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches the zero-access path. The command did not
+  run, so I can’t report its byte count. The rule says this is a hard block; confirmation cannot override it.
 
-✓ Done · 3.2s · 13:44
+✓ Done · 2.9s · 12:18
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ! PanCode's safety net blocked bash because it runs a command. This gate applies at…     Alt+U more · Ctrl+G X dismiss
- ▐P▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
 
 == answer
 
@@ -68,7 +68,7 @@ $ bash `wc -c .env` · runs a command ✗ blocked
 
 
 
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ How many bytes is .env? Run wc -c .env with bash and tell me exactly what happens. If it is blocked, name the rule.
 
@@ -77,13 +77,13 @@ $ bash `wc -c .env` · runs a command ✗ blocked
   │ rule: secret_path_bash
   │ This is a hard block; confirmation cannot override it.
 
-■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches a zero-access path. The command did not run,
-  so I can’t report its byte count.
+■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches the zero-access path. The command did not
+  run, so I can’t report its byte count. The rule says this is a hard block; confirmation cannot override it.
 
-✓ Done · 3.2s · 13:44
+✓ Done · 2.9s · 12:18
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ! PanCode's safety net blocked bash because it runs a command. This gate applies at…     Alt+U more · Ctrl+G X dismiss
- ▐P▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?

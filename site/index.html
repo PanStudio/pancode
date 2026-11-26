@@ -21,19 +21,19 @@
         <div class="term-bar"><span class="term-dots" aria-hidden="true"><span></span><span></span><span></span></span><span class="term-title">pancode · calibration-lab</span></div>
         <div class="term-body">
           <p class="t-row t-ask">Why does the absolute-zero test fail? Fix it and run the test check.</p>
-          <p class="t-row"><span class="t-glyph">▸</span> explored 1 search <span class="t-ok">✓</span></p>
-          <p class="t-row t-sub">│ project</p>
-          <p class="t-row"><span class="t-glyph">▸</span> searched for <code>absolute.?zero|273\.15|Kelvin|kelvin</code><span class="t-more"> · 20+ matches · truncated</span> <span class="t-ok">✓</span></p>
-          <p class="t-row"><span class="t-glyph">▸</span> explored 1 search, 1 file <span class="t-ok">✓</span></p>
-          <p class="t-row t-sub">│ symbol <code>kelvinToCelsius</code></p>
+          <p class="t-row"><span class="t-glyph">▸</span> explored 5 searches, 2 files <span class="t-ok">✓</span></p>
+          <p class="t-row t-sub">│ project · <code>absolute.?zero|Absolute Zero|absolute zero</code><span class="t-more"> · …</span></p>
+          <p class="t-row"><span class="t-glyph">$</span> checked test<span class="t-dim"> · 1.4KB</span> <span class="t-bad">✗ failed</span></p>
+          <p class="t-row t-sub">│ ℹ pass 6</p>
+          <p class="t-row t-sub">│ ℹ fail 1</p>
           <p class="t-row"><span class="t-glyph">±</span> edited temperature.mjs<span class="t-dim"> · +1 -1</span> <span class="t-ok">✓</span></p>
-          <p class="t-row"><span class="t-glyph">$</span> checked test<span class="t-dim"> · exit 0 · 24 lines</span> <span class="t-ok">✓</span></p>
-          <p class="t-row t-answer">The absolute-zero test failed because kelvinToCelsius rejected kelvin &lt;= 0, treating exactly 0 K as below absolute zero. Changed the check to reject only values below 0 K. The test check passes: all 7 tests passed.</p>
-          <p class="t-row"><span class="t-ok">✓</span> Done<span class="t-dim"> · 9.1s · 13:51</span></p>
-          <p class="t-row t-status"><span>default · calibration-lab · main*<span class="t-more"> │ <span class="t-ok">✓</span> ready</span></span><span><span class="t-more">ctx ▰▱▱▱▱▱ 5% · low · </span><span class="t-model">gpt-6-luna</span></span></p>
+          <p class="t-row"><span class="t-glyph">$</span> checked test<span class="t-dim"> · exit 0 · 19 lines</span> <span class="t-ok">✓</span></p>
+          <p class="t-row t-answer">Found it: kelvinToCelsius rejected 0 K because its absolute-zero check used &lt;= 0, although absolute zero is valid. Changed it to reject only values below zero. The test check passes: all 7 tests passed.</p>
+          <p class="t-row"><span class="t-ok">✓</span> Done<span class="t-dim"> · 11s · 12:35</span></p>
+          <p class="t-row t-status"><span>default · calibration-lab · main*<span class="t-more"> │ <span class="t-ok">✓</span> ready</span></span><span><span class="t-more">ctx ▰▱▱▱▱▱ 6% · low · </span><span class="t-model">gpt-6-luna</span></span></p>
         </div>
       </div>
-      <figcaption class="hero-caption">A recorded session, PanCode 0.9.0 development build with GPT-6 Luna through GitHub Copilot. <a href="/tutorials/desktop-and-terminal.html">Watch the recording</a></figcaption>
+      <figcaption class="hero-caption">A recorded session, PanCode 0.9.1 with GPT-6 Luna through GitHub Copilot. <a href="/tutorials/desktop-and-terminal.html">Watch the recording</a></figcaption>
     </figure>
   </section>
 

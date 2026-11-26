@@ -1,0 +1,80 @@
+Poll and worker list
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== tui-poll
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▐∀▌ PanCode 0.9.1
+
+▌ /poll --options node:test|vitest|jest --rationale 3 Which test runner should a small dependency-free ES module
+▌ package like this one use?
+
+↳ council · round 1
+  ✓ ◇ ↳ p1 · copilot · gpt-6-luna   5.0s  node:test: This package is a small ES module with no dependencies, and its e…
+  ✓ ◇ ↳ p2 · copilot · gpt-6-luna   4.5s  node:test: This small ES module package has no dependencies, and its existin…
+  ✓ ◇ ↳ p3 · copilot · gpt-6-luna   4.0s  node:test: This small ES module package already uses Node’s built-in test ru…
+  ✓ ◇ council of 3                        vote: node:test 3–0 · run rnsupiek5x6j
+
+i poll · 2 entries
+  │ poll       3 of 3 voted; majority: node:test
+  │ node:test  ### 3 (100%)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ask Panos…
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ ? keys · / commands                                              Try /run to dispatch parallel workers │ Alt+U details
+
+== tui-worker-list
+
+
+
+
+
+
+
+
+
+
+
+
+▐∀▌ PanCode 0.9.1
+
+▌ /poll --options node:test|vitest|jest --rationale 3 Which test runner should a small dependency-free ES module
+▌ package like this one use?
+
+↳ council · round 1
+  ✓ ◇ ↳ p1 · copilot · gpt-6-luna   5.0s  node:test: This package is a small ES module with no dependencies, and its e…
+  ✓ ◇ ↳ p2 · copilot · gpt-6-luna   4.5s  node:test: This small ES module package has no dependencies, and its existin…
+  ✓ ◇ ↳ p3 · copilot · gpt-6-luna   4.0s  node:test: This small ES module package already uses Node’s built-in test ru…
+  ✓ ◇ council of 3                        vote: node:test 3–0 · run rnsupiek5x6j
+
+i poll · 2 entries
+  │ poll       3 of 3 voted; majority: node:test
+  │ node:test  ### 3 (100%)
+
+━ Fleet Runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    state   agent         time  in  out  now · task
+  ❯ ✓ done  council of 3  5.0s           You are one participant in an opinion poll. Answer from your own judgment, i…
+  council of 3 · You are one participant in an opinion poll. Answer from your own judgment, independently; … ─── 5.0s
+  ❯ p1 · ✓ done · 5.0s · 156 out · node:test: This package is a small ES module with no dependencies, and its existin…
+    p2 · ✓ done · 4.5s · 99 out · node:test: This small ES module package has no dependencies, and its existing tests…
+    p3 · ✓ done · 4.0s · 77 out · node:test: This small ES module package already uses Node’s built-in test runner an…
+    synthesis · ✓ done · 0ms · vote: node:test 3–0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [↑↓] select · [Enter] detail · [Esc] close ━
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
