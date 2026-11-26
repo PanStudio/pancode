@@ -669,7 +669,7 @@ test("autonomy carries the engine's mode descriptions, and a mode the app does n
 		read.modes?.map((mode) => mode.id),
 		["default", "yolo"],
 	);
-	assert.match(read.modes?.find((mode) => mode.id === "yolo")?.description ?? "", /refused instead of asked/);
+	assert.match(read.modes?.find((mode) => mode.id === "yolo")?.description ?? "", /runs only if it passes/);
 
 	const transport = {
 		request: async () => ({ sessionId: "s1", modes: { currentModeId: "yolo", availableModes: read.modes } }),

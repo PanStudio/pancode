@@ -5,9 +5,9 @@ import { test } from "node:test";
 import { autonomyMenu, currentAutonomy } from "../client/chat/autonomy-model.js";
 
 const DEFAULT =
-	"Workspace edits run; shell commands run in the OS sandbox; calls that need approval go to the safety judge, then to you.";
+	"Edits and commands inside this workspace go ahead. Commands run in a sandbox that limits what they can change. Anything riskier goes to an automatic safety check, then to you.";
 const YOLO =
-	"Runs without approval stops: the same sandbox and safety judge, and a call that would need your approval is refused instead of asked (unless the operator's settings chose unconfined yolo). Questions still reach you.";
+	"Nothing stops to ask you. Commands run in a sandbox that limits what they can change. Anything that would have asked you goes to the automatic safety check and runs only if it passes. Questions PanCode asks still reach you.";
 const modes = [
 	{ id: "default", name: "default", description: DEFAULT },
 	{ id: "yolo", name: "yolo", description: YOLO },

@@ -160,12 +160,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 			{
 				term: "default",
 				meaning:
-					"Workspace edits run; shell commands run in the OS sandbox; calls that need approval go to the safety judge, then to you.",
+					"Edits and commands inside this workspace go ahead; commands run in a sandbox when this computer has one, and count as riskier when it does not. Anything riskier goes to an automatic safety check, then to you.",
 			},
 			{
 				term: "yolo",
 				meaning:
-					"Runs without stopping for you: commands run as default runs them, in the OS sandbox only when safety.sandbox and the host provide one, the safety judge reviews only when safety.judge.enabled is on, and a call that would need you is refused instead of asked (unless the operator's settings chose unconfined yolo). The autonomy menu names this host's sandbox backend and judge state.",
+					"Nothing stops to ask you. Commands run as they do in default, and anything that would have asked you goes to the automatic safety check and runs only if it passes. Questions PanCode asks still reach you. If your own settings chose unconfined yolo, nothing is checked first. The autonomy menu says what this computer's sandbox and safety check do.",
 			},
 		],
 	},
