@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { PACKAGE_NAME } from "../../core/package-root.js";
 import { type DeferredManager, deferredUpdateTarget, installHold } from "./deferred-update.js";
 import {
 	type Installation,
@@ -12,6 +13,7 @@ import {
 	installerUnpinCommand,
 	readInstallerRecord,
 } from "./install-method.js";
+import type { ReleaseSource } from "./release-version.js";
 import { compareReleaseVersions, fetchReleaseVersion, parseReleaseVersion } from "./release-version.js";
 import { createUpdateCheck } from "./update-check.js";
 
@@ -50,7 +52,7 @@ function installedPackageRoot(installation: Installation): string {
 export interface PlanSelfUpgradeOptions {
 	installation: Installation;
 	runningVersion: string;
-	fetchVersion?: (channel: string, signal?: AbortSignal) => Promise<string | null>;
+	fetchVersion?: (channel: string, signal?: AbortSignal, source?: ReleaseSource) => Promise<string | null>;
 	signal?: AbortSignal;
 }
 
@@ -86,7 +88,11 @@ export async function planSelfUpgrade(options: PlanSelfUpgradeOptions): Promise<
 		};
 	}
 	signal?.throwIfAborted();
-	const availableResult = await (options.fetchVersion ?? fetchReleaseVersion)(upgradeChannel(installation), signal);
+	const availableResult = await (options.fetchVersion ?? fetchReleaseVersion)(
+		upgradeChannel(installation),
+		signal,
+		installation.kind === "installer" ? "bundle" : "registry",
+	);
 	signal?.throwIfAborted();
 	if (typeof availableResult !== "string" || !parseReleaseVersion(availableResult))
 		return { status: "unavailable", current: runningVersion, installation };
@@ -243,7 +249,7 @@ export async function runApprovedSelfUpgrade(
 			name?: unknown;
 			version?: unknown;
 		};
-		if (pkg.name !== "pancode" || typeof pkg.version !== "string" || !parseReleaseVersion(pkg.version)) {
+		if (pkg.name !== PACKAGE_NAME || typeof pkg.version !== "string" || !parseReleaseVersion(pkg.version)) {
 			throw new Error("installed package metadata has the wrong identity or version");
 		}
 		installedVersion = pkg.version;

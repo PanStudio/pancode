@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { hostname, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { runningBuildId } from "./build-info.js";
-import { resolvePackageRoot } from "./package-root.js";
+import { PACKAGE_NAME, resolvePackageRoot } from "./package-root.js";
 import { processAlive, processBirthToken, processStartedAtMs } from "./process-identity.js";
 import { safeResourceWriteAsync } from "./safe-resource-write.js";
 import { resolvePancodeDirs, xdgBaseDir } from "./xdg.js";
@@ -214,7 +214,7 @@ export function staleRunningBuilds(state = resolvePancodeDirs().state): RunningB
 				const root = entry.replace(/\/dist\/(?:cli\/index|gui\/server)\.js$/, "");
 				if (
 					!existsSync(join(root, ".git")) ||
-					JSON.parse(readFileSync(join(root, "package.json"), "utf8")).name !== "pancode"
+					JSON.parse(readFileSync(join(root, "package.json"), "utf8")).name !== PACKAGE_NAME
 				)
 					continue;
 				const started = processStartedAtMs(pid);

@@ -7,6 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { isDevVersion } from "../../core/build-info.js";
 import { sha256Hex } from "../../core/hash.js";
+import { PACKAGE_NAME } from "../../core/package-root.js";
 import { processAlive, processBirthToken } from "../../core/process-identity.js";
 import { withStateFileLock, withStateFileLockSync } from "../../core/state-file-lock.js";
 import {
@@ -20,6 +21,7 @@ import {
 import type { Installation } from "./install-method.js";
 import { installationCommand, installerPackageRoot, readInstallerRecord } from "./install-method.js";
 import { NATIVE_UPDATE_TIMEOUT_MS, nativeAutoUpdatePolicy, runNativeBackgroundUpdate } from "./native-update.js";
+import type { ReleaseSource } from "./release-version.js";
 import { compareReleaseVersions, fetchTagVersion, parseReleaseVersion, releaseChannelTags } from "./release-version.js";
 
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60_000;
@@ -88,7 +90,7 @@ export interface UpdateCheckOptions {
 	processStartedAt: number;
 	now?: () => number;
 	backgroundUpdate?: typeof runNativeBackgroundUpdate;
-	fetchVersion?: (channel: string, signal?: AbortSignal) => Promise<string | null>;
+	fetchVersion?: (channel: string, signal?: AbortSignal, source?: ReleaseSource) => Promise<string | null>;
 	/** Live `interface.autoUpdate`; it disables only the install, never the notice. */
 	autoUpdate?: () => boolean;
 }
@@ -285,7 +287,7 @@ export function createUpdateCheck(options: UpdateCheckOptions) {
 			const activeRoot = active ? installerPackageRoot(active.current) : installation.root;
 			const disk = JSON.parse(await readFile(join(activeRoot, "package.json"), { encoding: "utf8", signal }));
 			const entry = await stat(join(activeRoot, "dist", "cli", "index.js"));
-			if (disk.name === "pancode" && parseReleaseVersion(disk.version)) {
+			if (disk.name === PACKAGE_NAME && parseReleaseVersion(disk.version)) {
 				const replaced =
 					compareReleaseVersions(disk.version, runningVersion) !== 0 || entry.mtimeMs > options.processStartedAt;
 				if (replaced) {
@@ -348,7 +350,10 @@ export function createUpdateCheck(options: UpdateCheckOptions) {
 					const current = await readCache();
 					if (fresh(current)) return current;
 					const fetchVersion = options.fetchVersion ?? fetchTagVersion;
-					const found = await Promise.all(tags.map(async (tag) => ({ tag, version: await fetchVersion(tag, signal) })));
+					const source = native ? "bundle" : "registry";
+					const found = await Promise.all(
+						tags.map(async (tag) => ({ tag, version: await fetchVersion(tag, signal, source) })),
+					);
 					signal.throwIfAborted();
 					// Newest by SemVer precedence; `latest` is listed first and wins a tie.
 					let best: { tag: ReleaseTag; version: string } | null = null;

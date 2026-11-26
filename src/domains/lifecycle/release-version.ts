@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { PACKAGE_NAME } from "../../core/package-root.js";
+
 /** Strict SemVer at the registry boundary; metadata never becomes a shell argument. */
 export function parseReleaseVersion(value: unknown): { core: number[]; pre: string[] } | null {
 	if (typeof value !== "string" || value.length > 128) return null;
@@ -56,29 +58,56 @@ function registryBase(): string {
 	return "https://registry.npmjs.org";
 }
 
-export async function fetchTagVersion(channel: string, signal?: AbortSignal): Promise<string | null> {
+/**
+ * Where a channel's version is read. An installer install runs a bundle, so it
+ * asks the channel file the release writes once that bundle is downloadable;
+ * every other install asks the registry its package manager installs from.
+ */
+export type ReleaseSource = "bundle" | "registry";
+
+/** The channel files scripts/install.sh reads, so a check announces the version the installer then fetches. */
+function channelBase(): string {
+	const mirror = process.env.PANCODE_RELEASE_MIRROR?.trim().replace(/\/+$/u, "");
+	return mirror ? `${mirror}/channel` : "https://pancode.dev/channel";
+}
+
+export async function fetchTagVersion(
+	channel: string,
+	signal?: AbortSignal,
+	source: ReleaseSource = "registry",
+): Promise<string | null> {
 	if (!["latest", "beta"].includes(channel)) return null;
 	try {
 		const timeout = AbortSignal.timeout(2500);
-		const response = await fetch(`${registryBase()}/pancode/${channel}`, {
-			headers: { Accept: "application/json" },
-			signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-		});
+		const bundle = source === "bundle";
+		const response = await fetch(
+			bundle ? `${channelBase()}/${channel}` : `${registryBase()}/${PACKAGE_NAME.replace("/", "%2f")}/${channel}`,
+			{
+				headers: { Accept: bundle ? "text/plain" : "application/json" },
+				signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+			},
+		);
 		if (!response.ok) return null;
-		const data = (await response.json()) as { version?: unknown };
-		return parseReleaseVersion(data.version) ? (data.version as string) : null;
+		const version = bundle
+			? (await response.text()).split("\n", 1)[0]?.trim()
+			: ((await response.json()) as { version?: unknown }).version;
+		return parseReleaseVersion(version) ? (version as string) : null;
 	} catch {
 		return null;
 	}
 }
 
-/** A channel also follows more stable channels, even before npm's tags are forwarded. */
+/** A channel also follows more stable channels. */
 export function releaseChannelTags(channel: string): string[] {
 	return channel === "latest" ? ["latest"] : channel === "beta" ? ["latest", "beta"] : [];
 }
 
-export async function fetchReleaseVersion(channel: string, signal?: AbortSignal): Promise<string | null> {
-	const versions = await Promise.all(releaseChannelTags(channel).map((tag) => fetchTagVersion(tag, signal)));
+export async function fetchReleaseVersion(
+	channel: string,
+	signal?: AbortSignal,
+	source: ReleaseSource = "registry",
+): Promise<string | null> {
+	const versions = await Promise.all(releaseChannelTags(channel).map((tag) => fetchTagVersion(tag, signal, source)));
 	let newest: string | null = null;
 	for (const version of versions)
 		if (version !== null && (newest === null || compareReleaseVersions(version, newest) === 1)) newest = version;

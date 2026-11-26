@@ -3,6 +3,7 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { readJsonObjectFile } from "./json-file.js";
+import { PACKAGE_NAME } from "./package-root.js";
 
 export interface PancodeRepoAwareness {
 	isPancodeRepo: boolean;
@@ -13,8 +14,6 @@ interface PackageJsonShape {
 	name?: unknown;
 	repository?: unknown;
 }
-
-const PANCODE_PACKAGE_NAME = "pancode";
 
 /** Only these authoring skills become native discovery in PanCode's own checkout. */
 export const PANCODE_SELF_DEVELOPMENT_SKILLS = ["pancode-dev", "pancode-test"] as const;
@@ -54,7 +53,7 @@ function hasSourceMarkers(root: string): boolean {
 
 function isPancodeRepoRoot(root: string): boolean {
 	const pkg = readPackageJson(root);
-	if (pkg?.name !== PANCODE_PACKAGE_NAME) return false;
+	if (pkg?.name !== PACKAGE_NAME) return false;
 	if (!repositoryMatches(pkg.repository)) return false;
 	if (!hasGitMarker(root)) return false;
 	return hasSourceMarkers(root);

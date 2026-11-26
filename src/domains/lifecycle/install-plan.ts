@@ -18,7 +18,7 @@ export type TrackingAutoUpdate = { enabled: boolean; blocker: string | null } | 
 
 function pinOrigin(record: InstallerRecord, windows: boolean): string {
 	const pin = record.versionPin ?? "";
-	if (record.pinSource === "package-file") return "installed from a package file";
+	if (record.pinSource === "bundle-file") return "installed from a bundle file";
 	if (record.pinSource === "rollback") return "upgrade --rollback";
 	return windows ? `install.ps1 -Version ${pin}` : `install.sh --version ${pin}`;
 }

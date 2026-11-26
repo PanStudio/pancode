@@ -10,12 +10,11 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { resolvePackageRoot } from "../../core/package-root.js";
+import { PACKAGE_NAME, resolvePackageRoot } from "../../core/package-root.js";
 import { isStrictDescendant } from "../../core/path-containment.js";
 import { shellQuote } from "../../core/shell-quote.js";
 import { xdgBaseDir } from "../../core/xdg.js";
 
-const PACKAGE_NAME = "pancode";
 const DIST_CLI_SUFFIX = join("dist", "cli", "index.js");
 // `pnpm run dev` and `node --import tsx src/cli/index.ts` run the checkout's source entry without dist/.
 const SOURCE_CLI_SUFFIX = join("src", "cli", "index.ts");
@@ -45,26 +44,24 @@ function sourceCheckoutRoot(entryPath: string | undefined = process.argv[1]): st
 
 /**
  * What scripts/install.sh recorded in `<install root>/install.json`: the
- * managed Node, the package prefix the launcher runs, and the one kept for
- * rollback.
+ * unpacked bundle the launcher runs, the Node inside it, and the bundle kept
+ * for rollback.
  */
 export interface InstallerRecord {
-	/** The install root holding runtime/, versions/ and install.json. */
+	/** The install root holding versions/ and install.json. */
 	root: string;
 	node: string;
 	nodeVersion: string;
 	nodeBuild: string;
-	/** Package prefix the launcher runs now. */
+	/** Bundle directory the launcher runs now. */
 	current: string;
-	/** Package prefix kept for rollback, or null. */
+	/** Bundle directory kept for rollback, or null. */
 	previous: string | null;
-	/** The Node that runs `previous`, when it differs from `node`. */
-	previousNode?: string;
 	launcher: string;
 	channel: string;
 	versionPin?: string;
-	/** How the pin was set: an exact --version, a --package file, or a rollback. */
-	pinSource?: "version-flag" | "package-file" | "rollback" | undefined;
+	/** How the pin was set: an exact --version, a --bundle file, or a rollback. */
+	pinSource?: "version-flag" | "bundle-file" | "rollback" | undefined;
 	/** ISO time the pin was set. */
 	pinnedAt?: string;
 	installedAt?: string;
@@ -120,7 +117,7 @@ export function readInstallerRecord(installRoot: string): InstallerRecord | null
 	}
 	if (raw === null || typeof raw !== "object") return null;
 	const record = raw as Record<string, unknown>;
-	if (record.schema !== 1 && record.schema !== 2) return null;
+	if (record.schema !== 3) return null;
 	const text = (key: string): string => (typeof record[key] === "string" ? (record[key] as string) : "");
 	// install.sh records logical paths; a root reached through a symlinked ~/.local or HOME
 	// still owns them when they resolve inside it.
@@ -128,9 +125,8 @@ export function readInstallerRecord(installRoot: string): InstallerRecord | null
 		isAbsolute(file) &&
 		(isStrictDescendant(file, join(installRoot, folder)) ||
 			isStrictDescendant(realPathOf(file), realPathOf(join(installRoot, folder))));
-	if (!owned("versions", text("current")) || !owned("runtime", text("node"))) return null;
+	if (!owned("versions", text("current")) || !owned("versions", text("node"))) return null;
 	if (text("previous") && !owned("versions", text("previous"))) return null;
-	if (text("previousNode") && !owned("runtime", text("previousNode"))) return null;
 	if (text("kind") !== INSTALLER_MANIFEST_KIND || text("current") === "" || text("node") === "") return null;
 	return {
 		root: installRoot,
@@ -139,11 +135,10 @@ export function readInstallerRecord(installRoot: string): InstallerRecord | null
 		nodeBuild: text("nodeBuild"),
 		current: text("current"),
 		previous: text("previous") || null,
-		...(text("previousNode") ? { previousNode: text("previousNode") } : {}),
 		launcher: text("launcher"),
 		channel: text("channel") || "latest",
 		versionPin: text("versionPin"),
-		pinSource: (["version-flag", "package-file", "rollback"] as const).find((value) => value === text("pinSource")),
+		pinSource: (["version-flag", "bundle-file", "rollback"] as const).find((value) => value === text("pinSource")),
 		pinnedAt: text("pinnedAt"),
 		installedAt: text("installedAt"),
 		autoUpdate: record.autoUpdate === true,
@@ -158,7 +153,6 @@ export function readInstallerRecord(installRoot: string): InstallerRecord | null
 
 /** Everything an installer creates inside its root, which may be a directory it shares with other files. */
 export const INSTALLER_OWNED_ENTRIES = [
-	"runtime",
 	"versions",
 	"launchers",
 	"launcher.cjs",
@@ -219,15 +213,15 @@ export function inactiveInstallerRecord(installation: Installation): InstallerRe
 	return record;
 }
 
-/** The package root inside an installer prefix. */
+/** The package root inside an unpacked bundle. */
 export function installerPackageRoot(prefix: string): string {
 	return join(prefix, "lib", "node_modules", "pancode");
 }
 
 /**
- * An installer prefix is `<install root>/versions/<version>`, and the root
- * holds the manifest. A bare npm prefix that happens to sit in a `versions`
- * directory has no such manifest and stays an npm install.
+ * An unpacked bundle is `<install root>/versions/<version>`, and the root
+ * holds the manifest. A directory of that shape with no such manifest is not
+ * an installer install.
  */
 function installerRecordForPrefix(prefix: string): InstallerRecord | null {
 	const versions = dirname(prefix);
@@ -255,9 +249,9 @@ export function inspectInstallation(entryPath = process.argv[1], fallbackRoot = 
 	if (sourceCheckoutRoot(base.entry) !== null || sourceCheckoutRoot(entry) !== null) return { ...base, kind: "source" };
 	const parts = root.split(sep);
 	if (parts.includes("Cellar") && parts.includes("pancode")) return { ...base, kind: "homebrew" };
-	const npmSuffix = sep + join("lib", "node_modules", "pancode");
-	if (root.endsWith(npmSuffix)) {
-		const prefix = root.slice(0, -npmSuffix.length) || sep;
+	const bundleSuffix = sep + join("lib", "node_modules", "pancode");
+	if (root.endsWith(bundleSuffix)) {
+		const prefix = root.slice(0, -bundleSuffix.length);
 		const installer = installerRecordForPrefix(prefix);
 		if (installer !== null)
 			return {
@@ -266,10 +260,12 @@ export function inspectInstallation(entryPath = process.argv[1], fallbackRoot = 
 				prefix,
 				installer,
 			};
-		return { ...base, kind: "npm", prefix };
 	}
-	if (process.platform === "win32" && root.endsWith(sep + join("node_modules", "pancode"))) {
-		const prefix = root.slice(0, -(sep + join("node_modules", "pancode")).length);
+	const npmSuffix = sep + join("lib", "node_modules", PACKAGE_NAME);
+	if (root.endsWith(npmSuffix)) return { ...base, kind: "npm", prefix: root.slice(0, -npmSuffix.length) || sep };
+	const windowsNpmSuffix = sep + join("node_modules", PACKAGE_NAME);
+	if (process.platform === "win32" && root.endsWith(windowsNpmSuffix)) {
+		const prefix = root.slice(0, -windowsNpmSuffix.length);
 		if (existsSync(join(prefix, "pancode.cmd"))) return { ...base, kind: "npm", prefix };
 	}
 	// Store paths also occur in project-local and temporary installs. Only known
@@ -308,13 +304,10 @@ export function npmUpgradeInvocation(
 	return { command: runtime.node, args: [runtime.npmCli, ...args], env: {} };
 }
 
-/**
- * The runtime stays the one the manifest names unless --refresh-runtime,
- * so an upgrade does not quietly download a new Node.
- */
+/** The installer run that moves an installer install to its channel's newest bundle. */
 export function installerUpgradeInvocation(
 	installation: Installation,
-	opts: { channel: string; channelExplicit: boolean; refreshRuntime: boolean; leavePrerelease?: boolean },
+	opts: { channel: string; channelExplicit: boolean; leavePrerelease?: boolean },
 	windows: boolean,
 ): UpgradeInvocation {
 	const record = installation.installer;
@@ -349,12 +342,7 @@ export function installerUpgradeInvocation(
 	// The installers refuse a channel older than the active version unless the
 	// operator asked to leave a pre-release for stable (`--channel latest`).
 	if (opts.leavePrerelease) args.push(windows ? "-LeavePrerelease" : "--leave-prerelease");
-	const env: UpgradeInvocation["env"] = {};
-	if (opts.refreshRuntime) {
-		env.PANCODE_NODE_VERSION = undefined;
-		args.push(windows ? "-RefreshRuntime" : "--refresh-runtime");
-	} else if (record.nodeVersion) env.PANCODE_NODE_VERSION = record.nodeVersion;
-	return { command: windows ? "powershell.exe" : "sh", args, env };
+	return { command: windows ? "powershell.exe" : "sh", args, env: {} };
 }
 
 export function formatUpgradeInvocation(invocation: UpgradeInvocation, windows = process.platform === "win32"): string {

@@ -30,11 +30,11 @@ import * as os from "node:os";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { PACKAGE_NAME } from "../../core/package-root.js";
 import { processBirthToken } from "../../core/process-identity.js";
 import { packageManagerLaunch } from "../../core/self-update.js";
 import type { Installation } from "./install-method.js";
 
-const PACKAGE_NAME = "pancode";
 /** Longest a wrapper waits for the install's processes to exit before it gives up for this quit. */
 export const DEFERRED_WAIT_MS = 30 * 60_000;
 /** Cap on the package-manager run itself. */
@@ -249,7 +249,7 @@ export function deferredUpdateTarget(installation: Installation, version: string
 			env: { PNPM_HOME: bin, PATH: `${bin}:${process.env.PATH ?? ""}` },
 			// The root is the per-version store copy; the global layout's link is stable.
 			versionFile:
-				layout && /^\d+$/u.test(layout) ? join(globalDir, layout, "node_modules", "pancode", "package.json") : null,
+				layout && /^\d+$/u.test(layout) ? join(globalDir, layout, "node_modules", PACKAGE_NAME, "package.json") : null,
 		};
 	} else if (installation.kind === "bun") {
 		const marker = `${sep}install${sep}global${sep}`;

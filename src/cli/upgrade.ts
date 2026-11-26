@@ -44,19 +44,19 @@ import { printError } from "./shared.js";
 const CHANNELS = ["latest", "beta"] as const;
 type Channel = (typeof CHANNELS)[number];
 
-const HELP = `pancode upgrade [--dry-run] [--channel=<latest|beta>] [--refresh-runtime]
+const HELP = `pancode upgrade [--dry-run] [--channel=<latest|beta>]
                    [--post-install] [--rollback] [--restart] [--json]
 
 Upgrade PanCode. An npm-installed
 binary is updated in its existing prefix. An install.sh install gets the new
-version in a new prefix beside the old one, then its launcher is switched.
+version, with the Node.js it runs on, in a new directory beside the old one,
+then its launcher is switched.
 Other package managers and source checkouts receive update instructions for
 their installation method.
 
 Flags:
   --dry-run             print planned actions without changing anything
-  --channel=<chan>      npm dist-tag to install (latest|beta). npm and install.sh installs.
-  --refresh-runtime     install.sh installs: also move to the newest Node LTS the installer picks
+  --channel=<chan>      release channel to install (latest|beta). npm and install.sh installs.
   --post-install        apply local checks after a package-manager update; skip reinstall
   --rollback            native installs: restore the previous working version, disable background updates
   --restart             after success, launch the installed PanCode in this project as a fresh session;
@@ -84,7 +84,6 @@ interface UpgradeOptions {
 	postInstall: boolean;
 	json: boolean;
 	restart: boolean;
-	refreshRuntime: boolean;
 	rollback: boolean;
 }
 
@@ -102,7 +101,6 @@ function parseUpgradeArgs(argv: ReadonlyArray<string>): UpgradeOptions {
 	let postInstall = false;
 	let json = false;
 	let restart = false;
-	let refreshRuntime = false;
 	let rollback = false;
 
 	const toChannel = (value: string | undefined): Channel => {
@@ -120,7 +118,6 @@ function parseUpgradeArgs(argv: ReadonlyArray<string>): UpgradeOptions {
 		else if (arg === "--post-install") postInstall = true;
 		else if (arg === "--json") json = true;
 		else if (arg === "--restart") restart = true;
-		else if (arg === "--refresh-runtime") refreshRuntime = true;
 		else if (arg === "--rollback") rollback = true;
 		else if (arg.startsWith("--channel=")) {
 			channel = toChannel(arg.slice("--channel=".length));
@@ -133,8 +130,8 @@ function parseUpgradeArgs(argv: ReadonlyArray<string>): UpgradeOptions {
 	}
 	if (!help && restart && (json || postInstall))
 		throw new Error("--restart cannot be combined with --json or --post-install");
-	if (rollback && (postInstall || refreshRuntime || restart))
-		throw new Error("--rollback cannot combine with --post-install, --refresh-runtime or --restart");
+	if (rollback && (postInstall || restart))
+		throw new Error("--rollback cannot combine with --post-install or --restart");
 	return {
 		dryRun,
 		channel,
@@ -143,7 +140,6 @@ function parseUpgradeArgs(argv: ReadonlyArray<string>): UpgradeOptions {
 		postInstall,
 		json,
 		restart,
-		refreshRuntime,
 		rollback,
 	};
 }
@@ -162,7 +158,10 @@ type RegistryLookup =
 
 async function lookUpAvailableVersion(channel: Channel, method: Installation["kind"]): Promise<RegistryLookup> {
 	if (method === "source") return { asked: false, reason: "source checkout" };
-	return { asked: true, version: await fetchReleaseVersion(channel) };
+	return {
+		asked: true,
+		version: await fetchReleaseVersion(channel, undefined, method === "installer" ? "bundle" : "registry"),
+	};
 }
 
 /**
@@ -768,9 +767,7 @@ export async function runUpgradeCommand(
 		presenter.step(`Channel: ${opts.channel}`);
 	if (installation.installer) {
 		const record = installation.installer;
-		presenter.step(
-			`Runtime: Node v${record.nodeVersion} ${record.nodeBuild}${opts.refreshRuntime ? " (refresh requested)" : ""}`,
-		);
+		presenter.step(`Runtime: Node v${record.nodeVersion} ${record.nodeBuild}`);
 	}
 	presenter.step(`State dir: ${shortenPath(stateDir)}`);
 	const unpin = pin === null ? null : installerUnpinCommand(installation, opts.channel);
@@ -907,7 +904,7 @@ export async function runUpgradeCommand(
 					stake?.release();
 				}
 			}
-			presenter.completedStep(`Installed pancode@${installedVersion}`);
+			presenter.completedStep(`Installed PanCode ${installedVersion}`);
 		} catch (err) {
 			presenter.fail(
 				method === "installer" ? "install.sh failed" : "npm install failed",

@@ -4,6 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** The name PanCode is published under on npm. The command, and the package directory inside a bundle, are `pancode`. */
+export const PACKAGE_NAME = "@akougkas/pancode";
+
 let cached: string | null = null;
 let cachedPancodeVersion: string | null = null;
 

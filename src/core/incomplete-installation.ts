@@ -81,10 +81,11 @@ export function incompleteInstallationAdvice(err: unknown, options: IncompleteIn
 		"This PanCode installation is incomplete: the command's own module is missing from",
 		`${outputDir}`,
 		"Reinstall to restore it, using the line that matches how you installed:",
-		"  npm install -g pancode    # npm install",
-		"  pnpm add -g pancode       # pnpm install",
-		"  bun add -g pancode        # Bun install",
-		"  pnpm run install:local              # source checkout",
+		"  curl -fsSL https://pancode.dev/install.sh | sh    # installer",
+		"  npm install -g @akougkas/pancode                  # npm install",
+		"  pnpm add -g @akougkas/pancode                     # pnpm install",
+		"  bun add -g @akougkas/pancode                      # Bun install",
+		"  pnpm run install:local                            # source checkout",
 	].join("\n");
 }
 

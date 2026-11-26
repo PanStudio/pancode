@@ -93,8 +93,7 @@ export async function runNativeBackgroundUpdate(
 	// The exact download target is not an operator pin; the installer preserves the recorded policy.
 	env.PANCODE_BACKGROUND_UPDATE = "1";
 	env.PANCODE_BACKGROUND_CURRENT = record.current;
-	env.PANCODE_NODE_VERSION = record.nodeVersion;
-	delete env.PANCODE_PACKAGE;
+	delete env.PANCODE_BUNDLE;
 	delete env.PANCODE_VERSION;
 	const { runCommandVector } = await import("../../core/safe-exec.js");
 	const result = await runCommandVector(windows ? "powershell.exe" : "sh", args, {
