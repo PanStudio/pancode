@@ -1032,6 +1032,13 @@ test("a call titled with its display words is still known by the tool name its f
 	];
 	assert.equal(activityDigest(reread), "read 4 files in 3 calls");
 	assert.equal(activityDigest(reread.slice(0, 2)), "read 1 file in 2 calls");
+	const searches = [
+		settled("n", "code_nav", "code_nav: project", { op: "overview" }),
+		settled("f", "find", "find: *", { pattern: "*" }),
+		settled("s", "safe_exec", "safe_exec: ls", { command: "ls" }),
+		settled("b", "bash", "ls", { command: "ls" }),
+	];
+	assert.equal(activityDigest(searches), "ran 2 searches, ran 2 commands");
 
 	const finish = presentTool(settled("f", "finish", "finish: state=done", { state: "done" }));
 	assert.equal(finish.verb, "Declared");
