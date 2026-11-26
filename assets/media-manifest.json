@@ -494,6 +494,42 @@
 			"altTextSeed": "Fullscreen terminal recording of the /model picker in PanCode on GitHub Copilot: the session starts on gpt-6-luna, the picker lists 26 models on the copilot target, and claude-sonnet-5.5 and gemini-4-argon are chosen in turn by typing part of the name, each changing the status bar's model and context size, before the session returns to gpt-6-luna.",
 			"representation": "captured-recording",
 			"copies": []
+		},
+		{
+			"id": "animation-api-fix",
+			"source": "assets/animations/anim-api-fix.gif",
+			"sha256": "6f204bea87ec32ff266707dfec58f3a0b7ccbed18807359d54bb4988145b27c8",
+			"provenance": "Rendered by agg from site/assets/casts/anim-api-fix.cast, recorded from PanCode 0.9.1 by site/capture/animation.mjs.",
+			"dimensions": {
+				"width": 897,
+				"height": 694
+			},
+			"role": "Fix a test",
+			"channels": [
+				"repository",
+				"readme"
+			],
+			"altTextSeed": "Fullscreen terminal recording of PanCode on gpt-6-luna in the bookshelf-api project: the request that the last-page test fails, to find the cause, fix it and run the test check, is typed into the composer; Panos explores with 6 searches and 3 files, edits one line of src/paginate.ts, runs the test check with exit 0, and explains that paginate used Math.floor and reported 2 pages for 25 books at 10 per page, so it changed it to Math.ceil and the full test check passes, 7/7, in 11s.",
+			"representation": "captured-recording",
+			"copies": []
+		},
+		{
+			"id": "animation-api-models",
+			"source": "assets/animations/anim-api-models.gif",
+			"sha256": "2f95ecadd44ee6d955a9a39b02bbd60e1bd701de1f6174096a88b7a5ae8a756c",
+			"provenance": "Rendered by agg from site/assets/casts/anim-api-models.cast, recorded from PanCode 0.9.1 by site/capture/animation.mjs.",
+			"dimensions": {
+				"width": 897,
+				"height": 694
+			},
+			"role": "Switch models",
+			"channels": [
+				"repository",
+				"readme"
+			],
+			"altTextSeed": "Fullscreen terminal recording of the /model picker in PanCode in the bookshelf-api project on GitHub Copilot: the session starts on gpt-6-luna, the picker lists 26 models on the copilot target, and claude-sonnet-5.5 and gemini-4-argon are chosen in turn by typing part of the name, each changing the status bar's model and context size, before the session returns to gpt-6-luna.",
+			"representation": "captured-recording",
+			"copies": []
 		}
 	],
 	"socialExports": [
