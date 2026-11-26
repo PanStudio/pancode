@@ -232,8 +232,8 @@ const escapeHtml = (text: string): string =>
 	);
 
 const HTML_STYLE = `
-:root{color-scheme:light dark;--paper:#f7f3ea;--ink:#1d1b17;--muted:#6b645a;--line:#d8d0c2;--well:#efe8da;--fail:#8c3a32}
-@media (prefers-color-scheme:dark){:root{--paper:#111;--ink:#ece6da;--muted:#a59d90;--line:#3a352e;--well:#1c1a17;--fail:#e0897f}}
+:root{color-scheme:light dark;--paper:#f5f3ee;--ink:#0f0e0c;--muted:#53514b;--line:#dcd8cf;--well:#ebe8e1;--fail:#ac0512}
+@media (prefers-color-scheme:dark){:root{--paper:#000000;--ink:#f1eee6;--muted:#a6a297;--line:#292926;--well:#131312;--fail:#ff6b60}}
 body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
 main,header{max-width:52rem;margin:0 auto;padding:1.5rem 1rem}
 header{border-bottom:1px solid var(--line)}
