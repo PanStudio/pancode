@@ -6,9 +6,9 @@
 	"version": "0.9.1",
 	"origin": "https://pancode.dev",
 	"repository": "https://github.com/PanStudio/pancode",
-	"publishedVersion": "0.9.0",
+	"publishedVersion": "0.9.1",
 	"analytics": {
-		"ga4": ""
+		"ga4": "G-65SSCG9E0G"
 	},
 	"hub": {
 		"title": "PanHub: packs for PanCode",

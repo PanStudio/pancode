@@ -1,6 +1,6 @@
 {
 	"name": "@pancode/kit",
-	"version": "0.9.1-rc.1",
+	"version": "0.9.1",
 	"private": true,
 	"description": "PanKit, the MCP tool suite for HPC and science.",
 	"type": "module",
