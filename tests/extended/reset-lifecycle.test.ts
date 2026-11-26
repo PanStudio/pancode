@@ -221,10 +221,8 @@ describe("contracts/reset-lifecycle", () => {
 		try {
 			const { code } = await runInHome(temp, () => runResetCommand(["--auth", "--yes"]));
 			strictEqual(code, 0);
-			// The bootstrap writes an empty store back, so the file exists and the
-			// secret does not. Asserting only on the file's absence would pass over
-			// a reset that left the key in place.
-			ok(!readFileSync(join(temp.configDir, "credentials.yaml"), "utf8").includes("test-secret"));
+			// The bootstrap writes no store back; the next saved key creates one.
+			ok(!existsSync(join(temp.configDir, "credentials.yaml")));
 			strictEqual(readFileSync(join(temp.configDir, "settings.yaml"), "utf8"), "theme: custom-theme\n");
 			ok(existsSync(join(temp.stateDir, "home.json")), "--auth does not reach the state root");
 		} finally {

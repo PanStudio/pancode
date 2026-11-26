@@ -213,8 +213,8 @@ export async function runOnboardingWizard(
 			"Before saving, PanCode sends the model one short test message (a few tokens; paid providers bill it).",
 		);
 	// "Nothing is saved" read as false to a first-run user who then found the
-	// settings.yaml and credentials.yaml templates the home bootstrap writes. Those
-	// hold no choice of theirs; the sentence is about the choices.
+	// settings.yaml template the home bootstrap writes. It holds no choice of
+	// theirs; the sentence is about the choices.
 	// Under 20 rows the selector's own legend names Esc, so this sentence gives its rows to the header above.
 	if (rows >= 20)
 		presenter.note(

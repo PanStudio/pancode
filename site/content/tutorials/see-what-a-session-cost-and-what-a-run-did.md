@@ -9,7 +9,7 @@ Costs are shown with their provenance: a measured figure, an estimate, and an un
 - The session id, which the exit summary prints. `/resume` also lists them.
 :::
 
-::: steps
+::: steps Read the cost and the record
 ### Read it in the session
 
 ```text
