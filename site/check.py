@@ -434,11 +434,11 @@ if cast_pages:
                 errors.append(f'{path}: {cast.name} must be asciicast v2 without env, command or timestamp')
         if casts and sum(sizes.values()) + max(cast.stat().st_size for cast in casts) > 1_500_000:
             errors.append(f'{path}: the first play exceeds the 1.5 MB recording media budget')
-# One platform: the 0.9.0 family pages only redirect to their guides, and
-# nothing a visitor or crawler reads names a family, PanSDK or a panstore command.
-for path, target in (('/panstore.html', '/docs/guide/panstore.html'), ('/pankit.html', '/docs/guide/pankit.html'), ('/sdk.html', '/docs/guide/sdk.html')):
-    if redirects.get(path) != target:
-        errors.append(f'{path} was public in 0.9.0 and must redirect to {target}')
+# One platform: the 0.9.0 family pages are gone, neither built nor redirected,
+# and nothing a visitor or crawler reads names a family, PanSDK or a panstore command.
+for path in ('/panstore.html', '/pankit.html', '/sdk.html'):
+    if path in redirects or (root / path.lstrip('/')).exists():
+        errors.append(f'{path}: the family pages are gone; build neither the page nor a redirect')
 for file in sorted(root.rglob('*')):
     if file.suffix not in ('.html', '.txt', '.xml', '.json', '.webmanifest'):
         continue

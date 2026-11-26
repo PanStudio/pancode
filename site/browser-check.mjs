@@ -209,10 +209,8 @@ try {
 	await page.waitForURL("**/docs/guide/tool-usage.html");
 	await page.goto(`${values.url}/start.html`);
 	await page.waitForURL("**/#start");
-	for (const name of ["panstore", "pankit", "sdk"]) {
-		await page.goto(`${values.url}/${name}.html`);
-		await page.waitForURL(`**/docs/guide/${name}.html`);
-	}
+	for (const name of ["panstore", "pankit", "sdk"])
+		assert.equal((await page.goto(`${values.url}/${name}.html`)).status(), 404, `/${name}.html is gone`);
 	const missing = await page.goto(`${values.url}/does-not-exist`);
 	assert.equal(missing.status(), 404);
 	assert.match(await page.locator("h1").innerText(), /back/);
