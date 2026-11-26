@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { readMarkCuts } from "./client/shell/mark-cuts.js";
 import { stagedClient } from "./scripts/staged-client.js";
 
 // The bundle carries the PanCode version it was built from, which /api/meta's `pancode` reads from the same file, so
@@ -11,16 +12,18 @@ import { stagedClient } from "./scripts/staged-client.js";
 const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
 	version: string;
 };
-// The canonical mark's three cuts, read once per build so the GUI draws the exact paths of assets/brand without
-// copying them: the full cut, its light-ground colours, and the flat cut for 24 px and below.
-const brand = (name: string) => readFileSync(new URL(`../../assets/brand/${name}.svg`, import.meta.url), "utf8");
+// The canonical mark's three cuts, read and checked once per build so the GUI draws the exact paths of assets/brand
+// without copying them: the full cut, its light-ground colours, and the flat cut for 24 px and below.
+const brand = (file: string) => ({
+	file,
+	svg: readFileSync(new URL(`../../assets/brand/${file}.svg`, import.meta.url), "utf8"),
+});
+const markCuts = readMarkCuts(brand("pancode-mark"), brand("pancode-mark-light"), brand("pancode-mark-small"));
 
 export default defineConfig({
 	define: {
 		__PANCODE_BUNDLE_VERSION__: JSON.stringify(version),
-		__PANCODE_MARK_SVG__: JSON.stringify(brand("pancode-mark")),
-		__PANCODE_MARK_LIGHT_SVG__: JSON.stringify(brand("pancode-mark-light")),
-		__PANCODE_MARK_SMALL_SVG__: JSON.stringify(brand("pancode-mark-small")),
+		__PANCODE_MARK_CUTS__: JSON.stringify(markCuts),
 	},
 	logLevel: process.env.PANCODE_BUILD_VERBOSE === "1" ? "info" : "warn",
 	root: fileURLToPath(new URL("./client", import.meta.url)),
