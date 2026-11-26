@@ -181,13 +181,21 @@ test("pnpm project stores stay local while its recognized global layout uses pnp
 	for (const [layout, kind] of [
 		["project/node_modules/.pnpm/pkg/node_modules/@akougkas/pancode", "local"],
 		["pnpm/global/5/.pnpm/pkg/node_modules/@akougkas/pancode", "pnpm"],
+		["share/pnpm/store/v11/links/@akougkas/pancode/0.9.1/a1/node_modules/@akougkas/pancode", "pnpm"],
+		["shared/store/v11/links/@akougkas/pancode/0.9.1/b2/node_modules/@akougkas/pancode", "local"],
 	] as const) {
 		const root = join(home.dir, layout);
 		const entry = join(root, "dist/cli/index.js");
 		mkdirSync(dirname(entry), { recursive: true });
 		writeFileSync(entry, "// fixture");
 		writeFileSync(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.4"}');
-		assert.equal(inspectInstallation(entry).kind, kind);
+		// pnpm 11+ reaches a global package through <pnpm home>/global/v<n>/<id>/node_modules.
+		if (layout.startsWith("share/pnpm/")) {
+			const link = join(home.dir, "share/pnpm/global/v11/c3/node_modules/@akougkas/pancode");
+			mkdirSync(dirname(link), { recursive: true });
+			symlinkSync(root, link);
+		}
+		assert.equal(inspectInstallation(entry).kind, kind, layout);
 	}
 });
 
