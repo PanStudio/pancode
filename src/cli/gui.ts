@@ -17,7 +17,8 @@ export async function inspectGuiBackground(fix: boolean): Promise<DoctorFinding[
 const HELP = `PanCode graphical application
 
 Usage:
-  pancode gui [--path </app/path>] [--open | --no-open] [--foreground]
+  pancode gui [--path </app/path>] [--open | --no-open] [--foreground | --reuse-background]
+              [--port <0-65535>] [--idle-exit <milliseconds>] [--log-file <file>] [--token-stdin]
   pancode gui background install [--handover] [--open] [--port <1-65535>]
   pancode gui background status|start|open|restart [--if-idle]|stop|uninstall
   pancode gui launcher install|status|uninstall
