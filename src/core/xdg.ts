@@ -316,7 +316,8 @@ export function removablePancodeRootProblem(role: PancodeDirRole, path: string):
 		if (foreign === null) return null;
 		return `no ${PANCODE_ROOT_MARKER} inside and it holds ${foreign}, which PanCode does not create there`;
 	}
-	return `no ${ROLE_OWNERSHIP_FILE[role]} inside and not named pancode`;
+	// Callers splice this after "this one has" and inside parentheses, so it stays a noun phrase.
+	return `no ${ROLE_OWNERSHIP_FILE[role]} inside and a name other than pancode`;
 }
 
 function onlyLaunchReceipts(stateDir: string): boolean {
