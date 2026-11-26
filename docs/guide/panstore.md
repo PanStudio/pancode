@@ -1,20 +1,20 @@
 # PanStore
 
-PanStore is the project store: it keeps files as blobs in named tags outside the working tree, with a record of who put each one, from where and with which hash.
+PanStore is PanCode's project store: it keeps files as blobs in named tags outside the working tree, with a record of who put each one, from where and with which hash.
 
 The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
 
-PanStore is the workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
+Its code is the private workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
 
 - `pancode store <command>` inside a PanCode project, with the roots, cache and placement from your settings.
-- `panstore <command>`, a command installed with PanCode, by the installer or the `@akougkas/pancode` npm package, that runs the same commands without the harness.
-- The model's `store` tool, and the PanKit `store` MCP server ([PanKit](pankit.md)).
+- The model's `store` tool.
+- The built-in `store` MCP server ([Built-in MCP servers](pankit.md)).
 
 Every checkout and task worktree of one repository reaches the same store: the store is keyed by the main checkout's real path, so a task worktree and the checkout it came from share one project key. A project whose tracked settings set `store.projectId` is keyed by that id instead, so checkouts at different paths, on different hosts, reach one store ([Sharing a store across hosts](#sharing-a-store-across-hosts)).
 
 ## Commands
 
-Each command below runs as `pancode store <command>` or `panstore <global flags> <command>`.
+Each command below runs as `pancode store <command>`.
 
 | Command | What it does |
 | --- | --- |
@@ -45,31 +45,6 @@ pancode store get results:data.csv
 pancode store where
 ```
 
-## `panstore`
-
-`panstore` runs the same commands with the store's locations given on the command line:
-
-```sh
-panstore --root [<name>=]<dir> [--root <name>=<dir> ...] [--cache <dir>] [--project <dir>] [--project-id <id>] <command> ...
-```
-
-- `--root` is required. The first is the primary root, named `default` unless it is given as `<name>=<dir>` too, which a store whose tags were placed on a primary of another name needs; each further root is `<name>=<dir>`. `panstore` treats every root as durable and applies no placement rules, so a new tag goes to the primary. These flags last for one `panstore` command; to add a second root to PanCode's own store, list it under `store.roots` (see [Roots and placement](#roots-and-placement)).
-- `--cache` is where `get` keeps its read-only copies; the default is `$XDG_CACHE_HOME/panstore` (`~/.cache/panstore` when the variable is unset).
-- `--project` is any directory of the project; the default is the current directory.
-- `--project-id` is the project's `store.projectId`, default `$PANSTORE_PROJECT_ID`. With it the store is keyed by the id instead of the project's path.
-
-`pancode store where` prints the exact `panstore` line for a PanCode project, so a script on the same host can reach the store PanCode uses:
-
-```text
-store root   /home/me/.local/share/pancode/data/store
-project root /home/me/src/sim
-project id   (none)
-project key  cb6fe116fff133e1
-project dir  /home/me/.local/share/pancode/data/store/projects/cb6fe116fff133e1
-root default  /home/me/.local/share/pancode/data/store  id 6f1c2a9e-5b7d-4e8a-9c3f-2d4b6a8e0f17
-panstore     panstore --root /home/me/.local/share/pancode/data/store --cache /home/me/.cache/pancode --project /home/me/src/sim
-```
-
 ## Records and actors
 
 Each blob has an append-only list of records: `put`, `note` and `remove`. A put record carries the bytes' sha256, size and modification time as the put computed them while streaming, never a later read of the blob's name, plus the source path, the producing run when PanCode knows it, and the actor. The hash is omitted above 64 MiB, as for other observed files; `verify --hash-large` hashes such a blob and records its digest as a note.
@@ -80,7 +55,7 @@ The actor says who wrote the record:
 | --- | --- |
 | `main` | The `store` tool in the main session. |
 | `worker` | The `store` tool in a dispatched worker, with the dispatch run id. |
-| `standalone` | Any command run from a shell: `pancode store` or `panstore`, whoever runs it. |
+| `standalone` | Any `pancode store` command run from a shell, whoever runs it. |
 | `extension` | An extension, with its id. |
 | `mcp` | An MCP server writing through a store reference or the builtin `store` server, with the server id as the client. |
 
@@ -173,7 +148,7 @@ An MCP server's declared path argument can name a blob instead of a file with th
 
 Admission judges each reference as the `store` call it stands for, so a reference to a records tag or a malformed reference is refused, and a worker writes only the tags its dispatch granted.
 
-The builtin PanKit `store` server is launched by PanCode with this session's roots, cache, project and writable tags as launch arguments, outside the server's declaration digest; when the session may write a tag created after launch, the server is relaunched once. Its `store_put` and `store_note` are admitted as the `store` tool's own put and note into that tag. Its tools are listed in [PanKit](pankit.md).
+The built-in `store` server is launched by PanCode with this session's roots, cache, project and writable tags as launch arguments, outside the server's declaration digest; when the session may write a tag created after launch, the server is relaunched once. Its `store_put` and `store_note` are admitted as the `store` tool's own put and note into that tag. Its tools are listed in [Built-in MCP servers](pankit.md#store).
 
 ## Limits
 

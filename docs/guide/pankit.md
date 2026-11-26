@@ -1,14 +1,14 @@
-# PanKit
+# Built-in MCP servers
 
-PanKit is PanCode's suite of MCP tool servers for HPC and scientific work, run with one command, `pankit`, by PanCode or by any other MCP host.
+PanCode ships seven MCP tool servers for HPC and scientific work. Inside a session they are PanCode's `builtin` MCP scope, and `pancode mcp serve <id>` runs one over stdio for any other MCP host.
 
-The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the commands are in [cli.ts](../../packages/kit/src/cli.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
+The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), `pancode mcp` is in [mcp.ts](../../src/cli/mcp.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
 
-PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@akougkas/pancode` npm package ships it as the `pankit` command, beside `pancode` and `panstore`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on [PanSDK](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/akougkas/pancode/blob/main/packages/kit/README.md).
+The servers live in the private workspace package `@pancode/kit`, which the `@akougkas/pancode` npm package bundles together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`.
 
 ## Servers
 
-PanKit ships seven servers. Each tool has an action class, the policy a host applies to its calls: `read` tools only read, and `execute` tools change something or run work with side effects. The tables below follow `pankit manifest`; a path argument is one the host judges as a file read or write before it sends the call.
+PanCode ships seven built-in servers. Each tool has an action class, the policy a host applies to its calls: `read` tools only read, and `execute` tools change something or run work with side effects. The tables below follow `pankit manifest`; a path argument is one the host judges as a file read or write before it sends the call.
 
 ### `node`
 
@@ -81,7 +81,7 @@ The dataset catalogs the operator names in a catalog file: datasets listed in th
 
 ### `store`
 
-A project's [PanStore](panstore.md): its tags, blobs, records and read-only copies. Unavailable until started with `--root`; `store_put` and `store_note` write only into the tags the server was started with `--write-tag` for, and record the actor `mcp`. No tool removes anything.
+A project's [PanStore](panstore.md) store: its tags, blobs, records and read-only copies. Unavailable until started with `--root`; `store_put` and `store_note` write only into the tags the server was started with `--write-tag` for, and record the actor `mcp`. No tool removes anything.
 
 | Tool | Class | Path arguments | Returns |
 | --- | --- | --- | --- |
@@ -251,4 +251,4 @@ A server's own description of its tools (the read-only, destructive and idempote
 - `node_gpus` reports NVIDIA GPUs only, through `nvidia-smi`.
 - The `store` server's reads are not confined to its write tags; see [PanStore limits](panstore.md#limits).
 - A fleet worker that may write the project starts a builtin server without its network grant, so a server that needs the network fails there.
-- PanKit servers on macOS and Windows are unverified. The release boot on those platforms installs the package and runs `pancode --version`, `pancode --help`, `panstore --version`, `pankit list` and one `pankit serve node` handshake; no server's tools are called there.
+- The built-in servers on macOS and Windows are unverified. The release boot on those platforms installs the package and runs `pancode --version`, `pancode --help`, `panstore --version`, `pankit list` and one `pankit serve node` handshake; no server's tools are called there.

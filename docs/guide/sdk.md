@@ -1,12 +1,14 @@
-# PanSDK
+# Extension API (unstable)
 
-PanSDK is the contract for authoring PanCode extensions, packs, tools and MCP servers, imported as `pancode/sdk/<entry point>` from the `@akougkas/pancode` npm package.
+The extension API is the contract for authoring PanCode extensions, packs, tools and MCP servers, imported as `pancode/sdk/<entry point>` from the `@akougkas/pancode` npm package.
+
+The extension API is unstable. Its entry points, types, validators and limits can change in any release until PanCode defines it; pin the PanCode version an extension is tested against.
 
 The entry points are [extension/index.ts](../../packages/sdk/src/extension/index.ts), [pack/index.ts](../../packages/sdk/src/pack/index.ts), [testing/index.ts](../../packages/sdk/src/testing/index.ts), [tool/index.ts](../../packages/sdk/src/tool/index.ts) and [mcp-server/index.ts](../../packages/sdk/src/mcp-server/index.ts); `pancode extensions init|validate|test` is `runExtensionsAuthoring` in [extensions-authoring.ts](../../src/cli/extensions-authoring.ts), and the scaffold is `scaffoldExtension` in [scaffold.ts](../../src/domains/extensions/authoring/scaffold.ts).
 
-## What PanSDK is
+## Entry points
 
-PanSDK is the workspace package `@pancode/sdk`, licensed Apache-2.0. It is private: PanCode bundles it at build time into `dist/sdk/` and never publishes it on its own. The `@akougkas/pancode` package exports it as five subpaths, each with JavaScript and type declarations:
+The extension API lives in the private workspace package `@pancode/sdk`, licensed Apache-2.0. PanCode bundles it at build time into `dist/sdk/` and never publishes it on its own. The `@akougkas/pancode` package exports it as five subpaths, each with JavaScript and type declarations:
 
 | Import | Holds |
 | --- | --- |
@@ -16,9 +18,9 @@ PanSDK is the workspace package `@pancode/sdk`, licensed Apache-2.0. It is priva
 | `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
 | `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio with no runtime dependencies. |
 
-[PanKit](pankit.md)'s servers are built on `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanSDK README](https://github.com/akougkas/pancode/blob/main/packages/sdk/README.md).
+PanCode's [built-in MCP servers](pankit.md) are built on `pancode/sdk/tool` and `pancode/sdk/mcp-server`.
 
-## Using the SDK
+## Using the extension API
 
 An extension package made with `pancode extensions init` needs no `npm install`: its tsconfig maps `pancode/sdk/extension` and `pancode/sdk/testing` to the installed PanCode's `dist/sdk/`, and `pancode extensions test` supplies `pancode/sdk/testing` when the tests run. See [Scaffold, validate and test](#scaffold-validate-and-test).
 

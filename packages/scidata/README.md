@@ -38,14 +38,14 @@ The package has no runtime dependencies.
 
 ## Where it runs
 
-PanCode's `data` tool and PanKit's `scidata` MCP server both read files through this package. The `data` tool is
+PanCode's `data` tool and its built-in `scidata` MCP server both read files through this package. The `data` tool is
 described in [Tool usage](https://pancode.dev/docs/guide/tool-usage.html) and the server in
-[PanKit](https://pancode.dev/docs/guide/pankit.html); both ship in the `@akougkas/pancode` npm package
+[Built-in MCP servers](https://pancode.dev/docs/guide/pankit.html); both ship in the `@akougkas/pancode` npm package
 (`npm install -g @akougkas/pancode`). The source is
 [packages/scidata](https://github.com/akougkas/pancode/tree/main/packages/scidata).
 
 ## Limits
 
-- No SQLite reader ships here; PanCode's `data` tool supplies its own, and the PanKit `scidata` server has none.
-- Each host passes its own `cacheDir`, so PanCode and the PanKit `scidata` server keep separate reader caches and
+- No SQLite reader ships here; PanCode's `data` tool supplies its own, and the built-in `scidata` server has none.
+- Each host passes its own `cacheDir`, so PanCode's `data` tool and the built-in `scidata` server keep separate reader caches and
   each downloads the HDF5 and Parquet readers once.

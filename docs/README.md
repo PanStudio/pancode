@@ -90,8 +90,8 @@ in your browser.
 | PanHub and `pancode hub`: browse, install, update, pin and drift for packs of every kind, scopes and workspace trust, the bundled index and the planned signed refresh, receipts, skills and their pins, and submitting a pack | [PanHub](guide/panhub.md) |
 | The HPC, science-data, literature and life-science packs, the hypothesis workflow, and their stated limits | [Science Packs](guide/panhub.md#science-packs) |
 | Package kinds, how plugins differ from extensions and how the two pair, and where each contract lives | [Plugins](guide/plugins.md) |
-| PanKit's MCP servers for node facts, modules, Spack, Darshan, scientific files, catalogs and the store, inside PanCode or another MCP host | [PanKit](guide/pankit.md) |
-| PanSDK's entry points for writing an extension, pack, tool or MCP server, and `pancode extensions init\|validate\|test` | [PanSDK](guide/sdk.md) |
+| PanCode's built-in MCP servers for node facts, modules, Spack, Darshan, scientific files, catalogs and the store, inside PanCode or another MCP host through `pancode mcp serve` | [Built-in MCP servers](guide/pankit.md) |
+| The extension API's entry points for writing an extension, pack, tool or MCP server, and `pancode extensions init\|validate\|test` (unstable) | [Extension API (unstable)](guide/sdk.md) |
 | Package manifests and component references | [Authoring Plugins](guide/authoring-plugins.md) |
 | Extensions: code in its own process, capability envelope, sandbox, hooks, runtime tools, commands, workspaces, and lifecycle | [Extensions](guide/harness-extensions.md) |
 | TUI layout, responsive behavior, colors, and interaction rules | [TUI Design](architecture/tui-design.md) |
@@ -108,8 +108,8 @@ in your browser.
 | Reuse a prompt I type often, or teach the agent a procedure as a skill | [Prompts, skills, and share archives](guide/extensions-and-sharing.md) |
 | Use the prompts and skills Claude Code, Codex or OpenCode already have | [Trust and compatibility roots](guide/extensions-and-sharing.md#trust-and-compatibility-roots), then [Adopt foreign resources](guide/interop.md#inbound-review-and-adopt-foreign-resources) to adopt them |
 | Find and install a skill, agent or plugin someone published | [PanHub](guide/panhub.md) |
-| Package my skills, prompts and agents for others to install | [Authoring plugins](guide/authoring-plugins.md), then [PanSDK](guide/sdk.md) |
-| Give PanCode or another MCP host tools for my cluster and data | [PanKit](guide/pankit.md) |
+| Package my skills, prompts and agents for others to install | [Authoring plugins](guide/authoring-plugins.md), then [Extension API](guide/sdk.md) |
+| Give PanCode or another MCP host tools for my cluster and data | [Built-in MCP servers](guide/pankit.md) |
 | Add code that changes PanCode: hooks, tools, commands, a workspace | [Extensions](guide/harness-extensions.md) |
 | Hand a task to Claude Code, Codex or OpenCode | [Coding agent interoperability](guide/interop.md) |
 | Move my prompts, skills and settings to another machine | [Share archives](guide/extensions-and-sharing.md#share-archives) |
@@ -141,7 +141,7 @@ reference data, and review define the acceptance criteria for a change.
 | Built-in worker agents, discovery, frontmatter, and admission | [Built-in Agents](guide/built-in-agents.md) |
 | Playbooks, local and multi-node fleet execution, placement, gates, and run records | [Fleet Dispatch](guide/fleet-dispatch.md) |
 | Stretch a subscription seat with a quota reserve and a best-supported or cheapest-adequate route choice | [Seat stretch](guide/seat-stretch.md) |
-| PanStore: tags and blobs, `pancode store` and `panstore`, roots and placement, records, worker tag grants, MCP store references, and its limits | [PanStore](guide/panstore.md) |
+| PanStore: tags and blobs, `pancode store`, roots and placement, records, worker tag grants, MCP store references, and its limits | [PanStore](guide/panstore.md) |
 | Capacity leases, heartbeats, locks, and node drain control | [Capacity and Scheduling](architecture/capacity-and-scheduling.md) |
 | Worker process protocol, watchdogs, exit mapping, the refusal limit and denial format, failure classification and retries, and route history labels | [Worker Dispatch Mechanics](architecture/worker-dispatch-mechanics.md) |
 | Worker context inheritance, fork, and splice modes | [Worker Context](architecture/worker-context.md) |
@@ -170,7 +170,7 @@ reference data, and review define the acceptance criteria for a change.
 | --- | --- |
 | Source layout, compile-time boundaries, domain loading, and runtime flow | [Architecture](architecture/architecture.md) |
 | Package identity, envelope, integrity, install state, dependency rule, trust by origin, the shared inventory, and the signed hub index design | [PanHub Architecture](architecture/panhub.md) |
-| The products (PanCode, PanStore, PanKit, PanHub, PanSDK), their boundaries, licences and dependencies, and how they plug into PanCode | [The PanCode family](architecture/family.md) |
+| The components inside PanCode (the harness, PanStore, the built-in MCP servers, PanHub, the extension API), their workspace packages, boundaries, licences and dependencies, and how the harness reaches them | [Components and workspace packages](architecture/components.md) |
 | Pi framework boundary and PanCode-owned policy | [Pi Boundary](architecture/pi-boundary.md) |
 | Clock, duration, timestamp, and ordering conventions | [Time Conventions](architecture/time-conventions.md) |
 | Boot sequence, startup presentation modes, and how to benchmark boot on a machine | [TUI Boot Performance](architecture/tui-boot-performance.md) |

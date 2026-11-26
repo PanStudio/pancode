@@ -285,7 +285,7 @@ Run `/reload hub` in a running session afterwards.
 
 **Life science.** Each skill answers from a live GET request and stamps the answer with the source's entry revision or release. Offline, each skill says the source could not be reached instead of answering from memory.
 
-The builtin servers ship inside PanCode as PanKit; their tools, action classes, configuration and limits are in [PanKit](pankit.md).
+The builtin servers ship inside PanCode; their tools, action classes, configuration and limits are in [Built-in MCP servers](pankit.md).
 
 **Launcher pins.** A pack's digest covers its `mcp.json`, not what the launcher fetches. A `uvx` or `npx` version pin, such as `uvx --from cite-nexus-mcp==0.2.5`, fixes the launcher's input, not the bytes it downloads: uv or npm resolves the package and its dependencies from its registry on first launch.
 
@@ -397,4 +397,4 @@ Every committed install, update, enable, disable, remove, register and import wr
 
 ## Authoring a pack
 
-Writing a pack, an extension or an MCP server is covered in [PanSDK](sdk.md); manifest fields and the contributor journey are in [authoring-plugins.md](authoring-plugins.md#authoring-templates-and-contributor-journey). A first-party pack goes under `hub/packs/<kind>/` and is pinned with `pnpm hub:pin`; a community pack is submitted as one row file, as described in [Community packs](#community-packs).
+Writing a pack, an extension or an MCP server is covered in [Extension API (unstable)](sdk.md); manifest fields and the contributor journey are in [authoring-plugins.md](authoring-plugins.md#authoring-templates-and-contributor-journey). A first-party pack goes under `hub/packs/<kind>/` and is pinned with `pnpm hub:pin`; a community pack is submitted as one row file, as described in [Community packs](#community-packs).

@@ -1198,10 +1198,10 @@ that it can answer questions about itself, but in compressed form:
   templates in `src/domains/extensions/authoring/templates/`, is stored in one
   file, `dist/assets/source.pack`: an 8-byte `PANSRC01` magic, a 4-byte index length, a JSON
   index, and one brotli stream per file (`src/core/source-pack.ts`). Other files under
-  `src/`, such as prompt fragments and recipes, ship loose. PanSDK, the public
-  authoring surface, ships compiled with bundled declarations in `dist/sdk/` and is
+  `src/`, such as prompt fragments and recipes, ship loose. The extension API,
+  the public authoring surface, ships compiled with bundled declarations in `dist/sdk/` and is
   imported as `pancode/sdk/extension`, `pancode/sdk/testing`, `pancode/sdk/tool`,
-  `pancode/sdk/pack` and `pancode/sdk/mcp-server` ([PanSDK](sdk.md)).
+  `pancode/sdk/pack` and `pancode/sdk/mcp-server` ([Extension API (unstable)](sdk.md)).
 - **Code map.** PanCode's own code map ships gzipped as `dist/assets/codemap.json.gz`.
   `code_nav` with `source: "pancode"` reads it.
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- The `panstore` and `pankit` commands are removed. The project store is `pancode store <command>`, a built-in MCP server runs for another MCP host with `pancode mcp serve <id>`, and `pancode mcp list` lists the built-in servers.
+
 ### Fixes
 
 - After a native upgrade, the desktop app's background service restarts on the new version instead of refusing with "belongs to another installation" and asking for a handover.

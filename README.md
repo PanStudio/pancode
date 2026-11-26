@@ -128,9 +128,10 @@ pancode run --read-only "Summarize this repository and how to run its tests."
 - **PanHub packs and skills.** `pancode hub` installs plugins, skills, agents,
   prompts, playbooks and extensions, each pinned by a SHA-256 of its whole
   tree, with `/hub` or Alt+L in the terminal. [PanHub](hub/README.md)
-- **PanKit servers.** PanCode ships MCP servers for node facts, software
-  modules, Spack, Darshan I/O traces, scientific data, dataset catalogs and
-  the project store, and `pankit` serves them to any MCP host. [PanKit](packages/kit/README.md)
+- **Built-in MCP servers.** PanCode ships MCP servers for node facts,
+  software modules, Spack, Darshan I/O traces, scientific data, dataset
+  catalogs and the project store, and `pancode mcp serve <id>` runs one for
+  any MCP host. [Built-in MCP servers](docs/guide/pankit.md)
 - **ACP beside other agents.** `pancode acp` serves PanCode to ACP editors, and
   Panos can delegate a task to an installed coding agent, and
   `pancode interop adopt` brings that agent's skills, agents and prompts in
@@ -173,11 +174,11 @@ documents every `pancode run` flag, exit code and JSON field.
 | --- | --- |
 | Get productive in the first hour | [Documentation map](docs/README.md) |
 | Install, connect, troubleshoot | [Installation](docs/guide/installation-and-lifecycle.md) · [Connect a model](docs/guide/configuration-and-targets.md) · [Troubleshooting](docs/guide/troubleshooting.md) |
-| Run on a cluster | [HPC clusters](docs/guide/hpc-clusters.md) · [PanStore](docs/guide/panstore.md) · [PanKit](docs/guide/pankit.md) |
+| Run on a cluster | [HPC clusters](docs/guide/hpc-clusters.md) · [PanStore](docs/guide/panstore.md) · [Built-in MCP servers](docs/guide/pankit.md) |
 | Find a command or setting | [Commands and modes](docs/guide/commands-and-modes.md) · [Configuration reference](docs/guide/configuration-reference.md) · [Environment variables](docs/guide/environment-variables.md) |
 | Script it | [Exit codes and output](docs/guide/exit-codes-and-output.md) · [Tool usage](docs/guide/tool-usage.md) |
 | Define checks or coordinate workers | [Quality policies](docs/guide/quality-policy.md) · [Fleet dispatch](docs/guide/fleet-dispatch.md) |
-| Extend PanCode | [PanHub](docs/guide/panhub.md) · [Plugins](docs/guide/plugins.md) · [Extensions](docs/guide/harness-extensions.md) · [PanSDK](docs/guide/sdk.md) · [Interop](docs/guide/interop.md) |
+| Extend PanCode | [PanHub](docs/guide/panhub.md) · [Plugins](docs/guide/plugins.md) · [Extensions](docs/guide/harness-extensions.md) · [Extension API](docs/guide/sdk.md) · [Interop](docs/guide/interop.md) |
 | Understand what PanCode may touch | [Sandbox and safety](docs/guide/sandbox-and-safety.md) · [Safety model](docs/architecture/safety-model.md) |
 | Learn a word | [Glossary](docs/guide/glossary.md) |
 | Explore the implementation | [Architecture](docs/architecture/architecture.md) |
