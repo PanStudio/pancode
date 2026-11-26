@@ -3,12 +3,16 @@
 `assets/` contains the canonical brand artwork and product captures.
 [`media-manifest.json`](media-manifest.json) records source paths, hashes,
 dimensions, descriptions, and delivery copies for the website and browser app.
-The brand sources are hand-written SVG: `brand/pancode-mark.svg` draws the P of
-the wordmark in the brand green on a black tile, on a 16 unit grid.
+The brand sources are hand-written SVG. `brand/pancode-mark.svg` draws the mark:
+four facets of one stone on a 64 unit grid, with the for-all sign as the channel
+between them. `brand/pancode-mark-small.svg` is its flat cut for 16 to 24 pixels
+and `brand/pancode-mark-light.svg` its cut for light grounds.
 `brand/pancode-wordmark.svg` and `brand/pancode-wordmark-light.svg` set the name
-as outlines, Pan in green and Code in azure, for dark and light grounds, and
-`brand/banner.svg` adds the tagline and site address. Every brand raster derives
-from the mark and the banner.
+as outlines, Pan in green and Code in azure, for dark and light grounds.
+`brand/pancode-display.svg` and `brand/pancode-display-light.svg` set the display
+name, with the sign in place of the A, and `brand/banner.svg` adds the mark, the
+tagline and the site address. Every brand raster derives from the mark, its small
+cut and the banner.
 
 ## Regenerate the brand
 

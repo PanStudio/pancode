@@ -54,6 +54,10 @@
 	--pancode-violet300: #c3affe;
 	--pancode-violet700: #6343a6;
 	--pancode-violet950: #18102a;
+	--pancode-teal400: #28c6da;
+	--pancode-teal700: #0b7f9c;
+	--pancode-orange400: #ffa24d;
+	--pancode-orange700: #a8500a;
 	--pancode-white: #ffffff;
 	--pancode-mist1: #f5f3ee;
 	--pancode-mist2: #ebe8e1;
@@ -155,6 +159,8 @@
 	--motion-base: 220ms;
 	--motion-entry: 560ms;
 	--motion-feedback: 1800ms;
+	--motion-draw: 900ms;
+	--motion-flow: 2400ms;
 	--motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 	--motion-distance: 12px;
 	--motion-stagger: 70ms;

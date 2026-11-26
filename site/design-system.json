@@ -52,6 +52,10 @@
 		"violet300": "#c3affe",
 		"violet700": "#6343a6",
 		"violet950": "#18102a",
+		"teal400": "#28c6da",
+		"teal700": "#0b7f9c",
+		"orange400": "#ffa24d",
+		"orange700": "#a8500a",
 		"white": "#ffffff",
 		"mist1": "#f5f3ee",
 		"mist2": "#ebe8e1",
@@ -81,6 +85,9 @@
 		},
 		"state": {
 			"use": "leaf is success, a true green at OKLCH hue 144, amber is warning, red is error, info takes azure, violet is data only. 300 is the foreground on dark, 700 on light, 950 and 50 are the washes. Success sits 26 degrees of hue from the brand teal so it never reads as the brand; every state also carries a glyph or a word."
+		},
+		"mark": {
+			"use": "teal and orange exist for the mark and for art built from it, never for interface roles. teal400 is the midpoint of green400 and azure400; orange400 with amber300 is the warm point of the mark. The 700 steps are their light-ground forms."
 		},
 		"mist": {
 			"hue": "OKLCH hue 90, chroma at most 0.012",
@@ -423,6 +430,8 @@
 		"base": "220ms",
 		"entry": "560ms",
 		"feedback": "1800ms",
+		"draw": "900ms",
+		"flow": "2400ms",
 		"ease": "cubic-bezier(0.2, 0.7, 0.2, 1)",
 		"distance": "12px",
 		"stagger": "70ms"
