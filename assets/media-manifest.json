@@ -43,7 +43,7 @@
 		{
 			"id": "gui-icon-192",
 			"source": "assets/pancode-app-icon-192.png",
-			"sha256": "0c58ad0ebeee7f3f916678627d2cb795c8b64d7b6d7177c22c286d0f6f0cc16b",
+			"sha256": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
 			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 192,
@@ -62,7 +62,7 @@
 		{
 			"id": "gui-icon-512",
 			"source": "assets/pancode-app-icon-512.png",
-			"sha256": "19cf57dc070e34882506195104ffb517222014c081cfb320e87df13d6134b1bd",
+			"sha256": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9",
 			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 512,
@@ -238,7 +238,7 @@
 		{
 			"id": "gui-pancode-mark",
 			"source": "assets/pancode-mark-gui.webp",
-			"sha256": "a5036c8164c0d10ecedbfb83602519d9f0ea99cf0e12faf0016246c2730e6401",
+			"sha256": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 128,
@@ -257,7 +257,7 @@
 		{
 			"id": "gui-favicon",
 			"source": "assets/pancode-app-favicon.png",
-			"sha256": "22f154abe875fd4284ba2b9de0efd794360f0c2e7fa2620fe3961dd3bf2abfa4",
+			"sha256": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 32,
