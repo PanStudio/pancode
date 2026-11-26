@@ -48,12 +48,10 @@ const strong: RampColor = [
 	["#f1eee6", 255],
 	["#0f0e0c", 232],
 ];
-const jade: RampColor = [
-	// On an unknown ground slot 29 is the only AA green; reserve it for the brand.
-	// Success keeps its check and a neutral ink at this depth.
-	["#1f836f", 243],
-	["#34dbb9", 79],
-	["#026b58", 23],
+const leaf: RampColor = [
+	["#4e804d", 65],
+	["#61e165", 77],
+	["#1c6a21", 22],
 ];
 const amber: RampColor = [
 	["#966e04", 243],
@@ -77,7 +75,7 @@ const violet: RampColor = [
 ];
 
 /** The key names are the published extension skin vocabulary, not instructions to render that hue.
- * Indexed green and jade step down on light so words clear both the selection wash and a cream terminal. */
+ * Indexed green and leaf step down on light so words clear both the selection wash and a cream terminal. */
 export const TERMINAL_PALETTE = {
 	neutralSubdued: subdued,
 	neutralSupporting: supporting,
@@ -90,24 +88,24 @@ export const TERMINAL_PALETTE = {
 	ivoryFocal: focal,
 	ivoryStrong: strong,
 	cyanSupporting: [
-		["#06864b", 29],
-		["#25b469", 35],
-		["#0c562f", 22],
+		["#028467", 29],
+		["#06b28c", 36],
+		["#015541", 23],
 	],
 	cyanReading: [
-		["#03864a", 29],
-		["#18d77c", 42],
-		["#137643", 22],
+		["#018467", 29],
+		["#08d4a7", 43],
+		["#00755b", 23],
 	],
 	cyanFocal: [
-		["#02874a", 29],
-		["#00e884", 42],
-		["#137643", 22],
+		["#018567", 29],
+		["#07e4b4", 43],
+		["#00755b", 23],
 	],
 	cyanStrong: [
-		["#278550", 29],
-		["#57eb95", 78],
-		["#0c562f", 22],
+		["#028568", 29],
+		["#0becbb", 50],
+		["#015541", 23],
 	],
 	turquoise: [
 		["#54789c", 63],
@@ -136,8 +134,8 @@ export const TERMINAL_PALETTE = {
 		["#aed5fd", 153],
 		["#093f6c", 24],
 	],
-	successSupporting: jade,
-	success: jade,
+	successSupporting: leaf,
+	success: leaf,
 	syntaxLiteral: violet,
 	warningSupporting: amber,
 	warning: amber,
@@ -152,9 +150,9 @@ export const TERMINAL_PALETTE = {
 		["#ffffff", 231],
 	],
 	selectionSurface: [
-		["#021a0b", 232],
-		["#021a0b", 232],
-		["#e1f9e7", 255],
+		["#001a12", 232],
+		["#001a12", 232],
+		["#dcfaee", 255],
 	],
 	yoloSurface: [
 		["#201300", 233],
@@ -174,9 +172,9 @@ export type PaletteColor = keyof typeof TERMINAL_PALETTE;
 // tint marks and labels, not the surrounding paragraph. Hue never carries a verdict alone.
 const DIM = { sgr: "39;2" } as const;
 const INK = { sgr: "39" } as const;
-const GREEN = { sgr: "32", dark: "92" } as const;
+const CYAN = { sgr: "36", dark: "96" } as const;
 const PURPLE = { sgr: "35", dark: "95" } as const;
-const JADE = { sgr: "36", dark: "96" } as const;
+const GREEN = { sgr: "32", dark: "92" } as const;
 const AMBER = { sgr: "33", dark: "93" } as const;
 const RED = { sgr: "31", dark: "91" } as const;
 const BLUE = { sgr: "34", dark: "94" } as const;
@@ -191,18 +189,18 @@ export const ANSI16: Readonly<Record<PaletteColor, { readonly sgr: string; reado
 	ivoryReading: INK,
 	ivoryFocal: INK,
 	ivoryStrong: INK,
-	cyanSupporting: GREEN,
-	cyanReading: GREEN,
-	cyanFocal: GREEN,
-	cyanStrong: GREEN,
+	cyanSupporting: CYAN,
+	cyanReading: CYAN,
+	cyanFocal: CYAN,
+	cyanStrong: CYAN,
 	turquoise: BLUE,
 	cyanDeep: PURPLE,
 	orangeSupporting: BLUE,
 	orangeReading: BLUE,
 	orangeFocal: BLUE,
 	orangeStrong: BLUE,
-	successSupporting: JADE,
-	success: JADE,
+	successSupporting: GREEN,
+	success: GREEN,
 	syntaxLiteral: PURPLE,
 	warningSupporting: AMBER,
 	warning: AMBER,
