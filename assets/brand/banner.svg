@@ -5,9 +5,9 @@
 		@font-face { font-family: "IBM Plex Mono"; font-weight: 500; src: url("../../site/assets/fonts/plex-500.woff2") format("woff2"); }
 		.pan { fill: var(--palette-green400, #07e4b4); }
 		.code { fill: var(--palette-azure400, #4aa8ff); }
-		.tagline { font: 400 66px "Instrument Sans", sans-serif; fill: var(--palette-ink2, #d6d2c7); }
+		.tagline { font: 400 66px "Instrument Sans", sans-serif; fill: var(--palette-ink2, #cbd2d6); }
 		.url { font: 500 40px "IBM Plex Mono", monospace; letter-spacing: 4px; fill: var(--palette-green400, #07e4b4); }
-		.label { font: 500 40px "IBM Plex Mono", monospace; letter-spacing: 4px; fill: var(--palette-ink3, #a6a297); }
+		.label { font: 500 40px "IBM Plex Mono", monospace; letter-spacing: 4px; fill: var(--palette-ink3, #a0a9ae); }
 		.amber300 { stop-color: var(--palette-amber300, #f2b106); }
 		.azure400 { stop-color: var(--palette-azure400, #4aa8ff); }
 		.green300 { stop-color: var(--palette-green300, #0becbb); }
@@ -15,8 +15,8 @@
 		.green500 { stop-color: var(--palette-green500, #08d4a7); }
 		.orange400 { stop-color: var(--palette-orange400, #ffa24d); }
 		.teal400 { stop-color: var(--palette-teal400, #28c6da); }
-		.ground { fill: var(--palette-black, #000000); }
-		.rule { fill: var(--palette-void4, #292926); }
+		.ground { fill: var(--palette-graphite1, #0e1113); }
+		.rule { fill: var(--palette-graphite5, #2a3236); }
 	</style>
 	<rect width="2400" height="750" class="ground"/>
 	<defs>

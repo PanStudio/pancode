@@ -5,7 +5,7 @@
 		{
 			"id": "brand-banner-png",
 			"source": "assets/banner.png",
-			"sha256": "4d00ceaa90ae6e1d30244cfde88b30f102118baa905568f1a6de1c20ccc55745",
+			"sha256": "d18a83dc37151431b2e74b62b64bc7b5791bf567636ff3a74e3c0e363c0dd70b",
 			"provenance": "Rendered from assets/brand/banner.svg by site/render-brand.mjs",
 			"dimensions": {
 				"width": 2400,
@@ -23,7 +23,7 @@
 		{
 			"id": "brand-banner-webp",
 			"source": "assets/banner.webp",
-			"sha256": "37c6fae44eb8b06f6a3b8f3c5a0985e50d28bb4a9b6384ecbce67052d09e0b57",
+			"sha256": "9c032acf361f8ab0637a977b2f064341b097c6981ea049b84f8724cf93c60a95",
 			"provenance": "Optimized WebP companion to the tracked banner PNG.",
 			"dimensions": {
 				"width": 2400,
@@ -501,8 +501,8 @@
 			"id": "social-link-dark",
 			"template": "site/cards/link.html",
 			"output": "site/assets/social-card.png",
-			"sourceSha256": "2111ae73c2b93b5f2af7893264c731f2d4173a004ea615c0f8d90606c6968991",
-			"sha256": "6205bbd6ab9a089de393e175f67ea2a6f9049aa5efdc819c754d9c7c390791c2",
+			"sourceSha256": "20c09ea613b90f36534564b168ed854fcb402b3229ae59d2d1787878f8470e62",
+			"sha256": "bfbe8c24556d10eaeef37a9ebc3655b36a21820b1025d581481ed646aec92b18",
 			"sources": [
 				"site/cards/link.html",
 				"site/css/cards.css",
@@ -532,8 +532,8 @@
 			"id": "social-link-light",
 			"template": "site/cards/link-light.html",
 			"output": "site/assets/social-card-light.png",
-			"sourceSha256": "1832fb9d6b59f6c3526451a847b855642d3a2a618a9c68e18bca4b90c068a888",
-			"sha256": "4a6f22a582b56a28ce6fd32934167e09fb4dec6994864a229adea7d5497a9e04",
+			"sourceSha256": "8fe36eef1b8bc28302389d99e06ff1807b4189036f196b6e620f2982c1c2db84",
+			"sha256": "7c0f75b38e0074f0ec5d4e931c8e3d4afbe8982b118a5d64cb92ca4e84243b0b",
 			"sources": [
 				"site/cards/link-light.html",
 				"site/css/cards.css",
@@ -563,8 +563,8 @@
 			"id": "social-square-dark",
 			"template": "site/cards/square.html",
 			"output": "site/assets/social-square.png",
-			"sourceSha256": "904e3d569af63d2b130f207edccbef4c40a86bc42e96598430dc00310020681b",
-			"sha256": "e2e97b07ccd4ed3c128a12043e7ea66cac9d0f36845c2c03adf9d83d7f9f7ab8",
+			"sourceSha256": "9e6d072e3cd0005602accb8807a550bd0a0a9190111a7475178d1a5546d810f1",
+			"sha256": "629eb6a7a989ecd01664f0a01fabd510b227d433023dc00bef6cb53d097a4c26",
 			"sources": [
 				"site/cards/square.html",
 				"site/css/cards.css",
@@ -594,8 +594,8 @@
 			"id": "social-square-light",
 			"template": "site/cards/square-light.html",
 			"output": "site/assets/social-square-light.png",
-			"sourceSha256": "fc7efc63214db34b891541857c9191b87980d5edef5df3b8363c054dbe90164f",
-			"sha256": "d297a88acb17ecf99e09a284c7ce508fbfea0979ca51614b2afc17db943a7016",
+			"sourceSha256": "c2a99612fb0746f56c5ee1d8e19fe226a682d21d30b3d870b8dd152e25dbbd1f",
+			"sha256": "ff6b290de49ec7aa64cdd7ce8f9890692e398b6dbb22393fc761b5cfd22c3477",
 			"sources": [
 				"site/cards/square-light.html",
 				"site/css/cards.css",
