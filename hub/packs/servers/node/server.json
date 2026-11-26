@@ -1,0 +1,113 @@
+{
+	"id": "node",
+	"version": "0.1.0",
+	"title": "Node facts",
+	"environment": [],
+	"tools": [
+		{
+			"name": "node_cpu",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "node_disks",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"description": "Report only the file system that holds this path; relative to the server's working directory."
+					},
+					"includePseudo": {
+						"type": "boolean",
+						"description": "Also list pseudo file systems such as proc, sysfs and cgroup. Default false."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "node_gpus",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "node_memory",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "node_network",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "node_processes",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"sort": {
+						"type": "string",
+						"enum": ["cpu", "memory"],
+						"description": "Rank by CPU percent or memory. Default cpu."
+					},
+					"limit": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 50,
+						"description": "How many processes to return, 1 to 50. Default 10."
+					}
+				}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		}
+	]
+}

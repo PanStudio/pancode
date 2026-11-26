@@ -31,7 +31,7 @@ use system `/tmp` or commit run output under `scripts/`.
 | `pnpm run hub:check` / `pnpm run skills:check` | Verify local catalog content and generated projections against committed pins. |
 | `pnpm run hub:pin` / `pnpm run skills:pin` | Refresh generated catalogs. PanHub pinning also fetches blessed remote packs. |
 | `pnpm run hub:review -- --base <ref>` | Review every community row file that differs from a base ref. |
-| `pnpm run kit:manifest` / `pnpm run kit:check` | Write `packages/kit/servers.json` from the PanKit server registry, or fail when the tracked file differs. |
+| `pnpm run kit:manifest` / `pnpm run kit:check` | Write `packages/kit/servers.json` and each core server pack's `hub/packs/servers/<id>/server.json` from the PanKit server registry, or fail when a tracked file differs. |
 | `pnpm run economy:check` | Validate the public API reference tariff in `models/economy-rates.json` and print witness quotes. `-- --as-of <YYYY-MM-DD>` audits another day. |
 | `pnpm run pi:surface-diff` / `pnpm run pi:surface-snapshot` | Review the consumed Pi declarations against their snapshot, or refresh it during dependency maintenance. |
 | `pnpm run acp:schema` / `acp:schema:write` / `acp:schema:bump` | Check that the generated ACP wire-shape module matches the pinned upstream schemas, regenerate it from the pin, or move the pin to the newest upstream tags and regenerate. |
