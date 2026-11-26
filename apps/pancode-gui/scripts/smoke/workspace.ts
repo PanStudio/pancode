@@ -391,7 +391,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		await check("hub-applied");
 		if (width === 1600 || width === 390) await page.screenshot({ path: join(output, `hub-applied-${width}.png`) });
 		await review.getByRole("button", { name: "Done", exact: true }).click();
-		await offer.locator(".status-mark", { hasText: "Ready" }).waitFor();
+		await offer.locator(".status-mark", { hasText: "Active" }).waitFor();
 		// A second user install is no longer offered; the project scope still is.
 		if (await offer.getByRole("button", { name: "Install skill:map-codebase for me", exact: true }).count())
 			throw new Error("An installed user copy still offers a user install.");
