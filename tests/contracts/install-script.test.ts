@@ -208,7 +208,7 @@ describe("contracts/install-script", () => {
 		try {
 			const mirror = join(root, "mirror");
 			const home = join(root, "home");
-			const installRoot = join(root, "install");
+			const installRoot = join(root, "new", "install");
 			mkdirSync(home);
 			writeRelease(root, mirror, "0.9.0", "0".repeat(64));
 			mkdirSync(join(mirror, "v0.9.1"));
@@ -246,10 +246,13 @@ describe("contracts/install-script", () => {
 				/PanCode 0\.9\.7 is not published at file:\/\/\S+ \(it has no v0\.9\.7\/SHA256SUMS\); check the version, or leave out --version/u,
 			);
 			ok(!unpublished.stderr.includes("network"), unpublished.stderr);
-			strictEqual(readdirSync(join(installRoot, "versions")).length, 0);
-			ok(!existsSync(join(installRoot, "install.json")));
-			ok(!existsSync(join(installRoot, ".install-lock")), "a refused install releases its lock");
+			// A refused first install takes back the root and the parent it created, owner marker included.
+			ok(!existsSync(join(root, "new")), "a refused first install leaves no install root behind");
 			ok(!existsSync(join(root, "bin", "pancode")));
+			// A root that was there before stays, and holds nothing the refused run wrote.
+			mkdirSync(installRoot, { recursive: true });
+			strictEqual(install("0.9.7").code, 1);
+			strictEqual(readdirSync(installRoot).length, 0, "no lock, owner marker or versions directory is left");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

@@ -630,6 +630,12 @@ reclaim_stale_install_lock() {
 
 acquire_install_lock() {
 	check_writable_dir "install dir" "$install_root" "--install-dir"
+	# The topmost directory this run creates; a run that ends with no installation removes it again.
+	probe="$install_root"
+	while [ ! -e "$probe" ]; do
+		created_top="$probe"
+		probe="$(dirname "$probe")"
+	done
 	mkdir -p "$install_root"
 	if ! mkdir "$install_root/.install-lock" 2>/dev/null && ! reclaim_stale_install_lock; then
 		# Only a lock directory that is there is another run's; any other mkdir failure is ours to report.
@@ -687,9 +693,21 @@ cleanup() {
 		kill -KILL "$unpack_pid" 2>/dev/null || true
 		wait "$unpack_pid" 2>/dev/null || true
 	fi
-	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
 	if [ -n "${work:-}" ]; then rm -rf "$work"; fi
 	if [ -n "${install_root:-}" ]; then rm -rf "$install_root/versions/.staging.$$"; fi
+	# A run that ends with no installation takes back only what it created, while it still holds the lock; rmdir
+	# never takes a directory that holds anything, so an existing root or a kept version stays as it was.
+	unclaimed=0
+	if [ "${lock_owned:-0}" = 1 ] && [ ! -f "$install_root/install.json" ]; then
+		unclaimed=1
+		if [ "${created_versions:-0}" = 1 ]; then rmdir "$install_root/versions" 2>/dev/null || true; fi
+		if [ "${created_owner:-0}" = 1 ]; then rm -f "$install_root/.installer-owner"; fi
+	fi
+	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
+	if [ "$unclaimed" = 1 ] && [ -n "${created_top:-}" ]; then
+		dir="$install_root"
+		while rmdir "$dir" 2>/dev/null && [ "$dir" != "$created_top" ]; do dir="$(dirname "$dir")"; done
+	fi
 	return 0
 }
 
@@ -835,7 +853,9 @@ main() {
 	if [ -f "$install_root/install.json" ] && ! grep -Eq '"schema": *3[,}]?$' "$install_root/install.json"; then
 		fail "$install_root holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another --install-dir, then rerun."
 	fi
+	[ -e "$install_root/.installer-owner" ] || created_owner=1
 	printf '%s\n' "$MANIFEST_KIND" >"$install_root/.installer-owner"
+	[ -e "$install_root/versions" ] || created_versions=1
 	mkdir -p "$install_root/versions" || fail "could not create $install_root"
 	available="$(free_kb "$install_root")"
 	case "$available" in
