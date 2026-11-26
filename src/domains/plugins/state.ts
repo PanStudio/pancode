@@ -22,7 +22,7 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { isRecord } from "../../core/type-guards.js";
 import { projectPackageTrust } from "../../core/workspace-trust.js";
-import { pancodeConfigDir } from "../../core/xdg.js";
+import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { evaluatePancodeCompatibility } from "../extensions/compatibility.js";
 import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
 import { type HubEntryKind, type HubRequirementRef, isHubKind } from "../resources/hub-types.js";
@@ -60,9 +60,10 @@ export function installHubPackage(input: HubPackageInstallInput): PluginMutation
 	return installPlugin(sourcePath, { ...options, expectedKind: kind });
 }
 
+/** Resolves without creating the config root: read-only `doctor` must leave a fresh home empty. */
 export function pluginBaseDir(scope: PluginScope, cwd = process.cwd()): string {
 	return scope === "user"
-		? path.join(pancodeConfigDir(), "plugins")
+		? path.join(pancodeConfigPath(), "plugins")
 		: path.join(pancodeProjectRoot(cwd, path.join("plugins", "state.json")), ".pancode", "plugins");
 }
 
@@ -191,7 +192,7 @@ function writeState(
 /** Reject redirects beneath the operator-selected config or project root. */
 function assertManagedBase(scope: PluginScope, cwd: string): void {
 	const boundary =
-		scope === "user" ? path.resolve(pancodeConfigDir()) : pancodeProjectRoot(cwd, path.join("plugins", "state.json"));
+		scope === "user" ? path.resolve(pancodeConfigPath()) : pancodeProjectRoot(cwd, path.join("plugins", "state.json"));
 	const base = pluginBaseDir(scope, cwd);
 	let cursor = boundary;
 	for (const part of path.relative(boundary, base).split(path.sep)) {
@@ -226,6 +227,7 @@ export class PluginWriterRefusal extends Error {
 
 function acquireScopeLock(scope: PluginScope, cwd: string): () => void {
 	assertManagedBase(scope, cwd);
+	if (scope === "user") pancodeConfigDir();
 	mkdirSync(pluginBaseDir(scope, cwd), { recursive: true });
 	const lock = path.join(pluginBaseDir(scope, cwd), ".mutation.lock");
 	let fd: number;

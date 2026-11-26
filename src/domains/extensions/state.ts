@@ -23,7 +23,7 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { isRecord } from "../../core/type-guards.js";
 import { projectPackageTrust } from "../../core/workspace-trust.js";
-import { pancodeConfigDir } from "../../core/xdg.js";
+import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { type InstalledPlugin, listInstalledPlugins, pluginPromptNames } from "../plugins/index.js";
 import {
 	type DroppedInstallRecord,
@@ -64,9 +64,10 @@ export interface InstalledExtensionRecord {
 	captured?: ReadonlyMap<string, Buffer>;
 }
 
+/** Resolves without creating the config root: read-only `doctor` must leave a fresh home empty. */
 export function extensionBaseDir(scope: ExtensionScope, cwd = process.cwd()): string {
 	return scope === "user"
-		? path.join(pancodeConfigDir(), "extensions")
+		? path.join(pancodeConfigPath(), "extensions")
 		: path.join(pancodeProjectRoot(cwd, path.join("extensions", "state.json")), ".pancode", "extensions");
 }
 
@@ -81,7 +82,7 @@ function statePath(scope: ExtensionScope, cwd = process.cwd()): string {
  */
 function assertManagedBase(scope: ExtensionScope, cwd: string): void {
 	const boundary =
-		scope === "user" ? path.resolve(pancodeConfigDir()) : pancodeProjectRoot(cwd, path.join("extensions", "state.json"));
+		scope === "user" ? path.resolve(pancodeConfigPath()) : pancodeProjectRoot(cwd, path.join("extensions", "state.json"));
 	const base = extensionBaseDir(scope, cwd);
 	let cursor = boundary;
 	for (const part of path.relative(boundary, base).split(path.sep)) {
@@ -94,6 +95,11 @@ function assertManagedBase(scope: ExtensionScope, cwd: string): void {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
 	}
+}
+
+/** A writer creates the user config root as PanCode owns it (mode 0700) before its first write beneath it. */
+function ensureScopeRoot(scope: ExtensionScope): void {
+	if (scope === "user") pancodeConfigDir();
 }
 
 function managedBaseError(scope: ExtensionScope, cwd: string): string | undefined {
@@ -260,6 +266,7 @@ function writeState(
 	invalid: ReadonlyArray<InvalidInstallRecord>,
 ): void {
 	const filePath = statePath(scope, cwd);
+	ensureScopeRoot(scope);
 	const written = { ...state, installed: withKeptInvalidRecords(state.installed, invalid) };
 	safeResourceWrite(filePath, `${JSON.stringify(written, null, 2)}\n`, { encoding: "utf8" });
 }
@@ -686,6 +693,7 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 	let stateBackup: string | undefined;
 	let packageBackup: string | undefined;
 	try {
+		ensureScopeRoot(scope);
 		mkdirSync(parent, { recursive: true });
 		if (stateResult.status === "corrupt") stateBackup = preserveFile(statePath(scope, cwd), "corrupt");
 		cpSync(source, stagingRoot, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
