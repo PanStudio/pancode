@@ -72,6 +72,8 @@ describe("release decisions", () => {
 			};
 			write({});
 			doesNotThrow(() => readRelease(scratch));
+			doesNotThrow(() => readRelease(scratch, "0".repeat(40)));
+			throws(() => readRelease(scratch, "1".repeat(40)), /not this run's commit 1{40}/u);
 			write({ channel: null });
 			throws(() => readRelease(scratch), /development version/u);
 			write({ dirty: true });

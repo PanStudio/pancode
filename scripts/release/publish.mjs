@@ -47,14 +47,15 @@ function captureUnless(absent, command, args, options) {
 	}
 }
 
-export function readRelease(directory) {
+/** The release in `directory`, refused unless it is publishable; `commit` is the commit the caller's run checked out. */
+export function readRelease(directory, commit) {
 	const release = JSON.parse(readFileSync(join(directory, "release.json"), "utf8"));
 	const problems = [];
 	if (release.channel === null)
 		problems.push(`${release.version} is a development version; only x.y.z and x.y.z-rc.N are published`);
 	if (release.dirty) problems.push("the release was built from a checkout with uncommitted changes");
-	if (process.env.GITHUB_SHA && process.env.GITHUB_SHA !== release.commit)
-		problems.push(`the release was built from ${release.commit}, not this run's commit ${process.env.GITHUB_SHA}`);
+	if (commit && commit !== release.commit)
+		problems.push(`the release was built from ${release.commit}, not this run's commit ${commit}`);
 	problems.push(
 		...releaseVersionErrors({
 			version: release.version,
@@ -229,7 +230,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 			if (!existsSync(values.remote)) throw new Error(`--remote ${values.remote} is not a local repository`);
 		}
 		const directory = resolve(positionals[0]);
-		const release = readRelease(directory);
+		const release = readRelease(directory, process.env.GITHUB_SHA);
 		const remote = values.remote ? resolve(values.remote) : `https://github.com/${REPOSITORY}.git`;
 		console.log(
 			`Publishing ${release.name}@${release.version} (${release.channel}) from ${release.commit}${rehearsal ? " as a rehearsal" : ""}`,
