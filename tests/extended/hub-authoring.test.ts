@@ -416,7 +416,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		}
 	});
 
-	it("all 45 curated packs pass validation", () => {
+	it("all 46 curated packs pass validation", () => {
 		const isDir = (p: string) => statSync(p).isDirectory();
 		const hubDir = join(REPO_ROOT, "hub", "packs");
 
@@ -446,7 +446,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 				),
 		];
 
-		equal(packagePaths.length, 45, `expected 45 curated packs, found ${packagePaths.length}`);
+		equal(packagePaths.length, 46, `expected 46 curated packs, found ${packagePaths.length}`);
 
 		for (const pkgPath of packagePaths) {
 			const res = validateHubPackage(pkgPath);
@@ -473,9 +473,9 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			entries: Array<{ name: string; sourceUrl?: string; source?: { repo: string; subdir?: string } }>;
 		};
 
-		// 46 locally scanned packages (34 skills, the HPC, science-data, literature
-		// and life-science plugins, the local-status extension and the seven core
-		// servers) plus every row
+		// 47 locally scanned packages (34 skills, the HPC, science-data, literature,
+		// life-science and pankit plugins, the local-status extension and the
+		// seven core servers) plus every row
 		// the community row files under hub/community/ state; those packs have no
 		// local directory under hub/ and so are never in packagePaths.
 		const communityDir = join(REPO_ROOT, "hub", "community");
@@ -492,8 +492,8 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			.reduce((sum, count) => sum + count, 0);
 		equal(
 			hubRegistry.entries.length,
-			46 + communityRows,
-			`PanHub index must contain the 46 local packs and ${communityRows} community rows`,
+			47 + communityRows,
+			`PanHub index must contain the 47 local packs and ${communityRows} community rows`,
 		);
 
 		// None of the entries should reference _authoring or templates

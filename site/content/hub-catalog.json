@@ -1,8 +1,8 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "341a4fab7f175ff6bc6c154aa9337138c63917d71f2865e45f681b62ae2ba9f9",
-		"rows": 51,
+		"sha256": "b78f6827fe9d6dcee8ef171e596c98dd7a8fc15197ae84b09e195726c5d599db",
+		"rows": 52,
 		"revoked": 0
 	},
 	"rows": [
@@ -116,6 +116,21 @@
 			},
 			"sha256": "729a99ae3dc4c426a817dc226a641ab204779c1ddde10651d568ecdf2f539a29",
 			"install": "pancode hub install plugin:literature"
+		},
+		{
+			"kind": "plugin",
+			"name": "pankit",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @akougkas/pancode package.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/plugins/pankit"
+			},
+			"sha256": "07849383aa947ac6a5aa9915eaf11685328d6def3449269e44e790f1e534e586",
+			"install": "pancode hub install plugin:pankit"
 		},
 		{
 			"kind": "plugin",
