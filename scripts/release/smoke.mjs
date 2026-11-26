@@ -32,14 +32,11 @@ function step(label, action) {
 }
 
 function run(command, args, env) {
-	const result = spawnSync(command, args, {
-		env,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-		cwd: env.HOME,
-		// Node refuses to start a .cmd file without a shell.
-		shell: command.endsWith(".cmd"),
-	});
+	const options = { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd: env.HOME };
+	// Node refuses to start a .cmd file without a shell, and a shell takes one command line, not an argument list.
+	const result = command.endsWith(".cmd")
+		? spawnSync([`"${command}"`, ...args].join(" "), { ...options, shell: true })
+		: spawnSync(command, args, options);
 	if (result.error) throw new Error(`could not start ${command}: ${result.error.message}`);
 	if (result.status !== 0)
 		throw new Error(`${[command, ...args].join(" ")} exited ${result.status}\n${result.stdout}${result.stderr}`);
@@ -187,11 +184,15 @@ try {
 	});
 	step("uninstall", () => {
 		run(command("pancode"), ["uninstall", "--yes"], env);
-		// Windows removes the running launcher and its Node once that process has exited.
+		// Windows removes the running launcher, its Node and the installed versions from a detached process
+		// after this one has exited, so they outlive the command by however long that removal takes.
 		const left = () => [root, command("pancode"), command("panstore")].filter((file) => existsSync(file));
-		for (let waited = 0; left().length > 0 && waited < 30; waited++)
+		for (let waited = 0; left().length > 0 && waited < 360; waited++)
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
-		if (left().length > 0) throw new Error(`uninstall left ${left().join(", ")}`);
+		if (left().length > 0) {
+			const inside = existsSync(root) ? readdirSync(root, { recursive: true }).slice(0, 40).join(", ") : "";
+			throw new Error(`uninstall left ${left().join(", ")}${inside ? `, holding ${inside}` : ""}`);
+		}
 	});
 	console.log(`SMOKE_OK ${target} ${version} node ${process.version}`);
 } catch (error) {
