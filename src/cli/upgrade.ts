@@ -744,7 +744,7 @@ export async function runUpgradeCommand(
 		return opts.dryRun ? 0 : 1;
 	}
 
-	// An exact --version or --package install is pinned: upgrade holds it at the pin
+	// An exact --version or --bundle install is pinned: upgrade holds it at the pin
 	// and says how to release it, instead of reporting the pin as a registry answer.
 	const pin = opts.postInstall || opts.channelExplicit ? null : installation.installer?.versionPin || null;
 	const lookup: RegistryLookup = opts.postInstall
