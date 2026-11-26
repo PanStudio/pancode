@@ -501,7 +501,7 @@ expected = sorted(catalog['rows'], key=lambda row: (kinds.index(row['kind']) if 
 # A core server is built in; its row gives the command another agent host runs to serve it.
 def hub_command(row):
     if row['kind'] == 'server' and row['tier'] == 'core':
-        return f"npx -y -p @akougkas/pancode pankit serve {row['name']}"
+        return f"npx -y -p @panstudio/pancode pankit serve {row['name']}"
     return row['install']
 if listed != [(f"{row['kind']}-{row['name']}", hub_command(row)) for row in expected]:
     errors.append(f"/hub.html does not list exactly the {len(catalog['rows'])} rows of hub-catalog.json with their commands")

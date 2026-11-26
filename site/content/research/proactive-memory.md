@@ -94,7 +94,7 @@ Needs: any chat route and a repository you can publish or describe. A local mode
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 ::: limits Boundaries
 - `held` is an evidence-gate input and is not proof of a general claim.

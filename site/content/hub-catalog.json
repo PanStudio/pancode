@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "ac5da8889b304378690df5ff2b9a374db6c6478998eb776cdb2090e2b91a3af1",
+		"sha256": "833411c8c5eecfd29937b806ddf606d9424890bf553895b778b54e88ea2a5fee",
 		"rows": 52,
 		"revoked": 0
 	},
@@ -24,7 +24,7 @@
 		{
 			"kind": "extension",
 			"name": "wtfp",
-			"publisher": "akougkas",
+			"publisher": "panstudio",
 			"version": "0.9.0",
 			"description": "The WTF-P writing desk for PanCode; paper state, gates and the write guard run in code.",
 			"category": null,
@@ -41,7 +41,7 @@
 		{
 			"kind": "plugin",
 			"name": "autotldr",
-			"publisher": "akougkas",
+			"publisher": "panstudio",
 			"version": "0.2.0",
 			"description": "Point it at anything. Get back what it means, in the shape you asked for.",
 			"category": null,
@@ -58,7 +58,7 @@
 		{
 			"kind": "plugin",
 			"name": "cite-nexus",
-			"publisher": "akougkas",
+			"publisher": "panstudio",
 			"version": "0.2.5",
 			"description": "CiteNexus connects research assistants to free scholarly metadata and optional academic APIs. Discover papers, resolve identifiers, check references, and export BibTeX, RIS or CSL-JSON with source provenance. No model or API key is required for default searches.",
 			"category": null,
@@ -150,7 +150,7 @@
 		{
 			"kind": "plugin",
 			"name": "wtfp",
-			"publisher": "akougkas",
+			"publisher": "panstudio",
 			"version": "0.9.0",
 			"description": "Portable, evidence-grounded academic research and writing workflows.",
 			"category": null,
@@ -167,7 +167,7 @@
 		{
 			"kind": "plugin",
 			"name": "zulipchat",
-			"publisher": "akougkas",
+			"publisher": "panstudio",
 			"version": "0.8.1",
 			"description": "Zulip messaging and search, and hand-off to Zulip agent bots.",
 			"category": null,

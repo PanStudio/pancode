@@ -168,7 +168,7 @@ A natural second experiment, also proposed and not yet run, is a small paired on
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 ::: limits Boundaries
 - System One is not a safety net. The deterministic safety rules and the judge decide, the screen can only tighten, and no use removes a confirmation.

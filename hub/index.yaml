@@ -85,7 +85,7 @@ entries:
           when grep on text is too noisy, and never rewrites it. Not for plain
           string or filename lookups; use grep or find."
   - kind: plugin
-    publisher: akougkas
+    publisher: panstudio
     name: autotldr
     description: Point it at anything. Get back what it means, in the shape you asked for.
     version: 0.2.0
@@ -162,7 +162,7 @@ entries:
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: plugin
-    publisher: akougkas
+    publisher: panstudio
     name: cite-nexus
     description: CiteNexus connects research assistants to free scholarly metadata
       and optional academic APIs. Discover papers, resolve identifiers, check
@@ -1157,7 +1157,7 @@ entries:
           suite before the main line moves, with exact rollback on failure. Not
           for creating worktrees; use worktree-create. Not for…
   - kind: plugin
-    publisher: akougkas
+    publisher: panstudio
     name: wtfp
     description: Portable, evidence-grounded academic research and writing workflows.
     version: 0.9.0
@@ -1429,7 +1429,7 @@ entries:
           It activates when an agent needs to write one section, execute an
           outline in dependency waves, make a small targeted prose or…
   - kind: extension
-    publisher: akougkas
+    publisher: panstudio
     name: wtfp
     description: The WTF-P writing desk for PanCode; paper state, gates and the
       write guard run in code.
@@ -1449,7 +1449,7 @@ entries:
         description: The WTF-P writing desk for PanCode; paper state, gates and the
           write guard run in code.
   - kind: plugin
-    publisher: akougkas
+    publisher: panstudio
     name: zulipchat
     description: Zulip messaging and search, and hand-off to Zulip agent bots.
     version: 0.8.1
