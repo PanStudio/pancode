@@ -17,6 +17,7 @@ PanCode 0.9.1 is the first release published by PanStudio, as `@panstudio/pancod
 ### Changed
 
 - PanCode is published by PanStudio. The repository is github.com/PanStudio/pancode and the npm package is `@panstudio/pancode` (`npm install -g @panstudio/pancode`). The installers download from the new repository's releases, `pancode report` files issues there, PanHub's default index URL points there, and the Claude Code marketplace is added with `claude plugin marketplace add PanStudio/pancode`.
+- The five community packs PanHub listed under the publisher `akougkas` (the `autotldr`, `cite-nexus`, `wtfp` and `zulipchat` plugins and the `wtfp` extension) are now published by `panstudio`, from the same source commits. A copy installed under 0.9.0 keeps its publisher, and `pancode hub list` marks it `installed from akougkas`; `pancode hub install` and `pancode hub update` refuse that pack with `hub_publisher_collision` until `pancode hub remove` deletes the old copy.
 - The `panstore` command is removed; the project store's commands are `pancode store <command>`. `pancode store where` now ends with the `pankit serve store` line that serves the project's store over MCP from any directory, and `PANSTORE_PROJECT_ID` is gone: a project's `store.projectId` keys its store.
 - The SDK is documented as PanCode's extension API, unstable until PanCode defines it; its `pancode/sdk/<subpath>` imports are unchanged.
 - Token counts read one way everywhere in the terminal (13.0k, 142k, 5.0M), compaction lines included.
