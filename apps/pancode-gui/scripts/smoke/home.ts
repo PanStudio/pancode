@@ -82,6 +82,15 @@ export async function homeSteps(run: SmokeRun) {
 			);
 		});
 		assert.equal(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches), true);
+		// The light flip above ran with motion on; a colour transition already running outlives the reduce.
+		await page.evaluate(() =>
+			Promise.allSettled(
+				document
+					.getAnimations()
+					.filter((animation) => animation instanceof CSSTransition)
+					.map((animation) => animation.finished),
+			),
+		);
 		await check("home-live-preferences");
 		await check("home");
 		if (width === 1600) await page.screenshot({ path: join(output, "home.png"), fullPage: true });
