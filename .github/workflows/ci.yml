@@ -334,7 +334,7 @@ jobs:
       # Build provenance for every release asset, verifiable with `gh attestation verify <file> --repo PanStudio/pancode`.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-checksums: ${{ runner.temp }}/release/assets/SHA256SUMS
+          subject-path: ${{ runner.temp }}/release/assets/*
       # The rulesets let only the pancode-release App create v* tags and fast-forward main, and its gh-pages
       # push triggers the Pages build; GITHUB_TOKEN can do none of the three.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

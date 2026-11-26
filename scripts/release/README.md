@@ -36,6 +36,8 @@ A dispatch with `release` checked builds and tests nothing. It runs two jobs, an
 | `tested run` | Finds a successful push run of `ci.yml` for the dispatched branch and commit and checks that every gate passed. It records the run and artifact IDs, refuses a rerun during lookup, and downloads that `release` artifact to check its `SHA256SUMS`, commit, version and changelog. No matching run or no unexpired artifact stops the dispatch before approval |
 | `publish` | After approval of the `release` environment, downloads the same immutable artifact by ID, checks its `SHA256SUMS` again, attests the release assets and runs `scripts/release/publish.mjs` |
 
+Provenance for every release asset, including `SHA256SUMS`, names the approved release run that publishes the push run's tested files.
+
 `pnpm run ci` runs the same gate on one machine: the checks beside the build, the tests against the built tarball, then the install smoke of this machine's bundle. `pnpm run release:build -- --out <dir>` and `pnpm run release:smoke -- <dir>/assets` run the two halves alone.
 
 ## Cutting a release
