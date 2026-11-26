@@ -125,6 +125,8 @@ export interface TurnFailureFacts {
 	noCredential?: boolean;
 	/** The project settings file whose targets list declares the target, which user settings cannot change. */
 	projectFile?: string;
+	/** The target's runtime reads no key, so no setting on this target gives it a credential. */
+	keyless?: boolean;
 	/** For a call PanCode never sent, its own words for what stopped it, so the rail can name the cause. */
 	reason?: string;
 }

@@ -38,6 +38,7 @@ export type Missing =
 			redeclared?: string;
 			sendsNone?: true;
 			projectFile?: string;
+			keyless?: true;
 	  }
 	/**
 	 * The target names the environment variable its key comes from, and it is not set. `projectFile` is the project
@@ -169,6 +170,15 @@ export function describeMissing(
 		case "credential": {
 			if (missing.sendsNone === true) {
 				const cause = `${missing.target} declares no credential, so PanCode sent none, and its endpoint asks for one.`;
+				if (missing.keyless === true)
+					return {
+						sentence: `${missing.target}'s runtime sends no credential, and its endpoint asks for one. ${
+							options.inSession
+								? "Switch to a route that sends one with /model."
+								: "Run: pancode configure to choose a target that sends one"
+						}`,
+						...(options.inSession ? {} : { command: "pancode configure" }),
+					};
 				// The project's list replaces the user's, so configure cannot reach this entry.
 				if (missing.projectFile !== undefined)
 					return { sentence: `${cause} Give ${missing.target} auth.apiKeyEnvVar in ${missing.projectFile}.` };
@@ -240,6 +250,7 @@ export function missingFromFailedCall(route: {
 	partialReply?: boolean;
 	noCredential?: boolean;
 	projectFile?: string;
+	keyless?: boolean;
 }): Missing | null {
 	if (route.stage === "auth" && route.noCredential === true && /^http_\d{3}$/u.test(route.errorClass ?? ""))
 		return {
@@ -247,7 +258,11 @@ export function missingFromFailedCall(route: {
 			target: route.targetId,
 			provider: route.targetId,
 			sendsNone: true,
-			...(route.projectFile !== undefined ? { projectFile: route.projectFile } : {}),
+			...(route.keyless === true
+				? { keyless: true }
+				: route.projectFile !== undefined
+					? { projectFile: route.projectFile }
+					: {}),
 		};
 	if (route.stage !== "transport" || route.url === undefined || route.partialReply === true) return null;
 	if (route.errorClass !== "network_error" && route.errorClass !== "timeout") return null;

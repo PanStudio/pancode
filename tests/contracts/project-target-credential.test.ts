@@ -190,6 +190,19 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	strictEqual(signIn, redeclaredTargetSentence("work", localFile, true));
 	strictEqual(signIn.includes("apiKeyEnvVar"), false);
 	strictEqual(bootAuthStatus(work, copilot).available, false);
+	// Back on the user's own list, now keyless on purpose: the recorded redeclaration does not reach it.
+	writeFileSync(join(configDir, "settings.yaml"), `targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n`);
+	const own = readLayeredSettings(home.dir).settings.targets.find((entry) => entry.id === "litellm");
+	ok(own);
+	strictEqual(targetRequiresAuth(own, litellm), false);
+	strictEqual(targetRequiresAuth(structuredClone(own), litellm), true, "a copy with no origin stays refused");
+	const ownView = applySessionRouting(
+		readLayeredSettings(home.dir).settings,
+		seedSessionRouting(readLayeredSettings(home.dir).settings),
+	);
+	const ownRouted = ownView.targets.find((entry) => entry.id === "litellm");
+	ok(ownRouted);
+	strictEqual(targetRequiresAuth(ownRouted, litellm), false);
 	const auth = openAuthStorage();
 	auth.setApiKey("litellm-key", "sk-stored-canary");
 	const resolved = await auth.resolveForTarget(resolveAuthTarget(target, litellm));
@@ -227,6 +240,11 @@ test("a refused credential and a placeholder-key 401 each name their real cause,
 		providerFailureAdvice(projectOnly).startsWith("Give bare auth.apiKeyEnvVar in /w/.pancode/settings.yaml "),
 		true,
 	);
+	// A runtime that reads no key gets no key-variable fix.
+	const keyless = readProviderFailureRoute({ ...placeholder, projectFile: "/w/.pancode/settings.yaml", keyless: true });
+	ok(keyless);
+	strictEqual(providerFailureAdvice(keyless).includes("apiKeyEnvVar"), false);
+	strictEqual(providerFailureAdvice(keyless).includes("pancode configure"), false);
 	strictEqual(classifyCallFailure(new Error(signInRefusal), { invoked: false }).errorClass, "credential_refused");
 	// A real key the endpoint refused keeps the old wording.
 	const sent = { targetId: "bare", stage: "auth", errorClass: "http_401" };

@@ -18,6 +18,8 @@ const projectKeyVariables = new Map<string, string>();
  * supplied. A symbol key survives the spreads that copy a target and stays out of JSON, validation and saved files.
  */
 const PROJECT_TARGET_ORIGIN = Symbol("pancode.projectTargetOrigin");
+/** The origin of an entry the user's own settings supplied. */
+const USER_TARGET = "user";
 
 /** The project settings file whose `targets` list supplied an entry, and what the user's own entry for that id named. */
 export interface ProjectTargetOrigin {
@@ -116,17 +118,29 @@ export function markProjectTarget(
 	if (origin.userCredential !== undefined) redeclaredEntries.add(redeclaredKey(target, origin.userCredential));
 }
 
-/** The origin `markProjectTarget` gave this entry, else null. */
-export function projectTargetOrigin(target: object): ProjectTargetOrigin | null {
-	return ((target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] as ProjectTargetOrigin | undefined) ?? null;
+/** Mark entries of a snapshot as the user's own, so a copy that lost its origin is never confused with them. */
+export function markUserTargets(targets: ReadonlyArray<object>): void {
+	for (const target of targets) markUser(target);
 }
 
-/** Copy the project origins of `from`'s targets onto a structured clone of them, matched by position and id. */
-export function keepProjectTargetOrigins(from: ReadonlyArray<{ id: string }>, to: ReadonlyArray<{ id: string }>): void {
+// Hidden from equality and serialization, so settings compare and save as before; spread copies drop it and fail closed.
+function markUser(target: object): void {
+	Object.defineProperty(target, PROJECT_TARGET_ORIGIN, { value: USER_TARGET, configurable: true, writable: true });
+}
+
+/** The origin `markProjectTarget` gave this entry, else null. */
+export function projectTargetOrigin(target: object): ProjectTargetOrigin | null {
+	const origin = (target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN];
+	return typeof origin === "object" && origin !== null ? (origin as ProjectTargetOrigin) : null;
+}
+
+/** Copy the layer origins of `from`'s targets onto a structured clone of them, matched by position and id. */
+export function keepTargetOrigins(from: ReadonlyArray<{ id: string }>, to: ReadonlyArray<{ id: string }>): void {
 	for (const [index, target] of to.entries()) {
 		const source = from[index];
-		const origin = source?.id === target.id ? projectTargetOrigin(source) : null;
-		if (origin !== null) (target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] = origin;
+		const origin = source?.id === target.id ? (source as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] : undefined;
+		if (origin === USER_TARGET) markUser(target);
+		else if (origin !== undefined) (target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] = origin;
 	}
 }
 
@@ -147,6 +161,7 @@ export function redeclaredUserTarget(
 	if (!signIn && variable !== undefined && isProjectKeyVariableName(variable)) return null;
 	const refuses = (credential: "stored" | "key-variable" | undefined) =>
 		credential === "stored" || (credential === "key-variable" && !signIn);
+	if ((target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] === USER_TARGET) return null;
 	const origin = projectTargetOrigin(target);
 	if (origin !== null) return refuses(origin.userCredential) ? { file: origin.file, signIn } : null;
 	const seen = (["stored", "key-variable"] as const).some(

@@ -46,7 +46,12 @@ import {
 } from "./config.js";
 import { DEFAULT_SETTINGS } from "./defaults.js";
 import { pancodeProjectRoot } from "./project-root.js";
-import { isProjectKeyVariableName, markProjectTarget, noteProjectTargets } from "./project-target-urls.js";
+import {
+	isProjectKeyVariableName,
+	markProjectTarget,
+	markUserTargets,
+	noteProjectTargets,
+} from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
@@ -1055,7 +1060,7 @@ function validateLayerStack(
 		const removed = downgradeProjectRemovedTargets(merged, user.blob, validation, sources.targets);
 		downgraded = removed.paths;
 		issues.push(...removed.issues);
-	}
+	} else markUserTargets(validation.settings.targets);
 	for (const issue of validation.issues) {
 		if (downgraded.has(issue.path)) continue;
 		issues.push({ origin: settingsSourceFor(sources, issue.path), path: issue.path, message: issue.message });

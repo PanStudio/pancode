@@ -5,7 +5,7 @@ import { writeDiagnostic } from "../../core/diagnostics.js";
 import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
 import { configureGitCommitAttribution } from "../../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../../core/guardrails.js";
-import { keepProjectTargetOrigins } from "../../core/project-target-urls.js";
+import { keepTargetOrigins } from "../../core/project-target-urls.js";
 import { pinRunSettings } from "../../core/run-overrides.js";
 import { formatSettingsLayerWarning } from "../../core/settings-layer-diagnostics.js";
 import {
@@ -151,7 +151,7 @@ export function createConfigBundle(
 		async start() {
 			if (initialSettings) {
 				const owned = structuredClone(initialSettings) as PancodeSettings;
-				keepProjectTargetOrigins(initialSettings.targets, owned.targets);
+				keepTargetOrigins(initialSettings.targets, owned.targets);
 				snapshot = pinRunSettings(owned);
 				projectWarning = formatSettingsLayerWarning(readLayeredSettings(process.cwd()));
 			} else {

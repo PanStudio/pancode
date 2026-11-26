@@ -212,8 +212,12 @@ function isCollectedBatchResult(toolName: string, result: unknown): boolean {
 	);
 }
 
-/** The project file a target's entry came from, for a remedy user settings cannot apply. */
-function projectFileOf(target: object): { projectFile?: string } {
+/**
+ * What can give a target with no credential one: nothing for a runtime that reads no key, else the project file its
+ * entry came from when configure (user settings) cannot reach it.
+ */
+function noCredentialRemedy(target: object, runtimeAuth: string): { keyless?: true; projectFile?: string } {
+	if (runtimeAuth !== "api-key") return { keyless: true };
 	const file = projectTargetOrigin(target)?.file;
 	return file !== undefined ? { projectFile: file } : {};
 }
@@ -2037,7 +2041,9 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 								errorClass: failure.errorClass,
 								partialReply: extractText(message).length > 0,
 								...(failure.stage === "auth" && placeholderKeySent ? { noCredential: true } : {}),
-								...(failure.stage === "auth" && placeholderKeySent ? projectFileOf(localRuntime.runtimeResolution.target) : {}),
+								...(failure.stage === "auth" && placeholderKeySent
+									? noCredentialRemedy(localRuntime.runtimeResolution.target, localRuntime.runtimeResolution.runtime.auth)
+									: {}),
 							},
 						});
 					const retryAfterMs = callTracking?.retryAfterMs();
