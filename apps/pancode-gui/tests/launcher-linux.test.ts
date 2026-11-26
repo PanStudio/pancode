@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { desktopArgument, desktopEntry } from "../server/launcher/desktop-entry.js";
+import { desktopArgument, desktopEntry, launcherId } from "../server/launcher/desktop-entry.js";
 import { installLauncher, launcherStatus, uninstallLauncher } from "../server/launcher/install.js";
 
 test("Linux launcher installs absolute checkout paths, verifies ownership, and leaves changed or unrelated files alone", async (t) => {
@@ -57,6 +57,45 @@ test("Linux launcher installs absolute checkout paths, verifies ownership, and l
 	await assert.rejects(launcherStatus("relative"), /absolute/);
 });
 
+test("a symlink at the desktop entry is named with its next step and neither followed nor removed", async (t) => {
+	const prefix = await mkdtemp(join(tmpdir(), "pancode web launcher-"));
+	t.after(() => rm(prefix, { recursive: true, force: true }));
+	const directory = join(prefix, "applications");
+	const entry = join(directory, `${launcherId}.desktop`);
+	const target = join(prefix, "elsewhere.desktop");
+	await mkdir(directory);
+	await writeFile(target, "[Desktop Entry]\n");
+	await symlink(target, entry);
+	await assert.rejects(
+		installLauncher(prefix, {
+			node: process.execPath,
+			entry: fileURLToPath(new URL("../server/main.ts", import.meta.url)),
+		}),
+		(error: Error) => error.message.startsWith(`${entry}: `) && error.message.includes(`move it out of ${directory}`),
+	);
+	assert.equal(await readlink(entry), target);
+	assert.equal(await readFile(target, "utf8"), "[Desktop Entry]\n");
+});
+
+test("an unreadable applications directory is reported with its path and cause, not as a file to move", {
+	skip: process.getuid?.() === 0,
+}, async (t) => {
+	const prefix = await mkdtemp(join(tmpdir(), "pancode web launcher-"));
+	const directory = join(prefix, "applications");
+	await mkdir(directory, { mode: 0o000 });
+	t.after(async () => {
+		await chmod(directory, 0o700);
+		await rm(prefix, { recursive: true, force: true });
+	});
+	const entry = join(directory, `${launcherId}.desktop`);
+	await assert.rejects(launcherStatus(prefix), (error: Error) => {
+		assert.ok(error.message.startsWith(`PanCode could not read ${entry}: `), error.message);
+		assert.match(error.message, /EACCES/);
+		assert.doesNotMatch(error.message, /move it/);
+		return true;
+	});
+});
+
 test("desktop quoting survives GLib parsing of spaces, quotes, backslashes, dollar and percent field codes", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "pancode-web-launcher-quoting-"));
 	t.after(() => rm(dir, { recursive: true, force: true }));
@@ -101,7 +140,7 @@ test("concurrent desktop installs leave one owned entry and give a useful retry 
 	assert.ok(results.some((result) => result.status === "fulfilled"));
 	for (const result of results)
 		if (result.status === "rejected") {
-			assert.match(String(result.reason), /Another launcher installation|already exist or differ/);
+			assert.match(String(result.reason), /Another launcher installation|then run this command again/);
 			assert.doesNotMatch(String(result.reason), /EEXIST/);
 		}
 	assert.equal((await launcherStatus(prefix)).status, "installed");

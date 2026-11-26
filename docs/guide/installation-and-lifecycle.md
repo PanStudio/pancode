@@ -230,7 +230,7 @@ lock, which exits 75. `--help` exits 0.
 | `--no-post-install` | none | Skip the `pancode upgrade --post-install` run after installing. |
 | `--gui` | `PANCODE_INSTALL_GUI=1` | Install the desktop app without asking. See [Desktop app offer](#desktop-app-offer-linux-and-wsl). |
 | `--no-gui` | `PANCODE_INSTALL_GUI=0` | Skip the desktop app. |
-| `--force`, `-f` | none | Replace a `pancode` launcher this installer did not write, including a symlink that points outside the install. A symlink into an npm install of PanCode is replaced without it, with a warning. |
+| `--force`, `-f` | none | Replace a `pancode` or `pankit` launcher this installer did not write, including a symlink that points outside the install. A `pancode` symlink into an npm install of PanCode is replaced without it, with a warning; a `pankit` one there stays until you pass `--force` or move it aside. |
 | `--dry-run` | none | Print the platform, bundle, install root and launcher, then what would run. Nothing is downloaded or changed. |
 | `-h`, `--help` | none | Print the usage text. |
 
@@ -253,7 +253,7 @@ parameter and no forced target; it needs `tar.exe`, which Windows 10 1803 and la
 | `-Rollback` | none | Point the launcher at the previous version. Without `install.json` a real run fails before creating anything with `no installer manifest at <root>\install.json; nothing to roll back`. With `-DryRun` it prints `would point <launcher> back at the previous version recorded in <root>\install.json` and changes nothing. Run directly, it only moves the launcher; `pancode upgrade --rollback` runs it and also records an older restored version in `home.json` (see [Upgrades](#b-upgrades-pancode-upgrade)). |
 | `-NoPostInstall` | none | Skip `pancode upgrade --post-install`. |
 | `-LeavePrerelease` | none | With the `latest` channel, move from an active pre-release to the stable release even when stable is older. With any other channel or version the run stops with `-LeavePrerelease only moves to the latest channel, not <name>`. |
-| `-Force` | none | Replace a launcher the installer did not write. |
+| `-Force` | none | Replace a `pancode` or `pankit` launcher the installer did not write. |
 | `-DryRun` | none | Print the plan and change nothing. |
 
 `install.cmd` has no options of its own. It passes its arguments to

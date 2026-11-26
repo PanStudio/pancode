@@ -2824,6 +2824,10 @@
 													},
 													"refusal": {
 														"type": "string"
+													},
+													"builtIn": {
+														"type": "boolean",
+														"const": true
 													}
 												},
 												"additionalProperties": false
@@ -4271,6 +4275,10 @@
 													},
 													"refusal": {
 														"type": "string"
+													},
+													"builtIn": {
+														"type": "boolean",
+														"const": true
 													}
 												},
 												"additionalProperties": false

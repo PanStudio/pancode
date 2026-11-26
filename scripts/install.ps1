@@ -278,20 +278,52 @@ function Install-Pancode {
 			if ($actual -ne $expected) { Fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed" }
 			Ok "verified $asset (sha256 $expected)"
 		}
-		$staging = Join-Path $installRoot "versions\.staging-$PID"
-		New-Item -ItemType Directory -Force -Path $staging | Out-Null
-		& $tar -xzf $bundleFile -C $staging
-		if ($LASTEXITCODE -ne 0) { Fail "could not unpack $bundleFile under $installRoot (a full disk, or not a PanCode bundle)" }
-		$pkgJson = Join-Path $staging "lib\node_modules\pancode\package.json"
-		if (-not (Test-Path -LiteralPath (Join-Path $staging "node.exe")) -or -not (Test-Path -LiteralPath $pkgJson)) { Fail "$bundleFile is not a PanCode bundle for Windows" }
-		$ran = & (Join-Path $staging "node.exe") -e "process.stdout.write(process.versions.node)"
-		if ($LASTEXITCODE -ne 0 -or -not $ran) { Fail "the bundled Node in $bundleFile does not run" }
-		Ok "Node v$ran runs ($build)"
-		$pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
-		if ($pkg.name -ne $PackageName) { Fail "$bundleFile does not hold the $PackageName package" }
-		$final = Join-Path $installRoot "versions\$($pkg.version)"
-		if (Test-Path -LiteralPath $final) { $final = "$final-$(Get-Date -Format yyyyMMddHHmmss)-$PID" }
-		Move-Item -LiteralPath $staging -Destination $final
+		# Each version prefix records the digest of the bundle it came from, so reinstalling that bundle
+		# activates the prefix again instead of unpacking a second copy beside it.
+		$bundleDigest = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleFile).Hash.ToLowerInvariant()
+		$final = $null
+		$bundlePackage = $null
+		foreach ($kept in Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory) {
+			$dir = $kept.FullName
+			# A copy that cannot be read, run or matched to this archive is a miss, and the bundle unpacks beside it.
+			try {
+				$receipt = Join-Path $dir ".pancode-bundle-sha256"
+				if ($kept.Name.StartsWith(".") -or -not (Test-Path -LiteralPath $receipt) -or ([string](Get-Content -LiteralPath $receipt -TotalCount 1)).Trim() -ne $bundleDigest) { continue }
+				if ((Test-Path -LiteralPath (Join-Path $dir ".pancode-refused-candidate")) -or
+					-not (Test-Path -LiteralPath (Join-Path $dir "node.exe")) -or
+					-not (Test-Path -LiteralPath (Join-Path $dir "lib\node_modules\pancode\dist\cli\index.js")) -or
+					-not (Test-Path -LiteralPath (Join-Path $dir "lib\node_modules\pancode\scripts\native-install.cjs"))) { continue }
+				if (-not $bundlePackage) { $bundlePackage = ((& $tar -xzOf $bundleFile "./lib/node_modules/pancode/package.json") -join "`n") | ConvertFrom-Json }
+				$keptVersion = & (Join-Path $dir "node.exe") -e 'try{const p=require(process.argv[1]);if(p.name!==process.argv[2])process.exit(1);process.stdout.write(p.version)}catch{process.exit(1)}' (Join-Path $dir "lib\node_modules\pancode\package.json") $PackageName
+				if ($LASTEXITCODE -ne 0 -or $bundlePackage.name -ne $PackageName -or [string]$keptVersion -ne [string]$bundlePackage.version) { continue }
+				# The bundle's helper runs the check activation runs; a copy that fails it is left as it is.
+				$null = & (Join-Path $dir "node.exe") (Join-Path $dir "lib\node_modules\pancode\scripts\native-install.cjs") probe $dir
+				if ($LASTEXITCODE -ne 0) { continue }
+			} catch { continue }
+			$final = $dir
+			$pkg = [pscustomobject]@{ version = [string]$keptVersion }
+			break
+		}
+		$reused = [bool]$final
+		if ($reused) {
+			Say "this bundle is already unpacked at versions\$(Split-Path -Leaf $final); using it"
+		} else {
+			$staging = Join-Path $installRoot "versions\.staging-$PID"
+			New-Item -ItemType Directory -Force -Path $staging | Out-Null
+			& $tar -xzf $bundleFile -C $staging
+			if ($LASTEXITCODE -ne 0) { Fail "could not unpack $bundleFile under $installRoot (a full disk, or not a PanCode bundle)" }
+			$pkgJson = Join-Path $staging "lib\node_modules\pancode\package.json"
+			if (-not (Test-Path -LiteralPath (Join-Path $staging "node.exe")) -or -not (Test-Path -LiteralPath $pkgJson)) { Fail "$bundleFile is not a PanCode bundle for Windows" }
+			$ran = & (Join-Path $staging "node.exe") -e "process.stdout.write(process.versions.node)"
+			if ($LASTEXITCODE -ne 0 -or -not $ran) { Fail "the bundled Node in $bundleFile does not run" }
+			Ok "Node v$ran runs ($build)"
+			$pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
+			if ($pkg.name -ne $PackageName) { Fail "$bundleFile does not hold the $PackageName package" }
+			$final = Join-Path $installRoot "versions\$($pkg.version)"
+			if (Test-Path -LiteralPath $final) { $final = "$final-$(Get-Date -Format yyyyMMddHHmmss)-$PID" }
+			Move-Item -LiteralPath $staging -Destination $final
+			Set-Content -LiteralPath (Join-Path $final ".pancode-bundle-sha256") -Value $bundleDigest
+		}
 		$node = Join-Path $final "node.exe"
 		$entry = Join-Path $final "lib\node_modules\pancode\dist\cli\index.js"
 		if ($Options.IncludeClaudeSdk) {
@@ -307,9 +339,10 @@ function Install-Pancode {
 		if ($Options.AutoUpdate) { $auto = "1" }
 		$post = if ($Options.NoPostInstall) { "0" } else { "1" }
 		$pinSource = if ($Options.Bundle) { "bundle-file" } else { "version-flag" }
-		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource
+		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource $(if ($Options.Force) { "1" } else { "0" })
 		# The pancode on PATH is still the previous version, and a version that predates a repair reports nothing to fix.
-		if ($LASTEXITCODE -ne 0) { New-Item -ItemType File -Force -Path (Join-Path $final ".pancode-refused-candidate") | Out-Null }
+		# A reused prefix may be the active or previous version, which this run did not bring.
+		if ($LASTEXITCODE -ne 0 -and -not $reused) { New-Item -ItemType File -Force -Path (Join-Path $final ".pancode-refused-candidate") | Out-Null }
 		if ($LASTEXITCODE -ne 0) {
 			$activeVersion = $null
 			if ($previous) {
