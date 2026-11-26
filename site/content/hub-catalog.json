@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "b78f6827fe9d6dcee8ef171e596c98dd7a8fc15197ae84b09e195726c5d599db",
+		"sha256": "ac5da8889b304378690df5ff2b9a374db6c6478998eb776cdb2090e2b91a3af1",
 		"rows": 52,
 		"revoked": 0
 	},
@@ -76,7 +76,7 @@
 			"kind": "plugin",
 			"name": "hpc",
 			"publisher": "pancode",
-			"version": "0.4.1",
+			"version": "0.4.2",
 			"description": "HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack and darshan servers with the cluster's own tools as the fallback.",
 			"category": null,
 			"tier": "core",
@@ -84,14 +84,14 @@
 			"source": {
 				"path": "hub/packs/plugins/hpc"
 			},
-			"sha256": "90d2dcf0044dc348de46efecd0a10176565d75200a518ac2955cb6a58db58661",
+			"sha256": "fd86ef3d52b0176b5678817ef4d3dd067d0af0376054ed7a235ee7e1d2d9f6a5",
 			"install": "pancode hub install plugin:hpc"
 		},
 		{
 			"kind": "plugin",
 			"name": "life-science",
 			"publisher": "pancode",
-			"version": "0.1.1",
+			"version": "0.1.2",
 			"description": "Life-science pack: skills that query the RCSB Protein Data Bank, UniProtKB and PubChem over their public, key-free REST APIs with web_fetch, and stamp each answer with the source's entry revision or release. Every lookup needs network; offline the skills say the source is unreachable.",
 			"category": null,
 			"tier": "core",
@@ -99,14 +99,14 @@
 			"source": {
 				"path": "hub/packs/plugins/life-science"
 			},
-			"sha256": "34ea43b361a353e6d135537ef5f68a375a5e531ee982b4619bca4d2fece46cb4",
+			"sha256": "1c07f5a63f522be45290d83a92ac1788b5f506e65ff7deb77269ffd196f487d4",
 			"install": "pancode hub install plugin:life-science"
 		},
 		{
 			"kind": "plugin",
 			"name": "literature",
 			"publisher": "pancode",
-			"version": "0.3.0",
+			"version": "0.3.1",
 			"description": "Literature pack: verifies citations and resolves DOIs and arXiv IDs through the CiteNexus MCP server from the cite-nexus pack (key-free Crossref, DataCite, Europe PMC and arXiv), with an offline extractor for BibTeX and Markdown and a web_fetch fallback. Adds a hypothesis workflow: cited grounding, independent council proposals, a testability ranking and the smallest experiment per hypothesis, ending at the operator's own choice. Extends arxiv-literature. Needs network for every lookup.",
 			"category": null,
 			"tier": "core",
@@ -114,7 +114,7 @@
 			"source": {
 				"path": "hub/packs/plugins/literature"
 			},
-			"sha256": "729a99ae3dc4c426a817dc226a641ab204779c1ddde10651d568ecdf2f539a29",
+			"sha256": "e8235be849e8df58b2289b70b14718eed06a7f69f0cf7737b19b397f01749482",
 			"install": "pancode hub install plugin:literature"
 		},
 		{
@@ -122,21 +122,21 @@
 			"name": "pankit",
 			"publisher": "pancode",
 			"version": "0.1.0",
-			"description": "PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @akougkas/pancode package.",
+			"description": "PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @panstudio/pancode package.",
 			"category": null,
 			"tier": "core",
 			"licence": "LicenseRef-PanCode-1.0",
 			"source": {
 				"path": "hub/packs/plugins/pankit"
 			},
-			"sha256": "07849383aa947ac6a5aa9915eaf11685328d6def3449269e44e790f1e534e586",
+			"sha256": "50c5ee3acab07ead9510ee9487bc92cf9d2803f1e588306763c334ed92de43b2",
 			"install": "pancode hub install plugin:pankit"
 		},
 		{
 			"kind": "plugin",
 			"name": "science-data",
 			"publisher": "pancode",
-			"version": "0.4.1",
+			"version": "0.4.2",
 			"description": "Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it.",
 			"category": null,
 			"tier": "core",
@@ -144,7 +144,7 @@
 			"source": {
 				"path": "hub/packs/plugins/science-data"
 			},
-			"sha256": "5653328b831c47c2d4a82e67b1f8c2e2483ed22e8409cbf72c9f77173ad45264",
+			"sha256": "138894071e64430388dddd8c6f646d433546405aa0edf1284f94bbd6d876aa1e",
 			"install": "pancode hub install plugin:science-data"
 		},
 		{
@@ -193,7 +193,7 @@
 			"source": {
 				"path": "hub/packs/servers/catalog"
 			},
-			"sha256": "718b4a2976f50c0846f79ee56f9a816796dcd3b44aaf63477658e9db4d8e21ad",
+			"sha256": "774c1b16ac8d73f19cf048a445bba082af9b9d8308e83a815f05c38f5592b1fc",
 			"install": "pancode hub install server:catalog"
 		},
 		{
@@ -208,7 +208,7 @@
 			"source": {
 				"path": "hub/packs/servers/darshan"
 			},
-			"sha256": "fe4f27b8d7c5ca58230f816c36caa88ba38ad31e04f723f8ac2cb7379a385bae",
+			"sha256": "298f3f72d08233ed99bee120a1817194c58f993f250e9fb5a5d1d5ec66b71d79",
 			"install": "pancode hub install server:darshan"
 		},
 		{
@@ -223,7 +223,7 @@
 			"source": {
 				"path": "hub/packs/servers/modules"
 			},
-			"sha256": "050899f4e8729e968162cce674b7f185cde920c7ef25087c2a8090ac636dcc51",
+			"sha256": "138d4e40b5de02ee9c2863149b6e5e05cedfd74523f18e729c0de9417b0d8e16",
 			"install": "pancode hub install server:modules"
 		},
 		{
@@ -238,7 +238,7 @@
 			"source": {
 				"path": "hub/packs/servers/node"
 			},
-			"sha256": "499c64dca44433c5c14c8d4a0757ea9870010614094705f91bfec51d655734a6",
+			"sha256": "30cfa184eab737a837bd86057367844ac8686d12eb4d3e6676747e61fa34961e",
 			"install": "pancode hub install server:node"
 		},
 		{
@@ -253,7 +253,7 @@
 			"source": {
 				"path": "hub/packs/servers/scidata"
 			},
-			"sha256": "1b2f89dff382cf74428b3e94b4149168d7bf3dc376ca398208aa3920445bb86e",
+			"sha256": "e99f9333680140a6deec8bd47f5d9993f65e6898029bffcd7823ce8913f40c4e",
 			"install": "pancode hub install server:scidata"
 		},
 		{
@@ -268,7 +268,7 @@
 			"source": {
 				"path": "hub/packs/servers/spack"
 			},
-			"sha256": "90d2a49e4d62b9f02da562a28de1a350dd286e697e39f8f72b89b39310cadc3a",
+			"sha256": "d42f1f5d544c1a4f6b4a64f0e5128d1b6afa54babab910f4d34f13a5e452984d",
 			"install": "pancode hub install server:spack"
 		},
 		{
@@ -283,14 +283,14 @@
 			"source": {
 				"path": "hub/packs/servers/store"
 			},
-			"sha256": "7658f16484f34f49a64c7939ab134f6ca7347813fa86b8257c1902dcdfa7f2f1",
+			"sha256": "874b699b59c2109802a75ee9f7a7c9a1257865a9b3459ebf50b2e6642a4d5ac3",
 			"install": "pancode hub install server:store"
 		},
 		{
 			"kind": "skill",
 			"name": "architecture",
 			"publisher": "pancode",
-			"version": "0.4.5",
+			"version": "0.4.6",
 			"description": "Decides the engineering approach for an intent in an interactive session: investigates, proposes two or three genuinely different approaches with trade-offs, recommends, lets the user decide, and writes the decision doc. Not a task-by-task plan; use sprint-plan. Not a multi-perspective debate; use design-council. Not product intent; use product-intent. Not a typed implementation handoff; use tech-spec.",
 			"category": "planning",
 			"tier": "core",
@@ -298,14 +298,14 @@
 			"source": {
 				"path": "hub/packs/skills/planning/architecture"
 			},
-			"sha256": "c5872289f0e5713c4a95ce68670269042e22b7daea3b9ad190b381d0d4dddf42",
+			"sha256": "d93ec888c52d071f278d8af72677cce07d9fe9008172c2320e4c143644966881",
 			"install": "pancode hub install skill:architecture"
 		},
 		{
 			"kind": "skill",
 			"name": "arxiv-literature",
 			"publisher": "pancode",
-			"version": "0.6.3",
+			"version": "0.6.4",
 			"description": "Searches arXiv, summarizes or compares papers, and builds a compact literature survey as citation-ready, source-linked paper cards, with BibTeX export and ID verification through the CiteNexus server when the cite-nexus pack is installed. Fetches arXiv directly by default and dispatches the researcher shadow agent only when the user asks for a deep or broad survey.",
 			"category": "research",
 			"tier": "core",
@@ -313,14 +313,14 @@
 			"source": {
 				"path": "hub/packs/skills/research/arxiv-literature"
 			},
-			"sha256": "c657c2b76e6ddb4fe212a371064becd3a38c14b21b6d85d64f5aa968dd32b7cb",
+			"sha256": "74bfbc09732af13de62c5c14497fe9f7cfe9a16e4dbcf38aa666cddcdc8b24cf",
 			"install": "pancode hub install skill:arxiv-literature"
 		},
 		{
 			"kind": "skill",
 			"name": "ast-grep",
 			"publisher": "pancode",
-			"version": "0.3.4",
+			"version": "0.3.5",
 			"description": "Structural code search with ast-grep rules: finds code by shape when grep on text is too noisy, and never rewrites it. Not for plain string or filename lookups; use grep or find.",
 			"category": "coding",
 			"tier": "core",
@@ -328,14 +328,14 @@
 			"source": {
 				"path": "hub/packs/skills/coding/ast-grep"
 			},
-			"sha256": "faee4bfcf18a7676b21b7d9fc36f552879fe45d0ade4dda6765e5a7f709f54b9",
+			"sha256": "b6cd8553a18a14d40dea74b9bb02070245947d475482776fece57cd256605e85",
 			"install": "pancode hub install skill:ast-grep"
 		},
 		{
 			"kind": "skill",
 			"name": "backlog",
 			"publisher": "pancode",
-			"version": "0.4.5",
+			"version": "0.4.6",
 			"description": "Turns a finished PRD or architecture doc into a ticket backlog of small stories with verifiable acceptance criteria, confirmed, then created as GitHub issues or in another configured tracker. Not for local sprint slicing into a SPRINT.md; use sprint-plan.",
 			"category": "planning",
 			"tier": "core",
@@ -343,14 +343,14 @@
 			"source": {
 				"path": "hub/packs/skills/planning/backlog"
 			},
-			"sha256": "877ef7f5d84af48f942450fcaebcb16c88fffda4fcc3a2d6e3667b4191e8113d",
+			"sha256": "c3a75570a0f98bca1cb41dac7887fc2be8d16e2e4b1d84bc7d56950869d0519c",
 			"install": "pancode hub install skill:backlog"
 		},
 		{
 			"kind": "skill",
 			"name": "branch-closeout",
 			"publisher": "pancode",
-			"version": "0.1.2",
+			"version": "0.1.3",
 			"description": "Proves merged work on the canonical base, inspects and removes associated worktrees through Git, deletes local branches safely, and audits surviving repository refs. Not for creating worktrees; use worktree-create. Not for integrating branches; use worktree-merge.",
 			"category": "git",
 			"tier": "core",
@@ -358,14 +358,14 @@
 			"source": {
 				"path": "hub/packs/skills/git/branch-closeout"
 			},
-			"sha256": "163f9c5edf2418deb0fd7d5c026b384ab33addab3ffcafa88029579b0fd7c5c7",
+			"sha256": "275932b23d7ad0829ec5f10f646b9ab8c9e314c861499eb4907b38a4a7408e98",
 			"install": "pancode hub install skill:branch-closeout"
 		},
 		{
 			"kind": "skill",
 			"name": "coding-standards",
 			"publisher": "pancode",
-			"version": "0.4.4",
+			"version": "0.4.5",
 			"description": "Correct-by-construction TypeScript rules (errors as values, parse don't validate, illegal states unrepresentable, deep modules) for writing or refactoring TypeScript when the project has not pinned its own standards.",
 			"category": "coding",
 			"tier": "core",
@@ -373,14 +373,14 @@
 			"source": {
 				"path": "hub/packs/skills/coding/coding-standards"
 			},
-			"sha256": "efb1ec6192da797e5b799f0df4c90f034d3feed9e8fb23e40fd462e515dc2dbc",
+			"sha256": "05044905deb43f31b5974a876634b948e373e921bc359890ad32c89e0e17ec66",
 			"install": "pancode hub install skill:coding-standards"
 		},
 		{
 			"kind": "skill",
 			"name": "context-handoff",
 			"publisher": "pancode",
-			"version": "0.5.7",
+			"version": "0.5.8",
 			"description": "Writes a durable, redacted, reference-not-copy handoff document when a session winds down or context is about to be compacted or lost, so the next session or agent can continue. Not for orienting at the start of a session; use context-prime.",
 			"category": "context",
 			"tier": "core",
@@ -388,14 +388,14 @@
 			"source": {
 				"path": "hub/packs/skills/context/context-handoff"
 			},
-			"sha256": "f842732c4be0134fd81c3d48a7b7e1bd07c6c2ebf28688e65482186cee77c504",
+			"sha256": "4b4b5d4244d3ffd4053fb3f160d5f5fc215d29798158c919c5bf32aafd46243d",
 			"install": "pancode hub install skill:context-handoff"
 		},
 		{
 			"kind": "skill",
 			"name": "context-prime",
 			"publisher": "pancode",
-			"version": "0.4.4",
+			"version": "0.4.5",
 			"description": "Orients a fresh session in a repository by loading the last handoff, git state, the project constitution, and active-work signals before acting. Not for writing the handoff; use context-handoff.",
 			"category": "context",
 			"tier": "core",
@@ -403,14 +403,14 @@
 			"source": {
 				"path": "hub/packs/skills/context/context-prime"
 			},
-			"sha256": "2bc6888c4d75b191d8aecdae1917711a85c073fe388f31b615e604dfc4164fd1",
+			"sha256": "ee5f749402491f045ec3789ca5756afcf230b4452ad19cd06f3a22b4a7facd0e",
 			"install": "pancode hub install skill:context-prime"
 		},
 		{
 			"kind": "skill",
 			"name": "credentials",
 			"publisher": "pancode",
-			"version": "0.2.2",
+			"version": "0.2.3",
 			"description": "Handles API keys, tokens, and facility credentials (kerberos tickets, globus and scheduler tokens, ssh agents, netrc) before a tool needs one, after an auth error, when a new secret is supplied, or when one may have leaked. Not for provider target configuration; use pancode auth and target settings.",
 			"category": "meta",
 			"tier": "core",
@@ -418,14 +418,14 @@
 			"source": {
 				"path": "hub/packs/skills/meta/credentials"
 			},
-			"sha256": "7984540ed03bcc4c0d982d76ab3faf78f9fc738b2ddff3ebc20fc98e1f16497e",
+			"sha256": "3dcbedb839b687230f87f8fb606505446dfdd1455c9aadb1f763135442562ff8",
 			"install": "pancode hub install skill:credentials"
 		},
 		{
 			"kind": "skill",
 			"name": "design-council",
 			"publisher": "pancode",
-			"version": "0.6.5",
+			"version": "0.6.6",
 			"description": "Convenes several expert perspectives that challenge each other on a design decision with real trade-offs before code is written; quick mode runs a single round. Not for a one-question-at-a-time interrogation of a plan; use plan-interview. Not for splitting implementation across workers; use dispatch directly.",
 			"category": "workflow",
 			"tier": "core",
@@ -433,14 +433,14 @@
 			"source": {
 				"path": "hub/packs/skills/workflow/design-council"
 			},
-			"sha256": "7af4343071ff06c470b16cc51beeb8d43821fd5839ac6723ecfd368d548a37c4",
+			"sha256": "2eb47a30176d450ba2326b7ac794f14631ff31217a81826ffd3b3300ae9a5f46",
 			"install": "pancode hub install skill:design-council"
 		},
 		{
 			"kind": "skill",
 			"name": "experiment-protocol",
 			"publisher": "pancode",
-			"version": "0.3.4",
+			"version": "0.3.5",
 			"description": "Pre-registers a performance study, numerical comparison, parameter sweep, or benchmark: thresholds, tolerances, environment pins, and verdict conditions locked into the validation contract before any measurement. Not for diagnosing a stalled bug; use scientific-debugging.",
 			"category": "research",
 			"tier": "core",
@@ -448,14 +448,14 @@
 			"source": {
 				"path": "hub/packs/skills/research/experiment-protocol"
 			},
-			"sha256": "d3e3f1930ec3299606cf8b82f013ea45e21c40392fa9696e4f21fa0b997a4c6b",
+			"sha256": "688276ec0fce78c22a47ceef2b7926017e37423f86dd9020ab421f39c5d3974e",
 			"install": "pancode hub install skill:experiment-protocol"
 		},
 		{
 			"kind": "skill",
 			"name": "extension-authoring",
 			"publisher": "pancode",
-			"version": "0.1.7",
+			"version": "0.1.8",
 			"description": "Builds, tests, and debugs PanCode api 2 extensions with declared capabilities and host-rendered views. Not for instruction-only skills; use skill-authoring.",
 			"category": "meta",
 			"tier": "core",
@@ -463,14 +463,14 @@
 			"source": {
 				"path": "hub/packs/skills/meta/extension-authoring"
 			},
-			"sha256": "7cd1d05f6f16dea480f7bbf1192197047652e2bdccb3d46c3e16d4067c745ad6",
+			"sha256": "90dd8f936047e91a284d218edc4c656e055cf8076e368282c215a314b34fa58c",
 			"install": "pancode hub install skill:extension-authoring"
 		},
 		{
 			"kind": "skill",
 			"name": "file-ticket",
 			"publisher": "pancode",
-			"version": "0.3.4",
+			"version": "0.3.5",
 			"description": "Turns something noticed mid-session into a tracker issue: captures evidence, dedups against existing issues, composes a labeled issue with acceptance criteria, confirms, and creates it via gh. Not for batch ticket creation from a PRD; use backlog. Not for diagnosing an existing issue; use fix-issue.",
 			"category": "git",
 			"tier": "core",
@@ -478,14 +478,14 @@
 			"source": {
 				"path": "hub/packs/skills/git/file-ticket"
 			},
-			"sha256": "bd3f445f91ba22b897431c1d4b9516a8df6064695fec9b6fad2bffd6c741136f",
+			"sha256": "b5f3723f85fbc9675850493a09e083145a135bb8ea48a10b77c06007364e8d9c",
 			"install": "pancode hub install skill:file-ticket"
 		},
 		{
 			"kind": "skill",
 			"name": "find-skills",
 			"publisher": "pancode",
-			"version": "0.3.3",
+			"version": "0.3.4",
 			"description": "Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.",
 			"category": "meta",
 			"tier": "core",
@@ -493,14 +493,14 @@
 			"source": {
 				"path": "hub/packs/skills/meta/find-skills"
 			},
-			"sha256": "b7d089ad80b2ce02fdbba0e6d02dfc650415f93b0bd95b1ab92b6f079236f57e",
+			"sha256": "931d05de4a417f9c024efa209b48e9aadf18e8d2b3c9a22541f70a0b8fbcde9d",
 			"install": "pancode hub install skill:find-skills"
 		},
 		{
 			"kind": "skill",
 			"name": "fix-issue",
 			"publisher": "pancode",
-			"version": "0.3.3",
+			"version": "0.3.4",
 			"description": "Resolves a tracker issue end to end: fetches it, diagnoses only when the issue does not name the code, fixes test-first, and self-reviews against the acceptance criteria, leaving a verified uncommitted change. Not for filing; use file-ticket. Not for committing or PRs; use ship.",
 			"category": "git",
 			"tier": "core",
@@ -508,14 +508,14 @@
 			"source": {
 				"path": "hub/packs/skills/git/fix-issue"
 			},
-			"sha256": "dd9516f5061b04fcfadbcbf61cb06f6950266cc04ecd6c8882a35b4a6d383222",
+			"sha256": "377c481c41bfa6db4675401c31af546e5744eccc5fe86e67b14785987e9d1990",
 			"install": "pancode hub install skill:fix-issue"
 		},
 		{
 			"kind": "skill",
 			"name": "map-codebase",
 			"publisher": "pancode",
-			"version": "0.2.1",
+			"version": "0.2.2",
 			"description": "Builds an interactive map of a codebase from verified repository structure, symbols and imports, as one standalone HTML file with a readable overview and expandable source evidence.",
 			"category": "planning",
 			"tier": "core",
@@ -523,14 +523,14 @@
 			"source": {
 				"path": "hub/packs/skills/planning/map-codebase"
 			},
-			"sha256": "c9277dfbec64b7c658367458b5d25b17b8c0d457d4cffe2a452fdb5f27a29e40",
+			"sha256": "ea09e8932f4e3d6a73a221631c1b5ffef6fe024ff5ab5a809551186a3bbaf297",
 			"install": "pancode hub install skill:map-codebase"
 		},
 		{
 			"kind": "skill",
 			"name": "pancode-dev",
 			"publisher": "pancode",
-			"version": "0.7.2",
+			"version": "0.7.3",
 			"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation.",
 			"category": "meta",
 			"tier": "core",
@@ -538,14 +538,14 @@
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-dev"
 			},
-			"sha256": "efaabf9b7ed9fbfc11338ab0b9efc1a907cbe0469f33cc949d8333a65d2059cd",
+			"sha256": "ad545ecd4f6ad03c0898abad89dcd200118450b090a524a5dc580b124b5bbcae",
 			"install": "pancode hub install skill:pancode-dev"
 		},
 		{
 			"kind": "skill",
 			"name": "pancode-test",
 			"publisher": "pancode",
-			"version": "0.5.1",
+			"version": "0.5.2",
 			"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
 			"category": "meta",
 			"tier": "core",
@@ -553,14 +553,14 @@
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-test"
 			},
-			"sha256": "20fa4ff57934318bc1124d4d08a52bce2286673f427986758dc8e5c12ce91651",
+			"sha256": "2342771a6c419c155a12c8a32f12a5125da28abc4be4f4a9440185a03c26ac7e",
 			"install": "pancode hub install skill:pancode-test"
 		},
 		{
 			"kind": "skill",
 			"name": "plan-interview",
 			"publisher": "pancode",
-			"version": "0.5.6",
+			"version": "0.5.7",
 			"description": "Stress-tests a plan, design, or idea through a phased one-question-at-a-time interview before code is written, ending in a compact decision log. Not for a multi-perspective debate; use design-council.",
 			"category": "workflow",
 			"tier": "core",
@@ -568,14 +568,14 @@
 			"source": {
 				"path": "hub/packs/skills/workflow/plan-interview"
 			},
-			"sha256": "360f19db12f60b1a7aca512db0790853e9c2ed79923df434e94a5193902f58c9",
+			"sha256": "04760cfa739106fc5714f116f4b77e254fde992cfaf8ab527df2f4d4275b62fe",
 			"install": "pancode hub install skill:plan-interview"
 		},
 		{
 			"kind": "skill",
 			"name": "prd",
 			"publisher": "pancode",
-			"version": "0.4.4",
+			"version": "0.4.5",
 			"description": "Turns an idea into a product requirements document through a phase-gated interview, ending in PRD.md plus per-milestone prompt files ready to drive a coding agent. Not for the problem-first product thesis; use product-intent.",
 			"category": "planning",
 			"tier": "core",
@@ -583,14 +583,14 @@
 			"source": {
 				"path": "hub/packs/skills/planning/prd"
 			},
-			"sha256": "11906a6d0045849c8e99860dd29601caa724bb164a6c0a8ac2c4ee506d04ebef",
+			"sha256": "4f11e11048a1fe34109f58314aaaefd24613f92045499215338f7b47e5b43d25",
 			"install": "pancode hub install skill:prd"
 		},
 		{
 			"kind": "skill",
 			"name": "product-intent",
 			"publisher": "pancode",
-			"version": "0.4.5",
+			"version": "0.4.6",
 			"description": "Writes a problem-first product document for a greenfield effort: interviews for the problem, evidence, and a falsifiable hypothesis, with zero engineering decisions. Not for engineering decisions; use architecture. Not for turning a locked idea into milestone build prompts; use prd.",
 			"category": "planning",
 			"tier": "core",
@@ -598,14 +598,14 @@
 			"source": {
 				"path": "hub/packs/skills/planning/product-intent"
 			},
-			"sha256": "238be04c8a82e24a53badf752f8e4526c9992a4c25ea55fe6a25d0c131e5f036",
+			"sha256": "bdfe67375fb649e2bc6794ac75b7f262c3f41ec561019b19fe0aa23a70f0de3b",
 			"install": "pancode hub install skill:product-intent"
 		},
 		{
 			"kind": "skill",
 			"name": "prototype",
 			"publisher": "pancode",
-			"version": "0.4.3",
+			"version": "0.4.4",
 			"description": "Answers a design question with throwaway code: a clearly marked, runnable, no-persistence prototype whose verdict is kept and whose code is discarded. Not for pre-registered performance experiments; use experiment-protocol. Not for production implementation.",
 			"category": "coding",
 			"tier": "core",
@@ -613,14 +613,14 @@
 			"source": {
 				"path": "hub/packs/skills/coding/prototype"
 			},
-			"sha256": "9fb638ba2881f4b90537de189306659349aea5cf70dd9f3a2df04deadd4a78c6",
+			"sha256": "1163f62d560977cad4b3347945321529f135f3bb1a4981d3555dcc9de4d71162",
 			"install": "pancode hub install skill:prototype"
 		},
 		{
 			"kind": "skill",
 			"name": "resolve-merge-conflicts",
 			"publisher": "pancode",
-			"version": "0.4.2",
+			"version": "0.4.3",
 			"description": "Resolves a merge, rebase, or cherry-pick stopped on conflicts by reconstructing both sides' intent, validating with the project's own checks, and completing the operation. Not for integrating many branches; use worktree-merge.",
 			"category": "git",
 			"tier": "core",
@@ -628,14 +628,14 @@
 			"source": {
 				"path": "hub/packs/skills/git/resolve-merge-conflicts"
 			},
-			"sha256": "bf1371fcaf43ae37013827fb6220368b3349ac8192f7d6bda9c72ba6b726100c",
+			"sha256": "fab015bef9dd25e697d2b1b617f6fe1ae05ed3b2a426f6d4818beeb06a67d389",
 			"install": "pancode hub install skill:resolve-merge-conflicts"
 		},
 		{
 			"kind": "skill",
 			"name": "scientific-debugging",
 			"publisher": "pancode",
-			"version": "0.3.4",
+			"version": "0.3.5",
 			"description": "Diagnoses stalled or cross-system failures and wrong, NaN, nondeterministic, or unexpectedly slow scientific results through falsifiable hypotheses across distinct fault classes, with evidence-cited verdicts before any fix. Not for designing benchmarks or pre-registered experiments; use experiment-protocol.",
 			"category": "research",
 			"tier": "core",
@@ -643,14 +643,14 @@
 			"source": {
 				"path": "hub/packs/skills/research/scientific-debugging"
 			},
-			"sha256": "23cad5bb0217813bdc88de1297bf27375d13bf7c09a1e9e4de323742bca4ae01",
+			"sha256": "80a904678b014bb8ca933f59f86c02db21774b4e5db5b49e1b22b2408e574f43",
 			"install": "pancode hub install skill:scientific-debugging"
 		},
 		{
 			"kind": "skill",
 			"name": "scientific-modernization",
 			"publisher": "pancode",
-			"version": "0.4.5",
+			"version": "0.4.6",
 			"description": "Modernizes, ports, rewrites, packages, or replaces established scientific software in independently validated stages against an external scientific oracle, settling compatibility and upstream stewardship before calling it complete. Not for an isolated benchmark; use experiment-protocol. Not for diagnosing wrong results; use scientific-debugging.",
 			"category": "research",
 			"tier": "core",
@@ -658,14 +658,14 @@
 			"source": {
 				"path": "hub/packs/skills/research/scientific-modernization"
 			},
-			"sha256": "b686c502aa06b0bf3c26b42a0b51f8d2777136db1412f5ce1a9c215b62644a34",
+			"sha256": "917bb6e82f4b39a0fbc66b88dd1d0badd7266ee945f780a6ceb3fb8dd0ec2ae0",
 			"install": "pancode hub install skill:scientific-modernization"
 		},
 		{
 			"kind": "skill",
 			"name": "ship",
 			"publisher": "pancode",
-			"version": "0.5.4",
+			"version": "0.5.5",
 			"description": "Ships finished work: writes one reviewed atomic commit, keeps maintainer branches local, or pushes a contributor branch to their fork and opens a PR only on explicit intent. Not for producing the change; use fix-issue.",
 			"category": "git",
 			"tier": "core",
@@ -673,14 +673,14 @@
 			"source": {
 				"path": "hub/packs/skills/git/ship"
 			},
-			"sha256": "4f2df9745b62179c92131c0a847d915751a691f92e48a6ec486f0a509f2980f0",
+			"sha256": "2ede7e3cca6444dcf5cbb4be2e481b94e540198c1d6b77ad530b71a69b7eb514",
 			"install": "pancode hub install skill:ship"
 		},
 		{
 			"kind": "skill",
 			"name": "skill-authoring",
 			"publisher": "pancode",
-			"version": "0.4.2",
+			"version": "0.4.3",
 			"description": "Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture.",
 			"category": "meta",
 			"tier": "core",
@@ -688,14 +688,14 @@
 			"source": {
 				"path": "hub/packs/skills/meta/skill-authoring"
 			},
-			"sha256": "e0c91f59155280b90a498a0820621a13892807c47985444e5b185b7c7e732f67",
+			"sha256": "e817d9e8dfad5a4da5234c3f20b601ee7292f572e8d0c28962fd3fb0504e5598",
 			"install": "pancode hub install skill:skill-authoring"
 		},
 		{
 			"kind": "skill",
 			"name": "sprint-plan",
 			"publisher": "pancode",
-			"version": "0.4.4",
+			"version": "0.4.5",
 			"description": "Slices an existing plan, PRD, or milestone into an executable sprint of dependency-ordered vertical slices sized for one agent run each, with done-when verification per slice; never fabricates a plan. Not for deciding the approach; use architecture.",
 			"category": "workflow",
 			"tier": "core",
@@ -703,14 +703,14 @@
 			"source": {
 				"path": "hub/packs/skills/workflow/sprint-plan"
 			},
-			"sha256": "86999eae62e8383ff866c4c4c08dfd108b513adab52ec35fc8beac8bcaf54538",
+			"sha256": "7f54bd3a414734b634e00013b5eb04d7e1fa6cddfcb30c92789231aa6d0ce269",
 			"install": "pancode hub install skill:sprint-plan"
 		},
 		{
 			"kind": "skill",
 			"name": "tdd",
 			"publisher": "pancode",
-			"version": "0.4.2",
+			"version": "0.4.3",
 			"description": "Builds a feature or fix test-first, red to green at pre-agreed public seams, one vertical slice at a time. Not for designing benchmark criteria; use experiment-protocol.",
 			"category": "coding",
 			"tier": "core",
@@ -718,14 +718,14 @@
 			"source": {
 				"path": "hub/packs/skills/coding/tdd"
 			},
-			"sha256": "5b1f96081011082059ffbf4c3bc63ab1163d821f1531b40d56114259f02b1116",
+			"sha256": "2510ddf0d0cf95f78492f2077cb6639ca0d7d20b925babadaa0e6893c734df59",
 			"install": "pancode hub install skill:tdd"
 		},
 		{
 			"kind": "skill",
 			"name": "tech-spec",
 			"publisher": "pancode",
-			"version": "0.3.5",
+			"version": "0.3.6",
 			"description": "Writes a typed call-stack architecture handoff: code-shaped contracts plus execution flows, implementation-ready for another engineer. User-invoked only. Not for weighing approaches or deciding the design; use architecture first.",
 			"category": "planning",
 			"tier": "core",
@@ -733,14 +733,14 @@
 			"source": {
 				"path": "hub/packs/skills/planning/tech-spec"
 			},
-			"sha256": "98cb4430287e926b1cae99d73f4ee5d2eecccb6fad2e2bce50037a48126ea9f4",
+			"sha256": "faa1b024361e606791a60c8468969e32f89695796852cb6ab1386c6609fda1b7",
 			"install": "pancode hub install skill:tech-spec"
 		},
 		{
 			"kind": "skill",
 			"name": "web-debug",
 			"publisher": "pancode",
-			"version": "0.1.0",
+			"version": "0.1.1",
 			"description": "Debugs a web front end in a headless browser: starts the dev server and a page check in one command, reads console errors, uncaught exceptions and failed requests as JSON, runs Playwright step files, and takes screenshots only for layout. Not for fetching documentation pages; use web_fetch.",
 			"category": "coding",
 			"tier": "core",
@@ -748,14 +748,14 @@
 			"source": {
 				"path": "hub/packs/skills/coding/web-debug"
 			},
-			"sha256": "7923f71c580a12c9e97bd9bcc701ce54b2cbcab6a0a55223d01b35bdc12ba883",
+			"sha256": "abeef8143be1c1dce062ab5f60eb1a5a674d8894ee1658a48224d02b49bd5274",
 			"install": "pancode hub install skill:web-debug"
 		},
 		{
 			"kind": "skill",
 			"name": "workflow-capture",
 			"publisher": "pancode",
-			"version": "0.4.7",
+			"version": "0.4.8",
 			"description": "Packages a workflow that just happened into a reusable SKILL.md: reconstructs it from the session record, checks overlap with installed skills, gates on approval, then writes it following skill-authoring. Not for authoring a skill with no prior workflow; use skill-authoring.",
 			"category": "workflow",
 			"tier": "core",
@@ -763,14 +763,14 @@
 			"source": {
 				"path": "hub/packs/skills/workflow/workflow-capture"
 			},
-			"sha256": "0500807b728d7f886dc3fc477bafb7b62a563444f202c784b9f093483e23308a",
+			"sha256": "1724e1059eeb408462125e340ecc0c0f7c1939789849a218285b54414ed2b88d",
 			"install": "pancode hub install skill:workflow-capture"
 		},
 		{
 			"kind": "skill",
 			"name": "worktree-create",
 			"publisher": "pancode",
-			"version": "0.6.2",
+			"version": "0.6.3",
 			"description": "Stands up one or more git worktrees for parallel work, each on its own branch with gitignored config copied in, dependencies installed, and a verified health check. Not for merging finished worktrees; use worktree-merge. Not for closeout; use branch-closeout.",
 			"category": "git",
 			"tier": "core",
@@ -778,14 +778,14 @@
 			"source": {
 				"path": "hub/packs/skills/git/worktree-create"
 			},
-			"sha256": "01e64ae4eaa039d4d4d9da93fe3d44995c453c77110f79c7dbbd4adb3a2d158e",
+			"sha256": "0db26619ad87a5f3e764fe70c04f5c17c041523fa18d007bdc754c18b9423f03",
 			"install": "pancode hub install skill:worktree-create"
 		},
 		{
 			"kind": "skill",
 			"name": "worktree-merge",
 			"publisher": "pancode",
-			"version": "0.6.2",
+			"version": "0.6.3",
 			"description": "Integrates finished worktree branches through one throwaway integration branch, testing after each merge and running the full suite before the main line moves, with exact rollback on failure. Not for creating worktrees; use worktree-create. Not for closeout; use branch-closeout.",
 			"category": "git",
 			"tier": "core",
@@ -793,7 +793,7 @@
 			"source": {
 				"path": "hub/packs/skills/git/worktree-merge"
 			},
-			"sha256": "94b38537d9d8005149fe8af8f5b1c76b982733ef4676e39e6bcad609c201fc99",
+			"sha256": "aa47498f08644f0f2bedb0d4d52ce1068f944782327c786bba713c26a225a6ac",
 			"install": "pancode hub install skill:worktree-merge"
 		}
 	]
