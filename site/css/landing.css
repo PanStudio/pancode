@@ -142,145 +142,8 @@
 	.install-steps .installer {
 		margin-block: 0.75rem 1rem;
 	}
-	.chapter-visual {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		min-inline-size: 0;
-	}
-	.scene-slot {
-		position: relative;
-		aspect-ratio: 4 / 3;
-		inline-size: 100%;
-	}
-	@media (max-width: 1000px), (max-height: 650px) {
-		.chapter-visual {
-			margin-block-end: 1.5rem;
-		}
-	}
-	.pancode-scene {
-		position: relative;
-		display: grid;
-		place-items: center;
-		aspect-ratio: 4 / 3;
-		background: var(--paper);
-		overflow: clip;
-		isolation: isolate;
-	}
-
-	.pancode-scene .scene-mark {
-		inline-size: 43%;
-		block-size: 65%;
-		object-fit: contain;
-	}
-	.story {
-		border-block-start: 1px solid var(--line);
-	}
-	.story-content,
-	.chapter-body {
-		min-inline-size: 0;
-	}
-	.story-toolbar {
-		display: flex;
-		align-items: center;
-		justify-content: start;
-		gap: 1rem;
-		padding-block: 1rem;
-	}
-	.chapter-nav {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.1rem 1rem;
-		margin: 0;
-	}
-	.chapter-nav a {
-		display: inline-flex;
-		align-items: center;
-		min-block-size: 2.75rem;
-		color: var(--muted);
-		font-size: 0.75rem;
-		text-decoration: none;
-	}
-	.chapter-nav a:is([aria-current], :hover, :focus-visible) {
-		color: var(--accent);
-	}
-	.story-chapter,
-	.story-chapter.start-section,
-	.story-chapter.faq {
-		display: grid;
-		grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-		gap: clamp(3rem, 6vw, 6rem);
-		padding-block: clamp(6rem, 10vw, 9rem);
-	}
-	.story-chapter > .chapter-body {
-		grid-column: 1;
-		grid-row: 1;
-	}
-	.story-chapter > .chapter-visual {
-		grid-column: 2;
-		grid-row: 1;
-	}
-	/* Count chapters only, so the plain band after chapter 05 keeps the alternation. */
-	.story-chapter:nth-child(even of .story-chapter) {
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr);
-	}
-	.story-chapter:nth-child(even of .story-chapter) > .chapter-body {
-		grid-column: 2;
-	}
-	.story-chapter:nth-child(even of .story-chapter) > .chapter-visual {
-		grid-column: 1;
-	}
-	/* The band keeps chapter 05's empty margin column, which the floating mark
-	   travels down before it crosses to chapter 06. */
-	.story-band {
-		display: grid;
-		grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-		gap: clamp(3rem, 6vw, 6rem);
-	}
-	.story-band > .chapter-body {
-		grid-column: 1;
-	}
-	.story-band h2 {
-		font-size: clamp(2.2rem, 3.5vw, 3.25rem);
-	}
-	.story-band h2 em {
-		color: var(--ink-soft);
-	}
-	.story-chapter:first-child {
-		border-block-start: 0;
-	}
-	.story-chapter h2 {
-		font-size: clamp(2.2rem, 3.5vw, 3.25rem);
-	}
-	.story-chapter h2 em {
-		color: var(--ink-soft);
-	}
-	.scene-slot > .pancode-scene {
-		position: absolute;
-		inset: 0;
-		inline-size: 100%;
-		block-size: 100%;
-	}
-	.chapter-visual .scene-slot {
-		position: sticky;
-		inset-block-start: calc(var(--header) + 3rem);
-		max-inline-size: 320px;
-	}
-	.chapter-visual .scene-mark {
-		inline-size: 31%;
-		block-size: 48%;
-	}
-	.helper-briefs > p {
-		padding-block: 0.65rem;
-	}
 	.install-steps p + p {
 		margin-block-start: 0.75rem;
-	}
-	.finale-heading p:not(.eyebrow) {
-		color: var(--ink-soft);
-	}
-	:is(.story-chapter, .story-band) .section-heading > p:not(.eyebrow) {
-		max-inline-size: 54ch;
 	}
 	.chapter-links {
 		display: flex;
@@ -291,172 +154,18 @@
 	.chapter-links .text-link {
 		margin: 0;
 	}
-	/* Four links sit two by two rather than three and one. */
-	.chapter-links:has(> :nth-child(4)) {
-		display: grid;
-		grid-template-columns: repeat(2, max-content);
-		column-gap: var(--space-7);
-	}
 	/* The caption mixes text and code, so it flows as one line of prose. */
 	.result-capture .stage-caption {
 		display: block;
-	}
-	.story-chapter .prompt-example {
-		display: block;
-		margin-block-start: 3rem;
-		padding-block-start: 1.5rem;
-	}
-	.story-chapter .prompt-example > p {
-		margin-block: 1.25rem;
-		font-size: clamp(1.5rem, 2.2vw, 2rem);
-	}
-	.working-notes {
-		margin-block: 2.5rem;
-	}
-	.working-notes > div {
-		display: grid;
-		grid-template-columns: 1fr 2fr;
-		gap: 2rem;
-		padding-block: 1rem;
-		border-block-start: 1px solid var(--line);
-		font-size: 0.9rem;
-	}
-	.working-notes dt {
-		font-weight: 500;
-	}
-	.working-notes dd {
-		color: var(--muted);
-	}
-	.helper-briefs {
-		margin-block: 2.5rem 1.5rem;
-		padding-block-start: 0.75rem;
-		border-block-start: 1px solid var(--line);
-	}
-	.helper-briefs .step-number {
-		margin-inline-end: 1rem;
-	}
-	.chapter-note {
-		color: var(--muted);
-		max-inline-size: 58ch;
-		font-size: 0.9rem;
-		margin-block: 1.5rem;
 	}
 	.result-capture {
 		margin-block: 2.5rem 1.5rem;
 		box-shadow: none;
 		animation: none;
 	}
-	.story-chapter .interface-grid {
-		grid-template-columns: 1fr;
-		gap: 2.5rem;
-		margin-block-start: 2.5rem;
-	}
-	.story-chapter .interface-item figure > a {
-		aspect-ratio: auto;
-		padding: 0.75rem;
-	}
-	.story-chapter .interface-item > p {
-		min-block-size: 0;
-	}
-	.story-chapter .model-routes {
-		margin-block-start: 2.5rem;
-	}
-	.story-chapter .model-routes dt {
-		font: 600 1.5rem / 1.2 var(--font-display);
-		letter-spacing: -0.02em;
-	}
-	.story-chapter .feature-list a {
-		grid-template-columns: 1.25rem 1fr 1rem;
-		gap: 0.6rem 1rem;
-	}
-	.story-chapter .feature-list p {
-		grid-column: 2;
-	}
-	.story-chapter .feature-list a > span:last-child {
-		grid-column: 3;
-		grid-row: 1;
-	}
-	.story-chapter .install-steps,
-	.story-chapter .faq-items {
-		margin-block-start: 2.5rem;
-	}
 	.landing .project-section {
 		gap: clamp(3rem, 7vw, 7rem);
 	}
-	.story-finale {
-		text-align: center;
-		padding-block: 5rem 4rem;
-	}
-	.finale-heading h2 {
-		font-size: clamp(2.6rem, 5vw, 4.5rem);
-		margin-block: 1.5rem;
-	}
-	.story-finale .pancode-scene {
-		max-inline-size: 1000px;
-		aspect-ratio: 16 / 9;
-		margin-inline: auto;
-	}
-	.finale-actions {
-		display: flex;
-		justify-content: center;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 1rem 2rem;
-		min-block-size: 3rem;
-	}
-	@media (max-width: 1000px), (max-height: 650px) {
-		.story-content {
-			max-inline-size: 760px;
-			margin-inline: auto;
-		}
-		.story-chapter,
-		.story-chapter.start-section,
-		.story-chapter.faq {
-			display: block;
-			padding-block: 1.5rem 3rem;
-		}
-		.story-band {
-			display: block;
-			padding-block: 3rem;
-		}
-		.chapter-visual .scene-slot {
-			position: relative;
-			inset-block-start: auto;
-			max-inline-size: none;
-			block-size: 180px;
-			aspect-ratio: auto;
-		}
-		.chapter-visual .scene-slot > .pancode-scene {
-			inline-size: min(100%, 232px);
-			inset-inline-start: 50%;
-			transform: translateX(-50%);
-		}
-		:is(.story-chapter, .story-band) h2 {
-			font-size: clamp(2.1rem, 5vw, 3.4rem);
-		}
-	}
-	@media (max-width: 600px) {
-		.working-notes > div {
-			grid-template-columns: 1fr;
-			gap: 0.4rem;
-		}
-		.chapter-links,
-		.chapter-links:has(> :nth-child(4)) {
-			display: flex;
-			flex-direction: column;
-			align-items: start;
-		}
-		.landing .project-section {
-			gap: 2rem;
-		}
-		.story-finale {
-			padding-block: 3.5rem;
-		}
-		.finale-actions {
-			min-block-size: 3rem;
-		}
-	}
-
 	.landing-hero {
 		display: grid;
 		grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
@@ -791,7 +500,9 @@
 		break-inside: avoid;
 	}
 	@media (max-width: 1023px) {
-		.reach-body {
+		.landing-hero,
+		.reach-body,
+		.flow-panel {
 			grid-template-columns: minmax(0, 1fr);
 			gap: var(--space-6);
 		}
@@ -799,17 +510,13 @@
 			order: -1;
 			justify-self: center;
 		}
-	}
-	@media (max-width: 1023px) {
-		.flow-panel {
-			grid-template-columns: minmax(0, 1fr);
-			gap: var(--space-6);
-			min-block-size: 0;
-		}
 		.flow-steps > .tab-list {
 			grid-template-columns: repeat(5, max-content);
 			overflow-x: auto;
 			gap: var(--space-5);
+		}
+		.flow-panel {
+			min-block-size: 0;
 		}
 	}
 	@media (max-width: 767px) {
@@ -824,20 +531,19 @@
 		.faq .faq-items {
 			columns: 1;
 		}
-	}
-	@media (max-width: 767px) {
 		.flow-facts > div {
 			grid-template-columns: minmax(0, 1fr);
 			gap: var(--space-1);
 		}
 	}
-	@media (max-width: 1023px) {
-		.landing-hero {
-			grid-template-columns: minmax(0, 1fr);
-			gap: var(--space-6);
-		}
-	}
 	@media (max-width: 600px) {
+		.chapter-links {
+			flex-direction: column;
+			align-items: start;
+		}
+		.landing .project-section {
+			gap: 2rem;
+		}
 		.hero-field {
 			margin-inline: 0;
 		}
