@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- PanHub has a seventh kind, `server`, for the seven PanKit servers PanCode carries (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`, `store`). Each is a core row of the bundled index, and its pack under `hub/packs/servers/` holds the server's shipped policy. `pancode hub list --kind server` shows them as `built in`, `pancode hub inspect server:<id>` lists each tool with its action class and the environment variables the server passes through, `install` and `update` answer that the server is built in and write nothing, and `enable`, `disable` and `remove` exit 1. In the terminal, `/hub servers` opens PanHub's Servers tab, and the desktop app's Hub page lists them in a Servers collection. pancode.dev/hub.html shows them in a Servers group, each with the `npx -y -p @akougkas/pancode pankit serve <id>` command that starts it for another MCP host.
+- The Claude Code marketplace gains `pankit`: `claude plugin install pankit@pancode` gives Claude Code six PanKit servers (all but `store`), each started as `npx -y -p @akougkas/pancode pankit serve <id>`.
+
 ### Changed
 
 - The `panstore` command is removed; the project store's commands are `pancode store <command>`. `pancode store where` now ends with the `pankit serve store` line that serves the project's store over MCP from any directory, and `PANSTORE_PROJECT_ID` is gone: a project's `store.projectId` keys its store.

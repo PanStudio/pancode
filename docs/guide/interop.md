@@ -347,6 +347,7 @@ actually contain.
 claude plugin marketplace add akougkas/pancode
 claude plugin install tdd@pancode
 claude plugin install hpc@pancode
+claude plugin install pankit@pancode
 ```
 
 A local checkout or the installed npm package works the same way, because every
@@ -416,6 +417,12 @@ $skill-installer install tdd from akougkas/pancode/hub/packs/skills/coding/tdd
 ```
 
 Disable one without deleting it through `[[skills.config]]` in `~/.codex/config.toml`.
+
+PanKit's servers reach Codex as stdio MCP servers, one `codex mcp add` per server:
+
+```bash
+codex mcp add node -- npx -y -p @akougkas/pancode pankit serve node
+```
 
 There is deliberately no Codex plugin marketplace here. Portable Codex plugins
 discover only a root `skills/` directory, the standalone packages carry a root
