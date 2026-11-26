@@ -148,12 +148,16 @@ def check():
     for size in ICON_SIZES:
         if Image.open(SITE / f"assets/responsive/pancode-icon-{size}.png").size != (size, size):
             raise ValueError("square application icon dimensions differ")
-    maskable = Image.open(SITE / "assets/responsive/pancode-icon-maskable-512.png").convert("RGB")
+    maskable = Image.open(SITE / "assets/responsive/pancode-icon-maskable-512.png").convert("RGBA")
     if maskable.size != (512, 512):
         raise ValueError("maskable application icon dimensions differ")
+    black = Image.new("RGB", (1, 1), json.loads((SITE / "design-system.json").read_text())["palette"]["black"]).getpixel((0, 0))
     pixels = maskable.load()
-    reach = max((x + .5 - 256) ** 2 + (y + .5 - 256) ** 2 for y in range(512) for x in range(512) if max(pixels[x, y]) >= 100)
-    if reach > (512 * .4) ** 2:
+    if any(pixels[x, y][3] != 255 for y in range(512) for x in range(512)):
+        raise ValueError("maskable application icon ground is not fully opaque")
+    # Any pixel that differs from the black ground, however dim its antialiasing, is painted.
+    painted = [(x, y) for y in range(512) for x in range(512) if pixels[x, y][:3] != black]
+    if any((x + .5 - 256) ** 2 + (y + .5 - 256) ** 2 > (512 * .4) ** 2 for x, y in painted):
         raise ValueError("maskable application icon paints outside its safe circle")
     if sorted(Image.open(SITE / "assets/responsive/favicon.ico").info["sizes"]) != [(16, 16), (32, 32), (48, 48)]:
         raise ValueError("favicon.ico must carry 16, 32 and 48 pixel images")
