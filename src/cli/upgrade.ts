@@ -15,7 +15,6 @@ import {
 	inspectInstallation,
 	installationCommand,
 	installerPackageRoot,
-	installerUnpinCommand,
 	installerUpgradeInvocation,
 	npmUpgradeInvocation,
 	readInstallerRecord,
@@ -777,11 +776,8 @@ export async function runUpgradeCommand(
 		presenter.step(`Runtime: Node v${record.nodeVersion} ${record.nodeBuild}`);
 	}
 	presenter.step(`State dir: ${shortenPath(stateDir)}`);
-	const unpin = pin === null ? null : installerUnpinCommand(installation, opts.channel);
-	if (unpin !== null) {
+	if (pin !== null)
 		presenter.note(`This install is ${describeTracking(installation)}. Upgrade and background updates leave it there.`);
-		presenter.commandAdvice(`To follow the ${opts.channel} channel again, with background updates, run:`, unpin);
-	}
 
 	const recorded = readStateInfo()?.version ?? null;
 	const describeRefresh = (): string =>

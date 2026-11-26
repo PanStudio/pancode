@@ -102,10 +102,9 @@ export function createInteractiveUpgradeFlow(deps: InteractiveUpgradeFlowDeps): 
 					return;
 				}
 				if (plan.status === "pinned") {
-					const pinned = `This install is ${describeTracking(plan.installation)}, so /upgrade leaves it there. To follow its channel again, run:`;
-					deps.notify("info", `${pinned}\n${plan.command}`, "lifecycle:upgrade-pinned");
+					const pinned = `This install is ${describeTracking(plan.installation)}, so /upgrade leaves it there.`;
+					deps.notify("info", pinned, "lifecycle:upgrade-pinned");
 					deps.record?.("info", pinned);
-					deps.record?.("info", plan.command);
 					return;
 				}
 				if (plan.status === "unavailable") {

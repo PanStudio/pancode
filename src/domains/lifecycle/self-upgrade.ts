@@ -6,13 +6,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { PACKAGE_NAME } from "../../core/package-root.js";
 import { type DeferredManager, deferredUpdateTarget, installHold } from "./deferred-update.js";
-import {
-	type Installation,
-	installationCommand,
-	installerPackageRoot,
-	installerUnpinCommand,
-	readInstallerRecord,
-} from "./install-method.js";
+import { type Installation, installationCommand, installerPackageRoot, readInstallerRecord } from "./install-method.js";
 import type { ReleaseSource } from "./release-version.js";
 import { compareReleaseVersions, fetchReleaseVersion, parseReleaseVersion } from "./release-version.js";
 import { createUpdateCheck } from "./update-check.js";
@@ -27,7 +21,7 @@ export type SelfUpgradePlan =
 	| { status: "current"; current: string; available: string; installation: Installation }
 	| { status: "unavailable"; current: string; installation: Installation }
 	| { status: "manual"; current: string; installation: Installation; command: string }
-	| { status: "pinned"; current: string; pin: string; installation: Installation; command: string };
+	| { status: "pinned"; current: string; pin: string; installation: Installation };
 
 function selfUpgradable(installation: Installation): boolean {
 	return (installation.kind === "npm" || installation.kind === "installer") && installation.prefix !== null;
@@ -84,7 +78,6 @@ export async function planSelfUpgrade(options: PlanSelfUpgradeOptions): Promise<
 			current: runningVersion,
 			pin,
 			installation,
-			command: installerUnpinCommand(installation, upgradeChannel(installation)) ?? "",
 		};
 	}
 	signal?.throwIfAborted();

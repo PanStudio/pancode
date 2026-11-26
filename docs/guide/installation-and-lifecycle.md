@@ -686,10 +686,8 @@ Source: `src/cli/upgrade.ts` and `scripts/install.sh`.
 On a pinned install, `upgrade` prints `Pinned version: <X>` in place of the
 `Available version` and `Channel` lines, then
 `This install is pinned to <X> since <date> (<origin>); release with pancode upgrade --channel <channel>. Upgrade and background updates leave it there.`
-and the installer command that follows the recorded channel again:
-`sh <root>/scripts/install.sh --version <channel> --auto-update --install-dir <dir> --bin-dir <dir>`,
-or `powershell ... -File <root>\scripts\install.ps1 -Version <channel> -AutoUpdate ...`
-on Windows.
+Releasing the pin that way also turns background updates back on, unless
+`PANCODE_AUTO_UPDATE=0` is set.
 
 `pancode upgrade --rollback` makes the previous version current again after
 checking that it starts, and turns background updates off until you turn them on
@@ -741,8 +739,8 @@ will wait for. A second `/upgrade` while an update is pending reports that one i
 already pending and starts nothing.
 
 `/upgrade` leaves a pinned installer install alone. It prints
-`This install is pinned to <X> since <date> (<origin>); release with pancode upgrade --channel <channel>, so /upgrade leaves it there. To follow its channel again, run:`
-followed by the same installer command `upgrade` prints. A source checkout is told
+`This install is pinned to <X> since <date> (<origin>); release with pancode upgrade --channel <channel>, so /upgrade leaves it there.`
+A source checkout is told
 `This source checkout updates through git, not the package registry. Run:` with its
 git steps. Homebrew, winget, repository-local, unknown, and any pnpm or Bun installation whose prefix
 the user cannot write receive their owner-specific shell instructions instead of an unsafe in-process replacement.

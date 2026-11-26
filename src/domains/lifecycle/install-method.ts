@@ -366,33 +366,6 @@ export function formatUpgradeInvocation(invocation: UpgradeInvocation, windows =
 	].join(" ");
 }
 
-/**
- * The installer run that releases a version pin. A pinned install keeps its
- * version through `pancode upgrade` and installer reruns; only an explicit
- * channel spec (`--version latest`) clears the pin, and `--auto-update` turns
- * background updates back on.
- */
-export function installerUnpinCommand(installation: Installation, channel = "latest"): string | null {
-	const record = installation.installer;
-	if (installation.kind !== "installer" || record === undefined) return null;
-	// The installers refuse a latest older than an active pre-release unless told to leave it, and leaving it is
-	// what following latest means.
-	const leave = channel === "latest" && prereleaseInstalled(installation.root);
-	if (process.platform === "win32")
-		return `powershell -NoProfile -ExecutionPolicy Bypass -File "${join(installation.root, "scripts", "install.ps1")}" -Version ${channel}${leave ? " -LeavePrerelease" : ""} -AutoUpdate -InstallDir "${record.root}" -BinDir "${dirname(record.launcher)}"`;
-	return `sh ${shellQuote(join(installation.root, "scripts", "install.sh"))} --version ${channel}${leave ? " --leave-prerelease" : ""} --auto-update --install-dir ${shellQuote(record.root)} --bin-dir ${shellQuote(dirname(record.launcher))}`;
-}
-
-function prereleaseInstalled(packageRoot: string): boolean {
-	try {
-		const version = (JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version?: unknown })
-			.version;
-		return typeof version === "string" && /^\d+\.\d+\.\d+-/.test(version);
-	} catch {
-		return false;
-	}
-}
-
 export function installationCommand(
 	installation: Installation,
 	action: "upgrade" | "uninstall",
