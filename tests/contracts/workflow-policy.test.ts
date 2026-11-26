@@ -9,10 +9,10 @@ import { parse } from "yaml";
 type Workflow = Record<string, unknown> & { permissions?: unknown; jobs?: Record<string, Record<string, unknown>> };
 
 const directory = ".github/workflows";
-/** The only jobs whose token may write repository contents: the GitHub release and the signed hub index. */
-const CONTENTS_WRITERS = ["hub-index.yml#sign", "release.yml#release"];
-/** The ci.yml job names branch protection and the publisher's qualification gate read. */
-const CI_JOB_NAMES = ["prepare", "ci (22)", "ci (24)", `boot (\${{ matrix.os }})`];
+/** The only job whose token may write repository contents: the signed hub index. A release writes with the App's token. */
+const CONTENTS_WRITERS = ["hub-index.yml#sign"];
+/** The ci.yml job name that expands to the branch-protection checks ci (22) and ci (24). */
+const CI_TEST_JOB = `ci (\${{ matrix.node }})`;
 const PINNED = /^[^@\s]+@[0-9a-f]{40}$/u;
 
 function readWorkflows(): Record<string, Workflow> {
@@ -60,8 +60,11 @@ function workflowPolicyProblems(workflows: Record<string, Workflow>): string[] {
 	}
 	if (JSON.stringify(writers.sort()) !== JSON.stringify(CONTENTS_WRITERS))
 		problems.push(`contents: write is granted to ${writers.join(", ") || "no job"}; only ${CONTENTS_WRITERS.join(", ")}`);
-	const ciNames = Object.values(workflows["ci.yml"]?.jobs ?? {}).map((job) => job.name);
-	for (const name of CI_JOB_NAMES) if (!ciNames.includes(name)) problems.push(`ci.yml has no job named ${name}`);
+	const test = workflows["ci.yml"]?.jobs?.test as
+		| { name?: unknown; strategy?: { matrix?: { node?: unknown } } }
+		| undefined;
+	if (test?.name !== CI_TEST_JOB || JSON.stringify(test.strategy?.matrix?.node) !== "[22,24]")
+		problems.push("ci.yml has no ci (22) and ci (24) jobs");
 	return problems;
 }
 
@@ -70,7 +73,7 @@ describe("workflow policy", () => {
 		deepStrictEqual(workflowPolicyProblems(readWorkflows()), []);
 	});
 
-	it("fails a workflow that tolerates failure, adds a contents writer, floats an action or renames ci (22)", () => {
+	it("fails a workflow that tolerates failure, adds a contents writer, floats an action or renames the ci jobs", () => {
 		const mutated = (change: (workflows: Record<string, Workflow>) => void): string[] => {
 			const workflows = readWorkflows();
 			change(workflows);
@@ -85,17 +88,17 @@ describe("workflow policy", () => {
 		const cases: Array<[string, (workflows: Record<string, Workflow>) => void, RegExp]> = [
 			[
 				"step continue-on-error",
-				(w) => Object.assign(job(w, "ci.yml", "ci").steps[0] ?? {}, { "continue-on-error": true }),
+				(w) => Object.assign(job(w, "ci.yml", "test").steps[0] ?? {}, { "continue-on-error": true }),
 				/continue-on-error/u,
 			],
 			[
 				"job continue-on-error",
-				(w) => Object.assign(job(w, "release.yml", "preflight"), { "continue-on-error": true }),
+				(w) => Object.assign(job(w, "ci.yml", "check"), { "continue-on-error": true }),
 				/continue-on-error/u,
 			],
 			[
-				"third writer",
-				(w) => Object.assign(job(w, "ci.yml", "prepare"), { permissions: { contents: "write" } }),
+				"second writer",
+				(w) => Object.assign(job(w, "ci.yml", "build"), { permissions: { contents: "write" } }),
 				/contents: write/u,
 			],
 			[
@@ -110,12 +113,12 @@ describe("workflow policy", () => {
 			],
 			[
 				"renamed ci (22)",
-				(w) => Object.assign(job(w, "ci.yml", "ci"), { name: "ci (node 22)" }),
-				/no job named ci \(22\)/u,
+				(w) => Object.assign(job(w, "ci.yml", "test"), { name: "ci (node 22)" }),
+				/no ci \(22\) and ci \(24\) jobs/u,
 			],
 			[
 				"ignore-scripts",
-				(w) => job(w, "ci.yml", "ci").steps.push({ run: "pnpm install --ignore-scripts" }),
+				(w) => job(w, "ci.yml", "test").steps.push({ run: "pnpm install --ignore-scripts" }),
 				/install scripts/u,
 			],
 			[
@@ -123,7 +126,7 @@ describe("workflow policy", () => {
 				(w) => job(w, "hub-index.yml", "sign").steps.push({ run: "pnpm run --if-present hub:check" }),
 				/--if-present/u,
 			],
-			["floating action", (w) => job(w, "ci.yml", "ci").steps.push({ uses: "actions/checkout@v6" }), /not pinned/u],
+			["floating action", (w) => job(w, "ci.yml", "test").steps.push({ uses: "actions/checkout@v6" }), /not pinned/u],
 		];
 		for (const [label, change, expected] of cases) {
 			const problems = mutated(change);

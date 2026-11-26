@@ -12,7 +12,7 @@ describe("release builds and pruned chunks", () => {
 		const pkg = JSON.parse(read("package.json"));
 		ok(!pkg.scripts.build.includes("--clean"));
 		match(pkg.scripts["build:release"], /scripts\/build\.ts --clean/u);
-		match(read("scripts/release-candidate.mjs"), /run\("pnpm", \["run", "build:release"\]\)/u);
+		match(read("scripts/release/build.mjs"), /pnpmArgv\(\["run", "build:release"\]\)/u);
 	});
 
 	it("keeps per-build records out of the package and checks dist against build.json", () => {
