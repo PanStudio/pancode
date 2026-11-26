@@ -378,6 +378,14 @@ const SegmentChunk = memo(function SegmentChunk({
 						);
 					case "reasoning":
 						return <ReasoningDisclosure key={segment.item.id} item={segment.item} />;
+					case "steer":
+						return (
+							<div key={segment.item.id} className="chat-steer">
+								<span className="sr-only">You added while PanCode worked</span>
+								{/* The operator's own text is never reinterpreted as Markdown. */}
+								<p className="chat-request__prompt">{segment.item.text}</p>
+							</div>
+						);
 					default:
 						return (
 							<ActivityGroup

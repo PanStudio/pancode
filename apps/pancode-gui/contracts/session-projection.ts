@@ -115,8 +115,8 @@ const provenanceKey = (provenance: TimelineItem["provenance"]) =>
 
 /**
  * The id a narrative chunk appends to. Chunks from one agent stream keep extending the same item until
- * something else happens in the turn: a tool call, a notice, or the same agent switching between reasoning
- * and prose. After that break the agent is writing a new passage, and appending it to the item above the tool
+ * something else happens in the turn: a tool call, a notice, an operator message, or the same agent switching
+ * between reasoning and prose. After that break the agent is writing a new passage, and appending it to the item above the tool
  * calls would print text written after them before them. Another agent's narrative is not a break, so
  * interleaved workers still read as one passage each. Ids derive only from the timeline, so the server's
  * snapshot and a browser applying the same deltas agree on them.
@@ -131,11 +131,25 @@ function narrativeId(timeline: readonly TimelineItem[], turnId: string, kind: Na
 			if (!broken) return item.id;
 			return `${base}#${(timeline.at(-1)?.sequence ?? 0) + 1}`;
 		}
-		if (item.kind === "tool" || item.kind === "notice") broken = true;
+		if (item.kind === "tool" || item.kind === "notice" || item.kind === "user") broken = true;
 		else if ((item.kind === "text" || item.kind === "thought") && provenanceKey(item.provenance) === identity)
 			broken = true;
 	}
 	return base;
+}
+
+/**
+ * The operator's words in a turn: the prompt's chunks extend one item, and a steer or follow-up the run took in after
+ * PanCode answered (any other item of the turn since) opens its own item at that place.
+ */
+function userId(timeline: readonly TimelineItem[], turnId: string, identity: string): string {
+	const base = `${turnId}:user${identity}`;
+	let index = timeline.length - 1;
+	while (index >= 0 && timeline[index]?.turnId !== turnId) index -= 1;
+	const last = timeline[index];
+	if (last === undefined) return base;
+	if (last.kind === "user" && (last.id === base || last.id.startsWith(`${base}#`))) return last.id;
+	return `${base}#${(timeline.at(-1)?.sequence ?? 0) + 1}`;
 }
 
 /**
@@ -337,7 +351,9 @@ export function applySessionDelta(current: SessionSnapshot, event: SessionDelta)
 				kind = event.type === "turn.text" ? "text" : event.type === "turn.thought" ? "thought" : "user";
 			const identity = provenanceKey(provenance);
 			if (kind !== "user") state = withoutBudgetBlock(state);
-			if (kind === "user" && origin === "replay")
+			const id =
+				kind === "user" ? userId(state.timeline, turnId, identity) : narrativeId(state.timeline, turnId, kind, identity);
+			if (kind === "user" && origin === "replay" && id === `${turnId}:user${identity}`)
 				state = {
 					...state,
 					turns: state.turns.map((turn) =>
@@ -346,7 +362,7 @@ export function applySessionDelta(current: SessionSnapshot, event: SessionDelta)
 				};
 			upsert(
 				{
-					id: kind === "user" ? `${turnId}:user${identity}` : narrativeId(state.timeline, turnId, kind, identity),
+					id,
 					turnId,
 					kind,
 					text,

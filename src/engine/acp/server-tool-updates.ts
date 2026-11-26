@@ -862,7 +862,7 @@ export function sendTextChunks(
 	transport: AcpJsonRpcPeerTransport,
 	sessionId: string,
 	active: ActivePrompt,
-	sessionUpdate: "agent_message_chunk" | "agent_thought_chunk",
+	sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk",
 	text: string,
 ): void {
 	for (const chunk of chunkText(text, ACP_MAX_CHUNK_BYTES)) {
@@ -874,7 +874,7 @@ function sendSafeChunks(
 	transport: AcpJsonRpcPeerTransport,
 	sessionId: string,
 	active: ActivePrompt,
-	sessionUpdate: "agent_message_chunk" | "agent_thought_chunk",
+	sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk",
 	text: string,
 ): void {
 	if (text.length > 0) sendTextChunks(transport, sessionId, active, sessionUpdate, text);
@@ -1194,6 +1194,14 @@ export function handleChatEvent(
 			},
 			withToolTiming(toolCallUpdateMeta(active.toolCallSnapshots.get(toolCallId)), event.durationMs),
 		);
+		return;
+	}
+	// A steer or follow-up the engine drained into this prompt's run is the operator's own message, sent at its place
+	// in the turn as replay sends it. Before the run's first message ends the event is the prompt itself (a scheduled
+	// turn's opening), which the client already holds.
+	if (event.type === "queued_user_turn") {
+		if ((event.kind === "steer" || event.kind === "follow-up") && active.sawTurnEnd && typeof event.text === "string")
+			sendSafeChunks(transport, sessionId, active, "user_message_chunk", event.text);
 		return;
 	}
 	if (event.type === "message_start") {

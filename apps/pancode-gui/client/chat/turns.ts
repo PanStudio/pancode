@@ -18,6 +18,8 @@ export type ChatSegment =
 	| Readonly<{ kind: "response"; item: TimelineItem }>
 	| Readonly<{ kind: "reasoning"; item: TimelineItem }>
 	| Readonly<{ kind: "notice"; item: TimelineItem }>
+	/** A steer or follow-up the operator sent while the turn ran, at the place the run took it in. */
+	| Readonly<{ kind: "steer"; item: TimelineItem }>
 	| Readonly<{ kind: "activity"; items: readonly TimelineItem[] }>;
 
 export interface ChatTurn {
@@ -120,7 +122,11 @@ function buildTurn(turnId: string, items: readonly TimelineItem[], status: Turn[
 		if (!isConversationItem(item)) continue;
 		switch (item.kind) {
 			case "user":
-				request = item;
+				if (request === null) request = item;
+				else {
+					flush();
+					segments.push({ kind: "steer", item });
+				}
 				break;
 			case "text":
 				flush();

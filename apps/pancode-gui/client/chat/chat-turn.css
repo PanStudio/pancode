@@ -231,6 +231,13 @@
 	line-height: var(--leading-body);
 	font-size: var(--text-reading);
 }
+/* A message sent while the turn ran sits where the run took it in, on the request's side. */
+.chat-steer {
+	display: grid;
+	justify-items: end;
+	max-width: min(80%, 40rem);
+	margin: var(--space-3) 0 var(--space-3) auto;
+}
 /* A stated absence is not the operator's words and must not be read as them. */
 .chat-request__prompt.is-missing {
 	color: var(--ink-subtle);
