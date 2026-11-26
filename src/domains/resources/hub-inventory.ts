@@ -18,7 +18,7 @@ import { bundledHubIndexPath, parsePluginGithubSource } from "../plugins/catalog
 import { withPluginDiscoveryPass } from "../plugins/index.js";
 import type { InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
 import type { ResourceDiagnostic } from "./collision.js";
-import { discoverHub } from "./hub.js";
+import { discoverHub, isBuiltinServerRow } from "./hub.js";
 import {
 	hubCopySourceId,
 	hubNamespace,
@@ -113,6 +113,8 @@ export interface HubPackageRecord {
 	/** The copies of this package, each with the version on disk, which an update leaves behind the catalog's. */
 	copies: Array<{ scope: PluginScope; state: HubCopyState; version?: string; update?: HubCopyUpdate }>;
 	refusal?: string;
+	/** A server PanCode carries: built in, with no copy to install, update, enable or remove. */
+	builtIn?: true;
 }
 
 export type HubComponentSourceClass = "core" | "package" | "user" | "project" | "compat";
@@ -987,6 +989,7 @@ function readHubInventoryInPass(options: HubInventoryOptions): HubInventory {
 					...(copy.update ? { update: copy.update } : {}),
 				})),
 				...(refusal ? { refusal } : {}),
+				...(isBuiltinServerRow(entry) ? { builtIn: true as const } : {}),
 			};
 			// discoverHub already sorts by ref; selection is applied before the cap.
 			if (packageMatches(record, options, selection, entry.triggers) && !packages.push(record)) break;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { spawn } from "node:child_process";
-import { accessSync, appendFileSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, appendFileSync, constants, existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { initializePancodeHome, recordHomeDowngrade } from "../core/init.js";
@@ -417,12 +417,25 @@ async function runPostInstallUpgrade(
 	for (const warning of report.warnings) presenter.warn(warning);
 }
 
+/** Whether the default background directory holds an app; a path that cannot be looked at says why. */
+function defaultBackground(owner: string): "present" | "absent" | { error: string } {
+	try {
+		lstatSync(owner);
+		return "present";
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		return code === "ENOENT" ? "absent" : { error: code ?? String(error) };
+	}
+}
+
 async function runBackgroundRestart(installation: Installation): Promise<string> {
-	const output = await runChild(
-		nodeFor(installation),
-		[installation.entry, "gui", "background", "restart", "--if-idle"],
-		"pancode gui background restart --if-idle",
-	);
+	const restart = ["gui", "background", "restart", "--if-idle"];
+	// An installer install restarts the app the way its launcher does, through the desktop host the manifest
+	// names, so a rollback to an older CLI still moves the app to the version now active.
+	const args = installation.installer
+		? [join(installation.root, "scripts", "native-install.cjs"), "launch", installation.installer.root, ...restart]
+		: [installation.entry, ...restart];
+	const output = await runChild(nodeFor(installation), args, "pancode gui background restart --if-idle");
 	const lines = output.trim().split(/\r?\n/).filter(Boolean);
 	if (lines.length !== 1) throw new Error("background restart did not return its one-line result");
 	return lines[0] ?? "";
@@ -559,6 +572,7 @@ export async function runUpgradeCommand(
 		if (CHANNELS.includes(recordedChannel as Channel)) opts.channel = recordedChannel as Channel;
 	}
 	const method = installation.kind;
+	const backgroundOwner = join(stateDir, "gui/background/owner.json");
 	if (opts.rollback) {
 		const record = installation.installer;
 		if (method !== "installer" || !record) {
@@ -659,6 +673,36 @@ export async function runUpgradeCommand(
 			presenter.warn(
 				`Could not record ${previousVersion} as this home's version (${downgradeError}); it asks before opening the home, and headless runs need PANCODE_ALLOW_OLDER=1`,
 			);
+		// The background app runs the version it started with until it restarts.
+		const found = defaultBackground(backgroundOwner);
+		const owner = found === "present" ? backgroundPackageRoot(stateDir) : null;
+		if (owner !== null && installIdentity(owner) !== installIdentity(installation.root))
+			presenter.note(`Left the desktop app running from ${shortenPath(owner)}, the installation it belongs to.`);
+		else if (found === "present") {
+			try {
+				presenter.note(await deps.runBackgroundRestart(installation));
+			} catch (error) {
+				presenter.warn(
+					`Rollback succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				presenter.commandAdvice(`Restart it when you want it on ${toLabel}:`, "pancode gui background restart --if-idle");
+			}
+		}
+		// Only the default location is known here; nothing records an app set up in another directory.
+		else if (found === "absent")
+			presenter.commandAdvice(
+				`No desktop app is set up in the default location. One set up with --directory keeps its version until it restarts; to move it to ${toLabel}:`,
+				"pancode gui background restart --if-idle --directory <dir>",
+			);
+		else {
+			presenter.warn(
+				`Could not look for a desktop app in ${shortenPath(dirname(backgroundOwner))} (${found.error}); one keeps the version it started with until it restarts`,
+			);
+			presenter.commandAdvice(
+				`To move it to ${toLabel}, restart it with --directory <dir> when it was set up elsewhere:`,
+				"pancode gui background restart --if-idle",
+			);
+		}
 		presenter.note(
 			`Sessions already running keep ${fromLabel}; run pancode --resume in this project to pick one up on ${toLabel}.`,
 		);
@@ -686,7 +730,6 @@ export async function runUpgradeCommand(
 		return version === null ? updateCommand : installationCommand(installation, "upgrade", version);
 	};
 	const sourceAdvice = () => presenter.commandAdvice(SOURCE_UPGRADE_LEAD, updateCommand);
-	const backgroundOwner = join(stateDir, "gui/background/owner.json");
 	const finish = async (): Promise<number> => {
 		if (!opts.dryRun && opts.postInstall) {
 			// The installer root a move to a checkout or a package manager left behind.
