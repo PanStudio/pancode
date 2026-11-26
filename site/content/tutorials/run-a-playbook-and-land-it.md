@@ -10,7 +10,7 @@ Run time and cost depend on your repository and the model you connect, so start 
 - A small, specific task you could review by hand.
 :::
 
-::: steps
+::: steps Take a playbook from plan to commit
 ### See what is available
 
 ```sh

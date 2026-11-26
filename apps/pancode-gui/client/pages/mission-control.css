@@ -289,11 +289,6 @@
 	padding: var(--space-12) var(--space-6);
 	text-align: center;
 }
-.mission__empty > .icon {
-	width: 32px;
-	height: 32px;
-	color: var(--accent);
-}
 .mission__empty h3 {
 	margin-bottom: 0;
 	font: 500 var(--text-h2) / var(--leading-tight) var(--font-editorial);

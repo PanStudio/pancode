@@ -22,7 +22,7 @@ import { ExploreDrawer } from "./ExploreDrawer.js";
 import { InlineRename } from "./InlineRename.js";
 import { MachineSwitcher } from "./MachineSwitcher.js";
 import { Menu, MenuItem } from "./Menu.js";
-import { PancodeLogo, PancodePulse, PancodeWordmark, PULSE_SIZE } from "./PancodeMark.js";
+import { PancodeEmptyMark, PancodeLogo, PancodePulse, PancodeWordmark, PULSE_SIZE } from "./PancodeMark.js";
 import { SettingsSidebar } from "./SettingsSidebar.js";
 import {
 	isSettingsPath,
@@ -145,7 +145,7 @@ export function TaskSidebar({
 					onClick={onNavigate}
 					aria-label={version ? `PanCode ${version} home` : "PanCode home"}
 				>
-					<PancodeLogo size={22} />
+					<PancodeLogo size={20} />
 					<span className="wb-brand__identity">
 						<PancodeWordmark />
 						{version ? (
@@ -250,7 +250,10 @@ export function TaskSidebar({
 							</p>
 						) : null}
 						{!workspaces.isPending && !workspaces.error && ordered.length === 0 ? (
-							<p className="wb-note">Open a workspace to start your first task.</p>
+							<div className="wb-side__empty">
+								<PancodeEmptyMark />
+								<p className="wb-note">Open a workspace to start your first task.</p>
+							</div>
 						) : null}
 						{ordered.slice(0, shown).map((workspace) => (
 							<ProjectGroup

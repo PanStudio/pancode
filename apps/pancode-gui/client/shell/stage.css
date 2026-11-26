@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: LicenseRef-PanCode-1.0 */
 /* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
-/* The first-run stage: the static canonical PanCode mark with setup progress as words under it. --stage-size is
-   set by the page. */
+/* The opening stage: the full cut at 96 px over the display name, on the page's ground, with setup progress as words
+   under them. The mark carries the app's one glow (none on light). */
 .pancode-stage {
-	--stage-size: 52px;
+	--stage-size: 96px;
 	display: grid;
 	justify-items: center;
 	gap: var(--space-3);
@@ -12,6 +12,8 @@
 	display: block;
 	width: var(--stage-size);
 	height: var(--stage-size);
+	border-radius: 50%;
+	box-shadow: var(--glow-brand-soft);
 }
 .pancode-stage__caption {
 	min-height: 1.5em;

@@ -161,7 +161,10 @@ try {
 		await navContext.close();
 	}
 	// The catalog filter narrows the rows, says how many match, and clears with Escape.
-	const hubContext = await browser.newContext({ viewport: { width: 1024, height: 900 } });
+	const hubContext = await browser.newContext({
+		viewport: { width: 1024, height: 900 },
+		permissions: ["clipboard-read", "clipboard-write"],
+	});
 	const hubPage = await hubContext.newPage();
 	await hubPage.goto(`${values.url}/hub.html?__static=1`);
 	const hubRows = await hubPage.locator(".hub-row").count();
@@ -176,6 +179,22 @@ try {
 	await hubPage.locator("#hub-query").press("Escape");
 	assert.equal(await hubPage.locator("#hub-query").inputValue(), "");
 	assert.equal(await hubPage.locator(".hub-row:visible").count(), hubRows, "Escape clears the filter");
+	// Each kind chip shows exactly the rows of its kind.
+	for (const kind of await hubPage
+		.locator(".hub-chip[data-hub-kind]:not([data-hub-kind=''])")
+		.evaluateAll((chips) => chips.map((chip) => chip.dataset.hubKind))) {
+		await hubPage.locator(`.hub-chip[data-hub-kind="${kind}"]`).click();
+		const ofKind = await hubPage.locator(`.hub-group .hub-row[data-hub-kind="${kind}"]`).count();
+		assert.equal(await hubPage.locator(".hub-group .hub-row:visible").count(), ofKind, `The ${kind} chip shows its rows`);
+		assert.equal(await hubPage.locator(`.hub-group .hub-row[data-hub-kind="${kind}"]:visible`).count(), ofKind);
+	}
+	await hubPage.locator('.hub-chip[data-hub-kind=""]').click();
+	// A row's Copy button copies the command printed on the row.
+	const copyRow = hubPage.locator('.hub-group .hub-row[data-hub-kind="server"]').first();
+	if (await copyRow.count()) {
+		await copyRow.locator(".copy").click();
+		assert.equal(await hubPage.evaluate(() => navigator.clipboard.readText()), await copyRow.locator("code").innerText());
+	}
 	await hubContext.close();
 	const context = await browser.newContext({
 		viewport: { width: 390, height: 844 },

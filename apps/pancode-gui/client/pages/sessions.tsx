@@ -58,7 +58,7 @@ import { useFollowLatest } from "../render/follow-latest.js";
 import { PathOpenerContext, type PathTarget } from "../render/Markdown.js";
 import { countRender } from "../render/render-probe.js";
 import { Menu, MenuItem } from "../shell/Menu.js";
-import { PancodeLogo, PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
+import { PancodeEmptyMark, PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
 import { answeredTurns, renameBlocker, taskTitle } from "../shell/shell-model.js";
 import { TopBar } from "../shell/TopBar.js";
@@ -168,7 +168,7 @@ const NO_ROWS: readonly HealthRow[] = [];
 function EmptyTranscript({ sessionId }: { sessionId: string }) {
 	return (
 		<div className="chat-empty">
-			<PancodeLogo size={40} />
+			<PancodeEmptyMark />
 			<h2>
 				What are we <em>working on</em>?
 			</h2>

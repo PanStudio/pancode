@@ -40,10 +40,42 @@
 .pancode-mark__flat {
 	fill: var(--mark-paint);
 }
+.pancode-mark__mono {
+	fill: currentColor;
+}
 .pancode-logo {
 	display: inline-block;
 	flex: none;
 	vertical-align: middle;
+}
+.pancode-logo--empty {
+	color: var(--muted);
+}
+/* 28 px cap height: the display file's capitals span 87.2 of its 120 units. */
+.pancode-display {
+	display: block;
+	height: calc(28px * 120 / 87.2);
+}
+.pancode-display__light,
+.pancode-display__dark {
+	display: block;
+	width: auto;
+	height: 100%;
+}
+.pancode-display__dark,
+:root[data-theme="dark"] .pancode-display__light {
+	display: none;
+}
+:root[data-theme="dark"] .pancode-display__dark {
+	display: block;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) .pancode-display__light {
+		display: none;
+	}
+	:root:not([data-theme="light"]) .pancode-display__dark {
+		display: block;
+	}
 }
 /* public/offline.css repeats these three rules for the page that loads without the bundle; keep them in step. */
 .pancode-wordmark {
