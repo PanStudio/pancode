@@ -27,7 +27,7 @@ import {
 import { isRecord } from "../../core/type-guards.js";
 
 const SECRET_KEY_RE =
-	/(?:api[-_]?key|access[-_]?key|auth(?:orization)?|credential|password|private[-_]?key|secret|token)/iu;
+	/(?:api[-_]?key|access[-_]?key|auth(?:orization|(?!or))|credential|password|private[-_]?key|secret|token)/iu;
 const ENV_KEY_RE = /^env(?:ironment)?$/iu;
 // A `"` ends a JSON or call string when structure follows it, so `{"a":"http://h:80","b":"me@corp.com"}` stays whole. Any other
 // `"` can sit inside a password, as in `https://u:a"b@h`, so it stays in the run (#446).
@@ -98,7 +98,7 @@ const SECRET_URL_SEMICOLON_VALUE_RE = new RegExp(`"?${stringRun(String.raw`[^;\s
 // case-sensitive, so `pass=0`, `compass` and `bypass` keep their values. A name run takes `-` as evidence's does, so the
 // `-` of `db-pass` stays in the run its `pass` word needs.
 const SECRET_ASSIGNMENT_RE = new RegExp(
-	String.raw`(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*?(?:${eitherCase("access|api|auth|credential|key|private|secret|token")}|${SECRET_KEY_WORDS}))([A-Za-z0-9_-]*=)([^\s;&|]+)`,
+	String.raw`(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*?(?:${eitherCase("access|api|auth(?:orization|(?!or))|credential|key|private|secret|token")}|${SECRET_KEY_WORDS}))([A-Za-z0-9_-]*=)([^\s;&|]+)`,
 	"gu",
 );
 // `:_authToken=${NPM_TOKEN}` or `--token "$TOKEN"` names a variable instead of
@@ -136,7 +136,8 @@ function redactUnlessEnvReference(match: string, prefix: string, secret: string)
 }
 // The name match stays broad, since a missed secret leaks and a false positive only hides a value (SF-6). A name holding a
 // password, passphrase, secret, credential, auth or singular token word, glued or not, redacts every value that is not a
-// variable reference, whatever its shape; so does one holding access, api or private. A name whose only secret word is a
+// variable reference, whatever its shape; so does one holding access, api or private. `auth` stops short of `author` and
+// `authority` as the flag rule's does, so `?author=Austen` and `GIT_AUTHOR_NAME` keep theirs. A name whose only secret word is a
 // `pass` or `pwd` of PASS_KEY_WORDS, as `DB_PASS` and `MYSQL_PWD` are, also names counters such as `n_pass=0`, so it shows
 // only up to six digits. Every other value hides whatever its length or shape, paths included, so `DB_PASS=hunter2` and
 // `MYSQL_PWD=/randomPW42` stay hidden, and a shown value never holds a nested `name=value`. Bare `PWD` and `OLDPWD` are not
@@ -144,7 +145,7 @@ function redactUnlessEnvReference(match: string, prefix: string, secret: string)
 // or a plural count such as tokens shows a value no credential takes: up to six digits, or a short lowercase word or
 // identifier without digits, as in `key=value`, `sort_key=name` or `max_tokens=128`.
 const STRICT_ASSIGNMENT_NAME_RE =
-	/PASS(?:WD|WORD|PHRASE)|SECRET|CREDENTIAL|AUTH|ACCESS|API|PRIVATE|TOKEN(?!S(?![A-Z]))/iu;
+	/PASS(?:WD|WORD|PHRASE)|SECRET|CREDENTIAL|AUTH(?:ORIZATION|(?!OR))|ACCESS|API|PRIVATE|TOKEN(?!S(?![A-Z]))/iu;
 const PASS_ASSIGNMENT_NAME_RE = new RegExp(PASS_KEY_WORDS, "u");
 const PLAIN_PASS_VALUE_RE = /^\d{1,6}$/u;
 const SHAPED_ASSIGNMENT_NAME_RE = /KEY|TOKENS/iu;
