@@ -208,7 +208,7 @@ PanCode is source-available under the PanCode License 1.0. In plain words:
 - PanCode is free to use for individuals, for small organizations (fewer than
   100 people and under 1,000,000 USD in yearly revenue), and for
   noncommercial research and teaching.
-- Larger organizations need a commercial license from the author. One person
+- Larger organizations need a commercial license from PanStudio. One person
   may evaluate PanCode for such an organization for up to 32 days.
 - Nobody may sell PanCode or offer it as a paid hosted service. Using PanCode
   to produce your own work, paid work included, is not selling it.

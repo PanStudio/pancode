@@ -9,7 +9,7 @@ once, and it then covers everything you contribute.
 
 ## 1. Words used here
 
-- **PanCode** is the software in the `akougkas/pancode` repository, in any form and under any name it later takes.
+- **PanCode** is the software in the `PanStudio/pancode` repository, in any form and under any name it later takes.
 - **Maintainer** means Anthony Kougkas, and anyone to whom he transfers this agreement under section 9.
 - **Contribution** means any code, documentation, data, image or other work you send to the Maintainer for inclusion
   in PanCode: by pull request, patch, issue, discussion, email or any other route. It includes contributions you made
