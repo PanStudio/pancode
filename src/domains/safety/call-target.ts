@@ -567,6 +567,12 @@ function summarizeUnlistedField(tool: string, field: string, value: unknown): st
 /** Harness-injected argument keys (`__pancode_resolved_dispatch_plan`) carry no operator decision and stay off display text. */
 const HARNESS_ARG_PREFIX = "__pancode_";
 
+/** A call's arguments as the operator inspects them: every key the model sent, none the harness injected. */
+export function operatorCallArgs(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+	if (args === undefined) return undefined;
+	return Object.fromEntries(Object.entries(args).filter(([field]) => !field.startsWith(HARNESS_ARG_PREFIX)));
+}
+
 function targetFieldName(value: string): string {
 	return sanitizeCallTargetText(value).slice(0, 32) || "field";
 }

@@ -5,7 +5,11 @@ import type { PermissionRequestedPayload } from "../core/telemetry/live-events.j
 import { ToolNames } from "../core/tool-names.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { ActionClass, ClassifierCall } from "../domains/safety/action-classifier.js";
-import { sanitizeCallTargetText, WORKER_CALL_TARGET_MAX_CHARS } from "../domains/safety/call-target.js";
+import {
+	operatorCallArgs,
+	sanitizeCallTargetText,
+	WORKER_CALL_TARGET_MAX_CHARS,
+} from "../domains/safety/call-target.js";
 import { COMMAND_CONSEQUENCE_MAX_SEVERE, fitConsequenceLine } from "../domains/safety/command-consequence.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { decisionActionClass } from "../domains/safety/decision-presentation.js";
@@ -677,7 +681,7 @@ export function createOverlayPermissionLifecycle(deps: OverlayPermissionLifecycl
 				!deps.openPermissionOverlay(
 					view,
 					mainMutationInspector(call, view),
-					() => call.args,
+					() => operatorCallArgs(call.args),
 					advisory,
 					countdownReader(meta.requestId),
 				)
