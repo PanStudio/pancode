@@ -11,7 +11,7 @@
  * remote assets are served from memory through the injected fetch. The bundled
  * index and the `sample-kit` fixture are read from the repository as committed.
  */
-import { deepStrictEqual, equal, fail, match, ok, rejects, throws } from "node:assert/strict";
+import { deepStrictEqual, doesNotMatch, equal, fail, match, ok, rejects, throws } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -423,6 +423,18 @@ test("with the compiled empty root, refresh refuses without a fetch and discover
 	equal(status.code, 0, status.out);
 	match(refresh.out, /no-root-key/u);
 	match(status.out, /"rootKey": false/u);
+});
+
+test("a dry run of an install missing its requirements says it would be refused, in the CLI's words", async (t) => {
+	const env = await isolatePancodeEnv("pancode-hub-dry-requires-");
+	t.after(() => env.restore());
+	const preview = await captureHub(["install", "plugin:literature", "--dry-run"]);
+	match(
+		preview.out,
+		/^would refuse install plugin:literature \(user\): .*; rerun with --with-requirements to install skill:arxiv-literature too$/mu,
+		preview.out,
+	);
+	doesNotMatch(preview.out, /planned|plan with requirements/u, preview.out);
 });
 
 test("after expiry remote rows are withdrawn while installed packs load and stored revocations apply", async (t) => {

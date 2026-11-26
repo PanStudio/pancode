@@ -504,24 +504,35 @@ function runLifecycleStep(
 						outcome.recovery?.packageBackup ? `; recovery ${outcome.recovery.packageBackup}` : ""
 					}${outcome.error ? `; verification: ${outcome.error.message}` : ""}`,
 				);
-			else if (outcome.status === "unattempted")
+			else if (outcome.status === "unattempted") {
+				// A dry run of a refused step says it would be refused, in the same CLI words as the real run.
+				const state = !parsed.dryRun ? "unattempted" : step?.refusal ? "would refuse" : "planned";
 				process.stdout.write(
-					`${parsed.dryRun ? "planned" : "unattempted"} ${operation} ${where}${step?.refusal ? `: ${step.refusal}` : ""}\n`,
+					`${state} ${operation} ${where}${step?.refusal ? `: ${cliRefusal(step.refusal, operation, parsed, step)}` : ""}\n`,
 				);
-			else {
+			} else {
 				// A refusal already names its fix; the generic next step is the TUI review's wording.
 				const next = outcome.error?.code === "refused" ? "" : (outcome.error?.next ?? "");
-				// The planner's "plan with requirements" is surface-neutral; on the CLI that plan is one flag away.
-				const missing = operation === "install" && !parsed.withRequirements ? (step?.dependencies.missing ?? []) : [];
-				const message = (outcome.error?.message ?? "unknown").replace(
-					/; plan with requirements$/,
-					missing.length ? `; rerun with --with-requirements to install ${missing.join(", ")} too` : "$&",
-				);
+				const message = cliRefusal(outcome.error?.message ?? "unknown", operation, parsed, step);
 				printError(`${operation} ${where} failed: ${message}${next ? `; ${next}` : ""}`);
 			}
 		}
 	}
 	return { plan, apply, ok };
+}
+
+/** The planner's "plan with requirements" is surface-neutral; on the CLI that plan is one flag away. */
+function cliRefusal(
+	message: string,
+	operation: HubOperation,
+	parsed: Parsed,
+	step: HubLifecyclePlan["steps"][number] | undefined,
+): string {
+	const missing = operation === "install" && !parsed.withRequirements ? (step?.dependencies.missing ?? []) : [];
+	return message.replace(
+		/; plan with requirements$/,
+		missing.length ? `; rerun with --with-requirements to install ${missing.join(", ")} too` : "$&",
+	);
 }
 
 function printRefreshNote(apply: HubApplyResult): void {
