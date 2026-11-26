@@ -89,6 +89,10 @@ html[data-theme="light"] .mark-stop-point-b {
 	stroke-dashoffset: 8;
 	opacity: 0;
 }
+.pan-node {
+	fill: var(--paper);
+	stroke-width: 1.5;
+}
 .pan-models .pan-signal,
 .pan-models .pan-node {
 	stroke: var(--accent);
@@ -100,10 +104,6 @@ html[data-theme="light"] .mark-stop-point-b {
 .pan-surfaces .pan-signal,
 .pan-surfaces .pan-node {
 	stroke: var(--ink-soft);
-}
-.pan-node {
-	fill: var(--paper);
-	stroke-width: 1.5;
 }
 .pan-label,
 .pan-cap {
@@ -119,65 +119,82 @@ html[data-theme="light"] .mark-stop-point-b {
 	letter-spacing: 0.12em;
 	fill: var(--muted);
 }
-[data-pan] .pan-route {
-	stroke-dasharray: 100;
-	stroke-dashoffset: 0;
-	transition: stroke-dashoffset var(--motion-draw) var(--motion-ease);
-}
-[data-pan="pending"] .pan-route {
-	stroke-dashoffset: 100;
-}
-[data-pan] :is(.pan-node, .pan-label, .pan-cap, .pan-mark) {
-	transition: opacity var(--motion-entry) var(--motion-ease);
-}
-[data-pan="pending"] :is(.pan-node, .pan-label, .pan-cap) {
-	opacity: 0;
-}
-[data-pan="live"] .pan-signal {
-	opacity: 1;
-	animation: pan-flow var(--motion-flow) linear infinite;
-}
-.pan-s2 {
-	animation-delay: calc(var(--motion-stagger) * 6);
-}
-.pan-s3 {
-	animation-delay: calc(var(--motion-stagger) * 12);
-}
-.pan-s4 {
-	animation-delay: calc(var(--motion-stagger) * 18);
-}
-.pan-s5 {
-	animation-delay: calc(var(--motion-stagger) * 24);
-}
-.pan-s6 {
-	animation-delay: calc(var(--motion-stagger) * 30);
+/* Drawing in, pending states and flowing signals run only when motion is welcome. Under reduced
+   motion the drawing is the finished, still picture whatever data-pan says. */
+@media (prefers-reduced-motion: no-preference) {
+	[data-pan] .pan-route {
+		stroke-dasharray: 100;
+		stroke-dashoffset: 0;
+		transition:
+			stroke-dashoffset var(--motion-draw) var(--motion-ease),
+			stroke-opacity var(--motion-base) var(--motion-ease);
+	}
+	[data-pan="pending"] .pan-route {
+		stroke-dashoffset: 100;
+	}
+	[data-pan] .pan-node {
+		transition:
+			opacity var(--motion-entry) var(--motion-ease),
+			stroke-opacity var(--motion-base) var(--motion-ease);
+	}
+	[data-pan] :is(.pan-label, .pan-cap, .pan-mark) {
+		transition: opacity var(--motion-entry) var(--motion-ease);
+	}
+	[data-pan="pending"] :is(.pan-node, .pan-label, .pan-cap) {
+		opacity: 0;
+	}
+	[data-pan="live"] .pan-signal {
+		opacity: 1;
+		animation: pan-flow var(--motion-flow) linear infinite;
+	}
+	[data-pan="live"] .pan-s2 {
+		animation-delay: calc(var(--motion-stagger) * 6);
+	}
+	[data-pan="live"] .pan-s3 {
+		animation-delay: calc(var(--motion-stagger) * 12);
+	}
+	[data-pan="live"] .pan-s4 {
+		animation-delay: calc(var(--motion-stagger) * 18);
+	}
+	[data-pan="live"] .pan-s5 {
+		animation-delay: calc(var(--motion-stagger) * 24);
+	}
+	[data-pan="live"] .pan-s6 {
+		animation-delay: calc(var(--motion-stagger) * 30);
+	}
+	[data-active][data-pan="live"] .pan-signal {
+		animation-play-state: paused;
+		opacity: 0;
+	}
+	[data-active="models"][data-pan="live"] [data-sector="models"] .pan-signal,
+	[data-active="agents"][data-pan="live"] [data-sector="agents"] .pan-signal,
+	[data-active="surfaces"][data-pan="live"] [data-sector="surfaces"] .pan-signal {
+		animation-play-state: running;
+		opacity: 1;
+	}
 }
 @keyframes pan-flow {
 	to {
 		stroke-dashoffset: -100;
 	}
 }
-/* The reach drawing lights one sector at a time. */
-.pan-sector {
-	transition: opacity var(--motion-base) var(--motion-ease);
+/* The reach drawing lights one sector at a time. Only the geometry of the others dims; their
+   labels step down to --muted, which keeps text contrast at AA in both themes. */
+[data-active] .pan-sector :is(.pan-route, .pan-node) {
+	stroke-opacity: 0.32;
 }
-[data-active] .pan-sector {
-	opacity: 0.32;
+[data-active] .pan-sector .pan-label {
+	fill: var(--muted);
 }
-[data-active="models"] [data-sector="models"],
-[data-active="agents"] [data-sector="agents"],
-[data-active="surfaces"] [data-sector="surfaces"] {
-	opacity: 1;
+[data-active="models"] [data-sector="models"] :is(.pan-route, .pan-node),
+[data-active="agents"] [data-sector="agents"] :is(.pan-route, .pan-node),
+[data-active="surfaces"] [data-sector="surfaces"] :is(.pan-route, .pan-node) {
+	stroke-opacity: 1;
 }
-[data-active][data-pan="live"] .pan-signal {
-	animation-play-state: paused;
-	opacity: 0;
-}
-[data-active="models"][data-pan="live"] [data-sector="models"] .pan-signal,
-[data-active="agents"][data-pan="live"] [data-sector="agents"] .pan-signal,
-[data-active="surfaces"][data-pan="live"] [data-sector="surfaces"] .pan-signal {
-	animation-play-state: running;
-	opacity: 1;
+[data-active="models"] [data-sector="models"] .pan-label,
+[data-active="agents"] [data-sector="agents"] .pan-label,
+[data-active="surfaces"] [data-sector="surfaces"] .pan-label {
+	fill: var(--ink-soft);
 }
 [data-active="models"] [data-sector="models"] .pan-route {
 	stroke: var(--accent);
@@ -187,17 +204,6 @@ html[data-theme="light"] .mark-stop-point-b {
 }
 [data-active="surfaces"] [data-sector="surfaces"] .pan-route {
 	stroke: var(--ink-soft);
-}
-@media (prefers-reduced-motion: reduce) {
-	.pan-signal {
-		animation: none;
-		opacity: 0;
-	}
-	[data-pan] .pan-route,
-	[data-pan] :is(.pan-node, .pan-label, .pan-cap, .pan-mark),
-	.pan-sector {
-		transition: none;
-	}
 }
 .pan-lost .pan-node {
 	stroke: var(--warning);
