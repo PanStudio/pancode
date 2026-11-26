@@ -343,10 +343,9 @@ function callReachProbes(call: ClassifierCall, workspace: string, callCwd: strin
 		return { probes, unseen };
 	}
 	if (call.tool !== ToolNames.Bash) return { probes: named, unseen: named.length === 0 };
+	// The policy's flat write and delete targets are spelled from the call cwd; the walk places each from its own.
 	const command = commandArg(call.args);
-	if (command === null) return { probes: named, unseen: true };
-	const shell = shellReachProbes(command, callCwd);
-	return { probes: [...named, ...shell.probes], unseen: shell.unseen };
+	return command === null ? { probes: [], unseen: true } : shellReachProbes(command, callCwd);
 }
 
 /**

@@ -107,6 +107,7 @@ test("a card claims the workspace, and its allow button names it, only for a rea
 	strictEqual(reach(ToolNames.Bash, { command: "cat README.md" }), "unknown");
 	strictEqual(reach(ToolNames.Bash, { command: "cat ../note.txt" }), "outside-workspace");
 	strictEqual(reach(ToolNames.Bash, { command: "cd docs && cat ../README.md" }), "unknown");
+	strictEqual(reach(ToolNames.Bash, { command: "cd docs && touch ../note.txt" }), "unknown");
 	strictEqual(reach(ToolNames.Bash, { command: "cd docs && cd ../.. && ls" }), "outside-workspace");
 	strictEqual(reach(ToolNames.RunScript, { script: "x.py", inputs: [join(parent, "blob.txt")] }), "outside-workspace");
 	strictEqual(reach(ToolNames.RunScript, { script: "x.py", inputs: ["t1:b.txt"] }), "unknown");
