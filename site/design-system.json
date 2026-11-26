@@ -424,6 +424,8 @@
 		"base": "220ms",
 		"entry": "560ms",
 		"feedback": "1800ms",
+		"draw": "900ms",
+		"flow": "2400ms",
 		"ease": "cubic-bezier(0.2, 0.7, 0.2, 1)",
 		"distance": "12px",
 		"stagger": "70ms"

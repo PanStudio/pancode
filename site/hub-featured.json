@@ -1,0 +1,12 @@
+[
+	"plugin:hpc",
+	"plugin:literature",
+	"plugin:science-data",
+	"plugin:life-science",
+	"extension:local-status",
+	"skill:tdd",
+	"skill:ship",
+	"skill:architecture",
+	"skill:scientific-debugging",
+	"skill:web-debug"
+]

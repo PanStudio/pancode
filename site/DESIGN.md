@@ -67,7 +67,7 @@ Favor rules and open layouts over nested panels and grids of interchangeable car
 
 ## Motion
 
-`design-system.json.motion` supplies shared timings, easing, reveal distance and feedback duration. Use the generated `--motion-*` variables; the build rejects literal durations and custom easing in component CSS. Hover and focus feedback uses 140ms, theme and disclosure changes use 220ms, and one-time entrances use 560ms. Motion confirms an action or reveals content once. Nothing pulses, loops or tracks the pointer, except a cursor blink or a live dot that reports real activity, and both stop under reduced motion.
+`design-system.json.motion` supplies shared timings, easing, reveal distance and feedback duration. Use the generated `--motion-*` variables; the build rejects literal durations and custom easing in component CSS. Hover and focus feedback uses 140ms, theme and disclosure changes use 220ms, one-time entrances use 560ms, a schematic route draws in 900ms and a signal crosses a route in 2400ms. Motion confirms an action, reveals content once, or shows a flow in a schematic. A schematic may run its signals while it is in view; it draws once, pauses offscreen and in a hidden tab, and shows its finished state under reduced motion. Nothing else loops and nothing tracks the pointer, except a cursor blink or a live dot that reports real activity.
 
 ## Terminal
 
