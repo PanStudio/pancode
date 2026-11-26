@@ -25,36 +25,6 @@ PanCode 0.9.0 is the first release under the PanCode name: one npm package, `@ak
 - **No compatibility readers for older homes.** PanCode 0.9.0 has no migration steps, retired-key tables or legacy readers. Configuration, data, state and cache directories written by earlier releases are not read or converted. A version 1 `settings.yaml` or credentials file fails validation, a key outside the current schema is reported as unknown, and `pancode doctor --fix` never renames or removes it. Set up again with `pancode configure`; a new home's `settings.yaml` is a short scaffold that sets no keys.
 - **License.** PanCode is source-available under the PanCode License 1.0: free for individuals, small organizations, and noncommercial research and teaching; larger organizations need a commercial license. PanSDK stays Apache-2.0. Read [LICENSE](LICENSE) for the terms.
 - **Release channels.** Channels are `latest` and `beta`. `--channel dev` and `pancode upgrade --skip-migrations` are gone.
-- **One spelling per command.** Every command, flag and setting below has one spelling and no alias. An old spelling is an unknown command or flag and exits 2, and an old setting key fails validation.
-
-| Removed | Use |
-| --- | --- |
-| `pancode library`, `/library`, `/reload library` | `pancode hub`, `/hub`, `/reload hub` |
-| keybinding `pancode.library.toggle` | `pancode.hub.toggle` (still `Alt+L`) |
-| `integrations.library.*`, `library.yaml` | `integrations.hub.*`, `hub.yaml` |
-| desktop route `/library` | `/hub` |
-| `run --json`, `run --json-events` | `run --output-format json` or `stream-json` |
-| `run --session <id>` | `run --resume <id\|prefix\|name>` |
-| `pancode --acp` | `pancode acp` |
-| `pancode ext` | `pancode extensions` |
-| `pancode export`, `pancode import` | `pancode share export`, `pancode share import` |
-| `context-init`, `context-index`, `context-clear` | `context init`, `context index`, `context reset` |
-| `components`, `evolve`, `flywheel` | `dev components`, `dev evolve`, `dev flywheel` |
-| `fleet run --json` | `fleet run --output-format stream-json` |
-| `fleet drain`, `fleet resume` | `fleet admission drain`, `fleet admission open` |
-| `fleet inspect` | `fleet status --json` or `telemetry inspect --run <runId>` |
-| `evidence build` | `evidence inspect <runId>`; every run is assessed when it settles |
-| `targets add` | `pancode configure` |
-| `targets fleet`, `targets workers`, `targets worker <args>` | `targets profile list`, `targets profile <args>` |
-| `reset --force`, `uninstall --force` | `reset --yes`, `uninstall --yes` |
-| `tools status --reset-profile` | `tools reset-profile <id>` |
-| `verifiers --cwd` | `verifiers --check-cwd` |
-| `semantic inbox-add`, `inbox-list`, `inbox-remove`, `inbox-preview` | `semantic inbox add`, `list`, `remove`, `preview` |
-| `dev share`, `dev gui` | `pancode share`, `pancode gui` |
-| `telemetry share list`, `forget`, `sweep` | `telemetry share` writes a local archive only |
-| `/loop list`, `/loop cancel` | `/loop`, `/loop stop <id> --now` |
-| other `configure --section` words | `models`, `chat`, `workers`, `context`, `safety`, `workspace` or `advanced` |
-| `/settings` words that are not an area id | `/settings <area id>`; `/login` and `/config` open `/settings models` |
 
 Changed behaviour:
 
