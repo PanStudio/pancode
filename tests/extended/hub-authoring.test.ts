@@ -443,7 +443,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 				),
 		];
 
-		equal(packagePaths.length, 38, `expected 38 curated packs, found ${packagePaths.length}`);
+		equal(packagePaths.length, 39, `expected 39 curated packs, found ${packagePaths.length}`);
 
 		for (const pkgPath of packagePaths) {
 			const res = validateHubPackage(pkgPath);
@@ -470,8 +470,8 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			entries: Array<{ name: string; sourceUrl?: string; source?: { repo: string; subdir?: string } }>;
 		};
 
-		// 39 locally scanned packages (34 skills, the HPC, science-data, literature
-		// and life-science plugins, and the local-status extension) plus every row
+		// 40 locally scanned packages (34 skills, the HPC, science-data, literature,
+		// life-science and pankit plugins, and the local-status extension) plus every row
 		// the community row files under hub/community/ state; those packs have no
 		// local directory under hub/ and so are never in packagePaths.
 		const communityDir = join(REPO_ROOT, "hub", "community");
@@ -488,8 +488,8 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			.reduce((sum, count) => sum + count, 0);
 		equal(
 			hubRegistry.entries.length,
-			39 + communityRows,
-			`PanHub index must contain the 39 local packs and ${communityRows} community rows`,
+			40 + communityRows,
+			`PanHub index must contain the 40 local packs and ${communityRows} community rows`,
 		);
 
 		// None of the entries should reference _authoring or templates
