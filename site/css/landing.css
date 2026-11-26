@@ -142,12 +142,6 @@
 	.installer-next .text-link {
 		font-size: 0.8rem;
 	}
-	.install-steps .installer {
-		margin-block: 0.75rem 1rem;
-	}
-	.install-steps p + p {
-		margin-block-start: 0.75rem;
-	}
 	.chapter-links {
 		display: flex;
 		flex-wrap: wrap;
@@ -491,13 +485,17 @@
 	}
 	.landing .faq .faq-items {
 		margin-block-start: var(--space-7);
+		columns: 2;
+		column-gap: var(--space-8);
 	}
 	.start-section .install-steps {
 		max-inline-size: 52rem;
 	}
-	.faq .faq-items {
-		columns: 2;
-		column-gap: var(--space-8);
+	.install-steps .installer {
+		margin-block: 0.75rem 1rem;
+	}
+	.install-steps p + p {
+		margin-block-start: 0.75rem;
 	}
 	.faq .faq-items details {
 		break-inside: avoid;
@@ -531,7 +529,7 @@
 			padding-inline-start: 0;
 			border-inline-start: 0;
 		}
-		.faq .faq-items {
+		.landing .faq .faq-items {
 			columns: 1;
 		}
 		.flow-facts > div {
