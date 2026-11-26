@@ -1004,6 +1004,10 @@
 		border: 0;
 		padding-block-start: 0;
 	}
+	.index-status {
+		display: block;
+		margin-block-start: var(--space-1);
+	}
 	.index-rows a {
 		font-weight: 600;
 		color: var(--ink);
@@ -1031,15 +1035,11 @@
 		}
 	}
 	@media (max-width: 767px) {
-		.learn-featured .tutorial-grid,
-		.index-rows li {
-			grid-template-columns: minmax(0, 1fr);
-		}
 		.learn-featured .tutorial-grid {
+			grid-template-columns: minmax(0, 1fr);
 			gap: var(--space-7);
 		}
-		.index-group,
-		.index-rows li {
+		.index-group {
 			gap: var(--space-1);
 		}
 	}
@@ -2779,9 +2779,15 @@
 		color: var(--ink-soft);
 	}
 	.hub-row .copy[data-copy-state] {
-		border-color: var(--accent);
 		background: none;
-		color: var(--accent);
+	}
+	.hub-row .copy[data-copy-state="success"] {
+		border-color: var(--success);
+		color: var(--success);
+	}
+	.hub-row .copy[data-copy-state="error"] {
+		border-color: var(--error);
+		color: var(--error);
 	}
 	:is(.hub-row, .hub-featured-row) .command-line code {
 		overflow-wrap: anywhere;
