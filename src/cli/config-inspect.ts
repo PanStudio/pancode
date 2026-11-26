@@ -21,6 +21,7 @@ import { resolvePackageRoot } from "../core/package-root.js";
 import { formatSettingsLayerIssue } from "../core/settings-layer-diagnostics.js";
 import type { SettingsOrigin } from "../core/settings-layers.js";
 import { readLayeredSettings, settingsSourceFor, settingsValueFor } from "../core/settings-layers.js";
+import { isRecord } from "../core/type-guards.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { renderEffectivePromptContext } from "../domains/context/compiled-handbook.js";
 import { loadOperatorProfile, renderOperatorProfile } from "../domains/context/operator-profile.js";
@@ -102,6 +103,8 @@ function inspectSettings(cwd: string, graph: CustomizationGraph): void {
 		const keys = Object.keys(layered.sources).sort();
 		for (const key of keys) {
 			const value = settingsValueFor(layered.settings, key);
+			// A section merges key by key, so its merged object holds defaults no layer set; its keys list on their own.
+			if (isRecord(value)) continue;
 			const note = settingNote(key, value);
 			graph.settings.push({
 				key,
