@@ -47,11 +47,11 @@ provenance["projection"] = {
     "source": "site/export-brand.mjs",
     "designSha256": hashlib.sha256((args.kit / "design-system.json").read_bytes()).hexdigest(),
     "encoders": encoders,
-    "padding": "The favicon is the mark on a transparent ground; the app icons set it at 80% on the palette black, which is also maskable-safe; the header mark is unchanged.",
+    "padding": "The favicon is the mark on a transparent ground; the app icons set it at 80% on the palette black; the maskable icon sets it at 72% on the palette black, inside the safe circle of radius 40%; the header mark is unchanged.",
     "iconTreatment": {
         "source": "site/assets/brand/pancode-mark.png",
-        "scale": {"favicon.png": 1, "icon-192.png": 0.8, "icon-512.png": 0.8},
-        "ground": {"favicon.png": None, "icon-192.png": "black", "icon-512.png": "black"},
+        "scale": {"favicon.png": 1, "icon-192.png": 0.8, "icon-512.png": 0.8, "icon-maskable-512.png": 0.72},
+        "ground": {"favicon.png": None, "icon-192.png": "black", "icon-512.png": "black", "icon-maskable-512.png": "black"},
         "resampling": "Pillow Image.Resampling.LANCZOS",
         "alpha": "Preserved from the canonical mark before resizing.",
         "optimization": f"pngquant {pngquant_version}, quality 90-100, speed 1; palette quantization after resizing.",
@@ -63,8 +63,7 @@ header.thumbnail((128, 128), Image.Resampling.LANCZOS)
 header.save(public / "pancode-logo.webp", quality=90, method=6)
 treatment = provenance["projection"]["iconTreatment"]
 palette = json.loads((args.kit / "design-system.json").read_text())["palette"]
-for size in [32, 192, 512]:
-    name = "favicon.png" if size == 32 else f"icon-{size}.png"
+for name, size in [("favicon.png", 32), ("icon-192.png", 192), ("icon-512.png", 512), ("icon-maskable-512.png", 512)]:
     resized = image.copy()
     edge = round(size * treatment["scale"][name])
     resized.thumbnail((edge, edge), Image.Resampling.LANCZOS)
@@ -74,8 +73,17 @@ for size in [32, 192, 512]:
     output = public / name
     square.save(output, optimize=True)
     subprocess.run([pngquant, "--quality", "90-100", "--speed", "1", "--force", "--output", str(output), str(output)], check=True)
+    if name == "icon-maskable-512.png":
+        painted = Image.open(output).convert("RGB")
+        background = painted.getpixel((0, 0))
+        radius = max(
+            ((x + 0.5 - size / 2) ** 2 + (y + 0.5 - size / 2) ** 2) ** 0.5
+            for y in range(size) for x in range(size) if painted.getpixel((x, y)) != background
+        )
+        if radius > size * 0.4:
+            raise SystemExit(f"{name}: painted radius {radius:.1f} px leaves the maskable safe circle ({size * 0.4:.1f} px).")
 provenance["projection"]["sha256"] = {
     name: hashlib.sha256((public/name).read_bytes()).hexdigest()
-    for name in ["pancode-logo.webp", "favicon.png", "icon-192.png", "icon-512.png"]
+    for name in ["pancode-logo.webp", "favicon.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png"]
 }
 (brand / "provenance.json").write_text(json.dumps(provenance, indent="\t")+"\n")
