@@ -358,6 +358,16 @@ test("every command the package declares gets a launcher, and rollback and the n
 	assert.equal(existsSync(toola), false);
 	assert.equal(existsSync(toolb), true);
 	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, []);
+	// A launcher another install wrote for a root whose path only starts with this one is not ours either.
+	const ownText = readFileSync(join(binDir, "pancode"), "utf8");
+	assert.ok(ownText.includes(`'${f.root}'`));
+	const sibling = ownText.replaceAll(`'${f.root}'`, `'${f.root}-tools'`);
+	writeFileSync(toolb, sibling);
+	assert.match(
+		activate("0.9.0b", { toolb: "dist/b/cli.js" }).stderr,
+		/toolb exists and this installer did not write it/u,
+	);
+	assert.equal(readFileSync(toolb, "utf8"), sibling);
 	rmSync(toolb);
 	activate("0.9.1", { toola: "dist/a/cli.js", toolb: "dist/b/cli.js" });
 	assert.equal(spawnSync(toolb, ["x"], { encoding: "utf8" }).stdout, "toolb 0.9.1 x\n");
@@ -366,6 +376,22 @@ test("every command the package declares gets a launcher, and rollback and the n
 	assert.equal(existsSync(toola), false);
 	assert.equal(existsSync(toolb), false);
 	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, []);
+});
+
+test("probe accepts a kept prefix only when its CLI passes the --version check activation runs", {
+	skip: process.platform === "win32",
+}, (t) => {
+	const f = fixture(t);
+	const kept = f.prefix("0.9.1");
+	f.node(kept);
+	mkdirSync(join(kept, suffix, "dist/cli"), { recursive: true });
+	const probe = (cli: string) => {
+		writeFileSync(join(kept, suffix, "dist/cli/index.js"), cli);
+		return spawnSync(process.execPath, [helper, "probe", kept], { encoding: "utf8" }).status;
+	};
+	assert.equal(probe('console.log("PanCode 0.9.1");'), 0);
+	for (const broken of ["", 'process.stdout.write("\\u00a0\\n");', "process.exit(3);"])
+		assert.notEqual(probe(broken), 0, broken);
 });
 
 test("a pin records where it came from and keeps its first date across reinstalls of the same pin", {
