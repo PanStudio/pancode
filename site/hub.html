@@ -1,11 +1,12 @@
 <!doctype html>
 <html lang="en"><head><!-- site-head --></head><body>
 <a class="skip" href="#content">Skip to content</a><!-- site-header -->
-<main id="content" class="page hub"><header class="page-intro guide-head"><p class="eyebrow"><span class="chapter">PanCode's marketplace</span>pancode hub</p><h1 class="hub-title"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></h1><p class="lede">Skills, plugins and extensions for PanCode, each pinned by the SHA-256 of its whole tree. These are the <!-- hub-count --> packs listed in the index bundled with PanCode v<!-- version -->.</p><dl class="guide-facts"><!-- hub-facts --></dl></header>
+<main id="content" class="page hub"><header class="page-intro guide-head"><p class="eyebrow"><span class="chapter">PanCode's marketplace</span>pancode hub</p><h1 class="hub-title"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></h1><p class="lede">Skills, plugins, extensions and built-in servers for PanCode, each pinned by the SHA-256 of its whole tree. These are the <!-- hub-count --> packs listed in the index bundled with PanCode v<!-- version -->.</p><dl class="guide-facts"><!-- hub-facts --></dl></header>
 <details class="hub-about"><summary>How packs and tiers work</summary>
 <div class="doc hub-intro">
 <p>A pack has one kind. A skill is written instructions the agent loads when a task needs them. A plugin carries several skills, prompts, agents or playbooks, and may declare MCP servers that stay untrusted until you trust them. An extension is code that runs in its own process and installs only after you review what it may do. Nothing here is installed automatically.</p>
-<p>Install a pack with the command on its row. It installs for your user by default; add <code>--project</code> to install it into the current project, or <code>--dry-run</code> to see the plan first. In the terminal, <code>/hub</code> browses the same packs.</p>
+<p>A skill, plugin or extension installs with the command on its row. It installs for your user by default; add <code>--project</code> to install it into the current project, or <code>--dry-run</code> to see the plan first. In the terminal, <code>/hub</code> browses the same packs.</p>
+<p>A server is an MCP server built into PanCode, so there is nothing to install. Its row's command does something else: it starts that server for another agent host, such as an MCP client you already use, and takes neither <code>--project</code> nor <code>--dry-run</code>.</p>
 <h2 id="tiers">Tiers</h2>
 <div class="doc-table" role="region" aria-label="PanHub tiers" tabindex="0"><table><thead><tr><th>Tier</th><th>Which packs</th><th>Installs as</th></tr></thead><tbody>
 <tr><td><code>core</code></td><td>First-party packs, published by <code>pancode</code> from <code>hub/packs/</code>.</td><td><code>trusted</code></td></tr>

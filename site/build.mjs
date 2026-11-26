@@ -1055,10 +1055,24 @@ const hubRow = (row) => {
 // A core server is built into PanCode, so its row gives the command another agent host runs to serve it.
 const hubBuiltIn = (row) => row.kind === "server" && row.tier === "core";
 const hubServe = (row) => `npx -y -p @akougkas/pancode pankit serve ${row.name}`;
+// What a bare serve command leaves out, said beside it.
+const hubServeNotes = {
+	store: {
+		html:
+			"Started as shown, it runs with no store root configured. In a project, <code>pancode store where</code> prints the full command with its <code>--root</code>, <code>--cache</code> and <code>--project</code>.",
+		markdown:
+			"Started as shown, it runs with no store root configured; in a project, `pancode store where` prints the full command with its `--root`, `--cache` and `--project`.",
+	},
+};
 const hubCommand = (row) => {
 	const command = hubBuiltIn(row) ? hubServe(row) : row.install;
 	const label = hubBuiltIn(row) ? "Copy the command that serves" : "Copy the install command for";
-	return `<div class="command-line"><code>${escapeHtml(command)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(command)}" aria-label="${label} ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+	const note =
+		hubBuiltIn(row) && hubServeNotes[row.name]
+			? `<p class="caption hub-serve-note">${hubServeNotes[row.name].html}</p>`
+			: "";
+	const line = `<div class="command-line"><code>${escapeHtml(command)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(command)}" aria-label="${label} ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+	return note ? `<div class="hub-command">${line}${note}</div>` : line;
 };
 // The packs a newcomer starts with, in hub-featured.json order, above the full catalog.
 const hubFeatured = JSON.parse(await read("hub-featured.json")).map((key) => {
@@ -1347,11 +1361,11 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
 const hubMarkdown = () =>
 	[
-		`The ${hubCatalog.rows.length} packs listed in the index bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
+		`The ${hubCatalog.rows.length} packs listed in the index bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). A skill, plugin or extension installs with the command on its row, for your user; add \`--project\` to install it into the current project. A server is built into PanCode, so there is nothing to install: its row gives the command that serves it to another agent host over MCP, and that command takes no install flags. A listing at any tier is not an endorsement.`,
 		hubCatalog.rows
 			.map(
 				(row) =>
-					`- \`${row.kind}:${row.name}\` v${row.version}, ${row.tier}, ${row.publisher}, ${row.licence}: ${row.description} ${hubBuiltIn(row) ? `Built into PanCode; on another agent host: \`${hubServe(row)}\`` : `Install: \`${row.install}\``}`,
+					`- \`${row.kind}:${row.name}\` v${row.version}, ${row.tier}, ${row.publisher}, ${row.licence}: ${row.description} ${hubBuiltIn(row) ? `Built into PanCode; serve it to another agent host: \`${hubServe(row)}\`.${hubServeNotes[row.name] ? ` ${hubServeNotes[row.name].markdown}` : ""}` : `Install: \`${row.install}\``}`,
 			)
 			.join("\n"),
 	].join("\n\n");
