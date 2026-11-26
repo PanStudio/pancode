@@ -142,6 +142,14 @@ function probe(args) {
 	return PROBES.has(args[0]) || (args[0] === "doctor" && !args.includes("--fix"));
 }
 
+/** Windows paths name the same file whatever their case. */
+function samePath(a, b) {
+	const x = path.resolve(a);
+	const y = path.resolve(b);
+	if (process.platform === "win32") return x.toLowerCase() === y.toLowerCase();
+	return x === y;
+}
+
 function inside(root, file) {
 	if (typeof file !== "string" || !path.isAbsolute(file)) return false;
 	const rel = path.relative(root, file);
@@ -235,12 +243,22 @@ function bootstrapFor(root) {
 	return bootstrap;
 }
 
-// A launcher this installer wrote for this root: a regular file with the mark that names the root.
+// The root a launcher this installer wrote runs: the whole quoted argument after its bin or launch verb.
+function launcherRoot(text) {
+	const posix = /^exec '(?:[^']|'\\'')*' '(?:[^']|'\\'')*' (?:bin|launch) '((?:[^']|'\\'')*)'/mu.exec(text);
+	if (posix) return posix[1].replaceAll("'\\''", "'");
+	const cmd = /^"[^"]*" "[^"]*" (?:bin|launch) "([^"]*)"/mu.exec(text);
+	return cmd ? cmd[1] : null;
+}
+
+// A launcher this installer wrote for this root: a regular file with the mark whose root is this one.
 function ownedLauncher(file, root) {
 	try {
 		if (!fs.lstatSync(file).isFile()) return false;
 		const text = fs.readFileSync(file, "utf8");
-		return text.includes(MARK) && text.includes(root);
+		if (!text.includes(MARK)) return false;
+		const owner = launcherRoot(text);
+		return owner !== null && samePath(owner, root);
 	} catch {
 		return false;
 	}
@@ -248,8 +266,8 @@ function ownedLauncher(file, root) {
 
 // One launcher per declared command beside pancode's, running through the manifest as pancode's does, so
 // an upgrade or rollback moves them together. A launcher a version no longer declares goes, and only when
-// this installer wrote it; a file someone else put there is never replaced.
-function syncBinLaunchers(root, prefix, binDir, launcherNode, recorded) {
+// this installer wrote it; a file someone else put there is replaced only under the installer's --force.
+function syncBinLaunchers(root, prefix, binDir, launcherNode, recorded, force = false) {
 	const bins = packageBins(prefix);
 	const written = [];
 	if (bins.size > 0) {
@@ -265,10 +283,14 @@ function syncBinLaunchers(root, prefix, binDir, launcherNode, recorded) {
 				/* Nothing there yet. */
 			}
 			if (present && !ownedLauncher(file, root)) {
-				process.stderr.write(
-					`[install] ${file} exists and this installer did not write it, so ${name} was not linked; move it aside and rerun the installer\n`,
-				);
-				continue;
+				const flag = process.platform === "win32" ? "-Force" : "--force";
+				if (!force || fs.lstatSync(file).isDirectory()) {
+					process.stderr.write(
+						`[install] ${file} exists and this installer did not write it, so ${name} was not linked; move it aside and rerun the installer${force ? "" : `, or rerun it with ${flag}`}\n`,
+					);
+					continue;
+				}
+				process.stderr.write(`[install] replacing ${file} (${flag})\n`);
 			}
 			const body =
 				process.platform === "win32"
@@ -280,7 +302,7 @@ function syncBinLaunchers(root, prefix, binDir, launcherNode, recorded) {
 		}
 	}
 	for (const file of Array.isArray(recorded) ? recorded : [])
-		if (typeof file === "string" && !written.includes(file) && ownedLauncher(file, root))
+		if (typeof file === "string" && !written.some((kept) => samePath(kept, file)) && ownedLauncher(file, root))
 			fs.rmSync(file, { force: true });
 	return written;
 }
@@ -756,6 +778,11 @@ function pruneQuietly(root, keep, options = {}) {
 
 async function main() {
 	const [action, root, ...args] = process.argv.slice(2);
+	if (action === "probe") {
+		// Whether the installers may reuse a kept version prefix: the --version check activation runs, on its own Node.
+		checkCandidate(nodeOf(root), root, false, false);
+		return;
+	}
 	if (action === "launch") {
 		let current = record(root);
 		if (!current) throw new Error(`No installer manifest in ${root}`);
@@ -952,7 +979,7 @@ async function main() {
 		return;
 	}
 	if (action !== "activate") throw new Error(`Unknown installer action ${action}`);
-	let [current, launcher, channel, pin, autoUpdate, postInstall, pinSource] = args;
+	let [current, launcher, channel, pin, autoUpdate, postInstall, pinSource, force] = args;
 	const node = nodeOf(current);
 	if (process.env.PANCODE_BACKGROUND_UPDATE === "1") {
 		if (
@@ -979,9 +1006,11 @@ async function main() {
 		);
 	}
 	check(node, current, postInstall === "1");
+	// Reinstalling the active bundle activates its own prefix again; the version before it stays the rollback target.
+	const previous = old?.current && !samePath(old.current, current) ? old.current : old?.previous || "";
 	// Activation has one commit point: launchers read this manifest on each invocation.
 	launcher = writeLauncher(root, node, launcher);
-	const binLaunchers = syncBinLaunchers(root, current, path.dirname(launcher), node, old?.binLaunchers);
+	const binLaunchers = syncBinLaunchers(root, current, path.dirname(launcher), node, old?.binLaunchers, force === "1");
 	const bundle = bundleInfo(current);
 	atomic(
 		path.join(root, "install.json"),
@@ -994,7 +1023,7 @@ async function main() {
 				nodeBuild: bundle.target,
 				current,
 				desktopManager: current,
-				previous: old?.current || "",
+				previous,
 				launcher,
 				binLaunchers,
 				channel,
@@ -1012,7 +1041,7 @@ async function main() {
 	);
 	pruneQuietly(root, []);
 	process.stdout.write(
-		`[install] background updates ${autoUpdate === "1" && (!pin || pin === "-") ? "enabled" : "disabled"}${pin && pin !== "-" ? `; pinned ${pin}` : ""}${old ? "; previous version retained for rollback and running sessions" : ""}\n`,
+		`[install] background updates ${autoUpdate === "1" && (!pin || pin === "-") ? "enabled" : "disabled"}${pin && pin !== "-" ? `; pinned ${pin}` : ""}${previous ? "; previous version retained for rollback and running sessions" : ""}\n`,
 	);
 }
 

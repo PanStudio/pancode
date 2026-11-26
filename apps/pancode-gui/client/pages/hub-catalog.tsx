@@ -11,6 +11,7 @@ import { Dialog } from "../interaction/Dialog.js";
 import { catalogKinds, desktopManaged, TERMINAL_NOTE, terminalSteps } from "./hub-extension-model.js";
 import {
 	type Applied,
+	builtInServerSentence,
 	componentSentence,
 	copyOperations,
 	copyState,
@@ -580,7 +581,15 @@ export function HubCatalog({
 						</div>
 						{(!compact || selected === pkg.ref) && (
 							<div className="hub-package__copies">
-								{!pkg.copies.length && <StatusMark tone="neutral" label="Not installed" />}
+								{!pkg.copies.length &&
+									(pkg.builtIn ? (
+										<>
+											<StatusMark tone="success" label="Built in" />
+											<p className="panel-note">{builtInServerSentence(pkg)}</p>
+										</>
+									) : (
+										<StatusMark tone="neutral" label="Not installed" />
+									))}
 								{pkg.copies.map((copy) => {
 									const state = copyState(String(copy.state));
 									const scope = copy.scope as Scope;
@@ -606,7 +615,7 @@ export function HubCatalog({
 										</div>
 									);
 								})}
-								{!desktopManaged(pkg) && (
+								{pkg.kind === "extension" && (
 									<details className="hub-terminal">
 										<summary>Manage extension in the terminal</summary>
 										<p className="panel-note">{TERMINAL_NOTE}</p>

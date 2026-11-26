@@ -218,6 +218,7 @@ export const approvalAnnouncement = (
 const AFFECTED_SCOPE_LABELS: Readonly<Record<string, string>> = {
 	conversation: "reaches this conversation only",
 	workspace: "reaches this workspace",
+	"outside-workspace": "reaches outside this workspace",
 	outward: "reaches outside this machine",
 	system: "reaches this machine",
 };
@@ -247,11 +248,11 @@ export function decisionChips(
 ): readonly string[] {
 	if (decision === undefined) return [];
 	const tier = decision.tierLabel.length > 0 ? decision.tierLabel : decisionTierLabel(decision.tier);
-	return [
-		tier,
-		actionClassWords(decision.actionClass, approvedWorkers(plan)),
-		labelled(AFFECTED_SCOPE_LABELS, decision.affectedScope),
-	];
+	const chips = [tier, actionClassWords(decision.actionClass, approvedWorkers(plan))];
+	// An unknown reach has no chip: naming the workspace would claim a reach the agent could not see.
+	return decision.affectedScope === "unknown"
+		? chips
+		: [...chips, labelled(AFFECTED_SCOPE_LABELS, decision.affectedScope)];
 }
 
 /** Why this call, of all calls, stopped for the operator; empty when the engine sent no rule. */

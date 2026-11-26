@@ -51,6 +51,7 @@ export const HubInventory = Type.Object(
 					catalogOrigin: Type.String(),
 					copies: Type.Array(record),
 					refusal: Type.Optional(Type.String()),
+					builtIn: Type.Optional(Type.Literal(true)),
 				},
 				closed,
 			),
