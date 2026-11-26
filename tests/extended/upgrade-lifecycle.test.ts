@@ -78,7 +78,13 @@ describe("contracts/upgrade-lifecycle", () => {
 				lookUpAvailableVersion: async () => ({ asked: true, version: null }),
 			});
 			ok(!/Already on /u.test(failed.stdout), `an unanswered lookup is not a current version:\n${failed.stdout}`);
-			match(failed.stdout, /Available version: unknown \(the registry could not be reached\)/u);
+			// The lookup names where it asked: the registry for a package-manager install, the channel file for a bundle.
+			match(failed.stdout, /Available version: unknown \(no version from \S+\/@akougkas%2fpancode\/latest\)/u);
+			const bundle = await upgrade(temp, ["--dry-run"], {
+				inspectInstallation: () => installation("installer"),
+				lookUpAvailableVersion: async () => ({ asked: true, version: null }),
+			});
+			match(bundle.stdout, /Available version: unknown \(no version from \S+\/channel\/latest\)/u);
 
 			// A lookup that was never owed is a different fact, and says so.
 			const skipped = await upgrade(temp, ["--dry-run"]);

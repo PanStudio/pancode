@@ -28,10 +28,12 @@ import {
 	installIdentity,
 	launcherWinsOnPath,
 } from "../domains/lifecycle/install-plan.js";
+import type { ReleaseSource } from "../domains/lifecycle/release-version.js";
 import {
 	compareReleaseVersions,
 	fetchReleaseVersion,
 	parseReleaseVersion,
+	releaseVersionUrl,
 } from "../domains/lifecycle/release-version.js";
 import { readStateInfo } from "../domains/lifecycle/state.js";
 import { updateFingerprint } from "../domains/lifecycle/update-check.js";
@@ -156,12 +158,14 @@ type RegistryLookup =
 	| { asked: false; reason: "source checkout" | "post-install checks" }
 	| { asked: true; version: string | null };
 
+/** An installer install follows the release's channel file; a package-manager install follows its registry. */
+function releaseSource(method: Installation["kind"]): ReleaseSource {
+	return method === "installer" ? "bundle" : "registry";
+}
+
 async function lookUpAvailableVersion(channel: Channel, method: Installation["kind"]): Promise<RegistryLookup> {
 	if (method === "source") return { asked: false, reason: "source checkout" };
-	return {
-		asked: true,
-		version: await fetchReleaseVersion(channel, undefined, method === "installer" ? "bundle" : "registry"),
-	};
+	return { asked: true, version: await fetchReleaseVersion(channel, undefined, releaseSource(method)) };
 }
 
 /**
@@ -762,7 +766,10 @@ export async function runUpgradeCommand(
 	if (pin !== null) presenter.step(`Pinned version: ${pin}`);
 	else if (availableVersion !== null) presenter.step(`Available version: ${availableVersion}`);
 	else if (!lookup.asked) presenter.step(`Available version: not checked (${lookup.reason})`);
-	else presenter.step("Available version: unknown (the registry could not be reached)");
+	else
+		presenter.step(
+			`Available version: unknown (no version from ${releaseVersionUrl(opts.channel, releaseSource(method))})`,
+		);
 	if ((method === "npm" || method === "installer") && !opts.postInstall && pin === null)
 		presenter.step(`Channel: ${opts.channel}`);
 	if (installation.installer) {

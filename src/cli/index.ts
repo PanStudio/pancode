@@ -101,7 +101,7 @@ Setup:
 Project and PanHub:
   pancode context <verb>       PANCODE.md, codemap, wiki and working set for this project
   pancode agents|tasks|verifiers|memory|claims|store  recipes, tasks, checks, memory, claims, store
-  pancode hub|extensions|mcp|share  packages, extension authoring, MCP servers, archives
+  pancode hub|extensions|mcp|share  packs, extension authoring, MCP servers, archives
   pancode tools|interop|panes  pinned programs, external coding agents, the pane host
   pancode arena|campaign|research|semantic  model trials, metric climbs, search
   pancode report|usage         reports to the maintainers, cross-session usage facts

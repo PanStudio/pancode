@@ -71,6 +71,13 @@ function channelBase(): string {
 	return mirror ? `${mirror}/channel` : "https://pancode.dev/channel";
 }
 
+/** The URL a channel's version is read from; a lookup that got no version names it. */
+export function releaseVersionUrl(channel: string, source: ReleaseSource): string {
+	return source === "bundle"
+		? `${channelBase()}/${channel}`
+		: `${registryBase()}/${PACKAGE_NAME.replace("/", "%2f")}/${channel}`;
+}
+
 export async function fetchTagVersion(
 	channel: string,
 	signal?: AbortSignal,
@@ -80,13 +87,10 @@ export async function fetchTagVersion(
 	try {
 		const timeout = AbortSignal.timeout(2500);
 		const bundle = source === "bundle";
-		const response = await fetch(
-			bundle ? `${channelBase()}/${channel}` : `${registryBase()}/${PACKAGE_NAME.replace("/", "%2f")}/${channel}`,
-			{
-				headers: { Accept: bundle ? "text/plain" : "application/json" },
-				signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-			},
-		);
+		const response = await fetch(releaseVersionUrl(channel, source), {
+			headers: { Accept: bundle ? "text/plain" : "application/json" },
+			signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+		});
 		if (!response.ok) return null;
 		const version = bundle
 			? (await response.text()).split("\n", 1)[0]?.trim()
