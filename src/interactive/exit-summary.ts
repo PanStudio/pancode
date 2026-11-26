@@ -485,7 +485,7 @@ export function renderExitSummary(
 					{
 						label: "checks",
 						lines: [clean(checks.facts)],
-						role: checks.failed ? ("error" as const) : checks.settled ? ("body" as const) : ("warning" as const),
+						role: checks.failed ? ("error" as const) : checks.settled ? ("success" as const) : ("warning" as const),
 					},
 				]
 			: []),
