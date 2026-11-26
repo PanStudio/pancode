@@ -11,6 +11,7 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
+import { isRecord } from "../../core/type-guards.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import {
 	installExtension,
@@ -640,6 +641,73 @@ export function resolveHubPackage(
 	if (parsePluginGithubSource(source))
 		throw new Error("remote plugin installation requires a catalog entry with version and full-tree sha256 pin");
 	throw new Error(`${source} is not a PanHub pack or a local pack directory; find the name with \`pancode hub search\``);
+}
+
+/** A server PanCode carries: its bundled row and the policy its pack holds. It has no installed copy. */
+export interface BuiltinHubServer {
+	ref: HubRequirementRef;
+	id: string;
+	version: string;
+	title: string;
+	tools: Array<{ name: string; actionClass: string }>;
+	environment: string[];
+	entry: HubEntry;
+}
+
+/** The server a row names when it is one PanCode carries, read from its bundled pack's `server.json`. */
+export function builtinHubServer(entry: HubEntry): BuiltinHubServer | undefined {
+	if (entry.kind !== "server" || !isBundledServerPack(entry.sourceUrl, entry.name)) return undefined;
+	let policy: unknown;
+	try {
+		policy = JSON.parse(readFileSync(path.join(entry.sourceUrl, "server.json"), "utf8"));
+	} catch {
+		return undefined;
+	}
+	if (
+		!isRecord(policy) ||
+		policy.id !== entry.name ||
+		typeof policy.version !== "string" ||
+		typeof policy.title !== "string" ||
+		!Array.isArray(policy.tools) ||
+		!Array.isArray(policy.environment)
+	)
+		return undefined;
+	return {
+		ref: hubEntryRef(entry),
+		id: entry.name,
+		version: policy.version,
+		title: policy.title,
+		tools: policy.tools
+			.filter(isRecord)
+			.map((tool) => ({ name: String(tool.name), actionClass: String(tool.actionClass) })),
+		environment: policy.environment.map(String),
+		entry,
+	};
+}
+
+/** Every server PanCode carries, in the bundled index's order. */
+function builtinHubServers(): BuiltinHubServer[] {
+	return bundledPluginCatalog([]).flatMap((entry) => builtinHubServer(entry) ?? []);
+}
+
+/**
+ * The built-in server a lifecycle reference names: `server:<id>`, a bare id no other pack shares, or the bundled
+ * pack directory itself. Anything else is left to the ordinary resolver.
+ */
+export function builtinHubServerFor(
+	source: string,
+	options: { cwd?: string; catalog?: string } = {},
+): BuiltinHubServer | undefined {
+	const local = pluginLocalPath(source, options.cwd);
+	if (existsSync(local)) {
+		const id = path.basename(local);
+		return isBundledServerPack(local, id) ? builtinHubServers().find((server) => server.id === id) : undefined;
+	}
+	const [kind, name] = source.includes(":") ? source.split(/:(.*)/su, 2) : [undefined, source];
+	if (kind !== undefined && kind !== "server") return undefined;
+	const server = builtinHubServers().find((item) => item.id === name);
+	if (!server || kind !== undefined) return server;
+	return discoverHub(options).entries.filter((item) => item.name === name).length === 1 ? server : undefined;
 }
 
 export function planHubUpdate(

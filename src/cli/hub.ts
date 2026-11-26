@@ -17,6 +17,9 @@ import {
 	reloadPluginResources,
 } from "../domains/plugins/index.js";
 import {
+	type BuiltinHubServer,
+	builtinHubServer,
+	builtinHubServerFor,
 	confirmHubRemote,
 	type HubEntry,
 	hubEntryDrift,
@@ -33,6 +36,7 @@ import {
 } from "../domains/resources/hub.js";
 import {
 	applyHubLifecycle,
+	builtinServerAnswer,
 	type HubApplyResult,
 	type HubLifecyclePlan,
 	type HubOperation,
@@ -86,7 +90,7 @@ import { terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 
 const HELP = `pancode hub <command>
 
-PanHub, one collection of packs: plugin, extension, skill, agent, prompt, playbook.
+PanHub, one collection of packs: plugin, extension, skill, agent, prompt, playbook, server.
 Common: pancode hub list, pancode hub search <query>, pancode hub install <name>.
 
 Commands:
@@ -105,6 +109,9 @@ Search: list and search are pack-oriented; --kind and a query also match what
   pancode-test) unless installed; --all lists them.
 Updates: a copy behind its catalog row says so; update --all brings every such
   copy forward except extensions, which are reviewed one at a time.
+Servers: the PanKit servers PanCode carries are built in and have no copy.
+  inspect shows their tools; install and update say so and write nothing;
+  enable, disable and remove refuse.
 Import: reads a portable, Claude Code or Codex plugin, or a bare skill directory,
   from a path or GitHub tree URL into a foreign-trust pack; it never activates
   hooks, MCP, LSP or scripts.
@@ -190,7 +197,8 @@ function parse(args: ReadonlyArray<string>): Parsed {
 		else if (arg === "--with-requirements") out.withRequirements = true;
 		else if (arg === "--kind") {
 			const value = args[++i];
-			if (!isHubKind(value)) throw new Error("--kind requires plugin, extension, skill, agent, prompt, or playbook");
+			if (!isHubKind(value))
+				throw new Error("--kind requires plugin, extension, skill, agent, prompt, playbook, or server");
 			out.kind = value;
 		} else if (arg === "--source") {
 			const value = args[++i];
@@ -466,6 +474,26 @@ function catalogInspectView(
 	};
 }
 
+/** A server PanCode carries: its row, its tools with their classes and the environment names it passes through. */
+function builtinInspectView(server: BuiltinHubServer): InspectView {
+	const entry = server.entry;
+	return {
+		ref: server.ref,
+		version: entry.version ?? server.version,
+		description: entry.description || server.title,
+		facts: [
+			["state", "built in; pancode mcp list shows it"],
+			["origin", "bundled"],
+			["trust", trustLabel({ ...entry, publisher: hubEntryPublisher(entry) })],
+			["environment", server.environment.join(", ") || "none"],
+			["sha256", entry.sha256],
+		],
+		membersHeading: "tools",
+		members: server.tools.map((tool) => ({ kind: "tool", name: tool.name, note: tool.actionClass })),
+		diagnostics: [],
+	};
+}
+
 interface HubCommandOptions {
 	cwd: string;
 	scope?: PluginScope;
@@ -601,6 +629,8 @@ export async function runHubCommand(
 	}
 	if (args[0] === "inventory" && helpRequested(args.slice(1)))
 		return (await import("./skills-inventory.js")).runSkillsInventory(args.slice(1));
+	const builtin = builtinLifecycleAnswer(args, discoveryOptions);
+	if (builtin !== undefined) return builtin;
 	const journal = createProcessJournal(pancodeStateDir(), () =>
 		writeDiagnostic("[pancode:telemetry] process journal unavailable; coverage is incomplete\n"),
 	);
@@ -612,6 +642,42 @@ export async function runHubCommand(
 		if (!(await journal.close(exitCode)) && exitCode === 0) exitCode = 1;
 	}
 	return exitCode;
+}
+
+/**
+ * A lifecycle command on a server PanCode carries is answered from the bundled index alone, before the process
+ * journal opens, so it leaves the PanCode home as it was. Anything else, including an unparsable line, goes on to
+ * the ordinary path.
+ */
+function builtinLifecycleAnswer(
+	args: ReadonlyArray<string>,
+	discoveryOptions: { catalog?: string },
+): number | undefined {
+	let parsed: Parsed;
+	let server: BuiltinHubServer | undefined;
+	try {
+		parsed = parse(args);
+		if (
+			parsed.help ||
+			parsed.all ||
+			parsed.positional.length !== 1 ||
+			!LIFECYCLE.includes(parsed.command as HubOperation)
+		)
+			return undefined;
+		const catalog = parsed.from ?? discoveryOptions.catalog;
+		server = builtinHubServerFor(parsed.positional[0] as string, { cwd: process.cwd(), ...(catalog ? { catalog } : {}) });
+	} catch {
+		return undefined;
+	}
+	if (!server) return undefined;
+	const answer = builtinServerAnswer(parsed.command as HubOperation, server);
+	if (parsed.json)
+		process.stdout.write(
+			`${JSON.stringify({ ok: answer.ok, ref: server.ref, builtIn: true, message: answer.message }, null, 2)}\n`,
+		);
+	else if (answer.ok) process.stdout.write(`${answer.message}\n`);
+	else printError(answer.message);
+	return answer.ok ? 0 : 1;
 }
 
 async function executeHubCommand(
@@ -770,6 +836,7 @@ async function executeHubCommand(
 								...(record.format ? { format: record.format } : {}),
 								...(record.provides ? { provides: record.provides } : {}),
 								publisher: hubEntryPublisher(entry),
+								...(builtinHubServer(entry) ? { builtIn: true } : {}),
 							},
 						]
 					: [];
@@ -809,7 +876,7 @@ async function executeHubCommand(
 								];
 								return `${item.scope}:${item.state}${notes.length ? ` (${notes.join("; ")})` : ""}`;
 							})
-							.join(", ") || "available";
+							.join(", ") || ("builtIn" in entry ? "built in" : "available");
 					rows.push({
 						cells: [hubEntryRef(entry), entry.version ?? "-", states, originLabel(entry.provenance), trustLabel(entry)],
 						description: entry.description,
@@ -1004,6 +1071,20 @@ async function executeHubCommand(
 				return installed.valid ? 0 : 1;
 			}
 			const entry = resolveHubPackage(ref, options);
+			const server = builtinHubServer(entry);
+			if (server) {
+				if (parsed.json)
+					emit({
+						...entry,
+						publisher: hubEntryPublisher(entry),
+						builtIn: true,
+						title: server.title,
+						tools: server.tools,
+						environment: server.environment,
+					});
+				else printInspection(builtinInspectView(server));
+				return 0;
+			}
 			const record = readHubInventory({
 				cwd: options.cwd,
 				...(options.catalog ? { catalog: options.catalog } : {}),
