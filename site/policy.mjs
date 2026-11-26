@@ -61,6 +61,7 @@ export async function checkPolicy() {
 		"tutorial.html",
 		"hub.html",
 		"404.html",
+		"privacy.html",
 		...articleFiles,
 		...(await readdir(join(root, "content/drafts")))
 			.filter((name) => name.endsWith(".md"))
@@ -139,7 +140,24 @@ export async function checkPolicy() {
 			errors.push(`${file}: there is no panstore command; PanStore's command is pancode store`);
 	}
 
+	// One sanctioned remote script: Google's tag loader, fetched by js/analytics.js
+	// when product.json names a GA4 id. Templates load scripts from the site only.
+	for (const file of templates) {
+		const text = await readFile(join(root, file), "utf8");
+		if (/<script\b[^>]*\ssrc=["']?(?:[a-z]+:)?\/\//i.test(text))
+			errors.push(`${file}: scripts must load from this site; analytics.js loads the one remote tag`);
+	}
+	for (const file of (await readdir(join(root, "js"))).filter((name) => name.endsWith(".js"))) {
+		const text = await readFile(join(root, "js", file), "utf8");
+		for (const [url] of text.matchAll(/\b(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/gi))
+			if (file !== "analytics.js" || url !== "https://www.googletagmanager.com")
+				errors.push(
+					`js/${file}: remote origin ${url} is not sanctioned; only analytics.js may load www.googletagmanager.com`,
+				);
+	}
 	const product = JSON.parse(await readFile(join(root, "product.json"), "utf8"));
+	if (!/^(?:G-[A-Z0-9]+)?$/.test(product.analytics?.ga4 ?? ""))
+		errors.push("product.json analytics.ga4 must be empty or a GA4 measurement id (G-...)");
 	if (!product.hub?.title || product.hub.title.length > 65)
 		errors.push("product.json hub: title missing or over 65 characters");
 	if (!product.hub?.description || product.hub.description.length < 70 || product.hub.description.length > 160)
@@ -170,6 +188,8 @@ export async function checkPolicy() {
 		}
 	}
 	if (errors.length) throw new Error(`Site policy failed:\n${errors.join("\n")}`);
-	console.log("Site policy passed: sanctioned tokens, public copy, attribution, navigation, and content boundaries.");
+	console.log(
+		"Site policy passed: sanctioned tokens, public copy, attribution, navigation, script origins, and content boundaries.",
+	);
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) await checkPolicy();

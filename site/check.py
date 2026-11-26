@@ -184,9 +184,24 @@ if origin + '/research.html' not in urls:
 if origin + '/404.html' in urls:
     errors.append('404 must not be listed in sitemap')
 # The page policy as published before recordings, byte for byte; only the theme script's hash varies.
-BASE_POLICY = ("default-src 'self'; script-src 'self' {theme} https://static.cloudflareinsights.com; style-src 'self'; "
-               "img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; "
+# With a GA4 id, Google's tag loader is the one remote script origin and google-analytics.com
+# takes collection; without one the policy names no remote script or connection at all.
+analytics_id = (product.get('analytics') or {}).get('ga4') or ''
+if not re.fullmatch(r'(?:G-[A-Z0-9]+)?', analytics_id):
+    errors.append('product.json analytics.ga4 must be empty or a GA4 measurement id')
+ANALYTICS_POLICY = {
+    'script': ' https://www.googletagmanager.com',
+    'img': ' https://*.google-analytics.com https://*.googletagmanager.com',
+    'connect': ' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com',
+} if analytics_id else {'script': '', 'img': '', 'connect': ''}
+BASE_POLICY = ("default-src 'self'; script-src 'self' {theme}" + ANALYTICS_POLICY['script'] + "; style-src 'self'; "
+               "img-src 'self' data:" + ANALYTICS_POLICY['img'] + "; font-src 'self'; connect-src 'self'" + ANALYTICS_POLICY['connect'] + "; "
                "frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'")
+if analytics_id:
+    if not (root / 'js/analytics.js').is_file():
+        errors.append('analytics is on but js/analytics.js is missing from the output')
+elif (root / 'js/analytics.js').exists():
+    errors.append('js/analytics.js is published without a GA4 id')
 theme_parser = ScriptParser()
 theme_parser.feed((root / 'index.html').read_text())
 theme_parser.close()
@@ -227,6 +242,18 @@ for url in [*urls, origin + '/404.html']:
         cast_pages.append((path, source))
     elif '/js/cast.js' in source or 'asciinema-player' in source:
         errors.append(f'{path}: a page without a recording loads the player')
+    # The tag rides on every page exactly when product.json names an id; only
+    # analytics.js reaches for Google's loader, and pages load scripts from this origin only.
+    if analytics_id:
+        if not re.search(r'<script src="/js/analytics\.js\?v=\w+" data-ga4="' + re.escape(analytics_id) + r'" defer></script>', source):
+            errors.append(f'{path}: analytics is on but the page does not load the GA4 tag')
+        if source.count('data-consent ') != 1:
+            errors.append(f'{path}: analytics is on but the page has no consent banner')
+    elif 'analytics.js' in source or 'data-consent ' in source:
+        errors.append(f'{path}: the GA4 tag or consent banner is present without an id')
+    for src in re.findall(r'<script\b[^>]*\ssrc="([^"]+)"', source):
+        if not src.startswith('/') or src.startswith('//'):
+            errors.append(f'{path}: script {src} is not served from this site')
     for script in page.inline_scripts:
         digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
         if not policy or f"'sha256-{digest}'" not in policy.group(1) or 'unsafe-inline' in policy.group(1):
