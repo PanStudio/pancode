@@ -2,6 +2,13 @@
 /* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
 @layer reset, base, shell, components, docs, motion, responsive;
 
+/* A registered length resolves ch once where it is set, so larger headings share the body column. */
+@property --measure-body {
+	syntax: "<length>";
+	inherits: true;
+	initial-value: 0px;
+}
+
 @layer reset {
 	*,
 	*::before,
@@ -1597,6 +1604,10 @@
 			min-block-size: 2.75rem;
 		}
 	}
+	/* Over an unlabelled block the button sits on the code, so a long line passes beneath it, not through it. */
+	:where(.code-block > pre:first-child) ~ .code-copy {
+		background: var(--code);
+	}
 	.copy[data-copy-state="success"] {
 		color: var(--code-accent);
 		border-color: var(--code-accent);
@@ -2120,7 +2131,10 @@
 		.guide-next,
 		details
 	) {
-		max-inline-size: var(--measure);
+		max-inline-size: var(--measure-body);
+	}
+	.doc {
+		--measure-body: var(--measure);
 	}
 	.guide-body > h2 {
 		padding-block-start: var(--space-5);
