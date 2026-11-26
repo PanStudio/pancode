@@ -71,7 +71,7 @@ pancode hub install plugin:hpc --project
 pack                            version  state      origin   publisher
 extension:local-status          0.1.1    available  bundled  pancode core LicenseRef-PanCode-1.0
   A small local status command and ambient status example.
-extension:wtfp                  0.9.0    available  bundled  akougkas verified MIT
+extension:wtfp                  0.9.0    available  bundled  panstudio verified MIT
   The WTF-P writing desk for PanCode; paper state, gates and the write guard run in code.
 ```
 
@@ -296,7 +296,7 @@ The builtin servers ship inside PanCode as PanKit and appear in PanHub as the se
 
 A community pack lives in its owner's public repository and enters PanHub as one row file, `hub/community/<publisher>/<name>.yaml`, naming the repository, one exact commit, the subdirectory, the tree digest, the licence and a tier. `pnpm hub:pin` fetches that commit, refuses a tree whose digest differs, and writes the index row. A pull request from a fork may change one row file and nothing else, and the hub review job fetches the commit as data, validates it, recomputes its digests, and checks the licence and every `uvx` or `npx` launch pin. Submissions start at `listed`; a maintainer moves a row to `verified` against the checklist in `hub/community/README.md`. `hub/TERMS.md` states what a listing promises, takedown and revocation.
 
-The bundled index holds five community rows, all published by `akougkas` at tier `verified` under MIT:
+The bundled index holds five community rows, all published by `panstudio` at tier `verified` under MIT:
 
 | Pack | Provides | Source (`github.com/akougkas/...` at commit, subdirectory) |
 | --- | --- | --- |

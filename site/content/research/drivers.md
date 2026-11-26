@@ -92,4 +92,4 @@ The main mechanism needs a switch first. Until the pinned prefix can be turned o
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.

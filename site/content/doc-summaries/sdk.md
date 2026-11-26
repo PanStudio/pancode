@@ -1,6 +1,6 @@
 ## What the extension API holds
 
-The extension API is how you write PanCode extensions, packs, tools and MCP servers. It is unstable: its imports, types and limits can change in any release, so pin the PanCode version an extension is tested against. It ships inside the `@akougkas/pancode` npm package, licensed Apache-2.0, as five imports:
+The extension API is how you write PanCode extensions, packs, tools and MCP servers. It is unstable: its imports, types and limits can change in any release, so pin the PanCode version an extension is tested against. It ships inside the `@panstudio/pancode` npm package, licensed Apache-2.0, as five imports:
 
 | Import | Holds |
 | --- | --- |
@@ -26,7 +26,7 @@ pancode extensions test .pancode/dev/extensions/lab-hello
 
 ## Write a tool server
 
-Any other Node project adds the package as a dependency with `npm install --save-dev pancode@npm:@akougkas/pancode` (Node 22.19 or later) and imports the subpaths:
+Any other Node project adds the package as a dependency with `npm install --save-dev pancode@npm:@panstudio/pancode` (Node 22.19 or later) and imports the subpaths:
 
 ```js
 import { serveStdio } from "pancode/sdk/mcp-server";

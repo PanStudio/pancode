@@ -5,7 +5,7 @@
 	"description": "PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It installs on HPC login nodes without root and ships checks for numerical work.",
 	"version": "0.9.1",
 	"origin": "https://pancode.dev",
-	"repository": "https://github.com/akougkas/pancode",
+	"repository": "https://github.com/PanStudio/pancode",
 	"publishedVersion": "0.9.1",
 	"hub": {
 		"title": "PanHub: packs for PanCode",
