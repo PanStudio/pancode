@@ -25,15 +25,29 @@ export async function tokenCSS() {
 		Object.entries(entries)
 			.map(([key, value]) => `\t--${prefix}${key}: ${value};`)
 			.join("\n");
+	const codeRoles = (name) => {
+		const { syntax, "accent-soft": accentSoft, ...roles } = code[name];
+		return [
+			`\t--code: ${sanctioned(roles.surface)};`,
+			`\t--code-sunk: ${sanctioned(roles.sunk)};`,
+			`\t--code-border: ${sanctioned(roles.border)};`,
+			`\t--code-control: ${sanctioned(roles.control)};`,
+			`\t--code-accent: ${sanctioned(roles.accent)};`,
+			`\t--code-accent-soft: ${sanctioned(accentSoft)};`,
+			`\t--code-ink: ${sanctioned(roles.text)};`,
+			`\t--code-muted: ${sanctioned(roles.muted)};`,
+			...Object.entries(syntax).map(([key, color]) => `\t--syntax-${key}: ${sanctioned(color)};`),
+		].join("\n");
+	};
 	const theme = (name) =>
 		[
 			`\tcolor-scheme: ${name};`,
 			...Object.entries(themes[name]).map(([key, color]) => `\t--${key}: ${sanctioned(color)};`),
+			codeRoles(name),
 			lines(elevation[name], "elevation-"),
 			lines(glow[name], "glow-"),
 		].join("\n");
 	const family = (role) => `"${type.families[role].family}", ${type.families[role].fallback}`;
-	const { syntax, note: _note, ...codeRoles } = code;
 	return `/* Generated from design-system.json by tokens.mjs. Edit the source, then regenerate. */
 ${type.faces
 	.map(
@@ -61,17 +75,6 @@ ${lines(space, "space-")}
 	--radius-lg: ${radius.lg};
 	--radius-pill: ${radius.pill};
 ${lines(motion, "motion-")}
-	--code: ${sanctioned(codeRoles.surface)};
-	--code-sunk: ${sanctioned(codeRoles.sunk)};
-	--code-border: ${sanctioned(codeRoles.border)};
-	--code-control: ${sanctioned(codeRoles.control)};
-	--code-accent: ${sanctioned(codeRoles.accent)};
-	--code-accent-soft: ${sanctioned(codeRoles["accent-soft"])};
-	--code-ink: ${sanctioned(codeRoles.text)};
-	--code-muted: ${sanctioned(codeRoles.muted)};
-${Object.entries(syntax)
-	.map(([key, color]) => `\t--syntax-${key}: ${sanctioned(color)};`)
-	.join("\n")}
 	--selection-bg: var(--selection);
 	--selection-ink: var(--on-selection);
 	--menu-shadow: var(--elevation-2);

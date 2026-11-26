@@ -38,7 +38,7 @@ A wrong numerical result can look fine and travel into a paper. If agents are go
 
 **Test the oracle.** Inject known errors into a scientific kernel and find out how often a pre-registered check catches them, and how often an agent talks its way around one.
 
-**Run a real modernization.** Take a small code with reference output through `scientific-modernization`, and report stages, costs, failures, and what the maintainer thought of the result.
+**Run a real modernization.** Take a small code with reference output through `scientific-modernization`, and report stages, costs, failures, and what the code's maintainers thought of the result.
 
 **Measure scheduler behavior.** Using a small allocation, record what an agent submits, how often it resubmits, and how much of the allocation produces useful output.
 

@@ -4,16 +4,17 @@
 	"defaultTheme": "dark",
 	"palette": {
 		"black": "#000000",
-		"void1": "#0b0b0a",
-		"void2": "#131312",
-		"void3": "#1c1c1a",
-		"void4": "#292926",
-		"void5": "#403f3b",
-		"void6": "#6a6862",
-		"ink1": "#f1eee6",
-		"ink2": "#d6d2c7",
-		"ink3": "#a6a297",
-		"ink4": "#837f76",
+		"graphite1": "#0e1113",
+		"graphite2": "#151a1d",
+		"graphite3": "#1b2124",
+		"graphite4": "#21282c",
+		"graphite5": "#2a3236",
+		"graphite6": "#40494e",
+		"graphite7": "#6a757a",
+		"ink1": "#ebeff2",
+		"ink2": "#cbd2d6",
+		"ink3": "#a0a9ae",
+		"ink4": "#838c91",
 		"green50": "#dcfaee",
 		"green100": "#a6f5d9",
 		"green200": "#61f0c6",
@@ -56,28 +57,29 @@
 		"teal700": "#0b7f9c",
 		"orange400": "#ffa24d",
 		"orange700": "#a8500a",
-		"white": "#ffffff",
-		"mist1": "#f5f3ee",
-		"mist2": "#ebe8e1",
-		"mist3": "#dcd8cf",
-		"mist4": "#bdb9ae",
-		"mist5": "#77746b",
-		"pine1": "#0f0e0c",
-		"pine2": "#2d2c28",
-		"pine3": "#53514b"
+		"cream1": "#fbf8f1",
+		"cream2": "#f6f1e6",
+		"cream3": "#eee8da",
+		"cream4": "#dfd9cb",
+		"cream5": "#c3bdb0",
+		"cream6": "#858074",
+		"slate1": "#151c1f",
+		"slate2": "#363f43",
+		"slate3": "#535c62",
+		"slate4": "#727c82"
 	},
 	"ramps": {
-		"void": {
-			"hue": "OKLCH hue 95, chroma at most 0.006",
-			"use": "Dark surfaces above the true-black ground. void1 raised, void2 sunk and hover, void3 overlay, void4 hairline, void5 strong line, void6 control border (3:1 on black through void3)."
+		"graphite": {
+			"hue": "OKLCH hue 227 to 237, chroma at most 0.016",
+			"use": "Dark surfaces, a cool graphite with a faint teal-blue undertone under the brand teal. graphite1 page, graphite2 raised, graphite3 sunk and hover, graphite4 overlay, graphite5 hairline, graphite6 strong line, graphite7 control border (3:1 on graphite1 through graphite4)."
 		},
 		"ink": {
-			"hue": "OKLCH hue 90, chroma at most 0.015",
-			"use": "Text on dark. ink1 primary, ink2 soft, ink3 muted (the smallest text colour allowed on void3), ink4 faint: decoration and disabled labels on black and void1 only."
+			"hue": "OKLCH hue 230, chroma at most 0.013",
+			"use": "Text on dark, a cool near-white and cool greys. ink1 primary, ink2 soft, ink3 muted, ink4 faint: decoration, disabled labels and code comments (4.5:1 on graphite1 through graphite3)."
 		},
 		"green": {
 			"hue": "OKLCH hue 170",
-			"use": "Brand, a teal-green, and the colour of Pan in the wordmark, the mark and the terminal rails. green400 is the focal green on black. green300 hover, green500 pressed, green700 text and links on light, green950 and green50 washes. Never a state colour."
+			"use": "Brand, a teal-green, and the colour of Pan in the wordmark, the mark and the terminal rails. green400 is the focal green on graphite. green300 hover, green500 pressed, green700 text and links on light, green950 and green50 washes. Never a state colour."
 		},
 		"azure": {
 			"hue": "OKLCH hue 249",
@@ -89,35 +91,36 @@
 		"mark": {
 			"use": "teal and orange exist for the mark and for art built from it, never for interface roles. teal400 is the midpoint of green400 and azure400; orange400 with amber300 is the warm point of the mark. The 700 steps are their light-ground forms."
 		},
-		"mist": {
-			"hue": "OKLCH hue 90, chroma at most 0.012",
-			"use": "Light surfaces. mist1 page, white raised, mist2 sunk, mist3 hairline, mist4 strong line, mist5 control border."
+		"cream": {
+			"hue": "OKLCH hue 86 to 88, chroma at most 0.02",
+			"use": "Light surfaces, a warm cream. cream1 raised and overlay, cream2 page, cream3 sunk and hover, cream4 hairline, cream5 strong line, cream6 control border (3:1 on cream1 through cream3)."
 		},
-		"pine": {
-			"use": "Text on light. pine1 primary, pine2 soft, pine3 muted."
+		"slate": {
+			"hue": "OKLCH hue 226 to 237, chroma at most 0.015",
+			"use": "Text on light, a dark graphite. slate1 primary, slate2 soft, slate3 muted, slate4 faint: decoration and disabled labels."
 		}
 	},
 	"themes": {
 		"dark": {
-			"paper": "black",
-			"paper-raised": "void1",
-			"paper-sunk": "void2",
-			"paper-overlay": "void3",
+			"paper": "graphite1",
+			"paper-raised": "graphite2",
+			"paper-sunk": "graphite3",
+			"paper-overlay": "graphite4",
 			"ink": "ink1",
 			"ink-soft": "ink2",
 			"muted": "ink3",
 			"faint": "ink4",
-			"line": "void4",
-			"line-strong": "void5",
-			"line-control": "void6",
+			"line": "graphite5",
+			"line-strong": "graphite6",
+			"line-control": "graphite7",
 			"accent": "green400",
 			"accent-hover": "green300",
 			"accent-pressed": "green500",
 			"accent-soft": "green950",
-			"on-accent": "black",
+			"on-accent": "graphite1",
 			"fill": "green400",
 			"fill-hover": "green300",
-			"on-fill": "black",
+			"on-fill": "graphite1",
 			"secondary": "azure400",
 			"secondary-soft": "azure950",
 			"success": "leaf300",
@@ -130,7 +133,7 @@
 			"info-soft": "azure950",
 			"focus": "green400",
 			"selection": "green400",
-			"on-selection": "black",
+			"on-selection": "graphite1",
 			"viz-1": "green400",
 			"viz-2": "azure400",
 			"viz-3": "amber300",
@@ -141,26 +144,26 @@
 			"viz-8": "ink3"
 		},
 		"light": {
-			"paper": "mist1",
-			"paper-raised": "white",
-			"paper-sunk": "mist2",
-			"paper-overlay": "white",
-			"ink": "pine1",
-			"ink-soft": "pine2",
-			"muted": "pine3",
-			"faint": "mist5",
-			"line": "mist3",
-			"line-strong": "mist4",
-			"line-control": "mist5",
+			"paper": "cream2",
+			"paper-raised": "cream1",
+			"paper-sunk": "cream3",
+			"paper-overlay": "cream1",
+			"ink": "slate1",
+			"ink-soft": "slate2",
+			"muted": "slate3",
+			"faint": "slate4",
+			"line": "cream4",
+			"line-strong": "cream5",
+			"line-control": "cream6",
 			"accent": "green700",
 			"accent-hover": "green800",
 			"accent-pressed": "green900",
 			"accent-soft": "green50",
-			"on-accent": "white",
-			"fill": "black",
-			"fill-hover": "pine2",
-			"on-fill": "green400",
-			"secondary": "azure600",
+			"on-accent": "cream1",
+			"fill": "green700",
+			"fill-hover": "green800",
+			"on-fill": "cream1",
+			"secondary": "azure700",
 			"secondary-soft": "azure50",
 			"success": "leaf700",
 			"success-soft": "leaf50",
@@ -171,40 +174,65 @@
 			"info": "azure700",
 			"info-soft": "azure50",
 			"focus": "green700",
-			"selection": "black",
-			"on-selection": "green400",
+			"selection": "green700",
+			"on-selection": "cream1",
 			"viz-1": "green700",
 			"viz-2": "azure600",
 			"viz-3": "amber700",
 			"viz-4": "violet700",
 			"viz-5": "red700",
 			"viz-6": "leaf700",
-			"viz-7": "pine1",
-			"viz-8": "pine3"
+			"viz-7": "slate1",
+			"viz-8": "slate3"
 		}
 	},
 	"code": {
-		"note": "Code, terminal and capture surfaces stay dark in both themes: black slabs on light paper keep the identity.",
-		"surface": "void1",
-		"sunk": "void2",
-		"border": "void4",
-		"control": "void6",
-		"accent": "green400",
-		"accent-soft": "green950",
-		"text": "ink1",
-		"muted": "ink3",
-		"syntax": {
-			"comment": "ink4",
-			"keyword": "azure300",
-			"string": "amber300",
-			"number": "violet300",
-			"function": "green300",
-			"type": "leaf300",
-			"property": "ink2",
-			"operator": "ink3",
-			"prompt": "green400",
-			"added": "leaf300",
-			"removed": "red300"
+		"note": "Code blocks and terminal frames take the theme: graphite slabs on dark, cream wells with dark graphite ink on light. Product captures and recordings keep the ground they were recorded on.",
+		"dark": {
+			"surface": "graphite2",
+			"sunk": "graphite3",
+			"border": "graphite5",
+			"control": "graphite7",
+			"accent": "green400",
+			"accent-soft": "green950",
+			"text": "ink1",
+			"muted": "ink3",
+			"syntax": {
+				"comment": "ink4",
+				"keyword": "azure300",
+				"string": "amber300",
+				"number": "violet300",
+				"function": "green300",
+				"type": "leaf300",
+				"property": "ink2",
+				"operator": "ink3",
+				"prompt": "green400",
+				"added": "leaf300",
+				"removed": "red300"
+			}
+		},
+		"light": {
+			"surface": "cream1",
+			"sunk": "cream3",
+			"border": "cream4",
+			"control": "cream6",
+			"accent": "green700",
+			"accent-soft": "green50",
+			"text": "slate1",
+			"muted": "slate3",
+			"syntax": {
+				"comment": "slate3",
+				"keyword": "azure700",
+				"string": "amber700",
+				"number": "violet700",
+				"function": "green700",
+				"type": "leaf700",
+				"property": "slate2",
+				"operator": "slate3",
+				"prompt": "green700",
+				"added": "leaf700",
+				"removed": "red700"
+			}
 		}
 	},
 	"terminal": {
@@ -337,7 +365,7 @@
 		"use": "Hairlines separate, control borders mark things that take input, emphasis marks the one selected or primary thing. The focus ring is always offset so the ground shows between the control and the ring."
 	},
 	"elevation": {
-		"note": "Shadows do not read on true black. On dark, height is a lighter surface step plus a hairline; a shadow appears only on overlays, where it darkens content underneath. On light, height is white on mist plus a soft shadow.",
+		"note": "On dark, height is a lighter graphite step plus a hairline; a shadow appears only on overlays, where it darkens content underneath. On light, height is the lighter cream1 on the cream2 page plus a soft shadow.",
 		"dark": {
 			"0": "none",
 			"1": "none",
@@ -346,9 +374,9 @@
 		},
 		"light": {
 			"0": "none",
-			"1": "0 1px 2px color-mix(in srgb, var(--pancode-pine1) 6%, transparent)",
-			"2": "0 12px 32px color-mix(in srgb, var(--pancode-pine1) 12%, transparent)",
-			"3": "0 28px 72px color-mix(in srgb, var(--pancode-pine1) 18%, transparent)"
+			"1": "0 1px 2px color-mix(in srgb, var(--pancode-slate1) 6%, transparent)",
+			"2": "0 12px 32px color-mix(in srgb, var(--pancode-slate1) 12%, transparent)",
+			"3": "0 28px 72px color-mix(in srgb, var(--pancode-slate1) 18%, transparent)"
 		},
 		"surfaces": {
 			"0": "paper",

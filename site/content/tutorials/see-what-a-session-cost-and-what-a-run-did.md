@@ -1,4 +1,4 @@
-PanCode records what each process, session, and worker run did in local journals, and every usage figure in every interface comes from those journals. This guide shows how to read a session's cost, find out why it stopped, check a run's record, and prepare an archive for a maintainer.
+PanCode records what each process, session, and worker run did in local journals, and every usage figure in every interface comes from those journals. This guide shows how to read a session's cost, find out why it stopped, check a run's record, and prepare an archive for the maintainers.
 
 ::: note Version scope
 Costs are shown with their provenance: a measured figure, an estimate, and an unknown value stay separate. An unknown stays unknown rather than becoming zero.
