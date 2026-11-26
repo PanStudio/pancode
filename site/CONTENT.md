@@ -141,6 +141,12 @@ Related list built from these entries, so a guide links to its worked
 examples. Name a guide only when the article uses that feature; the build fails
 on a path that is not published.
 
+Tutorials sit in eight categories, in the order `build.mjs` lists them: Getting
+started, Models and agents, Checks and records, Safety and autonomy, Workers and
+fleets, Context and memory, Scientific software, Extend and share. A tutorial
+that exercises one subsystem ends its `next` list with that subsystem's research
+page, and each subsystem page names its worked example.
+
 Markdown stays the source. A line `::: name arguments` opens a guide block and
 `:::` closes it; the body is Markdown.
 

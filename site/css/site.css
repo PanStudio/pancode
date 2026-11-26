@@ -927,10 +927,6 @@
 	.learning-path > p:not(.eyebrow) {
 		color: var(--muted);
 		font: var(--type-small);
-		display: -webkit-box;
-		-webkit-line-clamp: 3;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
 	}
 	@media (max-width: 1023px) {
 		.learning-paths {

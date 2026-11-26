@@ -118,4 +118,5 @@ The real frame carries more fields, such as usage, timings, and tool counts. `pa
 - [Let PanCode work without watching every call](/tutorials/let-it-work-with-containment-and-rewind.html)
 - [Report a problem without leaking your machine](/tutorials/report-a-problem-without-leaking-your-machine.html)
 - [Commands and shortcuts](/docs/guide/commands-and-modes.html)
+- [How protection works](/research/protection.html)
 :::

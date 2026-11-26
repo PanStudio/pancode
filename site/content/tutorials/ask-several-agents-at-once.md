@@ -110,4 +110,5 @@ The answers stay out of your main conversation. `/fleet share <runId>` brings on
 - [Workers and fleets](/docs/guide/fleet-dispatch.html)
 - [Commands and shortcuts](/docs/guide/commands-and-modes.html)
 - [Coordinate the coding agents you already use](/tutorials/coordinate-your-coding-agents.html)
+- [How scheduling works](/research/scheduling.html)
 :::

@@ -172,4 +172,5 @@ PanCode does not submit jobs for its own workers. The agent submits scheduler wo
 - [Fleet guide](/docs/guide/fleet-dispatch.html)
 - [Install on a cluster](/docs/guide/hpc-clusters.html)
 - [Install PanCode](/#start)
+- [How scheduling works](/research/scheduling.html)
 :::

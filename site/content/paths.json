@@ -4,7 +4,7 @@
       "id": "path-agents",
       "label": "Coding agents",
       "title": "You already use a coding agent",
-      "summary": "Run a first session in your own repository, see what PanCode may do without asking and how to undo it, check a change against the tests you name, hand bounded work to the agents you already use, then leave a run unattended within limits.",
+      "summary": "Keep your agent and put the harness around it. By the end you can check a change against the tests you name, hand bounded work to the agents you already use, and leave a run unattended within limits.",
       "steps": [
         "first-session",
         "let-it-work-with-containment-and-rewind",
@@ -17,7 +17,7 @@
       "id": "path-hpc",
       "label": "Science and HPC",
       "title": "You write research code and run it on a cluster",
-      "summary": "Start in your own repository, follow a numerical fix from a failing test to recorded verification, keep a speed-up only when a measurement proves it and the answers still match, and coordinate workers on other machines over SSH.",
+      "summary": "For research code, where a wrong number matters. By the end you can follow a numerical fix to recorded verification, keep a speed-up only when a measurement proves it, and coordinate workers on other machines over SSH.",
       "steps": [
         "first-session",
         "temperature-calibration",
@@ -29,7 +29,7 @@
       "id": "path-local",
       "label": "Local models",
       "title": "You run your own models",
-      "summary": "Connect a model server with no account or key, choose models for conversation and for delegated work, read what each session cost and why a run stopped, carry a long task through a handoff without losing its decisions, then compare answers blind before you trust a ranking of your models.",
+      "summary": "No account and no key. By the end you can choose models for conversation and for delegated work, read what each session cost, carry a long task through a handoff, and compare your models blind.",
       "steps": [
         "run-on-a-local-model",
         "choose-model-for-your-project",

@@ -95,4 +95,5 @@ This copies the built-in playbook to `.pancode/playbooks/parser-fix.md`, where y
 ::: next
 - [Workers and fleets](/docs/guide/fleet-dispatch.html)
 - [See what a session cost and what a run did](/tutorials/see-what-a-session-cost-and-what-a-run-did.html)
+- [How scheduling works](/research/scheduling.html)
 :::

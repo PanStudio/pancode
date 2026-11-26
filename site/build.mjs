@@ -1159,13 +1159,25 @@ for (const collection of collections) {
 						.join("")}</ul></div>`,
 			)
 			.join("\n");
+	// The tutorial index groups follow this order; a tutorial in any other category fails the build.
+	const tutorialCategories = [
+		"Getting started",
+		"Models and agents",
+		"Checks and records",
+		"Safety and autonomy",
+		"Workers and fleets",
+		"Context and memory",
+		"Scientific software",
+		"Extend and share",
+	];
+	if (collection.id === "tutorials")
+		for (const item of listed)
+			if (!tutorialCategories.includes(item.category))
+				throw new Error(`Tutorial ${item.slug} has category ${item.category}, which is not a tutorial index group.`);
 	const tutorialIndex =
 		collection.id === "tutorials"
 			? indexGroups(
-					[...new Set(listed.map((item) => item.category))].map((category) => [
-						category,
-						listed.filter((item) => item.category === category),
-					]),
+					tutorialCategories.map((category) => [category, listed.filter((item) => item.category === category)]),
 					(item) =>
 						`${escapeHtml(item.description)}${item.status ? ` <span class="chapter index-status">${escapeHtml(item.status)}</span>` : ""}`,
 				)
