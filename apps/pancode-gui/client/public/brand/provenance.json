@@ -4,7 +4,10 @@
 			"name": "pancode-mark",
 			"source": "assets/brand/pancode-mark.svg",
 			"sha256": "d9693e716c0a01be37d52a24484f8c66b01cd19c8011f4b962b222fe8de568c4",
-			"dimensions": [512, 512]
+			"dimensions": [
+				512,
+				512
+			]
 		}
 	],
 	"projection": {
