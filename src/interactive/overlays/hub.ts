@@ -503,6 +503,8 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			const here = subject.record.copies.find((copy) => copy.scope === view.scope) ?? subject.record.copies[0];
 			if (!here) {
 				handle.openDetail();
+				// A built-in server has no copy by design; its detail already says so.
+				if (subject.record.builtIn) return;
 				// Said once per package while PanHub is open: a second Enter on the
 				// same row repeated the same line into the transcript and told nothing new.
 				if (!toldNotInstalled.has(subject.record.ref)) {
