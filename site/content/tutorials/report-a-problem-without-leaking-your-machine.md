@@ -25,7 +25,7 @@ Without `--body-file`, a terminal opens `$EDITOR` on a template. `--session <id>
 The preview opens with where the report would go, then the body exactly as it would be sent:
 
 ```text
-Public, posted from your gh account to github.com/akougkas/pancode; nothing sent yet
+Public, posted from your gh account to github.com/PanStudio/pancode; nothing sent yet
 
 ----- title -----
 
@@ -45,7 +45,7 @@ Masked by PanCode: 1 path, 1 host name. No secrets recognized.
 No diagnostic bundle is attached.
 
 Sending will, in this order:
-  1. search akougkas/pancode for an existing report of the same problem
+  1. search PanStudio/pancode for an existing report of the same problem
   2. post the text you reviewed as a public issue from your gh account
 dry run: nothing sent
 ```

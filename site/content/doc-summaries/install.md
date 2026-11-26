@@ -48,13 +48,13 @@ CMD shows `C:\>` without the `PS`. If you see `'irm' is not recognized as an int
 With your own **Node.js 22.19 or newer** on `PATH`:
 
 ```sh
-npm install -g @akougkas/pancode
+npm install -g @panstudio/pancode
 ```
 
 ### bun
 
 ```sh
-bun add -g @akougkas/pancode
+bun add -g @panstudio/pancode
 ```
 
 bun installs the package, but `pancode` still runs on Node.js, so it needs **Node.js 22.19 or newer** on `PATH` too.
@@ -105,8 +105,8 @@ Installer installs update themselves in the background, at most once a day. On L
 | Installed with | Update | Remove the program |
 | --- | --- | --- |
 | Installer | `pancode upgrade`. The new version, with the Node.js it runs on, installs beside the current one and must start before the launcher switches to it. | `pancode uninstall` |
-| npm | `pancode upgrade` | `npm uninstall -g @akougkas/pancode` |
-| bun | `bun add -g @akougkas/pancode@latest`, then `pancode upgrade --post-install` | `bun remove -g @akougkas/pancode` |
+| npm | `pancode upgrade` | `npm uninstall -g @panstudio/pancode` |
+| bun | `bun add -g @panstudio/pancode@latest`, then `pancode upgrade --post-install` | `bun remove -g @panstudio/pancode` |
 
 The installer keeps the previous version. `pancode upgrade --rollback` makes it current again. An install made with an exact `--version` stays pinned to that version until you run the installer with `--version latest`.
 
@@ -114,7 +114,7 @@ If an upgrade is refused over a setting the installed version cannot repair, the
 
 `pancode uninstall` removes your settings, credentials, sessions and caches, the launcher, the desktop app's background service, every installed version of an installer install, and the package of an npm global install. It previews what it will delete and asks first, and it stops with exit 1 while a session is open on this state directory. Add `--keep-binary` to keep the program, `--keep-config` to keep settings and credentials, or `--dry-run` to only look. Removing the program with npm or bun keeps those files. Project `.pancode/` directories are never removed.
 
-If pancode.dev is unreachable, the latest GitHub release carries the installer, at `https://github.com/akougkas/pancode/releases/latest/download/install.sh`. Run it with `--version <x.y.z>`, because the file that says which version is latest lives on pancode.dev.
+If pancode.dev is unreachable, the latest GitHub release carries the installer, at `https://github.com/PanStudio/pancode/releases/latest/download/install.sh`. Run it with `--version <x.y.z>`, because the file that says which version is latest lives on pancode.dev.
 
 ## Give PanCode a useful first task
 

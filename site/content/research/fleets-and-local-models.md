@@ -104,7 +104,7 @@ Needs: one machine that can run a tool-calling model through a local server. A G
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 ::: limits Boundaries
 - One bug in one repository does not generalize, so report it as what it is.

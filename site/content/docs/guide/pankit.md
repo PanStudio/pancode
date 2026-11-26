@@ -41,12 +41,12 @@ PanCode starts `scidata` with its reader cache, `catalog` with `pankit/catalog.j
 
 ## Use them from another MCP host
 
-A host launches a server over stdio. Without a global install, `npx` fetches the `@akougkas/pancode` package and runs its `pankit`:
+A host launches a server over stdio. Without a global install, `npx` fetches the `@panstudio/pancode` package and runs its `pankit`:
 
 ```json
 {
 	"mcpServers": {
-		"node": { "command": "npx", "args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"] }
+		"node": { "command": "npx", "args": ["-y", "-p", "@panstudio/pancode", "pankit", "serve", "node"] }
 	}
 }
 ```

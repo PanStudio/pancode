@@ -12,13 +12,13 @@
     {
       "path": "README.md",
       "source": "README.md",
-      "sha256": "dc3f6f96556e3fb1391d80d18fc24caa1468a3f371915a9af6da11a2827579a7",
+      "sha256": "84ad5669a417ace98871668a7ee657fb33220862dacab109f13a2b0af1509651",
       "sourceSha256": "6862acb3cf0e4e5476e59c5734733656e1c8b5f11a9e9528649ddb6d8a4235a8"
     },
     {
       "path": "guide/hpc-clusters.md",
       "source": "docs/guide/hpc-clusters.md",
-      "sha256": "d3fe42302c02e0a8fc7382433d353b31c2dc9181711d95d7532ef084d3bcce22",
+      "sha256": "9b81fea20855e73ad3b9270aa858df8fca502c421ad81feef56788f8c27d0a1e",
       "sourceSha256": "e05b66a409ea244cbce8be23b66f0f31464a9e0cf22fbfe22df8b6baaf81c7dd"
     },
     {
@@ -84,7 +84,7 @@
     {
       "path": "guide/pankit.md",
       "source": "docs/guide/pankit.md",
-      "sha256": "bf103f166397c41dc86e598d0fff28002c7185fb3d843390cf4ef889e2123fa7",
+      "sha256": "87364dea1fb13ac14a19f30e96dc2a7cf18039daa3e8a22f067771a5c1984e7f",
       "sourceSha256": "f27b52b20ecb6e954941ada9f154ba39fc360ef1f26711d2d85bf7cbf982fc44"
     },
     {
@@ -108,7 +108,7 @@
     {
       "path": "guide/sdk.md",
       "source": "docs/guide/sdk.md",
-      "sha256": "4a411ddd17a4534531a608612a6ab52b5594a0c3c11d2a66ee21826a650fea5c",
+      "sha256": "0c1ffb3f20ef24e61b9cf6ad889b9c1159003ca794d19e680446a0f8f377918a",
       "sourceSha256": "0e118c3c4cb365dceb44b5fe4f8bbaa32d7832ad4ca8d76c40e21bd9b334cad5"
     },
     {

@@ -478,7 +478,7 @@ function head(
 			applicationSubCategory: "Coding agent",
 			operatingSystem: "Linux, macOS, Windows",
 			...(product.publishedVersion ? { softwareVersion: product.publishedVersion } : {}),
-			downloadUrl: "https://www.npmjs.com/package/@akougkas/pancode",
+			downloadUrl: "https://www.npmjs.com/package/@panstudio/pancode",
 			installUrl: `${url}#start`,
 			softwareHelp: { "@type": "CreativeWork", url: `${product.origin}/docs.html` },
 			license: `${repository}/blob/main/LICENSE`,
@@ -1062,7 +1062,7 @@ const hubRow = (row) => {
 };
 // A core server is built into PanCode, so its row gives the command another agent host runs to serve it.
 const hubBuiltIn = (row) => row.kind === "server" && row.tier === "core";
-const hubServe = (row) => `npx -y -p @akougkas/pancode pankit serve ${row.name}`;
+const hubServe = (row) => `npx -y -p @panstudio/pancode pankit serve ${row.name}`;
 // What a bare serve command leaves out, said beside it.
 const hubServeNotes = {
 	store: {
@@ -1378,7 +1378,7 @@ PanCode is a product of ${publisher.name}. It needs no account and no root, and 
 
 - Install on macOS, Linux, or WSL: \`curl -fsSL ${product.origin}/install.sh | sh\`
 - Install on Windows (best effort) in PowerShell: \`irm ${product.origin}/install.ps1 | iex\`
-- Install with npm (Node.js 22.19 or newer): \`npm install -g @akougkas/pancode\`
+- Install with npm (Node.js 22.19 or newer): \`npm install -g @panstudio/pancode\`
 - Connect a model in a project: \`pancode configure\`; then run \`pancode\` for the terminal or \`pancode gui --open\` for the desktop alpha.
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
 const hubMarkdown = () =>
@@ -1419,7 +1419,7 @@ await writeFile(
 			),
 			llmsLink("Overview", "/", "capabilities, models, installation, and common questions"),
 			llmsLink("Source repository", repository, "code, issues, and the full upstream guides"),
-			llmsLink("npm package", "https://www.npmjs.com/package/@akougkas/pancode"),
+			llmsLink("npm package", "https://www.npmjs.com/package/@panstudio/pancode"),
 			llmsLink("License", `${repository}/blob/main/LICENSE`, "PanCode License 1.0"),
 		].join("\n")}`,
 	].join("\n\n")}\n`,
