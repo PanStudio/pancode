@@ -5,7 +5,7 @@
  * Each surface passes its own separator glyph and resume hint and applies its own colour to the tone.
  */
 
-import { formatFooterTokens } from "../../core/display-units.js";
+import { formatCount } from "../../core/format-time.js";
 import type { YoloConfinement } from "./autonomy.js";
 import type { AutonomyStatus } from "./autonomy-window.js";
 
@@ -40,7 +40,7 @@ export function autonomyModeReadout(input: {
 }
 
 /**
- * The autonomous window: `turn 12/73 · 412/600 calls · 38/120 min · 1.9M/5M tok`, the running turn against its
+ * The autonomous window: `turn 12/73 · 412/600 calls · 38/120 min · 1.9M/5.0M tok`, the running turn against its
  * per-turn tool budget first, the nearest alone when narrow, and the way back once it has paused. Null when no cap
  * applies.
  */
@@ -60,7 +60,7 @@ export function autonomyWindowReadout(
 		{
 			used: usage.tokens,
 			cap: caps.tokens,
-			text: `${formatFooterTokens(usage.tokens)}/${formatFooterTokens(caps.tokens)} tok`,
+			text: `${formatCount(usage.tokens)}/${formatCount(caps.tokens)} tok`,
 		},
 	].filter((meter) => meter.cap > 0);
 	if (windowMeters.length === 0) return null;

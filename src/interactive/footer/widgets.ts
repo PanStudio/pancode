@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { formatCount } from "../../core/format-time.js";
 import type { ContextActivityPhase } from "../../core/telemetry/live-events.js";
 import type { LiveBudgetView } from "../../domains/context/budget/live-view.js";
 import type { AutonomyStatus } from "../../domains/safety/autonomy-window.js";
@@ -9,7 +11,7 @@ import type { ContextLedger } from "../../domains/session/context-ledger.js";
 import type { TaskBoardSnapshot } from "../../domains/session/task-board.js";
 import { wrapTextWithAnsi } from "../../engine/tui.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
-import { fitFooterText, formatFooterTokens } from "../footer-panel.js";
+import { fitFooterText } from "../footer-panel.js";
 import type { TurnSummary } from "../status/index.js";
 import { GLYPH, padAnsi } from "../theme/index.js";
 
@@ -166,19 +168,19 @@ export function formatToolTally(snapshot: ToolTallySnapshot | null | undefined, 
 		.filter(([name, count]) => count > 0 && name.toLowerCase() !== "dispatch")
 		.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
 		.slice(0, 4)
-		.map(([name, count]) => `${name} ${formatFooterTokens(count)}`);
+		.map(([name, count]) => `${name} ${formatCount(count)}`);
 	const called = entries.length > 0 ? entries.join(` ${GLYPH.sep} `) : available !== null ? null : "none";
 	const prefix = [available, called].filter((part): part is string => part !== null).join(` ${GLYPH.sep} `);
 	const active =
 		typeof snapshot.active === "number" && snapshot.active > 0
-			? ` ${GLYPH.sep} active ${formatFooterTokens(snapshot.active)}`
+			? ` ${GLYPH.sep} active ${formatCount(snapshot.active)}`
 			: "";
 	const truncated =
 		typeof snapshot.truncatedResults === "number" && snapshot.truncatedResults > 0
-			? ` ${GLYPH.sep} trunc ${formatFooterTokens(snapshot.truncatedResults)}`
+			? ` ${GLYPH.sep} trunc ${formatCount(snapshot.truncatedResults)}`
 			: "";
 	// `1✗` read as a glyph puzzle; a count of failures says what it counts, and none is not worth a chip.
-	const failed = snapshot.errors > 0 ? ` ${GLYPH.sep} ${formatFooterTokens(snapshot.errors)} failed` : "";
+	const failed = snapshot.errors > 0 ? ` ${GLYPH.sep} ${formatCount(snapshot.errors)} failed` : "";
 	return `${prefix}${active}${truncated}${failed}`;
 }
 

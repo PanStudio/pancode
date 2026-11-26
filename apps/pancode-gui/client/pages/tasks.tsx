@@ -14,7 +14,7 @@ import { InventoryMore } from "../interaction/InventoryMore.js";
 import { useInventoryWindow } from "../interaction/use-inventory-window.js";
 import { HomeAside } from "../shell/HomeAside.js";
 import { InlineRename } from "../shell/InlineRename.js";
-import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
+import { PancodeEmptyMark, PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import {
 	answeredInOverview,
 	READY_LABEL,
@@ -319,7 +319,7 @@ export function Sessions({ client }: { client: Client }) {
 						</ul>
 					) : !loading && workspace.data && (history.data || overview.data) ? (
 						<div className="taskpage__empty">
-							<Icon name="sessions" />
+							<PancodeEmptyMark />
 							<h2>
 								{query || filter !== "all"
 									? "No tasks match this view"

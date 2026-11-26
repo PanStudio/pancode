@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { formatFooterTokens } from "../display-units.js";
+import { formatCount } from "../format-time.js";
 import type { UnitTotal, UnitTotalRefusal } from "./economy.js";
 import type { Fact, FactSum } from "./fact.js";
 import type { FreeRule, Pricing, PricingSum } from "./pricing.js";
@@ -224,9 +224,9 @@ export function renderCompactCount(fact: Fact<number> | FactSum): string {
 	if ("kind" in fact) {
 		switch (fact.kind) {
 			case "measured":
-				return formatFooterTokens(fact.value);
+				return formatCount(fact.value);
 			case "estimated":
-				return `~${formatFooterTokens(fact.value)}`;
+				return `~${formatCount(fact.value)}`;
 			case "unknown":
 				return "?";
 			case "absent":
@@ -234,7 +234,7 @@ export function renderCompactCount(fact: Fact<number> | FactSum): string {
 		}
 	}
 	if (allAbsent(fact)) return "n/a";
-	const known = `${fact.coverage.estimated > 0 ? "~" : ""}${formatFooterTokens(fact.measured + fact.estimated)}`;
+	const known = `${fact.coverage.estimated > 0 ? "~" : ""}${formatCount(fact.measured + fact.estimated)}`;
 	if (fact.unknownCount === 0) return known;
 	return fact.coverage.measured + fact.coverage.estimated === 0 ? "?" : `≥${known} +?`;
 }

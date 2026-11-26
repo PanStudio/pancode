@@ -142,6 +142,7 @@
 	--shadow-panel: 0 12px 32px color-mix(in srgb, var(--pancode-pine1) 12%, transparent);
 	--shadow-float: 0 28px 72px color-mix(in srgb, var(--pancode-pine1) 18%, transparent);
 	--color-scrim: 52%;
+	--glow-brand-soft: none;
 	--motion-fast: 140ms;
 	--motion-base: 220ms;
 	--motion-entry: 560ms;
@@ -213,6 +214,7 @@
 	--shadow-panel: 0 16px 48px color-mix(in srgb, var(--pancode-black) 70%, transparent);
 	--shadow-float: 0 32px 96px color-mix(in srgb, var(--pancode-black) 80%, transparent);
 	--color-scrim: 72%;
+	--glow-brand-soft: 0 0 64px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme="light"]) {
@@ -277,5 +279,6 @@
 		--shadow-panel: 0 16px 48px color-mix(in srgb, var(--pancode-black) 70%, transparent);
 		--shadow-float: 0 32px 96px color-mix(in srgb, var(--pancode-black) 80%, transparent);
 		--color-scrim: 72%;
+		--glow-brand-soft: 0 0 64px color-mix(in srgb, var(--accent) 16%, transparent);
 	}
 }

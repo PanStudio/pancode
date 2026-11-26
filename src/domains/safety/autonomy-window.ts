@@ -14,7 +14,7 @@
  * new operator prompt, starts a fresh one.
  */
 
-import { formatFooterTokens } from "../../core/display-units.js";
+import { formatCount } from "../../core/format-time.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
 import type { ClassifierCall } from "./action-classifier.js";
@@ -242,7 +242,7 @@ export function createAutonomyWindow(deps: AutonomyWindowDeps): AutonomyWindow {
 		if (caps.toolCalls > 0 && used.toolCalls >= caps.toolCalls) {
 			latch({ kind: "calls", limit: caps.toolCalls, detail: `${caps.toolCalls}-call cap`, usage: used });
 		} else if (caps.tokens > 0 && used.tokens >= caps.tokens) {
-			latch({ kind: "tokens", limit: caps.tokens, detail: `${formatFooterTokens(caps.tokens)}-token cap`, usage: used });
+			latch({ kind: "tokens", limit: caps.tokens, detail: `${formatCount(caps.tokens)}-token cap`, usage: used });
 		} else if (caps.minutes > 0 && used.activeMs >= caps.minutes * MINUTE_MS) {
 			latch({ kind: "minutes", limit: caps.minutes, detail: `${caps.minutes}-minute cap`, usage: used });
 		}
@@ -487,7 +487,7 @@ export function autonomyHaltNotice(
 ): string {
 	const left = openDecisionsClause(open, halt.kind === "judge");
 	const used = halt.usage;
-	const spent = `${used.toolCalls} tool calls, ${Math.round(used.activeMs / MINUTE_MS)} min, ${formatFooterTokens(used.tokens)} cap tokens`;
+	const spent = `${used.toolCalls} tool calls, ${Math.round(used.activeMs / MINUTE_MS)} min, ${formatCount(used.tokens)} cap tokens`;
 	if (surface === "headless") {
 		const what =
 			halt.kind === "judge"
@@ -507,7 +507,7 @@ export function autonomyHaltNotice(
 		halt.kind === "calls"
 			? `another ${halt.limit} calls`
 			: halt.kind === "tokens"
-				? `another ${formatFooterTokens(halt.limit ?? 0)} cap tokens`
+				? `another ${formatCount(halt.limit ?? 0)} cap tokens`
 				: `another ${halt.limit} minutes`;
 	return `yolo paused: ${halt.detail} (${spent}). Enter on an empty prompt continues for ${again}; a new message also continues.${left}`;
 }

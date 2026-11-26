@@ -6,6 +6,7 @@
  */
 
 import { outputLimitCutOffToolCallIds } from "../../core/assistant-output.js";
+import { formatCount } from "../../core/format-time.js";
 import { isRecord } from "../../core/type-guards.js";
 import {
 	messageStopCompleted,
@@ -16,7 +17,7 @@ import type { BashExecutionEntry, MessageEntry, SessionEntry } from "../../domai
 import { IN_RUN_CONTINUATION_ENTRY } from "../../domains/session/entries.js";
 import { filterEntriesToActivePath } from "../../domains/session/tree/active-path.js";
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
-import { COMPACTION_LINE_LEAD, footerTokens } from "../../session-control/compaction-lines.js";
+import { COMPACTION_LINE_LEAD } from "../../session-control/compaction-lines.js";
 import { budgetBlockReplayFrame } from "./budget-notice.js";
 import { compactUsage, turnUsageMeta } from "./live-telemetry.js";
 import {
@@ -248,8 +249,8 @@ export function prepareAcpReplay(
 			// chunk would join the previous reply in a client that concatenates them (acp-verify round 2 #3).
 			const text =
 				entry.tokensAfter === undefined
-					? `${COMPACTION_LINE_LEAD}${footerTokens(entry.tokensBefore)} tokens`
-					: `${COMPACTION_LINE_LEAD}${footerTokens(entry.tokensBefore)} → ${footerTokens(entry.tokensAfter)} tokens`;
+					? `${COMPACTION_LINE_LEAD}${formatCount(entry.tokensBefore)} tokens`
+					: `${COMPACTION_LINE_LEAD}${formatCount(entry.tokensBefore)} → ${formatCount(entry.tokensAfter)} tokens`;
 			current.frames.push({
 				update: {
 					sessionUpdate: "session_info_update",

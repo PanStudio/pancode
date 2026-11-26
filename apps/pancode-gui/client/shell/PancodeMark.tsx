@@ -6,6 +6,7 @@ import type { MarkCuts } from "./mark-cuts.js";
 import "./mark.css";
 
 declare const __PANCODE_MARK_CUTS__: MarkCuts | undefined;
+declare const __PANCODE_DISPLAY_NAME__: { dark: string; light: string } | undefined;
 
 /**
  * The sizes PancodePulse is drawn at, defined once. An inline mark beside a word, a list or task row,
@@ -17,13 +18,17 @@ export const PULSE_SIZE = { inline: 14, row: 16, step: 16, stage: 24 } as const;
 const SMALL_MARK_PX = 24;
 /** Below this size gradients do not read and the mark is flat (site/DESIGN.md "Mark"). */
 const GRADED_MARK_PX = 32;
-type MarkFill = "small" | "flat" | "graded";
+/** An empty state's mark: one colour, above the sentence, never the coloured mark (identity-rollout P6). */
+const EMPTY_MARK_PX = 32;
+type MarkFill = "small" | "flat" | "graded" | "mono";
 
 /**
  * The cuts of assets/brand, checked and inlined by vite.config.ts (mark-cuts.ts) so a refined mark flows through
  * without hand-copied path data. Outside a Vite build, as in the page tests, the mark has no shapes.
  */
 const CUTS = typeof __PANCODE_MARK_CUTS__ === "undefined" ? null : __PANCODE_MARK_CUTS__;
+/** assets/brand/pancode-display.svg and its light-ground file as image URLs, from vite.config.ts like the cuts. */
+const DISPLAY_NAME = typeof __PANCODE_DISPLAY_NAME__ === "undefined" ? null : __PANCODE_DISPLAY_NAME__;
 
 /** Palette names stay names (brand.css projects them as `--pancode-<name>`); mark.css picks the theme's paint. */
 function paints(dark: string, light?: string): CSSProperties {
@@ -36,11 +41,20 @@ function paints(dark: string, light?: string): CSSProperties {
 /**
  * The mark: four facets of one stone with the for-all sign as the channel between them, and no tile. Fill follows
  * size: the small cut's flat facets and wider channel to 24 px, the full cut's paths in those flat colours below
- * 32 px, and from 32 px the full cut's gradients (the light cut's colours on a light theme).
+ * 32 px, and from 32 px the full cut's gradients (the light cut's colours on a light theme). Mono, for every
+ * single-colour context at any size, is the small cut's facets in the current text colour (site/DESIGN.md "Mark").
  */
 function MarkArt({ className, fill = "graded" }: { className: string; fill?: MarkFill }) {
 	const scope = useId().replace(/[^\w-]/g, "");
 	if (!CUTS) return <svg className={className} viewBox="0 0 64 64" aria-hidden="true" />;
+	if (fill === "mono")
+		return (
+			<svg className={className} viewBox={CUTS.small.viewBox} aria-hidden="true">
+				{CUTS.small.facets.map((facet) => (
+					<path key={facet.part} className="pancode-mark__mono" d={facet.d} />
+				))}
+			</svg>
+		);
 	if (fill !== "graded") {
 		const { viewBox, facets } =
 			fill === "small"
@@ -125,6 +139,33 @@ export function PancodeLogo({ size = 24 }: { size?: number }) {
 				className="pancode-logo__art"
 				fill={size <= SMALL_MARK_PX ? "small" : size < GRADED_MARK_PX ? "flat" : "graded"}
 			/>
+		</span>
+	);
+}
+
+/** The mark above an empty state's sentence, in the muted ink. */
+export function PancodeEmptyMark() {
+	return (
+		<span
+			className="pancode-logo pancode-logo--empty"
+			style={{ width: EMPTY_MARK_PX, height: EMPTY_MARK_PX }}
+			aria-hidden="true"
+		>
+			<MarkArt className="pancode-logo__art" fill="mono" />
+		</span>
+	);
+}
+
+/**
+ * The display name, for the opening stage only: the artwork's outlines with the for-all sign in place of the A, at
+ * 28 px cap height (mark.css). The theme shows one of the two files.
+ */
+export function PancodeDisplayName() {
+	if (!DISPLAY_NAME) return null;
+	return (
+		<span className="pancode-display" aria-hidden="true">
+			<img className="pancode-display__dark" src={DISPLAY_NAME.dark} alt="" />
+			<img className="pancode-display__light" src={DISPLAY_NAME.light} alt="" />
 		</span>
 	);
 }

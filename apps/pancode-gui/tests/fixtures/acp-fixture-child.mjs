@@ -60,13 +60,13 @@ const MODES = [
 		id: "default",
 		name: "default",
 		description:
-			"Workspace edits run; shell commands run in the OS sandbox; calls that need approval go to the safety judge, then to you.",
+			"Edits and commands inside this workspace go ahead. Commands run in a sandbox that limits what they can change. Riskier calls go to an automatic safety check, which runs them, refuses them or asks you. Decisions only you can make ask you directly.",
 	},
 	{
 		id: "yolo",
 		name: "yolo",
 		description:
-			"Runs without approval stops: the same sandbox and safety judge, and a call that would need your approval is refused instead of asked (unless the operator's settings chose unconfined yolo). Questions still reach you.",
+			"No approval card waits for you. Commands run in a sandbox that limits what they can change. The automatic safety check works as it does in default, and anything that would ask you is refused back to PanCode instead. PanCode's built-in blocks, your own safety rules and the run's limits still apply, and questions PanCode asks still reach you.",
 	},
 ];
 const editable = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"];

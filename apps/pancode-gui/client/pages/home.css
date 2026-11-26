@@ -8,9 +8,10 @@
 	container-type: inline-size;
 	display: grid;
 	/* Top-aligned, so the hero's place depends on the window's height alone: centring it made it jump whenever the
-	   starters left or Task settings opened below it. */
+	   starters left or Task settings opened below it. The top gives way below an 800 px window and the bottom keeps
+	   one margin, so a short window still holds the whole page without a scroll. */
 	align-items: start;
-	padding: clamp(var(--space-8), 18vh, var(--space-16)) var(--space-6) var(--space-12);
+	padding: clamp(var(--space-8), 8vh, var(--space-16)) var(--space-6) var(--space-8);
 }
 .newtask__inner {
 	display: grid;
@@ -18,7 +19,6 @@
 	gap: var(--space-5);
 	width: min(100%, 720px);
 	margin: 0 auto;
-	padding-bottom: 6dvh;
 	position: relative;
 }
 /* The floating notices' reserve (interaction.css). In flow it would re-centre the page when a notice
@@ -344,15 +344,10 @@
 	gap: var(--space-6);
 }
 .newtask__inner:has(> .onboard) .pancode-stage {
-	--stage-size: 112px;
 	margin-top: var(--space-4);
 }
 .newtask__inner:has(> .onboard) .newtask__title {
 	font-size: var(--text-welcome);
-}
-/* Setup just finished: the stage keeps its size for the finale, then settles into the plain mark. */
-.newtask__inner .pancode-stage[data-finale] {
-	--stage-size: 132px;
 }
 @container (min-width: 960px) {
 	.newtask__inner:has(> .onboard) {
@@ -365,7 +360,6 @@
 		justify-items: stretch;
 	}
 	.newtask__inner:has(> .onboard) .pancode-stage {
-		--stage-size: 148px;
 		grid-column: 1;
 		grid-row: 1;
 		justify-items: start;

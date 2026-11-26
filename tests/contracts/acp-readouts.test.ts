@@ -275,7 +275,7 @@ describe("contracts/acp pushes live readouts and judge admission to a client tha
 			turn.emit({ type: "agent_end" });
 		});
 		const window = running?.readouts.autonomy?.window;
-		strictEqual(window?.display, "412/600 calls · 38/120 min · 1.9M/5M tok");
+		strictEqual(window?.display, "412/600 calls · 38/120 min · 1.9M/5.0M tok");
 		strictEqual(window?.halted, false);
 		const halted = agent.frames().at(-1)?.readouts.autonomy?.window;
 		strictEqual(halted?.halted, true);

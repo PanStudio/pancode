@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { formatCount } from "../core/format-time.js";
+
 export interface CompactionSummaryLineInput {
 	/**
 	 * How many provider messages the summary replaced, the unit a context snapshot's `messageRange` counts. Not the
@@ -20,23 +22,13 @@ export interface CompactionSummaryLineInput {
 	isSplitTurn?: boolean;
 }
 
-/** `36175` as `36.2K`, the footer's own reading of a token count. */
-export function footerTokens(tokens: number): string {
-	if (!Number.isFinite(tokens) || tokens < 1000) return String(Math.max(0, Math.round(tokens)));
-	const thousands = tokens / 1000;
-	const fixed = thousands.toFixed(1);
-	if (thousands < 1000) return `${fixed.endsWith(".0") ? fixed.slice(0, -2) : fixed}K`;
-	const millions = (tokens / 1_000_000).toFixed(1);
-	return `${millions.endsWith(".0") ? millions.slice(0, -2) : millions}M`;
-}
-
 /**
  * The persistent transcript row an automatic or `/context compact` run leaves.
  * Example:
- *   PanCode compacted 36.2K → 28.6K tokens: 42 earlier messages now read as one summary
+ *   PanCode compacted 36.2k → 28.6k tokens: 42 earlier messages now read as one summary
  * The `[context engine]` tag and `summarized to 1823 chars` were PanCode's own bookkeeping; the row says what changed for
  * the conversation. A split-turn run says the cut landed inside a turn, so upstream context may need a re-read, and a
- * run that saved nothing says so instead of leaving `13K → 13K` to be decoded.
+ * run that saved nothing says so instead of leaving `13.0k → 13.0k` to be decoded.
  */
 /** How the compaction row starts, so a surface that routes it to the footer can tell it apart. */
 export const COMPACTION_LINE_LEAD = "PanCode compacted ";
@@ -53,7 +45,7 @@ export function renderCompactionSummaryLine(input: CompactionSummaryLineInput): 
 	const messages = `${count} earlier message${count === 1 ? "" : "s"} now read${count === 1 ? "s" : ""} as one summary`;
 	const flat = input.tokensAfter >= input.tokensBefore ? "; the context is no smaller" : "";
 	const tail = input.isSplitTurn ? " (the cut fell inside a turn)" : "";
-	return `${COMPACTION_LINE_LEAD}${footerTokens(input.tokensBefore)} → ${footerTokens(input.tokensAfter)} tokens: ${messages}${flat}${tail}`;
+	return `${COMPACTION_LINE_LEAD}${formatCount(input.tokensBefore)} → ${formatCount(input.tokensAfter)} tokens: ${messages}${flat}${tail}`;
 }
 
 /** Why the non-destructive stage had nothing to do before a summary ran. */

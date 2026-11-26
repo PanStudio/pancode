@@ -167,6 +167,19 @@ export async function publishFileAtomically(
 				}
 			}
 		}
-		throw new Error(`Nothing was published: ${String(error)}.${cleanup}`, { cause: error });
+		throw new PublishError(`${error instanceof Error ? error.message : String(error)}.${cleanup}`, error);
+	}
+}
+
+/**
+ * A publish that left the target as it was. `detail` is the cause alone, so a tool that leads its own error with
+ * "Nothing was published" states it once.
+ */
+export class PublishError extends Error {
+	readonly detail: string;
+	constructor(detail: string, cause: unknown) {
+		super(`Nothing was published: ${detail}`, { cause });
+		this.name = "PublishError";
+		this.detail = detail;
 	}
 }
