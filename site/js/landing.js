@@ -3,28 +3,30 @@
 (() => {
 	if (!("IntersectionObserver" in window)) return;
 	const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-	// A share of the element in view, or of the viewport when the element is taller than it.
-	const steps = Array.from({ length: 21 }, (_, i) => i / 20);
-	const shown = (entry, share) =>
-		entry.isIntersecting &&
-		entry.intersectionRect.height >=
-			share * Math.min(entry.boundingClientRect.height, entry.rootBounds?.height ?? innerHeight) - 1;
+	// Motion starts once the specified share of the element is in view. A viewport too short to ever hold that
+	// share shows the element complete and still: no early start, and nothing left waiting to appear.
+	const shown = (entry, share) => entry.isIntersecting && entry.intersectionRatio >= share - 0.001;
+	const reachable = (entry, share) =>
+		entry.boundingClientRect.height * share <= (entry.rootBounds?.height ?? innerHeight) + 1;
 
 	// The PAN art draws its routes once in view and runs its signals only while seen.
 	const stages = [...document.querySelectorAll(".pan-stage")];
 	const seen = new Set();
+	const still = new Set();
 	const stageObserver = new IntersectionObserver(
 		(entries) => {
 			for (const entry of entries) {
 				if (shown(entry, 0.25)) seen.add(entry.target);
 				else seen.delete(entry.target);
+				if (entry.isIntersecting && !reachable(entry, 0.25)) still.add(entry.target);
+				else still.delete(entry.target);
 				setStage(entry.target);
 			}
 		},
-		{ threshold: steps },
+		{ threshold: [0, 0.25] },
 	);
 	function setStage(stage) {
-		if (reduced.matches) stage.dataset.pan = "idle";
+		if (reduced.matches || still.has(stage)) stage.dataset.pan = "idle";
 		else if (seen.has(stage) && !document.hidden) stage.dataset.pan = "live";
 		else if (stage.dataset.pan !== "pending") stage.dataset.pan = "idle";
 	}
@@ -45,6 +47,11 @@
 		term.dataset.term = "pending";
 		const termObserver = new IntersectionObserver(
 			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting && !reachable(entry, 0.4))) {
+					termObserver.disconnect();
+					finishTerm();
+					return;
+				}
 				if (!entries.some((entry) => shown(entry, 0.4))) return;
 				termObserver.disconnect();
 				let index = 0;
@@ -55,7 +62,7 @@
 				};
 				next();
 			},
-			{ threshold: steps },
+			{ threshold: [0, 0.4] },
 		);
 		termObserver.observe(term);
 	}
@@ -83,6 +90,7 @@
 		const reachObserver = new IntersectionObserver(
 			(entries) => {
 				if (reduced.matches || round < 0) return;
+				if (!round && entries.some((entry) => entry.isIntersecting && !reachable(entry, 0.5))) return;
 				const visible = entries.some((entry) => shown(entry, 0.5));
 				if (round && !visible) cancel();
 				if (round || !visible || document.hidden) return;
@@ -93,7 +101,7 @@
 					if (step === buttons.length) cancel();
 				}, 2400);
 			},
-			{ threshold: steps },
+			{ threshold: [0, 0.5] },
 		);
 		for (const type of ["pointerdown", "keydown", "focusin"]) reach.addEventListener(type, cancel, { once: true });
 		document.addEventListener("visibilitychange", () => {
