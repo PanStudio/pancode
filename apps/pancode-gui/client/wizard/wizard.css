@@ -584,6 +584,7 @@
 }
 .wizard-field__row {
 	display: flex;
+	align-items: flex-start;
 	gap: var(--space-2);
 }
 .wizard-field input {

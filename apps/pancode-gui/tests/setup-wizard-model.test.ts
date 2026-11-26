@@ -179,3 +179,8 @@ test("a wizard choice's focus ring sits outside the row, clear of its flush-left
 	assert.match(css, /\.wizard-card \{[^}]*padding: var\(--space-3\) var\(--space-2\) var\(--space-3\) 0;/);
 	assert.doesNotMatch(css, /\.wizard-card:focus-visible \{[^}]*outline-offset: -/);
 });
+
+test("a wizard field row keeps its button at the input's height when the field carries a hint line below", () => {
+	const css = readFileSync(new URL("../client/wizard/wizard.css", import.meta.url), "utf8");
+	assert.match(css, /\.wizard-field__row \{[^}]*align-items: flex-start;/);
+});
