@@ -14,17 +14,17 @@
 		"ink2": "#d6d2c7",
 		"ink3": "#a6a297",
 		"ink4": "#837f76",
-		"green50": "#e1f9e7",
-		"green100": "#b4f3c8",
-		"green200": "#83eeaa",
-		"green300": "#57eb95",
-		"green400": "#00e884",
-		"green500": "#18d77c",
-		"green600": "#25b469",
-		"green700": "#137643",
-		"green800": "#0c562f",
-		"green900": "#032f17",
-		"green950": "#021a0b",
+		"green50": "#dcfaee",
+		"green100": "#a6f5d9",
+		"green200": "#61f0c6",
+		"green300": "#0becbb",
+		"green400": "#07e4b4",
+		"green500": "#08d4a7",
+		"green600": "#06b28c",
+		"green700": "#00755b",
+		"green800": "#015541",
+		"green900": "#002f22",
+		"green950": "#001a12",
 		"azure50": "#eff6fd",
 		"azure100": "#d3e8fe",
 		"azure200": "#aed5fd",
@@ -36,10 +36,10 @@
 		"azure800": "#093f6c",
 		"azure900": "#0a263f",
 		"azure950": "#061320",
-		"jade50": "#dff8f1",
-		"jade300": "#34dbb9",
-		"jade700": "#026b58",
-		"jade950": "#001c15",
+		"leaf50": "#e4fbe3",
+		"leaf300": "#61e165",
+		"leaf700": "#1c6a21",
+		"leaf950": "#081b08",
 		"amber50": "#fdf0d9",
 		"amber300": "#f2b106",
 		"amber700": "#765400",
@@ -72,15 +72,15 @@
 			"use": "Text on dark. ink1 primary, ink2 soft, ink3 muted (the smallest text colour allowed on void3), ink4 faint: decoration and disabled labels on black and void1 only."
 		},
 		"green": {
-			"hue": "OKLCH hue 154",
-			"use": "Brand, and the colour of Pan in the wordmark. green400 is the focal green on black. green300 hover, green500 pressed, green700 text and links on light, green950 and green50 washes. Never a state colour."
+			"hue": "OKLCH hue 170",
+			"use": "Brand, a teal-green, and the colour of Pan in the wordmark, the mark and the terminal rails. green400 is the focal green on black. green300 hover, green500 pressed, green700 text and links on light, green950 and green50 washes. Never a state colour."
 		},
 		"azure": {
 			"hue": "OKLCH hue 249",
 			"use": "Secondary, and the colour of Code in the wordmark. azure400 on dark, azure600 on light, azure950 and azure50 washes. Section numbers, version tags, one highlight per view. azure300 and azure700 also carry info. Never a fill behind body text, never an error or warning."
 		},
 		"state": {
-			"use": "jade is success, amber is warning, red is error, info takes azure, violet is data only. 300 is the foreground on dark, 700 on light, 950 and 50 are the washes. Success is jade so it never reads as the brand; every state also carries a glyph or a word."
+			"use": "leaf is success, a true green at OKLCH hue 144, amber is warning, red is error, info takes azure, violet is data only. 300 is the foreground on dark, 700 on light, 950 and 50 are the washes. Success sits 26 degrees of hue from the brand teal so it never reads as the brand; every state also carries a glyph or a word."
 		},
 		"mist": {
 			"hue": "OKLCH hue 90, chroma at most 0.012",
@@ -113,8 +113,8 @@
 			"on-fill": "black",
 			"secondary": "azure400",
 			"secondary-soft": "azure950",
-			"success": "jade300",
-			"success-soft": "jade950",
+			"success": "leaf300",
+			"success-soft": "leaf950",
 			"warning": "amber300",
 			"warning-soft": "amber950",
 			"error": "red300",
@@ -129,7 +129,7 @@
 			"viz-3": "amber300",
 			"viz-4": "violet300",
 			"viz-5": "red300",
-			"viz-6": "jade300",
+			"viz-6": "leaf300",
 			"viz-7": "ink1",
 			"viz-8": "ink3"
 		},
@@ -155,8 +155,8 @@
 			"on-fill": "green400",
 			"secondary": "azure600",
 			"secondary-soft": "azure50",
-			"success": "jade700",
-			"success-soft": "jade50",
+			"success": "leaf700",
+			"success-soft": "leaf50",
 			"warning": "amber700",
 			"warning-soft": "amber50",
 			"error": "red700",
@@ -171,7 +171,7 @@
 			"viz-3": "amber700",
 			"viz-4": "violet700",
 			"viz-5": "red700",
-			"viz-6": "jade700",
+			"viz-6": "leaf700",
 			"viz-7": "pine1",
 			"viz-8": "pine3"
 		}
@@ -192,21 +192,21 @@
 			"string": "amber300",
 			"number": "violet300",
 			"function": "green300",
-			"type": "jade300",
+			"type": "leaf300",
 			"property": "ink2",
 			"operator": "ink3",
 			"prompt": "green400",
-			"added": "jade300",
+			"added": "leaf300",
 			"removed": "red300"
 		}
 	},
 	"terminal": {
-		"note": "Nearest fixed-palette projections of the roles, for surfaces without truecolor. At 16 colours success is cyan so it stays apart from the brand green.",
+		"note": "Nearest fixed-palette projections of the roles, for surfaces without truecolor. At 16 colours the brand teal is cyan and success is green, so the two stay apart.",
 		"ansi256": {
 			"dark": {
-				"accent": 42,
+				"accent": 43,
 				"secondary": 75,
-				"success": 79,
+				"success": 77,
 				"warning": 214,
 				"error": 203,
 				"info": 111,
@@ -214,9 +214,9 @@
 				"line": 237
 			},
 			"light": {
-				"accent": 28,
+				"accent": 29,
 				"secondary": 25,
-				"success": 29,
+				"success": 22,
 				"warning": 94,
 				"error": 124,
 				"info": 25,
@@ -226,18 +226,18 @@
 		},
 		"ansi16": {
 			"dark": {
-				"accent": "brightGreen",
+				"accent": "brightCyan",
 				"secondary": "brightBlue",
-				"success": "brightCyan",
+				"success": "brightGreen",
 				"warning": "brightYellow",
 				"error": "brightRed",
 				"info": "brightBlue",
 				"muted": "brightBlack"
 			},
 			"light": {
-				"accent": "green",
+				"accent": "cyan",
 				"secondary": "blue",
-				"success": "cyan",
+				"success": "green",
 				"warning": "yellow",
 				"error": "red",
 				"info": "blue",

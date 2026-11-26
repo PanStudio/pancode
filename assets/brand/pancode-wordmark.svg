@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="120" viewBox="0 0 560 120">
 	<title>PanCode</title>
 	<style>
-		.pan { fill: var(--palette-green400, #00e884); }
+		.pan { fill: var(--palette-green400, #07e4b4); }
 		.code { fill: var(--palette-azure400, #4aa8ff); }
 	</style>
 	<!-- PanCode in Schibsted Grotesk 700 at 124px with -5px tracking, as outlines: Pan, then Code. -->
