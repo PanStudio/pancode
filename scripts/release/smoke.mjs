@@ -32,7 +32,14 @@ function step(label, action) {
 }
 
 function run(command, args, env) {
-	const result = spawnSync(command, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd: env.HOME });
+	const result = spawnSync(command, args, {
+		env,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+		cwd: env.HOME,
+		// Node refuses to start a .cmd file without a shell.
+		shell: command.endsWith(".cmd"),
+	});
 	if (result.error) throw new Error(`could not start ${command}: ${result.error.message}`);
 	if (result.status !== 0)
 		throw new Error(`${[command, ...args].join(" ")} exited ${result.status}\n${result.stdout}${result.stderr}`);
@@ -102,16 +109,24 @@ const home = join(scratch, "home");
 const mirror = join(scratch, "mirror");
 mkdirSync(join(mirror, "channel"), { recursive: true });
 mkdirSync(home);
-cpSync(assets, join(mirror, `v${version}`), { recursive: true });
+mkdirSync(join(mirror, `v${version}`));
+for (const name of [bundleFile, "SHA256SUMS"]) cpSync(join(assets, name), join(mirror, `v${version}`, name));
 writeFileSync(join(mirror, "channel", "latest"), `${version}\n`);
 const next = nextRelease(join(assets, bundleFile), version, target, scratch, mirror);
 const server = await serve(mirror);
 
 const bin = join(home, "bin");
 const root = join(home, "install");
+// This process's environment without anything that names another PanCode home or npm configuration.
+const inherited = Object.fromEntries(
+	Object.entries(process.env).filter(([name]) => !/^(?:PANCODE_|XDG_|npm_config_)/iu.test(name)),
+);
 const env = {
+	...inherited,
 	HOME: home,
 	USERPROFILE: home,
+	APPDATA: join(home, "AppData", "Roaming"),
+	LOCALAPPDATA: join(home, "AppData", "Local"),
 	PATH: [bin, process.env.PATH].join(windows ? ";" : ":"),
 	TMPDIR: scratch,
 	TEMP: scratch,
@@ -120,13 +135,6 @@ const env = {
 	PANCODE_INSTALL_GUI: "0",
 	PANCODE_RELEASE_MIRROR: `http://127.0.0.1:${server.port}`,
 	...(process.env.PANCODE_TARGET ? { PANCODE_TARGET: process.env.PANCODE_TARGET } : {}),
-	...(windows
-		? {
-				SystemRoot: process.env.SystemRoot,
-				APPDATA: join(home, "AppData", "Roaming"),
-				LOCALAPPDATA: join(home, "AppData", "Local"),
-			}
-		: {}),
 };
 const command = (name) => join(bin, windows && name !== "pancode" ? `${name}.cmd` : windows ? "pancode.exe" : name);
 const installed = () => run(command("pancode"), ["--version"], env).split("\n")[0].trim();
@@ -179,8 +187,11 @@ try {
 	});
 	step("uninstall", () => {
 		run(command("pancode"), ["uninstall", "--yes"], env);
-		for (const left of [root, command("pancode"), command("panstore")])
-			if (existsSync(left)) throw new Error(`uninstall left ${left}`);
+		// Windows removes the running launcher and its Node once that process has exited.
+		const left = () => [root, command("pancode"), command("panstore")].filter((file) => existsSync(file));
+		for (let waited = 0; left().length > 0 && waited < 30; waited++)
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+		if (left().length > 0) throw new Error(`uninstall left ${left().join(", ")}`);
 	});
 	console.log(`SMOKE_OK ${target} ${version} node ${process.version}`);
 } catch (error) {
