@@ -2133,6 +2133,7 @@
 		.guide-limits,
 		.guide-prompt,
 		.guide-next,
+		.tab-set,
 		details
 	) {
 		max-inline-size: var(--measure-body);
