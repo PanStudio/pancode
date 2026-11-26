@@ -1,7 +1,7 @@
 {
 	"/start.html": "/#start",
 	"/capabilities.html": "/#tools",
-	"/harness.html": "/#workflow",
+	"/harness.html": "/#flow",
 	"/compare.html": "/#compare",
 	"/vision.html": "/#project",
 	"/library.html": "/docs/guide/panhub.html",
@@ -28,7 +28,7 @@
 	"/docs/architecture/provider-adapter-cookbook.html": "/docs/guide/configuration-and-targets.html#servers-without-a-built-in-runtime",
 	"/docs/architecture/pi-boundary.html": "/docs/guide/interop.html#built-on-the-pi-sdk",
 	"/docs/architecture/acp.html": "/docs/guide/interop.html#connect-an-acp-frontend",
-	"/docs/architecture/architecture.html": "/#workflow",
+	"/docs/architecture/architecture.html": "/#flow",
 	"/docs/architecture/tui-design.html": "/docs/guide/commands-and-modes.html",
 	"/docs/architecture/capacity-and-scheduling.html": "/docs/guide/fleet-dispatch.html",
 	"/docs/architecture/dispatch-architecture-rationale.html": "/docs/guide/fleet-dispatch.html",

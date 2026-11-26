@@ -572,11 +572,12 @@
 	.t-glyph {
 		color: var(--syntax-prompt);
 	}
+	/* The terminal stays dark in both themes, so its colours come from the code palette. */
 	.t-ok {
-		color: var(--success);
+		color: var(--syntax-added);
 	}
 	.t-bad {
-		color: var(--error);
+		color: var(--syntax-removed);
 	}
 	.t-answer {
 		color: var(--code-ink);
@@ -602,7 +603,7 @@
 		margin-inline-start: auto;
 	}
 	.t-model {
-		color: var(--secondary);
+		color: var(--syntax-keyword);
 	}
 	.hero-caption {
 		font: var(--type-caption);
@@ -642,6 +643,98 @@
 	.reach-tabs:not([data-tabs-ready]) .reach-panel + .reach-panel {
 		margin-block-start: var(--space-6);
 	}
+
+	.flow-steps {
+		margin-block-start: var(--space-7);
+	}
+	.flow-steps > .tab-list {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 0;
+		counter-reset: stage;
+	}
+	.flow-steps > .tab-list button {
+		text-align: start;
+		padding: var(--space-3) var(--space-3) var(--space-4) 0;
+		font: var(--type-title);
+	}
+	.flow-steps > .tab-list button::before {
+		counter-increment: stage;
+		content: counter(stage, decimal-leading-zero) " /";
+		display: block;
+		font: var(--type-label);
+		letter-spacing: var(--tracking-label);
+		color: var(--secondary);
+		margin-block-end: var(--space-2);
+	}
+	.flow-panel {
+		display: grid;
+		grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+		gap: var(--space-8);
+		align-items: start;
+		padding-block-start: var(--space-7);
+		min-block-size: 24rem;
+	}
+	.flow-panel > .tab-label {
+		grid-column: 1 / -1;
+	}
+	.flow-text h3 {
+		font: var(--type-headline);
+		letter-spacing: var(--tracking-headline);
+		font-size: 1.75rem;
+		margin: 0 0 var(--space-4);
+	}
+	.flow-text > p {
+		color: var(--ink-soft);
+	}
+	.flow-text > .actions {
+		margin-block-start: var(--space-5);
+	}
+	.evidence .t-status {
+		margin-block-start: var(--space-3);
+	}
+	.evidence .t-status:first-child {
+		margin-block-start: 0;
+		padding-block-start: 0;
+		border-block-start: 0;
+	}
+	.evidence {
+		margin: 0;
+		background: var(--code);
+		border: 1px solid var(--code-border);
+		border-radius: var(--radius);
+		color: var(--code-ink);
+	}
+	.evidence figcaption {
+		padding: var(--space-3) var(--space-5);
+		border-block-start: 1px solid var(--code-border);
+		font: var(--type-caption);
+		color: var(--code-muted);
+	}
+	.flow-facts {
+		margin: 0;
+	}
+	.flow-facts > div {
+		display: grid;
+		grid-template-columns: 12rem minmax(0, 1fr);
+		gap: var(--space-5);
+		padding-block: var(--space-4);
+		border-block-start: 1px solid var(--line);
+	}
+	.flow-facts > div:last-child {
+		border-block-end: 1px solid var(--line);
+	}
+	.flow-facts dt {
+		font-weight: 600;
+	}
+	.flow-facts dd {
+		margin: 0;
+		color: var(--muted);
+	}
+	.flow-steps:not([data-tabs-ready]) .flow-panel {
+		min-block-size: 0;
+		border-block-start: 1px solid var(--line);
+	}
 	@media (max-width: 1023px) {
 		.reach-body {
 			grid-template-columns: minmax(0, 1fr);
@@ -650,6 +743,24 @@
 		.reach-art {
 			order: -1;
 			justify-self: center;
+		}
+	}
+	@media (max-width: 1023px) {
+		.flow-panel {
+			grid-template-columns: minmax(0, 1fr);
+			gap: var(--space-6);
+			min-block-size: 0;
+		}
+		.flow-steps > .tab-list {
+			grid-template-columns: repeat(5, max-content);
+			overflow-x: auto;
+			gap: var(--space-5);
+		}
+	}
+	@media (max-width: 767px) {
+		.flow-facts > div {
+			grid-template-columns: minmax(0, 1fr);
+			gap: var(--space-1);
 		}
 	}
 	@media (max-width: 1023px) {
