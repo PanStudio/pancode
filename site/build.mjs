@@ -511,12 +511,12 @@ function shell(html, path, title, description, type, options) {
 		.replaceAll("<!-- published-version -->", escapeHtml(product.publishedVersion))
 		.replace("<!-- version-source -->", `${repository}/tree/${ref}`)
 		.replaceAll("<!-- source-blob -->", `${repository}/blob/${ref}`)
+		// Open and close together: a transcript <pre> carries a class and must not gain a stray </div>.
 		.replace(
-			/<pre(?: data-label="([^"]*)")?>/g,
-			(_, label) =>
-				`<div class="code-block">${label ? `<p class="code-label eyebrow">${label}</p>` : ""}<pre tabindex="0" aria-label="Code example ${++number}">`,
+			/<pre(?: data-label="([^"]*)")?>([\s\S]*?)<\/pre>/g,
+			(_, label, body) =>
+				`<div class="code-block">${label ? `<p class="code-label eyebrow">${label}</p>` : ""}<pre tabindex="0" aria-label="Code example ${++number}">${body}</pre></div>`,
 		)
-		.replace(/<\/pre>/g, "</pre></div>")
 		.replace(
 			/<span aria-hidden="true">([↗→←↓])<\/span>/g,
 			(_, arrow) =>

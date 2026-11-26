@@ -205,6 +205,9 @@ for url in [*urls, origin + '/404.html']:
     page.close()
     if re.search(r'<a(?![^>]*\shref=)(?:\s[^>]*)?>', source):
         errors.append(f'{path}: a link has no href, so crawlers cannot follow it')
+    # An unmatched </div> closes the nearest open layout container and pushes the article out of it.
+    if len(re.findall(r'<div[\s>]', source)) != source.count('</div>'):
+        errors.append(f'{path}: div open and close tags do not balance, so the page layout breaks')
     if public_copyright not in source:
         errors.append(f'{path}: public copyright wording is missing')
     policy = re.search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', source)
