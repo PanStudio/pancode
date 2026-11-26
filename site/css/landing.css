@@ -4,7 +4,7 @@
 	.landing [hidden] {
 		display: none;
 	}
-	/* Install methods are tabs on paper; each command sits on the dark code surface. */
+	/* Install methods are tabs on paper; each command sits on the code surface. */
 	.installer {
 		border: 1px solid var(--line-control);
 		border-radius: var(--radius);
@@ -229,7 +229,7 @@
 	.t-glyph {
 		color: var(--syntax-prompt);
 	}
-	/* The terminal stays dark in both themes, so its colours come from the code palette. */
+	/* The terminal takes the code palette, which follows the theme. */
 	.t-ok {
 		color: var(--syntax-added);
 	}
