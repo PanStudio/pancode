@@ -6,23 +6,28 @@
  * into the cache by the library's own resolver on first use.
  */
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { createScidata, SCIENTIFIC_READERS, type Scidata } from "@pancode/scidata";
 import { ServerUsageError } from "../../registry.js";
 import { readerWorker } from "./worker.js";
 
 export const USAGE = `Options:
-  --cache <dir>  where the HDF5 and Parquet readers are kept (required)`;
+  --cache <dir>  where the HDF5 and Parquet readers are kept
+                 (default: <XDG_CACHE_HOME or ~/.cache>/pankit/data-readers)`;
 
-let configuredCache: string | undefined;
+let cacheOverride: string | undefined;
 
-/** The reader cache directory `--cache` named. Throws before `configure` has run. */
-export function readerCacheDir(): string {
-	if (configuredCache === undefined) throw new Error("the scidata server was started without --cache <dir>");
-	return configuredCache;
+/** The reader cache directory: `--cache` when given, else `<XDG_CACHE_HOME or ~/.cache>/pankit/data-readers`. */
+export function readerCacheDir(env: NodeJS.ProcessEnv = process.env): string {
+	if (cacheOverride !== undefined) return cacheOverride;
+	const xdg = env.XDG_CACHE_HOME;
+	// The XDG base directory spec ignores a relative value.
+	const base = xdg !== undefined && isAbsolute(xdg) ? xdg : join(homedir(), ".cache");
+	return join(base, "pankit", "data-readers");
 }
 
-/** Takes `--cache <dir>` (or `--cache=<dir>`), which it requires; each call replaces what the last one set. */
+/** Takes `--cache <dir>` (or `--cache=<dir>`); each call replaces what the last one set. */
 export function configureScidata(argv: ReadonlyArray<string>): void {
 	let cache: string | undefined;
 	for (let index = 0; index < argv.length; index += 1) {
@@ -39,8 +44,7 @@ export function configureScidata(argv: ReadonlyArray<string>): void {
 		if (cache !== undefined) throw new ServerUsageError("--cache given twice");
 		cache = resolve(value);
 	}
-	if (cache === undefined) throw new ServerUsageError("--cache <dir> is required");
-	configuredCache = cache;
+	cacheOverride = cache;
 }
 
 /** The library bound to this server's cache and worker; built per call so `--cache` holds from the first one. */

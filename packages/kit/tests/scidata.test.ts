@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createScidata, type DataRefusal, isDataRefusal, SCIENTIFIC_READERS } from "@pancode/scidata";
 import type { AnyTool } from "@pancode/sdk/tool";
@@ -25,9 +25,10 @@ import { locateReaderWorker } from "../src/servers/scidata/worker.js";
  * finds a recorded download failure in the cache and refuses at once.
  */
 
-const root = mkdtempSync(join(tmpdir(), "kit-scidata-"));
+const root = mkdtempSync(join(tmpdir(), "pankit-scidata-"));
 const cacheDir = join(root, "cache");
 configure(["--cache", cacheDir]);
+after(() => configure([]));
 
 const worker = locateReaderWorker();
 const library = createScidata({ cacheDir, ...(worker.url !== undefined ? { workerUrl: worker.url } : {}) });
@@ -337,8 +338,9 @@ test("configure takes --cache <dir> and refuses anything else as a usage error",
 			assert.ok(refused !== null, `refuses ${argv.join(" ")}`);
 			assert.ok(refused.includes("--cache <dir>"), refused);
 		}
-		// PanCode names the cache; the server has no default of its own.
-		assert.match(configureServer("scidata", loaded, []) ?? "", /--cache <dir> is required/u);
+		assert.equal(configureServer("scidata", loaded, []), null);
+		assert.equal(readerCacheDir({ XDG_CACHE_HOME: "/xdg-cache" }), "/xdg-cache/pankit/data-readers");
+		assert.ok(readerCacheDir({ XDG_CACHE_HOME: "relative" }).endsWith(join(".cache", "pankit", "data-readers")));
 	} finally {
 		configure(["--cache", cacheDir]);
 	}

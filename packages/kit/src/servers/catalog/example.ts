@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The catalog file `pancode mcp serve catalog --help` prints: one `local` source and
+ * The catalog file `pankit catalog --example` prints: one `local` source and
  * one `ckan` source, every field the parser takes for each, so a newcomer can
  * write a valid file on the first try. It parses as is; replace the values.
  */

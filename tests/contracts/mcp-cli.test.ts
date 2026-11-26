@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { it } from "node:test";
 import { mcpCommandOutput } from "../../src/cli/mcp.js";
@@ -523,84 +523,6 @@ it("records, lists and removes a builtin server's network grant and refuses any 
 		const later = (...args: string[]) => mcpCommandOutput(args, { cwd: project, configDir: config, builtin: shipsNone });
 		strictEqual(later("untrust", "kitfix").text, "mcp: untrusted kitfix (network grant removed)");
 		strictEqual(later("untrust", "kitfix").text, "no declared MCP server with id 'kitfix'");
-	} finally {
-		scratch.cleanup();
-	}
-});
-
-it("lists the built-in servers, prints their manifest and serves one over stdio with PanCode's defaults", () => {
-	const scratch = makeScratchHome("pancode-mcp-builtin-");
-	const cli = (args: string[], input?: string) =>
-		spawnSync(process.execPath, [CLI, "mcp", ...args], {
-			cwd: scratch.dir,
-			env: { ...process.env, ...scratch.env },
-			encoding: "utf8",
-			timeout: 30_000,
-			...(input !== undefined ? { input } : {}),
-		});
-	const shipped = JSON.parse(readFileSync(new URL("../../packages/kit/servers.json", import.meta.url), "utf8")) as {
-		servers: Array<{ id: string; title: string; version: string; tools: unknown[] }>;
-	};
-	try {
-		const listed = cli(["--json"]);
-		strictEqual(listed.status, 0, listed.stderr);
-		deepStrictEqual(
-			JSON.parse(listed.stdout).servers,
-			shipped.servers.map((server) => ({
-				id: server.id,
-				title: server.title,
-				version: server.version,
-				tools: server.tools.length,
-			})),
-		);
-		const text = cli([]);
-		strictEqual(text.status, 0, text.stderr);
-		deepStrictEqual(
-			text.stdout
-				.trimEnd()
-				.split("\n")
-				.map((line) => line.split(/\s+/u)[0]),
-			shipped.servers.map((server) => server.id),
-		);
-		const manifest = cli(["manifest"]);
-		strictEqual(manifest.status, 0, manifest.stderr);
-		deepStrictEqual(JSON.parse(manifest.stdout), shipped);
-
-		const help = cli(["serve", "scidata", "--help"]);
-		strictEqual(help.status, 0, help.stderr);
-		match(help.stdout, /PanCode adds each of these the command line leaves out:\n {2}--cache \S+\/mcp\/data-readers\n/u);
-		strictEqual(
-			cli(["serve", "scidata", "--cache", join(scratch.dir, "readers"), "--help"]).stdout.includes("PanCode adds"),
-			false,
-		);
-		const unknown = cli(["serve", "nope"]);
-		strictEqual(unknown.status, 2);
-		match(unknown.stderr, /^pancode mcp serve: unknown server nope\nservers: /u);
-
-		const frames = [
-			{
-				jsonrpc: "2.0",
-				id: 1,
-				method: "initialize",
-				params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } },
-			},
-			{ jsonrpc: "2.0", method: "notifications/initialized" },
-			{ jsonrpc: "2.0", id: 2, method: "tools/list" },
-		];
-		const served = cli(["serve", "node"], `${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`);
-		strictEqual(served.status, 0, served.stderr);
-		const answers = served.stdout
-			.trim()
-			.split("\n")
-			.map((line) => JSON.parse(line));
-		strictEqual(answers[0].result.serverInfo.name, "node");
-		deepStrictEqual(
-			answers[1].result.tools.map((tool: { name: string }) => tool.name).sort(),
-			shipped.servers
-				.find((server) => server.id === "node")
-				?.tools.map((tool) => (tool as { name: string }).name)
-				.sort(),
-		);
 	} finally {
 		scratch.cleanup();
 	}

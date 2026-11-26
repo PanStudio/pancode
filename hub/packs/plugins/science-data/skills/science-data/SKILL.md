@@ -71,7 +71,7 @@ session, call it through
    the tools below, or `op="put"` it into a store tag.
 
 With no catalog file the server is unavailable, and its reason names the path
-to create (`pancode mcp serve catalog --help` prints a valid file): say so and stop.
+to create (`pankit catalog --example` prints a valid file): say so and stop.
 In a fleet worker the `catalog` server reaches a remote portal only after the
 operator runs `pancode mcp trust catalog --network`.
 
@@ -113,10 +113,8 @@ are the `scidata` server's `mcp_scidata__scidata_inspect`,
 `mcp_scidata__scidata_select` and `mcp_scidata__scidata_stats`, from the same
 library as `data`, and the store is the `store` server's tools
 (`mcp_store__store_tags`, `mcp_store__store_get`, `mcp_store__store_put` and
-the rest), which there serve the store of the project the server starts in and
-write only the tags named with `--write-tag`; `pancode store where` prints the
-full command line. Declare each as
-`npx -y -p @akougkas/pancode pancode mcp serve <id>`.
+the rest), which there need `--root` options; `pancode store where` prints
+them. Declare each as `npx -y -p @akougkas/pancode pankit serve <id>`.
 
 ## Final answer
 

@@ -441,9 +441,9 @@ entries:
     description: "HPC pack: Lmod and Spack software environments, parallel HDF5 and
       MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack
       and darshan servers with the cluster's own tools as the fallback."
-    version: 0.4.2
+    version: 0.4.1
     sourceUrl: packs/plugins/hpc
-    sha256: bdd0ec693758563ed8f13b2ca87149432cbd497161c00e73b255ce52214a95eb
+    sha256: 90d2dcf0044dc348de46efecd0a10176565d75200a518ac2955cb6a58db58661
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -763,9 +763,9 @@ entries:
       through PanCode's catalog server, keeps results in the store, reads HDF5,
       NetCDF, Parquet and CSV with PanCode's data tool first, and writes a
       read-only Python script through run_script only for analysis beyond it."
-    version: 0.4.2
+    version: 0.4.1
     sourceUrl: packs/plugins/science-data
-    sha256: 19d5ccda9c78780266c4797165a8e1bc5002a5d7c908686299a98efcde049354
+    sha256: 5653328b831c47c2d4a82e67b1f8c2e2483ed22e8409cbf72c9f77173ad45264
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

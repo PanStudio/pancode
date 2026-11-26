@@ -13,9 +13,9 @@ package, is licensed under the Apache License, Version 2.0, without the Addition
 Conditions. The npm package carries one license file: the Apache License,
 Version 2.0 is the part of LICENSE headed "APACHE LICENSE, VERSION 2.0", and
 the source repository also keeps it alone in packages/sdk/LICENSE. PanStore,
-the built-in MCP servers and the scientific-data readers (packages/store/,
-packages/kit/ and packages/scidata/), shipped in the same package, are under
-the PanCode License 1.0 with the rest of PanCode.
+PanKit and the scientific-data readers (packages/store/, packages/kit/ and
+packages/scidata/), shipped in the same package, are under the PanCode
+License 1.0 with the rest of PanCode.
 
 --------------------------------------------------------------------
 Technology acknowledgements

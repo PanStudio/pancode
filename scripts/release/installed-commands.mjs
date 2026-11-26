@@ -1,34 +1,37 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The installed `pancode` command's built-in MCP servers, run from an npm prefix that holds the `pancode` package:
- * `pancode --version` prints the package version, `pancode mcp --json` lists exactly the built-in servers, and
- * `pancode mcp serve node` answers one MCP `initialize` over stdio and exits 0 once stdin closes.
+ * The installed `pancode` and `pankit` commands, run from an npm prefix that holds the `pancode` package:
+ * `pancode --version` names the package version, `pankit list` lists exactly the PanKit servers, and
+ * `pankit serve node` answers one MCP `initialize` over stdio and exits 0 once stdin closes.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+/** The servers the `pancode` package ships, as `pankit list` prints them. */
 /** The name PanCode is published under on npm. */
 export const PACKAGE_NAME = "@akougkas/pancode";
 
-/** The built-in MCP servers the `pancode` package ships, as `pancode mcp` lists them. */
 export const KIT_SERVERS = ["node", "modules", "spack", "darshan", "scidata", "catalog", "store"];
 /** The MCP handshake must finish, and the server exit, within this. */
 export const HANDSHAKE_TIMEOUT_MS = 10_000;
 
-/** The server ids in `pancode mcp --json` output. */
+/** The server ids in `pankit list` output: the first word of each line. */
 export function listedServers(stdout) {
-	return JSON.parse(stdout).servers.map((server) => server.id);
+	return stdout
+		.split("\n")
+		.map((line) => line.trim().split(/\s+/u)[0])
+		.filter(Boolean);
 }
 
-/** Problems with a `pancode mcp` listing: any server missing, extra or repeated. */
+/** Problems with a `pankit list` result: a non-zero exit, or any server missing, extra or repeated. */
 export function kitListProblems(listed, expected = KIT_SERVERS) {
 	const want = [...expected].sort();
 	const got = [...listed].sort();
 	return JSON.stringify(got) === JSON.stringify(want)
 		? []
-		: [`pancode mcp listed ${got.join(", ") || "no servers"}; expected exactly ${want.join(", ")}`];
+		: [`pankit list printed ${got.join(", ") || "no servers"}; expected exactly ${want.join(", ")}`];
 }
 
 /** `[node, <bin target>]` for one command of the installed package, so no shell or `.cmd` shim is involved. */
@@ -138,14 +141,14 @@ export function mcpHandshake(command, args, { cwd, env, timeoutMs = HANDSHAKE_TI
  */
 export async function checkInstalledCommands({ prefix, env, version }) {
 	const started = Date.now();
-	const printed = runCommand(prefix, "pancode", ["--version"], env).split("\n")[0]?.trim() ?? "";
-	if (!printed.includes(version)) throw new Error(`pancode --version printed ${printed}; expected ${version}`);
-	const servers = listedServers(runCommand(prefix, "pancode", ["mcp", "--json"], env));
+	const reported = runCommand(prefix, "pancode", ["--version"], env);
+	if (!reported.includes(version)) throw new Error(`pancode --version printed ${reported.trim()}; expected ${version}`);
+	const servers = listedServers(runCommand(prefix, "pankit", ["list"], env));
 	const problems = kitListProblems(servers);
 	if (problems.length > 0) throw new Error(problems.join("\n"));
-	const handshake = await mcpHandshake(process.execPath, [binTarget(prefix, "pancode"), "mcp", "serve", "node"], {
+	const handshake = await mcpHandshake(process.execPath, [binTarget(prefix, "pankit"), "serve", "node"], {
 		cwd: prefix,
 		env,
 	});
-	return { version: printed, mcpServers: servers, mcpServeNode: handshake, ms: Date.now() - started };
+	return { pankitServers: servers, pankitServeNode: handshake, ms: Date.now() - started };
 }

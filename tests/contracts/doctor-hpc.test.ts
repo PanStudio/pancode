@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { HPC_TOOLS, hpcToolchainFindings, mcpBuiltinFindings } from "../../src/cli/doctor-hpc.js";
+import { HPC_TOOLS, hpcToolchainFindings, pankitFindings } from "../../src/cli/doctor-hpc.js";
 import { pdfAttachmentFinding } from "../../src/cli/doctor-toolchain.js";
 import { formatDoctorReport } from "../../src/domains/lifecycle/doctor.js";
 import { popplerInstallHint } from "../../src/tools/read-documents/pdf.js";
@@ -161,7 +161,7 @@ describe("doctor pdf attachments row (#438)", () => {
 	});
 });
 
-/** A stand-in for the kit entry whose `doctor <options-json>` runs `body` (an ES module body with `argv` in scope). */
+/** A stand-in for `pankit` whose `doctor --json` runs `body` (an ES module body with `argv` in scope). */
 function fakeKit(body: string): string {
 	const file = path.join(root, "fake-kit.mjs");
 	writeFileSync(file, `const argv = process.argv.slice(2);\n${body}\n`);
@@ -176,7 +176,7 @@ function filesIn(dir: string): string[] {
 	return readdirSync(dir, { recursive: true, encoding: "utf8" }).sort();
 }
 
-describe("doctor built-in MCP server rows", () => {
+describe("doctor PanKit rows", () => {
 	it("is one row per manifest server: ok with the sources found, info with the reason verbatim, store available in sessions", async () => {
 		const entry = fakeKit(
 			report([
@@ -193,12 +193,12 @@ describe("doctor built-in MCP server rows", () => {
 			]),
 		);
 		const source = { ...builtinFixtureSource(root, ["kitfix", "slurm", "store"]), entry };
-		deepStrictEqual(await mcpBuiltinFindings({ workspaceRoot: workspace, source }), [
-			{ ok: true, name: "mcp kitfix", level: "ok", detail: "available; found: fix" },
-			{ ok: true, name: "mcp slurm", level: "info", detail: "needs Slurm: sbatch is not on PATH" },
+		deepStrictEqual(await pankitFindings({ workspaceRoot: workspace, source }), [
+			{ ok: true, name: "pankit kitfix", level: "ok", detail: "available; found: fix" },
+			{ ok: true, name: "pankit slurm", level: "info", detail: "needs Slurm: sbatch is not on PATH" },
 			{
 				ok: true,
-				name: "mcp store",
+				name: "pankit store",
 				level: "ok",
 				detail: "available in sessions: PanCode passes this project's store roots",
 			},
@@ -210,9 +210,9 @@ describe("doctor built-in MCP server rows", () => {
 			report([{ id: "slurm", available: false, reason: "the probe failed: EACCES reading /etc/slurm" }], 1),
 		);
 		const source = { ...builtinFixtureSource(root, ["kitfix", "slurm"]), entry };
-		deepStrictEqual(await mcpBuiltinFindings({ workspaceRoot: workspace, source }), [
-			{ ok: true, name: "mcp kitfix", level: "warn", detail: "the probe did not report this server" },
-			{ ok: true, name: "mcp slurm", level: "warn", detail: "the probe failed: EACCES reading /etc/slurm" },
+		deepStrictEqual(await pankitFindings({ workspaceRoot: workspace, source }), [
+			{ ok: true, name: "pankit kitfix", level: "warn", detail: "the kit did not report this server" },
+			{ ok: true, name: "pankit slurm", level: "warn", detail: "the probe failed: EACCES reading /etc/slurm" },
 		]);
 	});
 
@@ -220,14 +220,9 @@ describe("doctor built-in MCP server rows", () => {
 		const entry = fakeKit('process.stderr.write("probing modules\\n"); setInterval(() => {}, 1000);');
 		const source = { ...builtinFixtureSource(root, ["kitfix", "slurm"]), entry };
 		// The row names the bound that fired; a kit that stalled the probe would never return it.
-		const findings = await mcpBuiltinFindings({ workspaceRoot: workspace, source, timeoutMs: 300 });
+		const findings = await pankitFindings({ workspaceRoot: workspace, source, timeoutMs: 300 });
 		deepStrictEqual(findings, [
-			{
-				ok: true,
-				name: "mcp",
-				level: "warn",
-				detail: "the built-in MCP server probe did not answer within 300ms: probing modules",
-			},
+			{ ok: true, name: "pankit", level: "warn", detail: "pankit doctor did not answer within 300ms: probing modules" },
 		]);
 	});
 
@@ -244,8 +239,8 @@ describe("doctor built-in MCP server rows", () => {
 		process.env.KITFIX_DECLARED = "yes";
 		process.env.KITFIX_UNDECLARED = "leaked";
 		try {
-			const [row] = await mcpBuiltinFindings({ workspaceRoot: workspace, source });
-			strictEqual(row?.detail, 'declared=yes undeclared=undefined argv=doctor {"kitfix":[]}');
+			const [row] = await pankitFindings({ workspaceRoot: workspace, source });
+			strictEqual(row?.detail, "declared=yes undeclared=undefined argv=doctor --json");
 		} finally {
 			delete process.env.KITFIX_DECLARED;
 			delete process.env.KITFIX_UNDECLARED;
@@ -256,14 +251,14 @@ describe("doctor built-in MCP server rows", () => {
 		const marker = path.join(root, "spawned");
 		const entry = fakeKit(`(await import("node:fs")).writeFileSync(${JSON.stringify(marker)}, "");`);
 		const source = { ...builtinFixtureSource(root, []), entry };
-		deepStrictEqual(await mcpBuiltinFindings({ workspaceRoot: workspace, source }), [
-			{ ok: true, name: "mcp", level: "info", detail: "this PanCode ships no built-in MCP servers" },
+		deepStrictEqual(await pankitFindings({ workspaceRoot: workspace, source }), [
+			{ ok: true, name: "pankit", level: "info", detail: "this PanCode ships no PanKit servers" },
 		]);
 		ok(!existsSync(marker));
 	});
 
 	it("probes the shipped kit on an untouched home: a row per shipped server, catalog and scidata naming PanCode's paths", async () => {
-		const env = await isolatePancodeEnv("pancode-doctor-mcp-");
+		const env = await isolatePancodeEnv("pancode-doctor-pankit-");
 		const savedHome = process.env.HOME;
 		process.env.HOME = env.dir;
 		try {
@@ -271,18 +266,18 @@ describe("doctor built-in MCP server rows", () => {
 				servers: Array<{ id: string }>;
 			};
 			const before = filesIn(env.dir);
-			const findings = await mcpBuiltinFindings({ workspaceRoot: workspace });
+			const findings = await pankitFindings({ workspaceRoot: workspace });
 			deepStrictEqual(
 				findings.map((finding) => finding.name),
-				shipped.servers.map((server) => `mcp ${server.id}`),
+				shipped.servers.map((server) => `pankit ${server.id}`),
 			);
 			const byName = new Map(findings.map((finding) => [finding.name, finding]));
-			strictEqual(byName.get("mcp node")?.level, "ok");
-			const catalogFile = path.join(env.dir, "config", "mcp", "catalog.json");
-			const catalog = byName.get("mcp catalog")?.detail ?? "";
+			strictEqual(byName.get("pankit node")?.level, "ok");
+			const catalogFile = path.join(env.dir, "config", "pankit", "catalog.json");
+			const catalog = byName.get("pankit catalog")?.detail ?? "";
 			ok(catalog.includes(catalogFile), catalog);
-			const scidata = byName.get("mcp scidata")?.detail ?? "";
-			ok(scidata.includes(path.join(env.dir, "cache", "mcp", "data-readers")), scidata);
+			const scidata = byName.get("pankit scidata")?.detail ?? "";
+			ok(scidata.includes(path.join(env.dir, "cache", "pankit", "data-readers")), scidata);
 			deepStrictEqual(filesIn(env.dir), before);
 		} finally {
 			if (savedHome === undefined) delete process.env.HOME;

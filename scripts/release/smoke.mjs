@@ -165,8 +165,10 @@ try {
 		else run("sh", [join(assets, "install.sh"), "--install-dir", root, "--bin-dir", bin], env);
 		expectVersion(version);
 	});
-	step("the built-in MCP servers answer", () => {
-		if (!run(command("pancode"), ["mcp"], env).trim()) throw new Error("pancode mcp printed nothing");
+	step("pancode store and pankit answer", () => {
+		if (!run(command("pancode"), ["store", "--help"], env).trim())
+			throw new Error("pancode store --help printed nothing");
+		if (!run(command("pankit"), ["list"], env).trim()) throw new Error("pankit list printed nothing");
 	});
 	step("doctor reads an installer install", () => {
 		const result = spawnSync(command("pancode"), ["doctor", "--json"], { env, encoding: "utf8", cwd: home });
@@ -186,7 +188,7 @@ try {
 		run(command("pancode"), ["uninstall", "--yes"], env);
 		// Windows removes the running launcher, its Node and the installed versions from a detached process
 		// after this one has exited, so they outlive the command by however long that removal takes.
-		const left = () => [root, command("pancode")].filter((file) => existsSync(file));
+		const left = () => [root, command("pancode"), command("pankit")].filter((file) => existsSync(file));
 		for (let waited = 0; left().length > 0 && waited < 360; waited++)
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
 		if (left().length > 0) {

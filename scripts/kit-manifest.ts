@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * `pnpm kit:manifest` writes packages/kit/servers.json, the policy PanCode
- * ships for its built-in MCP servers, from the kit's server registry; `pnpm kit:check` fails when
+ * `pnpm kit:manifest` writes packages/kit/servers.json, the PanKit policy
+ * PanCode ships, from the kit's server registry; `pnpm kit:check` fails when
  * the tracked file is not what the registry generates. The file is formatted
  * the way `biome check` wants it, so lint and the check agree.
  */
@@ -40,8 +40,8 @@ if (checkMode) {
 		process.stderr.write(`${relativeDestination} is stale; run pnpm kit:manifest and commit the result.\n`);
 		process.exit(1);
 	}
-	process.stdout.write(`Verified ${relativeDestination}: ${servers} built-in MCP servers.\n`);
+	process.stdout.write(`Verified ${relativeDestination}: ${servers} PanKit servers.\n`);
 } else {
 	writeFileSync(destination, content);
-	process.stdout.write(`Wrote ${relativeDestination}: ${servers} built-in MCP servers.\n`);
+	process.stdout.write(`Wrote ${relativeDestination}: ${servers} PanKit servers.\n`);
 }

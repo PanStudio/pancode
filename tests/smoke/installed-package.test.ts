@@ -822,17 +822,15 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				stdio: "pipe",
 			});
 
-			// One package, one command: npm links the pancode bin from the one tarball alone.
-			deepStrictEqual(
-				readdirSync(join(prefix, "node_modules", ".bin")).filter((name) => /^pan/u.test(name)),
-				["pancode"],
-			);
+			// One package, two commands: npm links each bin from the one tarball alone.
+			for (const command of ["pancode", "pankit"])
+				ok(existsSync(join(prefix, "node_modules", ".bin", command)), `npm must link the ${command} bin`);
+			ok(!existsSync(join(prefix, "node_modules", ".bin", "panstore")), "pancode store is PanStore's one command");
 			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "the package installs with no @pancode/* package");
 			const storeHelp = await run(bin, ["store", "--help"], foreign, isolatedEnv(home));
 			strictEqual(storeHelp.code, 0, storeHelp.stderr);
-			const mcpList = await run(bin, ["mcp", "--json"], foreign, isolatedEnv(home));
-			strictEqual(mcpList.code, 0, mcpList.stderr);
-			ok((JSON.parse(mcpList.stdout) as { servers: unknown[] }).servers.length > 0, mcpList.stdout);
+			const kitList = await run(join(prefix, "node_modules", ".bin", "pankit"), ["list"], foreign, isolatedEnv(home));
+			strictEqual(kitList.code, 0, kitList.stderr);
 			const version = await run(bin, ["--version"], foreign, isolatedEnv(home));
 			strictEqual(version.code, 0, version.stderr);
 			// A development tree packs as `0.6.0-dev (unreleased · <commit>)`; a release packs as the bare version.

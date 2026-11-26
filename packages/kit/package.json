@@ -2,7 +2,7 @@
 	"name": "@pancode/kit",
 	"version": "0.9.1-dev",
 	"private": true,
-	"description": "PanCode's built-in MCP servers for HPC and science.",
+	"description": "PanKit, the MCP tool suite for HPC and science.",
 	"type": "module",
 	"license": "SEE LICENSE IN LICENSE",
 	"repository": {
@@ -24,6 +24,9 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		}
+	},
+	"bin": {
+		"pankit": "./dist/cli.js"
 	},
 	"scripts": {
 		"build": "tsup"

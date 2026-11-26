@@ -694,7 +694,7 @@ process.stdout.write(response.stdout ?? "", () => process.exit(response.code ?? 
 
 /** A directory holding stub darshan programs that answer from `responses`, keyed `<program> <mode>`. */
 function stubs(responses: Record<string, Response>): { dir: string; calls(): Call[] } {
-	const dir = mkdtempSync(join(tmpdir(), "kit-darshan-"));
+	const dir = mkdtempSync(join(tmpdir(), "pankit-darshan-"));
 	writeFileSync(join(dir, "stub.cjs"), STUB);
 	writeFileSync(join(dir, "responses.json"), JSON.stringify(responses));
 	writeFileSync(join(dir, "calls.jsonl"), "");
@@ -778,12 +778,12 @@ test(
 			"darshan-parser --perf": { stdout: PERF },
 			"darshan-parser --file": { stdout: FILE },
 		});
-		process.env.KIT_DARSHAN_TEST_SECRET = "do-not-pass";
+		process.env.PANKIT_DARSHAN_TEST_SECRET = "do-not-pass";
 		let summary: Record<string, unknown>;
 		try {
 			summary = await withPath(stub.dir, () => call("darshan_summary", { path: "logs/run.darshan" }));
 		} finally {
-			delete process.env.KIT_DARSHAN_TEST_SECRET;
+			delete process.env.PANKIT_DARSHAN_TEST_SECRET;
 		}
 		const log = resolve("logs/run.darshan");
 		const calls = stub.calls();
@@ -802,7 +802,7 @@ test(
 		for (const entry of calls) {
 			assert.equal(entry.name, "darshan-parser");
 			assert.equal(entry.lcAll, "C");
-			assert.ok(!entry.envKeys.includes("KIT_DARSHAN_TEST_SECRET"));
+			assert.ok(!entry.envKeys.includes("PANKIT_DARSHAN_TEST_SECRET"));
 			assert.ok(!entry.args.includes("--base") && !entry.args.includes("--all"));
 		}
 		assert.equal(summary.path, log);
@@ -1089,7 +1089,7 @@ test(
 );
 
 test("without darshan-parser every tool says so and the probe reports the server unavailable", async () => {
-	const empty = mkdtempSync(join(tmpdir(), "kit-darshan-path-"));
+	const empty = mkdtempSync(join(tmpdir(), "pankit-darshan-path-"));
 	for (const name of ["darshan_summary", "darshan_files", "darshan_modules", "darshan_timeline"]) {
 		const result = await withPath(empty, () => run(name, { path: "/run.darshan" }));
 		assert.equal(

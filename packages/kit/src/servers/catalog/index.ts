@@ -3,22 +3,24 @@
 /**
  * The `catalog` server: search the dataset catalogs the operator named in a
  * catalog file, describe one dataset, and stage one of its files to a path.
- * The file is the one `--file` names. PanCode ships no sources, so until the
- * operator writes that file the server is unavailable and says which path to
- * create.
+ * The file is `<XDG_CONFIG_HOME or ~/.config>/pankit/catalog.json`, or the
+ * path `--file` gives. PanKit ships no sources, so without the file the
+ * server is unavailable and says which path to create.
  */
+import os from "node:os";
 import path from "node:path";
 import { defineServer } from "@pancode/sdk/tool";
 import { type ServerProbe, ServerUsageError } from "../../registry.js";
-import { CATALOG_EXAMPLE } from "./example.js";
 import { catalogTools, loadCatalog } from "./tools.js";
 
 let configuredFile: string | null = null;
 
-/** The catalog file `--file` named. Throws before `configure` has run. */
+/** The catalog file this server reads: `--file` when given, else the default under the configuration directory. */
 export function catalogFilePath(): string {
-	if (configuredFile === null) throw new Error("the catalog server was started without --file <path>");
-	return configuredFile;
+	if (configuredFile !== null) return configuredFile;
+	const xdg = process.env.XDG_CONFIG_HOME;
+	const base = xdg !== undefined && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), ".config");
+	return path.join(base, "pankit", "catalog.json");
 }
 
 export const server = defineServer({
@@ -29,19 +31,16 @@ export const server = defineServer({
 });
 
 export const usage = `Options:
-  --file <path>  the catalog file to read (required)
+  --file <path>  the catalog file to read, instead of
+                 <XDG_CONFIG_HOME or ~/.config>/pankit/catalog.json
 
 The catalog file is {"version": 1, "sources": [...]}. A "local" source needs
 id, type and datasets; each dataset needs id and title, and each resource needs
 id and an absolute path. A "ckan" source needs id, type and the portal's base
-url.
+url. pankit catalog --example prints a valid file to start from.
 `;
 
-export const example = `A valid catalog file to start from:
-
-${CATALOG_EXAMPLE}`;
-
-/** Takes `--file <path>`, which it requires, resolved against the working directory; any other option is refused. */
+/** Takes `--file <path>`, resolved against the working directory; any other option is refused. */
 export function configure(argv: ReadonlyArray<string>): void {
 	let file: string | null = null;
 	for (let index = 0; index < argv.length; index++) {
@@ -53,7 +52,6 @@ export function configure(argv: ReadonlyArray<string>): void {
 		file = path.resolve(value);
 		index++;
 	}
-	if (file === null) throw new ServerUsageError("--file <path> is required");
 	configuredFile = file;
 }
 

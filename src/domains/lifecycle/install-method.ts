@@ -69,7 +69,7 @@ export interface InstallerRecord {
 	manager?: string;
 	pathAdded?: boolean;
 	pathEntry?: string;
-	/** Launchers written beside `launcher` for the package's other commands. */
+	/** Launchers written beside `launcher` for the package's other commands (pankit). */
 	binLaunchers?: string[];
 }
 

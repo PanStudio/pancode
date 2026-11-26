@@ -113,7 +113,7 @@ export const coreTests = [
 	"hub-skill-ranking",
 	"hub-signature",
 	"hub-trust",
-	"hub-packs-builtin-mcp",
+	"hub-packs-pankit",
 	"prefix-stagger",
 	"monitor-steer-tools",
 	"dispatch-write-root-request",

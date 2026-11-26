@@ -61,7 +61,7 @@ export async function writeStaged(
 	const { destination } = options;
 	const temporary = path.join(
 		path.dirname(destination),
-		`.${path.basename(destination)}.${randomBytes(6).toString("hex")}.pancode-part`,
+		`.${path.basename(destination)}.${randomBytes(6).toString("hex")}.pankit-part`,
 	);
 	const handle = await open(temporary, "wx");
 	let placed = false;

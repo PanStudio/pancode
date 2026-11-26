@@ -133,8 +133,8 @@ exit 0; a missing tag or blob exits 1.
 adopt without a key lists store directories whose project root no longer
 exists and that carry no project id; with a key it moves that store to this
 project, refusing when this project already has one.
-where prints the store's locations, each root's id and the command line that
-serves the store as an MCP server from any directory. A project id keys the store by that id instead of the
+where prints the store's locations, each root's id and the pankit command
+line that serves the store over MCP from any directory. A project id keys the store by that id instead of the
 main checkout's path; where then names a store left under the path key, which
 adopt moves.
 locks lists the project's store locks with each holder's key, pid, host and
@@ -578,9 +578,9 @@ function shellWord(word: string): string {
 	return /^[A-Za-z0-9_@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 }
 
-/** The `pancode mcp serve store` command line that reaches the store `context` names, from any directory. */
+/** The `pankit serve store` command line that serves the store `context` names over MCP, from any directory. */
 export function storeServerInvocation(context: StoreCliContext): string {
-	const words = ["pancode", "mcp", "serve", "store"];
+	const words = ["pankit", "serve", "store"];
 	context.roots.forEach((root, index) => {
 		words.push("--root", storeRootOption(root, index === 0));
 	});

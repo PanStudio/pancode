@@ -400,7 +400,7 @@ test("collections: names and contents from both tools", () => {
 // finding the tool ------------------------------------------------------------
 
 function scratch(prefix: string): string {
-	return mkdtempSync(join(tmpdir(), `kit-modules-${prefix}-`));
+	return mkdtempSync(join(tmpdir(), `pankit-modules-${prefix}-`));
 }
 
 function executable(path: string, body = "#!/bin/sh\nexit 0\n"): string {
@@ -560,7 +560,7 @@ const RECORDED = [
 	"MODULES_PAGER",
 	"MODULES_COLOR",
 	"MODULEPATH",
-	"KIT_TEST_UNLISTED",
+	"PANKIT_TEST_UNLISTED",
 ];
 
 /**
@@ -576,7 +576,7 @@ function stub(name: string, responses: Record<string, { stderr: string; code?: n
 	const cases = Object.entries(responses).map(([args, response], index) => {
 		const file = join(dir, `response-${index}.txt`);
 		writeFileSync(file, response.stderr);
-		return `\t${JSON.stringify(args)}) cat ${JSON.stringify(file)} >&2; echo 'export KIT_HACKED=1;'; exit ${response.code ?? 0} ;;`;
+		return `\t${JSON.stringify(args)}) cat ${JSON.stringify(file)} >&2; echo 'export PANKIT_HACKED=1;'; exit ${response.code ?? 0} ;;`;
 	});
 	const record = RECORDED.map((variable) => `printf '%s=%s\\n' ${variable} "\${${variable}-<unset>}"`).join("\n");
 	const program = executable(
@@ -633,7 +633,7 @@ test("Lmod avail: exact argv, pager and colour off, module variables passed and 
 	});
 	const result = await asLmod(fake, () => call("modules_avail", { name: "py" }), {
 		LMOD_SITE_NAME: "testsite",
-		KIT_TEST_UNLISTED: "leak",
+		PANKIT_TEST_UNLISTED: "leak",
 		LMOD_PAGER: "less",
 		LMOD_COLORIZE: "yes",
 	});
@@ -648,7 +648,7 @@ test("Lmod avail: exact argv, pager and colour off, module variables passed and 
 		MODULES_PAGER: "<unset>",
 		MODULES_COLOR: "<unset>",
 		MODULEPATH: process.env.MODULEPATH ?? "<unset>",
-		KIT_TEST_UNLISTED: "<unset>",
+		PANKIT_TEST_UNLISTED: "<unset>",
 	});
 	assert.equal(result.tool, "lmod");
 	assert.equal(result.version, "9.5");
@@ -660,7 +660,7 @@ test("Lmod avail: exact argv, pager and colour off, module variables passed and 
 			["python/3.10.14", false],
 		],
 	);
-	assert.equal(process.env.KIT_HACKED, undefined);
+	assert.equal(process.env.PANKIT_HACKED, undefined);
 });
 
 test(

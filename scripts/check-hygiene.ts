@@ -330,8 +330,7 @@ async function checkHubPin(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// kit-manifest: packages/kit/servers.json, the policy PanCode ships for its
-// built-in MCP servers,
+// kit-manifest: packages/kit/servers.json, the PanKit policy PanCode ships,
 // must match what the kit's server registry generates.
 // ---------------------------------------------------------------------------
 async function checkKitManifest(): Promise<void> {

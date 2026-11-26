@@ -37,7 +37,8 @@
 		"node": ">=22.19.0"
 	},
 	"bin": {
-		"pancode": "bin/pancode.cjs"
+		"pancode": "bin/pancode.cjs",
+		"pankit": "dist/kit/cli.js"
 	},
 	"exports": {
 		"./package.json": "./package.json",

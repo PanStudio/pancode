@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The `node` server: facts about the machine the server runs on. `node:os`
+ * The `node` server: facts about the machine PanKit runs on. `node:os`
  * answers on every platform, so the server is always available; `/proc`,
  * `lscpu`, `nvidia-smi` and `ps` add facts where they are present.
  */
