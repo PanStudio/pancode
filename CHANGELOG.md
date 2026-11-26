@@ -1,20 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.9.1 - 2026-11-27
+
+PanCode 0.9.1 gives PanCode one identity on every surface, rebuilds pancode.dev around what the harness does, lists PanKit's servers in PanHub, and fixes what testing 0.9.0 found in installing, upgrading, authentication and the desktop app.
+
+### Highlights
+
+- **A new mark.** The facet mark, a stone of four facets whose channel is the for-all sign ∀, replaces the P tile on the website, in the desktop app and its icons, and on the sign-in page. In the terminal the three-cell tile carries ∀ (`[V]` in ASCII) and the welcome wordmark draws the A of PAN as the sign. The brand green moves to teal, and success takes a leaf green so it never reads as the brand. The sign-in page, session export and transcript use the same palette.
+- **A new website.** pancode.dev opens on "The model is a choice. The harness is what you keep." and names the five things a single agent leaves open: which model gets the work, whether "done" is true, what a command may touch, who else takes part in the job, and what survives the session. Each has its section with recorded evidence. Tutorials sit in eight groups that follow those five, the tutorial, pack and research listings lead with a short featured set, articles share one reading rhythm, and the research page opens with the thesis "The harness is a systems problem." and an open question for each subsystem. PanCode is presented as one platform: the PanStore, PanKit and extension API pages are gone.
+- **PanKit servers in PanHub.** PanHub has a seventh kind, `server`, for the seven PanKit servers PanCode carries (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`, `store`). Each is a core row of the bundled index, and its pack under `hub/packs/servers/` holds the server's shipped policy. `pancode hub list --kind server` shows them as `built in`, `pancode hub inspect server:<id>` lists each tool with its action class and the environment variables the server passes through, `install` and `update` answer that the server is built in and write nothing, and `enable`, `disable` and `remove` exit 1. In the terminal, `/hub servers` opens PanHub's Servers tab, and the desktop app's Hub page lists them in a Servers collection. pancode.dev/hub.html shows them in a Servers group, each with the `npx -y -p @akougkas/pancode pankit serve <id>` command that starts it for another MCP host.
 
 ### Added
 
-- PanHub has a seventh kind, `server`, for the seven PanKit servers PanCode carries (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`, `store`). Each is a core row of the bundled index, and its pack under `hub/packs/servers/` holds the server's shipped policy. `pancode hub list --kind server` shows them as `built in`, `pancode hub inspect server:<id>` lists each tool with its action class and the environment variables the server passes through, `install` and `update` answer that the server is built in and write nothing, and `enable`, `disable` and `remove` exit 1. In the terminal, `/hub servers` opens PanHub's Servers tab, and the desktop app's Hub page lists them in a Servers collection. pancode.dev/hub.html shows them in a Servers group, each with the `npx -y -p @akougkas/pancode pankit serve <id>` command that starts it for another MCP host.
 - The Claude Code marketplace gains `pankit`: `claude plugin install pankit@pancode` gives Claude Code six PanKit servers (all but `store`), each started as `npx -y -p @akougkas/pancode pankit serve <id>`.
 
 ### Changed
 
 - The `panstore` command is removed; the project store's commands are `pancode store <command>`. `pancode store where` now ends with the `pankit serve store` line that serves the project's store over MCP from any directory, and `PANSTORE_PROJECT_ID` is gone: a project's `store.projectId` keys its store.
 - The SDK is documented as PanCode's extension API, unstable until PanCode defines it; its `pancode/sdk/<subpath>` imports are unchanged.
+- Token counts read one way everywhere in the terminal (13.0k, 142k, 5.0M), compaction lines included.
+- An approval card states what a command reaches only when PanCode established it from the command's steps and typed paths, and the allow-once button names the workspace only then. An effect PanCode could not read says to read the command.
+- The autonomy modes an ACP client or the desktop app lists describe themselves in plain words built from this host's sandbox and safety check.
 
 ### Fixes
 
-- After a native upgrade, the desktop app's background service restarts on the new version instead of refusing with "belongs to another installation" and asking for a handover.
+- Installing: a second install leaves another installation's desktop app where it is and prints the command that moves it; a failed install removes the root it created; `install.sh` and `install.ps1` say a version is not published when the release server says so; reinstalling the same bundle reuses its version directory.
+- Upgrading: after a native upgrade or a rollback, the desktop app's background service restarts on the active version instead of refusing with "belongs to another installation"; under `--no-gui` the upgrade names `pancode gui background restart --if-idle` for this installation's app; a package-manager install already on the channel's version is reported as current; pnpm 11+ global installs are recognised; hand-run commands on the beta channel name the version it resolves to, not a missing `beta` dist-tag.
+- `pancode doctor` names `pancode auth login <target>` for a connection with no stored credential, keeps the trust review command on an untrusted project row, and leaves `credentials.yaml` to the first saved key.
+- A project settings file that redeclares a target your user settings give a credential, an API key or a sign-in, no longer makes PanCode send a placeholder key: PanCode refuses the turn before any request and names the file, and `pancode doctor` says the same. A project `targets` list that replaces yours is reported at start and in doctor, and a 401 from a target whose runtime sends no credential points to `/model`.
+- Headless runs count each call a `--max-tool-calls` cap refuses as refused, and a review's failing verdict counts as a finished run.
+- `pancode hub install --dry-run` of a pack missing its requirements says the install would be refused and names `--with-requirements`.
+- `write` and `edit` say "Nothing was published" once when a publish fails.
+- The compaction card counts the same conversation messages as its notice, and a reopened session no longer shows a thinking-level line for each compaction that left the level unchanged.
+- Desktop app: a steer or follow-up appears at its place in the turn; live refusals read as refused; the session approval for a sandbox escape is offered; a turn's token line leaves the coverage gap to its breakdown, and tools that share a phrase share one tally; an interview question's markdown renders on the review page; a desktop entry clash names the command that clears it; setup and queue wording, focus rings and layout fixes; the new-task page fits a 713 px window.
 
 ## 0.9.0 - 2026-11-26
 
