@@ -102,7 +102,6 @@ export function useTaskActions(client: Client, afterNavigate?: () => void): Task
 	const queries = useQueryClient();
 	const launch = useProjectLaunch(client);
 	const { controls, requestClose } = useSessionCommands();
-	const overview = useSessionOverview(client);
 	const resume = useMutation({
 		mutationFn: ({ sessionId, workspaceId }: { sessionId: string; workspaceId: string; window?: boolean }) => {
 			if (controls.records.some((row) => row.sessionId === sessionId && row.stage !== "complete"))
@@ -127,15 +126,18 @@ export function useTaskActions(client: Client, afterNavigate?: () => void): Task
 				rememberWorkspace(workspaceId);
 				updateHomeDraft({ workspaceId });
 			}
+			// Read when pressed, not subscribed: an overview refetch mid-turn would otherwise give the shell a new
+			// startTask and render every page that reads it, the composer included.
+			const sessions = queries.getQueryData<SessionOverview>(["session-overview"])?.sessions ?? [];
 			const draft =
 				workspaceId && !home.pending && !home.text && !home.textIssue
-					? reusableDraft(overview.data?.sessions ?? [], workspaceId, ownDrafts())
+					? reusableDraft(sessions, workspaceId, ownDrafts())
 					: undefined;
 			afterNavigate?.();
 			if (draft) void navigate(`/sessions/${draft.id}`);
 			else void navigate("/");
 		},
-		[overview.data?.sessions, navigate, afterNavigate],
+		[queries, navigate, afterNavigate],
 	);
 	return {
 		launch,
