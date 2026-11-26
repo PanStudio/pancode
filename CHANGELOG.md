@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.1 - 2026-11-27
+## 0.9.1-rc.1 - 2026-11-26
 
 PanCode 0.9.1 is the first release published by PanStudio, as `@panstudio/pancode`. It gives PanCode one identity on every surface, rebuilds pancode.dev around what the harness does, lists PanKit's servers in PanHub, and fixes what testing 0.9.0 found in installing, upgrading, authentication and the desktop app.
 
@@ -17,6 +17,7 @@ PanCode 0.9.1 is the first release published by PanStudio, as `@panstudio/pancod
 ### Changed
 
 - PanCode is published by PanStudio. The repository is github.com/PanStudio/pancode and the npm package is `@panstudio/pancode` (`npm install -g @panstudio/pancode`). The installers download from the new repository's releases, `pancode report` files issues there, PanHub's default index URL points there, and the Claude Code marketplace is added with `claude plugin marketplace add PanStudio/pancode`.
+- The five community packs PanHub listed under the publisher `akougkas` (the `autotldr`, `cite-nexus`, `wtfp` and `zulipchat` plugins and the `wtfp` extension) are now published by `panstudio`, from the same source commits. A copy installed under 0.9.0 keeps its publisher, and `pancode hub list` marks it `installed from akougkas`; `pancode hub install` and `pancode hub update` refuse that pack with `hub_publisher_collision` until `pancode hub remove` deletes the old copy.
 - The `panstore` command is removed; the project store's commands are `pancode store <command>`. `pancode store where` now ends with the `pankit serve store` line that serves the project's store over MCP from any directory, and `PANSTORE_PROJECT_ID` is gone: a project's `store.projectId` keys its store.
 - The SDK is documented as PanCode's extension API, unstable until PanCode defines it; its `pancode/sdk/<subpath>` imports are unchanged.
 - Token counts read one way everywhere in the terminal (13.0k, 142k, 5.0M), compaction lines included.
@@ -32,6 +33,7 @@ PanCode 0.9.1 is the first release published by PanStudio, as `@panstudio/pancod
 - Headless runs count each call a `--max-tool-calls` cap refuses as refused, and a review's failing verdict counts as a finished run.
 - `pancode hub install --dry-run` of a pack missing its requirements says the install would be refused and names `--with-requirements`.
 - `write` and `edit` say "Nothing was published" once when a publish fails.
+- Redaction no longer hides values named by `author` or `authority`: `?author=Austen`, `GIT_AUTHOR_NAME=Jane` and an `author` argument keep their values on an approval card, while `auth`, `authorization` and `oauth` names still mask theirs.
 - The compaction card counts the same conversation messages as its notice, and a reopened session no longer shows a thinking-level line for each compaction that left the level unchanged.
 - Desktop app: a steer or follow-up appears at its place in the turn; live refusals read as refused; the session approval for a sandbox escape is offered; a turn's token line leaves the coverage gap to its breakdown, and tools that share a phrase share one tally; an interview question's markdown renders on the review page; a desktop entry clash names the command that clears it; setup and queue wording, focus rings and layout fixes; the new-task page fits a 713 px window.
 

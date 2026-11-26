@@ -1,6 +1,6 @@
 {
 	"name": "@pancode/sdk",
-	"version": "0.9.1",
+	"version": "0.9.1-rc.1",
 	"private": true,
 	"description": "PanCode's extension API: the contract for authoring PanCode extensions, packs, tools and MCP servers.",
 	"type": "module",
