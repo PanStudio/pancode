@@ -458,7 +458,7 @@ function head(
 			applicationSubCategory: "Coding agent",
 			operatingSystem: "Linux, macOS, Windows",
 			...(product.publishedVersion ? { softwareVersion: product.publishedVersion } : {}),
-			downloadUrl: "https://www.npmjs.com/package/pancode",
+			downloadUrl: "https://www.npmjs.com/package/@akougkas/pancode",
 			installUrl: `${url}#start`,
 			softwareHelp: { "@type": "CreativeWork", url: `${product.origin}/docs.html` },
 			license: `${repository}/blob/main/LICENSE`,
@@ -1303,7 +1303,7 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 
 - Install on macOS, Linux, or WSL: \`curl -fsSL ${product.origin}/install.sh | sh\`
 - Install on Windows (best effort) in PowerShell: \`irm ${product.origin}/install.ps1 | iex\`
-- Install with npm (Node.js 22.19 or newer): \`npm install -g pancode\`
+- Install with npm (Node.js 22.19 or newer): \`npm install -g @akougkas/pancode\`
 - Connect a model in a project: \`pancode configure\`; then run \`pancode\` for the terminal or \`pancode gui --open\` for the desktop alpha.
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
 const familyPages = family.filter((member) => member.page !== "/");
@@ -1345,7 +1345,7 @@ await writeFile(
 			),
 			llmsLink("Overview", "/", "capabilities, models, installation, and common questions"),
 			llmsLink("Source repository", repository, "code, issues, and the full upstream guides"),
-			llmsLink("npm package", "https://www.npmjs.com/package/pancode"),
+			llmsLink("npm package", "https://www.npmjs.com/package/@akougkas/pancode"),
 			llmsLink("License", `${repository}/blob/main/LICENSE`, "PanCode License 1.0"),
 		].join("\n")}`,
 	].join("\n\n")}\n`,
@@ -1386,8 +1386,7 @@ console.log(
 // Stable bootstraps follow released assets even while the rest of the site awaits a redeploy.
 // Deploy snapshots carry these inputs inside the site's Docker build context.
 const installerRoot = (await readdir(root)).includes("scripts") ? join(root, "scripts") : join(root, "..", "scripts");
-for (const name of ["install.sh", "install.ps1", "install.cmd"])
-	await cp(join(installerRoot, ...(name === "install.cmd" ? [] : ["installer-bootstrap"]), name), join(out, name));
+for (const name of ["install.sh", "install.ps1", "install.cmd"]) await cp(join(installerRoot, name), join(out, name));
 if (castPages.length) {
 	await mkdir(join(out, "assets/player"), { recursive: true });
 	for (const [from, to] of [

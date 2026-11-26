@@ -331,9 +331,9 @@ if f'Sitemap: {origin}/sitemap.xml' not in (root / 'robots.txt').read_text():
 repository_root = site.parent
 for installer in ('install.sh', 'install.ps1', 'install.cmd'):
     published = root / installer
-    source = repository_root / 'scripts' / ('' if installer == 'install.cmd' else 'installer-bootstrap') / installer
+    source = repository_root / 'scripts' / installer
     if not published.is_file() or published.read_bytes() != source.read_bytes():
-        errors.append(f'{installer} is missing or differs from the release bootstrap')
+        errors.append(f'{installer} is missing or differs from scripts/{installer}')
 if (root / 'CNAME').read_text().strip() != urlsplit(origin).hostname:
     errors.append('CNAME does not name the site origin')
 if not (root / '.nojekyll').is_file():

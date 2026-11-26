@@ -7,7 +7,7 @@
 //     prints { handles: ["@a", "@b"], issues: { "@a": [452] } }
 //   node scripts/report-credits.mjs --since ... --until ... --champions
 //     also rewrites CHAMPIONS.md (stable releases), honouring champions-removed.txt
-//   --until-rev <rev> ends the date range at a commit when the --until tag is not cut yet (pnpm run release)
+//   --until-rev <rev> ends the date range at a commit when the --until tag is not cut yet (release preparation)
 //
 // The handle comes from the author of the block, never from text in it, so a block cannot credit someone else.
 // No counts, ranks, dates or tiers appear in anything this writes.
@@ -185,36 +185,6 @@ export function championsUpdate(credits) {
 	return { path, next, changed: next !== current && (current !== null || credits.handles.length > 0) };
 }
 
-/**
- * What `pnpm run release` credits for `version`, read-only (RL-5): the range from the newest earlier release tag
- * reachable from HEAD (a stable release counts from the last stable) to this version, ending at HEAD because its tag
- * is not cut yet, and for a stable version CHAMPIONS.md as those credits leave it. `regenerate` is the command that
- * writes that file.
- */
-export function releaseCredits(version) {
-	const until = `v${version}`;
-	const stable = !version.includes("-");
-	let since;
-	try {
-		const describe = ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", until];
-		if (stable) describe.push("--exclude", "v*-*");
-		since =
-			execFileSync("git", [...describe, "HEAD"], { cwd: root, encoding: "utf8", stdio: "pipe" }).trim() || undefined;
-	} catch {
-		// No earlier release tag: every changelog citation up to this version is in range.
-		since = undefined;
-	}
-	const range = { ...(since ? { since } : {}), until, "until-rev": "HEAD" };
-	const credits = readCredits(range);
-	return {
-		since,
-		until,
-		credits,
-		champions: stable ? championsUpdate(credits) : null,
-		regenerate: `node scripts/report-credits.mjs ${since ? `--since ${since} ` : ""}--until ${until} --until-rev HEAD --champions`,
-	};
-}
-
 function main() {
 	const { values } = parseArgs({
 		options: {
@@ -232,6 +202,8 @@ function main() {
 		writeFileSync(champions.path, champions.next);
 	}
 	console.log(JSON.stringify(credits, null, 2));
+	// The section to paste under the version's CHANGELOG.md heading, which becomes the release notes.
+	if (credits.handles.length) console.error(creditsSection(credits));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

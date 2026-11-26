@@ -12,8 +12,8 @@
  * the process starts, and `node --test` runs a preload only in each test child, never in the runner
  * (Node 22.22 and 24.22). So `tests/harness/tmp-root.ts` pins the zone inside every test process
  * however it was launched, and the launchers pin both in the environment they start: `scripts/ci-tests.mjs`
- * (`pnpm test`, `pnpm test:gui`), `scripts/check-lane.mjs` and `scripts/release-candidate.mjs` (preparation,
- * tests and the install boot, locally and in CI). A bare `pnpm run test:file` keeps the shell's locale.
+ * (`pnpm test`, `pnpm test:gui`), `scripts/check-lane.mjs` and `scripts/ci.mjs` (checks, tests and the
+ * install smoke, locally and in CI). A bare `pnpm run test:file` keeps the shell's locale.
  * PANCODE_TEST_TZ and PANCODE_TEST_LC_ALL choose another zone or locale for a sweep, such
  * as `PANCODE_TEST_TZ=Pacific/Kiritimati pnpm test`.
  */

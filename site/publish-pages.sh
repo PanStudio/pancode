@@ -10,7 +10,7 @@ site_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_dir=$(dirname -- "$site_dir")
 branch=gh-pages
 
-if ! git -C "$repo_dir" diff --quiet HEAD -- site scripts/install.cmd scripts/installer-bootstrap; then
+if ! git -C "$repo_dir" diff --quiet HEAD -- site scripts/install.sh scripts/install.ps1 scripts/install.cmd; then
   printf '%s\n' 'Commit all site and installer changes before publishing.' >&2
   exit 1
 fi
@@ -51,7 +51,8 @@ fi
 # Dotfiles other than .nojekyll are nginx and builder leftovers, not site content.
 # --checksum: a changed file with the same size and an mtime in the same second
 # as the checkout would otherwise be skipped and stay stale on the branch.
-rsync -a --checksum --delete --exclude='/.git' --exclude='/.pancode-*' "$scratch/public/" "$scratch/branch/"
+# /channel holds the version files the installers and update checks read; a release writes them, not the site build.
+rsync -a --checksum --delete --exclude='/.git' --exclude='/.pancode-*' --exclude='/channel' "$scratch/public/" "$scratch/branch/"
 git -C "$scratch/branch" add -A
 if git -C "$scratch/branch" diff --cached --quiet; then
   printf '%s\n' 'The published branch already matches this build.'

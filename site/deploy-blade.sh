@@ -18,10 +18,9 @@ pancode_site_revision=$(git -C "$repo_dir" rev-parse HEAD)
 node "$site_dir/deployment-check.mjs"
 python3 "$site_dir/sync-docs.py" --check
 git -C "$repo_dir" archive --format=tar "$pancode_site_revision" site | tar -xf - -C "$pancode_site_scratch"
-mkdir -p "$pancode_site_scratch/site/scripts/installer-bootstrap"
+mkdir -p "$pancode_site_scratch/site/scripts"
 for name in install.sh install.ps1 install.cmd; do
-  source="scripts/installer-bootstrap/$name"
-  if [[ "$name" == install.cmd ]]; then source="scripts/$name"; fi
+  source="scripts/$name"
   git -C "$repo_dir" show "$pancode_site_revision:$source" > "$pancode_site_scratch/site/$source"
 done
 # The local checker still uses the repository layout; Docker needs only site/.

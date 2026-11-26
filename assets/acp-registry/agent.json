@@ -11,7 +11,7 @@
 	"authors": ["Anthony Kougkas <a.kougkas@gmail.com>"],
 	"distribution": {
 		"npx": {
-			"package": "pancode",
+			"package": "@akougkas/pancode",
 			"args": ["acp"]
 		}
 	}

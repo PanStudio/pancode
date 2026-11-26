@@ -35,7 +35,7 @@ A version with no suffix (`0.9.0`) is stable: npm `latest`, a GitHub release mar
 ## Cutting a release
 
 1. Set the version in `package.json`, `apps/pancode-gui/package.json`, `assets/acp-registry/agent.json` and every `packages/*/package.json`; the build refuses manifests that disagree. For a stable release also set `version` and `publishedVersion` in `site/product.json` and the `--branch v<version>` pin in `README.md`.
-2. Retitle the first `CHANGELOG.md` section `## <version> - YYYY-MM-DD`. Its body becomes the GitHub release notes.
+2. Retitle the first `CHANGELOG.md` section `## <version> - YYYY-MM-DD`. Its body becomes the GitHub release notes. To credit issue reporters, run `node scripts/report-credits.mjs --since v<previous> --until v<version> --until-rev HEAD --champions`: it rewrites `CHAMPIONS.md` and prints the `### Thanks` section to paste into the changelog section.
 3. Commit on the version branch, then commit the docs snapshot of that commit: `python3 site/sync-docs.py --snapshot-ref <release commit>`.
 4. Push the version branch and let the push run of `ci.yml` pass.
 5. Dispatch the release from the version branch:

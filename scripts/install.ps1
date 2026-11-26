@@ -292,7 +292,7 @@ function Install-Pancode {
 		}
 		if (-not $Options.NoPostInstall) {
 			& $node $entry upgrade --post-install
-			if ($LASTEXITCODE -ne 0) { Fail "package installed, but local initialization needs attention. Run pancode upgrade --post-install; the previous version remains available with: pancode upgrade --rollback" }
+			if ($LASTEXITCODE -ne 0) { Fail "PanCode is installed, but local initialization needs attention. Run pancode upgrade --post-install; the previous version remains available with: pancode upgrade --rollback" }
 		}
 		# When the candidate's helper installed pancode.cmd as the launcher, an exe left beside it would run first.
 		$activeLauncher = ""
