@@ -1,6 +1,6 @@
 {
 	"name": "@pancode/store",
-	"version": "0.9.0",
+	"version": "0.9.1-dev",
 	"private": true,
 	"description": "PanStore, the project store, usable as a library without the harness.",
 	"type": "module",

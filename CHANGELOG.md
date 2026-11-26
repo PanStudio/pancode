@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- After a native upgrade, the desktop app's background service restarts on the new version instead of refusing with "belongs to another installation" and asking for a handover.
+
 ## 0.9.0 - 2026-11-26
 
 PanCode 0.9.0 is the first release under the PanCode name: one npm package, `@akougkas/pancode`, that carries the harness and its family (PanHub, PanKit, PanStore and PanSDK). Panos, the orchestrator agent, works with you in the terminal, in the desktop app (alpha) or over ACP, and dispatches bounded workers whose results it checks before trusting them. Headless runs gain one versioned result, typed exit causes and per-run limits, so a script or another agent can depend on PanCode the way a person does. This release starts fresh: it reads no home, settings file or command spelling from earlier releases. See Breaking changes before you upgrade.

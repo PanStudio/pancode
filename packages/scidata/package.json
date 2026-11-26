@@ -1,6 +1,6 @@
 {
 	"name": "@pancode/scidata",
-	"version": "0.9.0",
+	"version": "0.9.1-dev",
 	"private": true,
 	"description": "The scientific data library behind PanCode's data tools.",
 	"type": "module",
