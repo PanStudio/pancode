@@ -4,8 +4,8 @@
   "corpusPolicy": "site/public-docs.json",
   "source": {
     "version": "0.9.0",
-    "ref": "bfdf713ace9ed4b9376475ffa15959c96ec533ef",
-    "commit": "bfdf713ace9ed4b9376475ffa15959c96ec533ef",
+    "ref": "3f8daa7b2a406a4cbfd21f7be136c690335bbaea",
+    "commit": "3f8daa7b2a406a4cbfd21f7be136c690335bbaea",
     "mode": "repository"
   },
   "files": [
@@ -31,7 +31,7 @@
       "path": "guide/commands-and-modes.md",
       "source": "docs/guide/commands-and-modes.md",
       "sha256": "226891860afab830c5ce5205c2ad79f02feb33208536cad3a560fddc560c3efd",
-      "sourceSha256": "086f90453cbcbc9cf17140f5ec147c6635f37f0afffac565f8b5020097090ba6"
+      "sourceSha256": "3a4b5e58424c4dcc4435806ac13f515907eb5714d905093249bace5b729a28f8"
     },
     {
       "path": "guide/tool-usage.md",
