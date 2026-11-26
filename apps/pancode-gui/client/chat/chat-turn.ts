@@ -109,7 +109,8 @@ export interface ResponseAuthor {
 export function responseAuthor(turn: ChatTurn): ResponseAuthor {
 	for (let index = turn.segments.length - 1; index >= 0; index -= 1) {
 		const segment = turn.segments[index];
-		if (segment === undefined || segment.kind === "activity" || segment.kind === "notice") continue;
+		if (segment === undefined || segment.kind === "activity" || segment.kind === "notice" || segment.kind === "steer")
+			continue;
 		const label = workerLabel(segment.item.provenance);
 		if (label !== null) return { name: label, delegated: true };
 		break;

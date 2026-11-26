@@ -14,7 +14,8 @@
 //  - The only two one-time answers on the wire are `allow-once` and `reject`, which is why the card
 //    eyebrow says ONE USE. `reject-and-stop` is a third answer the agent may announce per request;
 //    it is drawn only when `canStopTurn` is true, because sending it otherwise is a 409 rather than
-//    a silent plain reject.
+//    a silent plain reject. `allow-session-scope` is drawn only on an ask that names its
+//    `sessionScope`, and the card states that scope before anyone picks it.
 //  - No model-authored prose reaches this card. Every sentence below is either fixed copy or a
 //    value the agent already classified and bounded upstream.
 
@@ -340,6 +341,17 @@ export function workerAskRows(worker: Permission["worker"]): readonly DecisionRo
 /** Said in place of the classification when the agent announced none, so the gap is stated. */
 export const NO_DECISION_FACTS = "PanCode sent no classification with this request.";
 
+/** The session option's scope, stated as a row so the operator reads what the grant covers before choosing it. */
+export function sessionScopeRows(sessionScope: Permission["sessionScope"]): readonly DecisionRow[] {
+	if (sessionScope === undefined) return [];
+	return [
+		{
+			term: "For this session",
+			value: `Allow for this session also runs, without asking, every later unsandboxed rerun of ${sessionScope}. An edited script, another script, cwd or env asks again.`,
+		},
+	];
+}
+
 // ---- the answers ---------------------------------------------------------------------------
 
 export interface ApprovalAction {
@@ -366,6 +378,14 @@ const REJECT_AND_STOP: ApprovalAction = {
 	description: "Denies this request and every other parked request from this turn, and cancels the turn.",
 	keybinding: null,
 };
+const ALLOW_SESSION: ApprovalAction = {
+	decision: "allow-session-scope",
+	label: "Allow for this session",
+	variant: "quiet",
+	description:
+		"Allows this call and, for the rest of this session, unchanged reruns of the same scripts outside the sandbox.",
+	keybinding: null,
+};
 const ALLOW_ONCE: ApprovalAction = {
 	decision: "allow-once",
 	label: "Allow once",
@@ -379,8 +399,11 @@ const ALLOW_ONCE: ApprovalAction = {
  * announced it: an engine with no tool registry announces nothing, and the card must still work
  * with the two answers that have always been on the wire.
  */
-export function approvalActions(permission: Pick<Permission, "canStopTurn">): readonly ApprovalAction[] {
-	return permission.canStopTurn ? [REJECT, REJECT_AND_STOP, ALLOW_ONCE] : [REJECT, ALLOW_ONCE];
+export function approvalActions(
+	permission: Pick<Permission, "canStopTurn" | "sessionScope">,
+): readonly ApprovalAction[] {
+	const allow = permission.sessionScope === undefined ? [ALLOW_ONCE] : [ALLOW_SESSION, ALLOW_ONCE];
+	return permission.canStopTurn ? [REJECT, REJECT_AND_STOP, ...allow] : [REJECT, ...allow];
 }
 
 // ---- the concrete thing being approved -------------------------------------------------------

@@ -1119,3 +1119,42 @@ test("a connection that cannot list its models is not said to have failed to ans
 	assert.match(note, /cannot list its models/);
 	assert.match(catalogFallbackNote("local", "timeout"), /^local did not answer \(timeout\)/);
 });
+
+test("a steer the run took in stands as its own message at its place, live and after reload, and keeps out of the prompt", () => {
+	const project = (origin: "live" | "replay") => {
+		let revision = 0;
+		let snapshot = emptySession("session", "workspace");
+		const apply = (type: string, payload: Record<string, unknown>) => {
+			snapshot = applySessionDelta(snapshot, {
+				type,
+				payload: { resource: "session", revision: ++revision, ...payload },
+			} as Parameters<typeof applySessionDelta>[1]);
+		};
+		apply("turn.started", {
+			turn: turnRow({ id: "t", status: "running", origin, prompt: origin === "live" ? "go" : "" }),
+		});
+		// A replay carries the prompt as user chunks, which extend one message.
+		if (origin === "replay") for (const text of ["g", "o"]) apply("turn.user", { turnId: "t", text, origin });
+		apply("turn.text", { turnId: "t", text: "Working.", origin });
+		apply("turn.user", { turnId: "t", text: "use the cached index", origin });
+		apply("turn.text", { turnId: "t", text: "Done.", origin });
+		apply("turn.user", { turnId: "t", text: "then write the report", origin });
+		return snapshot;
+	};
+	for (const origin of ["live", "replay"] as const) {
+		const snapshot = project(origin);
+		assert.equal(snapshot.turns[0]?.prompt, "go", origin);
+		const turn = only(groupTurns(snapshot.timeline, statuses({ t: "running" })));
+		assert.equal(turn.request?.text, "go", origin);
+		assert.deepEqual(
+			turn.segments.map((segment) => [segment.kind, "item" in segment ? segment.item.text : ""]),
+			[
+				["response", "Working."],
+				["steer", "use the cached index"],
+				["response", "Done."],
+				["steer", "then write the report"],
+			],
+			origin,
+		);
+	}
+});
