@@ -252,7 +252,12 @@ function inlineArt(html, path) {
 	});
 }
 const mast = partials.match(/<header class="mast">[\s\S]*?<\/header>/)[0];
-const footer = partials.match(/<footer class="colophon[\s\S]*?<\/footer>/)[0];
+const footer = partials
+	.match(/<footer class="colophon[\s\S]*?<\/footer>/)[0]
+	.replace(
+		"<!-- footer-paths -->",
+		paths.map((path) => `<li><a href="/learn.html#${path.id}">${escapeHtml(path.label)}</a></li>`).join(""),
+	);
 const urls = [];
 // Pages that embed a recording; only they get the player, its stylesheet, and its policy.
 const castPages = [];
@@ -755,7 +760,7 @@ async function writePage(path, html, title, description, type, { sources = [], p
 		cast,
 		...(preview ? { preview } : {}),
 	});
-	if (/<!--\s*(?:site-|doc-|tutorial-|source-|hub-|version|art:)/.test(result))
+	if (/<!--\s*(?:site-|doc-|tutorial-|source-|hub-|footer-|version|art:)/.test(result))
 		throw new Error(`Unresolved template slot in ${path}`);
 	await writeFile(file, result);
 	if (path !== "/404.html") urls.push({ path, lastmod });

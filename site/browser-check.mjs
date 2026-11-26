@@ -32,7 +32,7 @@ const docs = catalog.map((item) =>
 	item.path === "README.md" ? "/docs.html" : `/docs/${item.path.replace(/\.md$/, ".html")}`,
 );
 // The header shows the Menu in place of the navigation at this width and below.
-const menuBreakpoint = 600;
+const menuBreakpoint = 760;
 const primary = [
 	"/",
 	"/docs.html",

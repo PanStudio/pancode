@@ -102,7 +102,8 @@ The public site footer reads **Copyright 2026 Anthony Kougkas**. Keep the reposi
 
 One vocabulary across every page. Each item names its tokens; a page never restyles one.
 
-- **Header.** Sticky, the ground at 86% opacity over a 16 px blur, a hairline below. The lockup is the mark at 36 px beside PanCode in the display face. The current page is underlined in `--accent`.
+- **Header.** One row, `--header` tall, sticky, the ground at 86% opacity over a 16 px blur, a hairline below. Left, the lockup: the mark at 28 px (`<!-- art:mark -->`), a 12 px gap, then PanCode in the display face. Centre, the primary navigation, the current page underlined in `--accent`. Right, GitHub, the theme toggle (a borderless 36 px round button with an inline sun or moon in `currentColor` and a 44 px hit area) and the small Install action; at 1000 px and below a hairline separates them from the links. At 760 px and below the row is the lockup, the toggle and a Menu listing the five links, GitHub and Install.
+- **Footer.** The lockup with "One harness for your models and agents.", then four link columns under mono labels (Start, Learn, Build, Project; Learn names the learning paths from `content/paths.json`), two columns below 768 px, and the copyright line under a hairline.
 - **Primary action** (`.btn`). `--fill` with `--on-fill` text, weight 600, `--radius-sm`. Hover and keyboard focus move to `--fill-hover` and add `--glow-brand`. One per view carries the eye; the header's small one is the same control.
 - **Text link** (`.text-link`). Ink text, weight 500, with an arrow in `--accent` that moves a few pixels on hover. Links in running text are `--accent` and underlined.
 - **Label** (`.eyebrow`). The mono label style in `--muted`. A section number inside it (`.chapter`) and a step number (`.step-number`) are `--secondary`.

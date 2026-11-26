@@ -306,7 +306,7 @@
 		const platform = windows ? panels.findIndex((panel) => panel.dataset.tabPlatform === "windows") : -1;
 		select([linked(), platform, 0].find((index) => index >= 0));
 	}
-	const wideNav = matchMedia("(min-width: 601px)");
+	const wideNav = matchMedia("(min-width: 761px)");
 	wideNav.addEventListener("change", () => {
 		if (wideNav.matches)
 			for (const menu of menus) {
