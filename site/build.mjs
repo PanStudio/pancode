@@ -1044,8 +1044,16 @@ const hubRow = (row) => {
 	]
 		.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`)
 		.join("");
-	return `<li class="hub-row" id="${escapeHtml(id)}" data-hub-text="${escapeHtml(text)}"><div class="hub-row-head"><h3>${escapeHtml(row.name)}</h3><span class="tag">v${escapeHtml(row.version)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><p>${escapeHtml(row.description)}</p><dl class="hub-meta">${meta}</dl><div class="command-line"><code>${escapeHtml(row.install)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(row.install)}" aria-label="Copy the install command for ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div></li>`;
+	return `<li class="hub-row" id="${escapeHtml(id)}" data-hub-text="${escapeHtml(text)}" data-hub-kind="${escapeHtml(row.kind)}"><div class="hub-row-head"><h3>${escapeHtml(row.name)}</h3><span class="tag">v${escapeHtml(row.version)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><details class="hub-row-more"><summary>${escapeHtml(row.description)}</summary><dl class="hub-meta">${meta}</dl></details>${hubCommand(row)}</li>`;
 };
+const hubCommand = (row) =>
+	`<div class="command-line"><code>${escapeHtml(row.install)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(row.install)}" aria-label="Copy the install command for ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+// The packs a newcomer starts with, in hub-featured.json order, above the full catalog.
+const hubFeatured = JSON.parse(await read("hub-featured.json")).map((key) => {
+	const row = hubCatalog.rows.find((item) => `${item.kind}:${item.name}` === key);
+	if (!row) throw new Error(`hub-featured.json names ${key}, which is not in the PanHub catalog.`);
+	return `<li class="hub-featured-row"><div class="hub-row-head"><h3><a href="#${escapeHtml(`${row.kind}-${row.name}`)}">${escapeHtml(row.name)}</a></h3><span class="tag">${escapeHtml(row.kind)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><p>${escapeHtml(row.description)}</p>${hubCommand(row)}</li>`;
+});
 const hubGroups = [...hubKinds, ...new Set(hubCatalog.rows.map((row) => row.kind))]
 	.filter((kind, i, all) => all.indexOf(kind) === i)
 	.map((kind) => [kind, hubCatalog.rows.filter((row) => row.kind === kind)])
@@ -1066,14 +1074,15 @@ const hubSlots = {
 		fact("Command", "<code>pancode hub</code>"),
 		fact("Packs", String(hubCatalog.rows.length)),
 	].join(""),
-	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
+	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><div class="hub-chips" role="group" aria-label="Kind"><button type="button" class="hub-chip" data-hub-kind="" aria-pressed="true">All</button><button type="button" class="hub-chip" data-hub-kind="plugin" aria-pressed="false">Plugins</button><button type="button" class="hub-chip" data-hub-kind="extension" aria-pressed="false">Extensions</button><button type="button" class="hub-chip" data-hub-kind="skill" aria-pressed="false">Skills</button></div><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
+	"hub-featured": `<section class="hub-featured" aria-labelledby="hub-featured-title" data-hub-featured><h2 id="hub-featured-title">Start with these</h2><ul class="hub-featured-rows">${hubFeatured.join("")}</ul></section>`,
 	"hub-groups": hubGroups,
 	"hub-source": `Bundled with PanCode v${escapeHtml(product.version)}: ${hubIndexLink} at ${hubAt}, sha256 <code class="hub-sha" data-hub-sha256>${hubCatalog.source.sha256}</code>.`,
 };
 let hubHtml = await read("hub.html");
 for (const [name, value] of Object.entries(hubSlots)) hubHtml = hubHtml.replaceAll(`<!-- ${name} -->`, value);
 await writePage("/hub.html", hubHtml, product.hub.title, product.hub.description, "WebPage", {
-	sources: ["content/hub-catalog.json", "hub.html", "product.json"],
+	sources: ["content/hub-catalog.json", "hub-featured.json", "hub.html", "product.json"],
 });
 
 for (const collection of collections) {
