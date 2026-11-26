@@ -5,7 +5,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { projectChosenTargetUrl, projectTargetKeyVariable } from "../../../core/project-target-urls.js";
+import {
+	projectChosenTargetUrl,
+	projectTargetKeyVariable,
+	redeclaredUserTargetFile,
+} from "../../../core/project-target-urls.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
 import { findEngineEnvKeys, getEngineEnvApiKey } from "../../../engine/env-api-keys.js";
 import type { TargetDescriptor } from "../types/target-descriptor.js";
@@ -47,6 +51,8 @@ export interface BootAuthStatus {
 	providerId: string;
 	required: boolean;
 	available: boolean;
+	/** The project settings file whose redeclaration of this credentialed user target withholds every credential. */
+	redeclaredIn?: string;
 }
 
 export function bootAuthStatus(target: TargetDescriptor, runtime: RuntimeAuthMetadata): BootAuthStatus {
@@ -58,6 +64,8 @@ export function bootAuthStatus(target: TargetDescriptor, runtime: RuntimeAuthMet
 				Boolean(runtime.credentialsEnvVar)));
 	const providerId =
 		target.auth?.oauthProfile?.trim() || target.auth?.apiKeyRef?.trim() || runtime.oauthProviderId || runtime.id;
+	const redeclaredIn = runtime.auth === "api-key" ? redeclaredUserTargetFile(target) : null;
+	if (redeclaredIn !== null) return { providerId, required: true, available: false, redeclaredIn };
 	if (!required) return { providerId, required: false, available: true };
 	const projectKey = runtime.auth === "oauth" ? null : projectTargetKeyVariable(target);
 	if (projectChosenTargetUrl(target, true)) {

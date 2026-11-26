@@ -951,6 +951,21 @@ function prepareProjectLayers(
 }
 
 /**
+ * The notice a project layer's `targets` list earns when the user layer has one too: arrays replace on merge, so the
+ * operator's own targets, and the stored credentials their entries name, are gone in this checkout.
+ */
+export const PROJECT_TARGETS_REPLACE_USER_TARGETS =
+	"replaces the targets list in your user settings; this checkout uses only the targets this file declares, and no stored credential attaches to them";
+
+function declaresCredential(target: Record<string, unknown>): boolean {
+	const auth = target.auth;
+	if (!isRecord(auth)) return false;
+	return ["apiKeyRef", "oauthProfile", "apiKeyEnvVar"].some(
+		(key) => typeof auth[key] === "string" && (auth[key] as string).trim().length > 0,
+	);
+}
+
+/**
  * Arrays replace wholesale, so a project `targets:` list can leave a route the
  * user layer set (the judge, the reviewer, a roster member) naming a target
  * this checkout no longer has (CLI-P32). The user file is valid on its own, so
@@ -1025,7 +1040,14 @@ function validateLayerStack(
 	let downgraded: Set<string> = new Set();
 	// Arrays replace wholesale, so a project layer that sets `targets` supplied every entry.
 	if (sources.targets === "project" || sources.targets === "project.local") {
-		noteProjectTargets(validation.settings.targets);
+		const file = sources.targets === "project" ? prepared.projectFile : prepared.localFile;
+		const userTargets = (Array.isArray(user.blob?.targets) ? user.blob.targets : []).filter(isRecord);
+		const userCredentialIds = new Set(
+			userTargets.filter(declaresCredential).flatMap((entry) => (typeof entry.id === "string" ? [entry.id] : [])),
+		);
+		noteProjectTargets(validation.settings.targets, { file, userCredentialIds });
+		if (userTargets.length > 0)
+			issues.push({ origin: sources.targets, path: "targets", message: PROJECT_TARGETS_REPLACE_USER_TARGETS });
 		const removed = downgradeProjectRemovedTargets(merged, user.blob, validation, sources.targets);
 		downgraded = removed.paths;
 		issues.push(...removed.issues);

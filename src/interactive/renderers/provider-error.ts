@@ -165,11 +165,20 @@ export interface ProviderFailureRoute {
 	stage?: string;
 	errorClass?: string;
 	partialReply?: boolean;
+	/** The call carried no credential: the target declares none, so the endpoint got PanCode's local placeholder key. */
+	noCredential?: boolean;
 }
 
 export function readProviderFailureRoute(value: unknown): ProviderFailureRoute | null {
 	const route = value as
-		| { targetId?: unknown; url?: unknown; stage?: unknown; errorClass?: unknown; partialReply?: unknown }
+		| {
+				targetId?: unknown;
+				url?: unknown;
+				stage?: unknown;
+				errorClass?: unknown;
+				partialReply?: unknown;
+				noCredential?: unknown;
+		  }
 		| null
 		| undefined;
 	if (typeof route?.targetId !== "string" || route.targetId.length === 0) return null;
@@ -179,6 +188,7 @@ export function readProviderFailureRoute(value: unknown): ProviderFailureRoute |
 		...(typeof route.stage === "string" ? { stage: route.stage } : {}),
 		...(typeof route.errorClass === "string" ? { errorClass: route.errorClass } : {}),
 		...(route.partialReply === true ? { partialReply: true } : {}),
+		...(route.noCredential === true ? { noCredential: true } : {}),
 	};
 }
 
@@ -217,7 +227,12 @@ export function providerFailureHeadline(route: ProviderFailureRoute): string | n
 	const errorClass = route.errorClass ?? "";
 	const status = httpStatusOf(errorClass);
 	if (route.stage === "auth") {
-		if (status !== null) return "The provider refused the credential.";
+		if (status !== null)
+			return route.noCredential === true
+				? "The endpoint asks for a credential; this target sends none."
+				: "The provider refused the credential.";
+		// PanCode's own refusal names the file and the fix, so it leads.
+		if (errorClass === "credential_refused") return null;
 		return errorClass === "credential_expired"
 			? "The saved credential has expired."
 			: "This route has no usable credential.";
@@ -261,7 +276,10 @@ export function providerFailureRailFacts(
 	const status = httpStatusOf(errorClass);
 	if (route.stage === "admission") return { cause: admissionRailCause(route.reason, errorClass) };
 	if (route.stage === "auth") {
+		if (errorClass === "credential_refused") return { cause: { text: "credential withheld", short: "not sent" } };
 		const way = { text: `pancode configure --id ${route.targetId}` };
+		if (status !== null && route.noCredential === true)
+			return { cause: { text: "needs a credential", short: "needs key" }, way };
 		if (status !== null) return { cause: { text: "credential refused", short: "key refused" }, way };
 		return {
 			cause:
@@ -296,6 +314,9 @@ export function providerFailureAdvice(route: ProviderFailureRoute, text?: string
 	const configure = `pancode configure --id ${route.targetId}`;
 	const errorClass = route.errorClass ?? "";
 	if (route.stage === "auth") {
+		if (errorClass === "credential_refused") return `${SWITCH_ROUTE}.`;
+		if (route.noCredential === true && httpStatusOf(errorClass) !== null)
+			return `${configure} adds one ${GLYPH.sep} ${SWITCH_ROUTE}.`;
 		// The setup status's sentence for a route with no credential, so the banner, `run` and `doctor` read the same.
 		const provider = /No API key for provider: (\S+?)\.?(?:\s|$)/u.exec(text ?? "")?.[1];
 		if (provider !== undefined && errorClass !== "credential_expired" && httpStatusOf(errorClass) === null)

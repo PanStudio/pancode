@@ -494,6 +494,8 @@ A target binds an id to a registered runtime, endpoint/auth, model defaults, and
 
 Keep credentials in user settings or the credential store. Project settings deliberately discard credential-bearing keys. A target that a project layer points at a URL is never sent your stored or environment keys, on turns, side calls, target probes or System One engines; the run fails naming why, and only a `--api-key` override still applies to it. A target naming `auth.apiKeyRef` reads from the environment only `auth.apiKeyEnvVar` or its runtime's own variable. A loopback URL is no exception when the target's runtime needs a credential; only runtimes that need none, such as Ollama, may point at loopback from a project.
 
+A project `targets:` list replaces the whole list in your user settings; it is not merged entry by entry. Startup prints a `[pancode:config]` notice naming the project file, and `pancode doctor` shows it as a `project targets` row. When that list redeclares a target your user settings give a credential (`auth.apiKeyRef`, `auth.oauthProfile` or `auth.apiKeyEnvVar`), the redeclared entry carries none of it. PanCode refuses the turn before any request and names the file. Remove `targets:` from that file, or give the target `auth.apiKeyEnvVar` there. A target that declares no credential at all is sent PanCode's local placeholder key. When its endpoint refuses that key, the error says the target sends none and points to `pancode configure --id <id>`.
+
 For ALCF, the `configure` wizard asks for a gateway URL and shows a
 Sophia example because the endpoint varies by cluster or resource.
 `gatewayUrlGuidance` in [configure-target.ts](../../src/cli/configure-target.ts)

@@ -967,6 +967,8 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		// `apiCallStartedAt` is null names this step, because no request has
 		// reached the provider it would otherwise blame (#423).
 		let preInvocationStage: PreInvocationStage = "transform";
+		// The last request carried the local placeholder key, so an endpoint that refuses it was sent no credential at all.
+		let placeholderKeySent = false;
 		let unsettledSpendUsd = 0;
 		let admittedMessages: readonly AgentMessage[] = [];
 		let admittedSystemPrompt = "";
@@ -1432,9 +1434,11 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 				// Pi converts the conversation between turn_start and this call; that is the transform stage (#434).
 				const call = modelCall;
 				call?.stage("transform", "end");
-				if (!targetRequiresAuth(localRuntime.runtimeResolution.target, localRuntime.runtimeResolution.runtime)) {
-					return LOCAL_API_KEY_FALLBACK;
-				}
+				placeholderKeySent = !targetRequiresAuth(
+					localRuntime.runtimeResolution.target,
+					localRuntime.runtimeResolution.runtime,
+				);
+				if (placeholderKeySent) return LOCAL_API_KEY_FALLBACK;
 				preInvocationStage = "auth";
 				call?.stage("auth", "start");
 				let refreshed: boolean | undefined;
@@ -2025,6 +2029,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 								stage: failure.stage,
 								errorClass: failure.errorClass,
 								partialReply: extractText(message).length > 0,
+								...(failure.stage === "auth" && placeholderKeySent ? { noCredential: true } : {}),
 							},
 						});
 					const retryAfterMs = callTracking?.retryAfterMs();
@@ -2081,6 +2086,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 				apiCallStartedAt = null;
 				apiCallFirstDeltaAt = null;
 				preInvocationStage = "transform";
+				placeholderKeySent = false;
 				runFirstCallVerdict = null;
 				pendingTerminalToolResult = null;
 				clearStallTimer();

@@ -121,6 +121,8 @@ export interface TurnFailureFacts {
 	stage?: string;
 	errorClass?: string;
 	partialReply?: boolean;
+	/** The call carried PanCode's local placeholder key, because the target declares no credential. */
+	noCredential?: boolean;
 	/** For a call PanCode never sent, its own words for what stopped it, so the rail can name the cause. */
 	reason?: string;
 }

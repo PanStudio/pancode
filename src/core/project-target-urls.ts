@@ -13,6 +13,12 @@
 const projectTargets = new Set<string>();
 /** The key variable a trusted project named for one of its own target URLs (`auth.apiKeyEnvVar`). */
 const projectKeyVariables = new Map<string, string>();
+/**
+ * The project settings file that redeclared a target the user layer gives a credential, keyed by the project's entry.
+ * Arrays replace on layer merge and project layers keep no stored-credential reference, so that entry reaches auth
+ * with no credential at all; without this record it read as a target that needs none and got the local placeholder.
+ */
+const redeclaredUserTargets = new Map<string, string>();
 
 function entryKey(id: string, url: string): string {
 	return `${id}\u0000${url}`;
@@ -51,17 +57,49 @@ export function isLoopbackUrl(url: string): boolean {
 	);
 }
 
+/** The way out of a redeclared target's refusal; `pancode configure` writes user settings, which the project still replaces. */
+export const REDECLARED_TARGET_FIX = "Remove targets from that file, or give the target auth.apiKeyEnvVar there.";
+
+/** Why a target a project redeclared gets none of the credential the user's own entry for it names. */
+export function redeclaredTargetSentence(targetId: string, projectFile: string): string {
+	return `Target ${targetId} is redeclared in ${projectFile}; stored credentials attach only to targets in your user settings. ${REDECLARED_TARGET_FIX}`;
+}
+
+/**
+ * Record the targets list a project layer supplied. `replaced` names the project settings file that set it and the ids
+ * the user layer declares with auth, whose entries this list replaced.
+ */
 export function noteProjectTargets(
 	targets: ReadonlyArray<{ id: string; url?: string; auth?: { apiKeyEnvVar?: string } }>,
+	replaced: { file: string; userCredentialIds: ReadonlySet<string> } = { file: "", userCredentialIds: new Set() },
 ): void {
+	const { file, userCredentialIds } = replaced;
 	for (const target of targets) {
 		const url = target.url?.trim();
+		const variable = target.auth?.apiKeyEnvVar?.trim();
+		const keyName = variable !== undefined && isProjectKeyVariableName(variable) ? variable : undefined;
+		if (userCredentialIds.has(target.id) && keyName === undefined)
+			redeclaredUserTargets.set(entryKey(target.id, url ?? ""), file);
+		else redeclaredUserTargets.delete(entryKey(target.id, url ?? ""));
 		if (!url) continue;
 		projectTargets.add(entryKey(target.id, url));
-		const variable = target.auth?.apiKeyEnvVar?.trim();
-		if (variable && isProjectKeyVariableName(variable)) projectKeyVariables.set(entryKey(target.id, url), variable);
+		if (keyName !== undefined) projectKeyVariables.set(entryKey(target.id, url), keyName);
 		else projectKeyVariables.delete(entryKey(target.id, url));
 	}
+}
+
+/**
+ * The project settings file when this entry is a project's redeclaration of a target the user layer gives a credential,
+ * else null. An entry that carries any auth reference of its own did not come from that redeclaration.
+ */
+export function redeclaredUserTargetFile(target: {
+	id: string;
+	url?: string;
+	auth?: { apiKeyEnvVar?: string; apiKeyRef?: string; oauthProfile?: string };
+}): string | null {
+	if (target.auth?.apiKeyEnvVar?.trim() || target.auth?.apiKeyRef?.trim() || target.auth?.oauthProfile?.trim())
+		return null;
+	return redeclaredUserTargets.get(entryKey(target.id, target.url?.trim() ?? "")) ?? null;
 }
 
 /**

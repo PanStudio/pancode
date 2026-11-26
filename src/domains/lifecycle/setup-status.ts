@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { unsetKeyVariableSentence } from "../../core/project-target-urls.js";
+import { redeclaredTargetSentence, unsetKeyVariableSentence } from "../../core/project-target-urls.js";
 
 /**
  * One answer to "can this home chat, and if not, what is the one missing thing?".
@@ -25,9 +25,18 @@ export type Missing =
 	 * No stored key or sign-in for the provider the target authenticates as. With `projectUrl` the target points at
 	 * an address a project chose, which never receives the operator's keys, so only defining it in user settings helps.
 	 * No key variable is suggested for it: the project picked the address, so naming the variable its settings or the
-	 * runtime read would steer the operator's real key there.
+	 * runtime read would steer the operator's real key there. With `redeclaredIn` that project settings file redeclared
+	 * a target the user settings give a credential, and the redeclaration carries none. With `sendsNone` the target
+	 * declares no credential, so its endpoint got PanCode's local placeholder key and refused it.
 	 */
-	| { kind: "credential"; target: string; provider: string; projectUrl?: string }
+	| {
+			kind: "credential";
+			target: string;
+			provider: string;
+			projectUrl?: string;
+			redeclaredIn?: string;
+			sendsNone?: true;
+	  }
 	/**
 	 * The target names the environment variable its key comes from, and it is not set. `projectFile` is the project
 	 * settings file that declares the target, when a caller that read the layers knows it.
@@ -69,6 +78,7 @@ export interface SetupTargetFacts {
 		provider: string;
 		envVariable?: string;
 		projectUrl?: string;
+		redeclaredIn?: string;
 	};
 	/** The last reachability check, when one ran. */
 	probe?: { ok: true } | { ok: false; detail: string };
@@ -111,16 +121,23 @@ export function setupStatus<TargetDraft = unknown>(facts: SetupFacts<TargetDraft
 		const credential = target.credential;
 		if (credential !== undefined && !credential.available) {
 			missing.push(
-				credential.projectUrl !== undefined
+				credential.redeclaredIn !== undefined
 					? {
 							kind: "credential",
 							target: target.id,
 							provider: credential.provider,
-							projectUrl: credential.projectUrl,
+							redeclaredIn: credential.redeclaredIn,
 						}
-					: credential.envVariable !== undefined
-						? { kind: "env", target: target.id, variable: credential.envVariable }
-						: { kind: "credential", target: target.id, provider: credential.provider },
+					: credential.projectUrl !== undefined
+						? {
+								kind: "credential",
+								target: target.id,
+								provider: credential.provider,
+								projectUrl: credential.projectUrl,
+							}
+						: credential.envVariable !== undefined
+							? { kind: "env", target: target.id, variable: credential.envVariable }
+							: { kind: "credential", target: target.id, provider: credential.provider },
 			);
 		}
 		if (target.probe !== undefined && !target.probe.ok && target.url !== undefined) {
@@ -148,6 +165,15 @@ export function describeMissing(
 ): { sentence: string; command?: string } {
 	switch (missing.kind) {
 		case "credential": {
+			if (missing.sendsNone === true) {
+				const command = `pancode configure --id ${missing.target}`;
+				return {
+					sentence: `${missing.target} declares no credential, so PanCode sent none, and its endpoint asks for one. Run: ${command}`,
+					command,
+				};
+			}
+			if (missing.redeclaredIn !== undefined)
+				return { sentence: redeclaredTargetSentence(missing.target, missing.redeclaredIn) };
 			if (missing.projectUrl !== undefined)
 				return {
 					sentence: `${missing.target} points at ${missing.projectUrl}, an address this project chose, so PanCode sends it none of your keys. To use it, define ${missing.target} in your user settings with its own key variable (auth.apiKeyEnvVar).`,
@@ -201,8 +227,8 @@ export function missingFromTargetStatus(status: {
 }
 
 /**
- * A request that never reached the endpoint, from the route record a failed call carries. A connection that dropped
- * after the reply began is not an unreachable endpoint and gives null.
+ * A request that never reached the endpoint, or reached it with no credential, from the route record a failed call
+ * carries. A connection that dropped after the reply began is not an unreachable endpoint and gives null.
  */
 export function missingFromFailedCall(route: {
 	targetId: string;
@@ -210,7 +236,10 @@ export function missingFromFailedCall(route: {
 	stage?: string;
 	errorClass?: string;
 	partialReply?: boolean;
+	noCredential?: boolean;
 }): Missing | null {
+	if (route.stage === "auth" && route.noCredential === true && /^http_\d{3}$/u.test(route.errorClass ?? ""))
+		return { kind: "credential", target: route.targetId, provider: route.targetId, sendsNone: true };
 	if (route.stage !== "transport" || route.url === undefined || route.partialReply === true) return null;
 	if (route.errorClass !== "network_error" && route.errorClass !== "timeout") return null;
 	const detail = route.errorClass === "timeout" ? "timed out" : "connection failed";
