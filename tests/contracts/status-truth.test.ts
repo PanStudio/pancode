@@ -2269,6 +2269,33 @@ test("a loop repair after a step that succeeded opens its own card, and a retry 
 	strictEqual(first?.entry.attempts.length, 2);
 });
 
+test("a resume replays a compaction's thinking baseline only when it changes the level shown", () => {
+	const row = (turnId: string, extra: object) => ({
+		kind: "thinkingLevelChange",
+		turnId,
+		parentTurnId: null,
+		timestamp: "2026-11-26T11:24:51Z",
+		...extra,
+	});
+	const entries = [
+		row("t0", { thinkingLevel: "low", configurationInitial: true }),
+		{
+			kind: "message",
+			role: "user",
+			turnId: "ask",
+			parentTurnId: "t0",
+			timestamp: "2026-11-26T11:25:00Z",
+			payload: "go",
+		},
+		row("t1", { parentTurnId: "ask", thinkingLevel: "medium" }),
+		row("t2", { parentTurnId: "t1", thinkingLevel: "medium", configurationInitial: true }),
+	] as unknown as SessionEntry[];
+	const panel = createChatPanel();
+	rehydrateChatPanelFromTurns(panel, entries, { readWorkerRunResult: () => null });
+	const shown = stripTerminalSequences(panel.render(100).join("\n")).match(/Thinking effort \w+/gu);
+	deepStrictEqual(shown, ["Thinking effort low", "Thinking effort medium"]);
+});
+
 test("a card replayed by /fork while its worker runs keeps streaming and settles, and one no stream follows never reads starting (bt-11 c)", () => {
 	const stream = createWorkerStream({ readResult: () => null });
 	const started = stream.started({
@@ -2727,6 +2754,46 @@ test("the exit summary counts a finished worker whose validation failed as Fleet
 		detail,
 	);
 	strictEqual(detail.match(/verifier validation failed/gu)?.length, 2, "the timeline says what each run's record says");
+});
+
+test("the exit summary reads a review's failing verdict as what it found, not as a failed validation", async () => {
+	const { composeTrustStatus } = await import("../../src/domains/evidence/trust-status.js");
+	const { renderExitSummary } = await import("../../src/interactive/exit-summary.js");
+	const { createExitSummaryCollector } = await import("../../src/interactive/exit-summary-collector.js");
+	const { telemetryViewOf } = await import("../harness/telemetry-view.js");
+	const bus = createTelemetryHub();
+	const collector = createExitSummaryCollector({
+		bus,
+		telemetry: {
+			subscribe: () => () => {},
+			read: { live: () => telemetryViewOf("session-1", []), subscribe: () => () => {} },
+		} as never,
+		dispatch: {},
+		session: { current: () => ({ id: "session-1", hasModelTurn: true }) } as never,
+		getTurns: () => 1,
+		getToolCounts: () => new Map(),
+		getModel: () => null,
+	});
+	const trust = composeTrustStatus({
+		artifactIntegrity: {
+			state: "verified",
+			source: { kind: "run_seal", id: "run" },
+			authority: { kind: "pancode", id: "receipt-integrity" },
+			artifacts: [],
+		},
+		validationGrounding: {
+			state: "failed",
+			source: { kind: "run_record", id: "run" },
+			authority: { kind: "validator", id: "result-quality" },
+			artifacts: [],
+		},
+	});
+	bus.emit("run.started", { runId: "run-r", agentId: "verifier", targetId: "mini", wireModelId: "m" } as never);
+	bus.emit("run.completed", { runId: "run-r", agentId: "verifier", outcome: "succeeded" } as never);
+	collector.observeRunResult("run-r", { outcome: "succeeded", trust, toolCalls: 3, reviewFindings: 1 });
+	const detail = renderExitSummary(collector.snapshot(), "on", 120, false, "detailed").join("\n");
+	doesNotMatch(detail, /failed validation|validation failed/u, detail);
+	match(detail, /verifier run-r review found 1 issue/u, detail);
 });
 
 test("the exit summary counts a failed-over council member once, by its last attempt, and the sealed report not at all", async () => {

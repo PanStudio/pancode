@@ -195,21 +195,37 @@ pick_downloader() {
 }
 
 # download <url> <file>. file:// URLs are copied, so an airgapped mirror on a
-# shared filesystem needs no web server.
+# shared filesystem needs no web server. The downloader's complaint goes to
+# $work/download.err, which download_failure reads.
 download() {
+	: >"$work/download.err"
 	case "$1" in
 		file://*)
-			cp -- "${1#file://}" "$2" 2>/dev/null
+			[ -e "${1#file://}" ] || {
+				echo "not found" >"$work/download.err"
+				return 1
+			}
+			cp -- "${1#file://}" "$2" 2>"$work/download.err"
 			return
 			;;
 	esac
 	if [ "$downloader" = curl ]; then
 		case "$1" in
-			https://*) curl -fsSL --proto '=https' --retry 3 --connect-timeout 20 -o "$2" "$1" ;;
-			*) curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1" ;;
+			https://*) curl -fsSL --proto '=https' --retry 3 --connect-timeout 20 -o "$2" "$1" 2>"$work/download.err" ;;
+			*) curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1" 2>"$work/download.err" ;;
 		esac
 	else
-		wget -q --tries=3 --timeout=20 -O "$2" "$1"
+		wget -nv --tries=3 --timeout=20 -O "$2" "$1" 2>"$work/download.err"
+	fi
+}
+
+# Why the last download failed: "not found" when the server or mirror has no
+# such file (HTTP 404), else the downloader's last line of complaint.
+download_failure() {
+	if grep -Eq 'returned error: 404|ERROR 404|^not found$' "$work/download.err" 2>/dev/null; then
+		echo "not found"
+	else
+		sed '/^[[:space:]]*$/d' "$work/download.err" 2>/dev/null | tail -n 1 | sed 's/^curl: ([0-9]*) //'
 	fi
 }
 
@@ -288,8 +304,10 @@ select_target() {
 
 # The version a channel names: one line at <channel base>/<channel>.
 resolve_channel() {
-	download "$channel_base/$1" "$work/channel" ||
-		fail "could not read $channel_base/$1; check the network or proxy (https_proxy), pass --version <exact version>, or set PANCODE_RELEASE_MIRROR"
+	download "$channel_base/$1" "$work/channel" || {
+		why="$(download_failure)"
+		fail "could not read $channel_base/$1${why:+ ($why)}; check the network or proxy (https_proxy), pass --version <exact version>, or set PANCODE_RELEASE_MIRROR"
+	}
 	resolved="$(head -n 1 "$work/channel" | tr -d ' \r')"
 	printf '%s\n' "$resolved" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || fail "$channel_base/$1 does not name a version"
 	printf '%s\n' "$resolved"
@@ -320,12 +338,23 @@ guard_downgrade() {
 # against the release's SHA256SUMS. Sets bundle_file.
 fetch_bundle() {
 	asset="pancode-$1-$target.tar.gz"
-	download "$release_base/v$1/SHA256SUMS" "$work/SHA256SUMS" ||
-		fail "could not read $release_base/v$1/SHA256SUMS; PanCode $1 may not exist, or the network or proxy (https_proxy) blocks it"
+	if ! download "$release_base/v$1/SHA256SUMS" "$work/SHA256SUMS"; then
+		why="$(download_failure)"
+		if [ "$why" = "not found" ]; then
+			# A missing release is an answer, not a network fault.
+			hint=""
+			[ "$version" != "$1" ] || hint="; check the version, or leave out --version to install the latest release"
+			fail "PanCode $1 is not published at $release_base (it has no v$1/SHA256SUMS)$hint"
+		fi
+		fail "could not read $release_base/v$1/SHA256SUMS${why:+ ($why)}; check the network or proxy (https_proxy)"
+	fi
 	expected="$(awk -v file="$asset" '$2 == file || $2 == "*" file {print $1; exit}' "$work/SHA256SUMS")"
 	[ -n "$expected" ] || fail "PanCode $1 ships no $target bundle. Install Node $NODE_MIN or newer yourself, then: npm install -g $NPM_PACKAGE@$1"
 	log "downloading $asset"
-	download "$release_base/v$1/$asset" "$work/$asset" || fail "could not download $release_base/v$1/$asset"
+	download "$release_base/v$1/$asset" "$work/$asset" || {
+		why="$(download_failure)"
+		fail "could not download $release_base/v$1/$asset${why:+ ($why)}"
+	}
 	actual="$(sha256_of "$work/$asset")"
 	[ "$actual" = "$expected" ] || fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed"
 	ok "verified $asset (sha256 $expected)"
