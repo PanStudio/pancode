@@ -26,7 +26,9 @@ Flags:
                             settles each ask first: it runs a call the task names, even a write outside the
                             workspace, recorded as safety-judge:allow:operator-named under
                             safety.judgeAllowedAttempts, and blocks one it judges unsafe; only the asks it leaves
-                            reach --on-permission
+                            reach --on-permission. Operator-only asks skip the judge: a dispatch plan (two or more
+                            tasks, compete, council or a remote node) with a writer in it is refused at default and
+                            runs at yolo; a plan whose every task is read-only runs at either
   --systemone <engine|off>  System One for this run: jev, memory, main, an engine, a target, or off
   --read-only               refuse writes, edits and asks; shell commands run only in a read-only sandbox,
                             where a write fails, and delegations run read-only; with --agent, the dispatch is read-only
