@@ -121,7 +121,9 @@ describe("campaign run folds one fixture across a roster", { timeout: 240_000 },
 
 	it("reports a row per entry with every metric field, a failing entry as failed, and leaves the fixture alone", async () => {
 		const out = join(scratch.root, "out");
-		const credentials = readFileSync(join(scratch.configDir, "credentials.yaml"), "utf8");
+		const credentialsFile = join(scratch.configDir, "credentials.yaml");
+		const readCredentials = () => (existsSync(credentialsFile) ? readFileSync(credentialsFile, "utf8") : null);
+		const credentials = readCredentials();
 		const result = await cli(
 			[
 				"campaign",
@@ -190,7 +192,7 @@ describe("campaign run folds one fixture across a roster", { timeout: 240_000 },
 		}
 		deepStrictEqual(readdirSync(out).sort(), ["01-mock", "02-absent-target-nope-low"]);
 		deepStrictEqual(readdirSync(fixture).sort(), [".planning", "README.md"]);
-		strictEqual(readFileSync(join(scratch.configDir, "credentials.yaml"), "utf8"), credentials);
+		strictEqual(readCredentials(), credentials);
 		const operatorSessions = existsSync(join(scratch.stateDir, "sessions"))
 			? readdirSync(join(scratch.stateDir, "sessions"), { recursive: true }).filter((name) =>
 					String(name).endsWith("meta.json"),

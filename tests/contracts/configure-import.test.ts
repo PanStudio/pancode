@@ -72,11 +72,7 @@ test("the app's setup makes a fresh home before any step can write settings, as 
 	await done;
 	input.end();
 	const dirs = resolvePancodeDirs();
-	for (const path of [
-		join(dirs.config, "credentials.yaml"),
-		join(dirs.state, "home.json"),
-		join(dirs.state, "sessions"),
-	])
+	for (const path of [join(dirs.config, "settings.yaml"), join(dirs.state, "home.json"), join(dirs.state, "sessions")])
 		assert.equal(existsSync(path), true, path);
 });
 
