@@ -19,6 +19,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
+import { DEV_VERSION } from "../release-version-policy.mjs";
 import { hostTarget } from "./bundle.mjs";
 
 const windows = process.platform === "win32";
@@ -139,7 +140,11 @@ const command = (name) => join(bin, windows && name !== "pancode" ? `${name}.cmd
 const installed = () => run(command("pancode"), ["--version"], env).split("\n")[0].trim();
 const expectVersion = (wanted) => {
 	const line = installed();
-	if (line !== `PanCode ${wanted}`) throw new Error(`pancode --version printed "${line}"; expected PanCode ${wanted}`);
+	// A development build names the commit it came from: `PanCode 0.9.1-dev (unreleased · d024932)`.
+	const named = DEV_VERSION.test(wanted)
+		? line.startsWith(`PanCode ${wanted} (unreleased · `)
+		: line === `PanCode ${wanted}`;
+	if (!named) throw new Error(`pancode --version printed "${line}"; expected PanCode ${wanted}`);
 };
 
 let failed = false;
