@@ -176,7 +176,7 @@ test("doctor makes unused failures warnings and active credential failures error
 	}
 	assert.match(
 		findings.find((row) => row.name === "connection active-key")?.detail ?? "",
-		/reachable.*required credential not found/u,
+		/reachable.*required credential not found \(run `pancode auth login active-key`\)/u,
 	);
 	assert.match(
 		findings.find((row) => row.name === "connection active-no-probe")?.detail ?? "",
