@@ -63,6 +63,7 @@ Run `pancode doctor` first ([doctor.md](doctor.md)): its `chat` row identifies m
 ## Lifecycle commands
 
 - **`This installation needs a package-manager update; no package was replaced.`** (`upgrade`, exit `1`): Run the printed package-manager command, then `pancode upgrade --post-install`.
+- **`PanCode could not tell whether a newer release is out; no package was replaced.`** (`upgrade`, exit `1`): Run the printed check, which changes nothing. When it names a version newer than the installed one, run the printed package-manager command, then `pancode upgrade --post-install`.
 - **`Rollback works only for native installer installs, made by install.sh or install.ps1`** (`upgrade --rollback`, exit `2`): Use your package manager (`npm`/`pnpm`/`bun`) to downgrade.
 - **`No previous version is installed, so there is nothing to roll back to`** (`upgrade --rollback`, exit `1`): Pass `--version <ver>` to the installer instead.
 - **`Rollback failed; the active version is unchanged`** (`upgrade --rollback`, exit `1`): Inspect installer output; active install was preserved.

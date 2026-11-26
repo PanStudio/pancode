@@ -394,9 +394,20 @@ export function formatUpgradeInvocation(invocation: UpgradeInvocation, windows =
 
 export function installationCommand(
 	installation: Installation,
-	action: "upgrade" | "uninstall",
+	action: "upgrade" | "uninstall" | "check",
 	channel = "latest",
 ): string {
+	// A check asks what the channel would install and changes nothing. The beta channel follows the newer of the
+	// latest and beta tags, and beta is published only while a pre-release is current, so it lists every tag.
+	if (action === "check") {
+		const query = channel === "beta" ? `${PACKAGE_NAME} dist-tags` : `${PACKAGE_NAME}@${channel} version`;
+		if (installation.kind === "npm") return `npm view ${query}`;
+		if (installation.kind === "pnpm") return `pnpm view ${query}`;
+		if (installation.kind === "bun") return `bun info ${query}`;
+		if (installation.kind === "homebrew") return "brew outdated pancode";
+		if (installation.kind === "winget") return "winget show --id PanCode.PanCode --exact";
+		return `# Ask the package manager that installed ${shellQuote(installation.root)} which version it has.`;
+	}
 	const spec = action === "upgrade" ? `${PACKAGE_NAME}@${channel}` : PACKAGE_NAME;
 	if (installation.kind === "npm" && installation.prefix)
 		return `npm ${action === "upgrade" ? "install" : "uninstall"} -g --prefix ${shellQuote(installation.prefix)} ${spec}`;

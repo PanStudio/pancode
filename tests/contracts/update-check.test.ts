@@ -5,7 +5,11 @@ import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { Installation } from "../../src/domains/lifecycle/install-method.js";
-import { compareReleaseVersions, parseReleaseVersion } from "../../src/domains/lifecycle/release-version.js";
+import {
+	compareReleaseVersions,
+	fetchReleaseVersion,
+	parseReleaseVersion,
+} from "../../src/domains/lifecycle/release-version.js";
 import {
 	createUpdateCheck,
 	UPDATE_CHECK_INTERVAL_MS,
@@ -13,6 +17,27 @@ import {
 } from "../../src/domains/lifecycle/update-check.js";
 import { startUpdateMonitor } from "../../src/interactive/update-monitor.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
+
+test("the beta channel knows its version only when both tags answered or are confirmed unpublished", async (t) => {
+	const real = globalThis.fetch;
+	t.after(() => {
+		globalThis.fetch = real;
+	});
+	const answer = (beta: number) => {
+		globalThis.fetch = (async (url: string | URL) =>
+			String(url).endsWith("/latest")
+				? Response.json({ version: "0.9.1" })
+				: beta === 200
+					? Response.json({ version: "0.9.2-rc.1" })
+					: new Response("{}", { status: beta })) as typeof fetch;
+	};
+	answer(200);
+	assert.equal(await fetchReleaseVersion("beta"), "0.9.2-rc.1");
+	answer(404);
+	assert.equal(await fetchReleaseVersion("beta"), "0.9.1", "an unpublished beta tag leaves latest");
+	answer(503);
+	assert.equal(await fetchReleaseVersion("beta"), null, "a beta that did not answer may be newer than latest");
+});
 
 async function fixture(kind: Installation["kind"] = "npm") {
 	const home = makeScratchHome("pancode-update-check-");

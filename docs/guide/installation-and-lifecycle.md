@@ -783,14 +783,26 @@ home is then recorded as installed (`installedAt`) and reports no repair. A dry
 run creates nothing.
 
 Without `--post-install`, a pnpm, Bun, Homebrew, WinGet, local, or unknown layout is
-never replaced through npm. A real run prints the owning manager's command and
-exits 1 with `This installation needs a package-manager update; no package was replaced.`;
-a dry run prints the same and exits 0. The commands are
-`pnpm add -g @akougkas/pancode@<channel>`, `bun add -g @akougkas/pancode@<channel>`
-(on the `beta` channel these name the version `beta` resolves to, not the dist-tag),
-`brew upgrade pancode` and `winget upgrade --id PanCode.PanCode --exact`; an unknown
-layout is told to use its original manager and then run
-`pancode upgrade --post-install`. Keep the original manager's global directory or
+never replaced through npm. For pnpm and Bun, PanCode asks the npm registry for the
+channel's version. When the installed version is that one or newer, the run prints
+`Already on <version>. Nothing to do.` and exits 0. When the registry names a newer
+version, a real run prints the owning manager's command and exits 1 with
+`This installation needs a package-manager update; no package was replaced.` The
+commands are `pnpm add -g @akougkas/pancode@<channel>` and
+`bun add -g @akougkas/pancode@<channel>`; on the `beta` channel they name the version
+`beta` resolves to, not the dist-tag. On `beta` the version is known only when both
+tags answer, or the registry confirms `beta` unpublished (404); a `beta` request that
+fails counts as no version. When the registry gives no version, a real run
+prints a check that changes nothing (`pnpm view @akougkas/pancode@latest version`, or
+`pnpm view @akougkas/pancode dist-tags` on `beta`; `bun info` for Bun), then the
+command to run if that version is newer (on `beta`, with `<version>` to fill in), and
+exits 1 with `PanCode could not tell whether a newer release is out; no package was replaced.`
+Homebrew and WinGet publish on their own schedule, so the registry is not asked: a
+real run prints `brew outdated pancode` or `winget show --id PanCode.PanCode --exact`
+to check, then `brew upgrade pancode` or `winget upgrade --id PanCode.PanCode --exact`,
+and exits 1 with the same message. A local or unknown layout is told to use its
+original manager, and exits 1 the same way. A dry run prints the same advice and
+exits 0. Keep the original manager's global directory or
 prefix when updating or removing the package. On Windows, where npm, pnpm and npx are `.cmd` shims, PanCode starts them through `cmd.exe /d /s /c` and only with arguments `cmd.exe` cannot reinterpret; an update whose arguments would need quoting is refused instead of run. `doctor --fix` rebuilding a source checkout (`pnpm run build`) and `fleet nodes install` or `setup` packing this build (`npm pack`) launch them the same way. Package removal preserves PanCode's user configuration and
 sessions; the uninstall operation below deliberately removes those roots.
 

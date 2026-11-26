@@ -78,11 +78,12 @@ export function releaseVersionUrl(channel: string, source: ReleaseSource): strin
 		: `${registryBase()}/${PACKAGE_NAME.replace("/", "%2f")}/${channel}`;
 }
 
-export async function fetchTagVersion(
+/** A tag's version, null when the tag is not published (404), and undefined when no answer came. */
+async function readTagVersion(
 	channel: string,
-	signal?: AbortSignal,
-	source: ReleaseSource = "registry",
-): Promise<string | null> {
+	signal: AbortSignal | undefined,
+	source: ReleaseSource,
+): Promise<string | null | undefined> {
 	if (!["latest", "beta"].includes(channel)) return null;
 	try {
 		const timeout = AbortSignal.timeout(2500);
@@ -91,14 +92,23 @@ export async function fetchTagVersion(
 			headers: { Accept: bundle ? "text/plain" : "application/json" },
 			signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
 		});
-		if (!response.ok) return null;
+		if (response.status === 404) return null;
+		if (!response.ok) return undefined;
 		const version = bundle
 			? (await response.text()).split("\n", 1)[0]?.trim()
 			: ((await response.json()) as { version?: unknown }).version;
-		return parseReleaseVersion(version) ? (version as string) : null;
+		return parseReleaseVersion(version) ? (version as string) : undefined;
 	} catch {
-		return null;
+		return undefined;
 	}
+}
+
+export async function fetchTagVersion(
+	channel: string,
+	signal?: AbortSignal,
+	source: ReleaseSource = "registry",
+): Promise<string | null> {
+	return (await readTagVersion(channel, signal, source)) ?? null;
 }
 
 /** A channel also follows more stable channels. */
@@ -111,9 +121,12 @@ export async function fetchReleaseVersion(
 	signal?: AbortSignal,
 	source: ReleaseSource = "registry",
 ): Promise<string | null> {
-	const versions = await Promise.all(releaseChannelTags(channel).map((tag) => fetchTagVersion(tag, signal, source)));
+	const versions = await Promise.all(releaseChannelTags(channel).map((tag) => readTagVersion(tag, signal, source)));
+	// A tag that did not answer may name the newest version, so the channel's version is unknown.
+	if (versions.includes(undefined)) return null;
 	let newest: string | null = null;
 	for (const version of versions)
-		if (version !== null && (newest === null || compareReleaseVersions(version, newest) === 1)) newest = version;
+		if (typeof version === "string" && (newest === null || compareReleaseVersions(version, newest) === 1))
+			newest = version;
 	return newest;
 }
