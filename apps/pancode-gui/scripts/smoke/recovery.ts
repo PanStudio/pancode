@@ -291,7 +291,7 @@ export async function recoverySteps(run: SmokeRun) {
 		await page.getByRole("button", { name: "Send", exact: true }).click();
 		await page.locator(".approval-strip__left").waitFor();
 		await page
-			.locator(".approval-card__facts li", { hasText: "stops in" })
+			.locator(".approval-card__facts li", { hasText: "No answer in" })
 			.filter({ visible: true })
 			.first()
 			.waitFor({ state: "attached" });
@@ -303,8 +303,9 @@ export async function recoverySteps(run: SmokeRun) {
 				const card =
 					[...document.querySelectorAll(".approval-card__facts li")]
 						.map((node) => node.textContent ?? "")
-						.find((text) => text.includes("stops in")) ?? "";
-				out.push([strip, card].map((text) => /stops in (.+?)(?: \(|$)/.exec(text)?.[1] ?? null));
+						.find((text) => text.startsWith("No answer in")) ?? "";
+				// The strip reads "stops in 9m 46s"; the card "No answer in 9m 46s (at 20:46) stops this turn".
+				out.push([/stops in (.+)$/.exec(strip)?.[1] ?? null, /^No answer in (.+?) \(at /.exec(card)?.[1] ?? null]);
 				await new Promise((resolve) => requestAnimationFrame(resolve));
 			}
 			return out;
