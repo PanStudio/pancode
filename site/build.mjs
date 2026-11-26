@@ -270,18 +270,16 @@ function responsiveImages(html, path) {
 		const pancode = source === "assets/brand/pancode-mark.webp";
 		const guide = articles.some((item) => item.url === path);
 		const article = guide || path.startsWith("/docs");
-		// Brand marks render at .brand img sizes; listing cards subtract the 1rem
-		// padding and 1px border around each card image from the column width.
-		const sizes = pancode
-			? tag.includes('class="scene-mark"')
-				? "160px"
-				: "(max-width: 600px) 27px, 32px"
-			: guide
-				? "(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px"
-				: article
-					? "(max-width: 600px) calc(100vw - 40px), (max-width: 850px) calc(100vw - 64px), 760px"
-					: path === "/"
-						? "(max-width: 600px) calc(100vw - 64px), (max-width: 824px) calc(100vw - 88px), (max-width: 1000px) 736px, (max-height: 650px) 736px, (max-width: 1100px) calc((94vw - 64px) * 0.623 - 24px), (max-width: 1344px) calc((94vw - 96px) * 0.623 - 24px), 700px"
+		// An image that states its own sizes keeps them. Brand marks render at .brand img sizes; listing
+		// cards subtract the 1rem padding and 1px border around each card image from the column width.
+		const sizes = tag.match(/\ssizes="([^"]+)"/)?.[1]
+			? ""
+			: pancode
+				? "(max-width: 600px) 27px, 32px"
+				: guide
+					? "(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px"
+					: article
+						? "(max-width: 600px) calc(100vw - 40px), (max-width: 850px) calc(100vw - 64px), 760px"
 						: "(max-width: 600px) calc(100vw - 74px), (max-width: 1100px) calc(50vw - 90px), (max-width: 1344px) calc(50vw - 106px), 566px";
 		const srcset = [...item.variants, { path: source, width: item.width }]
 			.map((v) => `/${v.path} ${v.width}w`)
@@ -289,7 +287,7 @@ function responsiveImages(html, path) {
 		if (pancode) tag = tag.replace(`src="/${source}"`, `src="/${item.variants.find((v) => v.width === 64).path}"`);
 		if (!/\bwidth=/.test(tag)) tag = tag.replace("<img", `<img width="${item.width}" height="${item.height}"`);
 		return tag
-			.replace(/\s*\/?>(?=$)/, ` srcset="${srcset}" sizes="${sizes}" decoding="async">`)
+			.replace(/\s*\/?>(?=$)/, ` srcset="${srcset}"${sizes && ` sizes="${sizes}"`} decoding="async">`)
 			.replace(/ decoding="async"(?=[\s\S]* decoding="async")/, "");
 	});
 }
@@ -834,7 +832,7 @@ await writeFile(join(out, "css/site.css"), minifyCss(`${await read("css/brand.cs
 await writeFile(join(out, "css/landing.css"), minifyCss(await read("css/landing.css")));
 await writeFile(join(out, "css/art.css"), minifyCss(await read("css/art.css")));
 await mkdir(join(out, "js"));
-for (const name of ["site.js", "docs.js", "redirect.js", "hub.js"])
+for (const name of ["site.js", "docs.js", "redirect.js", "hub.js", "landing.js"])
 	await cp(join(root, "js", name), join(out, "js", name));
 await mkdir(join(out, "content"));
 await writeFile(join(out, "content/docs-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -1035,9 +1033,8 @@ const hubSource = (row) => {
 };
 const hubRow = (row) => {
 	const id = `${row.kind}-${row.name}`;
-	const text = [row.kind, row.name, row.publisher, row.tier, row.licence, row.category ?? "", row.description]
-		.join(" ")
-		.toLowerCase();
+	// The filter text keeps its case, so a product name is never printed as a lowercase command; hub.js folds case.
+	const text = [row.kind, row.name, row.publisher, row.tier, row.licence, row.category ?? "", row.description].join(" ");
 	const meta = [
 		["Publisher", escapeHtml(row.publisher)],
 		["Licence", escapeHtml(row.licence)],
@@ -1046,8 +1043,16 @@ const hubRow = (row) => {
 	]
 		.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`)
 		.join("");
-	return `<li class="hub-row" id="${escapeHtml(id)}" data-hub-text="${escapeHtml(text)}"><div class="hub-row-head"><h3>${escapeHtml(row.name)}</h3><span class="tag">v${escapeHtml(row.version)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><p>${escapeHtml(row.description)}</p><dl class="hub-meta">${meta}</dl><div class="command-line"><code>${escapeHtml(row.install)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(row.install)}" aria-label="Copy the install command for ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div></li>`;
+	return `<li class="hub-row" id="${escapeHtml(id)}" data-hub-text="${escapeHtml(text)}" data-hub-kind="${escapeHtml(row.kind)}"><div class="hub-row-head"><h3>${escapeHtml(row.name)}</h3><span class="tag">v${escapeHtml(row.version)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><details class="hub-row-more"><summary>${escapeHtml(row.description)}</summary><dl class="hub-meta">${meta}</dl></details>${hubCommand(row)}</li>`;
 };
+const hubCommand = (row) =>
+	`<div class="command-line"><code>${escapeHtml(row.install)}</code><button type="button" class="copy" hidden data-copy="${escapeHtml(row.install)}" aria-label="Copy the install command for ${escapeHtml(`${row.kind}:${row.name}`)}">Copy</button></div>`;
+// The packs a newcomer starts with, in hub-featured.json order, above the full catalog.
+const hubFeatured = JSON.parse(await read("hub-featured.json")).map((key) => {
+	const row = hubCatalog.rows.find((item) => `${item.kind}:${item.name}` === key);
+	if (!row) throw new Error(`hub-featured.json names ${key}, which is not in the PanHub catalog.`);
+	return `<li class="hub-featured-row"><div class="hub-row-head"><h3><a href="#${escapeHtml(`${row.kind}-${row.name}`)}">${escapeHtml(row.name)}</a></h3><span class="tag">${escapeHtml(row.kind)}</span><span class="tag hub-tier" data-tier="${escapeHtml(row.tier)}">${escapeHtml(row.tier)}</span></div><p>${escapeHtml(row.description)}</p>${hubCommand(row)}</li>`;
+});
 const hubGroups = [...hubKinds, ...new Set(hubCatalog.rows.map((row) => row.kind))]
 	.filter((kind, i, all) => all.indexOf(kind) === i)
 	.map((kind) => [kind, hubCatalog.rows.filter((row) => row.kind === kind)])
@@ -1068,23 +1073,29 @@ const hubSlots = {
 		fact("Command", "<code>pancode hub</code>"),
 		fact("Packs", String(hubCatalog.rows.length)),
 	].join(""),
-	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
+	"hub-filter": `<div class="hub-filter" data-hub-filter hidden><label for="hub-query">Filter packs</label><input id="hub-query" type="search" autocomplete="off" spellcheck="false" placeholder="Name, publisher, licence or words from the description"><div class="hub-chips" role="group" aria-label="Kind"><button type="button" class="hub-chip" data-hub-kind="" aria-pressed="true">All</button><button type="button" class="hub-chip" data-hub-kind="plugin" aria-pressed="false">Plugins</button><button type="button" class="hub-chip" data-hub-kind="extension" aria-pressed="false">Extensions</button><button type="button" class="hub-chip" data-hub-kind="skill" aria-pressed="false">Skills</button></div><p class="hub-filter-count" aria-live="polite" data-hub-count>${hubCatalog.rows.length} of ${hubCatalog.rows.length} packs</p></div>`,
+	"hub-featured": `<section class="hub-featured" aria-labelledby="hub-featured-title" data-hub-featured><h2 id="hub-featured-title">Start with these</h2><ul class="hub-featured-rows">${hubFeatured.join("")}</ul></section>`,
 	"hub-groups": hubGroups,
 	"hub-source": `Bundled with PanCode v${escapeHtml(product.version)}: ${hubIndexLink} at ${hubAt}, sha256 <code class="hub-sha" data-hub-sha256>${hubCatalog.source.sha256}</code>.`,
 };
 let hubHtml = await read("hub.html");
 for (const [name, value] of Object.entries(hubSlots)) hubHtml = hubHtml.replaceAll(`<!-- ${name} -->`, value);
 await writePage("/hub.html", hubHtml, product.hub.title, product.hub.description, "WebPage", {
-	sources: ["content/hub-catalog.json", "hub.html", "product.json"],
+	sources: ["content/hub-catalog.json", "hub-featured.json", "hub.html", "product.json"],
 });
 
 for (const collection of collections) {
-	const cards = articles
-		.filter((item) => item.collection === collection)
+	const listed = articles.filter((item) => item.collection === collection);
+	// A listing shows its featured guides as cards and every guide in its index.
+	// Featured cards stack below 768 px and pair up above it; the slot is the card image box at each width.
+	const cardSizes =
+		"(max-width: 600px) calc(100vw - 40px), (max-width: 767px) calc(100vw - 64px), (max-width: 1100px) calc(50vw - 48px), (max-width: 1344px) calc(50vw - 64px), 608px";
+	const cards = listed
+		.filter((item) => item.featured)
 		.map(
 			// The first card image is the listing's largest above-the-fold content.
 			(item, position) =>
-				`<a class="tutorial-card" href="${item.url}">${item.image ? `<img src="${escapeHtml(item.image)}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}"${position === 0 ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">` : ""}<p class="eyebrow">${escapeHtml(item.category)} / ${escapeHtml(item.time)}</p><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p>${item.status ? `<p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p>` : ""}<span class="text-link">Read ${collection.id === "tutorials" ? "the tutorial" : "the article"} <span aria-hidden="true">↗</span></span></a>`,
+				`<a class="tutorial-card" href="${item.url}">${item.image ? `<img src="${escapeHtml(item.image)}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}" sizes="${cardSizes}"${position === 0 ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">` : ""}<p class="eyebrow">${escapeHtml(item.category)} / ${escapeHtml(item.time)}</p><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p>${item.status ? `<p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p>` : ""}<span class="text-link">Read the tutorial <span aria-hidden="true">↗</span></span></a>`,
 		)
 		.join("\n");
 	const learningPaths =
@@ -1097,15 +1108,74 @@ for (const collection of collections) {
 								return `<li><span class="step-number">${String(step + 1).padStart(2, "0")}</span><a href="${item.url}">${escapeHtml(item.title)}</a><span class="caption">${escapeHtml(item.time)}</span></li>`;
 							})
 							.join("");
-						return `<section class="learning-path" id="${path.id}" aria-labelledby="${path.id}-title"><p class="eyebrow"><span class="chapter">Path ${number + 1} /</span> ${escapeHtml(path.label)}</p><div><h2 id="${path.id}-title">${escapeHtml(path.title)}</h2><p>${escapeHtml(path.summary)}</p><ol>${steps}</ol></div></section>`;
+						return `<section class="learning-path" id="${path.id}" aria-labelledby="${path.id}-title"><p class="eyebrow"><span class="chapter">Path ${number + 1} /</span> ${escapeHtml(path.label)}</p><h2 id="${path.id}-title">${escapeHtml(path.title)}</h2><p>${escapeHtml(path.summary)}</p><ol>${steps}</ol></section>`;
 					})
-					.join("\n")}</div><p class="eyebrow tutorial-catalog-label">All tutorials</p>`
+					.join("\n")}</div>`
 			: "";
+	// An index lists guides in groups, one row each: a link, a description and the reading time.
+	const indexGroups = (groups, description) =>
+		groups
+			.map(
+				([name, items]) =>
+					`<div class="index-group"><h2>${escapeHtml(name)}</h2><ul class="index-rows">${items
+						.map(
+							(item) =>
+								`<li><a href="${item.url}">${escapeHtml(item.title)}</a><span class="index-desc">${description(item)}</span><span class="caption">${escapeHtml(item.time)}</span></li>`,
+						)
+						.join("")}</ul></div>`,
+			)
+			.join("\n");
+	const tutorialIndex =
+		collection.id === "tutorials"
+			? indexGroups(
+					[...new Set(listed.map((item) => item.category))].map((category) => [
+						category,
+						listed.filter((item) => item.category === category),
+					]),
+					(item) =>
+						`${escapeHtml(item.description)}${item.status ? ` <span class="chapter index-status">${escapeHtml(item.status)}</span>` : ""}`,
+				)
+			: "";
+	// Research: the five subsystems in order, then the open questions under the subsystem each belongs to.
+	const subsystems = collection.id === "research" ? listed.slice(0, 5) : [];
+	const researchTask = {
+		drivers: "Route",
+		memory: "Remember",
+		scheduling: "Delegate",
+		protection: "Contain",
+		accounting: "Verify",
+	};
+	const researchSubsystems = subsystems.length
+		? `<ol class="subsystem-list">${subsystems
+				.map((item, number) => {
+					if (!researchTask[item.slug]) throw new Error(`Research subsystem ${item.slug} has no PanCode task.`);
+					return `<li><span class="step-number">${String(number + 1).padStart(2, "0")}</span><a href="${item.url}"><h2>${escapeHtml(item.title)}</h2></a><span class="tag">${researchTask[item.slug]}</span><p>${escapeHtml(item.description)}</p><p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p></li>`;
+				})
+				.join("")}</ol>`
+		: "";
+	const subsystemOf = (item) => item.category.split(" · ")[0];
+	const researchQuestions = subsystems.length
+		? indexGroups(
+				subsystems
+					.map((subsystem) => subsystem.title.split(":")[0])
+					.map((name) => [name, listed.slice(5).filter((item) => subsystemOf(item) === name)])
+					.filter(([, items]) => items.length),
+				(item) => escapeHtml(item.status),
+			)
+		: "";
+	if (
+		subsystems.length &&
+		listed.slice(5).some((item) => !subsystems.some((s) => s.title.startsWith(`${subsystemOf(item)}:`)))
+	)
+		throw new Error("Every research question's category must start with the name of a subsystem.");
 	await writePage(
 		collection.listing,
 		(await read(collection.listing.slice(1)))
 			.replace("<!-- learning-paths -->", learningPaths)
-			.replace("<!-- tutorial-cards -->", cards),
+			.replace("<!-- tutorial-cards -->", cards)
+			.replace("<!-- tutorial-index -->", tutorialIndex)
+			.replace("<!-- research-subsystems -->", researchSubsystems)
+			.replace("<!-- research-questions -->", researchQuestions),
 		collection.title,
 		collection.description,
 		"WebPage",
@@ -1257,7 +1327,7 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
 const hubMarkdown = () =>
 	[
-		`The ${hubCatalog.rows.length} packs bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
+		`The ${hubCatalog.rows.length} packs listed in the index bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
 		hubCatalog.rows
 			.map(
 				(row) =>

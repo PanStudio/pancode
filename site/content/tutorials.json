@@ -13,7 +13,8 @@
     "guides": [
       "README.md",
       "guide/commands-and-modes.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "desktop-and-terminal",
@@ -29,7 +30,8 @@
     "guides": [
       "guide/gui.md",
       "README.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "let-it-work-with-containment-and-rewind",
@@ -44,7 +46,8 @@
     "versionScope": "0.9.0",
     "guides": [
       "guide/tool-usage.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "run-a-playbook-and-land-it",
@@ -92,7 +95,8 @@
     "guides": [
       "guide/exit-codes-and-output.md",
       "guide/commands-and-modes.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "see-what-a-session-cost-and-what-a-run-did",
@@ -137,7 +141,8 @@
     "versionScope": "0.9.0",
     "guides": [
       "guide/configuration-and-targets.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "coordinate-your-coding-agents",
@@ -153,7 +158,8 @@
     "guides": [
       "guide/interop.md",
       "guide/fleet-dispatch.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "keep-long-coding-tasks-on-track",
@@ -184,7 +190,8 @@
     "guides": [
       "guide/quality-policy.md",
       "guide/tool-usage.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "add-skills-and-plugins-deliberately",
@@ -326,7 +333,8 @@
     ],
     "guides": [
       "guide/configuration-and-targets.md"
-    ]
+    ],
+    "featured": true
   },
   {
     "slug": "pre-register-a-benchmark",
