@@ -916,8 +916,9 @@ export function withDoctorCommand(finding: DoctorFinding): DoctorFinding {
 		/`(?:pancode(?:`| [^`<>]+`)|pnpm [^`]+`|chmod [^`]+`|git (?:mv|rm) [^`]+`|export [A-Za-z_]\w*=[^`]+`)/.test(
 			finding.detail,
 		) ||
-		// The setup-status sentence names its command as plain "Run: pancode ...".
-		/\bRun: pancode /.test(finding.detail)
+		// The setup-status sentence names its command as plain "Run: pancode ...", and a project trust notice as
+		// "Review with pancode config trust <surface>".
+		/\b(?:Run:|Review with) pancode /.test(finding.detail)
 	)
 		return finding;
 	const name = finding.name;
@@ -1381,6 +1382,14 @@ export async function runDoctorModelChecks(
 				} else if (status.source === "stored-oauth" && stored?.type === "oauth" && stored.expires <= Date.now()) {
 					credentialAvailable = !requiredCredential;
 					credentialDetail = `stored sign-in expired; operator sign-in required: run \`pancode auth login ${target.id}\``;
+				} else if (
+					requiredCredential &&
+					!status.available &&
+					authTarget.targetEnvVar === undefined &&
+					authTarget.credentialRefusal === undefined
+				) {
+					// The chat row names the same command; without it this row fell back to `pancode configure`.
+					credentialDetail = `required credential not found (run \`pancode auth login ${target.id}\`)`;
 				} else if (status.available && status.source !== "not-required")
 					credentialDetail =
 						status.source === "stored-api-key" && status.detail && status.detail !== status.providerId
