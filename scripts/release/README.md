@@ -1,215 +1,118 @@
 # Releasing PanCode
 
-The maintainer's reference for branches, releases and the repository settings a release needs. A contributor opening a pull request does not need it; see [CONTRIBUTING.md](../../CONTRIBUTING.md). The modules in this directory are the pieces of `scripts/release.mjs` and `scripts/release-candidate.mjs`; [scripts/README.md](../README.md) lists them.
+The maintainer's reference for what a release is, how to cut one and the settings it needs. A contributor opening a pull request does not need it; see [CONTRIBUTING.md](../../CONTRIBUTING.md). [scripts/README.md](../README.md) lists the scripts in this directory.
 
-## Branches and releases
+## What a release is
 
-Development happens on the version branch, currently `v090`. Keep local
-and remote version branches synchronized with ordinary pushes. `main` moves
-only by fast-forward when a stable release completes. Published tags and npm
-versions are immutable. The completed stable release deletes its version branch;
-create the next version branch from the released `main` when development resumes.
+One commit, built once, published to four places:
 
-A stable release means the same qualified version is available on npm and
-GitHub, `main` points to its source commit, and the public website serves its
-prepared docs and installers. There is no atomic transaction across these
-services: publish npm first, then the GitHub tag/release, then promote `main` and
-`gh-pages`. A partial failure is resumed with the original artifact. Never move
-a published tag, rebuild a published candidate, or republish different bytes.
+| Where | What |
+| --- | --- |
+| npm | `@akougkas/pancode@<version>`, for people who bring their own Node.js |
+| GitHub release `v<version>` | One bundle per platform (`pancode-<version>-<target>.tar.gz`), the npm tarball, `install.sh`, `install.ps1`, `install.cmd` and `SHA256SUMS` over all of them |
+| `main` | Fast-forwarded to the released commit (stable releases) |
+| `gh-pages` | The website (stable releases) and `channel/latest` and `channel/beta`, one line each naming a version |
 
-Pushes to a version branch and pull requests run only the browser smoke
-(`browser-smoke.yml`), which creates no `ci` check. Qualification is deliberate;
-the required check names remain `ci (22)` and `ci (24)`. Development qualification
-accepts an `Unreleased` changelog and prepares an isolated website preview from
-the candidate version. Publication separately requires a final version, dated
-nonempty release notes, and matching committed website metadata. Full
-investigation also limits concurrent test files to two so subprocess fixtures
-do not compete with hundreds of cold boots. One manual `ci.yml` run
-checks source, builds and packs once, tests selected root/GUI behavior and the
-installed package on Node 22, runs the same tests and boot on Node 24, and
-publishes no result unless both pass. Its immutable
-`candidate-<sha>` artifact includes the versioned npm tarball, SHA-256 receipt,
-four installers extracted from that archive, release notes, and a prepared
-website. `results-<sha>` and `results24-<sha>` record the actual test counts. The development defaults select the root and GUI files listed in `scripts/ci-tests.mjs`; package and runtime
-checks remain part of explicit qualification. `pnpm run test:list` lists every selected
-file and every contract/GUI file reserved for full investigation. Redundant
-prose and appearance-specific tests are retired with maintainer approval. `test:full`, `test:gui:full`, and maintenance checks stay manual.
+A bundle is the Node.js pinned in `scripts/release/node-runtime.json`, npm, and the packed package with the production dependencies `pnpm-lock.yaml` names. The installers and `pancode upgrade` read a channel file, check the bundle against `SHA256SUMS` and unpack it; they resolve nothing from a package registry. Published tags, npm versions and release assets never change.
 
-Release with one command in a visible terminal:
+A version with no suffix (`0.9.0`) is stable: npm `latest`, a GitHub release marked Latest, `main`, the website and both channel files. A version ending in `-rc.N` is a pre-release: npm `beta`, a GitHub pre-release and `channel/beta` only. Any other version, such as `0.9.1-dev`, is a development version: it is built and tested on every push and never published.
+
+## The pipeline
+
+`.github/workflows/ci.yml` is the only pipeline. It runs on every push to a version branch, on every pull request, and when dispatched.
+
+| Job | What it proves |
+| --- | --- |
+| `check` | Typecheck, lint, GUI check and hub check |
+| `build` | `scripts/release/build.mjs` builds the npm tarball, every bundle, the installers and the website once, and uploads them as the `release` artifact |
+| `ci (22)`, `ci (24)` | The test tiers and the npm install check, against the `dist/` inside that tarball, on both supported Node majors. These are the branch-protection check names |
+| `install (<target>)` | `scripts/release/smoke.mjs` installs that target's bundle with the release's own installer in a throwaway home, runs the three commands, upgrades to a next version through `pancode upgrade`, rolls back and uninstalls. It runs on Linux x64 and arm64, Alpine (musl) x64 and arm64, CentOS 7 (glibc 2.17), macOS arm64 and x64, and Windows x64 and arm64 |
+| `browser smoke`, `gui api smoke` | The desktop app in the runner's Chrome and through its HTTP API |
+| `publish` | Only for a dispatch with `release` checked, after every job above passed, behind the `release` environment. `scripts/release/publish.mjs` publishes the files the other jobs tested |
+
+`pnpm run ci` runs the same gate on one machine: the checks beside the build, the tests against the built tarball, then the install smoke of this machine's bundle. `pnpm run release:build -- --out <dir>` and `pnpm run release:smoke -- <dir>/assets` run the two halves alone.
+
+## Cutting a release
+
+1. Set the version in `package.json`, `apps/pancode-gui/package.json`, `assets/acp-registry/agent.json` and every `packages/*/package.json`; the build refuses manifests that disagree. For a stable release also set `version` and `publishedVersion` in `site/product.json` and the `--branch v<version>` pin in `README.md`.
+2. Retitle the first `CHANGELOG.md` section `## <version> - YYYY-MM-DD`. Its body becomes the GitHub release notes.
+3. Commit on the version branch, then commit the docs snapshot of that commit: `python3 site/sync-docs.py --snapshot-ref <release commit>`.
+4. Push the version branch and let the push run of `ci.yml` pass.
+5. Dispatch the release from the version branch:
+
+   ```bash
+   gh workflow run ci.yml --repo akougkas/pancode --ref v090 -f release=true
+   ```
+
+6. When every job has passed, the `publish` job waits. Approve the `release` environment in the run's page. That approval is the release decision; nothing else in the pipeline can publish.
+
+`publish` then runs in this order: npm, the GitHub release and its tag, `main`, `gh-pages`. The channel file moves last, so no installer or update check hears about a version before its bundle can be downloaded. Each step first reads what is already published. If the job fails, fix the cause and rerun it with `gh run rerun <run id> --failed --repo akougkas/pancode`; it asks for approval again and completes only the open steps. Bytes that differ from what an earlier run published stop it.
+
+After a stable release, create the next version branch from `main` and set the next development version.
+
+### The first release of a package name
+
+npm trusted publishing cannot create a package, so the first version of `@akougkas/pancode` is published by hand, from the files the run built:
 
 ```bash
-pnpm run release -- --check      # read-only readiness report; needs no terminal and writes nothing
-pnpm run release                 # the release
-pnpm run release -- --platforms  # the release, with Windows and macOS boots added to its CI run
+gh run download <run id> --repo akougkas/pancode --name release --dir <dir>
+npm publish <dir>/assets/akougkas-pancode-<version>.tgz --access public
 ```
 
-`scripts/release.mjs` is the only release driver. It never pushes before every
-local gate is green, and every remote write asks for a typed phrase such as
-`push v090` or `publish pancode@0.9.0`. One release command runs per
-clone at a time, under a lock in
-`$(git rev-parse --git-common-dir)/pancode-release/`. Qualification and packing
-refuse `/tmp` and `TMPDIR` paths longer than 40 characters; export a short
-private one such as `TMPDIR=$HOME/.cache/cr`.
+Do this while `publish` waits for approval, then approve. The job finds that npm already serves those bytes and continues with GitHub, `main` and the website. Then attach the trusted publisher, described under Owner configuration, so later releases need only the approval.
 
-Before releasing, set the agreed version consistently in `package.json`, the GUI
-manifest, and both `version` and `publishedVersion` in `site/product.json`. Add dated release notes in
-`CHANGELOG.md` and update version references such as the README source-install
-command. Commit the candidate on the version branch. The command refuses a dirty
-tree or inconsistent versions; it does not invent release notes or bump versions.
+## Rehearsing
 
-The command then runs these steps in order:
+A change to the release scripts is rehearsed without publishing anything, against a loopback npm registry such as Verdaccio and a local bare repository:
 
-1. Readiness, in seconds. `pnpm run preflight -- --release` checks versions, the
-   dated changelog heading and nonempty notes, release readiness, the size
-   budgets the source tree decides, and the local tools. The command then checks
-   that `gh` is authenticated, that `npm whoami` answers, that `origin/main` is
-   an ancestor of the candidate, that tag `v<version>` is free or already at
-   the candidate, and that GitHub holds the owner configuration below: a public
-   repository, the `release` environment with the owner as required reviewer,
-   its deployment rules, variable and secret, and the rulesets. Every problem is
-   listed at once and nothing has been built or pushed. `--check` stops here after printing whether a local qualification
-   and a `ci.yml` run already exist for the commit.
-2. Local qualification, without confirmation because it writes nothing remote.
-   `scripts/release-candidate.mjs qualify` builds and packs once, then tests the
-   package and boots an installed copy on Node 22 and 24 at once, under the same
-   time zone, locale and pinned `rg` and `fd` as CI. A passed qualification of
-   the same commit is reused. It uses this process's Node for its own major and
-   `nvm`'s newest install of the other. This step is skipped when a `ci.yml`
-   run of the commit already exists.
-3. Push and CI. After the phrase `push <branch>`, the command pushes the version
-   branch and dispatches one `ci.yml` run for the exact commit, then watches it.
-   An existing run of the commit is used instead: an unfinished one is watched,
-   a failed one has its failed jobs rerun on confirmation, and a successful one
-   is reused if its `candidate-<sha>`, `results-<sha>` and `results24-<sha>`
-   artifacts are still live.
-4. Verification of the CI artifact. The command downloads the three artifacts,
-   runs `release-publish.mjs verify` against the run, and runs npm's own dry
-   run of the qualified tarball under the release's dist-tag. The published
-   bytes are always the CI artifact, never a local pack.
-5. npm, by the owner. After the phrase `publish <name>@<version>`, the command
-   runs `npm publish` on the qualified tarball in the terminal so npm's
-   two-factor prompt works. If npm already serves the same bytes it publishes
-   nothing; different bytes stop the release. An accepted publish is recorded,
-   so it is never offered twice while npm propagates.
-6. GitHub, with the owner's approval. After the phrase `release v<version>`, the
-   command dispatches `release.yml` and watches it. **The owner approves the
-   protected `release` environment in GitHub.** Agents leave the npm publish
-   and this approval to the owner. The release job waits for npm to serve the
-   exact bytes, creates or repairs the draft, pins it to the candidate, uploads
-   the versioned tarball and four installers, and publishes the tag and release.
-   A stable release becomes Latest, fast-forwards `main`, commits the prepared
-   site to `gh-pages`, and deletes the remote version branch.
-7. Closeout. After a stable release the command offers to forward the npm
-   `beta` dist-tag when it fell behind, then to
-   fast-forward local `main` and, when `origin/main` is the candidate, delete
-   the finished local version branch.
+```bash
+pnpm run release:build -- --out <dir>
+node scripts/release/publish.mjs <dir> --registry http://127.0.0.1:4873/ --remote <bare repository>
+```
 
-A version with a prerelease suffix, such as `0.9.0-rc.0`, goes to npm's `beta`
-dist-tag and a GitHub prerelease that is not Latest; the suffix alone selects
-this. Its approval covers only the tag and prerelease, so `main`, the site and
-the version branch stay as they are. A stable version goes to `latest`.
+The rehearsal publishes to that registry, fast-forwards `main` and writes `gh-pages` in that repository, and skips the GitHub release, which only GitHub can hold. Both flags are refused under GitHub Actions. The release directory must come from a committed tree with a stable or `-rc.N` version.
 
-For retries, run the command again. Readiness is checked again, the `ci.yml`
-run of the commit and the qualified bytes on npm are reused, and a new
-`release.yml` run is dispatched, whose job repairs draft GitHub assets and
-completes only the steps still open. If an artifact expires, prepare a new
-candidate commit; do not rebuild a previously qualified commit. A different npm
-integrity or tag commit stops the operation.
+## Moving the bundled Node.js
 
-The command always releases the checked-out head. If a release-tooling bug
-appears after npm accepted the version, the owner finishes by dispatching
-`release.yml` by hand for the published candidate. Once npm serves it, the
-workflow may finish from a version-branch head that adds only release-tooling
-files (`scripts/release*.mjs`, `scripts/release/`, `release.yml`,
-`tests/contracts/release-*.test.ts`). With other later commits, `mode: finish`
-requires npm to already serve the exact qualified bytes and the candidate to be
-an ancestor of the branch head, completes only the tag, GitHub release, main
-and website steps still open, never republishes, and leaves the version branch
-in place. The tag, tarball and website still come from the candidate.
+```bash
+node scripts/release/pin-node.mjs <version>
+```
 
-`pnpm run release:rehearse` is optional and not part of a routine release. Use
-it after changing release tooling or workflows. It qualifies locally, pushes
-the commit to a temporary `rehearse/*` branch after a typed phrase, runs one
-`ci.yml` run with the publisher's rehearsal jobs (`--platforms` adds the
-Windows and macOS boots), then cancels its unfinished runs and deletes the
-branch. It starts from a version branch, accepts a development version and an
-`Unreleased` changelog, and changes no package, tag, `main` or site. Prove Windows changes on a native Windows clone with
-`core.autocrlf=false` before pushing them.
+It rewrites `scripts/release/node-runtime.json` with the archive URL and SHA-256 for every target, after checking the official checksum file against the Node.js release keys with `gpgv`. The musl and glibc 2.17 archives come from unofficial-builds.nodejs.org and are unsigned; review their hashes in the diff. Every build checks each archive against its pin.
+
+## Checking a release as a user
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify pancode-<version>-<target>.tar.gz --repo akougkas/pancode
+npm audit signatures
+```
+
+Every release asset carries a GitHub build attestation naming this repository and `ci.yml`. A version published through trusted publishing also carries npm provenance.
 
 ## Owner configuration
 
-The owner configures `akougkas/pancode` once, before its first release.
-`pnpm run release` reads the configuration back and refuses to start while
-any piece is missing, and `release.yml` fails at the step that needs it.
+Configured once on `akougkas/pancode`.
 
-npm holds no trusted publisher and CI holds no npm token. The owner publishes
-the unscoped `pancode` package with npm two-factor approval inside
-`pnpm run release`, and `release.yml` only verifies that npm serves the
-qualified bytes. A rehearsal cannot prove npm's authorization without
-publishing a new version; `npm publish --dry-run` does not verify it.
+**npm.** After the first version exists:
 
-Every registry read and every `npm publish` and `npm dist-tag` the release
-runs names `https://registry.npmjs.org/` with `--registry`, so an npm config
-that points at a mirror never receives the publish. For a local rehearsal
-only, `PANCODE_RELEASE_REGISTRY=http://127.0.0.1:<port>/` (or
-`http://localhost:<port>/`) names a loopback registry instead; any other value,
-or any value under GitHub Actions, stops the release.
+```bash
+npm trust github @akougkas/pancode --file ci.yml --repo akougkas/pancode --env release --allow-publish
+```
 
-The GitHub App `pancode-release` (App ID 5919481) has **Contents: read/write**,
-**Workflows: read/write**, **Actions: read** and **Metadata: read**, no
-webhook, and is installed on `akougkas/pancode` only. Workflows permission lets
-main promotion carry workflow changes; Actions read verifies the
-qualification. The `release` environment holds the variable `RELEASE_APP_ID`
-(`5919481`) and the secret `RELEASE_APP_PRIVATE_KEY`. After the owner approves
-the job, `release.yml` mints an installation token for this repository from
-them and makes every GitHub write with it; it has no `GITHUB_TOKEN` fallback,
-and the publisher refuses a token from any App other than `pancode-release`.
-The App's `gh-pages` push triggers the Pages build; `GITHUB_TOKEN` pushes do
-not.
+Then set the package to require two-factor authentication and disallow tokens. No workflow holds an npm token; `publish` authenticates with the run's OIDC identity, which npm accepts only from `ci.yml` in the `release` environment.
 
-The `release` environment has the owner as required reviewer and admits only
-a **Tag** deployment rule `v*` and a **Branch** deployment rule
-`v[0-9][0-9][0-9]`, so publication from a version branch such as `v090`
-reaches the approval gate and nothing else does. GitHub enforces required
-reviewers only on a public repository of a personal account, so the
-repository is public before the first release. Leave Prevent self-review
-unchecked, because the owner also dispatches releases. An agent authenticated
-with the owner's admin credentials could technically approve or bypass the
-gate; a strict owner-only boundary requires separate agent credentials and
-disabling administrator bypass.
+**The `release` environment** has the owner as required reviewer and admits a Tag rule `v*` and a Branch rule `v[0-9][0-9][0-9]`, so only a version branch reaches the approval. It holds the variable `RELEASE_APP_ID` and the secret `RELEASE_APP_PRIVATE_KEY`. GitHub enforces required reviewers on a personal account only for a public repository. Leave Prevent self-review unchecked, because the owner also dispatches releases.
 
-Four rulesets protect the release refs, each with only the bypass it needs:
+**The GitHub App `pancode-release`** has Contents read and write, Workflows read and write and Metadata read, no webhook, and is installed on this repository only. `publish` mints its installation token after approval and uses it for the release, the tag, `main` and `gh-pages`. Workflows permission lets the `main` promotion carry workflow changes, and the App's `gh-pages` push starts the Pages build, which a `GITHUB_TOKEN` push does not.
 
-- `main` structure: deletion and non-fast-forward updates are blocked, with no
-  bypass.
-- `main` merges: pull requests and the required checks `ci (22)` and
-  `ci (24)`, with the App as bypass actor. The release promotion does not
-  satisfy these checks on main: `release.yml` verifies that npm serves the
-  qualified bytes and that the manual qualification run passed `ci (22)` and
-  `ci (24)` on the commit, then the App fast-forwards main through this
-  bypass.
-- `v*` tag creation, with the App as bypass actor, so only a release creates a
-  tag.
-- `v*` tag updates and deletions, with no bypass. Never grant an App a bypass
-  of published-tag immutability.
+**Rulesets.** `main` cannot be deleted or force-pushed by anyone. Changes reach `main` by pull request with `ci (22)` and `ci (24)`, and the App bypasses that to promote a release whose run passed them. Only the App creates `v*` tags. Nobody updates or deletes a `v*` tag.
 
-The repository topics come from `.github/repository-metadata.json`.
+**Release immutability** (Settings, Releases) seals a published release's tag and assets. `publish` attaches every asset to a draft and then publishes it, which is the order immutability needs.
 
-The first release starts from an empty repository. Its version-branch push
-makes that branch the default, so the release job leaves it in place and says
-so; the owner then makes `main` the default branch and deletes the version
-branch. The job also starts `gh-pages` as an orphan branch, which GitHub Pages
-does not serve until the owner points Pages at it with the custom domain
-`pancode.dev`. If the job's wait for `/version.json` runs out first, rerun its
-failed job; it completes only the steps still open.
+**Pages** serves `gh-pages` with the custom domain `pancode.dev`. The first stable release creates the branch; point Pages at it once.
 
-Workflow changes can be committed and rehearsed on the version branch without
-publishing. Decide the next release's product scope and version metadata when the
-owner asks to cut it.
-
-Manual qualification tests the actual archived package under isolated homes. Release
-publication consumes that artifact and its successful qualification record;
-there is no second build or test run in the publishing workflow.
+The first release of a repository starts with the version branch as the default branch. Make `main` the default after it exists.
 
 ## Contributor license check
 
