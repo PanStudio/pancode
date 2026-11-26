@@ -54,10 +54,50 @@
 		termObserver.observe(term);
 	}
 
+	// Reach lights the sector of the open tab and walks the three tabs once on first sight.
+	const reach = document.querySelector(".reach");
+	const tabs = reach?.querySelector(".reach-tabs[data-tabs-ready]");
+	const art = reach?.querySelector(".reach-art");
+	let round = 0;
+	if (tabs && art) {
+		const sync = () => {
+			const open = tabs.querySelector(".reach-panel:not([hidden])");
+			if (open) art.dataset.active = open.dataset.sector;
+		};
+		tabs.addEventListener("click", sync);
+		tabs.addEventListener("keyup", sync);
+		sync();
+		const buttons = [...tabs.querySelectorAll("[role=tab]")];
+		const cancel = () => {
+			clearInterval(round);
+			round = -1;
+			reachObserver.disconnect();
+		};
+		const reachObserver = new IntersectionObserver(
+			(entries) => {
+				if (reduced.matches || round || !entries.some((entry) => entry.isIntersecting)) return;
+				reachObserver.disconnect();
+				let step = 0;
+				round = setInterval(() => {
+					step += 1;
+					buttons[step % buttons.length].click();
+					if (step === buttons.length) cancel();
+				}, 2400);
+			},
+			{ threshold: 0.5 },
+		);
+		for (const type of ["pointerdown", "keydown", "focusin"]) reach.addEventListener(type, cancel, { once: true });
+		reachObserver.observe(reach);
+	}
+
 	reduced.addEventListener("change", () => {
 		if (!reduced.matches) return;
 		stageObserver.disconnect();
 		stages.forEach(setStage);
 		if (term?.dataset.term === "pending") finishTerm();
+		if (round > 0) {
+			clearInterval(round);
+			round = -1;
+		}
 	});
 })();

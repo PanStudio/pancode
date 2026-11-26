@@ -615,6 +615,43 @@
 	.term[data-term="pending"] .t-row:not(.is-in) {
 		opacity: 0;
 	}
+
+	.reach-body {
+		display: grid;
+		grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+		gap: var(--space-8);
+		align-items: center;
+		margin-block-start: var(--space-7);
+	}
+	.reach-panel > p {
+		max-inline-size: 30rem;
+	}
+	.reach-panel > p + p {
+		margin-block-start: var(--space-4);
+	}
+	.reach-names {
+		font: var(--type-small);
+		font-family: var(--font-mono);
+		color: var(--muted);
+	}
+	.reach-art {
+		max-inline-size: 35rem;
+		justify-self: end;
+		inline-size: 100%;
+	}
+	.reach-tabs:not([data-tabs-ready]) .reach-panel + .reach-panel {
+		margin-block-start: var(--space-6);
+	}
+	@media (max-width: 1023px) {
+		.reach-body {
+			grid-template-columns: minmax(0, 1fr);
+			gap: var(--space-6);
+		}
+		.reach-art {
+			order: -1;
+			justify-self: center;
+		}
+	}
 	@media (max-width: 1023px) {
 		.landing-hero {
 			grid-template-columns: minmax(0, 1fr);
