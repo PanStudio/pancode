@@ -18,18 +18,20 @@
 			"Pillow": "12.1.0",
 			"libwebp": "1.6.0"
 		},
-		"padding": "The favicon is the mark on a transparent ground; the app icons set it at 80% on the palette black, which is also maskable-safe; the header mark is unchanged.",
+		"padding": "The favicon is the mark on a transparent ground; the app icons set it at 80% on the palette black; the maskable icon sets it at 72% on the palette black, inside the safe circle of radius 40%; the header mark is unchanged.",
 		"iconTreatment": {
 			"source": "site/assets/brand/pancode-mark.png",
 			"scale": {
 				"favicon.png": 1,
 				"icon-192.png": 0.8,
-				"icon-512.png": 0.8
+				"icon-512.png": 0.8,
+				"icon-maskable-512.png": 0.72
 			},
 			"ground": {
 				"favicon.png": null,
 				"icon-192.png": "black",
-				"icon-512.png": "black"
+				"icon-512.png": "black",
+				"icon-maskable-512.png": "black"
 			},
 			"resampling": "Pillow Image.Resampling.LANCZOS",
 			"alpha": "Preserved from the canonical mark before resizing.",
@@ -39,7 +41,8 @@
 			"pancode-logo.webp": "73597b4374627c7e0fba52d46e1dc1227835d9c30940c0676c911eeadfb4e9d7",
 			"favicon.png": "2a0c2bdbb86356a286d69c2ce899a6476bfcf03a0287055b2bebe4322ee27b93",
 			"icon-192.png": "77186db0b7965fff669966f55d299ab1b9674eb15753a26ff05b4f4339079b8b",
-			"icon-512.png": "354778f2100c6e5d86f4744d6729e369e2372ad8f3c228ad363ff94dd80044bc"
+			"icon-512.png": "354778f2100c6e5d86f4744d6729e369e2372ad8f3c228ad363ff94dd80044bc",
+			"icon-maskable-512.png": "403c5f2c72c958e4a398f00a6012468178ce01af3779cec2ed5128a8d5cc5d20"
 		}
 	}
 }
