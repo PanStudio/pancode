@@ -272,11 +272,15 @@ function writeCopilotHome(home, scenario) {
 	);
 }
 
-function seedRepo(path, name, scenario) {
+// A fixture starts from a site archive, from another fixture's tree (`base`), or
+// from nothing but its own `files`; edits and files then apply on top.
+function fixtureTree(path, name) {
 	const fixture = JSON.parse(readFileSync(join(here, "fixtures", `${name}.json`), "utf8"));
-	rmSync(path, { recursive: true, force: true });
-	run("unzip", ["-q", "-o", join(site, fixture.archive), "-d", dirname(path)]);
-	if (fixture.root !== basename(path)) run("mv", [join(dirname(path), fixture.root), path]);
+	if (fixture.base) fixtureTree(path, fixture.base);
+	else if (fixture.archive) {
+		run("unzip", ["-q", "-o", join(site, fixture.archive), "-d", dirname(path)]);
+		if (fixture.root !== basename(path)) run("mv", [join(dirname(path), fixture.root), path]);
+	} else mkdirSync(path, { recursive: true });
 	for (const edit of fixture.edits ?? []) {
 		const file = join(path, edit.file);
 		const text = readFileSync(file, "utf8");
@@ -287,6 +291,12 @@ function seedRepo(path, name, scenario) {
 		mkdirSync(dirname(join(path, file)), { recursive: true });
 		writeFileSync(join(path, file), text);
 	}
+	return fixture;
+}
+
+function seedRepo(path, name, scenario) {
+	rmSync(path, { recursive: true, force: true });
+	const fixture = fixtureTree(path, name);
 	for (const command of fixture.run ?? []) runShell(command, { cwd: path, env: gitEnv() });
 	const env = {
 		...gitEnv(),

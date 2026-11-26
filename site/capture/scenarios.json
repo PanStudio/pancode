@@ -250,6 +250,104 @@
 			}
 		},
 		{
+			"id": "cast-api-verify",
+			"summary": "a live task in a TypeScript API: the agent adds an author filter with a test and runs the declared test check",
+			"title": "Adding a feature in PanCode and checking it",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen }"],
+			"profile": "configured",
+			"repo": "bookshelf-api",
+			"cols": 120,
+			"rows": 36,
+			"poster": "api-verify-result",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"marker": "ready"
+				},
+				{
+					"type": "Add a year filter to GET /books, so ?year=1847 lists only the books published that year, with a test. Then run the test check.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "checked test\\s·\\sexit 0",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 1.5
+				},
+				{
+					"shot": "api-verify",
+					"rows": [1, 24]
+				},
+				{
+					"until": "✓ Done\\s·",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 2
+				},
+				{
+					"shot": "api-verify-result"
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "Add a feature",
+				"alt": "Terminal recording in the bookshelf-api project on gpt-6-luna: asked to add a year filter to GET /books with a test, Panos reads src/server.ts, test/books.test.ts, src/books.ts and src/paginate.ts, edits src/server.ts to read ?year= and filter before pagination, adds a test that ?year=1847 returns Jane Eyre and Wuthering Heights, and runs the test check, which exits 0 with pass 8 and fail 0 (Done · 14s · 10 calls).",
+				"caption": "A feature with its test, then the project's declared test check and its result."
+			},
+			"shots": {
+				"api-verify": {
+					"label": "Check",
+					"alt": "Terminal at the start of a task in the bookshelf-api project on gpt-6-luna: the request to add a year filter to GET /books with a test, then Panos navigating the code, one outline lookup of a src/store.ts that does not exist failing, and reads of test/books.test.ts, src/books.ts and src/paginate.ts.",
+					"caption": "The change, then the declared test check and its exit status."
+				},
+				"api-verify-result": {
+					"label": "Result",
+					"alt": "Terminal after the task: diffs of src/server.ts, which now reads ?year= and filters before pagination, and test/books.test.ts, which adds a test that ?year=1847 returns Jane Eyre and Wuthering Heights; the test check exits 0 with pass 8 and fail 0, Panos reports 8 tests and 0 failures, the turn ends Done · 14s · 10 calls, and a notice says checks passed but coverage of the change was not measured.",
+					"caption": "The report after the check: what changed and what the test check showed."
+				}
+			},
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"fixture": "bookshelf-api-ready"
+		},
+		{
 			"id": "cast-headless-run",
 			"summary": "pancode run --output-format stream-json on a task, the answer read from the run_end event, and the end of that event",
 			"title": "An unattended PanCode run with JSON output",
@@ -409,6 +507,101 @@
 				"label": "Secret refused",
 				"alt": "Terminal recording in which the user asks PanCode on gpt-6-luna how many bytes .env holds, using wc -c .env with bash. The bash call is marked blocked under rule secret_path_bash as a hard block that confirmation cannot override, and Panos reports that the command did not run, so it cannot give the byte count.",
 				"caption": "A command that names the project's .env is refused before it runs; confirmation cannot override the block."
+			}
+		},
+		{
+			"id": "cast-api-blocked",
+			"summary": "the agent is asked to print the database URL from an untracked .env; the bash read is hard-blocked and the rule is named",
+			"title": "PanCode refuses to read a project secret",
+			"live": true,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"profile": "configured",
+			"repo": "bookshelf-api",
+			"homeFiles": {
+				"projects/bookshelf-api/.env": "DATABASE_URL=postgres://bookshelf:demo-password-not-real@localhost:5432/bookshelf\nPORT=3000\n"
+			},
+			"cols": 120,
+			"rows": 26,
+			"poster": "blocked",
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"marker": "ready"
+				},
+				{
+					"type": "Check that .env sets DATABASE_URL: run grep -c DATABASE_URL .env with bash and tell me exactly what happens. If it is blocked, name the rule.",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "secret_path_bash|✓ (?:Done\\s·\\s)?\\d",
+					"approve": "\\[?Enter\\]? (?:allow|record answer)",
+					"timeout": 300,
+					"pause": 1.5
+				},
+				{
+					"marker": "blocked"
+				},
+				{
+					"until": "✓ (?:Done\\s·\\s)?\\d",
+					"approve": "\\[?Enter\\]? (?:allow|record answer)",
+					"read": 3,
+					"timeout": 300,
+					"pause": 2
+				},
+				{
+					"marker": "answer"
+				},
+				{
+					"shot": "api-blocked"
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			],
+			"capture": {
+				"label": "Secret refused",
+				"alt": "Terminal recording in which the user asks PanCode on gpt-6-luna to check that .env sets DATABASE_URL with grep -c DATABASE_URL .env in bash. The bash call is marked blocked under rule secret_path_bash as a hard block that confirmation cannot override, and Panos reports that .env is a zero-access path and the command did not run, so it cannot report the count.",
+				"caption": "A command that reads the project's .env is refused before it runs, and the refusal names its rule; confirmation cannot override it."
+			},
+			"shots": {
+				"api-blocked": {
+					"label": "Blocked",
+					"alt": "Terminal after the request to run grep -c DATABASE_URL .env: the bash row reads blocked, with rule: secret_path_bash and This is a hard block; confirmation cannot override it. Panos reports that .env is a zero-access path and the command did not run; the turn ends Done · 4.1s.",
+					"caption": "The blocked command, the rule that blocked it, and the agent's report."
+				}
 			}
 		},
 		{
@@ -1698,6 +1891,104 @@
 			]
 		},
 		{
+			"id": "anim-api-fix",
+			"summary": "a take finished by animation.mjs: GPT-6 Luna through GitHub Copilot fixes the failing last-page test in a small TypeScript API",
+			"title": "Fixing a failing API test in PanCode with GPT-6 Luna",
+			"animation": true,
+			"live": true,
+			"cols": 100,
+			"rows": 30,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"sourceNote": "Chat: GPT-6 Luna through GitHub Copilot (target copilot, runtime copilot-sdk); the session had no other model.",
+			"markers": [
+				{
+					"label": "ready",
+					"match": "✓ ready"
+				},
+				{
+					"label": "asked",
+					"match": "The last-page test fails"
+				},
+				{
+					"label": "edited",
+					"match": "edited "
+				},
+				{
+					"label": "checked",
+					"match": "checked test · exit 0"
+				},
+				{
+					"label": "done",
+					"match": "✓ Done"
+				}
+			],
+			"poster": "done",
+			"endAt": "done",
+			"hold": 3,
+			"gif": {
+				"speed": 1.4
+			},
+			"capture": {
+				"label": "Fix a test",
+				"alt": "Fullscreen terminal recording of PanCode on gpt-6-luna in the bookshelf-api project: the request that the last-page test fails, to find the cause, fix it and run the test check, is typed into the composer; Panos explores with 6 searches and 3 files, edits one line of src/paginate.ts, runs the test check with exit 0, and explains that paginate used Math.floor and reported 2 pages for 25 books at 10 per page, so it changed it to Math.ceil and the full test check passes, 7/7, in 11s.",
+				"caption": "A short task on GPT-6 Luna through GitHub Copilot: the agent finds why the last page of results goes missing, fixes it, and runs the project's test check."
+			},
+			"profile": "configured",
+			"repo": "bookshelf-api",
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"type": "The last-page test fails. Find the cause, fix it, and run the test check.",
+					"delay": 30
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"until": "✓ Done\\s·",
+					"approve": "Enter\\]? allow",
+					"timeout": 300,
+					"pause": 4
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			]
+		},
+		{
 			"id": "anim-model-switch",
 			"summary": "a take finished by animation.mjs: /model switches the session between GPT-6 Luna, Claude Sonnet 5.5 and Gemini 4 Argon on GitHub Copilot",
 			"title": "Switching models in PanCode",
@@ -1743,6 +2034,196 @@
 			},
 			"profile": "configured",
 			"repo": "calibration-lab",
+			"env": {
+				"PANCODE_REDUCE_MOTION": "1"
+			},
+			"steps": [
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 15
+				},
+				{
+					"pause": 0.8
+				},
+				{
+					"type": "pancode"
+				},
+				{
+					"pause": 0.3,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready|not checked yet",
+					"timeout": 60,
+					"pause": 1.5
+				},
+				{
+					"pause": 1
+				},
+				{
+					"type": "/model",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "of 26 models",
+					"timeout": 20
+				},
+				{
+					"gone": "refreshing all targets",
+					"timeout": 30,
+					"pause": 0.8
+				},
+				{
+					"type": "claude-sonnet-5.5",
+					"delay": 90
+				},
+				{
+					"wait": "search \"claude-sonnet-5.5\"",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready\\s+ctx [^\\n]*·\\sclaude-sonnet-5\\.5",
+					"timeout": 20,
+					"pause": 2
+				},
+				{
+					"type": "/model",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "of 26 models",
+					"timeout": 20
+				},
+				{
+					"gone": "refreshing all targets",
+					"timeout": 30,
+					"pause": 0.8
+				},
+				{
+					"type": "gemini-4",
+					"delay": 90
+				},
+				{
+					"wait": "search \"gemini-4\"",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready\\s+ctx [^\\n]*·\\sgemini-4-argon",
+					"timeout": 20,
+					"pause": 2
+				},
+				{
+					"type": "/model",
+					"delay": 40
+				},
+				{
+					"pause": 0.5,
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "of 26 models",
+					"timeout": 20
+				},
+				{
+					"gone": "refreshing all targets",
+					"timeout": 30,
+					"pause": 0.8
+				},
+				{
+					"type": "luna",
+					"delay": 90
+				},
+				{
+					"wait": "search \"luna\"",
+					"timeout": 10,
+					"pause": 0.8
+				},
+				{
+					"keys": ["Enter"]
+				},
+				{
+					"wait": "✓ ready\\s+ctx [^\\n]*·\\sgpt-6-luna",
+					"timeout": 20,
+					"pause": 2
+				},
+				{
+					"keys": ["C-d"]
+				},
+				{
+					"wait": "\\$\\s*$",
+					"timeout": 20,
+					"pause": 0.6
+				},
+				{
+					"type": "exit"
+				},
+				{
+					"keys": ["Enter"]
+				}
+			]
+		},
+		{
+			"id": "anim-api-models",
+			"summary": "a take finished by animation.mjs: /model switches a session in a TypeScript API project between GPT-6 Luna, Claude Sonnet 5.5 and Gemini 4 Argon on GitHub Copilot",
+			"title": "Switching models in PanCode",
+			"animation": true,
+			"live": false,
+			"cols": 100,
+			"rows": 30,
+			"settings": ["interface: { mode: fullscreen, outputDetail: compact }"],
+			"sourceNote": "One target is configured: copilot (runtime copilot-sdk) with gpt-6-luna, signed in to GitHub Copilot. No message is sent; the take only switches the session model.",
+			"markers": [
+				{
+					"label": "ready",
+					"match": "✓ ready"
+				},
+				{
+					"label": "models",
+					"match": "of 26 models"
+				},
+				{
+					"label": "sonnet",
+					"match": "low · claude-sonnet-5.5"
+				},
+				{
+					"label": "gemini",
+					"match": "low · gemini-4-argon"
+				},
+				{
+					"label": "back",
+					"match": "low · gpt-6-luna",
+					"nth": 3
+				}
+			],
+			"poster": "models",
+			"endAt": "back",
+			"hold": 3,
+			"gif": {
+				"speed": 1.6
+			},
+			"capture": {
+				"label": "Switch models",
+				"alt": "Fullscreen terminal recording of the /model picker in PanCode in the bookshelf-api project on GitHub Copilot: the session starts on gpt-6-luna, the picker lists 26 models on the copilot target, and claude-sonnet-5.5 and gemini-4-argon are chosen in turn by typing part of the name, each changing the status bar's model and context size, before the session returns to gpt-6-luna.",
+				"caption": "One subscription, many models: /model lists what the connected target offers and switches the session without leaving the conversation."
+			},
+			"profile": "configured",
+			"repo": "bookshelf-api",
 			"env": {
 				"PANCODE_REDUCE_MOTION": "1"
 			},
