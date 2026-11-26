@@ -31,6 +31,7 @@ import {
 	finishedRunTrustStatus,
 	fullAnswerPointer,
 	PRODUCER_INTEGRITY,
+	reviewFindingCount,
 	runAnswerBudgetBytes,
 	runEvidenceLabels,
 	runHelperResult,
@@ -645,6 +646,7 @@ export function dispatchDetails(
 			const view = finishedRun(receipt);
 			const trustStatus = finishedRunTrustStatus(view, PRODUCER_INTEGRITY);
 			const helperResult = runHelperResult(view, PRODUCER_INTEGRITY);
+			const found = reviewFindingCount(trustStatus, view);
 			return {
 				...(helperResult !== null ? { helperResult } : {}),
 				runId: receipt.runId,
@@ -661,6 +663,7 @@ export function dispatchDetails(
 				// depth-capped wire (ACP rawOutput) keeps it whole while the
 				// canonical status's nested references fall off the end.
 				trust: summarizeTrustStatus(trustStatus),
+				...(found !== undefined ? { reviewFindings: found } : {}),
 				...(receipt.outcome !== undefined && receipt.outcome !== "succeeded"
 					? { outcome: receipt.outcome, outcomeDetail: receipt.outcomeDetail ?? null }
 					: {}),

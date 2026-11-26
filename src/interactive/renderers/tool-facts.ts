@@ -259,7 +259,9 @@ function runFactsOf(run: unknown): RunFacts {
 		origin: "model",
 		outcome,
 		integrity: seal === "verified" ? "verified" : seal === "failed" ? "compromised" : "unverified",
-		validation: RUN_VALIDATION[axis("validationGrounding") ?? ""] ?? "unknown",
+		// A review's failing verdict is what it found, not a failed validation of the run that gave it.
+		validation:
+			typeof entry.reviewFindings === "number" ? "none" : (RUN_VALIDATION[axis("validationGrounding") ?? ""] ?? "unknown"),
 	};
 }
 

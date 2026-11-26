@@ -85,7 +85,10 @@ test("an unmarked data or cache root of a PANCODE_HOME home is removable only wh
 	await mkdir(join(home, "cache"));
 	await mkdir(join(home, "state"));
 	// Roots that existed before PanCode created them carry no marker.
-	ok(removablePancodeRootProblem("data", join(home, "data")) !== null);
+	strictEqual(
+		removablePancodeRootProblem("data", join(home, "data")),
+		"no .pancode-root inside and a name other than pancode",
+	);
 	await writeFile(join(home, "state", "home.json"), "{}\n");
 	strictEqual(removablePancodeRootProblem("data", join(home, "data")), null);
 	strictEqual(removablePancodeRootProblem("cache", join(home, "cache")), null);

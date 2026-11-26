@@ -19,7 +19,12 @@ import {
 	usageLineNotes,
 } from "../core/views/usage-words.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
-import { plainOutcomeLabel, settledRunCaveat, TOOL_GUARD_REASON_CODE } from "../domains/dispatch/failure-headline.js";
+import {
+	plainOutcomeLabel,
+	reviewFindingsWords,
+	settledRunCaveat,
+	TOOL_GUARD_REASON_CODE,
+} from "../domains/dispatch/failure-headline.js";
 import { summarizeTrustStatus, trustFailureWords } from "../domains/evidence/trust-projection.js";
 import type { AutonomyReport } from "../domains/safety/autonomy-window.js";
 import { mutatingReceipts } from "../domains/safety/finish-mutations.js";
@@ -512,7 +517,9 @@ export function createExitSummaryCollector(deps: CollectorDeps) {
 		receiptsRead.add(runId);
 		const { against: _prior, refusedCalls: _refused, guardedCalls: _guarded, recordFailure: _failure, ...rest } = worker;
 		const caveat = settledRunCaveat(record);
-		const trust = record.trust ? summarizeTrustStatus(record.trust) : null;
+		// A review's failing verdict is what it found, not a failed validation of the review (settledRunCaveat agrees).
+		const review = record.reviewFindings !== undefined ? reviewFindingsWords(record.reviewFindings) : null;
+		const trust = record.trust && review === null ? summarizeTrustStatus(record.trust) : null;
 		const recordFailure = trust === null ? null : trustFailureWords(trust);
 		workers.set(runId, {
 			...rest,
@@ -520,7 +527,7 @@ export function createExitSummaryCollector(deps: CollectorDeps) {
 			...((record.refusedCalls ?? 0) > 0
 				? { refusedCalls: record.refusedCalls, guardedCalls: record.guardedCalls ?? 0 }
 				: {}),
-			record: trust?.verdict ?? "unknown",
+			record: review ?? trust?.verdict ?? "unknown",
 			...(recordFailure !== null ? { recordFailure } : {}),
 			...(record.changedPaths !== undefined ? { wrote: rest.wrote === true || record.changedPaths.length > 0 } : {}),
 		});

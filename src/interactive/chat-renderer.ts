@@ -861,6 +861,7 @@ function replayEntries(
 			if (next?.kind === "modelChange") movedRouteMarkers.add(next);
 		} else if (retry?.phase === "scheduled" && following === next) retriedAttempts.add(entry);
 	}
+	let replayedThinkingLevel: string | undefined;
 	const settleReplayedRun = (): void => {
 		const settle = pendingSettle;
 		pendingSettle = null;
@@ -1080,7 +1081,10 @@ function replayEntries(
 				if (!movedRouteMarkers.has(entry)) chatPanel.appendReplayBlock((width) => renderModelChangeEntry(entry, width));
 				break;
 			case "thinkingLevelChange":
-				chatPanel.appendReplayBlock((width) => renderThinkingChangeEntry(entry, width));
+				// A compaction re-records the level as the new generation's baseline; it changed nothing the operator saw.
+				if (!entry.configurationInitial || entry.thinkingLevel !== replayedThinkingLevel)
+					chatPanel.appendReplayBlock((width) => renderThinkingChangeEntry(entry, width));
+				replayedThinkingLevel = entry.thinkingLevel;
 				break;
 			case "fileEntry":
 				chatPanel.appendReplayBlock((width) => renderFileEntry(entry, width));
