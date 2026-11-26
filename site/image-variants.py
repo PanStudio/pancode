@@ -123,12 +123,13 @@ def generate_icons():
         canvas.alpha_composite(fitted, ((size-fitted.width)//2, (size-fitted.height)//2))
         return canvas
 
-    for size in ICON_SIZES:
-        fit(size, .9).save(SITE / f"assets/responsive/pancode-icon-{size}.png", optimize=True)
-    # A maskable icon is cropped to a circle by the platform: a full black ground,
-    # with the glyph inside the central safe zone.
     brand = json.loads((SITE / "design-system.json").read_text())
     black = Image.new("RGB", (1, 1), brand["palette"]["black"]).getpixel((0, 0))
+    # App icons set the stone at 80% on a black ground (DESIGN.md, Mark); only favicons stay transparent.
+    for size in ICON_SIZES:
+        fit(size, .8, (*black, 255)).save(SITE / f"assets/responsive/pancode-icon-{size}.png", optimize=True)
+    # A maskable icon is cropped to a circle by the platform: a full black ground,
+    # with the glyph inside the central safe zone.
     fit(512, .8, (*black, 255)).save(SITE / "assets/responsive/pancode-icon-maskable-512.png", optimize=True)
     # The 16 pixel image takes the small cut, whose wider channel survives at that size.
     small = [fit(48, 1), fit(32, 1), fit(16, 1, source=small_cut)]
