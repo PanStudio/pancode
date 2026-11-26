@@ -1,18 +1,17 @@
 Letting PanCode work: sandbox, snapshot and rewind
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == doctor
 
 ~/projects/calibration-lab $ pancode doctor
 OK   chat                   target 'copilot', model 'gpt-6-luna'; endpoint reachable
-OK   PanCode version        0.9.0-dev (unreleased · 765279a)
+OK   PanCode version        0.9.1
 WARN state dir mode         /home/researcher/.local/state/pancode is 755: group or other users can enter it and read session transcripts (run `pancode doctor --fix`, or `chmod 700` it when the directory is not PanCode's alone)
 WARN data dir mode          /home/researcher/.local/share/pancode is 755: group or other users can enter it and read memory, project store data and vendored tools (run `pancode doctor --fix`, or `chmod 700` it when the directory is not PanCode's alone)
 WARN settings.yaml mode     644 lets group or other users read it (run `pancode doctor --fix` to set 600)
-!!   credentials            missing (run `pancode doctor --fix`)
 !!   state metadata         missing (run `pancode doctor --fix`)
 WARN external tool herdr    pane host 0.9.5 is not installed; run `pancode panes install`
-6 rows need attention, 45 checks passed, 14 notes; `pancode doctor --verbose` prints every row
+5 rows need attention, 46 checks passed, 14 notes; `pancode doctor --verbose` prints every row
 ~/projects/calibration-lab $
 
 == report
@@ -28,31 +27,31 @@ WARN external tool herdr    pane host 0.9.5 is not installed; run `pancode panes
 
 
 
-
-
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ Delete the build output directory, regenerate it, and run the project's test check. Report what you ran.
 
-│ Thinking · /view
+▸ explored 1 search ✓
+  │ project
+§ consulted 1 source ✓
+  │ workspace
+▸ explored 1 file, 1 search ✓
+  │ package.json · `outDir|dist|build`
 
-▸ explored 2 searches, 2 files ✓
-  │ project · package.json · path `build.mjs` · build.mjs
-
-│ Thinking · /view · ≈193 tokens
+│ Thinking · /view · ≈125 tokens
 
 $ Panos ran `rm -rf dist` · exit 0 ✓
 $ checked build · exit 0 · 5 lines ✓
 $ checked test · exit 0 · 19 lines ✓
 
-■ Deleted dist/, ran npm run build to regenerate it, then ran npm test. Build succeeded; all 7 tests passed.
+■ Deleted dist/, ran npm run build to regenerate it, then ran npm run test. Build succeeded; all 7 tests passed.
 
-✓ Done · 17s · 13:43
+✓ Done · 11s · 12:18
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- ▐P▌ default · projects/calibration-lab · scratch │ ✓ ready                        ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · scratch │ ✓ ready                        ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna · ?
 
 == rewind
 
@@ -66,32 +65,32 @@ $ checked test · exit 0 · 19 lines ✓
 
 
 
-
-
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ Delete the build output directory, regenerate it, and run the project's test check. Report what you ran.
 
-│ Thinking · /view
+▸ explored 1 search ✓
+  │ project
+§ consulted 1 source ✓
+  │ workspace
+▸ explored 1 file, 1 search ✓
+  │ package.json · `outDir|dist|build`
 
-▸ explored 2 searches, 2 files ✓
-  │ project · package.json · path `build.mjs` · build.mjs
-
-│ Thinking · /view · ≈193 tokens
+│ Thinking · /view · ≈125 tokens
 
 $ Panos ran `rm -rf dist` · exit 0 ✓
 $ checked build · exit 0 · 5 lines ✓
 $ checked test · exit 0 · 19 lines ✓
 
-■ Deleted dist/, ran npm run build to regenerate it, then ran npm test. Build succeeded; all 7 tests passed.
+■ Deleted dist/, ran npm run build to regenerate it, then ran npm run test. Build succeeded; all 7 tests passed.
 
-✓ Done · 17s · 13:43
+✓ Done · 11s · 12:18
 
 ━ Rewind workspace files ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ❯ #1  13:43:17  delete · bash                                                                          ✓ same as now
+  ❯ #1  12:18:33  delete · bash                                                                          ✓ same as now
     ✓ same as now · delete · bash
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [Enter] preview rewind · [↑↓] select · [Tab] detail · [Esc] close ━
- ▐P▌ default · projects/calibration-lab · scratch │ ✓ ready                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+ ▐∀▌ default · projects/calibration-lab · scratch │ ✓ ready                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == preview
 
@@ -101,36 +100,36 @@ $ checked test · exit 0 · 19 lines ✓
 
 
 
-
-
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ Delete the build output directory, regenerate it, and run the project's test check. Report what you ran.
 
-│ Thinking · /view
+▸ explored 1 search ✓
+  │ project
+§ consulted 1 source ✓
+  │ workspace
+▸ explored 1 file, 1 search ✓
+  │ package.json · `outDir|dist|build`
 
-▸ explored 2 searches, 2 files ✓
-  │ project · package.json · path `build.mjs` · build.mjs
-
-│ Thinking · /view · ≈193 tokens
+│ Thinking · /view · ≈125 tokens
 
 $ Panos ran `rm -rf dist` · exit 0 ✓
 $ checked build · exit 0 · 5 lines ✓
 $ checked test · exit 0 · 19 lines ✓
 
-■ Deleted dist/, ran npm run build to regenerate it, then ran npm test. Build succeeded; all 7 tests passed.
+■ Deleted dist/, ran npm run build to regenerate it, then ran npm run test. Build succeeded; all 7 tests passed.
 
-✓ Done · 17s · 13:43
+✓ Done · 11s · 12:18
 
 ━ Rewind files to snapshot #1 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   snapshot #1 · 2026-11-25 13:43:17 · delete · bash
+   snapshot #1 · 2026-11-26 12:18:33 · delete · bash
    The workspace already matches this snapshot. Nothing would change.
    Pinned refs ─────────────────────────────────────────────────────────────────────────────────────────────────── 1
      HEAD aae72d8ff787 on scratch · still in place
    Never touched ────────────────────────────────────────────────────────────────────────────────────────────────────
    Gitignored files are never touched. Your Git index, HEAD and branches do not change.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [↑↓] scroll · [Esc] back to snapshots, nothing changed ━
- ▐P▌ default · projects/calibration-lab · scratch │ ✓ ready                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+ ▐∀▌ default · projects/calibration-lab · scratch │ ✓ ready                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == kept
 
@@ -144,29 +143,29 @@ $ checked test · exit 0 · 19 lines ✓
 
 
 
-
-
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ Delete the build output directory, regenerate it, and run the project's test check. Report what you ran.
 
-│ Thinking · /view
+▸ explored 1 search ✓
+  │ project
+§ consulted 1 source ✓
+  │ workspace
+▸ explored 1 file, 1 search ✓
+  │ package.json · `outDir|dist|build`
 
-▸ explored 2 searches, 2 files ✓
-  │ project · package.json · path `build.mjs` · build.mjs
-
-│ Thinking · /view · ≈193 tokens
+│ Thinking · /view · ≈125 tokens
 
 $ Panos ran `rm -rf dist` · exit 0 ✓
 $ checked build · exit 0 · 5 lines ✓
 $ checked test · exit 0 · 19 lines ✓
 
-■ Deleted dist/, ran npm run build to regenerate it, then ran npm test. Build succeeded; all 7 tests passed.
+■ Deleted dist/, ran npm run build to regenerate it, then ran npm run test. Build succeeded; all 7 tests passed.
 
-✓ Done · 17s · 13:43
+✓ Done · 11s · 12:18
 
 ━ Rewind workspace files ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ❯ #1  13:43:17  delete · bash                                                                          ✓ same as now
+  ❯ #1  12:18:33  delete · bash                                                                          ✓ same as now
     ✓ same as now · delete · bash
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [Enter] preview rewind · [↑↓] select · [Tab] detail · [Esc] close ━
- ▐P▌ default · projects/calibration-lab · scratch │ ✓ ready                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+ ▐∀▌ default · projects/calibration-lab · scratch │ ✓ ready                            ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna

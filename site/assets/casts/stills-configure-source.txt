@@ -1,0 +1,21 @@
+Guided setup stills
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== tui-configure-source
+
+
+┌  Welcome to PanCode
+│
+│  Choose what you already use. PanCode checks the endpoint and model list when the provider allows it.
+│  Before saving, PanCode sends the model one short test message (a few tokens; paid providers bill it).
+│  Esc goes back a step, and from the first step leaves without saving. Your choices are written to your PanCode
+│  settings only after the test message, except a browser sign-in you complete.
+│
+│  What do you have?
+│
+│  ❯ An API key                        Anthropic, OpenAI, Google, OpenRouter, Groq, Mistral, DeepSeek, and others
+│    A subscription                    ChatGPT Plus or Pro, Claude Pro or Max, GitHub Copilot
+│    A model server or gateway         Ollama, LM Studio, llama.cpp, vLLM, LiteLLM, or any OpenAI-compatible address
+│    A setup file from my lab or team  a path or https address someone gave you
+│
+│  ↑↓ move · Enter select · Esc cancel · q quit
