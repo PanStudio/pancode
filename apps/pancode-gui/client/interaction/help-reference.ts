@@ -160,12 +160,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 			{
 				term: "default",
 				meaning:
-					"Edits and commands inside this workspace go ahead; commands run in a sandbox when this computer has one, and count as riskier when it does not. Anything riskier goes to an automatic safety check, then to you.",
+					"Edits and commands inside this workspace go ahead. Commands run in a sandbox when this computer has one and your settings leave it on, and count as riskier without one. Riskier calls go to an automatic safety check, which runs them, refuses them or asks you, or straight to you when that check is off. Decisions only you can make ask you directly.",
 			},
 			{
 				term: "yolo",
 				meaning:
-					"Nothing stops to ask you. Commands run as they do in default, and anything that would have asked you goes to the automatic safety check and runs only if it passes. Questions PanCode asks still reach you. If your own settings chose unconfined yolo, nothing is checked first. The autonomy menu says what this computer's sandbox and safety check do.",
+					"No approval card waits for you. In contained yolo, the usual choice, commands and the automatic safety check work as they do in default, and anything that would ask you is refused back to PanCode instead. Unconfined yolo, which only your own settings can choose, skips the safety check and runs commands without a sandbox unless your settings require one. Either way PanCode's built-in blocks, your own safety rules and the run's limits still apply, and questions PanCode asks still reach you. The autonomy menu says what this computer's sandbox and safety check do.",
 			},
 		],
 	},
