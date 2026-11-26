@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * Builtin MCP servers: the PanKit servers PanCode ships, declared by the
+ * Builtin MCP servers: the MCP servers PanCode ships, declared by the
  * policy manifest `packages/kit/servers.json` in the installed package. A
  * builtin server is trusted by authorship like the operator's own
  * declarations, and its tools' classes, path arguments and surface are the
@@ -48,10 +48,10 @@ const RESERVED_PREFIX = "PANCODE_";
 /** Variables that change how a program or its runtime starts, never passed to a server. */
 const ENVIRONMENT_DENIED = ["NODE_OPTIONS", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_AUDIT"];
 
-/** Where the builtin servers come from: the policy manifest and the PanKit CLI that serves them. */
+/** Where the builtin servers come from: the policy manifest and the entry that serves them. */
 export interface McpBuiltinSource {
 	manifestPath: string;
-	/** The `pankit` entry run with `serve <id>`; a `.ts` entry runs through tsx. */
+	/** The kit entry run with `serve <id>`; a `.ts` entry runs through tsx. */
 	entry: string;
 }
 
@@ -66,7 +66,7 @@ export interface McpBuiltinTool {
 
 /** The shipped policy of one builtin server. */
 export interface McpBuiltinPolicy {
-	/** The PanKit server version the manifest was generated from. */
+	/** The server version the manifest was generated from. */
 	version: string;
 	title: string;
 	/**
@@ -81,7 +81,7 @@ export interface McpBuiltinPolicy {
 }
 
 /**
- * The installed package's manifest and CLI. A built install runs the bundled
+ * The installed package's manifest and kit entry. A built install runs the bundled
  * `dist/kit/cli.js`; a source run (tests, `pnpm run dev`) runs the TypeScript
  * entry of the checkout this module belongs to.
  */
@@ -95,7 +95,7 @@ export function defaultMcpBuiltinSource(): McpBuiltinSource {
 const require = createRequire(import.meta.url);
 
 /**
- * The command that runs the source's PanKit CLI with `argv`, as the builtin
+ * The command that runs the source's kit entry with `argv`, as the builtin
  * scope launches it: this Node with the entry. A TypeScript entry loads
  * through tsx, resolved absolutely and given the checkout's tsconfig so the
  * child's cwd, which is the project, cannot shadow either.
@@ -134,23 +134,20 @@ export interface McpBuiltinLaunchContext {
 }
 
 /**
- * The catalog file PanCode's builtin `catalog` server reads:
- * `<PanCode config dir>/pankit/catalog.json`. PanCode passes it as `--file`,
- * so a server PanCode launches never falls back to the operator's own
- * `~/.config/pankit/catalog.json` and an isolated PanCode home stays isolated.
+ * The catalog file PanCode's builtin `catalog` server reads, passed as its
+ * `--file`: `<PanCode config dir>/mcp/catalog.json`, so an isolated PanCode
+ * home stays isolated.
  */
 function mcpBuiltinCatalogFile(): string {
-	return path.join(resolvePancodeDirs().config, "pankit", "catalog.json");
+	return path.join(resolvePancodeDirs().config, "mcp", "catalog.json");
 }
 
 /**
- * The reader cache PanCode's builtin `scidata` server keeps:
- * `<PanCode cache dir>/pankit/data-readers`. PanCode passes it as `--cache`,
- * so a server PanCode launches never writes the operator's own
- * `~/.cache/pankit/data-readers`.
+ * The reader cache PanCode's builtin `scidata` server keeps, passed as its
+ * `--cache`: `<PanCode cache dir>/mcp/data-readers`.
  */
 function mcpBuiltinScidataCache(): string {
-	return path.join(resolvePancodeDirs().cache, "pankit", "data-readers");
+	return path.join(resolvePancodeDirs().cache, "mcp", "data-readers");
 }
 
 /**

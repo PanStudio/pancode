@@ -482,7 +482,7 @@ interface StubSpack {
  * checkout around it declares that Spack version.
  */
 function stubSpack(replies: Record<string, Reply>, version: string | null = "1.2.2"): StubSpack {
-	const root = mkdtempSync(join(tmpdir(), "pankit-spack-"));
+	const root = mkdtempSync(join(tmpdir(), "kit-spack-"));
 	const bin = join(root, "bin");
 	mkdirSync(bin);
 	if (version !== null) {
@@ -680,7 +680,7 @@ test("spack is found on PATH, else through SPACK_ROOT, and its absence is a tool
 	skip: process.platform === "win32",
 }, async () => {
 	const spack = stubSpack(FIND_ALL, "1.1.0");
-	const empty = mkdtempSync(join(tmpdir(), "pankit-spack-empty-"));
+	const empty = mkdtempSync(join(tmpdir(), "kit-spack-empty-"));
 	await withEnv({ PATH: empty, SPACK_ROOT: spack.root }, async () => {
 		const result = await run("spack_find");
 		assert.equal(result.json?.spackVersion, "1.1.0");
@@ -756,7 +756,7 @@ test("a read tool refuses, naming the command to run, while a package repository
 test("spack_locate returns a checked path and lists the matches of an ambiguous spec", {
 	skip: process.platform === "win32",
 }, async () => {
-	const packageDir = mkdtempSync(join(tmpdir(), "pankit-spack-pkg-"));
+	const packageDir = mkdtempSync(join(tmpdir(), "kit-spack-pkg-"));
 	writeFileSync(join(packageDir, "package.py"), "");
 	const spack = stubSpack({
 		"--color=never -E repo list --json": { stdout: "[]" },

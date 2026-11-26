@@ -4,7 +4,7 @@
  * The `store` server: a project's PanStore for any MCP host. It reads every
  * tag of the project the options name and writes only into the tags named
  * with `--write-tag`, through `@pancode/store` alone, so its puts and notes
- * are the records PanCode's own store tool and `panstore` read. Started
+ * are the records PanCode's own store tool and `pancode store` read. Started
  * without a `--root` it is unavailable and every tool says how to start it.
  */
 import { stat } from "node:fs/promises";

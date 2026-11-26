@@ -22,7 +22,7 @@ export interface KitManifestServer {
 	tools: KitManifestTool[];
 }
 
-/** The policy a host ships for PanKit: every server's tools with their class, path arguments and listed surface. */
+/** The policy PanCode ships for its built-in MCP servers: every server's tools with their class, path arguments and listed surface. */
 export interface KitManifest {
 	version: 1;
 	servers: KitManifestServer[];
@@ -79,7 +79,7 @@ export async function kitManifest(): Promise<KitManifest> {
 	return { version: 1, servers };
 }
 
-/** The manifest as `servers.json` stores it and `pankit manifest` prints it. */
+/** The manifest as `servers.json` stores it. */
 export function manifestText(manifest: KitManifest): string {
 	return `${JSON.stringify(manifest, null, "\t")}\n`;
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The one way a PanKit server runs a site command (`sbatch`, `module`,
+ * The one way a built-in MCP server runs a site command (`sbatch`, `module`,
  * `lfs`). No server may import `node:child_process` itself; every command goes
  * through `runCommand`, so each one is an argv array and never a shell
  * string, is bounded in time and output, sees only the environment it names,

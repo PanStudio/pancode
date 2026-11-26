@@ -148,15 +148,15 @@ export async function hpcToolchainFindings(options: HpcToolchainOptions = {}): P
 	return Promise.all(HPC_TOOLS.map((tool) => probeTool(tool, contract, timeoutMs)));
 }
 
-/** `pankit doctor --json` gets this long before it is killed and reported as silent. */
-export const PANKIT_DOCTOR_TIMEOUT_MS = 15_000;
-const PANKIT_DOCTOR_MAX_OUTPUT_BYTES = 1024 * 1024;
-const PANKIT_DOCTOR_KILL_GRACE_MS = 500;
+/** The kit's `doctor` gets this long before it is killed and reported as silent. */
+export const MCP_DOCTOR_TIMEOUT_MS = 15_000;
+const MCP_DOCTOR_MAX_OUTPUT_BYTES = 1024 * 1024;
+const MCP_DOCTOR_KILL_GRACE_MS = 500;
 const PROBE_FAILED = "the probe failed:";
 
-export interface PankitFindingsOptions {
+export interface McpBuiltinFindingsOptions {
 	workspaceRoot: string;
-	/** The manifest and CLI to probe; the installed package's by default. */
+	/** The manifest and kit entry to probe; the installed package's by default. */
 	source?: McpBuiltinSource;
 	timeoutMs?: number;
 }
@@ -168,7 +168,7 @@ interface KitDoctorRow {
 	sources?: Array<{ name: string; found: boolean }>;
 }
 
-/** The rows of `pankit doctor --json`, or null when the output is not that shape. */
+/** The rows the kit's `doctor` prints, or null when the output is not that shape. */
 function parseKitDoctor(text: string): KitDoctorRow[] | null {
 	let parsed: unknown;
 	try {
@@ -205,68 +205,31 @@ function parseKitDoctor(text: string): KitDoctorRow[] | null {
 	return rows;
 }
 
-/**
- * A launch option the builtin scope passes a server, and the variable its
- * unconfigured probe reads the same path from: `<variable>/<suffix>`.
- * `pankit doctor` never configures a server, so doctor sets the variable,
- * and the server's row names the path as `<label> <path>`.
- */
-const LAUNCH_OPTION_VARIABLES: ReadonlyArray<{
-	id: string;
-	option: string;
-	label: string;
-	variable: string;
-	suffix: string;
-}> = [
-	{
-		id: "catalog",
-		option: "--file",
-		label: "file",
-		variable: "XDG_CONFIG_HOME",
-		suffix: path.join("pankit", "catalog.json"),
-	},
-	{
-		id: "scidata",
-		option: "--cache",
-		label: "cache",
-		variable: "XDG_CACHE_HOME",
-		suffix: path.join("pankit", "data-readers"),
-	},
-];
-
-/** The variables that point each probe at the path the builtin launch passes its server, and that path per server. */
-function launchOptionPaths(
-	ids: ReadonlyArray<string>,
-	launchArgs: (id: string, context: Record<string, never>) => string[],
-): { env: Record<string, string>; paths: Map<string, string> } {
-	const env: Record<string, string> = {};
-	const paths = new Map<string, string>();
-	for (const { id, option, label, variable, suffix } of LAUNCH_OPTION_VARIABLES) {
-		if (!ids.includes(id)) continue;
-		const args = launchArgs(id, {});
-		const value = args[args.indexOf(option) + 1];
-		if (!args.includes(option) || value === undefined || !value.endsWith(`${path.sep}${suffix}`)) continue;
-		env[variable] = value.slice(0, -(suffix.length + 1));
-		paths.set(id, `${label} ${value}`);
+/** The paths a server's launch options name, as `<option without -->` `<path>`: `file /x/catalog.json`. */
+function launchPaths(args: ReadonlyArray<string>): string[] {
+	const paths: string[] = [];
+	for (let index = 0; index + 1 < args.length; index += 2) {
+		const value = args[index + 1] as string;
+		if (path.isAbsolute(value)) paths.push(`${(args[index] as string).replace(/^--/u, "")} ${value}`);
 	}
-	return { env, paths };
+	return paths;
 }
 
-function serverFinding(id: string, row: KitDoctorRow | undefined, launchPath: string | undefined): DoctorFinding {
-	const name = `pankit ${id}`;
-	if (row === undefined) return { ok: true, name, level: "warn", detail: "the kit did not report this server" };
+function serverFinding(id: string, row: KitDoctorRow | undefined, launch: ReadonlyArray<string>): DoctorFinding {
+	const name = `mcp ${id}`;
+	if (row === undefined) return { ok: true, name, level: "warn", detail: "the probe did not report this server" };
 	if (row.reason?.startsWith(PROBE_FAILED) === true) return { ok: true, name, level: "warn", detail: row.reason };
 	if (row.available) {
 		const found = (row.sources ?? []).filter((source) => source.found).map((source) => source.name);
 		const detail = [
 			"available",
 			...(found.length > 0 ? [`found: ${found.join(", ")}`] : []),
-			...(launchPath !== undefined && !found.some((name) => launchPath.endsWith(` ${name}`)) ? [launchPath] : []),
+			...launch.filter((entry) => !found.some((source) => entry.endsWith(` ${source}`))),
 		].join("; ");
 		return { ok: true, name, level: "ok", detail };
 	}
-	// `pankit doctor` never configures a server, and the builtin scope starts
-	// `store` with the session's store roots, so a session has what the probe lacks.
+	// Doctor has no session, and the builtin scope starts `store` with the
+	// session's store roots, so a session has what the probe lacks.
 	if (id === "store") {
 		return { ok: true, name, level: "ok", detail: "available in sessions: PanCode passes this project's store roots" };
 	}
@@ -274,14 +237,15 @@ function serverFinding(id: string, row: KitDoctorRow | undefined, launchPath: st
 }
 
 /**
- * One row per builtin PanKit server: whether this host can serve it, and why
- * not. It runs the shipped kit's `pankit doctor --json` once, as the builtin
- * scope launches a server: this Node, the project root as cwd, and only the
- * variables the manifest declares, so a server is never reported available
- * from a variable a session would not pass. The probes look programs up and
- * run none; this spawn is bounded. No row ever fails doctor.
+ * One row per built-in MCP server: whether this host can serve it, and why
+ * not. It runs the shipped kit's `doctor` once, as the builtin scope launches
+ * a server: this Node, the project root as cwd, only the variables the
+ * manifest declares, and each server configured with the options a session
+ * starts it with, so a server is never reported available from a variable or
+ * path a session would not pass. The probes look programs up and run none;
+ * this spawn is bounded. No row ever fails doctor.
  */
-export async function pankitFindings(options: PankitFindingsOptions): Promise<DoctorFinding[]> {
+export async function mcpBuiltinFindings(options: McpBuiltinFindingsOptions): Promise<DoctorFinding[]> {
 	const {
 		defaultMcpBuiltinSource,
 		kitInvocation,
@@ -293,49 +257,47 @@ export async function pankitFindings(options: PankitFindingsOptions): Promise<Do
 	const loaded = loadMcpBuiltinServers(options.workspaceRoot, source);
 	const findings: DoctorFinding[] = loaded.diagnostics.map((diagnostic) => ({
 		ok: true,
-		name: "pankit",
+		name: "mcp",
 		level: "warn",
 		detail: `${diagnostic.path}: ${diagnostic.message}`,
 	}));
 	const servers = loaded.servers;
 	if (servers.length === 0) {
 		if (findings.length > 0) return findings;
-		return [{ ok: true, name: "pankit", level: "info", detail: "this PanCode ships no PanKit servers" }];
+		return [{ ok: true, name: "mcp", level: "info", detail: "this PanCode ships no built-in MCP servers" }];
 	}
 	// Each probe reads only its own names, so the union equals each launch.
 	const env = mcpBuiltinLaunchEnvironment([...new Set(servers.flatMap((server) => server.builtin?.environment ?? []))]);
-	const launch = launchOptionPaths(
-		servers.map((server) => server.id),
-		mcpBuiltinLaunchArgs,
-	);
-	Object.assign(env, launch.env);
+	const launch = new Map(servers.map((server) => [server.id, mcpBuiltinLaunchArgs(server.id, {})]));
 	const cwd = servers[0]?.cwd ?? options.workspaceRoot;
-	const timeoutMs = options.timeoutMs ?? PANKIT_DOCTOR_TIMEOUT_MS;
-	const { command, args } = kitInvocation(source, ["doctor", "--json"]);
+	const timeoutMs = options.timeoutMs ?? MCP_DOCTOR_TIMEOUT_MS;
+	const { command, args } = kitInvocation(source, ["doctor", JSON.stringify(Object.fromEntries(launch))]);
 	const result = await runCommandVector(command, args, {
 		cwd,
 		workspaceRoot: cwd,
 		env,
 		timeoutMs,
-		killGraceMs: PANKIT_DOCTOR_KILL_GRACE_MS,
-		maxOutputBytes: PANKIT_DOCTOR_MAX_OUTPUT_BYTES,
+		killGraceMs: MCP_DOCTOR_KILL_GRACE_MS,
+		maxOutputBytes: MCP_DOCTOR_MAX_OUTPUT_BYTES,
 	});
 	const stderrLine = lines(result.stderr)[0];
 	const fail = (cause: string): DoctorFinding[] => [
 		...findings,
-		{ ok: true, name: "pankit", level: "warn", detail: stderrLine !== undefined ? `${cause}: ${stderrLine}` : cause },
+		{ ok: true, name: "mcp", level: "warn", detail: stderrLine !== undefined ? `${cause}: ${stderrLine}` : cause },
 	];
-	if (result.launched === false) return fail("pankit doctor could not start");
-	if (result.timedOut) return fail(`pankit doctor did not answer within ${timeoutMs}ms`);
-	if (result.outputCapped) return fail(`pankit doctor printed more than ${PANKIT_DOCTOR_MAX_OUTPUT_BYTES} bytes`);
+	if (result.launched === false) return fail("the built-in MCP server probe could not start");
+	if (result.timedOut) return fail(`the built-in MCP server probe did not answer within ${timeoutMs}ms`);
+	if (result.outputCapped) {
+		return fail(`the built-in MCP server probe printed more than ${MCP_DOCTOR_MAX_OUTPUT_BYTES} bytes`);
+	}
 	if (result.exitCode !== 0 && result.exitCode !== 1) {
-		return fail(`pankit doctor exited ${result.exitCode ?? `on ${result.signal ?? "a signal"}`}`);
+		return fail(`the built-in MCP server probe exited ${result.exitCode ?? `on ${result.signal ?? "a signal"}`}`);
 	}
 	const rows = parseKitDoctor(result.stdout);
-	if (rows === null) return fail("pankit doctor printed no server report");
+	if (rows === null) return fail("the built-in MCP server probe printed no server report");
 	const byId = new Map(rows.map((row) => [row.id, row]));
 	return [
 		...findings,
-		...servers.map((server) => serverFinding(server.id, byId.get(server.id), launch.paths.get(server.id))),
+		...servers.map((server) => serverFinding(server.id, byId.get(server.id), launchPaths(launch.get(server.id) ?? []))),
 	];
 }

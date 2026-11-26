@@ -3,7 +3,7 @@
 /**
  * The store's command line: argument parsing, the verbs, their text and `--json` output and exit codes. A host
  * runs it with a context naming what only the host knows: the roots, the cache directory, the project and the
- * actor its records carry. `pancode store` and `panstore` are two hosts of this one module.
+ * actor its records carry. `pancode store` is its host.
  */
 import { constants as fsConstants } from "node:fs";
 import { copyFile, readdir, readFile, rename, stat } from "node:fs/promises";
@@ -65,7 +65,7 @@ export interface StoreCliContext {
 	projectId?: string;
 	/** Who the records this command writes name as their producer. */
 	actor: StoreRecordProducer;
-	/** How the command is invoked, for help, diagnostics and hints: `panstore` or `pancode store`. */
+	/** How the command is invoked, for help, diagnostics and hints: `pancode store`. */
 	command: string;
 	/** A blob larger than this is recorded without its sha256 unless `verify --hash-large` asks; default no limit. */
 	hashMaxBytes?: number;
@@ -133,8 +133,8 @@ exit 0; a missing tag or blob exits 1.
 adopt without a key lists store directories whose project root no longer
 exists and that carry no project id; with a key it moves that store to this
 project, refusing when this project already has one.
-where prints the store's locations, each root's id and the panstore command
-line that reaches it. A project id keys the store by that id instead of the
+where prints the store's locations, each root's id and the command line that
+serves the store as an MCP server from any directory. A project id keys the store by that id instead of the
 main checkout's path; where then names a store left under the path key, which
 adopt moves.
 locks lists the project's store locks with each holder's key, pid, host and
@@ -578,9 +578,9 @@ function shellWord(word: string): string {
 	return /^[A-Za-z0-9_@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 }
 
-/** The `panstore` command line that reaches the store `context` names, from any directory. */
-export function panstoreInvocation(context: StoreCliContext): string {
-	const words = ["panstore"];
+/** The `pancode mcp serve store` command line that reaches the store `context` names, from any directory. */
+export function storeServerInvocation(context: StoreCliContext): string {
+	const words = ["pancode", "mcp", "serve", "store"];
 	context.roots.forEach((root, index) => {
 		words.push("--root", storeRootOption(root, index === 0));
 	});
@@ -613,7 +613,7 @@ export async function storeCliWhere(context: StoreCliContext) {
 		projectDir: storeProjectDir(storeRoot, context.projectKey),
 		...(previousKey !== null ? { previousKey } : {}),
 		roots,
-		panstore: panstoreInvocation(context),
+		storeServer: storeServerInvocation(context),
 	};
 }
 
@@ -922,7 +922,7 @@ async function execute(
 				`project key  ${data.projectKey}`,
 				`project dir  ${data.projectDir}`,
 				...data.roots.map((root) => `root ${root.name}  ${root.path}  id ${root.id ?? "(none yet)"}`),
-				`panstore     ${data.panstore}`,
+				`store server ${data.storeServer}`,
 				...(data.previousKey !== undefined
 					? [
 							`previous key ${data.previousKey}`,

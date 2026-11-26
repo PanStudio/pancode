@@ -10,7 +10,7 @@
 import type { CkanSource } from "./parse.js";
 
 export const MAX_REDIRECTS = 5;
-const USER_AGENT = "pankit-catalog/0.1.0";
+const USER_AGENT = "pancode-catalog/0.1.0";
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));

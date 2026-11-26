@@ -106,9 +106,9 @@ async function seed(f: Fixture, tag: string, blob: string, content: string, note
 	assert.equal(put.recorded, true);
 }
 
-test("configure takes panstore's options: roots, cache, project and repeated write tags", () => {
+test("configure takes the store server's options: roots, cache, project and repeated write tags", () => {
 	const cwd = join(base, "cwd");
-	const one = parseStoreOptions(["--root", "r"], cwd);
+	const one = parseStoreOptions(["--root", "r", "--cache", "c"], cwd);
 	assert.ok(one);
 	assert.deepEqual(one.roots, [{ name: "default", path: resolve(cwd, "r"), durable: true, purge: null }]);
 	assert.equal(one.projectRoot, storeProjectRootOf(cwd));
@@ -150,14 +150,18 @@ test("configure takes panstore's options: roots, cache, project and repeated wri
 	assert.deepEqual(full.writeTags, ["results", "runs/a"]);
 	assert.equal(full.projectId, undefined);
 
-	const keyed = parseStoreOptions(["--root", "r", "--project", "/p/repo", "--project-id", "proof-shared"], cwd);
+	const keyed = parseStoreOptions(
+		["--root", "r", "--cache", "c", "--project", "/p/repo", "--project-id", "proof-shared"],
+		cwd,
+	);
 	assert.equal(keyed?.projectId, "proof-shared");
 	assert.equal(keyed?.projectKey, storeProjectKeyForId("proof-shared"));
 
 	assert.equal(parseStoreOptions([], cwd), null);
 	assert.equal(parseStoreOptions(["--write-tag", "results"], cwd), null);
+	assert.throws(() => parseStoreOptions(["--root", "r"], cwd), /--cache <dir> is required with --root/u);
 
-	configure(["--root", "/s/main"]);
+	configure(["--root", "/s/main", "--cache", "/s/cache"]);
 	assert.equal(storeConfig()?.roots[0]?.path, "/s/main");
 	configure([]);
 	assert.equal(storeConfig(), null);
@@ -213,7 +217,7 @@ test("without --root the server is unavailable and every tool answers with the r
 
 test("a primary root that does not exist is unavailable, and a read says so rather than listing nothing", async () => {
 	const missing = join(base, "no-such-root");
-	configure(["--root", missing, "--root", `other=${base}`]);
+	configure(["--root", missing, "--root", `other=${base}`, "--cache", join(base, "cache")]);
 	const probed = await probe();
 	assert.equal(probed.available, false);
 	assert.match(probed.reason ?? "", /does not exist/);
@@ -250,7 +254,7 @@ test("a primary root given as <name>=<dir> reaches tags placed on that root by n
 	);
 
 	configure(["--root", storeRootOption(shared, true), ...options]);
-	assert.deepEqual(parseStoreOptions(["--root", `shared=${root}`], dir)?.roots, [shared]);
+	assert.deepEqual(parseStoreOptions(["--root", `shared=${root}`, "--cache", "c"], dir)?.roots, [shared]);
 	const listed = await call("store_list", { tag: "inputs" });
 	assert.deepEqual(
 		(listed.blobs as Array<Record<string, unknown>>).map((row) => row.blob),

@@ -247,7 +247,7 @@ async function withPath<T>(dir: string, body: () => Promise<T>): Promise<T> {
 }
 
 test("node_gpus without nvidia-smi says so and returns no list", async () => {
-	const empty = mkdtempSync(join(tmpdir(), "pankit-node-path-"));
+	const empty = mkdtempSync(join(tmpdir(), "kit-node-path-"));
 	const result = await withPath(empty, () => call("node_gpus"));
 	assert.deepEqual(result, { available: false, reason: "nvidia-smi is not on PATH" });
 });
@@ -255,7 +255,7 @@ test("node_gpus without nvidia-smi says so and returns no list", async () => {
 test("node_gpus keeps at most its cap of GPUs and says it cut the list", {
 	skip: process.platform === "win32",
 }, async () => {
-	const dir = mkdtempSync(join(tmpdir(), "pankit-node-gpus-"));
+	const dir = mkdtempSync(join(tmpdir(), "kit-node-gpus-"));
 	const lines = Array.from({ length: MAX_GPUS + 6 }, (_, index) => `${index}, NVIDIA H100 80GB HBM3, 81559, 0, 0`);
 	writeFileSync(join(dir, "gpus.csv"), `${lines.join("\n")}\n`);
 	const fake = join(dir, "nvidia-smi");
@@ -271,7 +271,7 @@ test("node_gpus keeps at most its cap of GPUs and says it cut the list", {
 test("node_processes returns command names and never a process's arguments", {
 	skip: process.platform === "win32",
 }, async () => {
-	const secret = "pankit-secret-token-5f2a";
+	const secret = "kit-secret-token-5f2a";
 	const busy = spawn(process.execPath, ["-e", "const end = Date.now() + 20000; while (Date.now() < end);", secret], {
 		stdio: "ignore",
 	});

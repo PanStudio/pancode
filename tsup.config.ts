@@ -238,7 +238,7 @@ function vendorGrammars(): void {
 const REQUIRE_BANNER =
 	'import { createRequire as __pancodeCreateRequire } from "node:module"; const require = __pancodeCreateRequire(import.meta.url);';
 
-/** Prepended to every file under dist/sdk/: PanSDK is Apache-2.0, like its source in packages/sdk/ (NOTICE). */
+/** Prepended to every file under dist/sdk/: the extension API is Apache-2.0, like its source in packages/sdk/ (NOTICE). */
 const SDK_LICENSE_HEADER = "// SPDX-License-Identifier: Apache-2.0\n// SPDX-FileCopyrightText: 2026 Anthony Kougkas\n";
 
 /** Puts the Apache-2.0 header on each emitted dist/sdk/ module that does not carry it yet. */
@@ -262,7 +262,6 @@ const entries = {
 	"sdk/mcp-server": "packages/sdk/src/mcp-server/index.ts",
 	// `pancode extensions test` sends `pancode/sdk/testing` here: the SDK host with the harness's own loader.
 	"extensions/test-kit": "src/domains/extensions/authoring/test-kit.ts",
-	"store/cli": "packages/store/src/cli/main.ts",
 	"gui/server": "apps/pancode-gui/server/main.ts",
 	"gui/reads-worker": "apps/pancode-gui/server/worker/reads-main.ts",
 	"gui/ops-worker": "apps/pancode-gui/server/worker/ops-main.ts",

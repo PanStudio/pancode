@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * A stand-in for the PanKit CLI in builtin-scope tests, written with the SDK
- * a PanKit server uses: `serve <id>` serves one of the servers below over
+ * A stand-in for the kit entry in builtin-scope tests, written with the SDK
+ * a built-in MCP server uses: `serve <id>` serves one of the servers below over
  * stdio. Tests build the injected policy manifest from the same definitions,
  * so the shipped surface matches what this process serves unless a test
  * edits the manifest.
@@ -58,7 +58,7 @@ const slurmSubmit = defineTool({
 	run: (args: { script: string }) => ({ json: { submitted: args.script, jobId: 42 } }),
 });
 
-/** Stands in for PanKit's store server: one put that reports the options it was started with instead of storing. */
+/** Stands in for the built-in store server: one put that reports the options it was started with instead of storing. */
 const storePut = defineTool({
 	name: "store_put",
 	description: "Report the argv this server was started with after serve store.",

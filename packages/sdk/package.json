@@ -2,7 +2,7 @@
 	"name": "@pancode/sdk",
 	"version": "0.9.1-dev",
 	"private": true,
-	"description": "PanSDK, the contract for authoring PanCode extensions, packs, tools and MCP servers.",
+	"description": "PanCode's extension API: the contract for authoring PanCode extensions, packs, tools and MCP servers.",
 	"type": "module",
 	"license": "Apache-2.0",
 	"repository": {

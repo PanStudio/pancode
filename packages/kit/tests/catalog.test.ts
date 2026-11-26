@@ -33,7 +33,7 @@ import { type CatalogSettings, catalogTools, MAX_LIMIT, MAX_RESOURCES } from "..
  */
 
 const context = { signal: new AbortController().signal, log: () => {} };
-const root = mkdtempSync(join(tmpdir(), "pankit-catalog-"));
+const root = mkdtempSync(join(tmpdir(), "kit-catalog-"));
 
 function scratch(name: string): string {
 	const dir = join(root, name);
@@ -225,7 +225,6 @@ after(async () => {
 	for (const response of held) response.destroy();
 	ckan.closeAllConnections();
 	await new Promise<void>((settle) => ckan.close(() => settle()));
-	configure([]);
 });
 
 function ckanSource(id: string, mode: string, extra: Record<string, unknown> = {}) {
@@ -354,46 +353,39 @@ test("a valid catalog file loads, and each problem is refused with its location"
 });
 
 test("without a catalog file the server is unavailable and every call names the path to create", async () => {
-	const config = scratch("no-file-config");
-	const saved = process.env.XDG_CONFIG_HOME;
-	process.env.XDG_CONFIG_HOME = config;
-	try {
-		configure([]);
-		const expected = join(config, "pankit", "catalog.json");
-		assert.equal(catalogFilePath(), expected);
-		const probed = await probe();
-		assert.equal(probed.available, false);
-		assert.deepEqual(probed.sources, [{ name: expected, found: false }]);
-		assert.match(
-			probed.reason ?? "",
-			new RegExp(`no catalog file at ${expected.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`, "u"),
-		);
-		const search = server.tools.find((tool) => tool.name === "catalog_search");
-		assert.ok(search);
-		const result = await search.run({ query: "x" } as never, context);
-		assert.ok("error" in result);
-		assert.ok(result.error.includes(expected), result.error);
+	const expected = join(scratch("no-file-config"), "mcp", "catalog.json");
+	assert.throws(() => configure([]), /--file <path> is required/u);
+	configure(["--file", expected]);
+	assert.equal(catalogFilePath(), expected);
+	const probed = await probe();
+	assert.equal(probed.available, false);
+	assert.deepEqual(probed.sources, [{ name: expected, found: false }]);
+	assert.match(
+		probed.reason ?? "",
+		new RegExp(`no catalog file at ${expected.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`, "u"),
+	);
+	assert.match(probed.reason ?? "", /pancode mcp serve catalog --help prints a valid file/u);
+	const search = server.tools.find((tool) => tool.name === "catalog_search");
+	assert.ok(search);
+	const result = await search.run({ query: "x" } as never, context);
+	assert.ok("error" in result);
+	assert.ok(result.error.includes(expected), result.error);
 
-		const given = join(scratch("given-file"), "mine.json");
-		configure(["--file", given]);
-		assert.equal(catalogFilePath(), given);
-		assert.ok(((await probe()).reason ?? "").includes(given));
-		writeFileSync(given, JSON.stringify({ version: 1, sources: [LOCAL] }));
-		assert.equal((await probe()).available, true);
-		writeFileSync(given, JSON.stringify({ version: 1, sources: [LOCAL], extra: true }));
-		const invalid = await probe();
-		assert.equal(invalid.available, false);
-		assert.match(invalid.reason ?? "", /the file\.extra: unknown field/u);
-		// An invalid file is there: doctor says found, and the reason says what is wrong with it.
-		assert.deepEqual(invalid.sources, [{ name: given, found: true, detail: "not valid" }]);
+	const given = join(scratch("given-file"), "mine.json");
+	configure(["--file", given]);
+	assert.equal(catalogFilePath(), given);
+	assert.ok(((await probe()).reason ?? "").includes(given));
+	writeFileSync(given, JSON.stringify({ version: 1, sources: [LOCAL] }));
+	assert.equal((await probe()).available, true);
+	writeFileSync(given, JSON.stringify({ version: 1, sources: [LOCAL], extra: true }));
+	const invalid = await probe();
+	assert.equal(invalid.available, false);
+	assert.match(invalid.reason ?? "", /the file\.extra: unknown field/u);
+	// An invalid file is there: doctor says found, and the reason says what is wrong with it.
+	assert.deepEqual(invalid.sources, [{ name: given, found: true, detail: "not valid" }]);
 
-		assert.throws(() => configure(["--url", "x"]), ServerUsageError);
-		assert.throws(() => configure(["--file"]), ServerUsageError);
-	} finally {
-		configure([]);
-		if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
-		else process.env.XDG_CONFIG_HOME = saved;
-	}
+	assert.throws(() => configure(["--url", "x"]), ServerUsageError);
+	assert.throws(() => configure(["--file"]), ServerUsageError);
 });
 
 test("local search matches every word over title, description and tags, clips, caps and pages", async () => {
@@ -625,7 +617,7 @@ test("a CKAN source that fails reports its status without its body and leaves th
 });
 
 function leftovers(dir: string): string[] {
-	return readdirSync(dir).filter((name) => name.includes("pankit-part"));
+	return readdirSync(dir).filter((name) => name.includes("pancode-part"));
 }
 
 test("catalog_stage copies a local resource and downloads a CKAN one, verifying the hash", async () => {

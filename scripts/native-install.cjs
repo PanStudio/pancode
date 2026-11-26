@@ -208,7 +208,7 @@ function packageVersion(prefix) {
 	}
 }
 
-// The commands the package declares besides pancode (panstore, pankit), each with its file inside the package.
+// The commands the package declares besides pancode, each with its file inside the package.
 function packageBins(prefix) {
 	const pkg = path.join(prefix, "lib", "node_modules", "pancode");
 	let bin;

@@ -76,7 +76,7 @@ export async function loadCatalog(
 		if (errorCode(error) === "ENOENT")
 			return {
 				ok: false,
-				error: `no catalog file at ${file}: the catalog server needs one naming the sources to search. PanKit ships no sources; create ${file} (pankit catalog --example prints a valid file to start from), or start the server with --file <path>.`,
+				error: `no catalog file at ${file}: the catalog server needs one naming the sources to search. PanCode ships no sources; create ${file} (pancode mcp serve catalog --help prints a valid file to start from).`,
 				file: "missing",
 			};
 		return { ok: false, error: `the catalog file ${file} cannot be read: ${message(error)}`, file: "unreadable" };
@@ -85,7 +85,7 @@ export async function loadCatalog(
 	if (!parsed.ok)
 		return {
 			ok: false,
-			error: `the catalog file ${file} is not valid: ${parsed.error}. The server serves nothing until the file is fixed; pankit catalog --example prints a valid file.`,
+			error: `the catalog file ${file} is not valid: ${parsed.error}. The server serves nothing until the file is fixed; pancode mcp serve catalog --help prints a valid file.`,
 			file: "invalid",
 		};
 	return { ok: true, catalog: parsed.value };

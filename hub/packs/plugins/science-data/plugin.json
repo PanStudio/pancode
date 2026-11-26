@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "science-data",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"description": "Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {

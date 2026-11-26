@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * A first-party pack references a PanKit server by id and tool name in its
+ * A first-party pack references a built-in MCP server by id and tool name in its
  * prose and never ships an `mcp.json` entry for a builtin id. Every input is
  * a tracked repository file: the packs under `hub/packs/plugins/` and the
  * generated manifest `packages/kit/servers.json`.
@@ -41,7 +41,7 @@ function capabilityTokens(pack: string): Array<{ file: string; id: string; tool:
 		);
 }
 
-describe("first-party packs and the builtin PanKit servers", () => {
+describe("first-party packs and the built-in MCP servers", () => {
 	it("ship no mcp.json in hpc or science-data, and no pack declares a builtin id", () => {
 		for (const pack of PACKS) ok(!existsSync(path.join(PLUGINS, pack, "mcp.json")), `${pack} ships mcp.json`);
 		for (const pack of readdirSync(PLUGINS)) {

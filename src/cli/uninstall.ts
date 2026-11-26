@@ -750,7 +750,7 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	const inactiveSize = inactiveInstall ? measurePath(inactiveInstall.root) : null;
 	const linkSize = measurePath(linkPath);
 	const launcher = classifyLauncher(linkPath, installation);
-	// The package's other commands (panstore, pankit) go with pancode's launcher, each only when this install wrote it.
+	// The package's other commands go with pancode's launcher, each only when this install wrote it.
 	const binLaunchers =
 		launcher.kind !== "remove"
 			? []

@@ -7,15 +7,15 @@ Commons Clause License Condition v1.0 (Software: PanCode; License: Apache
 License, Version 2.0, with these Additional Conditions; Licensor: Anthony
 Kougkas).
 
-PanSDK, the source under packages/sdk/ and its build output, including the
-pancode/sdk/<subpath> entry points under dist/sdk/ in the npm package, is
-licensed under the Apache License, Version 2.0, without the Additional
+The extension API, the source under packages/sdk/ and its build output,
+including the pancode/sdk/<subpath> entry points under dist/sdk/ in the npm
+package, is licensed under the Apache License, Version 2.0, without the Additional
 Conditions. The npm package carries one license file: the Apache License,
 Version 2.0 is the part of LICENSE headed "APACHE LICENSE, VERSION 2.0", and
 the source repository also keeps it alone in packages/sdk/LICENSE. PanStore,
-PanKit and the scientific-data readers (packages/store/, packages/kit/ and
-packages/scidata/), shipped in the same package, are under the PanCode
-License 1.0 with the rest of PanCode.
+the built-in MCP servers and the scientific-data readers (packages/store/,
+packages/kit/ and packages/scidata/), shipped in the same package, are under
+the PanCode License 1.0 with the rest of PanCode.
 
 --------------------------------------------------------------------
 Technology acknowledgements

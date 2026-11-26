@@ -66,7 +66,7 @@ type Opened = { config: StoreServerConfig; backend: StoreBackend } | { error: st
 /**
  * The configured store, or the tool error saying why there is none. A read
  * also needs the primary root to exist, so a mistyped `--root` is never read
- * as an empty store; a write creates it, as `panstore put` does.
+ * as an empty store; a write creates it, as `pancode store put` does.
  */
 async function openStore(tool: string, forWrite: boolean): Promise<Opened> {
 	const config = storeConfig();
@@ -162,7 +162,7 @@ function recordView(record: StoreRecord) {
 
 const storeTags = defineTool({
 	name: "store_tags",
-	description: `Returns the project store's tags (at most ${MAX_TAGS}) with each tag's blob count, total bytes and the store root it is placed on. Prefer it over running panstore tags or listing the store directory: one call answers in structured fields and says when the list was cut.`,
+	description: `Returns the project store's tags (at most ${MAX_TAGS}) with each tag's blob count, total bytes and the store root it is placed on. Prefer it over running pancode store tags or listing the store directory: one call answers in structured fields and says when the list was cut.`,
 	input: { type: "object", properties: {} },
 	actionClass: "read",
 	idempotent: true,
@@ -194,7 +194,7 @@ const storeTags = defineTool({
 
 const storeList = defineTool({
 	name: "store_list",
-	description: `Returns the blobs of one tag (at most ${MAX_BLOBS}, sorted by name, optionally only those whose name starts with prefix) with each blob's bytes, when it was stored and whether it has a record. Prefer it over running panstore ls or listing the store directory: sizes are bytes, times are ISO 8601, and the result says when the list was cut.`,
+	description: `Returns the blobs of one tag (at most ${MAX_BLOBS}, sorted by name, optionally only those whose name starts with prefix) with each blob's bytes, when it was stored and whether it has a record. Prefer it over running pancode store ls or listing the store directory: sizes are bytes, times are ISO 8601, and the result says when the list was cut.`,
 	input: {
 		type: "object",
 		properties: {
@@ -263,7 +263,7 @@ const storeList = defineTool({
 const storeStat = defineTool({
 	name: "store_stat",
 	description:
-		"Returns one blob's bytes, SHA-256, the store root its tag is placed on, whether the stored bytes still match their record (drift), and the record of its last put (actor, time, note) with the notes added since. Prefer it over running panstore stat or sha256sum on the store: it reports what was recorded and whether the bytes changed since.",
+		"Returns one blob's bytes, SHA-256, the store root its tag is placed on, whether the stored bytes still match their record (drift), and the record of its last put (actor, time, note) with the notes added since. Prefer it over running pancode store stat or sha256sum on the store: it reports what was recorded and whether the bytes changed since.",
 	input: { type: "object", properties: { tag: TAG_SCHEMA, blob: BLOB_SCHEMA }, required: ["tag", "blob"] },
 	actionClass: "read",
 	idempotent: true,
@@ -369,7 +369,7 @@ async function tagHistory(
 
 const storeHistory = defineTool({
 	name: "store_history",
-	description: `Returns the records of one blob, or of every blob of a tag when blob is left out, newest first (at most ${MAX_HISTORY}): each put, note and removal with its actor, time, note, bytes and SHA-256. Prefer it over running panstore history: it covers a whole tag in one call and says when the list was cut.`,
+	description: `Returns the records of one blob, or of every blob of a tag when blob is left out, newest first (at most ${MAX_HISTORY}): each put, note and removal with its actor, time, note, bytes and SHA-256. Prefer it over running pancode store history: it covers a whole tag in one call and says when the list was cut.`,
 	input: { type: "object", properties: { tag: TAG_SCHEMA, blob: BLOB_SCHEMA }, required: ["tag"] },
 	actionClass: "read",
 	idempotent: true,

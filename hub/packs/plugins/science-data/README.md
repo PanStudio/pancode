@@ -22,16 +22,17 @@ Run `/reload hub` in a running session after installing.
 The skill searches the dataset catalogs the operator names in PanCode's catalog
 file with `catalog_search` and `catalog_describe`, and brings one resource into
 the project with `catalog_stage`, which asks first. Without a catalog file the
-server is unavailable and names the path to create; `pankit catalog --example`
-prints a valid file. A fleet worker reaches a remote portal only after
+server is unavailable and names the path to create; `pancode mcp serve catalog
+--help` prints a valid file. A fleet worker reaches a remote portal only after
 `pancode mcp trust catalog --network`.
 
 ## Other harnesses
 
-Declare `npx -y -p @akougkas/pancode pankit serve <id>` (`catalog`, `scidata`, `store`)
+Declare `npx -y -p @akougkas/pancode pancode mcp serve <id>` (`catalog`, `scidata`, `store`)
 as a stdio MCP server yourself. The skill's `data` reads are then the
-`scidata` server's tools, and its store is the `store` server's, which needs
-`--root` options there (`pancode store where` prints them).
+`scidata` server's tools, and its store is the `store` server's, which serves
+the store of the project it starts in and writes only the tags named with
+`--write-tag` (`pancode store where` prints the full command line).
 
 ## Datasets and results in the store
 

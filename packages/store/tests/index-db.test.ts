@@ -33,7 +33,7 @@ function fixture() {
 		projectRoot,
 		projectKey: KEY,
 		actor: { actor: "standalone" },
-		command: "panstore",
+		command: "pancode store",
 	});
 	// A cache directory under a regular file: the index cannot open, so every verb answers by a full scan.
 	writeFileSync(join(base, "no-cache"), "");

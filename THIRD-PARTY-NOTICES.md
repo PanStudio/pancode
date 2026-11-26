@@ -2,8 +2,8 @@
 
 PanCode's npm package includes the third-party code and assets below in `dist/`. Each component remains under
 its own license, reproduced here with any upstream NOTICE text. PanCode itself is under the PanCode License 1.0
-in LICENSE, except PanSDK (pancode/sdk), which is under the Apache License 2.0 alone; NOTICE says which code is
-which and carries PanCode's own attributions.
+in LICENSE, except the extension API (pancode/sdk), which is under the Apache License 2.0 alone; NOTICE says which
+code is which and carries PanCode's own attributions.
 
 Rows marked "fetched on first use, not distributed" are not in the package: PanCode downloads that pinned npm
 tarball the first time a tool reads the format, accepts it only when its sha256 matches the pin, and keeps it in

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 export const PACKAGE = "@pancode/kit" as const;
 
+export { probeServers, type ServeDefaults, type ServerReport, serveServer } from "./host.js";
 export {
 	type KitManifest,
 	type KitManifestServer,

@@ -19,7 +19,7 @@
 #   4. Writes a small launcher (default ~/.local/bin/pancode) that runs the
 #      new version, replacing it atomically and keeping the previous version
 #      for --rollback, and one beside it for each other command the package
-#      declares (panstore, pankit).
+#      declares.
 #
 # Shell startup files are edited only with --modify-path. Proxies are honored
 # through https_proxy/http_proxy (curl and wget both read them).

@@ -341,26 +341,31 @@ test("every command the package declares gets a launcher, and rollback and the n
 		return result;
 	};
 	const binDir = dirname(f.record.launcher);
-	const panstore = join(binDir, "panstore");
-	const pankit = join(binDir, "pankit");
+	const toola = join(binDir, "toola");
+	const toolb = join(binDir, "toolb");
 	activate("0.8.9", {});
-	assert.equal(existsSync(panstore), false);
-	// Someone else's pankit stays, and the operator is told why that command is missing.
-	writeFileSync(pankit, "#!/bin/sh\necho mine\n");
-	const warned = activate("0.9.0", { panstore: "dist/store/cli.js", pankit: "dist/kit/cli.js" });
-	assert.match(warned.stderr, /pankit exists and this installer did not write it/u);
-	assert.equal(readFileSync(pankit, "utf8"), "#!/bin/sh\necho mine\n");
-	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, [panstore]);
-	const ran = spawnSync(panstore, ["list"], { encoding: "utf8", env: { ...process.env, HOME: join(f.root, "home") } });
-	assert.equal(ran.stdout, "panstore 0.9.0 list\n", ran.stderr);
+	assert.equal(existsSync(toola), false);
+	// Someone else's toolb stays, and the operator is told why that command is missing.
+	writeFileSync(toolb, "#!/bin/sh\necho mine\n");
+	const warned = activate("0.9.0", { toola: "dist/a/cli.js", toolb: "dist/b/cli.js" });
+	assert.match(warned.stderr, /toolb exists and this installer did not write it/u);
+	assert.equal(readFileSync(toolb, "utf8"), "#!/bin/sh\necho mine\n");
+	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, [toola]);
+	const ran = spawnSync(toola, ["list"], { encoding: "utf8", env: { ...process.env, HOME: join(f.root, "home") } });
+	assert.equal(ran.stdout, "toola 0.9.0 list\n", ran.stderr);
 	// Rolling back to a version without the command removes its launcher; the unowned file is still left alone.
 	assert.equal(f.run("rollback").status, 0);
-	assert.equal(existsSync(panstore), false);
-	assert.equal(existsSync(pankit), true);
+	assert.equal(existsSync(toola), false);
+	assert.equal(existsSync(toolb), true);
 	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, []);
-	rmSync(pankit);
-	activate("0.9.1", { panstore: "dist/store/cli.js", pankit: "dist/kit/cli.js" });
-	assert.equal(spawnSync(pankit, ["x"], { encoding: "utf8" }).stdout, "pankit 0.9.1 x\n");
+	rmSync(toolb);
+	activate("0.9.1", { toola: "dist/a/cli.js", toolb: "dist/b/cli.js" });
+	assert.equal(spawnSync(toolb, ["x"], { encoding: "utf8" }).stdout, "toolb 0.9.1 x\n");
+	// The next version that no longer declares the commands removes both launchers.
+	activate("0.9.2", {});
+	assert.equal(existsSync(toola), false);
+	assert.equal(existsSync(toolb), false);
+	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, []);
 });
 
 test("a pin records where it came from and keeps its first date across reinstalls of the same pin", {

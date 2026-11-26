@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { readFileSync } from "node:fs";
 import { mcpToolName } from "../core/tool-names.js";
 import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
+import { defaultMcpBuiltinSource, loadMcpBuiltinServers } from "../domains/gateway/mcp/builtin.js";
 import type { McpClient, McpServerInfo } from "../domains/gateway/mcp/client.js";
 import type {
 	McpServerEntryScript,
@@ -32,9 +34,12 @@ import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
 import { printError } from "./shared.js";
 
-const HELP = `pancode mcp <command>
+const HELP = `pancode mcp [<command>]
 
 Commands:
+  pancode mcp [--json]
+  pancode mcp serve <server> [options...]
+  pancode mcp manifest
   pancode mcp list [--refresh] [--json]
   pancode mcp test <id> [--call <tool> [--args <json>]]... [--json]
   pancode mcp trust <id> [--action-class <class>] [--network] [--json]
@@ -42,6 +47,19 @@ Commands:
   pancode mcp untrust <id> [--json]
 
 Action classes: ${MCP_TRUST_ACTION_CLASSES.join(", ")}
+
+Built-in servers:
+  PanCode ships MCP servers for HPC and science. pancode mcp lists them with
+  their tool counts; a session declares each with scope builtin.
+  pancode mcp serve <server> serves one over stdio for any MCP client, until
+  the client closes the connection; pancode mcp serve <server> --help lists
+  its options, and each option left out is the one a session starts it with
+  (catalog: --file <PanCode config>/mcp/catalog.json; scidata: --cache
+  <PanCode cache>/mcp/data-readers; store: the working directory's project
+  store, nothing writable). pancode mcp serve catalog --help prints a valid
+  catalog file. pancode mcp manifest prints the policy PanCode ships for
+  them: each tool's class, path arguments and listed surface. pancode doctor
+  reports whether each can run on this host.
 
 Path arguments:
   A declaration may add toolPathArguments: per tool, a map from a top-level
@@ -55,6 +73,7 @@ Path arguments:
   process running outside a sandbox then reads or writes.
 
 JSON responses (--json):
+  pancode mcp: {servers: [{id, title, version, tools}]}, tools a count.
   list: {servers: [...], diagnostics: [...], trustDiagnostics: [...]}
     Each server includes its declaration, trust {status, actionClass, reason?},
     entry (project servers: the project files its trust binds, [] when none),
@@ -366,7 +385,7 @@ export function mcpCommandOutput(
 		if ((command !== "trust" && command !== "untrust") || !id)
 			return fail(
 				2,
-				"usage: pancode mcp list | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
+				"usage: pancode mcp [serve <server> | manifest | list | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>]",
 			);
 		// A flag where the id belongs is named as a flag, never looked up as a server id (C5); exit 1 stays (NIGHT-DECISIONS 2).
 		if (id.startsWith("-")) return fail(1, `unknown flag: ${id}`);
@@ -749,7 +768,56 @@ function parseSurfaceArgs(argv: ReadonlyArray<string>): { id: string; hash?: str
 	return { id, ...(hash !== undefined ? { hash } : {}) };
 }
 
+/** The built-in servers this PanCode ships, as `pancode mcp` lists them. */
+function builtinServersOutput(json: boolean): { code: number; text: string } {
+	const source = defaultMcpBuiltinSource();
+	const loaded = loadMcpBuiltinServers(process.cwd(), source);
+	if (loaded.diagnostics.length > 0) {
+		return { code: 1, text: loaded.diagnostics.map((entry) => `${entry.path}: ${entry.message}`).join("\n") };
+	}
+	const servers = loaded.servers.flatMap((server) =>
+		server.builtin !== undefined
+			? [
+					{
+						id: server.id,
+						title: server.builtin.title,
+						version: server.builtin.version,
+						tools: server.builtin.tools.length,
+					},
+				]
+			: [],
+	);
+	if (json) return { code: 0, text: JSON.stringify({ servers }, null, 2) };
+	if (servers.length === 0) return { code: 0, text: "this PanCode ships no built-in MCP servers" };
+	const width = Math.max(...servers.map((server) => server.id.length));
+	return {
+		code: 0,
+		text: servers
+			.map((row) => `${row.id.padEnd(width)}  ${row.title} (${row.tools} tool${row.tools === 1 ? "" : "s"})`)
+			.join("\n"),
+	};
+}
+
+/** The policy manifest this PanCode ships for its built-in servers, as it is on disk. */
+function builtinManifestOutput(): { code: number; text: string } {
+	const { manifestPath } = defaultMcpBuiltinSource();
+	try {
+		return { code: 0, text: readFileSync(manifestPath, "utf8").trimEnd() };
+	} catch (error) {
+		return { code: 1, text: `${manifestPath}: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
 export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number> {
+	// Serve hands every later word, --help included, to the server it names.
+	if (argv[0] === "serve") return (await import("./mcp-serve.js")).runMcpServe(argv.slice(1));
+	const bare = argv.every((arg) => arg === "--json");
+	if (bare || (argv[0] === "manifest" && argv.length === 1)) {
+		const result = bare ? builtinServersOutput(argv.length > 0) : builtinManifestOutput();
+		if (result.code !== 0) printError(result.text);
+		else process.stdout.write(`${result.text}\n`);
+		return result.code;
+	}
 	if (argv.includes("--help") || argv.includes("-h")) {
 		process.stdout.write(HELP);
 		return 0;

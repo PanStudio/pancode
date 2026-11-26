@@ -22,8 +22,8 @@ export interface ServerProbe {
 }
 
 /**
- * What `configure` throws for an option it refuses. `pankit serve` prints its
- * message and the module's `usage` on stderr and exits 2.
+ * What `configure` throws for an option it refuses. `pancode mcp serve` prints
+ * its message and the module's `usage` on stderr and exits 2.
  */
 export class ServerUsageError extends Error {
 	override name = "ServerUsageError";
@@ -31,14 +31,13 @@ export class ServerUsageError extends Error {
 
 /**
  * What `./servers/<id>/index.js` exports. Its top level only defines: loading
- * it must not run a command, read site state or open a connection, so
- * `pankit list` and `pankit manifest` can load every server on any host.
+ * it must not run a command, read site state or open a connection, so the
+ * manifest generator (`pnpm kit:manifest`) can load every server on any host.
  * Touching the system is for a tool's `run` and for `probe`.
  *
- * A server's tool definitions never depend on its options: `pankit list`,
- * `doctor` and `manifest` never call `configure`, and the manifest a host
- * ships is generated from the unconfigured module, so the surface the server
- * serves is the one the manifest records whatever options it is given.
+ * A server's tool definitions never depend on its options: the manifest
+ * PanCode ships is generated from the unconfigured module, so the surface the
+ * server serves is the one the manifest records whatever options it is given.
  * Options decide what a call may reach, never which tools exist.
  */
 export interface ServerModule {
@@ -49,18 +48,20 @@ export interface ServerModule {
 	 * host must pass through for it to work (an MCP host launches servers with
 	 * a minimal environment). An entry is a name such as `SPACK_ROOT`, or a
 	 * prefix of at least four characters followed by `*` (`LMOD_*`) for every
-	 * variable whose name starts with it. `pankit manifest` lists them; never
+	 * variable whose name starts with it. The manifest lists them; never
 	 * name a credential.
 	 */
 	environment?: ReadonlyArray<string>;
 	/**
-	 * Takes the options after `pankit serve <server>`, once, before the server
+	 * Takes the options after `pancode mcp serve <server>`, once, before the server
 	 * serves. Throws a `ServerUsageError` for an option it refuses. A server
 	 * without it refuses every option.
 	 */
 	configure?(argv: ReadonlyArray<string>): void;
 	/** The options `configure` takes, printed when it refuses one. */
 	usage?: string;
+	/** What `pancode mcp serve <server> --help` prints after the options, such as a sample input file. */
+	example?: string;
 }
 
 export interface RegistryEntry {
@@ -70,9 +71,9 @@ export interface RegistryEntry {
 }
 
 /**
- * Every PanKit server, in the order `pankit list` shows them. Adding one is an
- * entry here, `{ id: "x", load: () => import("./servers/x/index.js") },` on a
- * line of its own, and its directory under `src/servers/`.
+ * Every built-in MCP server, in the order `pancode mcp` lists them. Adding one
+ * is an entry here, `{ id: "x", load: () => import("./servers/x/index.js") },`
+ * on a line of its own, and its directory under `src/servers/`.
  *
  * The order is fixed: node, modules, spack, darshan, scidata, catalog, store.
  * Put a new entry at its place in that order.
@@ -105,7 +106,7 @@ export async function loadServer(entry: RegistryEntry): Promise<ServerModule> {
 }
 
 /**
- * Hand a loaded server the options that followed `pankit serve <id>`. Null
+ * Hand a loaded server the options that followed `pancode mcp serve <id>`. Null
  * when it took them (or there were none), else the usage error text: a server
  * without `configure` refuses any option, and a `ServerUsageError` becomes its
  * message followed by the module's `usage`. Any other error propagates.
