@@ -1,8 +1,23 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { installBrowserComponent } from "../domains/lifecycle/browser-component.js";
-import { installClaudeAgentSdk } from "../domains/lifecycle/claude-sdk-install.js";
-import { installCopilotSdk } from "../domains/lifecycle/copilot-sdk-install.js";
+import {
+	installBrowserComponent,
+	PLAYWRIGHT_CORE_PACKAGE,
+	PLAYWRIGHT_CORE_VERSION,
+	resolveBrowserComponent,
+} from "../domains/lifecycle/browser-component.js";
+import {
+	CLAUDE_AGENT_SDK_PACKAGE,
+	CLAUDE_AGENT_SDK_VERSION,
+	installClaudeAgentSdk,
+	resolveClaudeAgentSdkEntry,
+} from "../domains/lifecycle/claude-sdk-install.js";
+import {
+	COPILOT_SDK_PACKAGE,
+	COPILOT_SDK_VERSION,
+	installCopilotSdk,
+	resolveCopilotSdkEntry,
+} from "../domains/lifecycle/copilot-sdk-install.js";
 import { describeYaziProfile, inspectCurrentYaziProfile, resetYaziProfile } from "../domains/mux/index.js";
 import {
 	describeFloorRejection,
@@ -29,8 +44,8 @@ Each is pinned to an exact upstream version and checksum, and a copy already on
 PATH wins over PanCode's own as long as it clears the pinned minimum.
 
 Commands:
-  pancode tools list [--json]           the pinned table and where each resolves
-  pancode tools status <id> [--json]    one tool in detail
+  pancode tools list [--json]           the pinned table, the components, and where each resolves
+  pancode tools status <id> [--json]    one tool or component in detail
   pancode tools reset-profile <id> [--json]  regenerate a tool's PanCode profile on next
                                            open (yazi)
   pancode tools install claude-sdk      provision the separate Claude SDK component
@@ -47,6 +62,41 @@ by an install that was killed. Removal touches nothing outside <data>/tools/<id>
 and needs no confirmation, since every byte under it is re-downloadable from the
 checksum-pinned registry. "remove --all" sweeps every tool in the table.
 `;
+
+/**
+ * What `tools install` provisions besides the pinned programs: an npm package kept apart from PanCode's own
+ * dependencies, in one directory per pinned version. `resolve` answers the path a session would load, null when
+ * nothing is provisioned, and throws on an install that is present and broken.
+ */
+const COMPONENTS = [
+	{
+		id: "claude-sdk",
+		package: CLAUDE_AGENT_SDK_PACKAGE,
+		version: CLAUDE_AGENT_SDK_VERSION,
+		resolve: resolveClaudeAgentSdkEntry,
+	},
+	{ id: "copilot-sdk", package: COPILOT_SDK_PACKAGE, version: COPILOT_SDK_VERSION, resolve: resolveCopilotSdkEntry },
+	{
+		id: "browser",
+		package: PLAYWRIGHT_CORE_PACKAGE,
+		version: PLAYWRIGHT_CORE_VERSION,
+		resolve: () => resolveBrowserComponent()?.prefix ?? null,
+	},
+] as const;
+
+function componentStatus(component: (typeof COMPONENTS)[number]) {
+	const base = { id: component.id, kind: "component", package: component.package, version: component.version };
+	const remedy = `pancode tools install ${component.id}`;
+	try {
+		const path = component.resolve();
+		return path === null
+			? { ...base, installed: false, path: null, remedy, detail: `not installed; run \`${remedy}\`` }
+			: { ...base, installed: true, path, remedy: null, detail: path };
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		return { ...base, installed: false, path: null, remedy, detail: `broken install: ${reason}` };
+	}
+}
 
 interface Parsed {
 	command?: string;
@@ -228,8 +278,9 @@ function parse(argv: ReadonlyArray<string>): Parsed {
 
 function listTools(json: boolean): number {
 	const statuses = toolStatuses();
+	const components = COMPONENTS.map(componentStatus);
 	if (json) {
-		process.stdout.write(`${JSON.stringify(statuses.map(jsonShape), null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify([...statuses.map(jsonShape), ...components], null, 2)}\n`);
 		return 0;
 	}
 	const rows = statuses.map((status) => [
@@ -240,6 +291,12 @@ function listTools(json: boolean): number {
 		describeResolution(status),
 	]);
 	process.stdout.write(formatColumns([["TOOL", "PIN", "LICENSE", "SOURCE", "RESOLVED"], ...rows]));
+	process.stdout.write(
+		`\n${formatColumns([
+			["COMPONENT", "PIN", "PACKAGE", "RESOLVED"],
+			...components.map((component) => [component.id, component.version, component.package, component.detail]),
+		])}`,
+	);
 	return 0;
 }
 
@@ -253,10 +310,12 @@ function listTools(json: boolean): number {
  * versioned opt-in).
  */
 function unknownTool(command: string, id: string, json: boolean): number {
+	// Only the verbs that take a component name it among the ids that exist.
+	const known = [...PINNED_TOOLS, ...(command === "remove" ? [] : COMPONENTS)].map((row) => row.id);
 	writeCliFailure({
 		path: ["tools", command],
 		slug: "not_found",
-		message: `unknown tool: ${id} (known: ${PINNED_TOOLS.map((row) => row.id).join(", ")})`,
+		message: `unknown tool: ${id} (known: ${known.join(", ")})`,
 		json,
 	});
 	return 2;
@@ -266,7 +325,15 @@ function statusTool(id: string | undefined, json: boolean): number {
 	if (id === undefined) return usageFailure("status", "usage", "name a tool: tools status <id>", json);
 	const entry = findPinnedTool(id);
 	if (entry === null) {
-		return unknownTool("status", id, json);
+		const component = COMPONENTS.find((row) => row.id === id);
+		if (component === undefined) return unknownTool("status", id, json);
+		const found = componentStatus(component);
+		if (json) process.stdout.write(`${JSON.stringify(found, null, 2)}\n`);
+		else
+			process.stdout.write(
+				`${component.id} ${component.version}\n  package     ${component.package}\n  resolves to ${found.detail}\n`,
+			);
+		return 0;
 	}
 	const status = toolStatus(entry);
 	const profile = id === "yazi" ? inspectCurrentYaziProfile() : null;
@@ -333,6 +400,13 @@ async function installOne(id: string | undefined, force: boolean, json: boolean)
  */
 function removeOne(id: string | undefined, json: boolean): number {
 	if (id === undefined) return usageFailure("remove", "usage", "name a tool: tools remove <id>, or --all", json);
+	if (COMPONENTS.some((row) => row.id === id))
+		return usageFailure(
+			"remove",
+			"usage",
+			`${id} is a component under <data>/components; tools remove deletes vendored programs only`,
+			json,
+		);
 	if (findPinnedTool(id) === null) return unknownTool("remove", id, json);
 	const result = removeTool(id);
 	if (json) {
@@ -392,6 +466,7 @@ function removeAll(id: string | undefined, json: boolean): number {
 function jsonShape(status: ToolStatus): Record<string, unknown> {
 	return {
 		id: status.id,
+		kind: "program",
 		version: status.version,
 		license: status.license,
 		platform: status.platform,
