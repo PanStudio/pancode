@@ -4,22 +4,22 @@
   "corpusPolicy": "site/public-docs.json",
   "source": {
     "version": "0.9.0",
-    "ref": "56af2dfcb6f9b6882969774ba6a7129572b5b303",
-    "commit": "56af2dfcb6f9b6882969774ba6a7129572b5b303",
+    "ref": "bfdf713ace9ed4b9376475ffa15959c96ec533ef",
+    "commit": "bfdf713ace9ed4b9376475ffa15959c96ec533ef",
     "mode": "repository"
   },
   "files": [
     {
       "path": "README.md",
       "source": "README.md",
-      "sha256": "36193c57d3ae2bc56ac8b8fedb6eb1da44f70f70c9997bdcbfdf49f93907cbc9",
-      "sourceSha256": "e776525ab307e651ced476b3aabb7042fe2df243d7569857dd33efaf9b3b8933"
+      "sha256": "dc3f6f96556e3fb1391d80d18fc24caa1468a3f371915a9af6da11a2827579a7",
+      "sourceSha256": "c5cb7b173a73af77d71c21f4d3b5d770df9ee54de34f1493c88cd7730cc9568d"
     },
     {
       "path": "guide/hpc-clusters.md",
       "source": "docs/guide/hpc-clusters.md",
-      "sha256": "48b3274f2e90476e46e913a607e615b1a547e95c01056ea72d6f7a9767cd411e",
-      "sourceSha256": "8fdc8b648781413299197a5e2e1686386454a201d6f80ef1c69f774e1848bd56"
+      "sha256": "d3fe42302c02e0a8fc7382433d353b31c2dc9181711d95d7532ef084d3bcce22",
+      "sourceSha256": "e05b66a409ea244cbce8be23b66f0f31464a9e0cf22fbfe22df8b6baaf81c7dd"
     },
     {
       "path": "guide/configuration-and-targets.md",
@@ -31,7 +31,7 @@
       "path": "guide/commands-and-modes.md",
       "source": "docs/guide/commands-and-modes.md",
       "sha256": "226891860afab830c5ce5205c2ad79f02feb33208536cad3a560fddc560c3efd",
-      "sourceSha256": "fa98f9dcfda0434780466cd953ae5cff515fbae0c0c19e51ea5ef9ea55248742"
+      "sourceSha256": "086f90453cbcbc9cf17140f5ec147c6635f37f0afffac565f8b5020097090ba6"
     },
     {
       "path": "guide/tool-usage.md",
@@ -61,7 +61,7 @@
       "path": "guide/panes-and-files.md",
       "source": "docs/guide/panes-and-files.md",
       "sha256": "eb94e08033657a6ad7c99304a65204ae2dc5362cb5360620eb8d9af0e86e0810",
-      "sourceSha256": "837c25ee3103c0d1a494498fc2ed422516bdeddc0d5152047207ca5dec2785ee"
+      "sourceSha256": "98ea5e95742b1f8b820d0915ba85ea957b8478f9afa87dd0c9fe0566bd516aad"
     },
     {
       "path": "guide/gui.md",
@@ -73,7 +73,7 @@
       "path": "guide/panstore.md",
       "source": "docs/guide/panstore.md",
       "sha256": "f098c30b62cf07b678a2cb1241f0ac716f2b427ba434e5546bc43a051942de99",
-      "sourceSha256": "46e9fb1681be9aefcb07343e8f3b83cd23a5d911df9ae43ef225a1da15bac073"
+      "sourceSha256": "195f7baaf26e8370d8620244b973433c9d4b4ed43a93a0c7eb7f46d029648463"
     },
     {
       "path": "guide/panhub.md",
@@ -84,14 +84,14 @@
     {
       "path": "guide/pankit.md",
       "source": "docs/guide/pankit.md",
-      "sha256": "10f1c4af009bb8623130c322dcb0959d5941cf4d459c7f6eb5e340442d1ed979",
-      "sourceSha256": "c7dcd9c78d7073fecccf823798f5edf8cc015a1cd694b33b615eabdc383df0f0"
+      "sha256": "031b11c2c6171aa0bf1e8e64590e8c0b854196bd10f9938704d899f518688162",
+      "sourceSha256": "59d68d03807e288ffcff7c1095b96abbef3231733d317268d0a418adb1925944"
     },
     {
       "path": "guide/sdk.md",
       "source": "docs/guide/sdk.md",
-      "sha256": "77015232b676f6c273659bbe8b4ee14df31e64a9dcd7a60e03aa21d102d5f6bb",
-      "sourceSha256": "5694b357344a23a06744dbac7310a4a25bf2b2337658dd123c6a39caab59a9bb"
+      "sha256": "5422a2a84027b6c7c9996e24288ef6c5c1b17fd53d50670db5f06c1818daec22",
+      "sourceSha256": "6c5f212724be0e2175fac3f30b42ab8ff5bdc0e1604da81dc1603d41114512a6"
     },
     {
       "path": "guide/fleet-dispatch.md",
@@ -127,7 +127,7 @@
       "path": "guide/troubleshooting.md",
       "source": "docs/guide/troubleshooting.md",
       "sha256": "a2b237daeea10cc0f5456b4c1e5e7f279c8fcd1c4bb6dc13336a1b24304a3436",
-      "sourceSha256": "d41b0ed792e5cb3c8e547cd2dfcf8a22ad3eb673da39f32b83ac5da11fdc206c"
+      "sourceSha256": "7fcf517fa5b266751af189f240042aa320d25d2d1dfb8a3527005ad31d8c867c"
     },
     {
       "path": "guide/quality-policy.md",
@@ -156,8 +156,8 @@
     {
       "path": "guide/environment-variables.md",
       "source": "docs/guide/environment-variables.md",
-      "sha256": "f6f343c49bcc2539610e363558a7c50bf282a4a43bc37763ceebd7cb3ed2ccf2",
-      "sourceSha256": "4112c1e7341e76a60ef10d0443e286be46911ab8a43fef8de991caab675eb0f6"
+      "sha256": "ddf22fe40aea95593981e70df63dc0b4757a4eb5acb2ac07aeedd62b019d4f2a",
+      "sourceSha256": "d80d46a35ebefb23f32cf5c7f9ad8842d3c7da554e8a3ad30d7d75606df595a5"
     },
     {
       "path": "guide/system-one.md",
@@ -175,7 +175,7 @@
       "path": "guide/glossary.md",
       "source": "docs/guide/glossary.md",
       "sha256": "73d716b66906e852fbf81761db6e2e35efba5e70c8716f7bebcf2b630ba6d954",
-      "sourceSha256": "45ab66ac154e107f72faeab0fb139728aca0cfead7fe0c082bdc55fafc032b02"
+      "sourceSha256": "b1e6778e22967430560b5a08ee5099a06cea7a6ff3176eb50b34f5112fd6d666"
     },
     {
       "path": "guide/semantic-context.md",

@@ -4,7 +4,7 @@ Run PanKit's MCP tool servers in PanCode or in any other MCP host.
 
 ## What PanKit gives you
 
-PanKit is a suite of MCP tool servers for HPC and scientific work. The `pancode` package installs it as the `pankit` command. PanCode loads every server as a builtin MCP server, and any other MCP host can launch one with `pankit serve <server>`.
+PanKit is a suite of MCP tool servers for HPC and scientific work. PanCode installs it as the `pankit` command. PanCode loads every server as a builtin MCP server, and any other MCP host can launch one with `pankit serve <server>`.
 
 | Server | What it answers |
 | --- | --- |
@@ -41,12 +41,12 @@ PanCode starts `scidata` with its reader cache, `catalog` with `pankit/catalog.j
 
 ## Use them from another MCP host
 
-A host launches a server over stdio. Without a global install, `npx` fetches the `pancode` package and runs its `pankit`:
+A host launches a server over stdio. Without a global install, `npx` fetches the `@akougkas/pancode` package and runs its `pankit`:
 
 ```json
 {
 	"mcpServers": {
-		"node": { "command": "npx", "args": ["-y", "-p", "pancode", "pankit", "serve", "node"] }
+		"node": { "command": "npx", "args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"] }
 	}
 }
 ```

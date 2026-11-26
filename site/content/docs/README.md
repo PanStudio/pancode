@@ -13,7 +13,7 @@ You need a model with tool calling. Linux, macOS and WSL are the primary platfor
 curl -fsSL https://pancode.dev/install.sh | sh
 ```
 
-The installer brings its own Node.js 24 and needs no root, including on x64 HPC login nodes with glibc 2.17 or newer. It checks the Node download against its published SHA-256 checksums, and their OpenPGP signature when `gpg` is installed. It installs under `~/.local/share/pancode-install` on Linux or `~/Library/Application Support/pancode/install` on macOS, and writes the launcher `~/.local/bin/pancode`.
+The installer needs no root, including on x64 HPC login nodes with glibc 2.17 or newer. It downloads one bundle for your platform, about 85 MB, that holds PanCode, the Node.js it runs on and every dependency, and checks the bundle's SHA-256 against the checksums published with the release before unpacking it. It installs under `~/.local/share/pancode-install` on Linux or `~/Library/Application Support/pancode/install` on macOS, and writes the launcher `~/.local/bin/pancode`.
 
 On Linux, an install run from a terminal ends by offering the desktop app, which starts at login and appears in your app menu. The optional Claude Agent SDK, about 224 MB, is skipped; PanCode offers to fetch it the first time you need it.
 
@@ -29,7 +29,7 @@ Commands PanCode runs are sandboxed with bubblewrap on Linux and WSL. On macOS t
 
 ### PowerShell
 
-Native Windows is best effort, so use the current stable release. Release checks only start the package on Windows, Windows has no command sandbox, and WSL with the macOS, Linux and WSL command is the better-tested route. The install needs no administrator rights, brings its own Node.js 24, and adds the launcher to your user `PATH`.
+Native Windows is best effort, so use the current stable release. Release checks only start the package on Windows, Windows has no command sandbox, and WSL with the macOS, Linux and WSL command is the better-tested route. The install needs no administrator rights, downloads a bundle that carries its own Node.js, and adds the launcher to your user `PATH`.
 
 ```powershell
 irm https://pancode.dev/install.ps1 | iex
@@ -52,13 +52,13 @@ CMD shows `C:\>` without the `PS`. If you see `'irm' is not recognized as an int
 With your own **Node.js 22.19 or newer** on `PATH`:
 
 ```sh
-npm install -g pancode
+npm install -g @akougkas/pancode
 ```
 
 ### bun
 
 ```sh
-bun add -g pancode
+bun add -g @akougkas/pancode
 ```
 
 bun installs the package, but `pancode` still runs on Node.js, so it needs **Node.js 22.19 or newer** on `PATH` too.
@@ -108,17 +108,17 @@ Installer installs update themselves in the background, at most once a day. On L
 
 | Installed with | Update | Remove the program |
 | --- | --- | --- |
-| Installer | `pancode upgrade`. The new version installs beside the current one and must start before the launcher switches to it. | `pancode uninstall` |
-| npm | `pancode upgrade` | `npm uninstall -g pancode` |
-| bun | `bun add -g pancode@latest`, then `pancode upgrade --post-install` | `bun remove -g pancode` |
+| Installer | `pancode upgrade`. The new version, with the Node.js it runs on, installs beside the current one and must start before the launcher switches to it. | `pancode uninstall` |
+| npm | `pancode upgrade` | `npm uninstall -g @akougkas/pancode` |
+| bun | `bun add -g @akougkas/pancode@latest`, then `pancode upgrade --post-install` | `bun remove -g @akougkas/pancode` |
 
 The installer keeps the previous version. `pancode upgrade --rollback` makes it current again. An install made with an exact `--version` stays pinned to that version until you run the installer with `--version latest`.
 
 If an upgrade is refused over a setting the installed version cannot repair, the installer prints the new version's own `doctor --fix` command to run.
 
-`pancode uninstall` removes your settings, credentials, sessions and caches, the launcher, the desktop app's background service, the managed Node and every package version of an installer install, and the package of an npm global install. It previews what it will delete and asks first, and it stops with exit 1 while a session is open on this state directory. Add `--keep-binary` to keep the program, `--keep-config` to keep settings and credentials, or `--dry-run` to only look. Removing the program with npm or bun keeps those files. Project `.pancode/` directories are never removed.
+`pancode uninstall` removes your settings, credentials, sessions and caches, the launcher, the desktop app's background service, every installed version of an installer install, and the package of an npm global install. It previews what it will delete and asks first, and it stops with exit 1 while a session is open on this state directory. Add `--keep-binary` to keep the program, `--keep-config` to keep settings and credentials, or `--dry-run` to only look. Removing the program with npm or bun keeps those files. Project `.pancode/` directories are never removed.
 
-If pancode.dev is unreachable, the latest GitHub release carries the full installer, at `https://github.com/akougkas/pancode/releases/latest/download/install.sh`.
+If pancode.dev is unreachable, the latest GitHub release carries the installer, at `https://github.com/akougkas/pancode/releases/latest/download/install.sh`. Run it with `--version <x.y.z>`, because the file that says which version is latest lives on pancode.dev.
 
 ## Give PanCode a useful first task
 
