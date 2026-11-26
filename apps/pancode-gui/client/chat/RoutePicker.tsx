@@ -95,7 +95,7 @@ export function RoutePicker({
 }) {
 	const panel = useRef<HTMLDetailsElement>(null);
 	const [open, setOpen] = useState(false);
-	useDetailsDismiss(panel, open);
+	useDetailsDismiss(panel);
 	useMenuShortcut("modelPicker", panel, open, setOpen, { enabled: chord && !!route.config?.options.length });
 	useEffect(() => {
 		const reveal = () => {

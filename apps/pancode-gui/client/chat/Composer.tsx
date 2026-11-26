@@ -178,7 +178,7 @@ export const Composer = memo(function Composer({
 	const [actionsOpen, setActionsOpen] = useState(false);
 	const [actionsInitial, setActionsInitial] = useState<string | null>(null);
 	const [actionDrafts, setActionDrafts] = useState<Record<string, CommandFields>>({});
-	useDetailsDismiss(options, optionsOpen);
+	useDetailsDismiss(options);
 	const [attachments, setAttachments] = useState<Attachment[]>(() => savedAttachments(sessionId));
 	const [attachmentsStored, setAttachmentsStored] = useState(true);
 	const [reviewingAttachment, setReviewingAttachment] = useState<string | null>(null);

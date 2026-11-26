@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { Link } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Workspace } from "../../contracts/sessions.js";
@@ -64,11 +64,10 @@ function WorkspaceMenu({
 	onOpen: () => void;
 }) {
 	const menu = useRef<HTMLDetailsElement>(null);
-	const [open, setOpen] = useState(false);
-	useDetailsDismiss(menu, open);
+	useDetailsDismiss(menu);
 	const current = workspaces.find((workspace) => workspace.id === value);
 	return (
-		<details className="ws-menu" ref={menu} onToggle={(event) => setOpen(event.currentTarget.open)}>
+		<details className="ws-menu" ref={menu}>
 			<summary className="wb-chip" title={current?.path}>
 				<Icon name="folder" />
 				<span>{current?.name ?? "Choose a workspace"}</span>

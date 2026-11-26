@@ -20,7 +20,7 @@ export function OutputDetailPicker({
 }) {
 	const ref = useRef<HTMLDetailsElement>(null);
 	const [open, setOpen] = useState(false);
-	useDetailsDismiss(ref, open);
+	useDetailsDismiss(ref);
 	useMenuShortcut("outputDetail", ref, open, setOpen);
 	return (
 		<details className="wb-menu output-detail" ref={ref} onToggle={(event) => setOpen(event.currentTarget.open)}>
