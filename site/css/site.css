@@ -865,6 +865,29 @@
 			column-gap: var(--space-3);
 		}
 	}
+	.research-status {
+		margin-block: var(--space-6) var(--space-3);
+	}
+	/* The maintainer's signed note, the only first-person text on the site. */
+	.research-note {
+		margin: var(--space-8) 0 0;
+		padding-inline-start: var(--space-5);
+		border-inline-start: 2px solid var(--accent);
+		max-inline-size: var(--measure);
+	}
+	.research-note p {
+		font: var(--type-lede);
+		color: var(--ink);
+		margin: 0;
+	}
+	.research-note footer {
+		font: var(--type-small);
+		color: var(--muted);
+		margin-block-start: var(--space-3);
+	}
+	.research-invite {
+		padding-block-start: var(--space-8);
+	}
 
 	.research-method {
 		display: grid;

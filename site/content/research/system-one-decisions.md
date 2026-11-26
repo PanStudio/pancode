@@ -16,7 +16,7 @@ Three questions sit inside the big one, and each could come back negative.
 
 ## What is measured so far
 
-These were measured on the design 0.6.8 shipped, which 0.8.0 keeps, on small samples. They show what the parts do. None of them shows that System One improves an agent's work.
+These were measured on an earlier build of the same design, on small samples. They show what the parts do. None of them shows that System One improves an agent's work.
 
 ::: compare
 | Measurement | Result | Sample |
@@ -36,7 +36,7 @@ Precision is weak. Between a third and more than half of filter matches can be w
 
 ### Filter across routes
 
-These also ran on the 0.6.8 design. They are small samples, and the query sets were regression sets, so they were not independent of the work being tested.
+These also ran on that earlier build. They are small samples, and the query sets were regression sets, so they were not independent of the work being tested.
 
 ::: compare
 | Route | Recall | Precision | Median latency | Returns |

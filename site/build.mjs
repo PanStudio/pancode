@@ -54,9 +54,9 @@ const collections = [
 		label: "Research",
 		listing: "/research.html",
 		items: research,
-		title: "Research: five subsystems and how to measure them · PanCode",
+		title: "Research: the harness as a systems problem · PanCode",
 		description:
-			"How PanCode is built: five subsystems with source maps, limits, and a first experiment for each, plus open questions researchers can take up.",
+			"PanCode treats the coding-agent harness as systems software: five subsystems with source maps, limits and a first experiment, and open questions to take up.",
 	},
 ];
 const articles = collections.flatMap((collection) =>
@@ -1195,7 +1195,8 @@ for (const collection of collections) {
 		? `<ol class="subsystem-list">${subsystems
 				.map((item, number) => {
 					if (!researchTask[item.slug]) throw new Error(`Research subsystem ${item.slug} has no PanCode task.`);
-					return `<li><span class="step-number">${String(number + 1).padStart(2, "0")}</span><a href="${item.url}"><h2>${escapeHtml(item.title)}</h2></a><span class="tag">${researchTask[item.slug]}</span><p>${escapeHtml(item.description)}</p><p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p></li>`;
+					if (!item.question) throw new Error(`Research subsystem ${item.slug} has no question.`);
+					return `<li><span class="step-number">${String(number + 1).padStart(2, "0")}</span><a href="${item.url}"><h2>${escapeHtml(item.title)}</h2></a><span class="tag">${researchTask[item.slug]}</span><p>${escapeHtml(item.question)}</p></li>`;
 				})
 				.join("")}</ol>`
 		: "";

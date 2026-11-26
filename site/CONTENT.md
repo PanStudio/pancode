@@ -40,6 +40,13 @@ only mechanisms confirmed in source, state the tree or release they were read
 from, and list the limits the source shows. Open-question pages follow the
 subsystem pages, and each one's `category` names the subsystem it belongs to.
 
+The research index opens with the thesis: the harness is a systems problem, and
+PanCode is systems software for coding agents. Each subsystem row shows that
+subsystem's question, from `question` in `content/research.json`. "Work with
+PanCode" holds four invitations: run an experiment, read or change the system,
+evaluate it for a team, and work with the author. The maintainer's signed note
+above it is the only first-person text on the site.
+
 Pages live in `content/research/` and `content/research.json` has the same
 shape as `content/tutorials.json`. Every research page is an invitation to
 contributors and outside researchers, and has these parts:

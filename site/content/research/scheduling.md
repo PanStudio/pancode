@@ -1,7 +1,7 @@
 A group of agents is a workload. Each job needs a route, a share of a real endpoint, a boundary on what it may touch, and a way to tell whether it did its work. PanCode schedules its own workers and other coding agents under those rules. This page describes that design and how to measure it.
 
-::: note Design described for the 0.9.0 development tree
-The mechanisms here are read from source on the development branch. The role grader, the evidence packets, and the capability envelope are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+::: note Design described for PanCode 0.9.1
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 :::
 
 ## The design
@@ -70,6 +70,8 @@ pancode fleet verify <run-id> --json
 pancode config set fleet.retry.maxRetries 0
 ```
 :::
+
+Worked examples: [Run a playbook from plan to commit](/tutorials/run-a-playbook-and-land-it.html) and [Coordinate the coding agents you already use](/tutorials/coordinate-your-coding-agents.html).
 
 ## First experiment
 
