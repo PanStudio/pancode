@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.1 - 2026-11-27
+## 0.9.1-rc.1 - 2026-11-26
 
 PanCode 0.9.1 is the first release published by PanStudio, as `@panstudio/pancode`. It gives PanCode one identity on every surface, rebuilds pancode.dev around what the harness does, lists PanKit's servers in PanHub, and fixes what testing 0.9.0 found in installing, upgrading, authentication and the desktop app.
 
