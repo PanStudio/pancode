@@ -1415,6 +1415,9 @@
 			padding-inline: 0.65rem;
 			gap: 0.5rem;
 		}
+		.hub-row .command-line {
+			padding-inline: 0;
+		}
 		.command-line code {
 			font-size: 0.7rem;
 		}
@@ -1472,6 +1475,14 @@
 	.copy {
 		min-inline-size: 4rem;
 		min-block-size: 2.5rem;
+	}
+	.hub-row .copy {
+		min-block-size: 2rem;
+	}
+	@media (pointer: coarse) {
+		.hub-row .copy {
+			min-block-size: 2.75rem;
+		}
 	}
 	.copy[data-copy-state="success"] {
 		color: var(--code-accent);
@@ -2480,6 +2491,37 @@
 		color: var(--muted);
 		font-size: 0.75rem;
 	}
+	.hub-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+	}
+	.hub-chip {
+		min-block-size: 2.75rem;
+		padding: 0 var(--space-4);
+		border: 1px solid var(--line-control);
+		border-radius: var(--radius-pill);
+		background: none;
+		color: var(--ink-soft);
+		font: var(--type-small);
+	}
+	.hub-chip[aria-pressed="true"] {
+		border-color: var(--accent);
+		color: var(--ink);
+	}
+	/* Ten packs to start with, two columns of rows above the full catalog. */
+	.hub-featured-rows {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0 var(--space-7);
+	}
+	.hub-featured-row {
+		padding-block: var(--space-5);
+		border-block-start: 1px solid var(--line);
+	}
 	.hub-filter[hidden],
 	.hub-group[hidden],
 	.hub-row[hidden] {
@@ -2501,19 +2543,19 @@
 	}
 	.hub-rows {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
-		gap: 0 var(--space-6);
+		grid-template-columns: minmax(0, 1fr);
 		margin: 0;
 		padding: 0;
 		list-style: none;
 	}
+	/* One line per pack: name and tags, its description that opens to the details, the install command. */
 	.hub-row {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-		padding-block: var(--space-5);
-		border-block-end: 1px solid var(--line);
-		min-inline-size: 0;
+		display: grid;
+		grid-template-columns: 18rem minmax(0, 1fr) minmax(0, 24rem);
+		gap: var(--space-5);
+		align-items: start;
+		padding-block: var(--space-3);
+		border-block-start: 1px solid var(--line);
 	}
 	.hub-row-head {
 		display: flex;
@@ -2521,7 +2563,7 @@
 		align-items: baseline;
 		gap: var(--space-2);
 	}
-	.hub-row h3 {
+	:is(.hub-row, .hub-featured-row) h3 {
 		margin: 0 auto 0 0;
 		font: 600 1rem / 1.3 var(--font-mono);
 		overflow-wrap: anywhere;
@@ -2534,16 +2576,32 @@
 		color: var(--secondary);
 		border-color: var(--secondary);
 	}
-	.hub-row > p {
-		margin: 0;
+	.hub-featured-row > p {
+		margin: var(--space-2) 0;
 		color: var(--ink-soft);
 		font-size: 0.9rem;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.hub-row-more summary {
+		color: var(--ink-soft);
+		font: var(--type-small);
+		display: -webkit-box;
+		-webkit-line-clamp: 1;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+		cursor: pointer;
+	}
+	.hub-row-more[open] summary {
+		display: block;
 	}
 	.hub-meta {
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-1) var(--space-4);
-		margin: 0;
+		margin: var(--space-2) 0 0;
 		font-size: 0.75rem;
 		color: var(--muted);
 	}
@@ -2560,15 +2618,41 @@
 	.hub-meta dt::after {
 		content: ":";
 	}
+	/* A catalog row carries its command bare, on the page ground rather than a code surface. */
 	.hub-row .command-line {
-		margin-block-start: auto;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ink);
+		gap: var(--space-3);
 	}
-	.hub-row .command-line code {
+	.hub-row .copy {
+		border-color: var(--line-control);
+		color: var(--ink-soft);
+	}
+	.hub-row .copy[data-copy-state] {
+		border-color: var(--accent);
+		background: none;
+		color: var(--accent);
+	}
+	:is(.hub-row, .hub-featured-row) .command-line code {
 		overflow-wrap: anywhere;
 		font-size: 0.75rem;
 	}
 	.hub-source {
 		margin-block-start: var(--space-8);
 		overflow-wrap: anywhere;
+	}
+	@media (max-width: 1023px) {
+		.hub-row {
+			grid-template-columns: minmax(0, 1fr);
+			gap: var(--space-2);
+		}
+	}
+	@media (max-width: 767px) {
+		.hub-featured-rows {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
 }
