@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
 import { desktopEntry, type LaunchPaths, launcherId, launcherUnsupported } from "./desktop-entry.js";
 
@@ -12,11 +12,14 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const names = { entry: `${launcherId}.desktop`, manifest: `${launcherId}.desktop.owner.json` };
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
+/** A file at a launcher path that is there but is not one PanCode may read: a symlink, a directory, a hard link, too large, or another user's. */
+export class UnsafeLauncherFile extends Error {}
+
 export async function contents(path: string) {
 	try {
 		const info = await lstat(path);
 		if (!info.isFile() || info.nlink !== 1 || info.size > 16_384 || (process.getuid && info.uid !== process.getuid()))
-			throw new Error("Launcher file is not a small regular file owned by this user.");
+			throw new UnsafeLauncherFile("Launcher file is not a small regular file owned by this user.");
 		return await readFile(path, "utf8");
 	} catch (error) {
 		if (missing(error)) return null;
@@ -38,8 +41,17 @@ export async function launcherFiles(prefix: string, platform: NodeJS.Platform = 
 }
 export async function launcherStatus(prefix: string, platform: NodeJS.Platform = process.platform) {
 	const files = await launcherFiles(prefix, platform);
-	const entry = await contents(files.entry),
-		manifest = await contents(files.manifest);
+	// A symlink or other odd file there is never followed or removed; the person who put it there moves it.
+	const read = (path: string) =>
+		contents(path).catch((error: unknown) => {
+			if (error instanceof UnsafeLauncherFile)
+				throw new Error(
+					`${path}: ${error.message} PanCode left it in place; move it out of ${files.directory}, then run this command again.`,
+				);
+			throw new Error(`PanCode could not read ${path}: ${error instanceof Error ? error.message : String(error)}`);
+		});
+	const entry = await read(files.entry),
+		manifest = await read(files.manifest);
 	if (entry === null && manifest === null) return { status: "absent" as const, ...files };
 	let owned = false,
 		available = false;
@@ -72,6 +84,30 @@ export async function launcherStatus(prefix: string, platform: NodeJS.Platform =
 		...files,
 	};
 }
+/**
+ * Why launcher files at `prefix` stay in place, and what clears them: PanCode removes an entry it owns,
+ * and a person moves aside a file PanCode cannot verify as its own.
+ */
+export async function launcherClash(state: Awaited<ReturnType<typeof launcherStatus>>, prefix: string) {
+	if (state.status === "conflict") {
+		const found = [];
+		for (const path of [state.entry, state.manifest])
+			if (
+				await lstat(path).then(
+					() => true,
+					() => false,
+				)
+			)
+				found.push(basename(path));
+		return `The PanCode desktop entry in ${state.directory} is not one PanCode can verify as its own, so it was left in place. Move ${found.join(" and ")} out of ${state.directory}, then run this command again.`;
+	}
+	const uninstall = `pancode gui launcher uninstall --prefix '${prefix.replaceAll("'", "'\\''")}'`;
+	const reason =
+		state.status === "unavailable"
+			? "starts PanCode files that are no longer installed"
+			: "opens PanCode another way, from another installation or without the background app";
+	return `The PanCode desktop entry at ${state.entry} ${reason}. Remove it with ${uninstall}, then run this command again.`;
+}
 export async function installLauncher(prefix: string, paths: LaunchPaths) {
 	const launch = {
 		node: await realpath(paths.node),
@@ -83,10 +119,7 @@ export async function installLauncher(prefix: string, paths: LaunchPaths) {
 	const entry = desktopEntry(launch);
 	const state = await launcherStatus(prefix);
 	if (state.status === "installed" && (await contents(state.entry)) === entry) return state;
-	if (state.status !== "absent")
-		throw new Error(
-			"Launcher files already exist or differ. Inspect status and uninstall the owned entry before installing again.",
-		);
+	if (state.status !== "absent") throw new Error(await launcherClash(state, prefix));
 	await mkdir(state.directory, { recursive: true });
 	await launcherFiles(prefix);
 	try {

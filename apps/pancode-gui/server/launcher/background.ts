@@ -19,7 +19,7 @@ import {
 	readBackgroundConfig,
 } from "./background-config.js";
 import { desktopEntry, type LaunchPaths } from "./desktop-entry.js";
-import { contents, installLauncher, launcherStatus, uninstallLauncher } from "./install.js";
+import { contents, installLauncher, launcherClash, launcherStatus, uninstallLauncher } from "./install.js";
 import { DEFAULT_GUI_PORT } from "./ports.js";
 import {
 	assertWindowsLauncherRemovable,
@@ -239,9 +239,7 @@ async function desktopOwned(config: BackgroundConfig, directory: string) {
 		state.status === "conflict" ||
 		(await contents(state.entry)) !== desktopEntry({ ...config.launch, background: directory })
 	)
-		throw new Error(
-			"The desktop entry belongs to another launch mode or was changed; it will not be replaced or removed.",
-		);
+		throw new Error(await launcherClash(state, config.desktopPrefix));
 	return true;
 }
 export async function installBackground(
