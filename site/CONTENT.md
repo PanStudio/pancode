@@ -118,8 +118,8 @@ tracker or an unsupported adoption claim.
 ## PanHub, PanStore and PanKit
 
 PanCode is one platform, and the site presents it that way. PanHub's page is
-the catalog, generated from the bundled index and labelled as the packs bundled
-with this release. A listing is not an endorsement; the page says what each
+the catalog, generated from the bundled index and labelled as the packs listed
+in that index; community pack trees are fetched and only their rows ship. A listing is not an endorsement; the page says what each
 tier means. PanStore is the store behind `pancode store` and PanKit is
 PanCode's agent toolkit, shareable with other agents over MCP; each is
 documented in its guide and has no page of its own. Never name PanSDK (the

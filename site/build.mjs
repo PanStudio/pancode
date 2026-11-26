@@ -1088,12 +1088,15 @@ await writePage("/hub.html", hubHtml, product.hub.title, product.hub.description
 for (const collection of collections) {
 	const listed = articles.filter((item) => item.collection === collection);
 	// A listing shows its featured guides as cards and every guide in its index.
+	// Featured cards stack below 768 px and pair up above it; the slot is the card image box at each width.
+	const cardSizes =
+		"(max-width: 600px) calc(100vw - 40px), (max-width: 767px) calc(100vw - 64px), (max-width: 1100px) calc(50vw - 48px), (max-width: 1344px) calc(50vw - 64px), 608px";
 	const cards = listed
 		.filter((item) => item.featured)
 		.map(
 			// The first card image is the listing's largest above-the-fold content.
 			(item, position) =>
-				`<a class="tutorial-card" href="${item.url}">${item.image ? `<img src="${escapeHtml(item.image)}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}"${position === 0 ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">` : ""}<p class="eyebrow">${escapeHtml(item.category)} / ${escapeHtml(item.time)}</p><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p>${item.status ? `<p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p>` : ""}<span class="text-link">Read the tutorial <span aria-hidden="true">↗</span></span></a>`,
+				`<a class="tutorial-card" href="${item.url}">${item.image ? `<img src="${escapeHtml(item.image)}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}" sizes="${cardSizes}"${position === 0 ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">` : ""}<p class="eyebrow">${escapeHtml(item.category)} / ${escapeHtml(item.time)}</p><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p>${item.status ? `<p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p>` : ""}<span class="text-link">Read the tutorial <span aria-hidden="true">↗</span></span></a>`,
 		)
 		.join("\n");
 	const learningPaths =
@@ -1131,7 +1134,7 @@ for (const collection of collections) {
 						listed.filter((item) => item.category === category),
 					]),
 					(item) =>
-						`${escapeHtml(item.description)}${item.status ? `<span class="chapter">${escapeHtml(item.status)}</span>` : ""}`,
+						`${escapeHtml(item.description)}${item.status ? ` <span class="chapter index-status">${escapeHtml(item.status)}</span>` : ""}`,
 				)
 			: "";
 	// Research: the five subsystems in order, then the open questions under the subsystem each belongs to.
@@ -1325,7 +1328,7 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - ${product.publishedVersion ? `Current release: v${product.publishedVersion}.` : "Not released yet."} Source: ${repository}. License: PanCode License 1.0.`;
 const hubMarkdown = () =>
 	[
-		`The ${hubCatalog.rows.length} packs bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
+		`The ${hubCatalog.rows.length} packs listed in the index bundled with PanCode v${product.version}, from \`${hubCatalog.source.path}\` (sha256 ${hubCatalog.source.sha256}). Install one with the command on its row; add \`--project\` to install it into the current project. A listing at any tier is not an endorsement.`,
 		hubCatalog.rows
 			.map(
 				(row) =>
