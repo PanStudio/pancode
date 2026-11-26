@@ -562,8 +562,9 @@ export interface OneShotGrant {
 	/** Parked approval request approved for this single admission pass. */
 	requestId?: string;
 	/**
-	 * Surface that released the call: `tool:one_shot` (TUI card), `acp-client`,
-	 * `escalation:operator` or `grant:main`. It is carried into audit
+	 * Surface that released the call: `tool:one_shot` (TUI card), `gui:operator`
+	 * (PanCode GUI card), `acp-client` (any other ACP client), `escalation:operator`
+	 * or `grant:main`. It is carried into audit
 	 * and decides the wording of the note the model reads (`approval-note.ts`).
 	 * It is audit text, never authority: the issuer below decides what clears.
 	 */

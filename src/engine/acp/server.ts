@@ -515,6 +515,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		toolCallSnapshot: (wireId) =>
 			activePromptState === null ? null : (activePromptState.toolCallSnapshots.get(wireId) ?? null),
 		permissionTimeoutMs: permissionWindowMs,
+		clientSurface: () => handshake.clientSurface,
 		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
 		...(options.session !== undefined ? { session: options.session } : {}),
 		workerAskNotice: (sessionId, text) => {
@@ -2759,7 +2760,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					if (session.model !== value) {
 						if (!options.setSessionRouting)
 							throw new AcpRequestError(-32601, "model selection is unavailable", { code: "method_not_found" });
-						options.setSessionRouting({ model: value }, handshake.settingsSource);
+						options.setSessionRouting({ model: value }, handshake.clientSurface);
 						session.model = value;
 						notifyConfigOptions(session);
 					}
@@ -2788,7 +2789,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					const selected = selectModel(
 						options.providers,
 						{ target, model, thinkingLevel: session.thinkingLevel },
-						(selected) => options.setSessionRouting?.(selected, handshake.settingsSource),
+						(selected) => options.setSessionRouting?.(selected, handshake.clientSurface),
 					);
 					session.target = selected.target;
 					session.model = selected.model;
@@ -2825,7 +2826,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 						throw new AcpRequestError(-32601, "thinking selection is unavailable", { code: "method_not_found" });
 					const thinkingLevel =
 						thinking?.effectiveLevel ?? clampThinkingLevel(options.providers, session.target, session.model, requested);
-					options.setSessionRouting({ thinkingLevel }, handshake.settingsSource);
+					options.setSessionRouting({ thinkingLevel }, handshake.clientSurface);
 					session.thinkingLevel = requested;
 					notifyConfigOptions(session);
 				}
@@ -2913,7 +2914,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32602, "model requires a configured target", { code: "invalid_params" });
 		}
 		try {
-			const committed = options.settings.commit(patch, handshake.settingsSource);
+			const committed = options.settings.commit(patch, handshake.clientSurface);
 			const session = boundSessionId === null ? undefined : sessions.get(boundSessionId);
 			if (
 				session &&

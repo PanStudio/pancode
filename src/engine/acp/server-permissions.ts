@@ -32,6 +32,7 @@ import { clippedCallCommand } from "../worker-refusals.js";
 import { ACP_DISPATCH_PLAN_META_KEY, dispatchPlanTitle, projectDispatchPlanMeta } from "./dispatch-plan-meta.js";
 import { AcpTimeoutError } from "./errors.js";
 import { boundString, redactCallText, safeStoredIdentifier, safeStoredString } from "./server-bounds.js";
+import type { AcpClientSurface } from "./server-options.js";
 import type { AcpToolCallSnapshot } from "./server-tool-updates.js";
 import { ACP_MAX_TOOL_TITLE_BYTES, permissionTitle, toolKind } from "./server-tool-updates.js";
 import type { AcpJsonRpcPeerTransport } from "./transport.js";
@@ -144,6 +145,7 @@ function installWorkerAskBridge(
 		activeSessionId: () => string | null;
 		/** The window a client-facing ask gets, read per ask because the client negotiates it at initialize. */
 		permissionTimeoutMs: () => number;
+		clientSurface: () => AcpClientSurface;
 		cancelActivePrompt: (reason: string) => void;
 		workerAsks?: AcpWorkerAskPort;
 		diagnostics?: (line: string) => void;
@@ -319,7 +321,9 @@ function installWorkerAskBridge(
 					// The terminal's Deny and stop: the worker is denied first, then the
 					// main turn the person asked to stop being asked in is cancelled.
 					if (answer.outcome === "selected" && answer.optionId === "reject-and-stop") {
-						input.cancelActivePrompt("ACP client denied a worker request and stopped the run");
+						input.cancelActivePrompt(
+							`${askAnswerer(input.clientSurface()).name} denied a worker request and stopped the run`,
+						);
 					}
 				} finally {
 					queue.cancel = null;
@@ -504,6 +508,17 @@ function decisionMeta(
 	};
 }
 
+/**
+ * Who answered an ask, by the client's surface. The PanCode GUI is the operator's own window onto this session, so
+ * its card is the operator answering, as the terminal card is. Any other ACP client answers as itself, and the model
+ * is never told this session's operator approved (#434).
+ */
+function askAnswerer(surface: AcpClientSurface): { decidedBy: string; grantRequestedBy: string; name: string } {
+	return surface === "gui"
+		? { decidedBy: "operator", grantRequestedBy: "gui:operator", name: "The operator" }
+		: { decidedBy: "acp-client", grantRequestedBy: "acp-client", name: "ACP client" };
+}
+
 export function installPermissionBridge(input: {
 	transport: AcpJsonRpcPeerTransport;
 	toolRegistry: ToolRegistry | undefined;
@@ -525,6 +540,7 @@ export function installPermissionBridge(input: {
 	toolCallSnapshot: (wireId: string) => AcpToolCallSnapshot | null;
 	/** The window a client-facing ask gets, read per ask because the client negotiates it at initialize. */
 	permissionTimeoutMs: () => number;
+	clientSurface: () => AcpClientSurface;
 	expireActivePrompt: () => void;
 	cancelActivePrompt: (reason: string) => void;
 	/** Forwarded worker asks; absent leaves them to the worker's own timeout fallback. */
@@ -582,6 +598,7 @@ export function installPermissionBridge(input: {
 		const approveAction = presentation.requiredActions.find((action) => action.id === "approve-once");
 		const denyAction = presentation.requiredActions.find((action) => action.id === "deny");
 		const stopAction = presentation.requiredActions.find((action) => action.id === "stop");
+		const answerer = askAnswerer(input.clientSurface());
 		queuedRequestIds.add(meta.requestId);
 		queuedRequestDetails.set(meta.requestId, {
 			tool: call.tool,
@@ -605,7 +622,7 @@ export function installPermissionBridge(input: {
 						tool: call.tool,
 						actionClass: decision.classification.actionClass,
 					},
-					...(action === "grant" ? { grantRequestedBy: "acp-client" } : {}),
+					...(action === "grant" ? { grantRequestedBy: answerer.grantRequestedBy } : {}),
 					...(action === "grant" && sessionScope === true ? { sessionScope } : {}),
 					...(beforeRelease ? { beforeRelease } : {}),
 					...(reason !== undefined ? { reason } : {}),
@@ -837,23 +854,27 @@ export function installPermissionBridge(input: {
 					// parked call released before the prompt aborts can start another
 					// model request while the abort is in flight.
 					if (answer.outcome === "selected" && answer.optionId === "reject-and-stop") {
-						const reason = "ACP client denied this tool call and stopped the run";
+						const reason = `${answerer.name} denied this tool call and stopped the run`;
 						input.cancelActivePrompt(reason);
-						void resolve({ status: "denied", decidedBy: "acp-client", reason }, "stop", () => {
+						void resolve({ status: "denied", decidedBy: answerer.decidedBy, reason }, "stop", () => {
 							queuedRequestIds.clear();
 							queuedRequestDetails.clear();
 						});
 						return;
 					}
 					if (answer.outcome === "selected" && answer.optionId === "allow-once") {
-						await resolve({ status: "granted", decidedBy: "acp-client" }, "grant");
+						await resolve({ status: "granted", decidedBy: answerer.decidedBy }, "grant");
 						return;
 					}
 					if (answer.outcome === "selected" && answer.optionId === "allow-session-scope") {
-						await resolve({ status: "granted", decidedBy: "acp-client" }, "grant", undefined, undefined, true);
+						await resolve({ status: "granted", decidedBy: answerer.decidedBy }, "grant", undefined, undefined, true);
 						return;
 					}
-					void resolve({ status: "denied", decidedBy: "acp-client", reason: "ACP client denied this tool call" });
+					void resolve({
+						status: "denied",
+						decidedBy: answerer.decidedBy,
+						reason: `${answerer.name} denied this tool call`,
+					});
 					return;
 				}
 				const err = outcome.err;

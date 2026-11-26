@@ -40,10 +40,10 @@ import { ACP_FLEET_META_KEY, ACP_FLEET_PREVIEW_METHOD, ACP_FLEET_RUN_METHOD } fr
 import { ACP_WORKSPACE_META_KEY } from "./live-telemetry.js";
 import { hasControlCharacters, utf8Bytes } from "./server-bounds.js";
 import type {
+	AcpClientSurface,
 	AcpForwardableEventKind,
 	AcpHandshake,
 	AcpHandshakeFeatures,
-	AcpSettingsSource,
 } from "./server-options.js";
 import { ACP_FORWARDABLE_EVENT_KINDS } from "./server-options.js";
 import { ACP_PERMISSION_OPTION_IDS } from "./server-permissions.js";
@@ -184,7 +184,7 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 	let queueEventsEnabled = false;
 	let readoutsEnabled = false;
 	let fullUsageEnabled = false;
-	let settingsSource: AcpSettingsSource = "acp";
+	let clientSurface: AcpClientSurface = "acp";
 	const enabledEventKinds = new Set<AcpForwardableEventKind>();
 	const workspaceInstanceId = randomUUID();
 	const requireInitialized = (): void => {
@@ -229,8 +229,8 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 			return fullUsageEnabled;
 		},
 		workspaceInstanceId,
-		get settingsSource() {
-			return settingsSource;
+		get clientSurface() {
+			return clientSurface;
 		},
 		initialize(params) {
 			if (initialized) throw new AcpRequestError(-32600, "already initialized", { code: "already_initialized" });
@@ -246,7 +246,7 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 					code: "invalid_params",
 				});
 			}
-			settingsSource = isRecord(params.clientInfo) && params.clientInfo.name === "pancode-gui" ? "gui" : "acp";
+			clientSurface = isRecord(params.clientInfo) && params.clientInfo.name === "pancode-gui" ? "gui" : "acp";
 			const clientCapabilities =
 				isRecord(params) && isRecord(params.clientCapabilities) ? params.clientCapabilities : null;
 			const clientMeta =

@@ -9,10 +9,11 @@
  * audit recorded as `permission_requested` then `allowed`. The
  * transcript marker is the operator's record; this is the model's.
  *
- * Four sources release a parked call and they are not the same fact. The main
- * TUI card (`tool:one_shot`) and a forwarded worker escalation
- * (`escalation:operator`) are a person answering. An ACP client answering
- * `allow-once` is that client, not this session's operator. A main-agent
+ * Five sources release a parked call and they are not the same fact. The main
+ * TUI card (`tool:one_shot`), the PanCode GUI's card (`gui:operator`) and a
+ * forwarded worker escalation (`escalation:operator`) are the operator
+ * answering. Any other ACP client answering `allow-once` is that client, not
+ * this session's operator. A main-agent
  * grant (`grant:main`, Phase D) is the main agent answering, not a person.
  * An escalation timeout always denies and
  * never releases a call; any source not named here gets the neutral wording.
@@ -85,6 +86,7 @@ export function approvalNote(input: ApprovalNoteInput): string {
 	const scope = input.ruleId?.trim() === SESSION_CODE_CONSENT_RULE_ID ? SESSION_CONSENT_SCOPE : SCOPE;
 	switch (input.requestedBy) {
 		case "tool:one_shot":
+		case "gui:operator":
 			return `${OPERATOR_APPROVAL_NOTE_PREFIX} The operator approved ${call} once${rail}. ${scope} If you describe how this call ran, say the operator approved it, never that it ran without a prompt.`;
 		case "escalation:operator":
 			return `${OPERATOR_APPROVAL_NOTE_PREFIX} The operator approved ${call} once${rail}, through a forwarded worker escalation. ${scope} If you describe how this call ran, say the operator approved it, never that it ran without a prompt.`;
@@ -100,11 +102,12 @@ export function approvalNote(input: ApprovalNoteInput): string {
 /**
  * Whose grant a released call ran under, as a noun phrase for a note that
  * names it (a rewrite that kept the approval, WX3). The surfaces match
- * approvalNote's, so an ACP client's approval is never called the operator's.
+ * approvalNote's, so another ACP client's approval is never called the operator's.
  */
 export function approvalGiver(requestedBy: string): string {
 	switch (requestedBy) {
 		case "tool:one_shot":
+		case "gui:operator":
 		case "escalation:operator":
 			return "the operator's approval";
 		case "acp-client":

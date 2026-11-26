@@ -46,6 +46,7 @@ async function askOnce(
 	args: Record<string, unknown>,
 	answer: "allow-once" | "reject-once",
 	toolName: "dispatch" | "bash" | "write" = "dispatch",
+	clientName = "acp-test",
 ) {
 	const safety = createWorkerSafety({ cwd: process.cwd() });
 	const registry = createRegistry({ safety, autonomy: () => "default" });
@@ -76,11 +77,13 @@ async function askOnce(
 	};
 	let emit: (event: unknown) => void = () => {};
 	let verdict = "";
+	let resultText = "";
 	const chat: AcpServerChat = {
 		submit: async () => {
 			emit({ type: "tool_execution_start", toolCallId: "call-1", toolName, args });
 			const result = await registry.invoke({ tool: toolName, args }, { toolCallId: "call-1" });
 			verdict = result.kind;
+			if (result.kind === "ok") resultText = result.result.kind === "ok" ? result.result.output : result.result.message;
 			emit({ type: "tool_execution_end", toolCallId: "call-1", toolName, result, isError: false });
 		},
 		cancel: () => {},
@@ -101,12 +104,12 @@ async function askOnce(
 		cwd: process.cwd(),
 	});
 	const call = async (method: string, params: unknown) => await handlers.get(method)?.(params);
-	await call("initialize", { protocolVersion: 1 });
+	await call("initialize", { protocolVersion: 1, clientInfo: { name: clientName, version: "1" } });
 	const session = (await call("session/new", { cwd: process.cwd(), mcpServers: [] })) as { sessionId: string };
 	await call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "go" }] });
 	close();
 	await served;
-	return { ask: asks[0], parked: parked[0], runs, verdict };
+	return { ask: asks[0], parked: parked[0], runs, verdict, resultText };
 }
 
 test("a plan-scale dispatch ask carries the plan admission rendered, with the hash its run seals", async () => {
@@ -162,6 +165,13 @@ test("an approved plan runs exactly once through the same ask", async () => {
 	const turn = await askOnce(PLAN, "allow-once");
 	strictEqual(turn.runs.length, 1);
 	strictEqual(turn.verdict, "ok");
+});
+
+test("an approval from the PanCode GUI is the operator's, and from any other client is that client's (#434)", async () => {
+	const gui = await askOnce(PLAN, "allow-once", "dispatch", "pancode-gui");
+	match(gui.resultText, /^\[operator approval\] The operator approved this dispatch call once\./u);
+	const other = await askOnce(PLAN, "allow-once", "dispatch", "zed");
+	match(other.resultText, /^\[approval\] The connected ACP client approved this dispatch call once\./u);
 });
 
 test("the plan projection bounds tasks and strings and strips control characters", () => {
