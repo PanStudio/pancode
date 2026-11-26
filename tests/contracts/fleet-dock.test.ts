@@ -196,7 +196,7 @@ test("transient Fleet band handles 4-worker overflow, watch-pane collapse, loops
 		const alertIdx = stackLines.findIndex((line) => /Quota threshold reached/u.test(line));
 		const fleetIdx = stackLines.findIndex((line) => /^Fleet ─+/u.test(line));
 		const ctxIdx = stackLines.findIndex((line) => /Context refresh/u.test(line));
-		const barIdx = stackLines.findIndex((line) => /▐P▌/u.test(line));
+		const barIdx = stackLines.findIndex((line) => /▐∀▌/u.test(line));
 		ok(
 			alertIdx === 0 && fleetIdx > alertIdx && ctxIdx > fleetIdx && barIdx > ctxIdx,
 			`expected alert < fleet < contextProgress < bar, got ${JSON.stringify(stackLines)}`,

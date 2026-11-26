@@ -12,6 +12,7 @@ export const HUB_TABS: ReadonlyArray<{ id: HubEntryKind; label: string }> = [
 	{ id: "playbook", label: "Playbooks" },
 	{ id: "plugin", label: "Plugins" },
 	{ id: "extension", label: "Extensions" },
+	{ id: "server", label: "Servers" },
 ];
 
 export function isHubTab(value: string): value is HubEntryKind {

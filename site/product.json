@@ -9,6 +9,6 @@
 	"publishedVersion": "0.9.0",
 	"hub": {
 		"title": "PanHub: packs for PanCode",
-		"description": "The PanHub marketplace: every skill, plugin and extension bundled with this PanCode release, with its tier, licence, source and install command."
+		"description": "The PanHub marketplace: every pack in the index bundled with this PanCode release, with its tier, licence, source and the command that installs or serves it."
 	}
 }

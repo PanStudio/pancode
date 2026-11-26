@@ -7,13 +7,13 @@
  */
 
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
-import { yoloContainmentNotes } from "../../core/sandbox/main-session.js";
+import { mainShellContained, yoloShellState } from "../../core/sandbox/main-session.js";
 import { missingRuntimeComponent } from "../../domains/lifecycle/components.js";
 import type { ProvidersContract } from "../../domains/providers/contract.js";
 import { isOrchestratorEligibleRuntime } from "../../domains/providers/eligibility.js";
 import { modelIdsForStatus } from "../../domains/providers/model-discovery.js";
 import { resolveRuntimeTarget } from "../../domains/providers/runtime-resolution.js";
-import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel } from "../../domains/safety/autonomy.js";
+import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel, type YoloConfinement } from "../../domains/safety/autonomy.js";
 import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { redactSecretString } from "../../domains/safety/redaction.js";
 import { AcpRequestError } from "./errors.js";
@@ -52,14 +52,51 @@ export const ACP_EMPTY_TRUNCATED_TARGET_LIST_BYTES = utf8Bytes(
 // stable newest-first prefix of whole rows and reserve 16 KiB for the envelope.
 export const ACP_MAX_SESSION_LIST_RESULT_BYTES = 240 * 1024;
 
-/** The yolo mode's description, with the sandbox backend and judge state this host's yolo runs under (M-19). */
-function yoloModeDescription(containment: AcpSafeSettingsSnapshot["containment"]): string {
-	const notes = yoloContainmentNotes(
-		containment?.sandbox ?? "auto",
-		sandboxAvailability(),
-		containment?.judgeEnabled ?? true,
-	);
-	return `Runs without approval stops: ${notes.sandbox}; ${notes.judge}; a call that would need your approval is refused instead of asked (unless the operator's settings chose unconfined yolo). Questions still reach you.`;
+const SANDBOXED = "Commands run in a sandbox that limits what they can change.";
+const ONLY_YOU = "Decisions only you can make ask you directly.";
+const YOLO_STILL_APPLIES =
+	"PanCode's built-in blocks, your own safety rules and the run's limits still apply, and questions PanCode asks still reach you.";
+
+/**
+ * What each autonomy mode does on this host, in the words the GUI menu and an editor's mode picker show: the sandbox
+ * and safety check a run records, never a backend name, setting key or internal role (M-19).
+ */
+function modeDescriptions(
+	containment: AcpSafeSettingsSnapshot["containment"],
+	confinement: YoloConfinement,
+): { default: string; yolo: string } {
+	const mode = containment?.sandbox ?? "auto";
+	const availability = sandboxAvailability();
+	const judge = containment?.judgeEnabled ?? true;
+	const riskier = judge
+		? "Riskier calls go to an automatic safety check, which runs them, refuses them or asks you."
+		: "Riskier calls ask you.";
+	const askFirst = `${
+		mainShellContained(mode, availability)
+			? `Edits and commands inside this workspace go ahead. ${SANDBOXED}`
+			: "Edits inside this workspace go ahead. Commands get no sandbox here, so they count as riskier."
+	} ${riskier} ${ONLY_YOU}`;
+	if (confinement === "unconfined") {
+		const shell = yoloShellState(confinement, mode, availability);
+		const commands =
+			shell === "sandboxed"
+				? SANDBOXED
+				: shell === "refused"
+					? "Commands are refused: your settings require a sandbox and this computer has none."
+					: "Commands run directly on this computer, with no sandbox.";
+		return {
+			default: askFirst,
+			yolo: `No approval card waits for you, and the automatic safety check is skipped. ${commands} ${YOLO_STILL_APPLIES}`,
+		};
+	}
+	const commands = mainShellContained(mode, availability) ? SANDBOXED : "Commands get no sandbox here.";
+	const refused = judge
+		? "The automatic safety check works as it does in default, and anything that would ask you is refused back to PanCode instead."
+		: "Anything that would ask you in default is refused back to PanCode instead.";
+	return {
+		default: askFirst,
+		yolo: `No approval card waits for you. ${commands} ${refused} ${YOLO_STILL_APPLIES}`,
+	};
 }
 
 export function safeSettingsProjection(snapshot: AcpSafeSettingsSnapshot): AcpSafeSettings {
@@ -197,22 +234,19 @@ export function probeMissingComponent(status: ReturnType<ProvidersContract["list
 	return missingRuntimeComponent(status.reason) ?? missingRuntimeComponent(status.health.lastError);
 }
 
-const modeState = (options: PancodeAcpServerOptions, session: AcpServerSession) => ({
-	currentModeId: session.autonomy,
-	availableModes: [
-		{
-			id: "default",
-			name: "default",
-			description:
-				"Workspace edits run; shell commands run in the OS sandbox; calls that need approval go to the safety judge, then to you.",
-		},
-		{
-			id: "yolo",
-			name: "yolo",
-			description: yoloModeDescription(options.settings?.read().containment),
-		},
-	],
-});
+const modeState = (options: PancodeAcpServerOptions, session: AcpServerSession) => {
+	const descriptions = modeDescriptions(
+		options.settings?.read().containment,
+		options.autonomyPosture?.().confinement ?? "contained",
+	);
+	return {
+		currentModeId: session.autonomy,
+		availableModes: [
+			{ id: "default", name: "default", description: descriptions.default },
+			{ id: "yolo", name: "yolo", description: descriptions.yolo },
+		],
+	};
+};
 
 export const sessionThinking = (
 	options: PancodeAcpServerOptions,

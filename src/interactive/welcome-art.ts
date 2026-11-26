@@ -11,10 +11,13 @@ function inked(font: Record<string, readonly string[]>): Record<string, readonly
 	);
 }
 
-/** Five-row solid block lettering: two-cell stems, one-cell counters, no shading. `#` is a filled cell. */
+/**
+ * Five-row solid block lettering: two-cell stems, one-cell counters, no shading. `#` is a filled cell. The A of PAN is
+ * drawn turned over, the for-all sign of the mark, with its bar in the upper half.
+ */
 const LETTERS: Record<string, readonly string[]> = inked({
 	P: ["#### ", "## ##", "#### ", "##   ", "##   "],
-	A: [" ### ", "## ##", "#####", "## ##", "## ##"],
+	A: ["## ##", "#####", "## ##", "## ##", " ### "],
 	N: ["##  #", "### #", "## ##", "##  #", "##  #"],
 	C: [" ####", "##   ", "##   ", "##   ", " ####"],
 	O: [" ### ", "## ##", "## ##", "## ##", " ### "],
@@ -24,7 +27,7 @@ const LETTERS: Record<string, readonly string[]> = inked({
 
 const WIDE_LETTERS: Record<string, readonly string[]> = inked({
 	P: ["###### ", "##   ##", "###### ", "##     ", "##     "],
-	A: [" ###### ", "##    ##", "########", "##    ##", "##    ##"],
+	A: ["##    ##", "########", "##    ##", "##    ##", " ###### "],
 	N: ["###   ##", "####  ##", "## ## ##", "##  ####", "##   ###"],
 	C: [" ######", "##     ", "##     ", "##     ", " ######"],
 	O: [" ###### ", "##    ##", "##    ##", "##    ##", " ###### "],

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { PancodeSettings } from "../core/config.js";
 import type { ThinkingLevel } from "../core/defaults.js";
-import { formatFooterTokens } from "../core/display-units.js";
+import { formatCount } from "../core/format-time.js";
 import { GLYPH } from "../core/glyphs.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { RouteBreakerView } from "../domains/dispatch/contract.js";
@@ -81,7 +81,7 @@ export interface OverlayModelSelectors {
 /** Why a pick cannot reach this turn, for the dialog and the confirmation alike. */
 function notThisTurn(wait: RouteMoveWait, fit?: RouteMoveFit): string {
 	if (fit?.kind === "too-large")
-		return `this conversation needs about ${formatFooterTokens(fit.neededTokens)} tokens and that model's window is ${formatFooterTokens(fit.window)}`;
+		return `this conversation needs about ${formatCount(fit.neededTokens)} tokens and that model's window is ${formatCount(fit.window)}`;
 	if (fit?.kind === "images") return "it cannot read this turn's images";
 	if (fit?.kind === "unresolved") return "it cannot be used right now";
 	if (wait === "output") return "output has started";
@@ -100,7 +100,7 @@ export function modelListTurnEffect(wait: RouteMoveWait): string | null {
 /** What a swap costs a session with history, in the words of its journal's `model_changed` cold reason. */
 function routeSwitchCost(historyTokens: number | null | undefined, leavesCache: boolean): string | null {
 	if (!leavesCache || !historyTokens || historyTokens <= 0) return null;
-	return `A new model starts with no prompt cache, so the next turn re-reads this session's ${formatFooterTokens(historyTokens)} tokens.`;
+	return `A new model starts with no prompt cache, so the next turn re-reads this session's ${formatCount(historyTokens)} tokens.`;
 }
 
 /** The line in the scope dialog, once the route is known. */

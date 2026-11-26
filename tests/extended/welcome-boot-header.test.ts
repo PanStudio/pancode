@@ -161,7 +161,7 @@ test("the session header shows brand identity without duplicating the route or l
 	const component = banner();
 	component.collapseToSessionHeader();
 	const lines = rows(component, 120);
-	ok(/▐P▌ PanCode \d/u.test(lines[0] ?? ""), lines[0]);
+	ok(/▐∀▌ PanCode \d/u.test(lines[0] ?? ""), lines[0]);
 	ok(!lines[0]?.includes("dynamo · qwen3.8-27b"), "route is owned by the status line");
 	ok(!lines.join("\n").includes("42ms"), "probe latency must not reach the header");
 	ok(!lines.join("\n").includes("healthy"), "the session header does not claim readiness");
@@ -214,7 +214,7 @@ test("a configured but unprobed target is neither ready nor unavailable", () => 
 	ok(!lines.includes("✗"), "an unprobed target must not claim failure");
 	ok(!lines.includes("unavailable"), lines);
 	component.collapseToSessionHeader();
-	ok(/▐P▌ PanCode \d/u.test(rows(component, 120)[0] ?? ""));
+	ok(/▐∀▌ PanCode \d/u.test(rows(component, 120)[0] ?? ""));
 });
 
 test("a target with no model and no default is unset, not ready", () => {
@@ -249,7 +249,7 @@ test("project configuration that is not applied leads as a blocker and stays on 
 	ok(actionLine(rows(launchpad, 120)).startsWith(`‖ ${reminder}`), "the reminder outranks the context guidance");
 	launchpad.collapseToSessionHeader();
 	const header = rows(launchpad, 120)[0] ?? "";
-	ok(/▐P▌ PanCode \d/u.test(header) && header.includes(reminder), header);
+	ok(/▐∀▌ PanCode \d/u.test(header) && header.includes(reminder), header);
 	// Narrow, the reminder outlasts the product name.
 	const narrow = rows(launchpad, 56)[0] ?? "";
 	ok(narrow.includes(reminder) && !narrow.includes("PanCode"), narrow);
@@ -277,7 +277,7 @@ test("stale project context offers refresh", () => {
 test("the welcome action never advertises a submit binding", () => {
 	const actions = ["Enter", "Ctrl+S", null].map((submitKey) => actionLine(rows(banner({ submitKey }), 80)));
 	strictEqual(new Set(actions).size, 1);
-	ok(rows(banner({ submitKey: null }), 80).some((line) => line.startsWith(`▐P▌ PanCode ${readPancodeVersion()}`)));
+	ok(rows(banner({ submitKey: null }), 80).some((line) => line.startsWith(`▐∀▌ PanCode ${readPancodeVersion()}`)));
 	ok(!actions[0]?.includes("to send"), actions[0]);
 });
 
@@ -430,11 +430,11 @@ test("the session header keeps the brand mark and version at narrow widths witho
 	component.collapseToSessionHeader();
 	for (const width of [20, 30, 40]) {
 		const line = rows(component, width)[0] ?? "";
-		ok(line.includes("▐P▌") && /\d+\.\d+\.\d+/u.test(line), `identity lost at ${width} columns: ${line}`);
+		ok(line.includes("▐∀▌") && /\d+\.\d+\.\d+/u.test(line), `identity lost at ${width} columns: ${line}`);
 		ok(!line.includes("dynamo"), `route duplicated at ${width} columns: ${line}`);
 	}
 	const wide = rows(component, 120)[0] ?? "";
-	match(wide, /^▐P▌ PanCode \d+\.\d+\.\d+(?:-(?:dev · source|rc\.\d+))?\s*$/u);
+	match(wide, /^▐∀▌ PanCode \d+\.\d+\.\d+(?:-(?:dev · source|rc\.\d+))?\s*$/u);
 });
 
 test("the collapsed header drops readiness, latency, route and onboarding", () => {
@@ -444,7 +444,7 @@ test("the collapsed header drops readiness, latency, route and onboarding", () =
 	for (const forbidden of ["✓", "✗", "◌", "describe a task", "/context init", "to send", "/ for commands", "dynamo"]) {
 		ok(!line.includes(forbidden), `collapsed header still shows ${forbidden}: ${line}`);
 	}
-	ok(/▐P▌ PanCode \d/u.test(line), line);
+	ok(/▐∀▌ PanCode \d/u.test(line), line);
 });
 
 test("the session header leaves workspace and route facts to the footer", () => {
@@ -453,7 +453,7 @@ test("the session header leaves workspace and route facts to the footer", () => 
 	});
 	component.collapseToSessionHeader();
 	const masthead = rows(component, 100)[0] ?? "";
-	ok(/▐P▌ PanCode \d/u.test(masthead), masthead);
+	ok(/▐∀▌ PanCode \d/u.test(masthead), masthead);
 	ok(!masthead.includes("dynamo"), masthead);
 	ok(!masthead.includes("project-leaf"), masthead);
 	ok(!masthead.includes("an-extremely-long-branch-name"), masthead);
@@ -980,7 +980,7 @@ test("a boot-time resume opens collapsed, with no fresh-start onboarding", () =>
 	const lines = headerRows(built);
 	strictEqual(lines.length, 1, "a resumed boot showed the launchpad");
 	ok(!lines[0]?.includes("describe a task"), lines[0]);
-	ok(/▐P▌ PanCode \d/u.test(lines[0] ?? ""), lines[0]);
+	ok(/▐∀▌ PanCode \d/u.test(lines[0] ?? ""), lines[0]);
 });
 
 test("the presentation's welcome action leaves submit bindings to the composer", () => {
@@ -1043,13 +1043,13 @@ for (const width of [40, 44, 60, 92, 120]) {
 					const rail = stripTerminalSequences(composer[0] ?? "");
 					strictEqual(rail, "━".repeat(width), "composer rail stays free of model identity");
 					const footer = footerRows(width).map(stripTerminalSequences).join("\n");
-					// The status bar has 1-cell side padding, starts with ▐P▌, and ends with the model id.
+					// The status bar has 1-cell side padding, starts with ▐∀▌, and ends with the model id.
 					const status = (footer.split("\n")[0] ?? "").trim();
-					ok(status.startsWith("▐P▌"), status);
+					ok(status.startsWith("▐∀▌"), status);
 					ok(status.endsWith(`${family}-27b-q6`), status);
 					if (width >= 112) ok(status.includes(`blade-gateway · ${model}`), status);
 					const session = headerRows(built, 120)[0] ?? "";
-					ok(/▐P▌ PanCode \d/u.test(session) && !session.includes(model), session);
+					ok(/▐∀▌ PanCode \d/u.test(session) && !session.includes(model), session);
 					identities.push(built.harnessFacts.modelIdentity().modelId ?? "");
 				}
 			}
@@ -1089,7 +1089,7 @@ test("the composer rail and session header stay clean while the footer retains t
 		const footer = built.footer.view.render(60).map(stripTerminalSequences).join("\n");
 		ok((footer.split("\n")[0] ?? "").trim().endsWith("q4_k_m"), footer);
 		const session = headerRows(built, 120)[0] ?? "";
-		ok(/▐P▌ PanCode \d/u.test(session) && !session.includes(model), session);
+		ok(/▐∀▌ PanCode \d/u.test(session) && !session.includes(model), session);
 	} finally {
 		built.dispose();
 	}
@@ -1104,10 +1104,10 @@ test("the welcome keeps a calm non-duplicated launchpad and minimal session head
 	ok(wide.join("\n").includes("████"));
 	for (const label of ["health", "sandbox", "awareness", "PANCODE.md"]) ok(wide.join("\n").includes(label), label);
 	ok(!wide.join("\n").includes(model), "raw model id stays on the status line");
-	ok(wide.some((line) => line.includes(`▐P▌ PanCode ${readPancodeVersion()}`)));
+	ok(wide.some((line) => line.includes(`▐∀▌ PanCode ${readPancodeVersion()}`)));
 	component.collapseToSessionHeader();
 	strictEqual(rows(component, 120).length, 1);
-	ok(/▐P▌ PanCode \d/u.test(rows(component, 120)[0] ?? ""));
+	ok(/▐∀▌ PanCode \d/u.test(rows(component, 120)[0] ?? ""));
 	ok(!rows(component, 120)[0]?.includes(model));
 	ok(!rows(component, 120).join("\n").includes("Instructions"));
 });
@@ -1201,7 +1201,7 @@ test("first boot stacks PAN over CODE beside the facts at every tier, with no se
 			strictEqual(lines.length, 11, `${outputStyle}@${width}`);
 			for (const index of [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]) ok(lines[index]?.includes("██"), `${outputStyle}@${width}`);
 			ok(
-				lines.some((line) => /██.* {3}▐P▌ PanCode 0\.9\.0/u.test(line)),
+				lines.some((line) => /██.* {3}▐∀▌ PanCode 0\.9\.0/u.test(line)),
 				lines.join("\n"),
 			);
 			ok(!lines.join("\n").includes(">_C"));
@@ -1215,14 +1215,14 @@ test("the narrow launchpad sets the compact letters on one band above the facts,
 		const lines = rows(banner(), width);
 		for (const line of lines) ok(visibleWidth(line) <= width, `${width}: ${line}`);
 		if (width < 57) {
-			ok(lines[0]?.startsWith("▐P▌ PanCode"), `${width}: ${lines[0]}`);
+			ok(lines[0]?.startsWith("▐∀▌ PanCode"), `${width}: ${lines[0]}`);
 			ok(!lines.some((line) => line.includes("██")), `${width}: ${lines.join("\n")}`);
 		} else {
 			// PAN and CODE share each art row, so the band is five rows, not eleven.
-			ok(lines[0]?.includes("████   ███  ██  █    ████  ███  ████  █████"), `${width}: ${lines[0]}`);
-			ok(lines[4]?.includes("██    ██ ██ ██  █    ████  ███  ████  █████"), `${width}: ${lines[4]}`);
+			ok(lines[0]?.includes("████  ██ ██ ██  █    ████  ███  ████  █████"), `${width}: ${lines[0]}`);
+			ok(lines[4]?.includes("██     ███  ██  █    ████  ███  ████  █████"), `${width}: ${lines[4]}`);
 			strictEqual(lines[5], "", `${width}: the band stands apart from the facts`);
-			ok(lines[6]?.startsWith(`▐P▌ PanCode ${readPancodeVersion()}`), `${width}: ${lines[6]}`);
+			ok(lines[6]?.startsWith(`▐∀▌ PanCode ${readPancodeVersion()}`), `${width}: ${lines[6]}`);
 			ok(lines[7]?.trim().startsWith("health"));
 		}
 	}

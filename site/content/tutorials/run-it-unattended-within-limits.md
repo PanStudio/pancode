@@ -9,7 +9,7 @@ A headless run has no one to ask: it denies whatever the safety judge does not a
 - A Git repository, and a task you can state completely in one prompt.
 :::
 
-::: steps
+::: steps Hand it work and walk away
 ### Put your decisions in the prompt
 
 The judge reads only your prompt in a headless run, so name the actions the job needs:

@@ -75,6 +75,10 @@ export function dispatchPlanHeadline(plan: DispatchPlanHeadlineFacts): string {
 	}
 }
 
+/** The effect row of a command PanCode cannot read, on the terminal and the GUI card alike. */
+export const UNREAD_COMMAND_EFFECT =
+	"PanCode cannot tell what this command changes. Read the command before you allow it.";
+
 /** Each decision tier's label, as the card's identity and the ACP `tierLabel` carry it. */
 export const DECISION_TIER_LABELS = {
 	conversation: "Conversational answer",

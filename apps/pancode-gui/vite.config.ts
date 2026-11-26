@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { readMarkCuts } from "./client/shell/mark-cuts.js";
 import { stagedClient } from "./scripts/staged-client.js";
 
 // The bundle carries the PanCode version it was built from, which /api/meta's `pancode` reads from the same file, so
@@ -11,11 +12,26 @@ import { stagedClient } from "./scripts/staged-client.js";
 const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
 	version: string;
 };
-// The canonical mark, read once per build so the GUI draws the exact paths of assets/brand without copying them.
-const mark = readFileSync(new URL("../../assets/brand/pancode-mark.svg", import.meta.url), "utf8");
+// The canonical mark's three cuts, read and checked once per build so the GUI draws the exact paths of assets/brand
+// without copying them: the full cut, its light-ground colours, and the flat cut for 24 px and below.
+const brand = (file: string) => ({
+	file,
+	svg: readFileSync(new URL(`../../assets/brand/${file}.svg`, import.meta.url), "utf8"),
+});
+const markCuts = readMarkCuts(brand("pancode-mark"), brand("pancode-mark-light"), brand("pancode-mark-small"));
+// The display name for the opening stage, drawn as an image so its outlines and the for-all sign stay the artwork's.
+const svgImage = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+const displayName = {
+	dark: svgImage(brand("pancode-display").svg),
+	light: svgImage(brand("pancode-display-light").svg),
+};
 
 export default defineConfig({
-	define: { __PANCODE_BUNDLE_VERSION__: JSON.stringify(version), __PANCODE_MARK_SVG__: JSON.stringify(mark) },
+	define: {
+		__PANCODE_BUNDLE_VERSION__: JSON.stringify(version),
+		__PANCODE_MARK_CUTS__: JSON.stringify(markCuts),
+		__PANCODE_DISPLAY_NAME__: JSON.stringify(displayName),
+	},
 	logLevel: process.env.PANCODE_BUILD_VERBOSE === "1" ? "info" : "warn",
 	root: fileURLToPath(new URL("./client", import.meta.url)),
 	plugins: [react(), stagedClient(fileURLToPath(new URL("./dist/client", import.meta.url)))],

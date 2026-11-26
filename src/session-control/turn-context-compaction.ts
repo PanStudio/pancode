@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import type { ContextOperationFact } from "../core/context-operation.js";
 import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/context-operation.js";
+import { formatCount } from "../core/format-time.js";
 import { isHostPolicyMessage } from "../core/host-policy-message.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
 import type { ContextActivityPhase, ContextActivityStatus } from "../core/telemetry/live-events.js";
@@ -33,7 +34,7 @@ import { findLastEntry } from "../domains/session/tree/active-path.js";
 import { compactEngineCodex, engineInitialSystemPrompt } from "../engine/agent.js";
 import { prepareInPrefixSummary } from "../engine/in-prefix-summary.js";
 import { HOST_STATUS_NOTICE_KEY } from "./chat-loop-messages.js";
-import { CONTEXT_STATUS_NOTICE_KEY, footerTokens, renderCompactionSummaryLine } from "./compaction-lines.js";
+import { CONTEXT_STATUS_NOTICE_KEY, renderCompactionSummaryLine } from "./compaction-lines.js";
 import { createContextFold, type FoldDecision, foldCheckpointFor, ledgerHoldsCheckpoint } from "./context-fold.js";
 import type { ContinuityReductionHooks } from "./continuity-controller.js";
 import { buildModelReplayAgentMessagesFromTurns, continuityContextFromSession } from "./model-session-replay.js";
@@ -782,7 +783,7 @@ export function createTurnContextCompaction(shared: TurnContextScope) {
 							// Nothing is measurable while the summarizer reads, so the rail
 							// stays indeterminate and says what it is waiting for.
 							summaryReportedAt = 0;
-							emitCompactionActivity("running", `reading ${footerTokens(footerTokensBefore)} tokens of history`, "summarize", {
+							emitCompactionActivity("running", `reading ${formatCount(footerTokensBefore)} tokens of history`, "summarize", {
 								unit: "tokens",
 							});
 						},
@@ -794,7 +795,7 @@ export function createTurnContextCompaction(shared: TurnContextScope) {
 							summaryReportedAt = now;
 							emitCompactionActivity(
 								"running",
-								`summarizing ${footerTokens(footerTokensBefore)} tokens of history`,
+								`summarizing ${formatCount(footerTokensBefore)} tokens of history`,
 								"summarize",
 								{ current: tokens, ...(limit !== undefined ? { total: limit } : {}), unit: "tokens" },
 							);
@@ -906,8 +907,9 @@ export function createTurnContextCompaction(shared: TurnContextScope) {
 			sessionId: originSession,
 		});
 		decision.committed({ tokensBefore, tokensAfter });
-		// The reducer reports selected ledger rows, not just message rows.
-		compactionFacts.push({ kind: "summarized", unit: "entries", count: result.messagesSummarized });
+		// The card states the notice's count in conversation messages; ledger entries also hold tool-call rows and
+		// bookkeeping, so an entry count disagreed with the notice beside it.
+		compactionFacts.push({ kind: "summarized", unit: "messages", count: result.conversationMessagesSummarized });
 		compactionTokens = { before: tokensBefore, after: tokensAfter, basis: "runtime-estimate" };
 		emitCompactionActivity("completed", "context compaction complete");
 		shared.autoCompactFailures = 0;
@@ -962,7 +964,7 @@ export function createTurnContextCompaction(shared: TurnContextScope) {
 					// A stop is the operator's own choice, not a fault, and what it left behind is the fact they need.
 					// The card is the one place a stop is reported, so it carries the size the context stayed at.
 					const view = budgetProducer.current();
-					const at = view?.inputTokens != null ? ` at ${footerTokens(view.inputTokens)} tokens` : " as it was";
+					const at = view?.inputTokens != null ? ` at ${formatCount(view.inputTokens)} tokens` : " as it was";
 					const conclusion =
 						outcome === "cancelled"
 							? compactionFacts.length === 0

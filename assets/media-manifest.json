@@ -43,8 +43,8 @@
 		{
 			"id": "gui-icon-192",
 			"source": "assets/pancode-app-icon-192.png",
-			"sha256": "75f8069c1a51359cd05b4271178a0f8e2e4348eb904cb206165972cb78eb8a24",
-			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
+			"sha256": "77186db0b7965fff669966f55d299ab1b9674eb15753a26ff05b4f4339079b8b",
+			"provenance": "Canonical PanCode mark from site/export-brand.mjs at 80% of the canvas on the palette black, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 192,
 				"height": 192
@@ -53,7 +53,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode application icon.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/icon-192.png"
@@ -62,8 +62,8 @@
 		{
 			"id": "gui-icon-512",
 			"source": "assets/pancode-app-icon-512.png",
-			"sha256": "602b9e1733530a17465b804b3533d5d2a8ea936e2417ee58ff11478df6e625b9",
-			"provenance": "Canonical PanCode mark; square safe-area projection from site/export-brand.mjs, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
+			"sha256": "354778f2100c6e5d86f4744d6729e369e2372ad8f3c228ad363ff94dd80044bc",
+			"provenance": "Canonical PanCode mark from site/export-brand.mjs at 80% of the canvas on the palette black, unchanged geometry, then palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing.",
 			"dimensions": {
 				"width": 512,
 				"height": 512
@@ -72,7 +72,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode application icon.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/icon-512.png"
@@ -238,7 +238,7 @@
 		{
 			"id": "gui-pancode-mark",
 			"source": "assets/pancode-mark-gui.webp",
-			"sha256": "04178ba7216c33883d5fd4682516d323b71c102f953cc340b1eed5145827cd73",
+			"sha256": "73597b4374627c7e0fba52d46e1dc1227835d9c30940c0676c911eeadfb4e9d7",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 128,
@@ -248,7 +248,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/pancode-logo.webp"
@@ -257,7 +257,7 @@
 		{
 			"id": "gui-favicon",
 			"source": "assets/pancode-app-favicon.png",
-			"sha256": "fd8820d2705467acc5b088869c13e95ee7665bfba89af65a210832bc623e439f",
+			"sha256": "2a0c2bdbb86356a286d69c2ce899a6476bfcf03a0287055b2bebe4322ee27b93",
 			"provenance": "Canonical PanCode mark exported from site/export-brand.mjs; palette-quantized with pngquant 2.18.0 (quality 90-100) after resizing; original provenance and derived hashes in the GUI brand/provenance.json.",
 			"dimensions": {
 				"width": 32,
@@ -267,7 +267,7 @@
 			"channels": [
 				"gui"
 			],
-			"altTextSeed": "PanCode mark: the P of the wordmark in the brand green on a black tile.",
+			"altTextSeed": "PanCode mark: four facets of one stone, with the for-all sign as the channel between them.",
 			"representation": "brand-artwork",
 			"copies": [
 				"apps/pancode-gui/client/public/favicon.png"
@@ -501,8 +501,8 @@
 			"id": "social-link-dark",
 			"template": "site/cards/link.html",
 			"output": "site/assets/social-card.png",
-			"sourceSha256": "48ee86cec564cc727b81061a25ec74ac54adf853239c177c2048b0313a6b3144",
-			"sha256": "1e70696e0592264fca72dce5b7aeb77598977c1092493311eeb0443304ad4b66",
+			"sourceSha256": "1a329080d3ab979420c1221f2ad21603d18a559db21686dedc57b50c0a75df53",
+			"sha256": "23bbc8e77bc548a3a167403b573f43078489a9c5ec3b7b709764bf1a8b546016",
 			"sources": [
 				"site/cards/link.html",
 				"site/css/cards.css",
@@ -532,8 +532,8 @@
 			"id": "social-link-light",
 			"template": "site/cards/link-light.html",
 			"output": "site/assets/social-card-light.png",
-			"sourceSha256": "3aae7ab38cc29ea54ec997570307e46c9c1f717a76ad8be65bd43c47cd5106d0",
-			"sha256": "c65c6a7eeda92a97bfaee0586e352da03df65ab11415948960f614c3fcab54f7",
+			"sourceSha256": "97b6c5647bc58dd3f74ad3399b66086b88238f2b76d53fad33d93ac5c5efbc5f",
+			"sha256": "2b994f96aacd83084f2260a7a397800aa040c3699bac52a5c263f32588c837a5",
 			"sources": [
 				"site/cards/link-light.html",
 				"site/css/cards.css",
@@ -563,8 +563,8 @@
 			"id": "social-square-dark",
 			"template": "site/cards/square.html",
 			"output": "site/assets/social-square.png",
-			"sourceSha256": "aa756f4d5214af04abc273cc8c597a8de83881b98dd5afabb2e0f862f40070a9",
-			"sha256": "3611e47d0213973cb28322efe1d65792d045dd4e74ab30a7239ac56f772b6128",
+			"sourceSha256": "bbce11af741adf989b9faa55886739488912fd98be3654cf71cff1b5996742be",
+			"sha256": "6ebe4cc59ea1b887e19a6254034f0ee358efe1ad06f3003a3659b7a9af843ccb",
 			"sources": [
 				"site/cards/square.html",
 				"site/css/cards.css",
@@ -594,8 +594,8 @@
 			"id": "social-square-light",
 			"template": "site/cards/square-light.html",
 			"output": "site/assets/social-square-light.png",
-			"sourceSha256": "6fda4cc2a53f76ff3aaee84797af2a6bb6d0e354b13bb67cb375224312e4a773",
-			"sha256": "2c88cdb96d31f12648d80c0ade6286e2503b10e14dc7c86849e44f66a01d66f9",
+			"sourceSha256": "d1caa687178ebb4d8c2014d2af761937e7a2a601db3db7d0d673cb0190d38fb5",
+			"sha256": "8f97ae9addc3d43b83b0b66d677949e1fe7679d62fff0b4dec7698ba027ffb2e",
 			"sources": [
 				"site/cards/square-light.html",
 				"site/css/cards.css",

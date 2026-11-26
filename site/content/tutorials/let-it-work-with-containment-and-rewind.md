@@ -11,7 +11,7 @@ The sandbox needs bubblewrap on Linux; on macOS it uses an experimental `sandbox
 - A Git repository you can experiment in, with a clean working tree.
 :::
 
-::: steps
+::: steps Contain, run and undo a task
 ### Check what this host can contain
 
 ```sh

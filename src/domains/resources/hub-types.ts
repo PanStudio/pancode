@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-/** PanHub distributes packs; kind describes the pack's public contents. */
-export type HubEntryKind = "skill" | "agent" | "prompt" | "playbook" | "plugin" | "extension";
+/**
+ * PanHub distributes packs; kind describes the pack's public contents. A
+ * `server` pack is one PanKit tool server; the seven PanCode carries are built
+ * in and have no installed copy.
+ */
+export type HubEntryKind = "skill" | "agent" | "prompt" | "playbook" | "plugin" | "extension" | "server";
 export type HubRequirementRef = `${HubEntryKind}:${string}`;
 
 /** Existing plugin-backed package formats. A standalone extension has its own manifest and writer. */
-export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension">[] = [
+export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension" | "server">[] = [
 	"plugin",
 	"skill",
 	"agent",
@@ -16,12 +20,13 @@ export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension">[] = [
 export function isHubKind(value: unknown): value is HubEntryKind {
 	return (
 		value === "extension" ||
-		(typeof value === "string" && HUB_KINDS.includes(value as Exclude<HubEntryKind, "extension">))
+		value === "server" ||
+		(typeof value === "string" && HUB_KINDS.includes(value as Exclude<HubEntryKind, "extension" | "server">))
 	);
 }
 
-/** The four component kinds. A plugin owns components; it is never a fifth invocable kind. */
-export type HubComponentKind = Exclude<HubEntryKind, "plugin" | "extension">;
+/** The four component kinds. A plugin owns components; it is never a fifth invocable kind, and a server is a pack of tools. */
+export type HubComponentKind = Exclude<HubEntryKind, "plugin" | "extension" | "server">;
 
 export const HUB_COMPONENT_KINDS: readonly HubComponentKind[] = ["skill", "agent", "prompt", "playbook"];
 

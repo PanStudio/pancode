@@ -86,7 +86,7 @@ test("ASCII glyph selection is startup-wide and keeps decision marks, frames, an
 		match(stripTerminalSequences(output.rail), /^-+$/u);
 		strictEqual(output.glyphs.rail, "|");
 		strictEqual(output.welcome.length, 1);
-		match(stripTerminalSequences(output.welcome[0] ?? ""), /^\[P\] PanCode \d/u);
+		match(stripTerminalSequences(output.welcome[0] ?? ""), /^\[V\] PanCode \d/u);
 		match(output.tip, /^Try \/run to dispatch parallel workers$/u);
 		ok(output.capMap.length === 5);
 		ok(output.capMap.map(stripTerminalSequences).every((line) => /^[\x20-\x7e]+$/u.test(line)));
@@ -338,7 +338,7 @@ test("demo-off skips welcome-only readers and live toggles restore the full welc
 			ok(lines.every((line) => visibleWidth(line) <= width));
 		}
 		deepStrictEqual(reads, { context: 0, quota: 0, recipes: 0, keys: 0 });
-		match(stripTerminalSequences(header.render(180)[0] ?? ""), /^▐P▌ PanCode \d/u);
+		match(stripTerminalSequences(header.render(180)[0] ?? ""), /^▐∀▌ PanCode \d/u);
 		settings.interface.demo = true;
 		ok(header.render(180).length > 1);
 		ok(reads.context > 0 && reads.quota > 0);
@@ -578,7 +578,7 @@ test("startup and live tier changes share one bounded welcome policy", () => {
 						const lines = header.render(width);
 						const text = lines.map(stripTerminalSequences).join("\n");
 						ok(lines.every((line) => visibleWidth(line) <= width));
-						match(text, /▐P▌ PanCode/u);
+						match(text, /▐∀▌ PanCode/u);
 						if (!demo) {
 							strictEqual(lines.length, 1);
 							ok(!/██|\/help|awareness/u.test(text));

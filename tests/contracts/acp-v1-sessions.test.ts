@@ -1730,7 +1730,7 @@ test("a slash command's failure line crosses a prompt once, as reply text, not a
 	// bt-session-res J10: `/context compact` failed and the line went out as a notice chunk and again as the result.
 	// ACP-5: a line past the result's line bound is cut there, so the cut form must still match the whole notice line.
 	const failure =
-		"[/context compact] failed; context unchanged at 9.6K tokens. The summary call failed: Connection error.: bad port. /context compact tries again; /model picks another route to summarize on.";
+		"[/context compact] failed; context unchanged at 9.6k tokens. The summary call failed: Connection error.: bad port. /context compact tries again; /model picks another route to summarize on.";
 	const detail = `provider said: ${"upstream refused the request; ".repeat(60).trimEnd()}`;
 	let emit: (event: unknown) => void = () => {};
 	const commands: AcpCommandControl = {
@@ -1932,7 +1932,7 @@ test("ACP load replays the compaction row as the notice the live compaction sent
 		const frame = peer.updates[0] as { update: Record<string, unknown> };
 		deepStrictEqual(frame.update, {
 			sessionUpdate: "session_info_update",
-			_meta: { "pancode/notice": { level: "info", text: "PanCode compacted 8K → 4K tokens" } },
+			_meta: { "pancode/notice": { level: "info", text: "PanCode compacted 8.0k → 4.0k tokens" } },
 		});
 		strictEqual(
 			peer.updates.some(

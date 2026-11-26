@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { resolvePackageRoot } from "../../core/package-root.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { isRecord } from "../../core/type-guards.js";
 import { parseFrontmatter } from "../agents/frontmatter.js";
 import { parsePlaybook, resolvePlaybookReferences } from "../agents/playbook.js";
 import { recipeIdFromPath } from "../agents/recipe.js";
@@ -10,7 +12,7 @@ import { parseAgentRecipeSchema } from "../agents/recipe-schema.js";
 import { assertAgentSpecPolicy, normalizeAgentSpec } from "../agents/spec.js";
 import { loadManifestFromRoot } from "../extensions/index.js";
 import { pluginResourcePath } from "../plugins/discovery.js";
-import type { PluginCandidate } from "../plugins/types.js";
+import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
 import { readHubManifest } from "./hub-packages.js";
 import { resolvePackageReferences } from "./package-references.js";
 import { loadPromptTemplates, type PromptTemplateRoot } from "./prompts/loader.js";
@@ -78,6 +80,128 @@ export interface HubValidationOptions {
 	authoring?: { knownSkills: ReadonlySet<string> };
 }
 
+/** The servers of the PanKit policy manifest this PanCode ships, or why that file cannot serve as one. */
+function shippedKitServers(): Record<string, unknown>[] | string {
+	const file = path.join(resolvePackageRoot(), "packages", "kit", "servers.json");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(file, "utf8"));
+	} catch (err) {
+		return `the shipped PanKit policy ${file} cannot be read: ${err instanceof Error ? err.message : String(err)}`;
+	}
+	if (!isRecord(parsed) || parsed.version !== 1)
+		return `the shipped PanKit policy ${file} is not version 1 of the server manifest`;
+	if (!Array.isArray(parsed.servers) || !parsed.servers.every(isRecord))
+		return `the shipped PanKit policy ${file} has no list of server entries`;
+	return parsed.servers;
+}
+
+/**
+ * Whether `root` is the first-party pack of server `id` inside this PanCode
+ * package. Only that directory may supply a builtin-form pack to an index or an
+ * install; validation alone accepts any copy whose policy matches.
+ */
+export function isBundledServerPack(root: string, id: string): boolean {
+	try {
+		const bundled = bundledServerPackDir(id);
+		if (realpathSync(root) === realpathSync(bundled)) return true;
+		// A case-insensitive filesystem can keep the caller's spelling in the real path, so compare the directory itself.
+		const [a, b] = [statSync(root, { bigint: true }), statSync(bundled, { bigint: true })];
+		return a.isDirectory() && a.ino !== 0n && a.ino === b.ino && a.dev === b.dev;
+	} catch {
+		return false;
+	}
+}
+
+/** Where this PanCode package keeps the first-party pack of server `id`. */
+export function bundledServerPackDir(id: string): string {
+	return path.join(resolvePackageRoot(), "hub", "packs", "servers", id);
+}
+
+/** The facts of one server PanKit ships, as its policy manifest states them. */
+export interface ShippedServerPolicy {
+	version: string;
+	title: string;
+	tools: Array<{ name: string; actionClass: string }>;
+	environment: string[];
+}
+
+/**
+ * The shipped policy of server `id` when the pack at `root` holds exactly that entry in `server.json`, or why it
+ * does not. The facts come from the shipped manifest, so a changed copy is reported rather than described.
+ */
+export function shippedServerPolicy(root: string, id: string): ShippedServerPolicy | string {
+	const file = path.join(root, "server.json");
+	let entry: unknown;
+	try {
+		entry = JSON.parse(readFileSync(file, "utf8"));
+	} catch (err) {
+		return `${file} cannot be read: ${err instanceof Error ? err.message : String(err)}`;
+	}
+	const servers = shippedKitServers();
+	if (typeof servers === "string") return servers;
+	const shipped = servers.find((server) => server.id === id);
+	if (shipped === undefined) return `${id} is not a server PanKit ships`;
+	if (JSON.stringify(shipped) !== JSON.stringify(entry))
+		return `${file} differs from the ${id} entry of packages/kit/servers.json`;
+	const { version, title, tools, environment } = shipped;
+	if (
+		typeof version !== "string" ||
+		typeof title !== "string" ||
+		!Array.isArray(tools) ||
+		!tools.every((tool) => isRecord(tool) && typeof tool.name === "string" && typeof tool.actionClass === "string") ||
+		!Array.isArray(environment) ||
+		!environment.every((name) => typeof name === "string")
+	)
+		return `the ${id} entry of packages/kit/servers.json lacks a version, title, tools or environment`;
+	return {
+		version,
+		title,
+		tools: tools.map((tool) => ({ name: tool.name as string, actionClass: tool.actionClass as string })),
+		environment: environment as string[],
+	};
+}
+
+/**
+ * A builtin server pack holds `server.json`, one server's entry of the PanKit
+ * policy manifest. Only the servers PanCode ships have that form, so the file
+ * must equal the shipped entry of the same id.
+ */
+function validateServerPack(root: string, manifest: PluginManifest): HubComponentValidationRecord[] {
+	const file = path.join(root, "server.json");
+	const fail = (message: string): HubComponentValidationRecord[] => [
+		{
+			kind: "server",
+			name: manifest.name,
+			path: "server.json",
+			valid: false,
+			diagnostics: [{ severity: "error", code: "ERR_SERVER", message, path: file, kind: "server" }],
+		},
+	];
+	if (!existsSync(file)) return fail("a server pack holds its server in server.json");
+	if (existsSync(path.join(root, "mcp.json"))) return fail("a server pack holds server.json and no mcp.json");
+	let entry: unknown;
+	try {
+		entry = JSON.parse(readFileSync(file, "utf8"));
+	} catch (err) {
+		return fail(`server.json is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.title !== "string")
+		return fail("server.json is one server's entry of the PanKit policy manifest");
+	if (entry.id !== manifest.name) return fail(`server.json names ${entry.id}, not the pack name ${manifest.name}`);
+	if (entry.version !== manifest.version)
+		return fail(`server.json has version ${String(entry.version)}, not the pack version ${manifest.version}`);
+	const servers = shippedKitServers();
+	if (typeof servers === "string") return fail(servers);
+	const shipped = servers.find((server) => server.id === entry.id);
+	if (shipped === undefined) return fail(`${entry.id} is not a server PanKit ships; only those have a server.json`);
+	if (JSON.stringify(shipped) !== JSON.stringify(entry))
+		return fail(`server.json differs from the ${entry.id} entry of packages/kit/servers.json; run pnpm kit:manifest`);
+	return [
+		{ kind: "server", name: entry.id, path: "server.json", description: entry.title, valid: true, diagnostics: [] },
+	];
+}
+
 export function validateHubPackage(
 	packageRoot: string,
 	options: HubValidationOptions = {},
@@ -134,6 +258,12 @@ export function validateHubPackage(
 				diagnostics: [],
 			});
 	}
+
+	if (packageKind === "server")
+		for (const record of validateServerPack(resolved, manifest)) {
+			resources.push(record);
+			contentDiagnostics.push(...record.diagnostics);
+		}
 
 	// ---------------------------------------------------------------------------
 	// 1. Skills

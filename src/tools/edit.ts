@@ -13,7 +13,7 @@ import {
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.js";
-import { publishFileAtomically, withFileMutationQueue } from "./file-mutation-queue.js";
+import { PublishError, publishFileAtomically, withFileMutationQueue } from "./file-mutation-queue.js";
 import { harnessRecipeWriteNote } from "./harness-note.js";
 import { resolveMutationTarget } from "./path-utils.js";
 import { hookLandingRefusal, publishTargetAdmission } from "./tool-landing.js";
@@ -255,7 +255,7 @@ export const editTool: ToolSpec = {
 				physical,
 			);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = err instanceof PublishError ? err.detail : err instanceof Error ? err.message : String(err);
 			const code = (err as NodeJS.ErrnoException | undefined)?.code;
 			if (code === "ENOENT") {
 				return {

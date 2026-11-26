@@ -1,0 +1,17 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "darshan",
+	"version": "0.1.0",
+	"description": "What one Darshan log says about a job's I/O, through darshan-parser.",
+	"license": "LicenseRef-PanCode-1.0",
+	"author": {
+		"name": "PanCode"
+	},
+	"repository": "https://github.com/akougkas/pancode",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "server"
+		}
+	}
+}

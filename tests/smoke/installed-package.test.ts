@@ -471,7 +471,7 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 		"IBM-Plex-Mono-OFL.txt",
 	])
 		ok(existsSync(join(guiDist, "client", "fonts", name)), `installed brand font/resource ${name}`);
-	for (const name of ["favicon.png", "icon-192.png", "icon-512.png", "brand/provenance.json"])
+	for (const name of ["favicon.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "brand/provenance.json"])
 		ok(existsSync(join(guiDist, "client", name)), `installed brand resource ${name}`);
 
 	// The checkout's tsx loader must be unreachable from inside the install: a
@@ -700,6 +700,7 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 			["/favicon.png", /^image\/png$/u],
 			["/icon-192.png", /^image\/png$/u],
 			["/icon-512.png", /^image\/png$/u],
+			["/icon-maskable-512.png", /^image\/png$/u],
 		];
 		for (const [path, type] of assets) {
 			const response = await request(path);
@@ -715,7 +716,7 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 		deepStrictEqual(
 			// Each icon carries a content-hash query so an updated icon replaces the cached one.
 			manifest.icons.map((icon) => icon.src.replace(/\?v=[0-9a-f]+$/u, "")),
-			["/icon-192.png", "/icon-512.png"],
+			["/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"],
 		);
 	} finally {
 		const exit = await service.close();
@@ -1168,7 +1169,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				authored.entries.map((entry) => `${entry.kind}:${entry.name}`).sort(),
 				"the installed marketplace must expose every bundled package",
 			);
-			strictEqual(authored.entries.length, 44, "catalog contains 39 bundled packages and five remote packages");
+			strictEqual(authored.entries.length, 52, "catalog contains 47 bundled packages and five remote packages");
 
 			const standaloneSkill = authored.entries.find((entry) => entry.kind === "skill");
 			ok(standaloneSkill);

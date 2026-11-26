@@ -10,7 +10,7 @@ The output contract is schema version 2, and `pancode schema run-result` prints 
 - `jq`, to read the result.
 :::
 
-::: steps
+::: steps Build the job step by step
 ### Preview the run without calling a model
 
 `--dry-run` prints what the run would do and exits 0. It opens no session, calls no model, and runs no check.

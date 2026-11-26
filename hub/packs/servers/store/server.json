@@ -1,0 +1,221 @@
+{
+	"id": "store",
+	"version": "0.1.0",
+	"title": "Project store",
+	"environment": [],
+	"tools": [
+		{
+			"name": "store_get",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"tag": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._/-]+$",
+						"minLength": 1,
+						"maxLength": 200,
+						"description": "A tag name: letters, digits, '.', '_', '-' and '/', at most 200 bytes, no empty, '.' or '..' segment and no segment starting with '.'."
+					},
+					"blob": {
+						"type": "string",
+						"pattern": "^[\\x20-\\x22\\x24-\\x5b\\x5d-\\x7e]+$",
+						"minLength": 1,
+						"maxLength": 480,
+						"description": "A blob name inside the tag: printable ASCII other than '#' and '\\', at most 480 bytes, no empty, '.' or '..' segment."
+					}
+				},
+				"required": ["tag", "blob"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "store_history",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"tag": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._/-]+$",
+						"minLength": 1,
+						"maxLength": 200,
+						"description": "A tag name: letters, digits, '.', '_', '-' and '/', at most 200 bytes, no empty, '.' or '..' segment and no segment starting with '.'."
+					},
+					"blob": {
+						"type": "string",
+						"pattern": "^[\\x20-\\x22\\x24-\\x5b\\x5d-\\x7e]+$",
+						"minLength": 1,
+						"maxLength": 480,
+						"description": "A blob name inside the tag: printable ASCII other than '#' and '\\', at most 480 bytes, no empty, '.' or '..' segment."
+					}
+				},
+				"required": ["tag"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "store_list",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"tag": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._/-]+$",
+						"minLength": 1,
+						"maxLength": 200,
+						"description": "A tag name: letters, digits, '.', '_', '-' and '/', at most 200 bytes, no empty, '.' or '..' segment and no segment starting with '.'."
+					},
+					"prefix": {
+						"type": "string",
+						"pattern": "^[\\x20-\\x22\\x24-\\x5b\\x5d-\\x7e]+$",
+						"minLength": 1,
+						"maxLength": 480,
+						"description": "Only blobs whose name starts with this literal text (printable ASCII other than '#' and '\\')."
+					}
+				},
+				"required": ["tag"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "store_note",
+			"actionClass": "execute",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"tag": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._/-]+$",
+						"minLength": 1,
+						"maxLength": 200,
+						"description": "A tag name: letters, digits, '.', '_', '-' and '/', at most 200 bytes, no empty, '.' or '..' segment and no segment starting with '.'."
+					},
+					"blob": {
+						"type": "string",
+						"pattern": "^[\\x20-\\x22\\x24-\\x5b\\x5d-\\x7e]+$",
+						"minLength": 1,
+						"maxLength": 480,
+						"description": "A blob name inside the tag: printable ASCII other than '#' and '\\', at most 480 bytes, no empty, '.' or '..' segment."
+					},
+					"note": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096,
+						"description": "The note."
+					}
+				},
+				"required": ["tag", "blob", "note"]
+			},
+			"annotations": {
+				"readOnlyHint": false,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "store_put",
+			"actionClass": "execute",
+			"pathArguments": {
+				"source": "read"
+			},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"tag": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._/-]+$",
+						"minLength": 1,
+						"maxLength": 200,
+						"description": "A tag name: letters, digits, '.', '_', '-' and '/', at most 200 bytes, no empty, '.' or '..' segment and no segment starting with '.'."
+					},
+					"source": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096,
+						"description": "The file to store; a relative path resolves from the server's working directory."
+					},
+					"blob": {
+						"type": "string",
+						"pattern": "^[\\x20-\\x22\\x24-\\x5b\\x5d-\\x7e]+$",
+						"minLength": 1,
+						"maxLength": 480,
+						"description": "A blob name inside the tag: printable ASCII other than '#' and '\\', at most 480 bytes, no empty, '.' or '..' segment."
+					},
+					"note": {
+						"type": "string",
+						"maxLength": 4096,
+						"description": "A note kept in the put's record."
+					}
+				},
+				"required": ["tag", "source"]
+			},
+			"annotations": {
+				"readOnlyHint": false,
+				"destructiveHint": false,
+				"idempotentHint": false
+			}
+		},
+		{
+			"name": "store_stat",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"tag": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._/-]+$",
+						"minLength": 1,
+						"maxLength": 200,
+						"description": "A tag name: letters, digits, '.', '_', '-' and '/', at most 200 bytes, no empty, '.' or '..' segment and no segment starting with '.'."
+					},
+					"blob": {
+						"type": "string",
+						"pattern": "^[\\x20-\\x22\\x24-\\x5b\\x5d-\\x7e]+$",
+						"minLength": 1,
+						"maxLength": 480,
+						"description": "A blob name inside the tag: printable ASCII other than '#' and '\\', at most 480 bytes, no empty, '.' or '..' segment."
+					}
+				},
+				"required": ["tag", "blob"]
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		},
+		{
+			"name": "store_tags",
+			"actionClass": "read",
+			"pathArguments": {},
+			"inputSchema": {
+				"type": "object",
+				"properties": {}
+			},
+			"annotations": {
+				"readOnlyHint": true,
+				"destructiveHint": false,
+				"idempotentHint": true
+			}
+		}
+	]
+}

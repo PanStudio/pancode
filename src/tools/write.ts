@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { ToolNames } from "../core/tool-names.js";
 import { DIFF_SKIPPED_NOTE } from "../core/views/diff-rows.js";
 import { type EditDiffResult, generateDiffString } from "./edit-diff.js";
-import { publishFileAtomically, withFileMutationQueue } from "./file-mutation-queue.js";
+import { PublishError, publishFileAtomically, withFileMutationQueue } from "./file-mutation-queue.js";
 import { harnessRecipeWriteNote } from "./harness-note.js";
 import { absolutePathMissingRoot, resolveMutationTarget } from "./path-utils.js";
 import { hookLandingRefusal, publishTargetAdmission } from "./tool-landing.js";
@@ -130,7 +130,7 @@ export const writeTool: ToolSpec = {
 				},
 			};
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = err instanceof PublishError ? err.detail : err instanceof Error ? err.message : String(err);
 			return { kind: "error", message: `write: Nothing was published. ${msg}` };
 		}
 	},
