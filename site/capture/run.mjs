@@ -272,11 +272,15 @@ function writeCopilotHome(home, scenario) {
 	);
 }
 
-function seedRepo(path, name, scenario) {
+// A fixture starts from a site archive, from another fixture's tree (`base`), or
+// from nothing but its own `files`; edits and files then apply on top.
+function fixtureTree(path, name) {
 	const fixture = JSON.parse(readFileSync(join(here, "fixtures", `${name}.json`), "utf8"));
-	rmSync(path, { recursive: true, force: true });
-	run("unzip", ["-q", "-o", join(site, fixture.archive), "-d", dirname(path)]);
-	if (fixture.root !== basename(path)) run("mv", [join(dirname(path), fixture.root), path]);
+	if (fixture.base) fixtureTree(path, fixture.base);
+	else if (fixture.archive) {
+		run("unzip", ["-q", "-o", join(site, fixture.archive), "-d", dirname(path)]);
+		if (fixture.root !== basename(path)) run("mv", [join(dirname(path), fixture.root), path]);
+	} else mkdirSync(path, { recursive: true });
 	for (const edit of fixture.edits ?? []) {
 		const file = join(path, edit.file);
 		const text = readFileSync(file, "utf8");
@@ -287,6 +291,12 @@ function seedRepo(path, name, scenario) {
 		mkdirSync(dirname(join(path, file)), { recursive: true });
 		writeFileSync(join(path, file), text);
 	}
+	return fixture;
+}
+
+function seedRepo(path, name, scenario) {
+	rmSync(path, { recursive: true, force: true });
+	const fixture = fixtureTree(path, name);
 	for (const command of fixture.run ?? []) runShell(command, { cwd: path, env: gitEnv() });
 	const env = {
 		...gitEnv(),
@@ -942,9 +952,11 @@ if (values.release) {
 function publish(scenario, outDir, entries) {
 	mkdirSync(join(site, "assets/casts"), { recursive: true });
 	if (!Object.keys(entries).length) return;
+	// Every published take ships its transcript, which quote-check reads for tutorial quotes;
+	// only a take with its own player capture ships the cast.
+	copyFileSync(join(outDir, `${scenario.id}.txt`), join(site, `assets/casts/${scenario.id}.txt`));
 	if (entries[scenario.id])
-		for (const ext of ["cast", "txt"])
-			copyFileSync(join(outDir, `${scenario.id}.${ext}`), join(site, `assets/casts/${scenario.id}.${ext}`));
+		copyFileSync(join(outDir, `${scenario.id}.cast`), join(site, `assets/casts/${scenario.id}.cast`));
 	const registry = JSON.parse(readFileSync(join(site, "content/captures.json"), "utf8"));
 	for (const [id, entry] of Object.entries(entries)) {
 		mkdirSync(dirname(join(site, entry.image)), { recursive: true });
@@ -977,12 +989,6 @@ function syncManifest(entry) {
 		changed = true;
 	}
 	if (!changed) return;
+	// The layout matches scripts/media-assets.py (json.dumps with a tab indent), the manifest's generator.
 	writeFileSync(path, `${JSON.stringify(manifest, null, "\t")}\n`);
-	formatJson(path);
-}
-
-// The manifest follows the repository's Biome layout, which JSON.stringify does
-// not reproduce for short arrays and objects.
-function formatJson(path) {
-	execFileSync(join(repo, "node_modules/.bin/biome"), ["format", "--write", path], { cwd: repo, stdio: "ignore" });
 }

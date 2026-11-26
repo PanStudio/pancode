@@ -1,0 +1,12 @@
+{
+	"description": "The bookshelf API with its pagination bug fixed, so every test passes; for takes that add a feature and run the test check.",
+	"base": "bookshelf-api",
+	"edits": [
+		{
+			"file": "src/paginate.ts",
+			"find": "Math.floor(",
+			"replace": "Math.ceil("
+		}
+	],
+	"commit": "Add the bookshelf API with paginated listing and tests"
+}

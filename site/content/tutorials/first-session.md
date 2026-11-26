@@ -32,13 +32,16 @@ Setup looks for a provider key in your environment, a stored sign-in and a local
 PanCode sends the model one short test request and saves only when it answers; a browser sign-in you complete is the exception. In the recording of `pancode configure` on a fresh profile, setup found the stored GitHub Copilot sign-in and recommended gpt-6-luna. Choosing it printed these lines:
 
 ```text
-◇  Testing copilot-sdk / gpt-6-luna ... answered in 1.7 s.
+◇  Testing copilot-sdk / gpt-6-luna ... answered in 3.2 s.
 ◇  target copilot-sdk saved, runtime copilot-sdk
 ◇  chat runs on copilot-sdk, model gpt-6-luna
 ◇  fleet default is copilot-sdk
 ◇  settings written to ~/.config/pancode/settings.yaml
 ◇  Saved. Chat and workers use this model. Change it any time with /model or /config.
 ```
+
+::: capture tui-configure-saved
+:::
 
 `pancode configure` runs setup again at any time. Its **Connect by endpoint** is the shortcut when you already know the URL. LM Studio commonly serves at `http://localhost:1234`; Ollama commonly serves at `http://localhost:11434`. The [connection guide](/docs/guide/configuration-and-targets.html) covers setup and credentials.
 

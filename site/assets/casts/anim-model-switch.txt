@@ -1,5 +1,5 @@
 Switching models in PanCode
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
@@ -7,8 +7,8 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /usage shows activity, accounts and model use.
 
 
 
@@ -32,7 +32,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
+  ∀  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
 
 == models
 
@@ -41,7 +41,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 
 
@@ -65,7 +65,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
   1–10 of 26 models · PgUp/PgDn page
   ✓ copilot · gpt-6-luna · healthy · in use, its connection's default · no sign-in needed
 ━━━━━━━━━━━━━━━━━ [type] filter · [Enter] use · [s] save · [Tab] focus/all · [*] fav · [Esc] close ━
-  P  default · calibration-lab · main │ ✓ ready                         ctx 272k · low · gpt-6-luna
+  ∀  default · calibration-lab · main │ ✓ ready                         ctx 272k · low · gpt-6-luna
 
 == sonnet
 
@@ -81,7 +81,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 
 
@@ -98,7 +98,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready              ctx 200k · low · claude-sonnet-5.5 · ?
+  ∀  default · calibration-lab · main │ ✓ ready              ctx 200k · low · claude-sonnet-5.5 · ?
 
 == gemini
 
@@ -114,7 +114,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 
 
@@ -131,7 +131,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                 ctx 200k · low · gemini-4-argon · ?
+  ∀  default · calibration-lab · main │ ✓ ready                 ctx 200k · low · gemini-4-argon · ?
 
 == back
 
@@ -147,7 +147,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 
 
@@ -164,4 +164,4 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?

@@ -1,0 +1,169 @@
+Tutorial cover stills
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
+
+== cli-report-preview
+
+~/projects/calibration-lab $ pancode report bug --title "footer flickers on resize" --body-file notes.txt --dry-run
+Public, posted from your gh account to github.com/akougkas/pancode; nothing sent yet
+
+----- title -----
+
+fix: footer flickers on resize
+
+----- body, exactly as it will be sent -----
+### What happened
+
+The footer flickers when I resize the terminal on host <host>, in <path>
+
+### Expected
+
+_No response_
+
+### Steps
+
+_No response_
+
+### What PanCode observed
+
+Nothing recorded.
+
+### Not known
+
+nothing listed
+
+### Environment
+
+- PanCode: 0.9.1
+- Platform: linux-x64
+- Node: 24.22
+- Install: npm
+- Surface: headless
+
+<details><summary>Report details</summary>
+
+```pancode-report
+v: 1
+id: rpt_01M8CHEQGH2Q980QGKX6S530DN
+kind: bug
+area: none
+surface: headless
+version: 0.9.1
+os: linux
+install: npm
+trigger: operator
+cause: none
+fingerprint: none
+links: none
+regression: no
+bundle: none
+consent: none
+credit: no
+```
+</details>
+
+Filed with `/report` from PanCode. The reporter reviewed this text before it was sent.
+----- end of body -----
+
+Masked by PanCode: 1 path, 1 host name. No secrets recognized.
+No diagnostic bundle is attached.
+
+Sending will, in this order:
+  1. search akougkas/pancode for an existing report of the same problem
+  2. post the text you reviewed as a public issue from your gh account
+dry run: nothing sent
+~/projects/calibration-lab $
+
+== cli-diffusion-mercury
+
+~/projects/calibration-lab $ pancode configure --id mercury --runtime inception --model mercury-3 --api-key-env INCEPTION_API_KEY
+
+saved target mercury (runtime=inception)
+  model      mercury-3
+  apiKeyEnv  INCEPTION_API_KEY
+  probe ok (7ms) 3 models
+
+settings written to /home/researcher/.config/pancode/settings.yaml
+warning: INCEPTION_API_KEY is not set in this shell; export it before using target mercury
+ok: target mercury saved
+~/projects/calibration-lab $ pancode models --offline --target mercury
+target   runtime    model        label                   source   caps     ctx   max    thinking
+mercury  inception  mercury-3    Inception: Mercury 3    default  CT----F  1.0M  131k   off
+mercury  inception  mercury-2    Inception: Mercury 2    cache    CT----F  260k  65.5k  off
+mercury  inception  mercury-2.5  Inception: Mercury 2.5  cache    CT----F  260k  65.5k  off
+
+mercury: cached list, not verified live
+~/projects/calibration-lab $
+
+== cli-local-runtimes
+
+~/projects/calibration-lab $ pancode configure --list | sed -n '/Local HTTP/,$p'
+Local HTTP:
+  anthropic-compat key-optional  targets=0
+    Generic Anthropic-compatible · models=listed once connected
+  openai-compat    key-optional  targets=0
+    Generic OpenAI-compatible · models=listed once connected
+  lemonade         key-optional  targets=0
+    Lemonade (OpenAI-compat) · models=listed once connected
+  litellm          key-optional  targets=0
+    LiteLLM gateway · models=listed once connected
+  llamacpp         key-optional  targets=0
+    llama.cpp · models=listed once connected
+  lmstudio         key-optional  targets=0
+    LM Studio · models=listed once connected
+  ollama           none          targets=0
+    Ollama (native) · models=listed once connected
+  sglang           key-optional  targets=0
+    SGLang · models=listed once connected
+  vllm             key-optional  targets=0
+    vLLM · models=listed once connected
+every registered runtime. run `pancode auth list` for the ones PanCode
+authenticates itself; the rest authenticate through their own tool (claude-cli,
+copilot login) or need no credential.
+~/projects/calibration-lab $
+
+== cli-flow-trust
+
+~/projects/calibration-lab $ pancode config trust safety
+{
+  "workspaceRoot": "/home/researcher/projects/calibration-lab",
+  "surface": "safety",
+  "files": [
+    {
+      "path": "/home/researcher/projects/calibration-lab/.pancode/safety.yaml",
+      "text": "version: 1\ninformationFlow:\n  targets:\n    local:\n      runtime: llamacpp\n      endpoint: http://127.0.0.1:8080/v1\n  recipients:\n    private-models: [\"target:local\"]\n  sources:\n    - id: secrets-local\n      paths: [secrets/]\n      recipients: [\"group:private-models\"]\n",
+      "hash": "9c1b6077e936b8cee258421473fb1c1bd3e49d60dbde442f58af0e61df69cb39"
+    }
+  ],
+  "contentHash": "a1b49590b2c1fb20ffc0519152cafcf1c11f38ca1ac3e97acedc83614c4d59c7",
+  "verdict": "untrusted"
+}
+Review the captured files above. Approve exactly these bytes with:
+pancode config trust safety --hash a1b49590b2c1fb20ffc0519152cafcf1c11f38ca1ac3e97acedc83614c4d59c7
+~/projects/calibration-lab $ pancode config trust safety --hash $(pancode config trust safety | grep -o '[0-9a-f]\{64\}' | tail -1)
+Project safety approved for /home/researcher/projects/calibration-lab at a1b49590b2c1fb20ffc0519152cafcf1c11f38ca1ac3e97acedc83614c4d59c7. Restart to reload settings and safety; reload extensions to register newly approved hooks.
+~/projects/calibration-lab $
+
+== cli-lab-import
+
+~/projects/calibration-lab $ pancode configure --import lab-pancode.yaml --yes
+Setup file lab-pancode.yaml will:
+Lab gateway, forwarded to port 4000. Ask #research-computing for a key; export it as LAB_API_KEY.
+
+  add target lab (openai-compat)
+    prompts go to http://localhost:4000/v1
+    model gpt-oss-120b; key from $LAB_API_KEY
+  chat uses lab / gpt-oss-120b
+  fleet uses lab / gpt-oss-120b
+Imported 1 target.
+  target lab reads its key from $LAB_API_KEY, which is not set in this shell.
+~/projects/calibration-lab $
+
+== cli-project-tighten
+
+~/projects/calibration-lab $ pancode config trust settings --hash $(pancode config trust settings | grep -o '[0-9a-f]\{64\}' | tail -1)
+Project settings approved for /home/researcher/projects/calibration-lab at 3f84f39f698e2a31d4880765a29c7c33ee7305cabeb6cf1d7af9fdd3aaaa324d. Restart to reload settings and safety; reload extensions to register newly approved hooks.
+~/projects/calibration-lab $ pancode config inspect | grep -E '^  (!|safety.limits.sessionCostUsd)'
+  ! settings project: /home/researcher/projects/calibration-lab/.pancode/settings.yaml: safety.autonomy: project autonomy may only tighten the level in user settings; project value ignored
+  ! settings project: /home/researcher/projects/calibration-lab/.pancode/settings.yaml: safety.limits.chatToolCallsPerTurn: a project may only tighten a limit from user settings; project value ignored
+  safety.limits.sessionCostUsd = 2  [project]
+~/projects/calibration-lab $
