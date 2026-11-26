@@ -21,12 +21,26 @@ const chrome = resolve(values.chrome ?? process.env.PANCODE_CHROME ?? "/usr/bin/
 if (!existsSync(chrome)) throw new Error(`Chrome was not found at ${chrome}; pass --chrome <path>.`);
 const { chromium } = createRequire(join(root, "apps/pancode-gui/package.json"))("playwright-core");
 
+// Sources that hold palette references but have no raster of their own.
+const sources = [
+	"assets/brand/pancode-mark-light.svg",
+	"assets/brand/pancode-display.svg",
+	"assets/brand/pancode-display-light.svg",
+	"assets/brand/pancode-wordmark.svg",
+	"assets/brand/pancode-wordmark-light.svg",
+];
 const renders = [
 	{ svg: "assets/brand/pancode-mark.svg", width: 512, height: 512, outputs: ["site/assets/brand/pancode-mark"] },
+	{
+		svg: "assets/brand/pancode-mark-small.svg",
+		width: 512,
+		height: 512,
+		outputs: ["site/assets/brand/pancode-mark-small"],
+	},
 	{ svg: "assets/brand/banner.svg", width: 2400, height: 750, outputs: ["assets/banner"] },
 ];
 const { palette } = JSON.parse(readFileSync(join(site, "design-system.json"), "utf8"));
-for (const { svg } of renders) {
+for (const svg of [...renders.map((item) => item.svg), ...sources]) {
 	const path = join(root, svg);
 	const source = readFileSync(path, "utf8");
 	const themed = source.replace(/var\(--palette-([a-zA-Z0-9]+), #[0-9a-fA-F]{3,8}\)/g, (_, name) => {

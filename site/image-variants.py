@@ -114,10 +114,11 @@ def generate():
 def generate_icons():
     """Square browser and app icons, the maskable app icon, and favicon.ico, all from the rendered mark."""
     mark = Image.open(SITE / "assets/brand/pancode-mark.png").convert("RGBA")
+    small_cut = Image.open(SITE / "assets/brand/pancode-mark-small.png").convert("RGBA")
 
-    def fit(size, scale, ground=None):
+    def fit(size, scale, ground=None, source=mark):
         canvas = Image.new("RGBA", (size, size), ground or (0, 0, 0, 0))
-        fitted = mark.copy()
+        fitted = source.copy()
         fitted.thumbnail((round(size*scale), round(size*scale)), Image.Resampling.LANCZOS)
         canvas.alpha_composite(fitted, ((size-fitted.width)//2, (size-fitted.height)//2))
         return canvas
@@ -129,8 +130,8 @@ def generate_icons():
     brand = json.loads((SITE / "design-system.json").read_text())
     black = Image.new("RGB", (1, 1), brand["palette"]["black"]).getpixel((0, 0))
     fit(512, .8, (*black, 255)).save(SITE / "assets/responsive/pancode-icon-maskable-512.png", optimize=True)
-    # At whole multiples of the 16 unit grid the mark fills the icon, so each cell sits on whole pixels.
-    small = [fit(size, 1) for size in (48, 32, 16)]
+    # The 16 pixel image takes the small cut, whose wider channel survives at that size.
+    small = [fit(48, 1), fit(32, 1), fit(16, 1, source=small_cut)]
     small[0].save(SITE / "assets/responsive/favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)], append_images=small[1:])
 
 

@@ -500,7 +500,7 @@ function head(
 	return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="${cast ? castContentSecurityPolicy : contentSecurityPolicy}"><meta name="referrer" content="strict-origin-when-cross-origin">
 <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}"><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="${escapeHtml(brand.defaultTheme)}">${themeColors}
-<link rel="canonical" href="${url}"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="canonical" href="${url}"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark-small.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png" sizes="180x180"><link rel="author" href="/humans.txt">
 ${path === "/404.html" ? "" : brand.type.preload.map((name) => `<link rel="preload" href="/assets/fonts/${name}" as="font" type="font/woff2" crossorigin>`).join("")}
 <link rel="stylesheet" href="/css/site.css"><script>${themeScript}</script>${cast ? `<script src="/js/cast.js" data-player-src="/assets/player/asciinema-player.min.js" data-player-css="/assets/player/asciinema-player.css" data-cast-css="/css/cast.css" defer></script>` : ""}
 <meta property="og:locale" content="en_US"><meta property="og:site_name" content="${escapeHtml(product.name)}"><meta property="og:type" content="${type === "Article" || type === "TechArticle" ? "article" : "website"}"><meta property="og:url" content="${url}"><meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${imageUrl}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="${image.width}"><meta property="og:image:height" content="${image.height}"><meta property="og:image:alt" content="${escapeHtml(imageAlt)}">${published && type !== "WebPage" ? `<meta property="article:published_time" content="${published}">` : ""}${lastmod && type !== "WebPage" ? `<meta property="article:modified_time" content="${lastmod}">` : ""}
@@ -826,17 +826,19 @@ for (const item of Object.values(captures))
 	}
 for (const name of ["pancode-mark.webp", "pancode-mark.png"])
 	await cp(join(root, "assets/brand", name), join(out, "assets/brand", name));
-// The SVG favicon is the mark source with its palette references resolved, as render-brand.mjs does for rasters.
-await writeFile(
-	join(out, "assets/brand/pancode-mark.svg"),
-	(await readFile(join(root, "..", "assets/brand/pancode-mark.svg"), "utf8")).replace(
-		/var\(--palette-([a-z0-9]+), #[0-9a-f]{6}\)/gi,
-		(_, name) => {
-			if (!brand.palette[name]) throw new Error(`The mark names an unknown palette colour: ${name}`);
-			return brand.palette[name];
-		},
-	),
-);
+// The published marks are the sources with their palette references resolved, as render-brand.mjs does for
+// rasters. The small cut is the SVG favicon; the light cut is for light grounds.
+for (const name of ["pancode-mark.svg", "pancode-mark-small.svg", "pancode-mark-light.svg"])
+	await writeFile(
+		join(out, "assets/brand", name),
+		(await readFile(join(root, "..", "assets/brand", name), "utf8")).replace(
+			/var\(--palette-([a-z0-9]+), #[0-9a-f]{6}\)/gi,
+			(_, colour) => {
+				if (!brand.palette[colour]) throw new Error(`${name} names an unknown palette colour: ${colour}`);
+				return brand.palette[colour];
+			},
+		),
+	);
 await cp(join(root, "assets/responsive/favicon.ico"), join(out, "favicon.ico"));
 await mkdir(join(out, "assets/animations"), { recursive: true });
 for (const asset of JSON.parse(await read("animation-assets.json"))) {
