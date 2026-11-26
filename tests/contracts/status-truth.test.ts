@@ -2438,20 +2438,25 @@ test("a summarizing compaction measures its written summary against the output c
 		stages: ["compact", "summarize", "state"] as const,
 	};
 	const reading = formatContextActivityRailLines(
-		{ ...base, message: "reading 13.1K tokens of history", current: null, total: null, unit: "tokens" },
+		{ ...base, message: "reading 13.1k tokens of history", current: null, total: null, unit: "tokens" },
 		40,
 		1000,
 	).map(stripTerminalSequences);
 	match(reading[1] ?? "", / no output yet$/u, "a narrow rail keeps the measure on the bar row");
 	const capped = formatContextActivityRailLines(
-		{ ...base, message: "summarizing 13.1K tokens of history", current: 2000, total: 8000, unit: "tokens" },
+		{ ...base, message: "summarizing 13.1k tokens of history", current: 2000, total: 8000, unit: "tokens" },
 		80,
 		1000,
 	).map(stripTerminalSequences);
-	match(capped[1] ?? "", / 2K of 8K tokens$/u);
-	strictEqual((capped[1] ?? "").split("█").length - 1, 16, "a quarter of the cap fills a quarter of the bar");
+	match(capped[1] ?? "", / 2\.0k of 8\.0k tokens$/u);
+	const barCells = [...(capped[1] ?? "")].filter((cell) => "█▸░".includes(cell)).length;
+	strictEqual(
+		(capped[1] ?? "").split("█").length - 1,
+		Math.floor(barCells / 4),
+		"a quarter of the cap fills a quarter of the bar",
+	);
 	const open = formatContextActivityRailLines(
-		{ ...base, message: "summarizing 13.1K tokens of history", current: 1, total: null, unit: "tokens" },
+		{ ...base, message: "summarizing 13.1k tokens of history", current: 1, total: null, unit: "tokens" },
 		80,
 		1000,
 	).map(stripTerminalSequences);

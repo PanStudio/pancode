@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
+import { formatCount } from "../core/format-time.js";
 import { TURN_CONTINUATION_CAP } from "../core/job-types.js";
 import { isPlanOnlyRequest } from "../core/plan-request.js";
 import { hostFramedTexts } from "../core/reminder-framing.js";
@@ -59,7 +60,6 @@ import {
 } from "./chat-loop-messages.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { lastAssistantText } from "./chat-loop-steering.js";
-import { footerTokens } from "./compaction-lines.js";
 import { lastToolCallOf } from "./continuation-tool-call.js";
 import { withSettledHistory } from "./message-list-digest.js";
 import { resolveFitOutputReserve, turnAdmissionRemedy } from "./output-reserve.js";
@@ -817,7 +817,7 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 				if (generation !== loop.submitGeneration || loop.disposed) return;
 				const tokens = context.contextUsage().tokens;
 				// The cheaper stages run before the summary and may have applied, so the size is stated, not "unchanged".
-				const size = tokens !== null ? `; context at ${footerTokens(tokens)} tokens` : "";
+				const size = tokens !== null ? `; context at ${formatCount(tokens)} tokens` : "";
 				const aborted = err instanceof Error && err.name === "AbortError";
 				// Worded as the operator's /context compact failure is: the size, why in words, and the way on (HS14).
 				// A failure here does not stop the turn, which goes out without a summary. A settled card already states a cancel.
