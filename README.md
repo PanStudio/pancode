@@ -130,8 +130,10 @@ pancode run --read-only "Summarize this repository and how to run its tests."
   tree, with `/hub` or Alt+L in the terminal. [PanHub](hub/README.md)
 - **PanKit, the agent toolkit.** PanCode ships MCP servers for node facts,
   software modules, Spack, Darshan I/O traces, scientific data, dataset
-  catalogs and the project store, and `pankit` serves them to Claude Code,
-  Codex or any other MCP host. [PanKit](packages/kit/README.md)
+  catalogs and the project store. PanHub lists them as built-in `server`
+  packs, `pankit serve <id>` serves one to Codex or any other MCP host, and
+  `claude plugin install pankit@pancode` gives Claude Code six of them.
+  [PanKit](packages/kit/README.md)
 - **ACP beside other agents.** `pancode acp` serves PanCode to ACP editors, and
   Panos can delegate a task to an installed coding agent, and
   `pancode interop adopt` brings that agent's skills, agents and prompts in

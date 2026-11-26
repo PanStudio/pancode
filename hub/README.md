@@ -14,6 +14,7 @@ PanHub organizes shareable packs by kind into dedicated directories under `hub/p
 | **Playbook** | `hub/packs/playbooks/` | An executable multi-agent coordination plan the fleet runs | `/fleet run <playbook>` or preview |
 | **Plugin** | `hub/packs/plugins/` | Content released together; it never runs code inside PanCode | Inspect contents, invoke member components |
 | **Extension** | `hub/packs/extensions/` | A standalone PanCode runtime package | `/ext:<id>:<command>` or `pancode extensions run <id> <command>` |
+| **Server** | `hub/packs/servers/` | The seven PanKit tool servers PanCode carries, as core rows rather than contributions | Built in: `pancode mcp list` shows them and `pankit serve <id>` serves one to another MCP host |
 
 ## Browsing and Managing Packages
 
@@ -55,6 +56,10 @@ The same sources are usable by Claude Code and Codex with no converted copy and 
 # Claude Code: the repository is a standard marketplace
 claude plugin marketplace add akougkas/pancode
 claude plugin install tdd@pancode
+claude plugin install pankit@pancode   # six PanKit MCP servers
+
+# Codex: run a PanKit server as a stdio MCP server
+codex mcp add node -- npx -y -p @akougkas/pancode pankit serve node
 
 # Codex: the checkout ships no .agents/skills links, so create them. This gives
 # every repository the curated skills and the hpc plugin's skills.
