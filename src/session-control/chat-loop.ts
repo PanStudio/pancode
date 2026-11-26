@@ -47,7 +47,6 @@ import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessage
 import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
-import { formatFooterTokens } from "../core/display-units.js";
 import { formatCount } from "../core/format-time.js";
 import {
 	armedSkillSurface,
@@ -2294,10 +2293,10 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 				const hasMessages =
 					entries.some((entry) => entry.kind === "message") || agentRuntime.agent.state.messages.length > 0;
 				const usage = context.contextUsage();
-				const used = usage.tokens !== null ? `${formatFooterTokens(usage.tokens)} tokens` : "unknown usage";
+				const used = usage.tokens !== null ? `${formatCount(usage.tokens)} tokens` : "unknown usage";
 				const budget =
 					usage.tokens !== null && usage.contextWindow > 0
-						? `${formatFooterTokens(usage.tokens)} of ${formatFooterTokens(usage.contextWindow)} tokens used`
+						? `${formatCount(usage.tokens)} of ${formatCount(usage.contextWindow)} tokens used`
 						: used;
 				// Nothing was summarized, so instructions given for the summary went unused, and the operator should know (bt-11).
 				const unused = instructions?.trim() ? ". Your compaction instructions were not used" : "";
