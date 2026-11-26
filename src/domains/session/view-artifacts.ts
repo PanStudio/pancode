@@ -3,8 +3,7 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { formatFooterTokens } from "../../core/display-units.js";
-import { clockLocal, formatElapsed } from "../../core/format-time.js";
+import { clockLocal, formatCount, formatElapsed } from "../../core/format-time.js";
 import { parseJsonObjectPayload } from "../../core/json-payload.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
@@ -693,7 +692,7 @@ function renderRunSummary(run: SettledRunView, report: RunRecordVerificationRepo
 		"## Checks",
 		...renderRunChecks(run),
 		"",
-		`${formatDurationMs(parseTime(settled.endedAt) - parseTime(settled.startedAt))} · ${tokens === null ? "unknown" : formatFooterTokens(tokens)} tokens · ${renderRunCost(settled)}`,
+		`${formatDurationMs(parseTime(settled.endedAt) - parseTime(settled.startedAt))} · ${tokens === null ? "unknown" : formatCount(tokens)} tokens · ${renderRunCost(settled)}`,
 		"",
 		...(result?.output
 			? [
@@ -1447,8 +1446,8 @@ export class CompactionArtifactProvider implements ArtifactProvider {
 						"# Compaction Summary",
 						"",
 						`- trigger: ${entry.trigger ?? "unknown"}`,
-						`- tokens before: ${formatFooterTokens(entry.tokensBefore)}`,
-						...(entry.tokensAfter !== undefined ? [`- tokens after: ${formatFooterTokens(entry.tokensAfter)}`] : []),
+						`- tokens before: ${formatCount(entry.tokensBefore)}`,
+						...(entry.tokensAfter !== undefined ? [`- tokens after: ${formatCount(entry.tokensAfter)}`] : []),
 						...(entry.messagesSummarized !== undefined ? [`- entries summarized: ${entry.messagesSummarized}`] : []),
 						`- continues at turn: ${entry.firstKeptTurnId}`,
 						"",
@@ -1486,7 +1485,7 @@ export class PromptManifestArtifactProvider implements ArtifactProvider {
 			(record, index): ViewArtifact => ({
 				id: `prompt-manifest:${index + 1}:${shortValue(record.systemPromptHash)}`,
 				category: this.category,
-				title: `Prompt compile · ${shortValue(record.systemPromptHash)} · ${formatFooterTokens(record.tokenEstimate)}`,
+				title: `Prompt compile · ${shortValue(record.systemPromptHash)} · ${formatCount(record.tokenEstimate)}`,
 				timestamp: parseTime(record.at),
 				sizeBytes: Buffer.byteLength(JSON.stringify(record), "utf8"),
 				path,

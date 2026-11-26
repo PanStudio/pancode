@@ -288,7 +288,7 @@ it("keeps compaction failure lines in the reply, where context status does not g
 		{
 			level: "warning",
 			text:
-				"[PanCode] auto-compaction failed; context at 28.6K tokens. 401 invalid api key. This turn goes on without it; /context compact tries again; /model picks another route to summarize on.",
+				"[PanCode] auto-compaction failed; context at 28.6k tokens. 401 invalid api key. This turn goes on without it; /context compact tries again; /model picks another route to summarize on.",
 		},
 		{
 			level: "info",
@@ -298,7 +298,7 @@ it("keeps compaction failure lines in the reply, where context status does not g
 		{
 			level: "error",
 			text:
-				"[/context compact] failed; context unchanged at 30.1K tokens. 401 invalid api key. /context compact tries again; /model picks another route to summarize on.",
+				"[/context compact] failed; context unchanged at 30.1k tokens. 401 invalid api key. /context compact tries again; /model picks another route to summarize on.",
 		},
 		{ level: "info", text: "Portable compaction failed; continuing from the original session history." },
 		// Only an info status line leaves the reply: a context engine line raised to a warning stays visible.
@@ -312,7 +312,7 @@ it("keeps compaction failure lines in the reply, where context status does not g
 				type: "notice",
 				surface: "transcript",
 				level: "info",
-				text: "PanCode compacted 36.2K → 28.6K tokens",
+				text: "PanCode compacted 36.2k → 28.6k tokens",
 				key: CONTEXT_STATUS_NOTICE_KEY,
 			});
 		},
@@ -434,7 +434,7 @@ it("projects transcript notices for plain ACP clients while keeping footer state
 	const status = [
 		"[context engine] working set: nothing evictable, the 1 turn is inside the protected window; llm_summary runs instead",
 		"compaction would not reduce context; checkpoint discarded (usage recorded)",
-		"PanCode compacted 36.2K → 28.6K tokens: 42 earlier messages now read as one summary",
+		"PanCode compacted 36.2k → 28.6k tokens: 42 earlier messages now read as one summary",
 		// ACP-3: the producer's tag routes the line, so a reworded one still stays off the reply.
 		"Context trimmed: 3 tool results now read by ref",
 	];

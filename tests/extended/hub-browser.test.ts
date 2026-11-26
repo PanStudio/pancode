@@ -639,12 +639,12 @@ function harness(
 }
 
 describe("PanHub browser behavior", () => {
-	it("reads the inventory once and projects it across the six categories", () => {
+	it("reads the inventory once and projects it across the seven categories", () => {
 		const state = harness();
 		equal(state.inventoryReads, 1);
 		deepStrictEqual(
 			state.options.tabs?.map((tab) => tab.id),
-			["skill", "agent", "prompt", "playbook", "plugin", "extension"],
+			["skill", "agent", "prompt", "playbook", "plugin", "extension", "server"],
 		);
 	});
 
@@ -922,10 +922,12 @@ describe("PanHub browser behavior", () => {
 		match(plain(view.render(120).join("\n")), /demo-pack/);
 		equal(view.activeTab()?.id, "plugin");
 
-		// Right moves from Plugins to Extensions and wraps to Skills. The rows, the
+		// Right moves from Plugins through Extensions and Servers and wraps to Skills. The rows, the
 		// status row and the subjects the action keys read must all describe Skills afterwards.
 		view.handleInput("\u001b[C");
 		equal(view.activeTab()?.id, "extension");
+		view.handleInput("\u001b[C");
+		equal(view.activeTab()?.id, "server");
 		view.handleInput("\u001b[C");
 		equal(view.activeTab()?.id, "skill");
 		state.options.globalActions?.b?.();
@@ -939,6 +941,7 @@ describe("PanHub browser behavior", () => {
 
 		const after = harness({ initialTab: "plugin" });
 		const afterView = after.mount();
+		afterView.handleInput("\u001b[C");
 		afterView.handleInput("\u001b[C");
 		afterView.handleInput("\u001b[C");
 		after.options.globalActions?.b?.();

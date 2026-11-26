@@ -13,7 +13,7 @@ import type {
 import { fromArgsOrUsage, usageError } from "./usage-error.js";
 
 /** `/hub <kind>` completes the plurals and also accepts the singular tab ids. */
-const HUB_KIND_PLURALS = ["skills", "agents", "prompts", "playbooks", "plugins", "extensions"] as const;
+const HUB_KIND_PLURALS = ["skills", "agents", "prompts", "playbooks", "plugins", "extensions", "servers"] as const;
 const HUB_KIND_WORDS = new Map<string, HubEntryKind>(
 	HUB_KIND_PLURALS.flatMap((plural) => {
 		const kind = plural.slice(0, -1) as HubEntryKind;
@@ -180,7 +180,8 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "hub",
 		rank: 2,
 		acp: false,
-		description: "Browse skills, agents, prompts, playbooks, plugins and extensions, or review an install or removal",
+		description:
+			"Browse skills, agents, prompts, playbooks, plugins, extensions and servers, or review an install or removal",
 		group: "PanCode",
 		kinds: ["resources", "agents"],
 		// The same verbs as `pancode hub`; each opens the review that command would apply.
@@ -280,7 +281,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					kind: "usage-error",
 					command: "hub",
 					reason:
-						"Use /hub [skills|agents|prompts|playbooks|plugins|extensions] to browse, /hub inspect|install|update|enable|disable|remove <ref>, /hub import <path-or-url>, or /hub interop",
+						"Use /hub [skills|agents|prompts|playbooks|plugins|extensions|servers] to browse, /hub inspect|install|update|enable|disable|remove <ref>, /hub import <path-or-url>, or /hub interop",
 				};
 			return { kind: "resources", tab };
 		},
