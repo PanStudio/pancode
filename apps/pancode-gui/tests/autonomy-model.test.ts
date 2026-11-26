@@ -5,9 +5,9 @@ import { test } from "node:test";
 import { autonomyMenu, currentAutonomy } from "../client/chat/autonomy-model.js";
 
 const DEFAULT =
-	"Edits and commands inside this workspace go ahead. Commands run in a sandbox that limits what they can change. Anything riskier goes to an automatic safety check, then to you.";
+	"Edits and commands inside this workspace go ahead. Commands run in a sandbox that limits what they can change. Riskier calls go to an automatic safety check, which runs them, refuses them or asks you. Decisions only you can make ask you directly.";
 const YOLO =
-	"Nothing stops to ask you. Commands run in a sandbox that limits what they can change. Anything that would have asked you goes to the automatic safety check and runs only if it passes. Questions PanCode asks still reach you.";
+	"No approval card waits for you. Commands run in a sandbox that limits what they can change. The automatic safety check works as it does in default, and anything that would ask you is refused back to PanCode instead. PanCode's built-in blocks, your own safety rules and the run's limits still apply, and questions PanCode asks still reach you.";
 const modes = [
 	{ id: "default", name: "default", description: DEFAULT },
 	{ id: "yolo", name: "yolo", description: YOLO },

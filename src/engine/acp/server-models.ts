@@ -53,6 +53,9 @@ export const ACP_EMPTY_TRUNCATED_TARGET_LIST_BYTES = utf8Bytes(
 export const ACP_MAX_SESSION_LIST_RESULT_BYTES = 240 * 1024;
 
 const SANDBOXED = "Commands run in a sandbox that limits what they can change.";
+const ONLY_YOU = "Decisions only you can make ask you directly.";
+const YOLO_STILL_APPLIES =
+	"PanCode's built-in blocks, your own safety rules and the run's limits still apply, and questions PanCode asks still reach you.";
 
 /**
  * What each autonomy mode does on this host, in the words the GUI menu and an editor's mode picker show: the sandbox
@@ -65,10 +68,14 @@ function modeDescriptions(
 	const mode = containment?.sandbox ?? "auto";
 	const availability = sandboxAvailability();
 	const judge = containment?.judgeEnabled ?? true;
-	const riskier = judge ? "goes to an automatic safety check, then to you" : "asks you";
-	const askFirst = mainShellContained(mode, availability)
-		? `Edits and commands inside this workspace go ahead. ${SANDBOXED} Anything riskier ${riskier}.`
-		: `Edits inside this workspace go ahead. Commands get no sandbox here, so they count as riskier. Anything riskier ${riskier}.`;
+	const riskier = judge
+		? "Riskier calls go to an automatic safety check, which runs them, refuses them or asks you."
+		: "Riskier calls ask you.";
+	const askFirst = `${
+		mainShellContained(mode, availability)
+			? `Edits and commands inside this workspace go ahead. ${SANDBOXED}`
+			: "Edits inside this workspace go ahead. Commands get no sandbox here, so they count as riskier."
+	} ${riskier} ${ONLY_YOU}`;
 	if (confinement === "unconfined") {
 		const shell = yoloShellState(confinement, mode, availability);
 		const commands =
@@ -79,14 +86,16 @@ function modeDescriptions(
 					: "Commands run directly on this computer, with no sandbox.";
 		return {
 			default: askFirst,
-			yolo: `Nothing stops to ask you and nothing is checked first: only your own safety rules and PanCode's built-in blocks stop a call. ${commands} Questions PanCode asks still reach you.`,
+			yolo: `No approval card waits for you, and the automatic safety check is skipped. ${commands} ${YOLO_STILL_APPLIES}`,
 		};
 	}
 	const commands = mainShellContained(mode, availability) ? SANDBOXED : "Commands get no sandbox here.";
-	const wouldAsk = judge ? "goes to the automatic safety check and runs only if it passes" : "is refused";
+	const refused = judge
+		? "The automatic safety check works as it does in default, and anything that would ask you is refused back to PanCode instead."
+		: "Anything that would ask you in default is refused back to PanCode instead.";
 	return {
 		default: askFirst,
-		yolo: `Nothing stops to ask you. ${commands} Anything that would have asked you ${wouldAsk}. Questions PanCode asks still reach you.`,
+		yolo: `No approval card waits for you. ${commands} ${refused} ${YOLO_STILL_APPLIES}`,
 	};
 }
 
