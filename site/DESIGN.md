@@ -134,7 +134,7 @@ The site is static HTML and CSS with small progressive enhancements. Use CSS lay
 
 ## Overview page and media
 
-The overview is typographic first. Its hero sets the headline in the display face with the second line in the brand green, the five premises with azure mono labels, one install command on a code surface, and the mark at the right over a cell grid that fades into the ground under `--glow-halo`. This is the one place on the site where the mark glows. Each chapter carries a small still mark in its margin column, which sticks beside the chapter body on wide screens and sits above it on narrow ones.
+The overview shows the product first. Its hero sets the headline in the display face with the second line in the brand green, one sentence, one install command on a code surface, and a terminal window of real recorded output under the PAN field: routes from the mark to named models and agents. The field is the one place the hero glows. Reach, Flow, Product and Start follow, each with one job and one next step.
 
 Generated media may replace a still mark in the hero, a chapter margin or the closing section. It must use the sanctioned palette on a true-black ground, contain no rendered text, logos or other brands, and ship as a silent, compressed derivative with a poster and intrinsic dimensions. A film plays once, never loops unattended, loads only when visible, pauses offscreen and in hidden tabs, and is replaced by its poster under reduced motion and on data-saving connections. No rectangular backdrop: the film's black sits on the page's black. The artwork of the retired identity must not appear anywhere.
 
