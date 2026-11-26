@@ -206,6 +206,7 @@
 		border: 0;
 		background: none;
 		box-shadow: none;
+		container: hero-stage / inline-size;
 	}
 	/* The field draws over the window's top edge, so the mark sits on it. */
 	.hero-field {
@@ -562,6 +563,12 @@
 		.hero-field .pan-label,
 		.hero-field .pan-cap {
 			display: none;
+		}
+	}
+	/* In a narrow column the centred mark would reach the window title, so the window overlaps less. */
+	@container hero-stage (max-width: 37.5rem) {
+		.term {
+			margin-block-start: calc((var(--space-4) + var(--space-1) / 2) * -1);
 		}
 	}
 	/* Action links get a full touch target where fingers do the tapping. */
