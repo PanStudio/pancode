@@ -30,5 +30,7 @@ test("the bundled packs' publisher column and repository slug are allowed; the s
 
 test("the project's repository URL is allowed; other GitHub URLs are refused", () => {
 	assert.deepEqual(privacyHits("see https://github.com/PanStudio/pancode/issues/new", []), []);
-	assert.deepEqual(privacyHits("see https://github.com/someone/else", []), ['a URL ("https://github.com/someone/else")']);
+	assert.deepEqual(privacyHits("see https://github.com/someone/else", []), [
+		'a URL ("https://github.com/someone/else")',
+	]);
 });
