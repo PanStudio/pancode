@@ -54,10 +54,10 @@ With Node.js 22.19 or newer already installed:
 npm install -g @akougkas/pancode
 ```
 
-From source, build the v0.9.0 release:
+From source, build the v0.9.1 release:
 
 ```bash
-git clone --branch v0.9.0 https://github.com/akougkas/pancode.git
+git clone --branch v0.9.1 https://github.com/akougkas/pancode.git
 cd pancode
 corepack enable pnpm
 pnpm run install:local

@@ -1,6 +1,6 @@
 {
 	"name": "@akougkas/pancode",
-	"version": "0.9.1-dev",
+	"version": "0.9.1",
 	"description": "PanCode is systems software for coding agents. It drives the models you have, sandboxes commands, bounds workers and checks finished work against what ran.",
 	"keywords": [
 		"coding-agent",
