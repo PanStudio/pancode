@@ -24,7 +24,7 @@ import {
 	skillCard,
 	tabAfterKey,
 } from "./hub-model.js";
-import { originSentence, type Package, serverPackages, serverSentence } from "./hub-plan.js";
+import { builtInServerSentence, builtInServers, originSentence, type Package } from "./hub-plan.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 
 const collections = [
@@ -145,12 +145,12 @@ function SkillBody({ skill }: { skill: Resource }) {
 		</>
 	);
 }
-/** A server row: built in, so its card says where it runs and how to override it, and offers nothing to change. */
+/** A server PanCode carries: its card says it is built in and how to override it, and offers nothing to change. */
 function ServerBody({ server }: { server: Package }) {
 	return (
 		<>
-			<StatusMark tone={server.builtIn ? "success" : "neutral"} label={server.builtIn ? "Built in" : "Not installed"} />
-			<p>{serverSentence(server)}</p>
+			<StatusMark tone="success" label="Built in" />
+			<p>{builtInServerSentence(server)}</p>
 			<CardFacts
 				facts={[
 					{ label: "Reference", value: server.ref },
@@ -296,11 +296,11 @@ export function HubPage({
 			state: extensionState(row),
 			detail: row,
 		})),
-		Servers: serverPackages(inventory.data?.packages ?? []).map((pkg) => ({
+		Servers: builtInServers(inventory.data?.packages ?? []).map((pkg) => ({
 			id: pkg.ref,
 			name: pkg.name,
 			description: pkg.description,
-			state: pkg.builtIn ? `Built in · ${originSentence(pkg)}` : originSentence(pkg),
+			state: `Built in · ${originSentence(pkg)}`,
 			detail: pkg,
 			server: pkg,
 		})),

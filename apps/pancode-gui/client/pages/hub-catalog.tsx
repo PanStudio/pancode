@@ -11,6 +11,7 @@ import { Dialog } from "../interaction/Dialog.js";
 import { catalogKinds, desktopManaged, TERMINAL_NOTE, terminalSteps } from "./hub-extension-model.js";
 import {
 	type Applied,
+	builtInServerSentence,
 	componentSentence,
 	copyOperations,
 	copyState,
@@ -26,7 +27,6 @@ import {
 	type Plan,
 	type Scope,
 	scopeCopy,
-	serverSentence,
 	stepTitle,
 	verb,
 } from "./hub-plan.js";
@@ -585,7 +585,7 @@ export function HubCatalog({
 									(pkg.builtIn ? (
 										<>
 											<StatusMark tone="success" label="Built in" />
-											<p className="panel-note">{serverSentence(pkg)}</p>
+											<p className="panel-note">{builtInServerSentence(pkg)}</p>
 										</>
 									) : (
 										<StatusMark tone="neutral" label="Not installed" />
@@ -615,7 +615,7 @@ export function HubCatalog({
 										</div>
 									);
 								})}
-								{!desktopManaged(pkg) && !pkg.builtIn && (
+								{pkg.kind === "extension" && (
 									<details className="hub-terminal">
 										<summary>Manage extension in the terminal</summary>
 										<p className="panel-note">{TERMINAL_NOTE}</p>
