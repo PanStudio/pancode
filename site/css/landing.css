@@ -110,6 +110,9 @@
 			inline-size: 2.75rem;
 			block-size: 2.75rem;
 		}
+		.installer-shells > .tab-list button {
+			min-block-size: 2.75rem;
+		}
 	}
 	.copy-icon-button[data-copy-state="error"] {
 		color: var(--syntax-removed);
