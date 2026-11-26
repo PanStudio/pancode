@@ -434,7 +434,13 @@ async function runBackgroundRestart(installation: Installation): Promise<string>
  */
 function handoverCommand(installation: Installation): string {
 	const launcher = launcherPathFor(installation);
-	const command = existsSync(launcher) && !launcherWinsOnPath(launcher) ? shellQuote(launcher) : "pancode";
+	if (!existsSync(launcher) || launcherWinsOnPath(launcher)) return "pancode gui background install --handover";
+	const windows = process.platform === "win32";
+	const command = (windows ? /^[A-Za-z0-9_.\\/:@=+-]+$/u : /^[A-Za-z0-9_./:@=+-]+$/u).test(launcher)
+		? launcher
+		: windows
+			? `& '${launcher.replaceAll("'", "''")}'`
+			: shellQuote(launcher);
 	return `${command} gui background install --handover`;
 }
 
