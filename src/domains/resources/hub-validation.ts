@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { resolvePackageRoot } from "../../core/package-root.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { isRecord } from "../../core/type-guards.js";
 import { parseFrontmatter } from "../agents/frontmatter.js";
 import { parsePlaybook, resolvePlaybookReferences } from "../agents/playbook.js";
 import { recipeIdFromPath } from "../agents/recipe.js";
@@ -10,7 +12,7 @@ import { parseAgentRecipeSchema } from "../agents/recipe-schema.js";
 import { assertAgentSpecPolicy, normalizeAgentSpec } from "../agents/spec.js";
 import { loadManifestFromRoot } from "../extensions/index.js";
 import { pluginResourcePath } from "../plugins/discovery.js";
-import type { PluginCandidate } from "../plugins/types.js";
+import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
 import { readHubManifest } from "./hub-packages.js";
 import { resolvePackageReferences } from "./package-references.js";
 import { loadPromptTemplates, type PromptTemplateRoot } from "./prompts/loader.js";
@@ -78,6 +80,50 @@ export interface HubValidationOptions {
 	authoring?: { knownSkills: ReadonlySet<string> };
 }
 
+/** The policy manifest of the PanKit servers this PanCode ships, beside its bundled index. */
+function shippedKitServers(): unknown[] {
+	const parsed: unknown = JSON.parse(readFileSync(path.join(resolvePackageRoot(), "packages/kit/servers.json"), "utf8"));
+	return isRecord(parsed) && Array.isArray(parsed.servers) ? parsed.servers : [];
+}
+
+/**
+ * A builtin server pack holds `server.json`, one server's entry of the PanKit
+ * policy manifest. Only the servers PanCode ships have that form, so the file
+ * must equal the shipped entry of the same id.
+ */
+function validateServerPack(root: string, manifest: PluginManifest): HubComponentValidationRecord[] {
+	const file = path.join(root, "server.json");
+	const fail = (message: string): HubComponentValidationRecord[] => [
+		{
+			kind: "server",
+			name: manifest.name,
+			path: "server.json",
+			valid: false,
+			diagnostics: [{ severity: "error", code: "ERR_SERVER", message, path: file, kind: "server" }],
+		},
+	];
+	if (!existsSync(file)) return fail("a server pack holds its server in server.json");
+	if (existsSync(path.join(root, "mcp.json"))) return fail("a server pack holds server.json and no mcp.json");
+	let entry: unknown;
+	try {
+		entry = JSON.parse(readFileSync(file, "utf8"));
+	} catch (err) {
+		return fail(`server.json is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.title !== "string")
+		return fail("server.json is one server's entry of the PanKit policy manifest");
+	if (entry.id !== manifest.name) return fail(`server.json names ${entry.id}, not the pack name ${manifest.name}`);
+	if (entry.version !== manifest.version)
+		return fail(`server.json has version ${String(entry.version)}, not the pack version ${manifest.version}`);
+	const shipped = shippedKitServers().find((server) => isRecord(server) && server.id === entry.id);
+	if (shipped === undefined) return fail(`${entry.id} is not a server PanKit ships; only those have a server.json`);
+	if (JSON.stringify(shipped) !== JSON.stringify(entry))
+		return fail(`server.json differs from the ${entry.id} entry of packages/kit/servers.json; run pnpm kit:manifest`);
+	return [
+		{ kind: "server", name: entry.id, path: "server.json", description: entry.title, valid: true, diagnostics: [] },
+	];
+}
+
 export function validateHubPackage(
 	packageRoot: string,
 	options: HubValidationOptions = {},
@@ -134,6 +180,12 @@ export function validateHubPackage(
 				diagnostics: [],
 			});
 	}
+
+	if (packageKind === "server")
+		for (const record of validateServerPack(resolved, manifest)) {
+			resources.push(record);
+			contentDiagnostics.push(...record.diagnostics);
+		}
 
 	// ---------------------------------------------------------------------------
 	// 1. Skills

@@ -331,7 +331,8 @@ async function checkHubPin(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // kit-manifest: packages/kit/servers.json, the PanKit policy PanCode ships,
-// must match what the kit's server registry generates.
+// and each hub/packs/servers/<id>/server.json must match what the kit's
+// server registry generates.
 // ---------------------------------------------------------------------------
 async function checkKitManifest(): Promise<void> {
 	const result = await runProcess("node", ["--import", "tsx", "scripts/kit-manifest.ts", "--check"], {});

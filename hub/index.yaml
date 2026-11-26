@@ -151,6 +151,16 @@ entries:
           associated worktrees through Git, deletes local branches safely, and
           audits surviving repository refs. Not for creating worktrees; use
           worktree-create. Not for integrating branches; use…
+  - kind: server
+    publisher: pancode
+    name: catalog
+    description: The dataset catalogs the operator names in a catalog file, local
+      and public CKAN, and staging one resource.
+    version: 0.1.0
+    sourceUrl: packs/servers/catalog
+    sha256: 718b4a2976f50c0846f79ee56f9a816796dcd3b44aaf63477658e9db4d8e21ad
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: plugin
     publisher: akougkas
     name: cite-nexus
@@ -275,6 +285,15 @@ entries:
           tickets, globus and scheduler tokens, ssh agents, netrc) before a tool
           needs one, after an auth error, when a new secret is supplied, or when
           one may have leaked. Not for provider target…
+  - kind: server
+    publisher: pancode
+    name: darshan
+    description: What one Darshan log says about a job's I/O, through darshan-parser.
+    version: 0.1.0
+    sourceUrl: packs/servers/darshan
+    sha256: fe4f27b8d7c5ca58230f816c36caa88ba38ad31e04f723f8ac2cb7379a385bae
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: skill
     publisher: pancode
     name: design-council
@@ -566,6 +585,26 @@ entries:
         description: Builds an interactive map of a codebase from verified repository
           structure, symbols and imports, as one standalone HTML file with a
           readable overview and expandable source evidence.
+  - kind: server
+    publisher: pancode
+    name: modules
+    description: The site's software modules through Lmod or Environment Modules,
+      and the module load lines a batch script needs.
+    version: 0.1.0
+    sourceUrl: packs/servers/modules
+    sha256: 050899f4e8729e968162cce674b7f185cde920c7ef25087c2a8090ac636dcc51
+    license: LicenseRef-PanCode-1.0
+    tier: core
+  - kind: server
+    publisher: pancode
+    name: node
+    description: This machine's CPU topology and load, memory and swap, mounted file
+      systems, network interfaces, NVIDIA GPUs and top processes.
+    version: 0.1.0
+    sourceUrl: packs/servers/node
+    sha256: 499c64dca44433c5c14c8d4a0757ea9870010614094705f91bfec51d655734a6
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: skill
     publisher: pancode
     name: pancode-dev
@@ -756,6 +795,16 @@ entries:
           reconstructing both sides' intent, validating with the project's own
           checks, and completing the operation. Not for integrating many
           branches; use worktree-merge.
+  - kind: server
+    publisher: pancode
+    name: scidata
+    description: The structure, a bounded slice and statistics of CSV, TSV, JSON,
+      HDF5, NetCDF, Zarr and Parquet files.
+    version: 0.1.0
+    sourceUrl: packs/servers/scidata
+    sha256: 1b2f89dff382cf74428b3e94b4149168d7bf3dc376ca398208aa3920445bb86e
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: plugin
     publisher: pancode
     name: science-data
@@ -887,6 +936,16 @@ entries:
         description: Writes, reviews, or prunes a SKILL.md, judging whether its
           description, body, and length earn their cost. Not for packaging a
           workflow that just happened; use workflow-capture.
+  - kind: server
+    publisher: pancode
+    name: spack
+    description: "The Spack instance on PATH or SPACK_ROOT: installed specs, package
+      recipes, prefixes, concretization and environments."
+    version: 0.1.0
+    sourceUrl: packs/servers/spack
+    sha256: 90d2a49e4d62b9f02da562a28de1a350dd286e697e39f8f72b89b39310cadc3a
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: skill
     publisher: pancode
     name: sprint-plan
@@ -914,6 +973,16 @@ entries:
           sprint of dependency-ordered vertical slices sized for one agent run
           each, with done-when verification per slice; never fabricates a plan.
           Not for deciding the approach; use architecture.
+  - kind: server
+    publisher: pancode
+    name: store
+    description: "A project's PanStore: tags, blobs, records and read-only copies,
+      with writes only into allowed tags."
+    version: 0.1.0
+    sourceUrl: packs/servers/store
+    sha256: 7658f16484f34f49a64c7939ab134f6ca7347813fa86b8257c1902dcdfa7f2f1
+    license: LicenseRef-PanCode-1.0
+    tier: core
   - kind: skill
     publisher: pancode
     name: tdd
