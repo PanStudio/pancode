@@ -942,9 +942,11 @@ if (values.release) {
 function publish(scenario, outDir, entries) {
 	mkdirSync(join(site, "assets/casts"), { recursive: true });
 	if (!Object.keys(entries).length) return;
+	// Every published take ships its transcript, which quote-check reads for tutorial quotes;
+	// only a take with its own player capture ships the cast.
+	copyFileSync(join(outDir, `${scenario.id}.txt`), join(site, `assets/casts/${scenario.id}.txt`));
 	if (entries[scenario.id])
-		for (const ext of ["cast", "txt"])
-			copyFileSync(join(outDir, `${scenario.id}.${ext}`), join(site, `assets/casts/${scenario.id}.${ext}`));
+		copyFileSync(join(outDir, `${scenario.id}.cast`), join(site, `assets/casts/${scenario.id}.cast`));
 	const registry = JSON.parse(readFileSync(join(site, "content/captures.json"), "utf8"));
 	for (const [id, entry] of Object.entries(entries)) {
 		mkdirSync(dirname(join(site, entry.image)), { recursive: true });
@@ -977,12 +979,6 @@ function syncManifest(entry) {
 		changed = true;
 	}
 	if (!changed) return;
+	// The layout matches scripts/media-assets.py (json.dumps with a tab indent), the manifest's generator.
 	writeFileSync(path, `${JSON.stringify(manifest, null, "\t")}\n`);
-	formatJson(path);
-}
-
-// The manifest follows the repository's Biome layout, which JSON.stringify does
-// not reproduce for short arrays and objects.
-function formatJson(path) {
-	execFileSync(join(repo, "node_modules/.bin/biome"), ["format", "--write", path], { cwd: repo, stdio: "ignore" });
 }
