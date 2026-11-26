@@ -13,9 +13,37 @@
 const projectTargets = new Set<string>();
 /** The key variable a trusted project named for one of its own target URLs (`auth.apiKeyEnvVar`). */
 const projectKeyVariables = new Map<string, string>();
+/**
+ * Where a project's targets list came from, carried on each entry of the effective settings snapshot that list
+ * supplied. A symbol key survives the spreads that copy a target and stays out of JSON, validation and saved files.
+ */
+const PROJECT_TARGET_ORIGIN = Symbol("pancode.projectTargetOrigin");
+/** The origin of an entry the user's own settings supplied. */
+const USER_TARGET = "user";
+
+/** The project settings file whose `targets` list supplied an entry, and what the user's own entry for that id named. */
+export interface ProjectTargetOrigin {
+	file: string;
+	/** "stored": the user's entry names `auth.apiKeyRef` or `auth.oauthProfile`; "key-variable": only `auth.apiKeyEnvVar`. */
+	userCredential?: "stored" | "key-variable";
+}
+
+/**
+ * Redeclarations of credentialed user targets seen by this process, for a copy of a target that lost its origin
+ * (`structuredClone` drops symbol keys). It only ever refuses: an entry lost from the snapshot must not read as one
+ * that needs no credential and get the local placeholder. Keyed by id, URL and the project's key variable.
+ */
+const redeclaredEntries = new Set<string>();
 
 function entryKey(id: string, url: string): string {
 	return `${id}\u0000${url}`;
+}
+
+function redeclaredKey(
+	target: { id: string; url?: string; auth?: { apiKeyEnvVar?: string } },
+	userCredential: "stored" | "key-variable",
+): string {
+	return `${entryKey(target.id, target.url?.trim() ?? "")}\u0000${target.auth?.apiKeyEnvVar?.trim() ?? ""}\u0000${userCredential}`;
 }
 
 /** A name a project may give for its target's key: an environment variable name, never a value. */
@@ -51,6 +79,22 @@ export function isLoopbackUrl(url: string): boolean {
 	);
 }
 
+/** How every redeclared-target refusal's fix begins; doctor keys on it to drop its generic `pancode configure` hint. */
+export const REDECLARED_TARGET_FIX_LEAD = "Remove targets from that file";
+
+/**
+ * Why a target a project redeclared gets none of the credential the user's own entry for it names. `projectFile` is
+ * null when the entry reached auth without its origin. An OAuth runtime ignores a key variable and a project cannot
+ * name a stored sign-in, so its only fix is the file's targets list.
+ */
+export function redeclaredTargetSentence(targetId: string, projectFile: string | null, signIn = false): string {
+	const where = projectFile ?? "a project settings file";
+	return signIn
+		? `Target ${targetId} is redeclared in ${where}; the stored credential your user settings name for it attaches only to the target there. ${REDECLARED_TARGET_FIX_LEAD}; a project cannot name a stored sign-in.`
+		: `Target ${targetId} is redeclared in ${where}; stored credentials attach only to targets in your user settings. ${REDECLARED_TARGET_FIX_LEAD}, or give the target auth.apiKeyEnvVar there.`;
+}
+
+/** Record the targets list a project layer supplied, for the URL rules below. */
 export function noteProjectTargets(
 	targets: ReadonlyArray<{ id: string; url?: string; auth?: { apiKeyEnvVar?: string } }>,
 ): void {
@@ -59,9 +103,71 @@ export function noteProjectTargets(
 		if (!url) continue;
 		projectTargets.add(entryKey(target.id, url));
 		const variable = target.auth?.apiKeyEnvVar?.trim();
-		if (variable && isProjectKeyVariableName(variable)) projectKeyVariables.set(entryKey(target.id, url), variable);
+		if (variable !== undefined && isProjectKeyVariableName(variable))
+			projectKeyVariables.set(entryKey(target.id, url), variable);
 		else projectKeyVariables.delete(entryKey(target.id, url));
 	}
+}
+
+/** Mark an entry of the effective snapshot as supplied by a project's targets list. */
+export function markProjectTarget(
+	target: { id: string; url?: string; auth?: { apiKeyEnvVar?: string } },
+	origin: ProjectTargetOrigin,
+): void {
+	(target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] = origin;
+	if (origin.userCredential !== undefined) redeclaredEntries.add(redeclaredKey(target, origin.userCredential));
+}
+
+/** Mark entries of a snapshot as the user's own, so a copy that lost its origin is never confused with them. */
+export function markUserTargets(targets: ReadonlyArray<object>): void {
+	for (const target of targets) markUser(target);
+}
+
+// Hidden from equality and serialization, so settings compare and save as before; spread copies drop it and fail closed.
+function markUser(target: object): void {
+	Object.defineProperty(target, PROJECT_TARGET_ORIGIN, { value: USER_TARGET, configurable: true, writable: true });
+}
+
+/** The origin `markProjectTarget` gave this entry, else null. */
+export function projectTargetOrigin(target: object): ProjectTargetOrigin | null {
+	const origin = (target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN];
+	return typeof origin === "object" && origin !== null ? (origin as ProjectTargetOrigin) : null;
+}
+
+/** Copy the layer origins of `from`'s targets onto a structured clone of them, matched by position and id. */
+export function keepTargetOrigins(from: ReadonlyArray<{ id: string }>, to: ReadonlyArray<{ id: string }>): void {
+	for (const [index, target] of to.entries()) {
+		const source = from[index];
+		const origin = source?.id === target.id ? (source as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] : undefined;
+		if (origin === USER_TARGET) markUser(target);
+		else if (origin !== undefined) (target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] = origin;
+	}
+}
+
+/**
+ * When this entry is a project's redeclaration of a target whose user entry names a credential this runtime would
+ * read, the refusal: the project file (null when the entry lost its origin) and whether the runtime signs in (OAuth).
+ * Else null. An API-key runtime accepts the project's own key variable instead; an OAuth runtime reads none.
+ */
+export function redeclaredUserTarget(
+	target: { id: string; url?: string; auth?: { apiKeyEnvVar?: string; apiKeyRef?: string; oauthProfile?: string } },
+	runtimeAuth: string,
+): { file: string | null; signIn: boolean } | null {
+	// A project layer keeps no stored-credential reference, so an entry naming one is the user's own.
+	if (target.auth?.apiKeyRef?.trim() || target.auth?.oauthProfile?.trim()) return null;
+	const signIn = runtimeAuth === "oauth";
+	if (!signIn && runtimeAuth !== "api-key") return null;
+	const variable = target.auth?.apiKeyEnvVar?.trim();
+	if (!signIn && variable !== undefined && isProjectKeyVariableName(variable)) return null;
+	const refuses = (credential: "stored" | "key-variable" | undefined) =>
+		credential === "stored" || (credential === "key-variable" && !signIn);
+	if ((target as Record<symbol, unknown>)[PROJECT_TARGET_ORIGIN] === USER_TARGET) return null;
+	const origin = projectTargetOrigin(target);
+	if (origin !== null) return refuses(origin.userCredential) ? { file: origin.file, signIn } : null;
+	const seen = (["stored", "key-variable"] as const).some(
+		(credential) => refuses(credential) && redeclaredEntries.has(redeclaredKey(target, credential)),
+	);
+	return seen ? { file: null, signIn } : null;
 }
 
 /**

@@ -27,10 +27,16 @@ import {
 } from "../../core/owner-only-acl.js";
 import { readPancodeVersion } from "../../core/package-root.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
-import { unsetKeyVariableSentence } from "../../core/project-target-urls.js";
+import { REDECLARED_TARGET_FIX_LEAD, unsetKeyVariableSentence } from "../../core/project-target-urls.js";
 import type { SettingsScalarRepair } from "../../core/settings-issues.js";
 import { formatSettingsIssues } from "../../core/settings-issues.js";
-import { readLayeredSettings, type SettingsOrigin, settingsSourceFor } from "../../core/settings-layers.js";
+import { formatSettingsLayerIssue } from "../../core/settings-layer-diagnostics.js";
+import {
+	PROJECT_TARGETS_REPLACE_USER_TARGETS,
+	readLayeredSettings,
+	type SettingsOrigin,
+	settingsSourceFor,
+} from "../../core/settings-layers.js";
 import { repairSettingsCoercions, type SettingsRepairResult } from "../../core/settings-repair.js";
 import { shellQuote } from "../../core/shell-quote.js";
 import type { CacheReportV1 } from "../../core/telemetry/dto.js";
@@ -942,7 +948,8 @@ export function withDoctorCommand(finding: DoctorFinding): DoctorFinding {
 		) ||
 		// The setup-status sentence names its command as plain "Run: pancode ...", and a project trust notice as
 		// "Review with pancode config trust <surface>".
-		/\b(?:Run:|Review with) pancode /.test(finding.detail)
+		/\b(?:Run:|Review with) pancode /.test(finding.detail) ||
+		finding.detail.includes(REDECLARED_TARGET_FIX_LEAD)
 	)
 		return finding;
 	const name = finding.name;
@@ -1333,13 +1340,23 @@ export async function runDoctorModelChecks(
 	const proposals: Array<{ row: DoctorFinding; repair: SettingsScalarRepair }> = [];
 	let settings: ReturnType<typeof readSettings>;
 	let sources: Record<string, SettingsOrigin>;
+	let replacedTargets: DoctorFinding[];
 	try {
 		// The targets a session in this directory runs, a trusted project's included; an untrusted one adds none.
-		({ settings, sources } = readLayeredSettings(process.cwd()));
+		const layered = readLayeredSettings(process.cwd());
+		({ settings, sources } = layered);
+		replacedTargets = layered.issues
+			.filter((issue) => issue.path === "targets" && issue.message === PROJECT_TARGETS_REPLACE_USER_TARGETS)
+			.map((issue) => ({
+				ok: true,
+				level: "warn",
+				name: "project targets",
+				detail: formatSettingsLayerIssue(layered, issue),
+			}));
 	} catch {
 		return [];
 	}
-	if (settings.targets.length === 0) return [];
+	if (settings.targets.length === 0) return replacedTargets;
 	// Every runtime descriptor and the model catalog sit behind these two
 	// imports. They are loaded here, not at module load, so a doctor run on a
 	// home with no targets (the `--fix` seed every CLI test starts from) pays
@@ -1403,6 +1420,8 @@ export async function runDoctorModelChecks(
 				if (requiredCredential && !status.available && authTarget.projectKeyEnvVar) {
 					projectKeyUnset = authTarget.projectKeyEnvVar;
 					credentialDetail = `required credential not found: ${unsetKeyVariableSentence(target.id, authTarget.projectKeyEnvVar).replace(/\.$/u, "")}; this project sends only that variable to ${target.url ?? "its url"}`;
+				} else if (requiredCredential && status.refused && status.detail) {
+					credentialDetail = `no credential sent: ${status.detail.replace(/\.$/u, "")}`;
 				} else if (status.source === "stored-oauth" && stored?.type === "oauth" && stored.expires <= Date.now()) {
 					credentialAvailable = !requiredCredential;
 					credentialDetail = `stored sign-in expired; operator sign-in required: run \`pancode auth login ${target.id}\``;
@@ -1567,7 +1586,7 @@ export async function runDoctorModelChecks(
 			return [connection, row, ...cache];
 		}),
 	);
-	const findings = results.flat();
+	const findings = [...replacedTargets, ...results.flat()];
 	const applied = new Set<SettingsScalarRepair>();
 	// Prompts and locked writes are serialized even though passive catalog reads run concurrently.
 	for (const { row, repair } of proposals) {

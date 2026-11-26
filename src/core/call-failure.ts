@@ -142,7 +142,15 @@ export function classifyCallFailure(
 		errorClass = `http_${httpStatus}`;
 	} else if (!evidence.invoked && /credential|authentication|api.?key|oauth|token.*expired/iu.test(message)) {
 		stage = "auth";
-		errorClass = /expir/iu.test(message) ? "credential_expired" : "credential_unavailable";
+		// A refusal is PanCode withholding a credential it holds; storing another one would not change it.
+		errorClass =
+			/stored credentials? (?:attach(?:es)? only to targets|your user settings name for it attaches only)|PanCode does not send your stored/u.test(
+				message,
+			)
+				? "credential_refused"
+				: /expir/iu.test(message)
+					? "credential_expired"
+					: "credential_unavailable";
 	} else {
 		stage = evidence.invoked ? "transport" : "admission";
 		errorClass = /timeout|timed out|deadline/iu.test(message)

@@ -171,6 +171,8 @@ export async function runPancodeCommand(
 		if (!(await confirmStartupWorkspace())) return 1;
 	}
 	let startupSettings: import("../core/config.js").PancodeSettings | undefined;
+	// The project-layer notice already printed, so the trusted rereads below print only a new one.
+	let projectWarning: string | null = null;
 	let setupRan = false;
 	if (terminalLeaseEligible(options)) {
 		const existingHome = homeIsReturning();
@@ -179,7 +181,7 @@ export async function runPancodeCommand(
 		// established best-effort diagnostics, but every subsequent boot phase
 		// consumes this same effective snapshot.
 		const layered = readStrictLayeredSettings(process.cwd());
-		const projectWarning = formatSettingsLayerWarning(layered);
+		projectWarning = formatSettingsLayerWarning(layered);
 		if (projectWarning !== null) writeDiagnostic(projectWarning);
 		startupSettings = layered.settings;
 		const verdict = classifyDefaultTarget(
@@ -231,6 +233,7 @@ export async function runPancodeCommand(
 			const configuredLayers = readStrictLayeredSettings(process.cwd());
 			const configuredWarning = formatSettingsLayerWarning(configuredLayers);
 			if (configuredWarning !== null && configuredWarning !== projectWarning) writeDiagnostic(configuredWarning);
+			projectWarning = configuredWarning;
 			startupSettings = configuredLayers.settings;
 			const configuredVerdict = classifyDefaultTarget(startupSettings);
 			if (configuredVerdict.kind !== "usable" && configuredVerdict.kind !== "missing-credential") {
@@ -263,7 +266,14 @@ export async function runPancodeCommand(
 		const outcome = await runProjectTrustCard(process.cwd());
 		// Quitting the card opens no session, like declining the workspace check.
 		if (outcome === "quit") return 1;
-		if (outcome === "trusted") startupSettings = readStrictLayeredSettings(process.cwd()).settings;
+		if (outcome === "trusted") {
+			// The layers the card just trusted can replace the user's targets; that notice was not printed untrusted.
+			const trusted = readStrictLayeredSettings(process.cwd());
+			const warning = formatSettingsLayerWarning(trusted);
+			if (warning !== null && warning !== projectWarning) writeDiagnostic(warning);
+			projectWarning = warning;
+			startupSettings = trusted.settings;
+		}
 		// The per-file notices are held after the card: a skipped card is answered by the header's `/trust`
 		// reminder, and a trusted project names what its connections still need, also after `/trust`'s restart.
 		trustCardNotices = launchTrustNotices(outcome, process.cwd(), startupSettings);

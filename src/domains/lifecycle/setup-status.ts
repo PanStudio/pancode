@@ -25,9 +25,21 @@ export type Missing =
 	 * No stored key or sign-in for the provider the target authenticates as. With `projectUrl` the target points at
 	 * an address a project chose, which never receives the operator's keys, so only defining it in user settings helps.
 	 * No key variable is suggested for it: the project picked the address, so naming the variable its settings or the
-	 * runtime read would steer the operator's real key there.
+	 * runtime read would steer the operator's real key there. `redeclared` is the refusal for a project's redeclaration
+	 * of a target the user settings give a credential, naming that project file. With `sendsNone` the target declares
+	 * no credential, so its endpoint got PanCode's local placeholder key and refused it; `projectFile` is the project
+	 * settings file that declares the target, which user settings cannot change.
 	 */
-	| { kind: "credential"; target: string; provider: string; projectUrl?: string }
+	| {
+			kind: "credential";
+			target: string;
+			provider: string;
+			projectUrl?: string;
+			redeclared?: string;
+			sendsNone?: true;
+			projectFile?: string;
+			keyless?: true;
+	  }
 	/**
 	 * The target names the environment variable its key comes from, and it is not set. `projectFile` is the project
 	 * settings file that declares the target, when a caller that read the layers knows it.
@@ -69,6 +81,7 @@ export interface SetupTargetFacts {
 		provider: string;
 		envVariable?: string;
 		projectUrl?: string;
+		redeclared?: string;
 	};
 	/** The last reachability check, when one ran. */
 	probe?: { ok: true } | { ok: false; detail: string };
@@ -111,16 +124,23 @@ export function setupStatus<TargetDraft = unknown>(facts: SetupFacts<TargetDraft
 		const credential = target.credential;
 		if (credential !== undefined && !credential.available) {
 			missing.push(
-				credential.projectUrl !== undefined
+				credential.redeclared !== undefined
 					? {
 							kind: "credential",
 							target: target.id,
 							provider: credential.provider,
-							projectUrl: credential.projectUrl,
+							redeclared: credential.redeclared,
 						}
-					: credential.envVariable !== undefined
-						? { kind: "env", target: target.id, variable: credential.envVariable }
-						: { kind: "credential", target: target.id, provider: credential.provider },
+					: credential.projectUrl !== undefined
+						? {
+								kind: "credential",
+								target: target.id,
+								provider: credential.provider,
+								projectUrl: credential.projectUrl,
+							}
+						: credential.envVariable !== undefined
+							? { kind: "env", target: target.id, variable: credential.envVariable }
+							: { kind: "credential", target: target.id, provider: credential.provider },
 			);
 		}
 		if (target.probe !== undefined && !target.probe.ok && target.url !== undefined) {
@@ -148,6 +168,24 @@ export function describeMissing(
 ): { sentence: string; command?: string } {
 	switch (missing.kind) {
 		case "credential": {
+			if (missing.sendsNone === true) {
+				const cause = `${missing.target} declares no credential, so PanCode sent none, and its endpoint asks for one.`;
+				if (missing.keyless === true)
+					return {
+						sentence: `${missing.target}'s runtime sends no credential, and its endpoint asks for one. ${
+							options.inSession
+								? "Switch to a route that sends one with /model."
+								: "Run: pancode configure to choose a target that sends one"
+						}`,
+						...(options.inSession ? {} : { command: "pancode configure" }),
+					};
+				// The project's list replaces the user's, so configure cannot reach this entry.
+				if (missing.projectFile !== undefined)
+					return { sentence: `${cause} Give ${missing.target} auth.apiKeyEnvVar in ${missing.projectFile}.` };
+				const command = `pancode configure --id ${missing.target}`;
+				return { sentence: `${cause} Run: ${command}`, command };
+			}
+			if (missing.redeclared !== undefined) return { sentence: missing.redeclared };
 			if (missing.projectUrl !== undefined)
 				return {
 					sentence: `${missing.target} points at ${missing.projectUrl}, an address this project chose, so PanCode sends it none of your keys. To use it, define ${missing.target} in your user settings with its own key variable (auth.apiKeyEnvVar).`,
@@ -201,8 +239,8 @@ export function missingFromTargetStatus(status: {
 }
 
 /**
- * A request that never reached the endpoint, from the route record a failed call carries. A connection that dropped
- * after the reply began is not an unreachable endpoint and gives null.
+ * A request that never reached the endpoint, or reached it with no credential, from the route record a failed call
+ * carries. A connection that dropped after the reply began is not an unreachable endpoint and gives null.
  */
 export function missingFromFailedCall(route: {
 	targetId: string;
@@ -210,7 +248,22 @@ export function missingFromFailedCall(route: {
 	stage?: string;
 	errorClass?: string;
 	partialReply?: boolean;
+	noCredential?: boolean;
+	projectFile?: string;
+	keyless?: boolean;
 }): Missing | null {
+	if (route.stage === "auth" && route.noCredential === true && /^http_\d{3}$/u.test(route.errorClass ?? ""))
+		return {
+			kind: "credential",
+			target: route.targetId,
+			provider: route.targetId,
+			sendsNone: true,
+			...(route.keyless === true
+				? { keyless: true }
+				: route.projectFile !== undefined
+					? { projectFile: route.projectFile }
+					: {}),
+		};
 	if (route.stage !== "transport" || route.url === undefined || route.partialReply === true) return null;
 	if (route.errorClass !== "network_error" && route.errorClass !== "timeout") return null;
 	const detail = route.errorClass === "timeout" ? "timed out" : "connection failed";

@@ -16,6 +16,7 @@ import { classifyCallFailure, trackCallFetch } from "../core/call-failure.js";
 import { gatewayRoutingObservationFromRecord, gatewayRoutingObservationLabel } from "../core/gateway-routing.js";
 import { isHostAuthored, rememberMessageCalls } from "../core/message-accounting.js";
 import { applyModelAdmission, type ModelAdmissionEvent } from "../core/model-admission.js";
+import { projectTargetOrigin } from "../core/project-target-urls.js";
 import { type ModelRouteRefusal, modelRouteGuarded, modelRouteRefusalMessage } from "../core/response-model-id.js";
 import { requestedThinking } from "../core/telemetry/call-effort.js";
 import { mainAgent } from "../core/telemetry/context.js";
@@ -209,6 +210,16 @@ function isCollectedBatchResult(toolName: string, result: unknown): boolean {
 		details.complete === true &&
 		details.collected === true
 	);
+}
+
+/**
+ * What can give a target with no credential one: nothing for a runtime that reads no key, else the project file its
+ * entry came from when configure (user settings) cannot reach it.
+ */
+function noCredentialRemedy(target: object, runtimeAuth: string): { keyless?: true; projectFile?: string } {
+	if (runtimeAuth !== "api-key") return { keyless: true };
+	const file = projectTargetOrigin(target)?.file;
+	return file !== undefined ? { projectFile: file } : {};
 }
 
 export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
@@ -967,6 +978,8 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		// `apiCallStartedAt` is null names this step, because no request has
 		// reached the provider it would otherwise blame (#423).
 		let preInvocationStage: PreInvocationStage = "transform";
+		// The last request carried the local placeholder key, so an endpoint that refuses it was sent no credential at all.
+		let placeholderKeySent = false;
 		let unsettledSpendUsd = 0;
 		let admittedMessages: readonly AgentMessage[] = [];
 		let admittedSystemPrompt = "";
@@ -1432,9 +1445,11 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 				// Pi converts the conversation between turn_start and this call; that is the transform stage (#434).
 				const call = modelCall;
 				call?.stage("transform", "end");
-				if (!targetRequiresAuth(localRuntime.runtimeResolution.target, localRuntime.runtimeResolution.runtime)) {
-					return LOCAL_API_KEY_FALLBACK;
-				}
+				placeholderKeySent = !targetRequiresAuth(
+					localRuntime.runtimeResolution.target,
+					localRuntime.runtimeResolution.runtime,
+				);
+				if (placeholderKeySent) return LOCAL_API_KEY_FALLBACK;
 				preInvocationStage = "auth";
 				call?.stage("auth", "start");
 				let refreshed: boolean | undefined;
@@ -2025,6 +2040,10 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 								stage: failure.stage,
 								errorClass: failure.errorClass,
 								partialReply: extractText(message).length > 0,
+								...(failure.stage === "auth" && placeholderKeySent ? { noCredential: true } : {}),
+								...(failure.stage === "auth" && placeholderKeySent
+									? noCredentialRemedy(localRuntime.runtimeResolution.target, localRuntime.runtimeResolution.runtime.auth)
+									: {}),
 							},
 						});
 					const retryAfterMs = callTracking?.retryAfterMs();
@@ -2081,6 +2100,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 				apiCallStartedAt = null;
 				apiCallFirstDeltaAt = null;
 				preInvocationStage = "transform";
+				placeholderKeySent = false;
 				runFirstCallVerdict = null;
 				pendingTerminalToolResult = null;
 				clearStallTimer();
