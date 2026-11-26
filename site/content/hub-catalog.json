@@ -1,8 +1,8 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "21c008b483c8d9cde3f3618042c0c194a99893e28078b8c0845bcd434c504e32",
-		"rows": 44,
+		"sha256": "341a4fab7f175ff6bc6c154aa9337138c63917d71f2865e45f681b62ae2ba9f9",
+		"rows": 51,
 		"revoked": 0
 	},
 	"rows": [
@@ -165,6 +165,111 @@
 			},
 			"sha256": "a75ee79f19d48f0ff0b9c56afdacb2996a876ca0a477faac3f9d732f7853a1b3",
 			"install": "pancode hub install plugin:zulipchat"
+		},
+		{
+			"kind": "server",
+			"name": "catalog",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "The dataset catalogs the operator names in a catalog file, local and public CKAN, and staging one resource.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/catalog"
+			},
+			"sha256": "718b4a2976f50c0846f79ee56f9a816796dcd3b44aaf63477658e9db4d8e21ad",
+			"install": "pancode hub install server:catalog"
+		},
+		{
+			"kind": "server",
+			"name": "darshan",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "What one Darshan log says about a job's I/O, through darshan-parser.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/darshan"
+			},
+			"sha256": "fe4f27b8d7c5ca58230f816c36caa88ba38ad31e04f723f8ac2cb7379a385bae",
+			"install": "pancode hub install server:darshan"
+		},
+		{
+			"kind": "server",
+			"name": "modules",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "The site's software modules through Lmod or Environment Modules, and the module load lines a batch script needs.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/modules"
+			},
+			"sha256": "050899f4e8729e968162cce674b7f185cde920c7ef25087c2a8090ac636dcc51",
+			"install": "pancode hub install server:modules"
+		},
+		{
+			"kind": "server",
+			"name": "node",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "This machine's CPU topology and load, memory and swap, mounted file systems, network interfaces, NVIDIA GPUs and top processes.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/node"
+			},
+			"sha256": "499c64dca44433c5c14c8d4a0757ea9870010614094705f91bfec51d655734a6",
+			"install": "pancode hub install server:node"
+		},
+		{
+			"kind": "server",
+			"name": "scidata",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "The structure, a bounded slice and statistics of CSV, TSV, JSON, HDF5, NetCDF, Zarr and Parquet files.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/scidata"
+			},
+			"sha256": "1b2f89dff382cf74428b3e94b4149168d7bf3dc376ca398208aa3920445bb86e",
+			"install": "pancode hub install server:scidata"
+		},
+		{
+			"kind": "server",
+			"name": "spack",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "The Spack instance on PATH or SPACK_ROOT: installed specs, package recipes, prefixes, concretization and environments.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/spack"
+			},
+			"sha256": "90d2a49e4d62b9f02da562a28de1a350dd286e697e39f8f72b89b39310cadc3a",
+			"install": "pancode hub install server:spack"
+		},
+		{
+			"kind": "server",
+			"name": "store",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "A project's PanStore: tags, blobs, records and read-only copies, with writes only into allowed tags.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/servers/store"
+			},
+			"sha256": "7658f16484f34f49a64c7939ab134f6ca7347813fa86b8257c1902dcdfa7f2f1",
+			"install": "pancode hub install server:store"
 		},
 		{
 			"kind": "skill",
