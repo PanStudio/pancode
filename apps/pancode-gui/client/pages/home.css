@@ -344,15 +344,10 @@
 	gap: var(--space-6);
 }
 .newtask__inner:has(> .onboard) .pancode-stage {
-	--stage-size: 112px;
 	margin-top: var(--space-4);
 }
 .newtask__inner:has(> .onboard) .newtask__title {
 	font-size: var(--text-welcome);
-}
-/* Setup just finished: the stage keeps its size for the finale, then settles into the plain mark. */
-.newtask__inner .pancode-stage[data-finale] {
-	--stage-size: 132px;
 }
 @container (min-width: 960px) {
 	.newtask__inner:has(> .onboard) {
@@ -365,7 +360,6 @@
 		justify-items: stretch;
 	}
 	.newtask__inner:has(> .onboard) .pancode-stage {
-		--stage-size: 148px;
 		grid-column: 1;
 		grid-row: 1;
 		justify-items: start;

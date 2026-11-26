@@ -15,6 +15,7 @@ import { StatusMark } from "../design/status.js";
 import { setPageTitle } from "../interaction/announcer.js";
 import { InventoryMore } from "../interaction/InventoryMore.js";
 import { useInventoryWindow } from "../interaction/use-inventory-window.js";
+import { PancodeEmptyMark } from "../shell/PancodeMark.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
@@ -246,7 +247,7 @@ export function MissionControl({ client }: { client: Client }) {
 					) : null}
 					{items && shown.length === 0 ? (
 						<div className="mission__empty">
-							<Icon name="sessions" />
+							<PancodeEmptyMark />
 							<h3>{items.length ? "No sessions match this view" : "No session is open on this server"}</h3>
 							<p>
 								{items.length

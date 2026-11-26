@@ -77,6 +77,7 @@ const theme = (name) => {
 			["raised", "panel", "float"].map((level, i) => [`shadow-${level}`, design.elevation[name][i + 1]]),
 		),
 		"color-scrim": name === "dark" ? "72%" : "52%",
+		"glow-brand-soft": design.glow[name]["brand-soft"],
 	});
 };
 // Every palette colour the mark's cuts name, so PancodeMark paints the artwork from the palette, not from copies.
