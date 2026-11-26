@@ -181,13 +181,21 @@ test("pnpm project stores stay local while its recognized global layout uses pnp
 	for (const [layout, kind] of [
 		["project/node_modules/.pnpm/pkg/node_modules/@akougkas/pancode", "local"],
 		["pnpm/global/5/.pnpm/pkg/node_modules/@akougkas/pancode", "pnpm"],
+		["share/pnpm/store/v11/links/@akougkas/pancode/0.9.1/a1/node_modules/@akougkas/pancode", "pnpm"],
+		["shared/store/v11/links/@akougkas/pancode/0.9.1/b2/node_modules/@akougkas/pancode", "local"],
 	] as const) {
 		const root = join(home.dir, layout);
 		const entry = join(root, "dist/cli/index.js");
 		mkdirSync(dirname(entry), { recursive: true });
 		writeFileSync(entry, "// fixture");
 		writeFileSync(join(root, "package.json"), '{"name":"@akougkas/pancode","version":"0.5.4"}');
-		assert.equal(inspectInstallation(entry).kind, kind);
+		// pnpm 11+ reaches a global package through <pnpm home>/global/v<n>/<id>/node_modules.
+		if (layout.startsWith("share/pnpm/")) {
+			const link = join(home.dir, "share/pnpm/global/v11/c3/node_modules/@akougkas/pancode");
+			mkdirSync(dirname(link), { recursive: true });
+			symlinkSync(root, link);
+		}
+		assert.equal(inspectInstallation(entry).kind, kind, layout);
 	}
 });
 
@@ -318,7 +326,16 @@ test("an installer post-install under --no-gui leaves the desktop app, its hando
 	assert.equal(declined.status, 0, declined.stderr + declined.stdout);
 	assert.doesNotMatch(declined.stdout + declined.stderr, /must not (hand over|restart)/);
 	assert.match(declined.stdout, /Left the desktop app as it was/);
+	assert.match(declined.stdout, /pancode gui background install --handover/);
 	// No child ran at all, so no `gui background install` could write a launcher or a Start Menu shortcut.
+	assert.equal(existsSync(join(f.home.dir, "calls.jsonl")), false);
+
+	// The app of this same installation needs only a restart, not a handover from itself.
+	writeFileSync(join(background, "server.json"), JSON.stringify({ packageRoot: f.root }));
+	const own = await f.call(["--post-install"], untouched, { PANCODE_INSTALL_GUI: "0" });
+	assert.equal(own.status, 0, own.stderr + own.stdout);
+	assert.match(own.stdout, /pancode gui background restart --if-idle/);
+	assert.doesNotMatch(own.stdout, /--handover|Move it to this installation/);
 	assert.equal(existsSync(join(f.home.dir, "calls.jsonl")), false);
 });
 
@@ -397,6 +414,14 @@ test("manual package managers get instructions without replacement and dry runs 
 	});
 	assert.equal(result.status, 1, result.stderr + result.stdout);
 	assert.match(result.stdout, /pnpm add -g/);
+	// npm has no beta dist-tag between pre-releases, so the beta command names the version beta resolves to.
+	const beta = await f.call(["--channel", "beta", "--json"], {
+		inspectInstallation: () => ({ ...inspectInstallation(f.entry), kind: "pnpm" }),
+		lookUpAvailableVersion: async (channel) => ({ asked: true, version: channel === "beta" ? "99.0.0" : null }),
+	});
+	assert.equal(beta.status, 1, beta.stderr + beta.stdout);
+	assert.match(beta.stdout, /pnpm add -g @akougkas\/pancode@99\.0\.0/);
+	assert.doesNotMatch(beta.stdout, /@beta/);
 	const preview = await f.call(["--dry-run", "--restart"]);
 	assert.equal(preview.status, 0, preview.stderr + preview.stdout);
 	assert.match(preview.stdout, /Would relaunch/);

@@ -236,6 +236,13 @@ describe("contracts/install-script", () => {
 			const missing = install("0.9.1");
 			strictEqual(missing.code, 1, missing.stderr);
 			match(missing.stderr, /PanCode 0\.9\.1 ships no linux-x64 bundle.*npm install -g @akougkas\/pancode@0\.9\.1/u);
+			const unpublished = install("0.9.7");
+			strictEqual(unpublished.code, 1, unpublished.stderr);
+			match(
+				unpublished.stderr,
+				/PanCode 0\.9\.7 is not published at file:\/\/\S+ \(it has no v0\.9\.7\/SHA256SUMS\); check the version, or leave out --version/u,
+			);
+			ok(!unpublished.stderr.includes("network"), unpublished.stderr);
 			strictEqual(readdirSync(join(installRoot, "versions")).length, 0);
 			ok(!existsSync(join(installRoot, "install.json")));
 			ok(!existsSync(join(installRoot, ".install-lock")), "a refused install releases its lock");

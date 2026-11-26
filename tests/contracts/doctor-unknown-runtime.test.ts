@@ -7,7 +7,12 @@ import { test } from "node:test";
 import { runPancodeRun } from "../../src/cli/run.js";
 import { readSettings } from "../../src/core/config.js";
 import { resolvePancodeDirs } from "../../src/core/xdg.js";
-import { runDoctor, runDoctorModelChecks, withDoctorCommand } from "../../src/domains/lifecycle/doctor.js";
+import {
+	runDoctor,
+	runDoctorHarnessChecks,
+	runDoctorModelChecks,
+	withDoctorCommand,
+} from "../../src/domains/lifecycle/doctor.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -83,4 +88,18 @@ test("a session with no prompt-cache verdict is information, not a warning that 
 	ok(row, "the cache telemetry row is reported");
 	strictEqual(row.level, "info");
 	ok(!withDoctorCommand(row).detail.includes("configure"), withDoctorCommand(row).detail);
+});
+
+test("an untrusted project settings file sends the operator to trust review, not to agents validate", async (t) => {
+	const home = await isolatePancodeEnv("pancode-doctor-untrusted-");
+	t.after(() => home.restore());
+	const workspace = join(home.dir, "repo");
+	mkdirSync(join(workspace, ".git"), { recursive: true });
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	writeFileSync(join(workspace, ".pancode", "settings.local.yaml"), "chat:\n  model: m\n");
+	const row = runDoctorHarnessChecks(workspace).find((finding) => finding.name.startsWith("harness .pancode"));
+	ok(row, "the untrusted file is reported");
+	const detail = withDoctorCommand(row).detail;
+	match(detail, /Review with pancode config trust settings\.?$/u);
+	ok(!detail.includes("next:"), detail);
 });
