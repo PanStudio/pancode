@@ -3,7 +3,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
-import { canonicalizePath } from "../../core/path-canonical.js";
+import { canonicalizePath, canonicalizeRawPath, createPathWalkMemo } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { storeReplacedBlob } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
@@ -11,9 +11,18 @@ import type { ClassifierCall } from "./action-classifier.js";
 import type { AutonomyExposure } from "./autonomy.js";
 import { autonomyCallInputs } from "./autonomy-inputs.js";
 import { describeBashCallConsequences, type PathKind } from "./command-consequence.js";
-import { type ShellCommandStep, shellCommandSteps } from "./command-path-walks.js";
+import {
+	extractCommandCdScopedTargets,
+	extractCommandCdTargets,
+	type ShellCommandStep,
+	shellCommandSteps,
+} from "./command-path-walks.js";
 import { outwardShellReason } from "./containment.js";
 import type { SafetyDecision } from "./contract.js";
+import { hidesShellContent, pathPolicyTargets } from "./policy-bash-paths.js";
+import { commandArg } from "./policy-call-args.js";
+import { bashOperandRoles } from "./policy-operand-roles.js";
+import { readScopeSpellings } from "./read-scope.js";
 import { asksToLeaveSandbox } from "./sandbox-escape.js";
 
 /** What exists at `path` once resolved against `cwd`; null when it does not, or cannot be read. */
@@ -219,33 +228,85 @@ export function mainCallExposure(call: ClassifierCall, decision: SafetyDecision)
 	return shellOutwardReason(call) === null ? "local" : "outward";
 }
 
-/** A shell word that names a path by itself: absolute, under home, or up out of the cwd. */
-const PATH_WORD = /^(?:\/|~(?:\/|$)|\.\.(?:\/|$))/u;
+/** How far a parked main-agent call reaches, as its approval card states it. */
+export type MainCallReach = "workspace" | "outside-workspace" | "unknown";
+
+/** Device files a command writes or reads as plumbing (`> /dev/null`, `2>/dev/stderr`), not as a place it reaches. */
+const DEVICE_PLUMBING = /^\/dev\/(?:null|zero|tty|stdin|stdout|stderr|fd\/\d+)$/u;
+
+/** A shell word whose path the shell computes when it runs, so its text does not say where it lands. */
+const SHELL_COMPUTED = /[$`]/u;
 
 /**
- * Whether a parked main-agent call reaches files outside the workspace, so its
- * card says so instead of "reaches this workspace": a read the net marked as
- * outside the workspace, a command that leaves the sandbox, or a shell call whose
- * cwd, script or path operand lies outside. Card text only, like `mainCallExposure`.
+ * The paths a call names in a path role: the typed path of a file tool, and for
+ * a shell call the operands its readers, copies, searches and input redirects
+ * open, its write and delete targets (output redirects included) and the
+ * directories it cds into. A word a command only prints is not among them.
  */
-export function mainCallReachesOutsideWorkspace(
+function namedCallPaths(call: ClassifierCall, callCwd: string): string[] {
+	const named = pathPolicyTargets(call, callCwd).map((target) => target.path);
+	if (call.tool === ToolNames.RunScript) {
+		const script = call.args?.script;
+		return typeof script === "string" ? [...named, script] : named;
+	}
+	if (call.tool !== ToolNames.Bash) return named;
+	const command = commandArg(call.args);
+	if (command === null) return named;
+	const roles = bashOperandRoles(command);
+	return [
+		...named,
+		...roles.opened,
+		...roles.writes.map((write) => write.target),
+		...roles.searches.flatMap((search) => search.roots),
+		...extractCommandCdTargets(command),
+		...extractCommandCdScopedTargets(command).map((target) => target.path),
+	];
+}
+
+/**
+ * How far a parked main-agent call reaches, for the words of its approval card.
+ * Outside the workspace: a read the net marked so, a command that leaves the
+ * sandbox, or a cwd, script or named path that resolves (links followed) outside
+ * the canonical workspace. The workspace: every named path resolves inside and
+ * nothing else can reach further, because the call is a typed file tool, a
+ * recognized command, or a shell call the main-session sandbox confines.
+ * Unknown otherwise, so the card never claims the workspace for a reach it
+ * cannot see. Card text only: admission reads none of this.
+ */
+export function mainCallReach(
 	call: ClassifierCall,
 	decision: SafetyDecision,
 	workspace: string = process.cwd(),
-	home: string = homedir(),
-): boolean {
-	if (decision.policy?.readScope === "outside-workspace" || asksToLeaveSandbox(decision)) return true;
-	if (call.tool !== ToolNames.Bash && call.tool !== ToolNames.RunScript) return false;
+): MainCallReach {
+	const policy = decision.policy;
+	if (policy?.readScope === "outside-workspace" || asksToLeaveSandbox(decision)) return "outside-workspace";
+	const memo = createPathWalkMemo();
+	const root = canonicalizePath(workspace, memo) ?? resolve(workspace);
+	const shell = call.tool === ToolNames.Bash || call.tool === ToolNames.RunScript;
 	const cwdArg = call.args?.cwd;
-	const cwd = resolve(workspace, typeof cwdArg === "string" && cwdArg.length > 0 ? cwdArg : ".");
-	const outside = (base: string, word: string): boolean =>
-		word !== "/dev/null" &&
-		!isSameOrDescendant(resolve(base, word === "~" || word.startsWith("~/") ? home + word.slice(1) : word), workspace);
-	if (outside(workspace, cwd)) return true;
+	const callCwd = resolve(workspace, shell && typeof cwdArg === "string" && cwdArg.length > 0 ? cwdArg : ".");
 	// run_script resolves its script against the workspace root, whatever its cwd.
-	const script = call.args?.script;
-	if (call.tool === ToolNames.RunScript) return typeof script === "string" && outside(workspace, script);
-	const command = call.args?.command;
-	if (typeof command !== "string") return false;
-	return shellCommandSteps(command).some((step) => step.args.some((word) => PATH_WORD.test(word) && outside(cwd, word)));
+	const script = call.tool === ToolNames.RunScript ? call.args?.script : undefined;
+	let unseen = false;
+	for (const raw of [...(shell ? [callCwd] : []), ...namedCallPaths(call, callCwd)]) {
+		if (DEVICE_PLUMBING.test(raw)) continue;
+		if (SHELL_COMPUTED.test(raw)) {
+			unseen = true;
+			continue;
+		}
+		const base = raw === script ? workspace : callCwd;
+		const landsInside = readScopeSpellings(raw, base).every((spelling) => {
+			const real = canonicalizeRawPath(spelling, base, memo);
+			return real !== null && isSameOrDescendant(real, root);
+		});
+		if (!landsInside) return "outside-workspace";
+	}
+	if (unseen) return "unknown";
+	if (!shell) return pathPolicyTargets(call, callCwd).length > 0 ? "workspace" : "unknown";
+	const command = commandArg(call.args);
+	if (command !== null && hidesShellContent(command, policy?.posture)) return "unknown";
+	if (policy?.shellSandbox !== undefined) return "workspace";
+	return call.tool === ToolNames.Bash && (policy?.actionClass === "read" || policy?.execRecognition === "recognized")
+		? "workspace"
+		: "unknown";
 }

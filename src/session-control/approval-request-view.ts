@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ActionClass } from "../domains/safety/action-classifier.js";
 import type { AutonomyExposure } from "../domains/safety/autonomy.js";
+import type { MainCallReach } from "../domains/safety/call-consequence.js";
 
 /**
  * Facts about a parked mutation that may cross every process boundary: what
@@ -27,8 +28,11 @@ export interface ApprovalRequestView {
 	origin: { kind: "main" } | { kind: "worker"; agentId: string; runId: string; endsWithTurn?: boolean };
 	/** Admission-normalized exposure. Caller prose never supplies presentation fields. */
 	exposure?: AutonomyExposure;
-	/** The call names a path outside the workspace or leaves the sandbox, so the card never says it stays inside. */
-	outsideWorkspace?: true;
+	/**
+	 * How far a main-agent call reaches (`mainCallReach`), so the card says the workspace only when the
+	 * call's facts keep it there. Absent, as for a worker ask, is unknown.
+	 */
+	reach?: MainCallReach;
 	reason: string;
 	/**
 	 * The safety-net rule's own reason text, set for a net-axis ask so the card can say what

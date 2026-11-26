@@ -14,11 +14,7 @@ import { ToolNames } from "../core/tool-names.js";
 import { redactCommandOutputSecrets } from "../domains/evidence/redact.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import { askAxis } from "../domains/safety/approval-axis.js";
-import {
-	describeMainCallConsequences,
-	mainCallExposure,
-	mainCallReachesOutsideWorkspace,
-} from "../domains/safety/call-consequence.js";
+import { describeMainCallConsequences, mainCallExposure, mainCallReach } from "../domains/safety/call-consequence.js";
 import { describeCallTarget, sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { escapeScopeOptionConsequence, escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
@@ -302,7 +298,7 @@ export function mainApprovalRequestView(
 				? { artifact: { kind: "settings-change" as const, text: decision.rejection.detail } }
 				: {}),
 		exposure: call.tool === ToolNames.AskUser ? askUserExposure(call.args) : mainCallExposure(call, decision),
-		...(mainCallReachesOutsideWorkspace(call, decision) ? { outsideWorkspace: true as const } : {}),
+		reach: mainCallReach(call, decision),
 		...(target.length > 0 ? { target } : {}),
 		...(mutation !== null ? { mutation } : {}),
 		...(queueDepth !== undefined && queueDepth > 1 ? { queueDepth } : {}),

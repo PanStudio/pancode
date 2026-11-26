@@ -14,7 +14,7 @@ import { DEFAULT_AUTONOMY_LEVEL } from "../../domains/safety/autonomy.js";
 import {
 	describeMainCallConsequences,
 	mainCallExposure,
-	mainCallReachesOutsideWorkspace,
+	mainCallReach,
 } from "../../domains/safety/call-consequence.js";
 import { describeCallTarget, sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { COMMAND_CONSEQUENCE_MAX_SEVERE } from "../../domains/safety/command-consequence.js";
@@ -594,7 +594,7 @@ export function installPermissionBridge(input: {
 				: { kind: "autonomy", level: meta.axis.slice("autonomy:".length) || DEFAULT_AUTONOMY_LEVEL },
 			origin: { kind: "main" },
 			exposure: call.tool === ToolNames.AskUser ? askUserExposure(call.args) : mainCallExposure(call, decision),
-			outsideWorkspace: mainCallReachesOutsideWorkspace(call, decision),
+			reach: mainCallReach(call, decision),
 			...(meta.dispatchPlan !== undefined ? { workers: meta.dispatchPlan.taskCount } : {}),
 		});
 		// A dispatch plan is named by what one approval starts, as the terminal card names it.

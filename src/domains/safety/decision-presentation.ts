@@ -16,7 +16,10 @@ const DECISION_TIERS = ["conversation", "workspace", "outward", "safety-net", "s
 type DecisionTier = (typeof DECISION_TIERS)[number];
 type DecisionSemanticToken = "accent" | "action" | "warning";
 type DecisionRequestKind = "question" | "permission";
-type DecisionAffectedScope = "conversation" | "workspace" | "outside-workspace" | "outward" | "system";
+type DecisionAffectedScope = "conversation" | "workspace" | "outside-workspace" | "unknown" | "outward" | "system";
+
+/** How far a call reaches when its class keeps it off this machine's system tier; `unknown` when no fact says. */
+type DecisionCallReach = "workspace" | "outside-workspace" | "unknown";
 type DecisionReversibility = "reversible" | "limited" | "unknown";
 type DecisionAuthorityEffect = "records-answer" | "grants-once";
 type DecisionActionId = "record-answer" | "cancel" | "approve-once" | "deny" | "stop";
@@ -99,17 +102,17 @@ export function decisionActionClass(value: unknown): ActionClass {
 
 function actionConsequence(
 	actionClass: ActionClass,
-	outsideWorkspace: boolean,
+	reach: DecisionCallReach,
 ): {
 	affectedScope: DecisionAffectedScope;
 	reversibility: DecisionReversibility;
 } {
-	const reach = outsideWorkspace ? "outside-workspace" : "workspace";
 	switch (actionClass) {
 		case "read":
 			return { affectedScope: reach, reversibility: "reversible" };
 		case "write":
-			return { affectedScope: reach, reversibility: "reversible" };
+			// Only a workspace change is one the operator can review and revert.
+			return { affectedScope: reach, reversibility: reach === "workspace" ? "reversible" : "limited" };
 		case "execute":
 		case "dispatch":
 			return { affectedScope: reach, reversibility: "limited" };
@@ -129,11 +132,11 @@ export function decisionFactsForPermission(input: {
 	exposure?: AutonomyExposure;
 	sandboxed?: true;
 	workers?: number;
-	/** The call names a path outside the workspace or leaves the sandbox (`mainCallReachesOutsideWorkspace`). */
-	outsideWorkspace?: boolean;
+	/** How far the call reaches (`mainCallReach`); absent, as for a worker ask that carries no path facts, is unknown. */
+	reach?: DecisionCallReach;
 }): TrustedDecisionFacts {
 	const exposure = input.exposure ?? "local";
-	const consequence = actionConsequence(input.actionClass, input.outsideWorkspace === true);
+	const consequence = actionConsequence(input.actionClass, input.reach ?? "unknown");
 	return {
 		requestKind: "permission",
 		axis: input.axis,
@@ -199,7 +202,9 @@ function tierIdentity(
 				tierLabel: DECISION_TIER_LABELS.workspace,
 				...(facts.affectedScope === "outside-workspace"
 					? { title: "Approve action outside the workspace", kind: "action outside the workspace" }
-					: { title: "Approve workspace action", kind: "workspace action" }),
+					: facts.affectedScope === "workspace"
+						? { title: "Approve workspace action", kind: "workspace action" }
+						: { title: "Approve action", kind: "action" }),
 				semanticToken: "action",
 			};
 		case "outward":
@@ -287,9 +292,13 @@ function consequenceCopy(facts: TrustedDecisionFacts, tier: DecisionTier): strin
 				return facts.actionClass === "read"
 					? "The call reads outside the workspace without changing anything."
 					: "The call can affect files or processes outside the workspace.";
+			if (facts.affectedScope === "workspace")
+				return facts.actionClass === "read"
+					? "The call reads within the workspace without mutating it."
+					: "The call can affect files or processes inside the workspace.";
 			return facts.actionClass === "read"
-				? "The call reads within the workspace without mutating it."
-				: "The call can affect files or processes inside the workspace.";
+				? "The call reads without changing anything. PanCode cannot tell whether it stays in the workspace."
+				: "The call can affect files or processes. PanCode cannot tell whether they stay in the workspace.";
 		case "outward":
 			return "The resulting step can reach people or systems outside the workspace.";
 		case "safety-net":

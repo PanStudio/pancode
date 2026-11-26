@@ -73,6 +73,7 @@ const WRITE_VIEW: ApprovalRequestView = {
 	actionClass: "write",
 	axis: { kind: "autonomy", level: "default" },
 	origin: { kind: "main" },
+	reach: "workspace",
 	reason: "write blocked: write",
 	target: DEEP_TARGET,
 	mutation: { kind: "write", bytes: 4173, replacements: 1, digest: "6e068cd0028e23c4" },
