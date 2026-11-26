@@ -517,8 +517,9 @@ offer_gui() {
 		read -r answer </dev/tty || answer=n
 		case "$answer" in "" | [Yy]*) ;; *) return 0 ;; esac
 	fi
-	# The command's report is JSON for scripts; the installer states the outcome in its own words.
-	if "$node_bin" "$entry" gui background install --handover --json </dev/null >"$work/gui.out"; then
+	# The command's report is JSON for scripts; the installer states the outcome in its own words. It never
+	# passes --handover: an app another installation runs stays with it, and moving it is the person's choice.
+	if "$node_bin" "$entry" gui background install --json </dev/null >"$work/gui.out" 2>"$work/gui.err"; then
 		if "$node_bin" -e 'try { process.exit(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).windows?.status === "installed" ? 0 : 1); } catch { process.exit(1); }' "$work/gui.out"; then
 			ok "desktop app installed; open PanCode from the Windows Start Menu or your app menu, or run: pancode gui"
 		elif [ "$gui_os" = Darwin ]; then
@@ -529,7 +530,10 @@ offer_gui() {
 		gui_warning="$("$node_bin" -e 'try { const w=JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).windows; if(w?.status === "failed") process.stdout.write("Windows desktop setup failed: " + String(w.reason || "unknown error") + "; run pancode doctor --fix"); } catch { process.stdout.write("Could not read the desktop setup report; run pancode doctor"); }' "$work/gui.out")"
 		[ -z "$gui_warning" ] || warn "$gui_warning"
 		log "the desktop app uses PanCode's saved credentials; save a key that lives only in your shell with: pancode auth login <target>"
+	elif grep -q "belongs to another installation" "$work/gui.err" 2>/dev/null; then
+		warn "the desktop app runs from another installation and was left as it is; move it to this one with: $launcher gui background install --handover"
 	else
+		cat "$work/gui.err" >&2
 		warn "the desktop app was not set up. Retry with: pancode doctor --fix (verified service handover waits until active work finishes)"
 	fi
 }

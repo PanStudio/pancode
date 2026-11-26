@@ -75,6 +75,9 @@ function writeBundle(scratch: string, directory: string, version: string): strin
 			'if (args[0] === "--version") console.log(`PanCode $' + '{require("../../package.json").version}`);',
 			'if (args[0] === "doctor") console.log(JSON.stringify({ findings: [] }));',
 			'if (args[0] === "tools") console.log(JSON.stringify({ ok: true, message: "pane host" }));',
+			// The desktop app another installation runs: install refuses it without --handover, as the GUI does.
+			'if (args[0] === "gui") { if (process.env.GUI_LOG) require("node:fs").appendFileSync(process.env.GUI_LOG, args.join(" ") + "\\n");',
+			'  if (!args.includes("--handover")) { console.error("pancode: Background setup belongs to another installation. Run: pancode gui background install --handover"); process.exitCode = 1; } }',
 			"",
 		].join("\n"),
 	);
@@ -247,6 +250,51 @@ describe("contracts/install-script", () => {
 			ok(!existsSync(join(installRoot, "install.json")));
 			ok(!existsSync(join(installRoot, ".install-lock")), "a refused install releases its lock");
 			ok(!existsSync(join(root, "bin", "pancode")));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("--gui leaves a desktop app another installation runs where it is and names the command that moves it", {
+		skip: !["linux", "darwin"].includes(process.platform) || !existsSync(NPM_SEMVER),
+	}, () => {
+		const root = mkdtempSync(join(tmpdir(), "pancode-install-gui-"));
+		try {
+			const mirror = join(root, "mirror");
+			const home = join(root, "home");
+			const bin = join(root, "bin");
+			const guiLog = join(root, "gui.log");
+			mkdirSync(home);
+			writeRelease(root, mirror, "0.9.0");
+			const result = spawnSync(
+				"sh",
+				[SCRIPT, "--gui", "--install-dir", join(root, "install"), "--bin-dir", bin, "--version", "0.9.0"],
+				{
+					cwd: root,
+					env: {
+						HOME: home,
+						PATH: "/usr/bin:/bin",
+						LANG: "C",
+						TMPDIR: root,
+						PANCODE_RELEASE_MIRROR: `file://${mirror}`,
+						PANCODE_TARGET: TARGET,
+						GUI_LOG: guiLog,
+					},
+					input: "",
+					encoding: "utf8",
+				},
+			);
+			const output = `${result.stdout}${result.stderr}`;
+			strictEqual(result.status, 0, output);
+			strictEqual(readFileSync(guiLog, "utf8"), "gui background install --json\n", "no handover is attempted");
+			match(
+				output,
+				new RegExp(
+					`desktop app runs from another installation and was left as it is; move it to this one with: ${join(bin, "pancode").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} gui background install --handover`,
+					"u",
+				),
+			);
+			ok(!output.includes("desktop app installed"), output);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
