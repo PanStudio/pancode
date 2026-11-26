@@ -55,7 +55,6 @@
 			"!tests/fixtures/telemetry/golden",
 			"!tests/fixtures/typecheck-corpus",
 			"!assets/media-manifest.json",
-			"!apps/pancode-gui/client/public/brand/provenance.json",
 			"!tmp"
 		]
 	},
