@@ -354,7 +354,9 @@ function requiredActions(facts: TrustedDecisionFacts, tier: DecisionTier): Reado
 					? "Approve this worker call once"
 					: tier === "outward"
 						? "Approve this outward call once"
-						: "Approve workspace action once";
+						: facts.affectedScope === "workspace"
+							? "Approve workspace action once"
+							: "Approve action once";
 	const stopConsequence =
 		facts.origin.kind === "worker"
 			? facts.origin.endsWithTurn === true

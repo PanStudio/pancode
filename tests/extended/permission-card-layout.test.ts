@@ -9,7 +9,13 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { PermissionResolvedPayload } from "../../src/core/telemetry/live-events.js";
 import { ToolNames } from "../../src/core/tool-names.js";
+import { type MainCallReach, mainCallReach } from "../../src/domains/safety/call-consequence.js";
 import { CALL_TARGET_MAX_CHARS, describeCallTarget } from "../../src/domains/safety/call-target.js";
+import type { SafetyDecision } from "../../src/domains/safety/contract.js";
+import {
+	classifyDecisionPresentation,
+	decisionFactsForPermission,
+} from "../../src/domains/safety/decision-presentation.js";
 import { UNATTENDED_ALLOWED_BY } from "../../src/domains/safety/unattended.js";
 import { getKeybindings, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
@@ -87,6 +93,37 @@ function plain(lines: ReadonlyArray<string>): string[] {
 function contentWidth(columns: number): number {
 	return Math.min(PERMISSION_OVERLAY_WIDTH, columns) - 4;
 }
+
+test("a card claims the workspace, and its allow button names it, only for a reach every named place shows", (t) => {
+	const parent = realpathSync(mkdtempSync(join(tmpdir(), "pancode-reach-")));
+	t.after(() => rmSync(parent, { recursive: true, force: true }));
+	const ws = join(parent, "ws");
+	mkdirSync(join(ws, "docs"), { recursive: true });
+	const decision = { kind: "ask" } as unknown as SafetyDecision;
+	const reach = (tool: string, args: Record<string, unknown>) => mainCallReach({ tool, args }, decision, ws);
+	strictEqual(reach(ToolNames.Write, { path: "routes/$id.tsx", content: "x" }), "workspace");
+	strictEqual(reach(ToolNames.Write, { path: "../w.txt", content: "x" }), "outside-workspace");
+	// A sandboxed shell can read anywhere, so naming only workspace files does not establish the workspace.
+	strictEqual(reach(ToolNames.Bash, { command: "cat README.md" }), "unknown");
+	strictEqual(reach(ToolNames.Bash, { command: "cat ../note.txt" }), "outside-workspace");
+	strictEqual(reach(ToolNames.Bash, { command: "cd docs && cat ../README.md" }), "unknown");
+	strictEqual(reach(ToolNames.Bash, { command: "cd docs && cd ../.. && ls" }), "outside-workspace");
+	strictEqual(reach(ToolNames.RunScript, { script: "x.py", inputs: [join(parent, "blob.txt")] }), "outside-workspace");
+	strictEqual(reach(ToolNames.RunScript, { script: "x.py", inputs: ["t1:b.txt"] }), "unknown");
+	const allowLabel = (callReach: MainCallReach) =>
+		classifyDecisionPresentation(
+			decisionFactsForPermission({
+				tool: ToolNames.Bash,
+				actionClass: "execute",
+				axis: { kind: "autonomy", level: "default" },
+				origin: { kind: "main" },
+				reach: callReach,
+			}),
+		).requiredActions.find((action) => action.id === "approve-once")?.label;
+	strictEqual(allowLabel("workspace"), "Approve workspace action once");
+	strictEqual(allowLabel("outside-workspace"), "Approve action once");
+	strictEqual(allowLabel("unknown"), "Approve action once");
+});
 
 test("a fresh card shows allow dimmed while Enter cannot answer it yet, in the same words", () => {
 	const theme = pancodeTheme();
