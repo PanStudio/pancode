@@ -151,6 +151,12 @@ describe("approval card arguments of an uncurated tool", () => {
 			["key=value", true],
 			["sort_key=name", true],
 			["max_tokens=128", true],
+			// `auth` stops short of author and authority, which name no credential.
+			["author=Austen", true],
+			["/books?author=Austen&year=1847", true],
+			["GIT_AUTHOR_NAME=Jane", true],
+			[`auth=${value}`, false],
+			[`AUTHORIZATION=${value}`, false],
 			// FX-34: a pass/pwd name shares the evidence key words and shows only a short number; bare PWD and OLDPWD are not such names.
 			["MYSQL_PWD=hunter2hunter2", false],
 			["DBPASS=hunter2hunter2", false],
