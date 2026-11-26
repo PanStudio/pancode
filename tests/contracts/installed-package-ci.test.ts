@@ -16,12 +16,15 @@ test("the pipeline builds the release once and every later job consumes that art
 	const { build, test: tests, install, "tested-run": tested, publish } = workflow.jobs;
 	ok(build?.steps.some((step) => step.run?.includes("scripts/release/build.mjs") && step.run.includes("--targets all")));
 	ok(build?.steps.some((step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "release"));
-	const downloads = (job: { steps: Step[] }, runId?: string): boolean =>
+	const downloads = (job: { steps: Step[] }, outputs?: string): boolean =>
 		job.steps.some(
 			(step) =>
 				step.uses?.startsWith("actions/download-artifact@") &&
-				step.with?.name === "release" &&
-				step.with["run-id"] === runId,
+				(outputs
+					? step.with?.["artifact-ids"] === `\${{ ${outputs}.artifact-id }}` &&
+						step.with["run-id"] === `\${{ ${outputs}.run-id }}` &&
+						step.with["merge-multiple"] === true
+					: step.with?.name === "release" && step.with["run-id"] === undefined),
 		);
 	for (const [name, job] of Object.entries({ tests, install })) {
 		ok(job, name);
@@ -29,9 +32,9 @@ test("the pipeline builds the release once and every later job consumes that art
 		ok(downloads(job), `${name} downloads the built release`);
 	}
 	// A release takes the artifact of the push run that built and tested its commit.
-	ok(tested && downloads(tested, `\${{ steps.find.outputs.run-id }}`), "tested-run downloads the push run's release");
+	ok(tested && downloads(tested, "steps.find.outputs"), "tested-run downloads the push run's release");
 	ok(publish?.needs === "tested-run", "publish needs tested-run");
-	ok(downloads(publish, `\${{ needs.tested-run.outputs.run-id }}`), "publish downloads the release tested-run checked");
+	ok(downloads(publish, "needs.tested-run.outputs"), "publish downloads the release tested-run checked");
 	for (const [name, job] of Object.entries({ tests, install, tested, publish }))
 		ok(!job?.steps.some((step) => /build\.mjs|npm pack|run build/u.test(step.run ?? "")), `${name} builds nothing`);
 	ok(install?.steps.some((step) => step.run?.includes("scripts/release/smoke.mjs")));

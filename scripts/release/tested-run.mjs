@@ -7,7 +7,7 @@
  *
  *   tested-run.mjs find                     the newest push run of ci.yml for GITHUB_SHA on GITHUB_REF_NAME
  *                                           that completed with every job passed and still holds its `release`
- *                                           artifact; writes `run-id` to GITHUB_OUTPUT
+ *                                           artifact; writes `run-id` and `artifact-id` to GITHUB_OUTPUT
  *   tested-run.mjs check <dir> [--sums <sha256>]
  *                                           that artifact, downloaded to <dir>, held against its SHA256SUMS and
  *                                           GITHUB_SHA; writes the SHA-256 of SHA256SUMS to GITHUB_OUTPUT as
@@ -21,6 +21,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { TARGETS } from "./bundle.mjs";
 import { readRelease } from "./publish.mjs";
 
 const WORKFLOW = "ci.yml";
@@ -28,15 +29,24 @@ const ARTIFACT = "release";
 /** The jobs only a release dispatch runs; a push run skips them. */
 const RELEASE_JOBS = new Set(["tested run", "publish"]);
 /** Gate jobs that every push run of ci.yml must run and pass. */
-const REQUIRED_JOBS = ["check", "build", "ci (22)", "ci (24)"];
+const REQUIRED_JOBS = [
+	"check",
+	"build",
+	"ci (22)",
+	"ci (24)",
+	"browser smoke",
+	"gui api smoke",
+	...TARGETS.map((target) => `install (${target})`),
+];
 
-const ghPages = (path, field) =>
+const ghApi = (path, ...options) =>
 	JSON.parse(
-		execFileSync("gh", ["api", "--paginate", "--slurp", path], {
+		execFileSync("gh", ["api", path, ...options], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
 		}),
-	).flatMap((page) => page[field] ?? []);
+	);
+const ghPages = (path, field) => ghApi(path, "--paginate", "--slurp").flatMap((page) => page[field]);
 
 function env(name) {
 	const value = process.env[name];
@@ -94,20 +104,27 @@ function find() {
 	const passedNames = new Set(passed.map((job) => job.name));
 	const missing = REQUIRED_JOBS.filter((name) => !passedNames.has(name));
 	if (missing.length) throw new Error(`push run ${run.html_url} is missing required jobs: ${missing.join(", ")}`);
+	// Older attempts can leave artifacts on the same run. Only the successful build's upload qualifies.
+	const build = passed.find((job) => job.name === "build");
 	const artifact = ghPages(
 		`repos/${repository}/actions/runs/${run.id}/artifacts?name=${ARTIFACT}&per_page=100`,
 		"artifacts",
-	)
-		.filter((entry) => entry.name === ARTIFACT)
-		.sort((a, b) => b.id - a.id)[0];
+	).find(
+		(entry) => entry.name === ARTIFACT && entry.created_at >= build.started_at && entry.created_at <= build.completed_at,
+	);
 	if (!artifact || artifact.expired)
 		throw new Error(
-			`push run ${run.html_url} no longer holds its ${ARTIFACT} artifact. Rerun it with \`gh run rerun ${run.id} --repo ${repository}\`, then dispatch the release again.`,
+			`push run ${run.html_url} no longer holds the successful build's ${ARTIFACT} artifact. Rerun it with \`gh run rerun ${run.id} --repo ${repository}\`, then dispatch the release again.`,
 		);
+	// A rerun keeps its run id but can upload a different artifact under the same name.
+	const current = ghApi(`repos/${repository}/actions/runs/${run.id}`);
+	if (current.run_attempt !== run.run_attempt || current.status !== "completed" || current.conclusion !== "success")
+		throw new Error(`push run ${run.html_url} changed during lookup. Dispatch the release again once it passes.`);
 	console.log(
-		`Releasing the ${ARTIFACT} artifact (${artifact.size_in_bytes} bytes, expires ${artifact.expires_at}) of push run ${run.html_url}, where ${passed.length} jobs passed`,
+		`Releasing ${ARTIFACT} artifact ${artifact.id} (${artifact.size_in_bytes} bytes, expires ${artifact.expires_at}) from ${run.html_url}/attempts/${run.run_attempt}, where ${passed.length} jobs passed`,
 	);
 	output("run-id", run.id);
+	output("artifact-id", artifact.id);
 }
 
 function check(directory, expectedSums) {

@@ -33,8 +33,8 @@ A dispatch with `release` checked builds and tests nothing. It runs two jobs, an
 
 | Job | What it does |
 | --- | --- |
-| `tested run` | Runs `scripts/release/tested-run.mjs` to find the newest push run of `ci.yml` for the dispatched commit on the dispatched branch that completed with every job passed, downloads that run's `release` artifact by run id and checks it against its `SHA256SUMS`, the commit, the version and the changelog. With no such run, a run that failed or is still going, or an expired artifact, it fails within seconds and names the reason; nothing is rebuilt |
-| `publish` | After `tested run`, behind the `release` environment. It downloads the same artifact, refuses a `SHA256SUMS` other than the one `tested run` checked, attests every asset and runs `scripts/release/publish.mjs` |
+| `tested run` | Finds a successful push run of `ci.yml` for the dispatched branch and commit and checks that every gate passed. It records the run and artifact IDs, refuses a rerun during lookup, and downloads that `release` artifact to check its `SHA256SUMS`, commit, version and changelog. No matching run or no unexpired artifact stops the dispatch before approval |
+| `publish` | After approval of the `release` environment, downloads the same immutable artifact by ID, checks its `SHA256SUMS` again, attests the release assets and runs `scripts/release/publish.mjs` |
 
 `pnpm run ci` runs the same gate on one machine: the checks beside the build, the tests against the built tarball, then the install smoke of this machine's bundle. `pnpm run release:build -- --out <dir>` and `pnpm run release:smoke -- <dir>/assets` run the two halves alone.
 
@@ -52,7 +52,7 @@ A dispatch with `release` checked builds and tests nothing. It runs two jobs, an
 
 6. `tested run` checks the push run's files in about a minute, then `publish` waits. Approve the `release` environment in the run's page. That approval is the release decision; nothing else in the pipeline can publish.
 
-If `tested run` fails, its log names the reason. A push run that is still going: wait for it, then dispatch again. A push run that failed: fix the cause, push, and dispatch at the new commit. An expired artifact: rerun the push run with `gh run rerun <run id> --repo PanStudio/pancode`, which builds and tests the commit again, then dispatch again.
+If `tested run` fails, its log names the reason. A push run that is still going: wait for it, then dispatch again. A push run that failed: fix the cause, push, and dispatch at the new commit. If the artifact expires, including while waiting for approval, rerun the push run with `gh run rerun <push run id> --repo PanStudio/pancode`, then dispatch a new release to select the newly tested artifact. GitHub allows reruns for 30 days from the original run; after that, push a new commit and let its gate pass.
 
 `publish` then runs in this order: npm, the GitHub release and its tag, `main`, `gh-pages`. The channel file moves last, so no installer or update check hears about a version before its bundle can be downloaded. Each step first reads what is already published. If the job fails, fix the cause and rerun it with `gh run rerun <run id> --failed --repo PanStudio/pancode`; it asks for approval again, downloads the same artifact and completes only the open steps. Bytes that differ from what an earlier run published stop it.
 
@@ -60,11 +60,12 @@ After a stable release, create the next version branch from `main` and set the n
 
 ### The first release of a package name
 
-npm trusted publishing cannot create a package, so the first version of `@panstudio/pancode` is published by hand, from the files the push run built:
+npm trusted publishing cannot create a package, so the first version of `@panstudio/pancode` is published by hand. Set `ARTIFACT_ID` to the ID printed by `tested run`, then use that archive:
 
 ```bash
-gh run download <push run id> --repo PanStudio/pancode --name release --dir <dir>
-npm publish <dir>/assets/panstudio-pancode-<version>.tgz --access public
+gh api "repos/PanStudio/pancode/actions/artifacts/$ARTIFACT_ID/zip" > release.zip
+unzip release.zip -d release
+npm publish release/assets/panstudio-pancode-*.tgz --access public
 ```
 
 Do this while `publish` waits for approval, then approve. The job finds that npm already serves those bytes and continues with GitHub, `main` and the website. Then attach the trusted publisher, described under Owner configuration, so later releases need only the approval.
