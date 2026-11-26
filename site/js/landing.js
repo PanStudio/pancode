@@ -110,6 +110,13 @@
 		reachObserver.observe(reach);
 	}
 
+	// A premise link targets a closed harness tab: the browser cannot scroll to it, and site.js opens it after.
+	const flow = document.querySelector(".flow");
+	addEventListener("hashchange", () => {
+		const target = location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+		if (target && flow?.contains(target)) target.scrollIntoView();
+	});
+
 	reduced.addEventListener("change", () => {
 		if (!reduced.matches) return;
 		stageObserver.disconnect();
