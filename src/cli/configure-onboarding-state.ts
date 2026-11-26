@@ -188,7 +188,7 @@ export function draftDescriptor(answers: Answers, runtime: RuntimeDescriptor, wi
 	const apiKeyRef =
 		answers.credential === "stored"
 			? targetApiKeyRef(answers.targetId ?? runtime.id, readSettings().targets)
-			: answers.credential === "keep"
+			: answers.credential === "keep" && runtime.auth === "api-key"
 				? (answers.existing?.auth?.apiKeyRef ?? runtime.id)
 				: undefined;
 	const configured = buildDescriptor(runtime, answers.targetId ?? runtime.id, {

@@ -219,12 +219,15 @@ export interface AcpSafeSettingsSnapshot extends AcpRoutingSnapshot {
 	containment?: { sandbox: SandboxMode; judgeEnabled: boolean };
 }
 
-/** Who a settings change from an ACP client is attributed to: the PanCode GUI names itself, any other client is acp (#434). */
-export type AcpSettingsSource = "acp" | "gui";
+/**
+ * Who an ACP client's settings changes and approval answers are attributed to: the PanCode GUI names itself and
+ * is the operator's own surface, any other client is acp (#434).
+ */
+export type AcpClientSurface = "acp" | "gui";
 
 interface AcpSettingsControl {
 	read(): AcpSafeSettingsSnapshot;
-	commit(patch: AcpSafeSettingsPatch, source: AcpSettingsSource): AcpSafeSettingsSnapshot;
+	commit(patch: AcpSafeSettingsPatch, source: AcpClientSurface): AcpSafeSettingsSnapshot;
 }
 
 export interface PancodeAcpServerOptions {
@@ -379,7 +382,7 @@ export interface PancodeAcpServerOptions {
 	/** Apply a route change only to this hosted session, leaving saved defaults alone. */
 	setSessionRouting?: (
 		patch: { target?: string; model?: string; thinkingLevel?: AcpThinkingLevel },
-		source: AcpSettingsSource,
+		source: AcpClientSurface,
 	) => void;
 	onActiveSessionAutonomyChange?: (level: AutonomyLevel | null) => void;
 	/**
@@ -553,8 +556,8 @@ export interface AcpHandshake {
 	/** The client advertised `pancode/usage`: usage `_meta` carries the full read-model quantities, not their displays. */
 	readonly fullUsageEnabled: boolean;
 	readonly workspaceInstanceId: string;
-	/** The surface a settings change from this client is attributed to, from `clientInfo.name` (#434). */
-	readonly settingsSource: AcpSettingsSource;
+	/** The surface this client's settings changes and approval answers are attributed to, from `clientInfo.name` (#434). */
+	readonly clientSurface: AcpClientSurface;
 	initialize(params: unknown): AcpInitializeResponse;
 	authenticate(params: unknown): never;
 }

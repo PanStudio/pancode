@@ -232,6 +232,43 @@ describe("approval line of a verify call with arguments", () => {
 	});
 });
 
+describe("approval line of a single dispatch and a gateway call", () => {
+	it("names the task a lone dispatch sends after its facts, masked and clipped", () => {
+		const task = "Add a test to test/stats.test.js asserting range([7]) is 0, then run npm test.";
+		strictEqual(
+			describeCallTarget(ToolNames.Dispatch, { agent: "coder", task, intent: { read_roots: ["."] } }),
+			`coder · task=${task} · intent=<object 1 field>`,
+		);
+		const leaky = describeCallTarget(ToolNames.Dispatch, {
+			agent: "coder",
+			autonomy: "build",
+			task: `push with token ghp_abcdefghijklmnopqrstuvwxyz0123456789 then ${"report ".repeat(40)}`,
+		});
+		ok(leaky.startsWith("coder · autonomy=build · task=push with token "), leaky);
+		ok(leaky.length <= 120 && leaky.includes("more characters"), leaky);
+		doesNotMatch(leaky, /ghp_abcdefghij/u);
+	});
+
+	it("reads a gateway call's arguments through the capability they reach", () => {
+		strictEqual(
+			describeCallTarget(ToolNames.Gateway, {
+				op: "find",
+				capability: "find",
+				args: { pattern: "src/**/*", path: ".", limit: 100 },
+			}),
+			"find · capability=find · args=(src/**/* · path=. · limit=100)",
+		);
+		strictEqual(
+			describeCallTarget(ToolNames.Gateway, { op: "call", capability: "bash", args: '{"command":"ls -la"}' }),
+			"call · capability=bash · args=(ls -la)",
+		);
+		strictEqual(
+			describeCallTarget(ToolNames.Gateway, { op: "call", capability: "gateway", args: { op: "find" } }),
+			"call · capability=gateway · args=<object 1 field>",
+		);
+	});
+});
+
 describe("run record of a limitation call", () => {
 	it("records the limitation's reason and what it left unverified", () => {
 		deepStrictEqual(

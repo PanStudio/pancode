@@ -313,6 +313,37 @@ test("a worker refuses a permit or tool surface edited after the host sealed it"
 	throws(() => parseWorkerSpec(outside), /WorkerSpec\.envelope tools exceed the permit ceiling: dispatch/u);
 });
 
+test("a scout handed a batch's write roots seals a read-only permit its worker accepts", async () => {
+	const env = await isolatePancodeEnv("pancode-readonly-batch-roots-");
+	let captured: WorkerSpec | undefined;
+	const bundle = makeDispatchBundle(dispatchStubContext(), {
+		spawnWorker(spec) {
+			captured = spec;
+			throw new Error("worker spec observed");
+		},
+	});
+	try {
+		await bundle.extension.start();
+		await rejects(
+			bundle.contract.dispatch({
+				agentId: "scout",
+				task: "List the exports",
+				executionRole: "explorer",
+				cwd: env.dir,
+				writeRoots: [`${env.dir}/test/`],
+			}),
+			/worker spec observed/u,
+		);
+		ok(captured);
+		const parsed = parseWorkerSpec(JSON.parse(JSON.stringify(captured)));
+		strictEqual(parsed.envelope.write.mode, "none");
+		deepStrictEqual(parsed.permit.ceiling.writeRoots, []);
+	} finally {
+		await bundle.extension.stop?.();
+		env.restore();
+	}
+});
+
 test("escalate is refused, never downgraded, where the runtime cannot park a call", async () => {
 	const parked = await sealedCoderSpec("pancode-permit-escalate-");
 	parked.permit.allowance = { ...parked.permit.allowance, asks: "main", approvalAuthority: "operator" };

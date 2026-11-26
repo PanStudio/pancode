@@ -56,6 +56,19 @@ interface RunningRow {
 	node: string;
 }
 
+/** One ledger row the totals count. */
+interface CountedRunRow {
+	runId: string;
+	agentId: string;
+	/** The sealed outcome once the run ended, else its ledger status. */
+	state: string;
+	startedAt: string;
+	endedAt: string | null;
+	elapsed: Displayed;
+	usd: Displayed;
+	node: string;
+}
+
 interface InFlightStepRow {
 	stepId: string;
 	kind: "agent" | "code";
@@ -81,6 +94,8 @@ interface StatusSnapshot {
 	running: RunningRow[];
 	roots: RunningRootRow[];
 	retrying: Array<Record<string, unknown>>;
+	/** Every run the totals count, newest first. */
+	runs: CountedRunRow[];
 	totals: {
 		total: Counted;
 		input: Counted;
@@ -185,6 +200,7 @@ async function emptySnapshot(all: boolean, nowMs: number): Promise<StatusSnapsho
 		running: [],
 		roots: await runningRoots(all),
 		retrying: [],
+		runs: [],
 		totals: emptyFleetTotals(),
 	};
 }
@@ -248,6 +264,16 @@ async function ledgerSnapshot(all: boolean, nowMs: number): Promise<StatusSnapsh
 			})),
 		roots: await runningRoots(all),
 		retrying: [],
+		runs: records.map(({ row, telemetry }) => ({
+			runId: row.id,
+			agentId: row.agentId,
+			state: (row.endedAt !== null ? row.outcome : null) ?? row.status,
+			startedAt: row.startedAt,
+			endedAt: row.endedAt,
+			elapsed: telemetry.activity.elapsed,
+			usd: telemetry.row.usd,
+			node: row.node?.id ?? "local",
+		})),
 		totals: fleetTotals(records.map(({ telemetry }) => telemetry)),
 	};
 }
@@ -326,6 +352,16 @@ async function writeStatusText(out: StatusWriter, snapshot: StatusSnapshot): Pro
 		out.write("retrying:\n");
 		for (const row of snapshot.retrying) {
 			out.write(`  ${row.runId}  ${row.agentId}  attempt=${row.attempt} due=${row.dueAt}  ${row.reason}\n`);
+		}
+	}
+	if (snapshot.runs.length === 0) {
+		out.write("runs: none\n");
+	} else {
+		out.write(`runs (${snapshot.runs.length}, newest first; fleet view <run id> reads one):\n`);
+		for (const row of snapshot.runs) {
+			out.write(
+				`  ${row.runId}  ${row.agentId}  ${row.state}  node=${row.node}  ${row.startedAt}  ${row.elapsed.display}  ${row.usd.display}\n`,
+			);
 		}
 	}
 	out.write(

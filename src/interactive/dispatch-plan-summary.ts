@@ -87,7 +87,8 @@ export function readDispatchPlan(text: string): PlanSummary | null {
 		if (task) {
 			const role = task[1];
 			members.push({
-				label: role?.startsWith("member#") === true ? null : (role ?? null),
+				// `task` and `member` are a slot, not a name: the row's index already numbers it and the agent names it.
+				label: role === undefined || /^(?:task|member)(?:#|$)/u.test(role) ? null : role,
 				agent: task[2] ?? "",
 				target: task[3] ?? null,
 				model: task[4] ?? null,

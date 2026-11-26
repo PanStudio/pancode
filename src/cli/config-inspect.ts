@@ -21,6 +21,7 @@ import { resolvePackageRoot } from "../core/package-root.js";
 import { formatSettingsLayerIssue } from "../core/settings-layer-diagnostics.js";
 import type { SettingsOrigin } from "../core/settings-layers.js";
 import { readLayeredSettings, settingsSourceFor, settingsValueFor } from "../core/settings-layers.js";
+import { isRecord } from "../core/type-guards.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { renderEffectivePromptContext } from "../domains/context/compiled-handbook.js";
 import { loadOperatorProfile, renderOperatorProfile } from "../domains/context/operator-profile.js";
@@ -102,6 +103,8 @@ function inspectSettings(cwd: string, graph: CustomizationGraph): void {
 		const keys = Object.keys(layered.sources).sort();
 		for (const key of keys) {
 			const value = settingsValueFor(layered.settings, key);
+			// A section merges key by key, so its merged object holds defaults no layer set; its keys list on their own.
+			if (isRecord(value)) continue;
 			const note = settingNote(key, value);
 			graph.settings.push({
 				key,
@@ -116,16 +119,17 @@ function inspectSettings(cwd: string, graph: CustomizationGraph): void {
 }
 
 /**
- * Setup seeds settings.yaml with the defaults, so a worker thinking level of off reads as the operator's own choice
- * while a route that cannot turn thinking off, such as copilot-sdk, runs workers at another level (bt-20).
+ * A worker thinking level of off that a layer sets reads as a choice, while a route that cannot turn thinking off,
+ * such as copilot-sdk, runs workers at another level (bt-20). Setup seeds only `version`, so the row lists only
+ * when a layer really holds the key.
  */
 function settingNote(key: string, value: unknown): string | undefined {
 	if (key !== "fleet.default.thinkingLevel" || value !== "off") return undefined;
-	const seeded =
+	const builtIn =
 		value === DEFAULT_SETTINGS.fleet.default.thinkingLevel
-			? " off is the built-in default, which setup writes into settings.yaml."
+			? " off is also the built-in default, so removing the key keeps it."
 			: "";
-	return `workers run without thinking where their route allows it; a route that cannot turn thinking off runs at its default or lowest level, and the dispatch result names it in a route_warning.${seeded}`;
+	return `workers run without thinking where their route allows it; a route that cannot turn thinking off runs at its default or lowest level, and the dispatch result names it in a route_warning.${builtIn}`;
 }
 
 function inspectPancodeMd(cwd: string, graph: CustomizationGraph): void {

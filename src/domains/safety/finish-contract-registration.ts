@@ -264,6 +264,7 @@ export function createFinishContractRegistration(
 					];
 				return [];
 			}
+			const fact = engagedFact(assessment);
 			if (rigor === "high") {
 				const failedChecks = {
 					...(assessment.failedAfterEdit?.length ? { failedChecks: assessment.failedAfterEdit } : {}),
@@ -289,7 +290,7 @@ export function createFinishContractRegistration(
 							kind: "inject_reminder",
 							severity: "warn",
 							message: `${assessment.message} The current task scope does not permit automatic validation recovery; report the change as unverified. This notice grants no additional authority.`,
-							fact: "unvalidated_mutation",
+							fact,
 							...failedChecks,
 						},
 					];
@@ -312,9 +313,11 @@ export function createFinishContractRegistration(
 						message,
 						note: assessment.retiredBy
 							? retiredChecksNote(assessment.retiredBy)
-							: "the change has no validation evidence yet",
+							: fact === "failed_check"
+								? "a check failed after the last change"
+								: "the change has no validation evidence yet",
 						...(reserved ? { reserved: "verification" as const } : {}),
-						fact: "unvalidated_mutation",
+						fact,
 					},
 					{ kind: "inject_reminder", message, severity: "warn", ...failedChecks },
 				];
@@ -324,7 +327,7 @@ export function createFinishContractRegistration(
 					kind: "inject_reminder",
 					message: assessment.message,
 					severity: "warn",
-					fact: "unvalidated_mutation",
+					fact,
 					...(assessment.failedAfterEdit?.length ? { failedChecks: assessment.failedAfterEdit } : {}),
 					...(assessment.retiredBy ? { retired: assessment.retiredBy } : {}),
 				},
@@ -338,10 +341,15 @@ export function createFinishContractRegistration(
  * unvalidated change, or a check that failed after the last change or still stands red.
  */
 function declaredShortFacts(assessment: FinishContractAssessment, input: FinishContractInput): CompletionFact[] {
-	if (assessment.kind !== "ok") return ["unvalidated_mutation"];
+	if (assessment.kind !== "ok") return [engagedFact(assessment)];
 	return assessment.advisory === FINISH_CONTRACT_FAILED_CHECK_ADVISORY_MESSAGE || standingFailedCheck(input)
 		? ["failed_check"]
 		: [];
+}
+
+/** A check that ran on the changed tree and failed is evidence a check ran, so it is not an unvalidated change. */
+function engagedFact(assessment: Extract<FinishContractAssessment, { kind: "engage" }>): CompletionFact {
+	return assessment.failedAfterEdit?.length ? "failed_check" : "unvalidated_mutation";
 }
 
 function isHardBlockEffect(effect: MiddlewareEffect): boolean {

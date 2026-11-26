@@ -829,7 +829,8 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 				// Under a cap, a call with no reported usage is priced from its request size at the route's rates, so the cap
 				// still trips; an uncapped session prices nothing extra.
 				const capped = deps.getSettings().safety.limits.sessionCostUsd > 0;
-				let interrupted = capped || (message as { stopReason?: unknown }).stopReason === "aborted" ? unreported : null;
+				const aborted = (message as { stopReason?: unknown }).stopReason === "aborted";
+				let interrupted = capped || aborted ? unreported : null;
 				const resolution = localRuntime.runtimeResolution;
 				const { rates } = resolveEffectivePricing(resolution.target, resolution.runtime, resolution.wireModelId);
 				if (unreported && capped && rates) interrupted = { ...unreported, usd: calculatePricingCostUsd(rates, unreported) };
@@ -856,6 +857,8 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 					settlement.pricing.usd.kind === "estimated" &&
 					settlement.pricing.usd.method === "prompt-side-only" &&
 					capped &&
+					// PanCode cut an aborted call short, so its missing usage is no provider's omission (bt-deep 11).
+					!aborted &&
 					!unreportedUsageSessions.has(deps.sessionOrigin?.()?.id ?? "")
 				) {
 					unreportedUsageSessions.add(deps.sessionOrigin?.()?.id ?? "");

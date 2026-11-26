@@ -4,6 +4,7 @@ import type { OutputStyle } from "../core/defaults.js";
 import { tierPolicy } from "../core/presentation-tier.js";
 import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { redactUrlCredentials } from "../domains/safety/redaction.js";
+import type { SessionEntry } from "../domains/session/entries.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
 import type { NoticeLevel, NoticeSource } from "../session-control/notice-source.js";
 import type { PromptReferenceCard, RunIo } from "../session-control/slash-command-types.js";
@@ -265,8 +266,35 @@ function renderCommandReport(report: TranscriptReport, width: number, style: Out
  * context is built from message entries, and this is never one.
  */
 export const OPERATOR_COMMAND_ENTRY = "operatorCommand";
-/** Session entry holding a settled run's operator wait, which replay has no other way to know. Never model context. */
-export const TURN_HUMAN_WAIT_ENTRY = "turnHumanWait";
+/**
+ * Session entry holding a settled run's measured duration and operator wait, so its resumed receipt states the
+ * figures the live one did rather than the gap between ledger rows. Never model context.
+ */
+export const TURN_TIMING_ENTRY = "turnHumanWait";
+
+export interface RecordedTurnTiming {
+	elapsedMs?: number;
+	humanWaitMs?: number;
+}
+
+/** The recorded timing of each settled run, by the turn id of the prompt that opened it. */
+export function recordedTurnTimings(entries: ReadonlyArray<SessionEntry>): Map<string, RecordedTurnTiming> {
+	const timings = new Map<string, RecordedTurnTiming>();
+	for (const entry of entries) {
+		if (entry.kind !== "custom" || entry.customType !== TURN_TIMING_ENTRY) continue;
+		const { turnId, elapsedMs, humanWaitMs } = (entry.data ?? {}) as {
+			turnId?: unknown;
+			elapsedMs?: unknown;
+			humanWaitMs?: unknown;
+		};
+		if (typeof turnId !== "string") continue;
+		timings.set(turnId, {
+			...(typeof elapsedMs === "number" ? { elapsedMs } : {}),
+			...(typeof humanWaitMs === "number" ? { humanWaitMs } : {}),
+		});
+	}
+	return timings;
+}
 
 /** An operator command line as the transcript echoes it, live and on replay. */
 export function renderOperatorCommandRows(text: string, width: number): string[] {

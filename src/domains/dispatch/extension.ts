@@ -8562,7 +8562,7 @@ export function createDispatchBundle(
 		if (!judgeRoutedPermit(previewPermit, settings)) assertMainGrantRoutable(req, target.runtime, previewPermit);
 		assertRuntimeCanHonorWorkerPermissionMode(target.runtime, workerPermissionModeForPermit(previewPermit.allowance));
 		assertResponseSchemaEnforceable(target.runtime, target.modelCapabilities, req.responseSchema, effectiveTools.length);
-		assertWriteRootsEnforceable(target.runtime, pathScope.writeBoundaries);
+		assertWriteRootsEnforceable(target.runtime, stage.envelope.write.roots);
 		assertProtectedArtifactsEnforceable(
 			target.runtime.id,
 			target.runtime.kind !== "subprocess",

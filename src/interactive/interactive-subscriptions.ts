@@ -164,14 +164,24 @@ export function createInteractiveSubscriptions(deps: InteractiveSubscriptionsDep
 		const name = sanitizeCallTargetText(payload.agentId)
 			.slice(0, 80)
 			.replace(/^./, (letter) => letter.toUpperCase());
+		// A shadow recipe the operator's turn dispatched works for that turn, so it is the operator's worker, not PanCode's.
+		const origin = payload.rootRequestOrigin ?? payload.requestOrigin;
+		const words =
+			origin === "user" || origin === "agent"
+				? {
+						failed: `Your ${name} worker failed ${GLYPH.sep} /fleet shows why`,
+						completed: `Your ${name} worker finished`,
+						working: `Your ${name} worker is working`,
+					}
+				: {
+						// A helper runs for PanCode, not for the operator's turn, so its failure costs that turn nothing and the run itself is on the board.
+						failed: `PanCode's ${name} helper failed; your turn is not affected ${GLYPH.sep} /fleet shows why`,
+						completed: `PanCode's ${name} helper finished`,
+						working: `PanCode's ${name} helper is working`,
+					};
 		deps.notify(
 			status === "failed" ? "warning" : status === "completed" ? "success" : "info",
-			// A helper runs for PanCode, not for the operator's turn, so its failure costs that turn nothing and the run itself is on the board.
-			status === "failed"
-				? `PanCode's ${name} helper failed; your turn is not affected ${GLYPH.sep} /fleet shows why`
-				: status === "completed"
-					? `PanCode's ${name} helper finished`
-					: `PanCode's ${name} helper is working`,
+			words[status],
 			`helper:${assignment}`,
 		);
 	};

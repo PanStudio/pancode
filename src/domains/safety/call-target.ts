@@ -283,6 +283,8 @@ const CALL_TARGET_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
 		"thinking_level",
 		"detach",
 		"timeout_ms",
+		// A single dispatch's task is what the worker is sent to do; it reads last so the facts above stay on a clipped line.
+		"task",
 	],
 	monitor: ["run_id", "mode"],
 	steer: ["run_id", "action"],
@@ -567,6 +569,27 @@ function summarizeUnlistedField(tool: string, field: string, value: unknown): st
 /** Harness-injected argument keys (`__pancode_resolved_dispatch_plan`) carry no operator decision and stay off display text. */
 const HARNESS_ARG_PREFIX = "__pancode_";
 
+/** A call's arguments as the operator inspects them: every key the model sent, none the harness injected. */
+export function operatorCallArgs(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+	if (args === undefined) return undefined;
+	return Object.fromEntries(Object.entries(args).filter(([field]) => !field.startsWith(HARNESS_ARG_PREFIX)));
+}
+
+/**
+ * A gateway call's own arguments read through the capability they reach, so
+ * `args=<object 3 fields>` names the pattern and path a direct call would. Null
+ * when the envelope names no other capability or carries no argument object.
+ */
+function gatewayArgsTarget(args: Record<string, unknown>): string | null {
+	const envelope = normalizeGatewayArguments(args);
+	const capability = typeof envelope.capability === "string" ? envelope.capability.trim() : "";
+	const inner = envelope.args;
+	if (capability.length === 0 || capability === ToolNames.Gateway) return null;
+	if (typeof inner !== "object" || inner === null || Array.isArray(inner)) return null;
+	const target = describeCallTarget(capability, inner as Record<string, unknown>, undefined, Number.POSITIVE_INFINITY);
+	return target.length > 0 ? target : null;
+}
+
 function targetFieldName(value: string): string {
 	return sanitizeCallTargetText(value).slice(0, 32) || "field";
 }
@@ -633,6 +656,13 @@ export function describeCallTarget(
 		if (tool === "edit" && field === "edits" && Array.isArray(value)) {
 			parts.push(countLabel(value.length, "replacement", "replacements"));
 			continue;
+		}
+		if (tool === ToolNames.Gateway && field === "args") {
+			const inner = gatewayArgsTarget(args);
+			if (inner !== null) {
+				parts.push(`args=(${inner})`);
+				continue;
+			}
 		}
 		parts.push(`${targetFieldName(field)}=${summarizeUnlistedField(tool, field, value)}`);
 	}

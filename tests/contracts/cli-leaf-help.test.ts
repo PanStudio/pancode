@@ -84,6 +84,14 @@ describe("leaf commands answer --help", { concurrency: 4 }, () => {
 		match(forms.join("\n"), /--verify[\s\S]*--accept/);
 		for (const form of forms) ok(summary.stdout.includes(`${form}\n`), `context --help omits: ${form.trim()}`);
 	});
+	it("pancode gui --help names in its usage every flag its prose explains (bt-deep 17)", async () => {
+		const result = await cli(["gui", "--help"]);
+		equal(result.status, 0, result.stderr);
+		const [, usage = "", prose = ""] = result.stdout.match(/Usage:\n([\s\S]*?)\n\n([\s\S]*)/u) ?? [];
+		const flags = new Set(prose.match(/--[a-z][a-z-]*/gu));
+		ok(flags.has("--token-stdin"), prose);
+		for (const flag of flags) ok(usage.includes(flag), `gui --help usage omits ${flag}`);
+	});
 	it("pancode hub --help, --help --all and help --json list the same hub leaves", async () => {
 		const [hub, all, manifest] = await Promise.all([
 			cli(["hub", "--help"]),
