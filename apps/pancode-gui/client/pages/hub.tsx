@@ -24,9 +24,19 @@ import {
 	skillCard,
 	tabAfterKey,
 } from "./hub-model.js";
+import { builtInServerSentence, builtInServers, originSentence, type Package } from "./hub-plan.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 
-const collections = ["Catalog", "Agents", "Skills", "Prompts", "Playbooks", "Extensions", "Verifiers"] as const;
+const collections = [
+	"Catalog",
+	"Agents",
+	"Skills",
+	"Prompts",
+	"Playbooks",
+	"Extensions",
+	"Servers",
+	"Verifiers",
+] as const;
 type Collection = (typeof collections)[number];
 type Entry = {
 	id: string;
@@ -36,6 +46,7 @@ type Entry = {
 	detail: unknown;
 	agent?: Agent;
 	skill?: Resource;
+	server?: Package;
 };
 
 function ResourceBody({ collection, value }: { collection: string; value: unknown }) {
@@ -134,6 +145,29 @@ function SkillBody({ skill }: { skill: Resource }) {
 		</>
 	);
 }
+/** A server PanCode carries: its card says it is built in and how to override it, and offers nothing to change. */
+function ServerBody({ server }: { server: Package }) {
+	return (
+		<>
+			<StatusMark tone="success" label="Built in" />
+			<p>{builtInServerSentence(server)}</p>
+			<CardFacts
+				facts={[
+					{ label: "Reference", value: server.ref },
+					server.version
+						? { label: "Version", value: server.version }
+						: { label: "Version", value: "Not declared", absent: true },
+					{ label: "Origin", value: originSentence(server) },
+				]}
+			/>
+			<details>
+				<summary>Source and configuration</summary>
+				<Facts value={server} hide={["ref", "name", "description", "copies", "builtIn"]} />
+			</details>
+		</>
+	);
+}
+
 const purpose: Record<Collection, string> = {
 	Catalog:
 		"Every pack PanCode can install, and every copy already installed, for you or for this project. Each change is planned first, shown to you, and only then applied.",
@@ -142,6 +176,8 @@ const purpose: Record<Collection, string> = {
 	Prompts: "Saved starting points for conversations and common tasks.",
 	Playbooks: "Saved workflows the fleet runs, coordinating several steps or specialists.",
 	Extensions: "Installed packs that add executable capabilities. Admission state shows whether PanCode can load them.",
+	Servers:
+		"MCP servers PanCode carries. They are built in, so there is nothing to install or remove; pancode mcp list shows them.",
 	Verifiers: "Checks PanCode discovered for this workspace. Viewing this list does not run them.",
 };
 export function HubPage({
@@ -259,6 +295,14 @@ export function HubPage({
 			description: row.description,
 			state: extensionState(row),
 			detail: row,
+		})),
+		Servers: builtInServers(inventory.data?.packages ?? []).map((pkg) => ({
+			id: pkg.ref,
+			name: pkg.name,
+			description: pkg.description,
+			state: `Built in · ${originSentence(pkg)}`,
+			detail: pkg,
+			server: pkg,
 		})),
 		Verifiers: (verifiers.data?.checks ?? []).map((row) => ({
 			id: row.id,
@@ -413,6 +457,8 @@ export function HubPage({
 									<AgentBody agent={row.agent} />
 								) : row.skill ? (
 									<SkillBody skill={row.skill} />
+								) : row.server ? (
+									<ServerBody server={row.server} />
 								) : (
 									<ResourceBody collection={active} value={row.detail} />
 								)}
