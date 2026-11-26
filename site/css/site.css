@@ -121,7 +121,8 @@
 		font-size: 0.85rem;
 		color: var(--muted);
 	}
-	.eyebrow {
+	.eyebrow,
+	.research-method > summary {
 		font: var(--type-label);
 		text-transform: uppercase;
 		letter-spacing: var(--tracking-label);
@@ -826,41 +827,39 @@
 	.tutorial-card .text-link {
 		margin-block-start: 1rem;
 	}
-	.research-list {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 0;
+	/* The five subsystems, numbered, each with the PanCode task it serves. */
+	.subsystem-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
 	}
-	.research-list .tutorial-card {
+	.subsystem-list li {
 		display: grid;
-		grid-template-columns: minmax(8rem, 0.6fr) minmax(0, 2fr);
-		column-gap: 3rem;
-		padding-block: 2rem;
-		border-block-start: 1px solid var(--line);
+		grid-template-columns: var(--space-8) minmax(0, 1fr) auto;
+		column-gap: var(--space-5);
+		padding-block: var(--space-5);
+		border-block-start: 1px solid var(--line-strong);
 	}
-	.research-list .tutorial-card > * {
-		grid-column: 2;
-		max-inline-size: 65ch;
-	}
-	.research-list .tutorial-card > .eyebrow {
-		grid-column: 1;
-		grid-row: 1 / span 4;
+	.subsystem-list h2 {
+		font: var(--type-title);
 		margin: 0;
 	}
-	.research-list .tutorial-card > .caption {
-		margin-block-start: 1rem;
-		font-size: 0.8rem;
+	.subsystem-list li > p {
+		grid-column: 2;
+		color: var(--muted);
+		margin: var(--space-2) 0 0;
+	}
+	.subsystem-list .tag {
+		align-self: start;
 	}
 	@media (max-width: 600px) {
-		.research-list .tutorial-card {
-			display: block;
-		}
-		.research-list .tutorial-card > .eyebrow {
-			margin-block-end: 1rem;
+		.subsystem-list li {
+			grid-template-columns: var(--space-6) minmax(0, 1fr) auto;
+			column-gap: var(--space-3);
 		}
 	}
 
-	.research-method,
-	.learning-path {
+	.research-method {
 		display: grid;
 		grid-template-columns: minmax(8rem, 0.6fr) minmax(0, 2fr);
 		column-gap: 3rem;
@@ -875,19 +874,17 @@
 		margin: 0;
 	}
 	.research-method > div > *,
-	.learning-path > div > * {
+	.research-method > :not(summary) {
 		max-inline-size: 65ch;
 	}
-	.research-method h2,
-	.learning-path h2 {
+	.research-method h2 {
 		font-size: 1.6rem;
 		line-height: 1.15;
 		letter-spacing: -0.03em;
 		margin-block-end: 1rem;
 	}
 	.research-method p:not(.eyebrow),
-	.research-method li,
-	.learning-path > div > p {
+	.research-method li {
 		color: var(--ink-soft);
 	}
 	.research-method ol {
@@ -897,13 +894,40 @@
 		gap: 0.6rem;
 	}
 	@media (max-width: 600px) {
-		.research-method,
-		.learning-path {
+		.research-method {
 			display: block;
 		}
-		.research-method > .eyebrow,
-		.learning-path > .eyebrow {
+		.research-method > .eyebrow {
 			margin-block-end: 1rem;
+		}
+	}
+	:is(.learn, .research) h1 em {
+		font-style: normal;
+		color: var(--accent);
+	}
+	/* Three learning paths side by side between two rules. */
+	.learning-paths {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: var(--space-7);
+		padding-block: var(--space-7);
+		border-block: 1px solid var(--line);
+	}
+	.learning-path h2 {
+		font: var(--type-title);
+		margin: var(--space-3) 0;
+	}
+	.learning-path > p:not(.eyebrow) {
+		color: var(--muted);
+		font: var(--type-small);
+		display: -webkit-box;
+		-webkit-line-clamp: 3;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	@media (max-width: 1023px) {
+		.learning-paths {
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 	/* Learning paths: numbered tutorials on one rule, each row a full touch target. */
@@ -926,10 +950,91 @@
 	.learning-path li .caption {
 		white-space: nowrap;
 	}
-	.tutorial-catalog-label {
-		margin-block: 0 var(--space-6);
-		padding-block-start: var(--space-6);
+	.learn-featured .tutorial-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: var(--space-7) var(--space-6);
+		padding-block-end: 0;
+	}
+	.learn-featured .tutorial-card img {
+		aspect-ratio: 16 / 10;
+		object-fit: cover;
+		object-position: left top;
+		inline-size: 100%;
+		block-size: auto;
+	}
+	/* Every guide once, a row per guide under its category. */
+	.learn-index {
+		padding-block-start: var(--space-8);
+	}
+	.index-group {
+		display: grid;
+		grid-template-columns: 14rem minmax(0, 1fr);
+		gap: var(--space-6);
+		padding-block: var(--space-5);
 		border-block-start: 1px solid var(--line);
+	}
+	.index-group h2 {
+		font: var(--type-label);
+		letter-spacing: var(--tracking-label);
+		text-transform: uppercase;
+		color: var(--secondary);
+		margin: 0;
+	}
+	.index-rows {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.index-rows li {
+		display: grid;
+		grid-template-columns: minmax(0, 22rem) minmax(0, 1fr) auto;
+		gap: var(--space-5);
+		align-items: baseline;
+		padding-block: var(--space-3);
+		border-block-start: 1px solid var(--line);
+	}
+	.index-rows li:first-child {
+		border: 0;
+		padding-block-start: 0;
+	}
+	.index-rows a {
+		font-weight: 600;
+		color: var(--ink);
+		text-decoration: none;
+	}
+	.index-rows a:is(:hover, :focus-visible) {
+		color: var(--accent);
+	}
+	.index-desc {
+		color: var(--muted);
+		font: var(--type-small);
+	}
+	/* A narrow column takes the group name above its rows and each description under its link. */
+	@media (max-width: 1023px) {
+		.index-group {
+			grid-template-columns: minmax(0, 1fr);
+			gap: var(--space-3);
+		}
+		.index-rows li {
+			grid-template-columns: minmax(0, 1fr) auto;
+			gap: var(--space-1) var(--space-5);
+		}
+		.index-desc {
+			grid-area: 2 / 1 / auto / -1;
+		}
+	}
+	@media (max-width: 767px) {
+		.learn-featured .tutorial-grid,
+		.index-rows li {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.learn-featured .tutorial-grid {
+			gap: var(--space-7);
+		}
+		.index-group,
+		.index-rows li {
+			gap: var(--space-1);
+		}
 	}
 
 	.tutorial-article {

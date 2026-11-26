@@ -1086,12 +1086,14 @@ await writePage("/hub.html", hubHtml, product.hub.title, product.hub.description
 });
 
 for (const collection of collections) {
-	const cards = articles
-		.filter((item) => item.collection === collection)
+	const listed = articles.filter((item) => item.collection === collection);
+	// A listing shows its featured guides as cards and every guide in its index.
+	const cards = listed
+		.filter((item) => item.featured)
 		.map(
 			// The first card image is the listing's largest above-the-fold content.
 			(item, position) =>
-				`<a class="tutorial-card" href="${item.url}">${item.image ? `<img src="${escapeHtml(item.image)}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}"${position === 0 ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">` : ""}<p class="eyebrow">${escapeHtml(item.category)} / ${escapeHtml(item.time)}</p><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p>${item.status ? `<p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p>` : ""}<span class="text-link">Read ${collection.id === "tutorials" ? "the tutorial" : "the article"} <span aria-hidden="true">↗</span></span></a>`,
+				`<a class="tutorial-card" href="${item.url}">${item.image ? `<img src="${escapeHtml(item.image)}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.alt)}"${position === 0 ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">` : ""}<p class="eyebrow">${escapeHtml(item.category)} / ${escapeHtml(item.time)}</p><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p>${item.status ? `<p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p>` : ""}<span class="text-link">Read the tutorial <span aria-hidden="true">↗</span></span></a>`,
 		)
 		.join("\n");
 	const learningPaths =
@@ -1104,15 +1106,74 @@ for (const collection of collections) {
 								return `<li><span class="step-number">${String(step + 1).padStart(2, "0")}</span><a href="${item.url}">${escapeHtml(item.title)}</a><span class="caption">${escapeHtml(item.time)}</span></li>`;
 							})
 							.join("");
-						return `<section class="learning-path" id="${path.id}" aria-labelledby="${path.id}-title"><p class="eyebrow"><span class="chapter">Path ${number + 1} /</span> ${escapeHtml(path.label)}</p><div><h2 id="${path.id}-title">${escapeHtml(path.title)}</h2><p>${escapeHtml(path.summary)}</p><ol>${steps}</ol></div></section>`;
+						return `<section class="learning-path" id="${path.id}" aria-labelledby="${path.id}-title"><p class="eyebrow"><span class="chapter">Path ${number + 1} /</span> ${escapeHtml(path.label)}</p><h2 id="${path.id}-title">${escapeHtml(path.title)}</h2><p>${escapeHtml(path.summary)}</p><ol>${steps}</ol></section>`;
 					})
-					.join("\n")}</div><p class="eyebrow tutorial-catalog-label">All tutorials</p>`
+					.join("\n")}</div>`
 			: "";
+	// An index lists guides in groups, one row each: a link, a description and the reading time.
+	const indexGroups = (groups, description) =>
+		groups
+			.map(
+				([name, items]) =>
+					`<div class="index-group"><h2>${escapeHtml(name)}</h2><ul class="index-rows">${items
+						.map(
+							(item) =>
+								`<li><a href="${item.url}">${escapeHtml(item.title)}</a><span class="index-desc">${description(item)}</span><span class="caption">${escapeHtml(item.time)}</span></li>`,
+						)
+						.join("")}</ul></div>`,
+			)
+			.join("\n");
+	const tutorialIndex =
+		collection.id === "tutorials"
+			? indexGroups(
+					[...new Set(listed.map((item) => item.category))].map((category) => [
+						category,
+						listed.filter((item) => item.category === category),
+					]),
+					(item) =>
+						`${escapeHtml(item.description)}${item.status ? `<span class="chapter">${escapeHtml(item.status)}</span>` : ""}`,
+				)
+			: "";
+	// Research: the five subsystems in order, then the open questions under the subsystem each belongs to.
+	const subsystems = collection.id === "research" ? listed.slice(0, 5) : [];
+	const researchTask = {
+		drivers: "Route",
+		memory: "Remember",
+		scheduling: "Delegate",
+		protection: "Contain",
+		accounting: "Verify",
+	};
+	const researchSubsystems = subsystems.length
+		? `<ol class="subsystem-list">${subsystems
+				.map((item, number) => {
+					if (!researchTask[item.slug]) throw new Error(`Research subsystem ${item.slug} has no PanCode task.`);
+					return `<li><span class="step-number">${String(number + 1).padStart(2, "0")}</span><a href="${item.url}"><h2>${escapeHtml(item.title)}</h2></a><span class="tag">${researchTask[item.slug]}</span><p>${escapeHtml(item.description)}</p><p class="caption"><span class="chapter">${escapeHtml(item.status)}</span></p></li>`;
+				})
+				.join("")}</ol>`
+		: "";
+	const subsystemOf = (item) => item.category.split(" · ")[0];
+	const researchQuestions = subsystems.length
+		? indexGroups(
+				subsystems
+					.map((subsystem) => subsystem.title.split(":")[0])
+					.map((name) => [name, listed.slice(5).filter((item) => subsystemOf(item) === name)])
+					.filter(([, items]) => items.length),
+				(item) => escapeHtml(item.status),
+			)
+		: "";
+	if (
+		subsystems.length &&
+		listed.slice(5).some((item) => !subsystems.some((s) => s.title.startsWith(`${subsystemOf(item)}:`)))
+	)
+		throw new Error("Every research question's category must start with the name of a subsystem.");
 	await writePage(
 		collection.listing,
 		(await read(collection.listing.slice(1)))
 			.replace("<!-- learning-paths -->", learningPaths)
-			.replace("<!-- tutorial-cards -->", cards),
+			.replace("<!-- tutorial-cards -->", cards)
+			.replace("<!-- tutorial-index -->", tutorialIndex)
+			.replace("<!-- research-subsystems -->", researchSubsystems)
+			.replace("<!-- research-questions -->", researchQuestions),
 		collection.title,
 		collection.description,
 		"WebPage",
