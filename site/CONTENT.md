@@ -44,8 +44,8 @@ The research index opens with the thesis: the harness is a systems problem, and
 PanCode is systems software for coding agents. Each subsystem row shows that
 subsystem's question, from `question` in `content/research.json`. "Work with
 PanCode" holds four invitations: run an experiment, read or change the system,
-evaluate it for a team, and work with the author. The maintainer's signed note
-above it is the only first-person text on the site.
+evaluate it for a team, and work with PanStudio. The founder's signed note above
+it is the only first-person text on the site.
 
 Pages live in `content/research/` and `content/research.json` has the same
 shape as `content/tutorials.json`. Every research page is an invitation to
@@ -62,7 +62,7 @@ contributors and outside researchers, and has these parts:
   and recorded the result.
 - How to join: GitHub issues and `CONTRIBUTING.md`.
 
-Name no lab, advisor, or funding. Publish numbers on the page and no data files.
+Name no academic lab, advisor, or funding. Publish numbers on the page and no data files.
 No private paths, hostnames, or agent logs. A research page may run longer than a
 tutorial. When a question is settled and the result ships, the how-to moves to
 Docs or Tutorials and the Research page says what was found. Personal essays stay
@@ -93,10 +93,10 @@ learn page renders the paths, and every step page gets a path strip with its
 place in the path and Previous and Next links. A step's next list should lead
 to its path successor.
 
-## Creator and dates
+## Publisher and dates
 
-Anthony Kougkas creates and maintains PanCode, and the site credits him as the
-author of its articles. Do not narrate earlier prototypes or projects as
+PanCode is a product of PanStudio. Anthony Kougkas, its founder, writes the
+articles, and the site credits him as their author. Do not narrate earlier prototypes or projects as
 PanCode history. Credit upstream projects and contributors. Do not manufacture
 dates.
 
