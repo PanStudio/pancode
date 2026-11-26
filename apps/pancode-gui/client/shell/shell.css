@@ -511,6 +511,15 @@
 .wb-side__tasks > .wb-note {
 	padding-left: 10px;
 }
+.wb-side__empty {
+	display: grid;
+	justify-items: start;
+	gap: var(--space-2);
+	padding: var(--space-3) 10px;
+}
+.wb-side__empty > .wb-note {
+	padding: 0;
+}
 
 /* ---- footer --------------------------------------------------------------- */
 .wb-side__foot {
@@ -1351,6 +1360,7 @@ button.wb-chip:hover:not(:disabled) {
 		height: var(--window-titlebar-height);
 		display: flex;
 		align-items: center;
+		gap: var(--space-2);
 		padding-inline: var(--space-4);
 		background: var(--paper);
 		color: var(--ink-muted);

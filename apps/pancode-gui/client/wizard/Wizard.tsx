@@ -440,6 +440,7 @@ export default function Wizard({
 				<aside className="wizard__stage" aria-label="PanCode">
 					<Stage
 						scene={scene}
+						opening={stageKey === "welcome"}
 						caption={
 							view.kind === "model-missing"
 								? CAPTION_NO_MODELS

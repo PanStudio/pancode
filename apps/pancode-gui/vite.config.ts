@@ -19,11 +19,18 @@ const brand = (file: string) => ({
 	svg: readFileSync(new URL(`../../assets/brand/${file}.svg`, import.meta.url), "utf8"),
 });
 const markCuts = readMarkCuts(brand("pancode-mark"), brand("pancode-mark-light"), brand("pancode-mark-small"));
+// The display name for the opening stage, drawn as an image so its outlines and the for-all sign stay the artwork's.
+const svgImage = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+const displayName = {
+	dark: svgImage(brand("pancode-display").svg),
+	light: svgImage(brand("pancode-display-light").svg),
+};
 
 export default defineConfig({
 	define: {
 		__PANCODE_BUNDLE_VERSION__: JSON.stringify(version),
 		__PANCODE_MARK_CUTS__: JSON.stringify(markCuts),
+		__PANCODE_DISPLAY_NAME__: JSON.stringify(displayName),
 	},
 	logLevel: process.env.PANCODE_BUILD_VERBOSE === "1" ? "info" : "warn",
 	root: fileURLToPath(new URL("./client", import.meta.url)),
