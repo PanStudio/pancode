@@ -67,64 +67,10 @@
 		termObserver.observe(term);
 	}
 
-	// Reach lights the sector of the open tab and walks the three tabs once on first sight.
-	const reach = document.querySelector(".reach");
-	const tabs = reach?.querySelector(".reach-tabs[data-tabs-ready]");
-	const art = reach?.querySelector(".reach-art");
-	let round = 0;
-	if (tabs && art) {
-		const sync = () => {
-			const open = tabs.querySelector(".reach-panel:not([hidden])");
-			if (open) art.dataset.active = open.dataset.sector;
-		};
-		tabs.addEventListener("click", sync);
-		tabs.addEventListener("keyup", sync);
-		sync();
-		const buttons = [...tabs.querySelectorAll("[role=tab]")];
-		const cancel = () => {
-			clearInterval(round);
-			round = -1;
-			reachObserver.disconnect();
-		};
-		// The round starts once half of Reach is in view and ends for good if Reach or the page is hidden.
-		const reachObserver = new IntersectionObserver(
-			(entries) => {
-				if (reduced.matches || round < 0) return;
-				if (!round && entries.some((entry) => entry.isIntersecting && !reachable(entry, 0.5))) return;
-				const visible = entries.some((entry) => shown(entry, 0.5));
-				if (round && !visible) cancel();
-				if (round || !visible || document.hidden) return;
-				let step = 0;
-				round = setInterval(() => {
-					step += 1;
-					buttons[step % buttons.length].click();
-					if (step === buttons.length) cancel();
-				}, 2400);
-			},
-			{ threshold: [0, 0.5] },
-		);
-		for (const type of ["pointerdown", "keydown", "focusin"]) reach.addEventListener(type, cancel, { once: true });
-		document.addEventListener("visibilitychange", () => {
-			if (document.hidden && round > 0) cancel();
-		});
-		reachObserver.observe(reach);
-	}
-
-	// A premise link targets a closed harness tab: the browser cannot scroll to it, and site.js opens it after.
-	const flow = document.querySelector(".flow");
-	addEventListener("hashchange", () => {
-		const target = location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
-		if (target && flow?.contains(target)) target.scrollIntoView();
-	});
-
 	reduced.addEventListener("change", () => {
 		if (!reduced.matches) return;
 		stageObserver.disconnect();
 		stages.forEach(setStage);
 		if (term?.dataset.term === "pending") finishTerm();
-		if (round > 0) {
-			clearInterval(round);
-			round = -1;
-		}
 	});
 })();

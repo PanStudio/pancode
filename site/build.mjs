@@ -361,7 +361,7 @@ const plainText = (html) =>
 		.trim();
 // The overview's question list is a real FAQ; its structured data is read from the same HTML.
 const faq = [
-	...((await read("index.html")).match(/<div class="faq-items">([\s\S]*?)<\/div><\/div>/)?.[1] ?? "").matchAll(
+	...((await read("index.html")).match(/<div class="faq-items">([\s\S]*?)<\/div>\s*<\/section>/)?.[1] ?? "").matchAll(
 		/<details><summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/g,
 	),
 ].map(([, question, answer]) => ({
