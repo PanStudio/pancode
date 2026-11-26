@@ -238,7 +238,8 @@ describe("contracts/uninstall-lifecycle", () => {
 			writeFileSync(join(packageRoot, "dist", "cli", "index.js"), "", "utf8");
 			const fakeBin = join(temp.root, "fake-bin");
 			mkdirSync(fakeBin);
-			writeFileSync(join(fakeBin, "npm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+			// Stands in where no npm sits beside this Node: uninstall -g --prefix <prefix> <name>.
+			writeFileSync(join(fakeBin, "npm"), '#!/bin/sh\nrm -rf "$4/lib/node_modules/$5"\n', { mode: 0o755 });
 			const repo = join(temp.root, "repo");
 			mkdirSync(repo);
 			execFileSync("git", ["init", "-q", repo]);
@@ -248,6 +249,8 @@ describe("contracts/uninstall-lifecycle", () => {
 			const { code, stdout } = await runInHome(temp, () => runUninstallCommand(["--yes"]));
 			strictEqual(code, 0, stdout);
 			match(stdout, /Removed the npm package/u);
+			// npm exits 0 for a name it does not find, so the unscoped name once left the package installed.
+			strictEqual(existsSync(packageRoot), false, "npm was asked for the scoped package");
 			strictEqual(existsSync(temp.stateDir), false, `state came back: ${readdirSafe(temp.stateDir)}`);
 		} finally {
 			process.chdir(savedCwd);
@@ -462,8 +465,6 @@ describe("contracts/uninstall-lifecycle", () => {
 				const own = `alias c=pancode\n\n# added by pancode install.sh\nexport PATH="${temp.binDir}:$PATH"\n`;
 				writeFileSync(rc, own);
 
-				// The test reporter flushes asynchronously; capture would swallow its pending lines.
-				await new Promise((done) => setTimeout(done, 50));
 				const preview = await runInHome(temp, () => runUninstallCommand(["--dry-run"]));
 				match(preview.stdout, /Pane host: .*h\.sock/u);
 				match(preview.stdout, keepBinary ? /PATH block: / : /✓ PATH block: ~\/\.bashrc/u);

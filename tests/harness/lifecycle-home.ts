@@ -9,13 +9,27 @@
  * inherited from the developer's shell would otherwise still be consulted, and
  * a test that leaks one of those deletes the machine's actual PanCode state.
  *
- * The commands write their transcript with `process.stdout.write`, so the
- * capture replaces that for the duration of the call. Both the environment and
- * stdout are restored in a finally, including when the command throws.
+ * The commands write their transcript with `process.stdout.write`. The capture
+ * never replaces that around a call: the test runner reports to its parent over
+ * the same stream, and a replacement held across an await swallowed those
+ * frames, so a file reported fewer tests than it ran. One dispatcher is
+ * installed when this module loads and sends a write to a capture only when it
+ * comes from that command's own async context; every other write passes through.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const capture = new AsyncLocalStorage<{ stdout: string }>();
+const writeThrough = process.stdout.write;
+process.stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
+	const sink = capture.getStore();
+	if (!sink) return writeThrough.call(process.stdout, chunk, ...(rest as []));
+	sink.stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+	for (const argument of rest) if (typeof argument === "function") argument();
+	return true;
+}) as typeof process.stdout.write;
 
 export interface LifecycleHome {
 	root: string;
@@ -120,9 +134,8 @@ export async function runInHome(
 ): Promise<{ code: number; stdout: string }> {
 	const keys = Object.keys(home.env);
 	const saved = new Map(keys.map((key) => [key, process.env[key]]));
-	const savedWrite = process.stdout.write.bind(process.stdout);
 	const savedIsTty = process.stdout.isTTY;
-	let stdout = "";
+	const sink = { stdout: "" };
 
 	for (const key of keys) {
 		const value = home.env[key];
@@ -133,15 +146,10 @@ export async function runInHome(
 	// the words rather than the rail. NO_COLOR is cleared by the tmp-root
 	// harness, so this is the only thing choosing the lane.
 	process.stdout.isTTY = false;
-	process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-		stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-		return true;
-	}) as typeof process.stdout.write;
 
 	try {
-		return { code: await run(), stdout };
+		return { code: await capture.run(sink, run), stdout: sink.stdout };
 	} finally {
-		process.stdout.write = savedWrite;
 		process.stdout.isTTY = savedIsTty;
 		for (const [key, value] of saved) {
 			if (value === undefined) delete process.env[key];
