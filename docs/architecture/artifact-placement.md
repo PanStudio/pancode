@@ -159,6 +159,7 @@ persisted. Route history is a fold over `run.settled` records in the run journal
 | `provider-target-checks/<key>.json` | The last setup test request a target's model answered; read for 24 hours so a just-tested route starts as checked |
 | `copilot-sdk/sessions/<session id>/` | The Copilot runtime's records for one `copilot-sdk` conversation, written through the SDK's `sessionFs`; removed when PanCode closes the conversation, unless a record under `copilot-sdk/conversations/` keeps it resumable |
 | `copilot-sdk/conversations/<hash>.json` | One resumable Copilot conversation per PanCode session (SDK session id, system prompt hash, transcript fingerprints), so a continued session resumes it; removed when that session is deleted, and swept to the newest 32 and none idle over 7 days |
+| `component-npm/` | npm's cache and logs for `pancode tools install claude-sdk`, `copilot-sdk` and `browser`, so a component install writes nothing under `~/.npm` ([components.ts](../../src/domains/lifecycle/components.ts)) |
 | `mcp-catalogs/<key>.json` | Cached MCP tool catalogs |
 | `yazi/profile/` | The managed file-browser profile for the files pane |
 | `yazi/sessions/` | Per-pane DDS/chooser transports and owner receipts (host, PID and birth token). Removed on close; old receipts are swept only after their local owner is confirmed dead. |

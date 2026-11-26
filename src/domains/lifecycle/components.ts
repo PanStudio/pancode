@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { resolvePancodeDirs } from "../../core/xdg.js";
 
 /**
@@ -40,6 +40,22 @@ export function componentSearchDirs(id: string, version: string): string[] {
 	const own = componentInstallDir(id, version);
 	const operator = operatorComponentDir(id, version);
 	return operator === own ? [own] : [own, operator];
+}
+
+/**
+ * The environment a component's npm install runs in: `node`'s directory first on PATH, and npm's cache and logs
+ * under PanCode's cache root instead of the operator's ~/.npm. The operator's npm configuration is still read,
+ * because it names the registry, proxy and certificates this machine installs through.
+ */
+export function componentNpmEnv(node: string): Record<string, string> {
+	return {
+		...(process.env as Record<string, string>),
+		PATH: `${dirname(node)}${delimiter}${process.env.PATH ?? ""}`,
+		npm_config_cache: join(resolvePancodeDirs().cache, "component-npm"),
+		npm_config_update_notifier: "false",
+		npm_config_fund: "false",
+		npm_config_audit: "false",
+	};
 }
 
 /** The separately installed runtime components `pancode tools install` provides. */

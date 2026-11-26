@@ -2,13 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withStateFileLock } from "../../core/state-file-lock.js";
 import { pancodeDataDir } from "../../core/xdg.js";
 import { claudeSdkNpmCommand } from "./claude-sdk-install.js";
 import {
 	componentInstallDir,
+	componentNpmEnv,
 	componentSearchDirs,
 	operatorComponentDir,
 	usesOperatorComponents,
@@ -105,13 +106,7 @@ export async function installCopilotSdk(options: Pick<CopilotSdkInstallOptions, 
 					{
 						cwd: staging,
 						workspaceRoot: staging,
-						env: {
-							...process.env,
-							PATH: `${dirname(node)}${delimiter}${process.env.PATH ?? ""}`,
-							npm_config_update_notifier: "false",
-							npm_config_fund: "false",
-							npm_config_audit: "false",
-						},
+						env: componentNpmEnv(node),
 						timeoutMs: 10 * 60_000,
 						...(options.signal ? { signal: options.signal } : {}),
 					},

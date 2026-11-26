@@ -162,6 +162,7 @@ const PANCODE_CACHE_ENTRIES: { names: ReadonlySet<string>; prefixes: ReadonlyArr
 		"system-one",
 		"codewiki-digests",
 		"copilot-sdk",
+		"component-npm",
 		"run",
 		"yazi",
 		"mcp-catalogs",

@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { withStateFileLock } from "../../core/state-file-lock.js";
 import { pancodeDataDir } from "../../core/xdg.js";
 import { claudeSdkNpmCommand } from "./claude-sdk-install.js";
-import { componentInstallDir, componentSearchDirs, usesOperatorComponents } from "./components.js";
+import { componentInstallDir, componentNpmEnv, componentSearchDirs, usesOperatorComponents } from "./components.js";
 import { inspectInstallation } from "./install-method.js";
 
 /**
@@ -105,11 +105,7 @@ export async function installBrowserComponent(options: BrowserInstallOptions = {
 			const npm = claudeSdkNpmCommand(node, installation.installer !== undefined, "");
 			const staging = mkdtempSync(join(dirname(target), `.${PLAYWRIGHT_CORE_VERSION}-`));
 			const env = {
-				...process.env,
-				PATH: `${dirname(node)}${delimiter}${process.env.PATH ?? ""}`,
-				npm_config_update_notifier: "false",
-				npm_config_fund: "false",
-				npm_config_audit: "false",
+				...componentNpmEnv(node),
 				PLAYWRIGHT_BROWSERS_PATH: join(staging, "browsers"),
 				PLAYWRIGHT_SKIP_BROWSER_GC: "1",
 			};
