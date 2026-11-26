@@ -834,7 +834,7 @@ await writeFile(join(out, "css/site.css"), minifyCss(`${await read("css/brand.cs
 await writeFile(join(out, "css/landing.css"), minifyCss(await read("css/landing.css")));
 await writeFile(join(out, "css/art.css"), minifyCss(await read("css/art.css")));
 await mkdir(join(out, "js"));
-for (const name of ["site.js", "docs.js", "redirect.js", "hub.js"])
+for (const name of ["site.js", "docs.js", "redirect.js", "hub.js", "landing.js"])
 	await cp(join(root, "js", name), join(out, "js", name));
 await mkdir(join(out, "content"));
 await writeFile(join(out, "content/docs-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
