@@ -107,7 +107,7 @@ All symbols are defined in the `GLYPH` object in [src/core/glyphs.ts](../../src/
 
 | Glyph | `GLYPH` key | Token | Meaning | Used by |
 | :--- | :--- | :--- | :--- | :--- |
-| `▐P▌` | `brand` | `accent`, `title` | Brand wordmark | Launchpad, session header and expanded footer title. |
+| `▐∀▌` | `brand` | `accent`, `title` | PanCode mark: the for-all sign in the on-accent ink on a brand green tile, `[V]` in ASCII | Launchpad, session header and expanded footer title. |
 | `■` | `agent` | `accent` | Agent voice | First row of agent prose; `error` on a failed turn. |
 | `▌` | `userBar` | `accent` | Operator input | Gutter of every prompt row. |
 | `›` | `user` | `action` | Quoted operator text | Steering queue entries, `/btw` and `/draft` request echoes, command reference cards. |
