@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Connect a model · PanCode</title><meta name="description" content="Set up local models, institutional endpoints, and cloud connections. Run pancode configure, or choose Guided setup in the desktop alpha."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/docs/guide/configuration-and-targets.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/docs/guide/configuration-and-targets.html"><meta property="og:title" content="Connect a model · PanCode"><meta property="og:description" content="Set up local models, institutional endpoints, and cloud connections. Run pancode configure, or choose Guided setup in the desktop alpha."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Connect a model · PanCode"><meta name="twitter:description" content="Set up local models, institutional endpoints, and cloud connections. Run pancode configure, or choose Guided setup in the desktop alpha."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"TechArticle","@id":"https://pancode.dev/docs/guide/configuration-and-targets.html#page","name":"Connect a model · PanCode","description":"Set up local models, institutional endpoints, and cloud connections. Run pancode configure, or choose Guided setup in the desktop alpha.","url":"https://pancode.dev/docs/guide/configuration-and-targets.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Connect a model","mainEntityOfPage":"https://pancode.dev/docs/guide/configuration-and-targets.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/docs/guide/configuration-and-targets.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/docs/guide/configuration-and-targets.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://pancode.dev/docs.html"},{"@type":"ListItem","position":3,"name":"Connect a model","item":"https://pancode.dev/docs/guide/configuration-and-targets.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main class="page docs-layout" id="content">
+  <aside class="docs-sidebar" aria-label="Documentation"><details class="docs-menu"><summary>Browse documentation</summary><div class="docs-menu-body"><a class="docs-home" href="/docs.html">PanCode docs</a><label class="search-label" for="doc-search">Find a guide</label><input id="doc-search" type="search" placeholder="Search topics…" aria-describedby="search-status" /><p class="search-status" id="search-status" role="status"></p><ul class="search-hits" id="search-hits"></ul><noscript><p class="caption">Browse the guides below. Search requires JavaScript.</p></noscript><div id="all-docs"><details class="doc-nav-group" open><summary>Start</summary><a href="/docs.html">Install PanCode</a>
+<a href="/docs/guide/hpc-clusters.html">Install on a cluster</a>
+<a href="/docs/guide/configuration-and-targets.html" aria-current="page">Connect a model</a></details>
+<details class="doc-nav-group"><summary>Everyday use</summary><a href="/docs/guide/commands-and-modes.html">Commands and shortcuts</a>
+<a href="/docs/guide/tool-usage.html">Tools and permissions</a>
+<a href="/docs/guide/sandbox-and-safety.html">Sandbox and safety</a>
+<a href="/docs/guide/context-continuity.html">Save and resume work</a>
+<a href="/docs/guide/proactive-memory.html">Memory and lessons</a>
+<a href="/docs/guide/panes-and-files.html">Files and terminal panes</a>
+<a href="/docs/guide/gui.html">The desktop app</a>
+<a href="/docs/guide/quality-policy.html">Require project checks</a>
+<a href="/docs/guide/research-and-arena.html">Climb a metric, compare models</a>
+<a href="/docs/guide/exit-codes-and-output.html">Automate with pancode run</a>
+<a href="/docs/guide/semantic-context.html">Semantic context</a>
+<a href="/docs/guide/built-in-agents.html">Built-in and custom agents</a></details>
+<details class="doc-nav-group"><summary>The family</summary><a href="/docs/guide/panstore.html">Keep results in PanStore</a>
+<a href="/docs/guide/panhub.html">Packs from PanHub</a>
+<a href="/docs/guide/pankit.html">Tool servers with PanKit</a>
+<a href="/docs/guide/sdk.html">Write extensions and tools with PanSDK</a></details>
+<details class="doc-nav-group"><summary>Extend PanCode</summary><a href="/docs/guide/fleet-dispatch.html">Workers and fleets</a>
+<a href="/docs/guide/plugins.html">Install plugins</a>
+<a href="/docs/guide/harness-extensions.html">Write and install extensions</a>
+<a href="/docs/guide/interop.html">Editors and other agents</a></details>
+<details class="doc-nav-group"><summary>Reference</summary><a href="/docs/guide/doctor.html">Check your installation</a>
+<a href="/docs/guide/troubleshooting.html">Troubleshooting</a>
+<a href="/docs/guide/configuration-reference.html">Configuration essentials</a>
+<a href="/docs/guide/environment-variables.html">Environment essentials</a>
+<a href="/docs/guide/system-one.html">System One decision models</a>
+<a href="/docs/guide/information-flow.html">Information flow</a>
+<a href="/docs/guide/glossary.html">Glossary</a></details></div></div></details></aside>
+  <article class="doc-article"><div class="doc-toolbar"><p id="doc-path">Connect a model</p><a id="doc-github" href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/guide/configuration-and-targets.md">Read the full guide <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div><div class="doc" id="doc" data-doc="guide/configuration-and-targets.md"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#connect-the-way-you-already-work">Connect the way you already work</a>
+<a href="#use-a-local-model-server">Use a local model server</a>
+<a href="#settings-center">Settings Center</a>
+<a href="#check-the-connection">Check the connection</a>
+<a href="#servers-without-a-built-in-runtime">Servers without a built-in runtime</a>
+<a href="#related-tutorials-and-research">Related tutorials and research</a></details><h1 id="connect-a-model">Connect a model</h1>
+<p>Set up local models, institutional endpoints, and cloud connections.</p>
+<h2 id="connect-the-way-you-already-work">Connect the way you already work</h2>
+<p>Run <code>pancode configure</code>, or choose <strong>Guided setup</strong> in the desktop alpha. First-time setup asks what you have: an API key, a subscription, a model server or gateway, or a setup file from your lab or team. When PanCode finds a route first, such as a provider key in your environment, it lists that route for you to choose.</p>
+<ol>
+<li>Provide what the row asks for: paste a key, sign in to a subscription in the browser, or enter a server&#39;s address.</li>
+<li>For a model server or gateway, PanCode checks reachability and reads the model list.</li>
+<li>PanCode takes the provider&#39;s recommended model, or the only model a server lists. Otherwise you pick from the list. For a local server with no models, load one and choose <strong>Check again</strong>.</li>
+<li>PanCode sends the model one short test request and saves when it answers. After a failure you can try again, change the key or address, or choose <strong>Save anyway</strong>. The first connection supplies the chat and worker defaults.</li>
+</ol>
+<p>The test request shows that the model answers. It does not establish model quality or tool calling, and <code>--no-verify</code> skips it. Live, cached, and provider-catalog model lists are labeled separately. Choose a model that supports tool calling for repository work.</p>
+<p>Already know the URL? Use <code>pancode configure --quick</code> for endpoint-first setup. A lab or team can publish one setup file: <code>pancode configure --import &lt;path-or-https-url&gt;</code> reads it, prints where prompts will go, and asks once before saving.</p>
+<h2 id="use-a-local-model-server">Use a local model server</h2>
+<p>Start LM Studio, Ollama, llama.cpp, vLLM, SGLang or Lemonade with a model that can call tools, then run <code>pancode</code>. It finds a server on its default port, such as Ollama on 11434, and offers it. On another address, run <code>pancode configure</code> and choose <strong>A model server or gateway</strong>. <code>pancode targets --probe --tools --target &lt;id&gt;</code> checks that the model really calls tools.</p>
+<h2 id="settings-center">Settings Center</h2>
+<p>Run <code>pancode configure --settings</code> or choose <strong>Settings</strong> on the desktop. Both use these sections:</p>
+<div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Section</th>
+<th>What to change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Connections</td>
+<td>Providers, credentials, endpoints, and model lists</td>
+</tr>
+<tr>
+<td>Chat</td>
+<td>The connection and model answering you</td>
+</tr>
+<tr>
+<td>Fleet</td>
+<td>Worker models, profiles, and capacity</td>
+</tr>
+<tr>
+<td>Context &amp; Memory</td>
+<td>Context limits, compaction, and memory</td>
+</tr>
+<tr>
+<td>Permissions &amp; Limits</td>
+<td>Approvals, autonomy, and spending limits</td>
+</tr>
+<tr>
+<td>Appearance</td>
+<td>Output style and interface preferences</td>
+</tr>
+<tr>
+<td>Integrations</td>
+<td>Agents, libraries, plugins, and Git</td>
+</tr>
+<tr>
+<td>Advanced</td>
+<td>Diagnostics and the full settings editor</td>
+</tr>
+</tbody></table></div>
+<p>Terminal <code>/settings</code> groups the same controls into its own areas: Recent &amp; Pinned, Models, Chat and display, Workers, Context and memory, Safety and limits, Workspace, and Advanced.</p>
+<p><strong>Use connection default</strong> lets a route inherit its connection&#39;s model. In the terminal, save to the session, project, or global scope where offered. Configure edits global defaults; desktop saved settings apply to new conversations. Active conversation controls have their own scope.</p>
+<h2 id="check-the-connection">Check the connection</h2>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode doctor
+pancode targets --probe</code></pre></div>
+<p>If setup fails, check credentials, the endpoint address, and whether the local model is loaded. See <a href="/docs/guide/troubleshooting.html">troubleshooting</a> for the next step.</p>
+<h2 id="servers-without-a-built-in-runtime">Servers without a built-in runtime</h2>
+<p>Every connection names a runtime, which fixes how PanCode talks to the server. <code>pancode configure --list</code> prints the runtime ids you can choose. Amazon Bedrock is not in that list, but a <code>bedrock</code> connection in your configuration runs.</p>
+<div class="doc-table" role="region" aria-label="Reference table 2" tabindex="0"><table>
+<thead>
+<tr>
+<th>Kind of server</th>
+<th>Runtimes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Local model servers</td>
+<td><code>lmstudio</code>, <code>ollama</code>, <code>llamacpp</code>, <code>vllm</code>, <code>sglang</code>, <code>lemonade</code></td>
+</tr>
+<tr>
+<td>Cloud providers</td>
+<td><code>openai</code>, <code>anthropic</code>, <code>google</code>, <code>mistral</code>, <code>groq</code>, <code>deepseek</code>, <code>openrouter</code>, and others</td>
+</tr>
+<tr>
+<td>Any compatible endpoint</td>
+<td><code>openai-compat</code>, <code>anthropic-compat</code>, <code>litellm</code></td>
+</tr>
+<tr>
+<td>Another agent&#39;s login</td>
+<td><code>claude-code</code>, <code>codex-cli</code>, <code>opencode-cli</code>, <code>pi-cli</code>, and others; workers only</td>
+</tr>
+</tbody></table></div>
+<p>A server that speaks the OpenAI or Anthropic API but has no runtime of its own usually works through <code>openai-compat</code> or <code>anthropic-compat</code>, or through a LiteLLM gateway. Local runtimes probe the server, report the loaded models, and price usage as free; the compatible runtimes make no local-server assumptions and are priced as free only when the connection declares it.</p>
+<p>When none of these fits, a developer can add a runtime as a plugin: a JavaScript file in the <code>runtimes/</code> folder of PanCode&#39;s config directory, or an npm package listed under <code>integrations.runtimePlugins</code>, which takes effect after a restart. A broken plugin is reported on stderr and never stops startup. The <a href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/architecture/provider-adapter-cookbook.md">provider adapter cookbook</a> describes the runtime descriptor a plugin exports.</p>
+<h2 id="related-tutorials-and-research">Related tutorials and research</h2>
+<nav class="guide-next" aria-label="Related tutorials and research"><ul>
+<li><a href="/tutorials/choose-model-for-your-project.html">Choose a model for your project <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/diffusion-models.html">Diffusion models in the terminal <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/run-on-a-local-model.html">Run PanCode on a local model <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/set-up-a-lab-from-one-setup-file.html">Set up a lab from one setup file <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/share-a-folder-with-a-teammate-or-a-second-terminal.html">Share a folder with a teammate or a second terminal <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/drivers.html">Drivers: the model you have, on its own wire <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/fleets-and-local-models.html">When do several agents or small models pay off? <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></div><div class="doc-end"><span>Updated <time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></span><a id="doc-snapshot-source" href="https://github.com/akougkas/pancode/tree/ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-version="0.9.0" data-source-ref="ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-commit="ff215460f467aea6f3b0211a6996e5746e87ae75">Guide to v0.9.0</a><a href="https://github.com/akougkas/pancode/issues">Suggest an improvement <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></article>
+  <aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#connect-the-way-you-already-work">Connect the way you already work</a>
+<a href="#use-a-local-model-server">Use a local model server</a>
+<a href="#settings-center">Settings Center</a>
+<a href="#check-the-connection">Check the connection</a>
+<a href="#servers-without-a-built-in-runtime">Servers without a built-in runtime</a>
+<a href="#related-tutorials-and-research">Related tutorials and research</a></aside>
+</main><footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

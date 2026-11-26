@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Keep results in PanStore · PanCode</title><meta name="description" content="Keep datasets and results outside the working tree with PanStore, with a record of where each file came from and whether it changed."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/docs/guide/panstore.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/docs/guide/panstore.html"><meta property="og:title" content="Keep results in PanStore · PanCode"><meta property="og:description" content="Keep datasets and results outside the working tree with PanStore, with a record of where each file came from and whether it changed."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Keep results in PanStore · PanCode"><meta name="twitter:description" content="Keep datasets and results outside the working tree with PanStore, with a record of where each file came from and whether it changed."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"TechArticle","@id":"https://pancode.dev/docs/guide/panstore.html#page","name":"Keep results in PanStore · PanCode","description":"Keep datasets and results outside the working tree with PanStore, with a record of where each file came from and whether it changed.","url":"https://pancode.dev/docs/guide/panstore.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Keep results in PanStore","mainEntityOfPage":"https://pancode.dev/docs/guide/panstore.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/docs/guide/panstore.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/docs/guide/panstore.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://pancode.dev/docs.html"},{"@type":"ListItem","position":3,"name":"Keep results in PanStore","item":"https://pancode.dev/docs/guide/panstore.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main class="page docs-layout" id="content">
+  <aside class="docs-sidebar" aria-label="Documentation"><details class="docs-menu"><summary>Browse documentation</summary><div class="docs-menu-body"><a class="docs-home" href="/docs.html">PanCode docs</a><label class="search-label" for="doc-search">Find a guide</label><input id="doc-search" type="search" placeholder="Search topics…" aria-describedby="search-status" /><p class="search-status" id="search-status" role="status"></p><ul class="search-hits" id="search-hits"></ul><noscript><p class="caption">Browse the guides below. Search requires JavaScript.</p></noscript><div id="all-docs"><details class="doc-nav-group" open><summary>Start</summary><a href="/docs.html">Install PanCode</a>
+<a href="/docs/guide/hpc-clusters.html">Install on a cluster</a>
+<a href="/docs/guide/configuration-and-targets.html">Connect a model</a></details>
+<details class="doc-nav-group"><summary>Everyday use</summary><a href="/docs/guide/commands-and-modes.html">Commands and shortcuts</a>
+<a href="/docs/guide/tool-usage.html">Tools and permissions</a>
+<a href="/docs/guide/sandbox-and-safety.html">Sandbox and safety</a>
+<a href="/docs/guide/context-continuity.html">Save and resume work</a>
+<a href="/docs/guide/proactive-memory.html">Memory and lessons</a>
+<a href="/docs/guide/panes-and-files.html">Files and terminal panes</a>
+<a href="/docs/guide/gui.html">The desktop app</a>
+<a href="/docs/guide/quality-policy.html">Require project checks</a>
+<a href="/docs/guide/research-and-arena.html">Climb a metric, compare models</a>
+<a href="/docs/guide/exit-codes-and-output.html">Automate with pancode run</a>
+<a href="/docs/guide/semantic-context.html">Semantic context</a>
+<a href="/docs/guide/built-in-agents.html">Built-in and custom agents</a></details>
+<details class="doc-nav-group" open><summary>The family</summary><a href="/docs/guide/panstore.html" aria-current="page">Keep results in PanStore</a>
+<a href="/docs/guide/panhub.html">Packs from PanHub</a>
+<a href="/docs/guide/pankit.html">Tool servers with PanKit</a>
+<a href="/docs/guide/sdk.html">Write extensions and tools with PanSDK</a></details>
+<details class="doc-nav-group"><summary>Extend PanCode</summary><a href="/docs/guide/fleet-dispatch.html">Workers and fleets</a>
+<a href="/docs/guide/plugins.html">Install plugins</a>
+<a href="/docs/guide/harness-extensions.html">Write and install extensions</a>
+<a href="/docs/guide/interop.html">Editors and other agents</a></details>
+<details class="doc-nav-group"><summary>Reference</summary><a href="/docs/guide/doctor.html">Check your installation</a>
+<a href="/docs/guide/troubleshooting.html">Troubleshooting</a>
+<a href="/docs/guide/configuration-reference.html">Configuration essentials</a>
+<a href="/docs/guide/environment-variables.html">Environment essentials</a>
+<a href="/docs/guide/system-one.html">System One decision models</a>
+<a href="/docs/guide/information-flow.html">Information flow</a>
+<a href="/docs/guide/glossary.html">Glossary</a></details></div></div></details></aside>
+  <article class="doc-article"><div class="doc-toolbar"><p id="doc-path">Keep results in PanStore</p><a id="doc-github" href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/guide/panstore.md">Read the full guide <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div><div class="doc" id="doc" data-doc="guide/panstore.md"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#keep-results-out-of-your-working-tree">Keep results out of your working tree</a>
+<a href="#store-a-file-from-your-shell">Store a file from your shell</a>
+<a href="#ask-pancode-to-use-it">Ask PanCode to use it</a>
+<a href="#let-workers-write">Let workers write</a>
+<a href="#limits">Limits</a>
+<a href="#related-tutorials">Related tutorials</a></details><h1 id="keep-results-in-panstore">Keep results in PanStore</h1>
+<p>Keep datasets and results outside the working tree, with a record of where each came from.</p>
+<h2 id="keep-results-out-of-your-working-tree">Keep results out of your working tree</h2>
+<p>Long analyses produce files you want to keep but not commit: datasets, model outputs, figures. PanStore, the project store, holds them outside the working tree. The main session, its workers and every linked worktree of the project see the same store, and each file keeps a record of where it came from.</p>
+<p>A tag is a named container, classed input, output, cache or archive. A blob is a file in a tag. A reference reads <code>&lt;tag&gt;:&lt;blob&gt;</code>, such as <code>results:summary.parquet</code>.</p>
+<h2 id="store-a-file-from-your-shell">Store a file from your shell</h2>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode store put results out/summary.parquet --note &quot;baseline run&quot;
+pancode store tags
+pancode store ls results
+pancode store stat results:summary.parquet</code></pre></div>
+<p><code>put</code> creates a missing tag as an input tag. <code>stat</code> shows the record and whether the bytes have drifted since: <code>none</code>, <code>changed</code>, <code>missing</code> or <code>unrecorded</code>. <code>get</code> prints the path of a read-only copy, or copies the blob elsewhere with <code>--to &lt;path&gt;</code>. Every command takes <code>--json</code>. Outside a PanCode project, the <code>panstore</code> command that PanCode installs runs the same commands against a store root you name.</p>
+<h2 id="ask-pancode-to-use-it">Ask PanCode to use it</h2>
+<blockquote>
+<p>Run the analysis script on <code>data:measurements.h5</code>, put its summary into the <code>results</code> tag, and tell me whether the stored baseline has drifted.</p>
+</blockquote>
+<p>The agent reaches the store through its <code>store</code> tool. Reads run without asking. Creating a tag, a put and a note are judged as writes. Removing a blob, or a put that replaces one, asks first and names the blob; a replacing put also states its size. The store keeps no earlier versions.</p>
+<p>When a <code>run_script</code> run declares a store blob as an input and its output is put back, the record names the script and that input.</p>
+<h2 id="let-workers-write">Let workers write</h2>
+<p>Dispatched workers read the store. They write only into the tags their dispatch grants, and a granted tag must exist first. The built-in coder, researcher and scout workers use the store without extra setup.</p>
+<h2 id="limits">Limits</h2>
+<ul>
+<li>The store lives in PanCode&#39;s data directory on one host; <code>pancode store where</code> prints its folder. A worker on an SSH fleet node sees that node&#39;s own store.</li>
+<li><code>put</code> copies bytes, and the store keeps no earlier versions of a blob.</li>
+<li><code>pancode reset --data</code>, <code>reset --all</code> and <code>uninstall</code> without <code>--keep-data</code> delete the store for good.</li>
+<li>The store has been exercised on Linux only.</li>
+</ul>
+<h2 id="related-tutorials">Related tutorials</h2>
+<nav class="guide-next" aria-label="Related tutorials"><ul>
+<li><a href="/tutorials/keep-results-in-the-project-store.html">Keep results outside the tree with the project store <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></div><div class="doc-end"><span>Updated <time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></span><a id="doc-snapshot-source" href="https://github.com/akougkas/pancode/tree/ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-version="0.9.0" data-source-ref="ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-commit="ff215460f467aea6f3b0211a6996e5746e87ae75">Guide to v0.9.0</a><a href="https://github.com/akougkas/pancode/issues">Suggest an improvement <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></article>
+  <aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#keep-results-out-of-your-working-tree">Keep results out of your working tree</a>
+<a href="#store-a-file-from-your-shell">Store a file from your shell</a>
+<a href="#ask-pancode-to-use-it">Ask PanCode to use it</a>
+<a href="#let-workers-write">Let workers write</a>
+<a href="#limits">Limits</a>
+<a href="#related-tutorials">Related tutorials</a></aside>
+</main><footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

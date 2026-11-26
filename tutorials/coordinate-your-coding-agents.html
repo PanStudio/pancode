@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Coordinate the coding agents you already use · PanCode</title><meta name="description" content="Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/tutorials/coordinate-your-coding-agents.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/coordinate-your-coding-agents.html"><meta property="og:title" content="Coordinate the coding agents you already use · PanCode"><meta property="og:description" content="Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them."><meta property="og:image" content="https://pancode.dev/assets/social/tui-interop.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Terminal Local coding agents panel with 4 proposed and 0 connected: Claude Code, Codex, OpenCode and GitHub Copilot are listed as not configured with their launch commands, and the detail for Claude Code shows its path under /home/researcher, [a] connect, which appends exactly this entry to delegation.agents, [x] decline, and the start of that entry."><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Coordinate the coding agents you already use · PanCode"><meta name="twitter:description" content="Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them."><meta name="twitter:image" content="https://pancode.dev/assets/social/tui-interop.png"><meta name="twitter:image:alt" content="Terminal Local coding agents panel with 4 proposed and 0 connected: Claude Code, Codex, OpenCode and GitHub Copilot are listed as not configured with their launch commands, and the detail for Claude Code shows its path under /home/researcher, [a] connect, which appends exactly this entry to delegation.agents, [x] decline, and the start of that entry.">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/coordinate-your-coding-agents.html#page","name":"Coordinate the coding agents you already use · PanCode","description":"Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them.","url":"https://pancode.dev/tutorials/coordinate-your-coding-agents.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/tui-interop.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Coordinate the coding agents you already use","mainEntityOfPage":"https://pancode.dev/tutorials/coordinate-your-coding-agents.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/tui-interop.png","https://pancode.dev/assets/guides/tui-interop.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/coordinate-your-coding-agents.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/coordinate-your-coding-agents.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Coordinate the coding agents you already use","item":"https://pancode.dev/tutorials/coordinate-your-coding-agents.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Agent coordination</span>6 min read</p><h1>Coordinate the coding agents you already use</h1><p class="lede">Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal · Desktop alpha</dd></div><div><dt class="eyebrow">Basis</dt><dd>Documented workflow</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><nav class="path-strip" aria-label="Learning path"><ul><li><a class="path-strip-path" href="/learn.html#path-agents">Coding agents · step 4 of 5</a><span>Previous: <a href="/tutorials/check-a-change-against-your-repository.html">Check a change against your repository</a></span><span>Next: <a href="/tutorials/run-it-unattended-within-limits.html">Run it unattended within limits</a></span></li></ul></nav><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover"><a class="capture-frame" href="/assets/guides/tui-interop.png?v=9c03af9be0"><img src="/assets/guides/tui-interop.webp?v=bb44e617e6" width="2268" height="784" alt="Terminal Local coding agents panel with 4 proposed and 0 connected: Claude Code, Codex, OpenCode and GitHub Copilot are listed as not configured with their launch commands, and the detail for Claude Code shows its path under /home/researcher, [a] connect, which appends exactly this entry to delegation.agents, [x] decline, and the start of that entry." fetchpriority="high" srcset="/assets/responsive/tui-interop-640.webp?v=31c03822ff 640w, /assets/responsive/tui-interop-1024.webp?v=337a8e094a 1024w, /assets/responsive/tui-interop-1600.webp?v=3c9fef916c 1600w, /assets/guides/tui-interop.webp?v=bb44e617e6 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">/hub interop lists the coding agents PanCode detected and the entry that connecting would add. <span class="tag">Terminal · v0.9.0-dev</span></figcaption></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#before-you-start">Before you start</a>
+<a href="#see-which-peers-pancode-can-use">See which peers PanCode can use</a>
+<a href="#choose-managed-work-or-an-interactive-handoff">Choose managed work or an interactive handoff</a>
+<a href="#give-one-bounded-assignment">Give one bounded assignment</a>
+<a href="#keep-worker-authority-separate">Keep worker authority separate</a>
+<a href="#separate-changes-with-a-worktree">Separate changes with a worktree</a>
+<a href="#review-before-combining">Review before combining</a></details><p>You can use PanCode to coordinate the coding agents you already have installed. Give a peer a focused assignment, follow a managed run where the connector supports it, and review its output before accepting the change.</p>
+<aside class="guide-note"><p class="eyebrow">Version scope</p><p>The supported peer family includes Claude Code, Codex, OpenCode, Pi, and Antigravity. Their modes and controls differ. Install and authenticate each peer&#39;s own CLI before configuring it in PanCode.</p>
+</aside><section class="guide-needs"><h2 id="before-you-start">Before you start</h2>
+<ul>
+<li>PanCode with one working model connection. The <a href="/tutorials/first-session.html">first session</a> covers it.</li>
+<li>A peer&#39;s CLI installed and signed in under its own account.</li>
+<li>An assignment whose answer you can check against the repository.</li>
+</ul>
+</section><h2 id="see-which-peers-pancode-can-use">See which peers PanCode can use</h2>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode interop inspect --json
+pancode configure --interop</code></pre></div>
+<p>The first command reports what PanCode can find; the second configures interoperability. In a terminal conversation, <code>/hub interop</code> shows the available connections. The <a href="/docs/guide/interop.html">interoperability guide</a> covers the mode for each peer.</p>
+<figure class="guide-sequence" data-sequence><ol class="guide-frames"><li class="guide-frame" id="frame-tui-interop" data-label="/interop"><a class="capture-frame" href="/assets/guides/tui-interop.png?v=9c03af9be0"><img src="/assets/guides/tui-interop.webp?v=bb44e617e6" width="2268" height="784" alt="Terminal Local coding agents panel with 4 proposed and 0 connected: Claude Code, Codex, OpenCode and GitHub Copilot are listed as not configured with their launch commands, and the detail for Claude Code shows its path under /home/researcher, [a] connect, which appends exactly this entry to delegation.agents, [x] decline, and the start of that entry." loading="lazy" srcset="/assets/responsive/tui-interop-640.webp?v=31c03822ff 640w, /assets/responsive/tui-interop-1024.webp?v=337a8e094a 1024w, /assets/responsive/tui-interop-1600.webp?v=3c9fef916c 1600w, /assets/guides/tui-interop.webp?v=bb44e617e6 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">01</span> /hub interop lists the coding agents PanCode detected and the entry that connecting would add. <span class="tag">Terminal · v0.9.0-dev</span></p></li><li class="guide-frame" id="frame-cli-interop-inspect" data-label="Inspect"><a class="capture-frame" href="/assets/guides/cli-interop-inspect.png?v=e8d26b8ff9"><img src="/assets/guides/cli-interop-inspect.webp?v=e1c08bc539" width="2268" height="1304" alt="Terminal interop inspect report: Claude Code, Codex, OpenCode and GitHub Copilot present with their versions, each with its ACP, headless and pane status and the next step, no inventory found, and Antigravity CLI absent because its agy CLI is missing." loading="lazy" srcset="/assets/responsive/cli-interop-inspect-640.webp?v=f0a8620db4 640w, /assets/responsive/cli-interop-inspect-1024.webp?v=587a950bc0 1024w, /assets/responsive/cli-interop-inspect-1600.webp?v=d0b8cd7b7c 1600w, /assets/guides/cli-interop-inspect.webp?v=e1c08bc539 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">02</span> interop inspect: each coding agent PanCode detected, how far it is wired, and the next step. <span class="tag">Terminal · v0.9.0-dev</span></p></li></ol><figcaption class="caption">What PanCode detected on a machine with peer CLIs installed but not signed in.
+</figcaption></figure><h2 id="choose-managed-work-or-an-interactive-handoff">Choose managed work or an interactive handoff</h2>
+<p>The three commands answer different needs. Pick by whether you want a recorded run or a place to work with the peer yourself. An ACP peer is one PanCode drives over the Agent Client Protocol; a headless target runs the peer&#39;s own CLI once for the task.</p>
+<div class="guide-compare"><div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What happens</th>
+<th>What PanCode records</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/run &lt;agent-id&gt; &lt;task&gt;</code></td>
+<td>A configured ACP peer such as <code>antigravity</code> runs the task; <code>acp:&lt;id&gt;</code> names one explicitly</td>
+<td>The result and a sealed run record</td>
+</tr>
+<tr>
+<td><code>/run --target &lt;target&gt; &lt;agent&gt; &lt;task&gt;</code></td>
+<td>A configured headless target runs it</td>
+<td>The result and a sealed run record</td>
+</tr>
+<tr>
+<td><code>/panes peer &lt;agent&gt; [brief]</code></td>
+<td>A pane opens beside the conversation for you to work in</td>
+<td>No run record</td>
+</tr>
+</tbody></table></div>
+</div><p>The <a href="/tutorials/panes-and-docks.html">panes tutorial</a> covers the pane host. Do not infer that a pane completed a task because it opened. Do not infer that a run record contains every internal reasoning step or mediates every operation inside a peer-owned loop.</p>
+<h2 id="give-one-bounded-assignment">Give one bounded assignment</h2>
+<figure class="guide-prompt"><figcaption class="eyebrow"><span class="chapter">Assign to a peer</span></figcaption><blockquote><p>Inspect the parser&#39;s handling of empty input. Identify the existing tests and propose a regression test. Do not edit files.</p>
+</blockquote><button type="button" class="copy" data-copy="Inspect the parser&#39;s handling of empty input. Identify the existing tests and propose a regression test. Do not edit files." aria-label="Copy the request">Copy</button></figure><p>That last sentence is a task instruction, not an enforced boundary. For an enforced one, put <code>--read-only</code> before the task, as in <code>/run --read-only &lt;agent&gt; &lt;task&gt;</code>; an option typed after the task text becomes part of the task. PanCode admits a read-only run only on a peer whose own sandbox refuses every write, and refuses it before launch on every other peer, ACP peers included.</p>
+<h2 id="keep-worker-authority-separate">Keep worker authority separate</h2>
+<p>A native worker, one of PanCode&#39;s own agents, inherits the main session&#39;s level inside its own permit and OS sandbox. At contained <code>yolo</code>, which is yolo&#39;s default, workers are dispatched as at <code>default</code>; at unconfined <code>yolo</code> a mediated worker runs the yolo way within its dispatch scope. A read-only worker stays at <code>default</code>.</p>
+<p>Managed peer dispatches run at default permissions, even when the main session uses <code>yolo</code>, and each external agent runs its own tool loop.</p>
+<p>A read-only run must leave every file outside PanCode&#39;s home unchanged. It is admitted only where the peer&#39;s own sandbox guarantees that, so check the peer before you rely on it.</p>
+<div class="guide-compare"><div class="doc-table" role="region" aria-label="Reference table 2" tabindex="0"><table>
+<thead>
+<tr>
+<th>Peer</th>
+<th>Read-only headless run</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Codex</td>
+<td>Runs under its read-only sandbox mode</td>
+</tr>
+<tr>
+<td>Claude Code</td>
+<td>Refused before launch</td>
+</tr>
+<tr>
+<td>Antigravity</td>
+<td>Refused before launch</td>
+</tr>
+<tr>
+<td>Pi</td>
+<td>Refused before launch</td>
+</tr>
+<tr>
+<td>OpenCode</td>
+<td>Refused before launch</td>
+</tr>
+</tbody></table></div>
+</div><p>ACP peers may own their tools. Explicitly permitting peer-owned tools changes what PanCode can observe and mediate, so read the guide&#39;s permission limits before using such a peer on sensitive work. PanCode&#39;s own shell commands and native workers&#39; commands run in an OS sandbox when one is available. External peers keep their own authority.</p>
+<h2 id="separate-changes-with-a-worktree">Separate changes with a worktree</h2>
+<p>For supported headless dispatch, <code>--worktree</code> keeps a Git task branch for review. That helps you compare two proposed changes without mixing their working files.</p>
+<p>A worktree is an organizational boundary. It does not confine a peer&#39;s filesystem or network access. Keep assignments narrow, inspect the branch and diff, and run the repository&#39;s checks before merging a result.</p>
+<h2 id="review-before-combining">Review before combining</h2>
+<section class="guide-result"><p class="eyebrow"><span class="chapter">What to look for</span></p><p>A useful result may be a diagnosis, a patch, or a failed attempt that reveals a missing dependency. Look for the files it touched, the checks it ran, and the limits of its report. A claimed test result and an observed check are different evidence.</p>
+</section><p>When comparing agents, give them the same task and evaluate the actual output. Record the model, connector, setup, check results, and any costs you can substantiate. PanCode coordinating two peers does not make either one better.</p>
+<section class="guide-limits"><p class="eyebrow"><span class="chapter">Boundaries</span></p><ul>
+<li>Supported modes differ by peer, and some cannot receive live steering. The Antigravity CLI over ACP can.</li>
+<li>A pane is an interactive handoff; it produces no run record.</li>
+<li>Peer accounts, subscriptions, and usage limits stay with each peer&#39;s own provider.</li>
+</ul>
+</section><nav class="guide-next" aria-label="Next steps"><ul>
+<li><a href="/tutorials/run-it-unattended-within-limits.html">Run it unattended within limits <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/ask-several-agents-at-once.html">Ask several agents at once <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/docs/guide/quality-policy.html">Project quality checks <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/docs/guide/interop.html">Interoperability guide <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#before-you-start">Before you start</a>
+<a href="#see-which-peers-pancode-can-use">See which peers PanCode can use</a>
+<a href="#choose-managed-work-or-an-interactive-handoff">Choose managed work or an interactive handoff</a>
+<a href="#give-one-bounded-assignment">Give one bounded assignment</a>
+<a href="#keep-worker-authority-separate">Keep worker authority separate</a>
+<a href="#separate-changes-with-a-worktree">Separate changes with a worktree</a>
+<a href="#review-before-combining">Review before combining</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

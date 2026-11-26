@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>PanKit: MCP tool servers for HPC and science</title><meta name="description" content="PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/pankit.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="website"><meta property="og:url" content="https://pancode.dev/pankit.html"><meta property="og:title" content="PanKit: MCP tool servers for HPC and science"><meta property="og:description" content="PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="PanKit: MCP tool servers for HPC and science"><meta name="twitter:description" content="PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"WebPage","@id":"https://pancode.dev/pankit.html#page","name":"PanKit: MCP tool servers for HPC and science","description":"PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store.","url":"https://pancode.dev/pankit.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"dateModified":"2026-11-26T00:19:37-06:00","breadcrumb":{"@id":"https://pancode.dev/pankit.html#breadcrumbs"},"about":{"@id":"https://pancode.dev/pankit.html#application"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/pankit.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"PanKit: MCP tool servers for HPC and science","item":"https://pancode.dev/pankit.html"}]},{"@type":"SoftwareApplication","@id":"https://pancode.dev/pankit.html#application","name":"PanKit","url":"https://pancode.dev/pankit.html","description":"PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store.","applicationCategory":"DeveloperApplication","isPartOf":{"@id":"https://pancode.dev/#site"},"softwareVersion":"0.9.0","downloadUrl":"https://www.npmjs.com/package/@akougkas/pancode","softwareHelp":{"@type":"CreativeWork","url":"https://pancode.dev/docs/guide/pankit.html"},"license":"https://github.com/akougkas/pancode/blob/main/LICENSE","isAccessibleForFree":true,"author":{"@id":"https://pancode.dev/#publisher"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":"https://pancode.dev/assets/social/gui-task.png"}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html" aria-current="page"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html" aria-current="page"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide family-page"><header class="page-intro guide-head"><p class="eyebrow"><span class="chapter">The PanCode family</span>pankit</p><h1 class="family-title"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></h1><p class="lede">Seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, catalogs and the store.</p><dl class="guide-facts"><div><dt class="eyebrow">Ships in</dt><dd><code>@akougkas/pancode</code> v0.9.0</dd></div><div><dt class="eyebrow">Command</dt><dd><code>pankit</code></dd></div><div><dt class="eyebrow">Licence</dt><dd><a href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/LICENSE">PanCode License 1.0</a></dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#the-seven-servers">The seven servers</a>
+<a href="#install">Install</a>
+<a href="#example">Example</a>
+<a href="#limits">Limits</a>
+<a href="#learn-more">Learn more</a></details><p>PanKit is a suite of MCP tool servers for HPC and scientific work. Every server speaks the Model Context Protocol over stdio, so any MCP host can run it, and PanCode reaches the same servers through its MCP gateway as <code>builtin</code> servers. One command, <code>pankit</code>, lists, checks and serves them.</p>
+<h2 id="the-seven-servers">The seven servers</h2>
+<div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Server</th>
+<th>What it answers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node</code></td>
+<td>This machine&#39;s CPU, memory, disks, network interfaces, NVIDIA GPUs and top processes, all read-only.</td>
+</tr>
+<tr>
+<td><code>modules</code></td>
+<td>The site&#39;s software modules through Lmod or Environment Modules, and the <code>module load</code> lines a batch script needs.</td>
+</tr>
+<tr>
+<td><code>spack</code></td>
+<td>Installed Spack specs, package details, prefixes, concretization and environments. It never installs anything.</td>
+</tr>
+<tr>
+<td><code>darshan</code></td>
+<td>What one Darshan log says about a job&#39;s I/O: per-module totals, top files and a timeline.</td>
+</tr>
+<tr>
+<td><code>scidata</code></td>
+<td>The structure, a bounded slice and summary statistics of HDF5, NetCDF, Zarr, Parquet, CSV and JSON files.</td>
+</tr>
+<tr>
+<td><code>catalog</code></td>
+<td>Search, describe and stage datasets from the catalogs an operator lists, including public CKAN portals.</td>
+</tr>
+<tr>
+<td><code>store</code></td>
+<td>A project&#39;s <a href="/panstore.html">PanStore</a>: tags, blobs, records, and writes only to the tags it was started with.</td>
+</tr>
+</tbody></table></div>
+<h2 id="install">Install</h2>
+<p>PanKit ships with PanCode. Installing PanCode, with the installer or from npm, also installs the <code>pankit</code> command.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-bash">curl -fsSL https://pancode.dev/install.sh | sh
+npm install -g @akougkas/pancode   # or, with Node.js 22.19 or newer</code></pre></div>
+<h2 id="example">Example</h2>
+<p>Check which servers can run on this host, then serve one over stdio:</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 2"><code class="language-bash">pankit doctor
+pankit serve node</code></pre></div>
+<p>An MCP host that reads the common <code>mcpServers</code> shape can start a server without a global install:</p>
+<div class="code-block"><p class="code-label eyebrow">JSON</p><pre tabindex="0" aria-label="Code example 3"><code class="language-json">{
+	&quot;mcpServers&quot;: {
+		&quot;node&quot;: { &quot;command&quot;: &quot;npx&quot;, &quot;args&quot;: [&quot;-y&quot;, &quot;-p&quot;, &quot;@akougkas/pancode&quot;, &quot;pankit&quot;, &quot;serve&quot;, &quot;node&quot;] }
+	}
+}</code></pre></div>
+<h2 id="limits">Limits</h2>
+<section class="guide-limits"><p class="eyebrow"><span class="chapter">What PanKit does not do</span></p><ul>
+<li><code>catalog</code> ships no sources and reads public CKAN portals only, without credentials or proxy support.</li>
+<li>No <code>modules</code> tool loads a module, and <code>node_gpus</code> reports NVIDIA GPUs only.</li>
+<li>PanKit servers on macOS and Windows are unverified beyond one <code>pankit serve node</code> handshake.</li>
+<li>The full list is in <a href="/docs/guide/pankit.html#limits">the guide&#39;s limits</a>.</li>
+</ul>
+</section><h2 id="learn-more">Learn more</h2>
+<nav class="guide-next" aria-label="Learn more"><ul>
+<li><a href="/docs/guide/pankit.html">Tool servers with PanKit <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/packages/kit/README.md">The PanKit package and its source <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="https://www.npmjs.com/package/@akougkas/pancode">@akougkas/pancode on npm <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#the-seven-servers">The seven servers</a>
+<a href="#install">Install</a>
+<a href="#example">Example</a>
+<a href="#limits">Limits</a>
+<a href="#learn-more">Learn more</a></aside></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Script PanCode in CI</title><meta name="description" content="Build a CI job on one JSON result, typed exit codes, run limits, a dry run, and an answer validated against your schema."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/tutorials/script-pancode-in-ci.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script><script src="/js/cast.js?v=5cec636500" data-player-src="/assets/player/asciinema-player.min.js?v=752c9b528b" data-player-css="/assets/player/asciinema-player.css?v=981fe7bc60" data-cast-css="/css/cast.css?v=ad7414d08f" defer></script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/script-pancode-in-ci.html"><meta property="og:title" content="Script PanCode in CI"><meta property="og:description" content="Build a CI job on one JSON result, typed exit codes, run limits, a dry run, and an answer validated against your schema."><meta property="og:image" content="https://pancode.dev/assets/social/cast-headless-run.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Terminal recording of pancode run --output-format stream-json asked to run the test check and report how many tests pass, with events written to run.jsonl and exit 0 printed; jq then reads the run_end result text: 6 tests passed and 1 failed, the absolute zero test at calibration.test.mjs:19, where kelvinToCelsius(0) threw a RangeError, and the check exited with code 1. The final frame shows the end of the run_end event: tool calls with nothing refused or written, safety decisions with 3 allowed and 0 blocked, an empty verify block, and timings."><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Script PanCode in CI"><meta name="twitter:description" content="Build a CI job on one JSON result, typed exit codes, run limits, a dry run, and an answer validated against your schema."><meta name="twitter:image" content="https://pancode.dev/assets/social/cast-headless-run.png"><meta name="twitter:image:alt" content="Terminal recording of pancode run --output-format stream-json asked to run the test check and report how many tests pass, with events written to run.jsonl and exit 0 printed; jq then reads the run_end result text: 6 tests passed and 1 failed, the absolute zero test at calibration.test.mjs:19, where kelvinToCelsius(0) threw a RangeError, and the check exited with code 1. The final frame shows the end of the run_end event: tool calls with nothing refused or written, safety decisions with 3 allowed and 0 blocked, an empty verify block, and timings.">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/script-pancode-in-ci.html#page","name":"Script PanCode in CI","description":"Build a CI job on one JSON result, typed exit codes, run limits, a dry run, and an answer validated against your schema.","url":"https://pancode.dev/tutorials/script-pancode-in-ci.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/cast-headless-run.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Script PanCode in CI","mainEntityOfPage":"https://pancode.dev/tutorials/script-pancode-in-ci.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/cast-headless-run.png","https://pancode.dev/assets/guides/cast-headless-run.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/script-pancode-in-ci.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/script-pancode-in-ci.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Script PanCode in CI","item":"https://pancode.dev/tutorials/script-pancode-in-ci.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Safety and autonomy</span>8 min read</p><h1>Script PanCode in CI</h1><p class="lede">Build a CI job on one JSON result, typed exit codes, run limits, a dry run, and an answer validated against your schema.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal · Desktop alpha</dd></div><div><dt class="eyebrow">Basis</dt><dd>Documented workflow</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover" data-cast="/assets/casts/cast-headless-run.cast?v=64dec46dfa" data-cast-cols="100" data-cast-rows="30" data-cast-poster="15.326" data-cast-length="0:17"><a class="capture-frame" href="/assets/guides/cast-headless-run.png?v=d09f3612e6"><img src="/assets/guides/cast-headless-run.webp?v=686f4c405d" width="1908" height="1308" alt="Terminal recording of pancode run --output-format stream-json asked to run the test check and report how many tests pass, with events written to run.jsonl and exit 0 printed; jq then reads the run_end result text: 6 tests passed and 1 failed, the absolute zero test at calibration.test.mjs:19, where kelvinToCelsius(0) threw a RangeError, and the check exited with code 1. The final frame shows the end of the run_end event: tool calls with nothing refused or written, safety decisions with 3 allowed and 0 blocked, an empty verify block, and timings." fetchpriority="high" srcset="/assets/responsive/cast-headless-run-640.webp?v=bcd5f4ba15 640w, /assets/responsive/cast-headless-run-1024.webp?v=5c7e03bce4 1024w, /assets/responsive/cast-headless-run-1600.webp?v=8be575c189 1600w, /assets/guides/cast-headless-run.webp?v=686f4c405d 1908w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">A headless run: JSON events to a file, exit status 0, and the answer read from the run_end event that closes the stream. <span class="tag">Terminal · v0.9.0-dev</span> <a class="cast-download" href="/assets/casts/cast-headless-run.cast?v=64dec46dfa" download>Recording · 0:17</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">An unattended PanCode run with JSON output
+Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+
+== answer
+
+~/projects/calibration-lab $ pancode run --output-format stream-json &quot;Run the test check and report how many tests pass.&quot; &gt; run.jsonl; echo &quot;exit $?&quot;
+exit 0
+~/projects/calibration-lab $ jq -r &#39;select(.type == &quot;run_end&quot;).result.text&#39; run.jsonl
+The test check ran: 6 tests passed and 1 failed. The failing test is “absolute zero” at `calibration.test.mjs:19`; `kelvinToCelsius(0)` threw a `RangeError`. The check exited with code 1.
+~/projects/calibration-lab $
+
+== run-end
+
+  &quot;tools&quot;: {
+    &quot;calls&quot;: 3,
+    &quot;refused&quot;: 0,
+    &quot;writes&quot;: 0
+  },
+  &quot;safety&quot;: {
+    &quot;decisions&quot;: {
+      &quot;allowed&quot;: 3,
+      &quot;blocked&quot;: 0,
+      &quot;guardBlocked&quot;: 0,
+      &quot;permissionRequested&quot;: 0
+    },
+    &quot;blockedAttempts&quot;: []
+  },
+  &quot;verify&quot;: {
+    &quot;requested&quot;: 0,
+    &quot;checks&quot;: []
+  },
+  &quot;dispatch&quot;: {
+    &quot;runs&quot;: [],
+    &quot;live&quot;: [],
+    &quot;undelivered&quot;: []
+  },
+  &quot;timings&quot;: {
+    &quot;sessionReadyMs&quot;: 1034,
+    &quot;firstRequestMs&quot;: 2428,
+    &quot;firstTokenMs&quot;: 7850
+  }
+}
+~/projects/calibration-lab $</pre></div></details></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#before-you-start">Before you start</a>
+<a href="#exit-codes-a-job-can-branch-on">Exit codes a job can branch on</a>
+<a href="#a-github-actions-job">A GitHub Actions job</a>
+<a href="#limits-to-know">Limits to know</a>
+<a href="#next">Next</a></details><p>A CI job needs three things from a coding agent: a result it can parse, an exit code it can branch on, and limits it can rely on. <code>pancode run</code> gives a script all three. This guide builds one job step by step, then puts it in a GitHub Actions workflow.</p>
+<aside class="guide-note"><p class="eyebrow">Version scope</p><p>The output contract is schema version 2, and <code>pancode schema run-result</code> prints its JSON Schema for the version you have installed.</p>
+</aside><section class="guide-needs"><h2 id="before-you-start">Before you start</h2>
+<ul>
+<li>PanCode installed on the runner, with a model connection whose key comes from an environment variable.</li>
+<li>A repository with a test command.</li>
+<li><code>jq</code>, to read the result.</li>
+</ul>
+</section><ol class="guide-steps"><li class="guide-step"><span class="step-number" aria-hidden="true">01</span><div><h3 id="preview-the-run-without-calling-a-model">Preview the run without calling a model</h3>
+<p><code>--dry-run</code> prints what the run would do and exits 0. It opens no session, calls no model, and runs no check.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode run --dry-run --output-format json \
+  --max-cost-usd 2 --timeout 15m \
+  --verify &quot;npm test&quot; \
+  &quot;Fix the failing parser test.&quot; | jq &#39;.plan&#39;</code></pre></div>
+<p>The plan names the route, the tools the agent may use, the sandbox mode, the limits, and the checks. Put this in a pull request job to catch a bad flag before anything is spent. Check that <code>.plan.route.target</code> is set.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">02</span><div><h3 id="ask-for-one-result-document">Ask for one result document</h3>
+<p><code>--output-format json</code> prints one <code>run_end</code> document on stdout when the run is over. Progress and notices go to stderr, so stdout is the document alone.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 2"><code class="language-sh">pancode run --output-format json \
+  --max-cost-usd 2 --timeout 15m \
+  &quot;Fix the failing parser test.&quot; &gt; result.json</code></pre></div>
+<p>Use <code>--output-format stream-json</code> instead when another program should follow the run live. It prints one JSON event per line and ends with the same <code>run_end</code> document.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">03</span><div><h3 id="bound-the-run">Bound the run</h3>
+<p>Each limit is a flag, and each one stops the run with its own cause code.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 3"><code class="language-sh">pancode run --output-format json \
+  --max-requests 40 --max-tool-calls 120 \
+  --max-cost-usd 2 --require-priced \
+  --timeout 15m --sandbox required \
+  &quot;Fix the failing parser test.&quot; &gt; result.json</code></pre></div>
+<p><code>--max-requests</code> and <code>--max-tool-calls</code> cap the main agent&#39;s model requests and tool calls. <code>--max-cost-usd</code> caps priced spend, and <code>--require-priced</code> refuses the run when a route it could reach has no price. <code>--sandbox required</code> refuses to start on a runner with no OS sandbox.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">04</span><div><h3 id="make-the-job-fail-when-the-work-is-not-finished">Make the job fail when the work is not finished</h3>
+<p>By default a run that ends normally exits 0, whatever the agent says about its own work. Two flags turn an honest &quot;not finished&quot; into a failed job.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 4"><code class="language-sh">pancode run --output-format json \
+  --verify &quot;npm test&quot; --fail-on-verify \
+  --exit-code \
+  &quot;Fix the failing parser test.&quot; &gt; result.json</code></pre></div>
+<p><code>--verify</code> declares an acceptance check that PanCode runs itself after the turn, and <code>--fail-on-verify</code> exits 1 when it fails. <code>--exit-code</code> exits 1 when the run was assessed as partly done or not done.</p>
+<p>The agent declares how the turn ended, and PanCode records that claim beside its own assessment. A claim of done that left unvalidated changes or a failing check is assessed as partly done, so <code>--exit-code</code> fails it.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">05</span><div><h3 id="get-a-structured-answer">Get a structured answer</h3>
+<p>When the next step needs data instead of prose, pass a JSON Schema. The answer must be one JSON object that matches it, and PanCode validates the object before the run exits 0.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 5"><code class="language-sh">cat &gt; summary.schema.json &lt;&lt;&#39;EOF&#39;
+{
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;required&quot;: [&quot;fixed&quot;, &quot;files&quot;],
+  &quot;properties&quot;: {
+    &quot;fixed&quot;: { &quot;type&quot;: &quot;boolean&quot; },
+    &quot;files&quot;: { &quot;type&quot;: &quot;array&quot;, &quot;items&quot;: { &quot;type&quot;: &quot;string&quot; } }
+  }
+}
+EOF
+
+pancode run --output-format json \
+  --output-schema summary.schema.json \
+  &quot;Fix the failing parser test and report which files changed.&quot; \
+  | jq &#39;.result.structured&#39;</code></pre></div>
+<p>A mismatch gets one repair turn with no tools. If the answer still does not match, the run exits 1 with cause <code>schema_mismatch</code>. The schema&#39;s root must be an object, and a schema PanCode cannot enforce exits 2 before any model request.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">06</span><div><h3 id="read-the-result">Read the result</h3>
+<p>Branch on the exit code first, then read the fields you need.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 6"><code class="language-sh">jq -r &#39;.outcome&#39; result.json            # succeeded, failed, canceled, timed_out
+jq -r &#39;.causes[].code&#39; result.json      # why, most important first
+jq -r &#39;.result.text&#39; result.json        # the answer
+jq &#39;.verify.checks&#39; result.json         # each --verify check and whether it passed
+jq &#39;.usage.total&#39; result.json           # tokens and cost</code></pre></div>
+<p><code>causes</code> is empty on success. On a failure or a stop it lists every reason as a code, usually with a message. <code>-o answer.md</code> also writes the answer to a file when the run exits 0.</p>
+</div></li></ol><section class="guide-result"><p class="eyebrow"><span class="chapter">What you should see</span></p><p>One JSON document on stdout, an exit code that matches its <code>exitCode</code> field, and a <code>causes</code> list that names the reason whenever that code is not 0.</p>
+</section><h2 id="exit-codes-a-job-can-branch-on">Exit codes a job can branch on</h2>
+<div class="guide-compare"><div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Exit</th>
+<th>Meaning</th>
+<th>Typical cause codes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0</code></td>
+<td>The run settled and succeeded</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>The run failed, or a flag you set turned an unfinished result into a failure</td>
+<td><code>verify_failed</code>, <code>schema_mismatch</code>, <code>context_overflow</code></td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>A usage or setup error, before any model request</td>
+<td><code>empty_task</code>, <code>schema_unsupported</code>, <code>session_live</code></td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>A request nobody could approve, with <code>--on-permission fail</code></td>
+<td><code>permission_required</code></td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>A limit stopped the run</td>
+<td><code>max_requests</code>, <code>max_tool_calls</code>, <code>max_cost_usd</code></td>
+</tr>
+<tr>
+<td><code>124</code></td>
+<td><code>--timeout</code> expired</td>
+<td><code>deadline</code></td>
+</tr>
+</tbody></table></div>
+</div><p>Retry on 124 or 4 only after you raise the limit, because the same run will stop at the same place. An exit of 2 is a mistake in the job itself, so fail fast and fix the command.</p>
+<h2 id="a-github-actions-job">A GitHub Actions job</h2>
+<p>This workflow installs PanCode, connects a model from a repository secret, previews the run, then runs it with limits. The job fails when the run does not finish the work.</p>
+<div class="code-block"><p class="code-label eyebrow">YAML</p><pre tabindex="0" aria-label="Code example 7"><code class="language-yaml">name: agent-fix
+on: workflow_dispatch
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PanCode
+        run: |
+          curl -fsSL https://pancode.dev/install.sh | sh -s -- --no-gui
+          echo &quot;$HOME/.local/bin&quot; &gt;&gt; &quot;$GITHUB_PATH&quot;
+
+      - name: Connect a model
+        run: |
+          pancode configure --id ci --runtime anthropic \
+            --model &lt;model&gt; --api-key-env ANTHROPIC_API_KEY --set-orchestrator
+
+      - name: Preview
+        run: |
+          pancode run --dry-run --output-format json \
+            --verify &quot;npm test&quot; &quot;Fix the failing parser test.&quot; | jq &#39;.plan&#39;
+
+      - name: Run
+        run: |
+          pancode run --output-format json \
+            --max-requests 40 --max-cost-usd 2 --timeout 15m \
+            --verify &quot;npm test&quot; --fail-on-verify --exit-code \
+            &quot;Fix the failing parser test.&quot; &gt; result.json
+
+      - name: Report
+        if: always()
+        run: |
+          jq -r &#39;&quot;outcome: \(.outcome)&quot;, &quot;causes: \([.causes[].code] | join(&quot;, &quot;))&quot;&#39; result.json
+          jq -r &#39;.result.text&#39; result.json &gt;&gt; &quot;$GITHUB_STEP_SUMMARY&quot;</code></pre></div>
+<p>Replace <code>&lt;model&gt;</code> with a model id from <code>pancode models --target ci</code>. The key stays in the secret: <code>--api-key-env</code> names the variable, and PanCode reads it when it calls the model. If the installer put the launcher somewhere else, <code>command -v pancode</code> after the install step shows where.</p>
+<h2 id="limits-to-know">Limits to know</h2>
+<p>A headless run has no one to ask. Requests that would need approval are denied, and the turn goes on without them unless you pass <code>--on-permission fail</code>.</p>
+<p><code>--max-cost-usd</code> bounds priced routes only. On a route with no price, stderr says the cap cannot bound it, and <code>--require-priced</code> turns that into a refusal.</p>
+<p>Pass the task as an argument. <code>run</code> reads stdin only when you pass <code>-</code>, so a pipe into <code>run</code> without it is ignored.</p>
+<h2 id="next">Next</h2>
+<p><a href="/tutorials/run-it-unattended-within-limits.html">Run it unattended within limits</a> covers read-only runs, yolo, and scheduled turns. The <a href="/docs/guide/exit-codes-and-output.html">exit codes and output guide</a> lists every field and cause.</p>
+</article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#before-you-start">Before you start</a>
+<a href="#exit-codes-a-job-can-branch-on">Exit codes a job can branch on</a>
+<a href="#a-github-actions-job">A GitHub Actions job</a>
+<a href="#limits-to-know">Limits to know</a>
+<a href="#next">Next</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

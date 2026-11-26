@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Set up a lab from one setup file · PanCode</title><meta name="description" content="Write one YAML file that connects every lab member to your model gateway, check what it may carry, and test the route."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html"><meta property="og:title" content="Set up a lab from one setup file · PanCode"><meta property="og:description" content="Write one YAML file that connects every lab member to your model gateway, check what it may carry, and test the route."><meta property="og:image" content="https://pancode.dev/assets/social/cli-lab-import.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Terminal: configure --import lab-pancode.yaml --yes prints the setup file&#39;s note, then what it changes: add target lab on openai-compat, prompts go to http://localhost:4000/v1, model gpt-oss-120b with its key from LAB_API_KEY, chat and fleet use lab. It reports Imported 1 target and that LAB_API_KEY is not set in this shell. The gateway address is a local port here; no gateway answered. No model."><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Set up a lab from one setup file · PanCode"><meta name="twitter:description" content="Write one YAML file that connects every lab member to your model gateway, check what it may carry, and test the route."><meta name="twitter:image" content="https://pancode.dev/assets/social/cli-lab-import.png"><meta name="twitter:image:alt" content="Terminal: configure --import lab-pancode.yaml --yes prints the setup file&#39;s note, then what it changes: add target lab on openai-compat, prompts go to http://localhost:4000/v1, model gpt-oss-120b with its key from LAB_API_KEY, chat and fleet use lab. It reports Imported 1 target and that LAB_API_KEY is not set in this shell. The gateway address is a local port here; no gateway answered. No model.">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html#page","name":"Set up a lab from one setup file · PanCode","description":"Write one YAML file that connects every lab member to your model gateway, check what it may carry, and test the route.","url":"https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/cli-lab-import.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Set up a lab from one setup file","mainEntityOfPage":"https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/cli-lab-import.png","https://pancode.dev/assets/guides/cli-lab-import.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Set up a lab from one setup file","item":"https://pancode.dev/tutorials/set-up-a-lab-from-one-setup-file.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Models</span>5 min read</p><h1>Set up a lab from one setup file</h1><p class="lede">Write one YAML file that connects every lab member to your model gateway, check what it may carry, and test the route.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal</dd></div><div><dt class="eyebrow">Basis</dt><dd>Documented workflow</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover"><a class="capture-frame" href="/assets/guides/cli-lab-import.png?v=666d6cc327"><img src="/assets/guides/cli-lab-import.webp?v=710b9641e4" width="2268" height="584" alt="Terminal: configure --import lab-pancode.yaml --yes prints the setup file&#39;s note, then what it changes: add target lab on openai-compat, prompts go to http://localhost:4000/v1, model gpt-oss-120b with its key from LAB_API_KEY, chat and fleet use lab. It reports Imported 1 target and that LAB_API_KEY is not set in this shell. The gateway address is a local port here; no gateway answered. No model." fetchpriority="high" decoding="async"></a><figcaption class="caption">One setup file adds the lab gateway and says what it will change. No model. <span class="tag">Terminal · v0.9.0-dev</span></figcaption></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#before-you-start">Before you start</a>
+<a href="#write-the-setup-file">Write the setup file</a>
+<a href="#know-what-the-file-may-carry">Know what the file may carry</a>
+<a href="#try-it-on-your-own-account-first">Try it on your own account first</a>
+<a href="#publish-it">Publish it</a>
+<a href="#what-a-member-sees">What a member sees</a>
+<a href="#change-the-file-later">Change the file later</a></details><p>A lab or site that runs its own model gateway can connect every member&#39;s PanCode with one small YAML file. You publish it once; each member imports it, sees where their prompts will go, and confirms. The file can name models and where to find a key, but it can never carry a key or change what PanCode is allowed to do.</p>
+<aside class="guide-note"><p class="eyebrow">Version scope</p><p>The output below is from <code>pancode configure --import</code> run against a fresh PanCode home.</p>
+</aside><section class="guide-needs"><h2 id="before-you-start">Before you start</h2>
+<ul>
+<li>An OpenAI-compatible model gateway your members can reach, here <code>https://llm.lab.example.org/v1</code>.</li>
+<li>A way to give each member a key, which they keep in an environment variable.</li>
+<li>An <code>https</code> address or a shared path where you can publish the file.</li>
+</ul>
+</section><h2 id="write-the-setup-file">Write the setup file</h2>
+<div class="code-block"><p class="code-label eyebrow">lab-pancode.yaml</p><pre tabindex="0" aria-label="Code example 1"><code class="language-yaml">notes: &quot;Lab gateway. Ask #research-computing for a key; export it as LAB_API_KEY.&quot;
+targets:
+  - id: lab
+    runtime: openai-compat
+    url: https://llm.lab.example.org/v1
+    defaultModel: gpt-oss-120b
+    capabilities: { contextWindow: 131072 }
+    auth: { apiKeyEnvVar: LAB_API_KEY }
+chat: { target: lab }
+fleet: { target: lab, model: gpt-oss-120b }</code></pre></div>
+<p><code>targets</code> lists the model endpoints. <code>chat</code> and <code>fleet</code> choose which target the main session and its workers use. <code>notes</code> is shown to the member before they confirm, so use it to say how to get a key.</p>
+<h2 id="know-what-the-file-may-carry">Know what the file may carry</h2>
+<p>A setup file may hold only <code>targets</code>, <code>chat</code>, <code>fleet</code> and <code>notes</code>. A target may hold only <code>id</code>, <code>runtime</code>, <code>url</code>, <code>defaultModel</code>, <code>wireModels</code>, <code>capabilities</code>, <code>pricing</code> and <code>auth</code>, and <code>auth</code> only names an environment variable (<code>apiKeyEnvVar</code>) or an OAuth profile. Anything else refuses the whole file. A literal key is the usual mistake:</p>
+<div class="code-block"><p class="code-label eyebrow">bad.yaml</p><pre tabindex="0" aria-label="Code example 2"><code class="language-yaml">targets:
+  - id: lab2
+    runtime: openai-compat
+    url: https://x/v1
+    auth: { apiKey: sk-123 }</code></pre></div>
+<section class="guide-result"><p class="eyebrow"><span class="chapter">What you should see</span></p><p><code>error: setup file refused; nothing changed:</code> followed by <code>targets[0].auth.apiKey is not allowed in a setup file</code>, and exit code 1.</p>
+</section><p>The same rule refuses request headers and safety settings, so a member never has to read a setup file for hidden permissions.</p>
+<h2 id="try-it-on-your-own-account-first">Try it on your own account first</h2>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 3"><code class="language-sh">pancode configure --import lab-pancode.yaml</code></pre></div>
+<p>In a terminal, the command prints what the file will change and asks <code>Apply these changes? [y/N]</code>. Answer <code>n</code> and nothing changes. <code>--yes</code> applies without asking. With <code>--yes</code>, and no <code>LAB_API_KEY</code> exported yet, the import printed:</p>
+<section class="guide-result"><p class="eyebrow"><span class="chapter">What you should see</span></p><div class="code-block"><pre tabindex="0" aria-label="Code example 4"><code class="language-text">Setup file lab-pancode.yaml will:
+Lab gateway. Ask #research-computing for a key; export it as LAB_API_KEY.
+
+  add target lab (openai-compat)
+    prompts go to https://llm.lab.example.org/v1
+    model gpt-oss-120b; key from $LAB_API_KEY
+  chat uses lab / gpt-oss-120b
+  fleet uses lab / gpt-oss-120b
+Imported 1 target.
+  lab reads its key from LAB_API_KEY, which is not set in this shell.</code></pre></div>
+</section><p>After <code>Imported</code>, each target gets one line: <code>lab: ready</code>, or what is still missing, as here.</p>
+<p>A plain <code>http</code> address to anything other than this machine or a private network address adds a warning that prompts and keys cross the network unencrypted.</p>
+<p>Importing saves the settings without sending a request to the model. Check the route yourself:</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 5"><code class="language-sh">export LAB_API_KEY=...
+pancode doctor
+pancode targets --probe --target lab</code></pre></div>
+<p>The <code>chat</code> row of <code>doctor</code> should end in <code>endpoint reachable</code>, and the probe&#39;s <code>health</code> column should not read <code>down</code>.</p>
+<h2 id="publish-it">Publish it</h2>
+<p>Put the file at an <code>https</code> address or a path members can read. A fetched file must be <code>https</code> all the way, a redirect to anything else is refused, and the file may be at most 64 KiB.</p>
+<h2 id="what-a-member-sees">What a member sees</h2>
+<p>A member who has never run PanCode runs <code>pancode</code>. At <strong>What do you have?</strong> they choose <strong>A setup file from my lab or team</strong>, type the address at <strong>Where is the setup file?</strong>, and see the same preview under <strong>This setup file will:</strong> with <strong>Apply</strong> and <strong>Back</strong>. A member who already uses PanCode runs:</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 6"><code class="language-sh">pancode configure --import https://lab.example.org/pancode/setup.yaml</code></pre></div>
+<p>Only the <code>lab</code> target and the chat and fleet routes change. Their other targets, project settings and stored keys stay as they were.</p>
+<p>Importing the same file again prints <code>Setup file already imported; nothing changed (lab-pancode.yaml).</code> with the status line, so it is safe to put in a login script with <code>--yes</code>. Without a terminal and without <code>--yes</code>, the command prints the preview and exits 2 without saving.</p>
+<h2 id="change-the-file-later">Change the file later</h2>
+<p>If you change the settings of a target a member already has, their import is refused with <code>lab already saved with different settings; nothing changed.</code> and the command to rerun with <code>--replace</code>. Tell members when you change it. A new target id imports without <code>--replace</code>.</p>
+<section class="guide-limits"><p class="eyebrow"><span class="chapter">Boundaries</span></p><ul>
+<li>Importing does not test the model. Members should run <code>pancode doctor</code> after setting their key.</li>
+<li>The file cannot hand out keys. Each member still gets a key and exports it in their shell.</li>
+<li>A member can change their route afterwards with <code>/model</code> or <code>pancode configure</code>; the file is not enforced.</li>
+</ul>
+</section><nav class="guide-next" aria-label="Next steps"><ul>
+<li><a href="/docs/guide/hpc-clusters.html">Connect PanCode on an HPC login node <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/docs/guide/configuration-and-targets.html">Setup files and model targets <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/run-on-a-local-model.html">Run on a local model <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#before-you-start">Before you start</a>
+<a href="#write-the-setup-file">Write the setup file</a>
+<a href="#know-what-the-file-may-carry">Know what the file may carry</a>
+<a href="#try-it-on-your-own-account-first">Try it on your own account first</a>
+<a href="#publish-it">Publish it</a>
+<a href="#what-a-member-sees">What a member sees</a>
+<a href="#change-the-file-later">Change the file later</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

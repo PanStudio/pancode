@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>PanSDK: write extensions, packs and tools</title><meta name="description" content="PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/sdk.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="website"><meta property="og:url" content="https://pancode.dev/sdk.html"><meta property="og:title" content="PanSDK: write extensions, packs and tools"><meta property="og:description" content="PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0."><meta property="og:image" content="https://pancode.dev/assets/social/cli-extension-validate.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Terminal output: extensions init creates lint-status from the status template under .pancode/dev/extensions; validate reports it valid with one warning that the licence is missing, then prints its capability envelope with the status command, session state, exec and net false, its SHA-256 and a passed registration check; extensions test reports one test passed and none failed.">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="PanSDK: write extensions, packs and tools"><meta name="twitter:description" content="PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0."><meta name="twitter:image" content="https://pancode.dev/assets/social/cli-extension-validate.png"><meta name="twitter:image:alt" content="Terminal output: extensions init creates lint-status from the status template under .pancode/dev/extensions; validate reports it valid with one warning that the licence is missing, then prints its capability envelope with the status command, session state, exec and net false, its SHA-256 and a passed registration check; extensions test reports one test passed and none failed.">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"WebPage","@id":"https://pancode.dev/sdk.html#page","name":"PanSDK: write extensions, packs and tools","description":"PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0.","url":"https://pancode.dev/sdk.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/cli-extension-validate.png","width":1200,"height":630},"dateModified":"2026-11-26T00:19:37-06:00","breadcrumb":{"@id":"https://pancode.dev/sdk.html#breadcrumbs"},"about":{"@id":"https://pancode.dev/sdk.html#application"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/sdk.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"PanSDK: write extensions, packs and tools","item":"https://pancode.dev/sdk.html"}]},{"@type":"SoftwareApplication","@id":"https://pancode.dev/sdk.html#application","name":"PanSDK","url":"https://pancode.dev/sdk.html","description":"PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0.","applicationCategory":"DeveloperApplication","isPartOf":{"@id":"https://pancode.dev/#site"},"softwareVersion":"0.9.0","downloadUrl":"https://www.npmjs.com/package/@akougkas/pancode","softwareHelp":{"@type":"CreativeWork","url":"https://pancode.dev/docs/guide/sdk.html"},"license":"https://github.com/akougkas/pancode/blob/main/packages/sdk/LICENSE","isAccessibleForFree":true,"author":{"@id":"https://pancode.dev/#publisher"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":"https://pancode.dev/assets/social/cli-extension-validate.png"}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html" aria-current="page"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html" aria-current="page"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide family-page"><header class="page-intro guide-head"><p class="eyebrow"><span class="chapter">The PanCode family</span>pancode/sdk</p><h1 class="family-title"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></h1><p class="lede">Types and helpers for writing extensions, packs, tools and MCP servers, imported from pancode/sdk.</p><dl class="guide-facts"><div><dt class="eyebrow">Ships in</dt><dd><code>@akougkas/pancode</code> v0.9.0</dd></div><div><dt class="eyebrow">Import</dt><dd><code>pancode/sdk</code></dd></div><div><dt class="eyebrow">Licence</dt><dd><a href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/packages/sdk/LICENSE">Apache-2.0</a></dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#install">Install</a>
+<a href="#example">Example</a>
+<a href="#limits">Limits</a>
+<a href="#learn-more">Learn more</a></details><p>PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers. It is licensed Apache-2.0, bundled into the <code>@akougkas/pancode</code> npm package and imported from five subpaths. PanKit&#39;s servers are built on it.</p>
+<div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Import</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>pancode/sdk/extension</code></td>
+<td>The types an extension runtime is written against.</td>
+</tr>
+<tr>
+<td><code>pancode/sdk/pack</code></td>
+<td>The validators and limits PanCode applies to a package&#39;s manifest and its runtime&#39;s output.</td>
+</tr>
+<tr>
+<td><code>pancode/sdk/testing</code></td>
+<td>A test host that runs an extension runtime in process, under the same rules.</td>
+</tr>
+<tr>
+<td><code>pancode/sdk/tool</code></td>
+<td><code>defineTool</code>, <code>defineServer</code> and <code>policyManifest</code>, for MCP tools with a declared policy.</td>
+</tr>
+<tr>
+<td><code>pancode/sdk/mcp-server</code></td>
+<td><code>serveStdio</code>, which serves a defined server over MCP stdio.</td>
+</tr>
+</tbody></table></div>
+<h2 id="install">Install</h2>
+<p>An extension made with <code>pancode extensions init</code> needs no install: its tsconfig points at the installed PanCode. Any other Node project adds the package as a dependency under the name <code>pancode</code>, so the <code>pancode/sdk</code> imports resolve. Node 22.19 or later is required.</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-bash">npm install --save-dev pancode@npm:@akougkas/pancode</code></pre></div>
+<h2 id="example">Example</h2>
+<p>An extension runtime exports a function that receives the API and registers its handlers:</p>
+<div class="code-block"><pre tabindex="0" aria-label="Code example 2"><code class="language-ts">import type { ExtensionApiV2 } from &quot;pancode/sdk/extension&quot;;
+
+export default function activate(api: ExtensionApiV2): void {
+	api.handle(&quot;hello&quot;, () =&gt; ({ text: &quot;hello&quot; }));
+}</code></pre></div>
+<p><code>pancode extensions init</code> scaffolds a package around it, <code>pancode extensions validate</code> checks the manifest and <code>pancode extensions test</code> runs its tests against the test host.</p>
+<h2 id="limits">Limits</h2>
+<section class="guide-limits"><p class="eyebrow"><span class="chapter">What PanSDK does not do</span></p><ul>
+<li>A scaffolded package resolves only <code>pancode/sdk/extension</code> and <code>pancode/sdk/testing</code> without <code>node_modules</code>.</li>
+<li><code>pancode/sdk/mcp-server</code> serves tools only, over stdio only: no resources, prompts or sampling.</li>
+<li>A server&#39;s declared classes are a hint to any host; PanCode applies the classes its operator declares.</li>
+<li>The full list is in <a href="/docs/guide/sdk.html#limits">the guide&#39;s limits</a>.</li>
+</ul>
+</section><h2 id="learn-more">Learn more</h2>
+<nav class="guide-next" aria-label="Learn more"><ul>
+<li><a href="/docs/guide/sdk.html">Write extensions and tools with PanSDK <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/write-an-extension-with-declared-capabilities.html">Write an extension with declared capabilities, a tutorial <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/packages/sdk/README.md">The PanSDK package and its source <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="https://www.npmjs.com/package/@akougkas/pancode">@akougkas/pancode on npm <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#install">Install</a>
+<a href="#example">Example</a>
+<a href="#limits">Limits</a>
+<a href="#learn-more">Learn more</a></aside></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Accounting: done, checked against what ran · PanCode</title><meta name="description" content="How PanCode checks a finished task against what it observed and seals the record, with the first experiment the project plans to run."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/research/accounting.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/research/accounting.html"><meta property="og:title" content="Accounting: done, checked against what ran · PanCode"><meta property="og:description" content="How PanCode checks a finished task against what it observed and seals the record, with the first experiment the project plans to run."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Accounting: done, checked against what ran · PanCode"><meta name="twitter:description" content="How PanCode checks a finished task against what it observed and seals the record, with the first experiment the project plans to run."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/research/accounting.html#page","name":"Accounting: done, checked against what ran · PanCode","description":"How PanCode checks a finished task against what it observed and seals the record, with the first experiment the project plans to run.","url":"https://pancode.dev/research/accounting.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Accounting: done, checked against what ran","mainEntityOfPage":"https://pancode.dev/research/accounting.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/research/accounting.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/research/accounting.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Research","item":"https://pancode.dev/research.html"},{"@type":"ListItem","position":3,"name":"Accounting: done, checked against what ran","item":"https://pancode.dev/research/accounting.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html" aria-current="page">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html" aria-current="page">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/research.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All research</a><p class="guide-review">Design on the development tree. Not yet measured.</p><p class="eyebrow"><span class="chapter">Subsystem</span>6 min read</p><h1>Accounting: done, checked against what ran</h1><p class="lede">How PanCode checks a finished task against what it observed and seals the record, with the first experiment the project plans to run.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0-dev</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal</dd></div><div><dt class="eyebrow">Basis</dt><dd>Read from source; first experiment not yet run</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#the-design">The design</a>
+<a href="#source-map">Source map</a>
+<a href="#the-question">The question</a>
+<a href="#what-is-known-so-far">What is known so far</a>
+<a href="#why-it-matters">Why it matters</a>
+<a href="#use-pancode-on-it-today">Use PanCode on it today</a>
+<a href="#first-experiment">First experiment</a>
+<a href="#open-questions">Open questions</a>
+<a href="#how-to-join">How to join</a></details><p>When an agent says a task is done, that is a claim. PanCode keeps its own account of what happened: which checks ran on the final tree, which of the agent&#39;s statements a command supports, and what was never measured. This page describes that design and the first experiment the project plans to run.</p>
+<aside class="guide-note"><p class="eyebrow">Design described for the 0.9.0 development tree</p><p>The mechanisms here are read from source on the development branch. The claimed and assessed completion states and the intervention ledger are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.</p>
+</aside><h2 id="the-design">The design</h2>
+<ul>
+<li><strong>Checks count only on the final tree.</strong> The host classifies every tool call as a check, an inspection, or a change. A change to the workspace retires every pass recorded before it, so a test that passed before the last edit verifies nothing.</li>
+<li><strong>Claimed and assessed, side by side.</strong> The agent declares done, partly done, or not done. The host seals its own state beside that claim, and a declared done over an open fact becomes partly done. Open facts include a change with no check after it, a failed check, and a missing expected output.</li>
+<li><strong>Claims matched to commands.</strong> A worker&#39;s statement that a check passed is matched to a command the host saw exit cleanly. Trust is kept as five separate readings (integrity, grounding, independent review, context provenance, and completion evidence) and is never collapsed into one score.</li>
+<li><strong>Assess, then seal.</strong> A run&#39;s settlement and assessment are written before a hash chain over its journal is sealed. Verification replays the chain, checks every file&#39;s size and hash, and rejects lines added after the seal.</li>
+<li><strong>Unknown stays unknown.</strong> Every usage and cost value is measured, estimated, unknown, or absent, each with a reason. A sum keeps its known subtotal and counts the unknowns. A cost cap that cannot be priced stops the run.</li>
+<li><strong>Checks for numerical work.</strong> A check can compare results within a relative, absolute, or ULP tolerance, repeat a seeded run and report the spread, or reproduce from inputs pinned by hash. Each judged check becomes a claim tied to its commit, command, and tolerance, and two opposite verdicts under the same conditions are recorded as a contradiction.</li>
+<li><strong>PanCode accounts for itself.</strong> Every nudge and block the host issues gets an id and settles exactly once: acted on, ignored, recovered, or exhausted. The same holds for a lesson from memory, which counts as delivered only when its text reached the model and is held only when later evidence supports it.</li>
+</ul>
+<h2 id="source-map">Source map</h2>
+<div class="guide-compare"><div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Source</th>
+<th>Default</th>
+<th>Switch</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Final-tree freshness</td>
+<td><code>src/domains/safety/run-effects.ts</code>, <code>check-classifier.ts</code></td>
+<td>On</td>
+<td>None yet</td>
+</tr>
+<tr>
+<td>Claimed and assessed</td>
+<td><code>src/domains/safety/finish-contract.ts</code>, <code>src/tools/finish.ts</code></td>
+<td>On, advisory</td>
+<td><code>PANCODE_RIGOR</code>, <code>run --exit-code</code></td>
+</tr>
+<tr>
+<td>Claim grounding and trust</td>
+<td><code>src/domains/dispatch/validation-grounding.ts</code>, <code>src/domains/evidence/trust-status.ts</code></td>
+<td>On</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Seal and verify</td>
+<td><code>src/domains/telemetry/seal.ts</code></td>
+<td>On</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Measured, estimated, unknown</td>
+<td><code>src/core/telemetry/fact.ts</code></td>
+<td>On</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Numerical checks</td>
+<td><code>src/tools/verify/numeric.ts</code>, <code>reproduce-run.ts</code></td>
+<td>When declared</td>
+<td>The check catalog</td>
+</tr>
+<tr>
+<td>Claims ledger</td>
+<td><code>src/domains/claims/</code></td>
+<td>When declared</td>
+<td>The check catalog</td>
+</tr>
+<tr>
+<td>Intervention ledger</td>
+<td><code>src/domains/middleware/fired-record.ts</code></td>
+<td>On</td>
+<td>Instrumentation</td>
+</tr>
+</tbody></table></div>
+</div><h2 id="the-question">The question</h2>
+<p>How often does a model declare a task done when the evidence does not support it, and how often does the host catch it? A third number keeps the first two honest: how often the host lowers a done that was in fact correct. The answer could be that models rarely overclaim, or that the host misses most of it.</p>
+<h2 id="what-is-known-so-far">What is known so far</h2>
+<p>These are facts about the design, read from source. They are not study results.</p>
+<ul>
+<li>The seal is unkeyed and unsigned. It shows a record is intact and cannot show who produced it.</li>
+<li>The host that did the work also assesses it.</li>
+<li>The assessment only lowers a declared done. A declared partly done is not examined further.</li>
+<li>At normal rigor the completion check advises and does not block. <code>PANCODE_RIGOR=high</code> makes it ask again.</li>
+<li>A writer the host does not recognize, run after a passing check, leaves that pass standing.</li>
+<li>A second clean run that agrees with the first shows self-agreement, not correctness.</li>
+</ul>
+<h2 id="why-it-matters">Why it matters</h2>
+<p>A change to research code is finished when the checks say so, and a summary written after one more edit may describe a tree that no longer exists. A reader of a result, in the same lab or another one, needs to know which statements a command supports and which rest on the agent&#39;s word.</p>
+<h2 id="use-pancode-on-it-today">Use PanCode on it today</h2>
+<ol class="guide-steps"><li class="guide-step"><span class="step-number" aria-hidden="true">01</span><div><h3 id="make-an-unfinished-run-fail-the-job">Make an unfinished run fail the job</h3>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode run --exit-code --verify &quot;npm test&quot; --fail-on-verify \
+  --output-format json &quot;&lt;task&gt;&quot; | jq &#39;.outcome, .causes&#39;</code></pre></div>
+<p>The run exits 1 when the agent declared partly done, when its done left unvalidated changes, or when the check failed.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">02</span><div><h3 id="read-what-a-run-did">Read what a run did</h3>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 2"><code class="language-sh">pancode evidence inspect &lt;run-id&gt;
+pancode claims</code></pre></div>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">03</span><div><h3 id="verify-a-sealed-record">Verify a sealed record</h3>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 3"><code class="language-sh">pancode telemetry verify --run &lt;run-id&gt;</code></pre></div>
+<p>The command uses only the record&#39;s own files, so it works on another machine.</p>
+</div></li></ol><h2 id="first-experiment">First experiment</h2>
+<aside class="guide-note"><p class="eyebrow">Proposed, not yet run</p><p>This is the first experiment the project plans to run. Nobody has run it yet.</p>
+</aside><p>Write trap tasks, each with a hidden grader the agent never sees. In one, the natural fix passes the visible test and a later cleanup edit breaks it. In another, the test runner cannot start. In a third, a numerical result drifts inside the test&#39;s tolerance and outside the reference&#39;s. A fourth cannot be completed as stated.</p>
+<p>Run each task several times on one model from each family, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.</p>
+<p>Two things are needed first. The trap tasks do not exist yet, and the campaign runner does not read the sealed assessment or repeat a run.</p>
+<h2 id="open-questions">Open questions</h2>
+<ul>
+<li><a href="/research/sealed-run-records.html">Can an agent run be a scientific record?</a></li>
+<li><a href="/research/scientific-and-hpc-workflows.html">What would make a scientist trust an agent&#39;s change?</a></li>
+<li><a href="/research/proactive-memory.html">Does agent memory change outcomes?</a></li>
+</ul>
+<h2 id="how-to-join">How to join</h2>
+<p>Open a <a href="https://github.com/akougkas/pancode/issues">GitHub issue</a> that says what you plan to measure, and read the <a href="https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md">contributor guide</a>. Results are published on this page with their numbers, including null and negative ones.</p>
+</article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#the-design">The design</a>
+<a href="#source-map">Source map</a>
+<a href="#the-question">The question</a>
+<a href="#what-is-known-so-far">What is known so far</a>
+<a href="#why-it-matters">Why it matters</a>
+<a href="#use-pancode-on-it-today">Use PanCode on it today</a>
+<a href="#first-experiment">First experiment</a>
+<a href="#open-questions">Open questions</a>
+<a href="#how-to-join">How to join</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

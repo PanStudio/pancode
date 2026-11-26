@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Require project checks · PanCode</title><meta name="description" content="Name the declared checks a change requires in PanCode, run them, and see whether passing results still match the files."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/docs/guide/quality-policy.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/docs/guide/quality-policy.html"><meta property="og:title" content="Require project checks · PanCode"><meta property="og:description" content="Name the declared checks a change requires in PanCode, run them, and see whether passing results still match the files."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Require project checks · PanCode"><meta name="twitter:description" content="Name the declared checks a change requires in PanCode, run them, and see whether passing results still match the files."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"TechArticle","@id":"https://pancode.dev/docs/guide/quality-policy.html#page","name":"Require project checks · PanCode","description":"Name the declared checks a change requires in PanCode, run them, and see whether passing results still match the files.","url":"https://pancode.dev/docs/guide/quality-policy.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Require project checks","mainEntityOfPage":"https://pancode.dev/docs/guide/quality-policy.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/docs/guide/quality-policy.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/docs/guide/quality-policy.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://pancode.dev/docs.html"},{"@type":"ListItem","position":3,"name":"Require project checks","item":"https://pancode.dev/docs/guide/quality-policy.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main class="page docs-layout" id="content">
+  <aside class="docs-sidebar" aria-label="Documentation"><details class="docs-menu"><summary>Browse documentation</summary><div class="docs-menu-body"><a class="docs-home" href="/docs.html">PanCode docs</a><label class="search-label" for="doc-search">Find a guide</label><input id="doc-search" type="search" placeholder="Search topics…" aria-describedby="search-status" /><p class="search-status" id="search-status" role="status"></p><ul class="search-hits" id="search-hits"></ul><noscript><p class="caption">Browse the guides below. Search requires JavaScript.</p></noscript><div id="all-docs"><details class="doc-nav-group" open><summary>Start</summary><a href="/docs.html">Install PanCode</a>
+<a href="/docs/guide/hpc-clusters.html">Install on a cluster</a>
+<a href="/docs/guide/configuration-and-targets.html">Connect a model</a></details>
+<details class="doc-nav-group" open><summary>Everyday use</summary><a href="/docs/guide/commands-and-modes.html">Commands and shortcuts</a>
+<a href="/docs/guide/tool-usage.html">Tools and permissions</a>
+<a href="/docs/guide/sandbox-and-safety.html">Sandbox and safety</a>
+<a href="/docs/guide/context-continuity.html">Save and resume work</a>
+<a href="/docs/guide/proactive-memory.html">Memory and lessons</a>
+<a href="/docs/guide/panes-and-files.html">Files and terminal panes</a>
+<a href="/docs/guide/gui.html">The desktop app</a>
+<a href="/docs/guide/quality-policy.html" aria-current="page">Require project checks</a>
+<a href="/docs/guide/research-and-arena.html">Climb a metric, compare models</a>
+<a href="/docs/guide/exit-codes-and-output.html">Automate with pancode run</a>
+<a href="/docs/guide/semantic-context.html">Semantic context</a>
+<a href="/docs/guide/built-in-agents.html">Built-in and custom agents</a></details>
+<details class="doc-nav-group"><summary>The family</summary><a href="/docs/guide/panstore.html">Keep results in PanStore</a>
+<a href="/docs/guide/panhub.html">Packs from PanHub</a>
+<a href="/docs/guide/pankit.html">Tool servers with PanKit</a>
+<a href="/docs/guide/sdk.html">Write extensions and tools with PanSDK</a></details>
+<details class="doc-nav-group"><summary>Extend PanCode</summary><a href="/docs/guide/fleet-dispatch.html">Workers and fleets</a>
+<a href="/docs/guide/plugins.html">Install plugins</a>
+<a href="/docs/guide/harness-extensions.html">Write and install extensions</a>
+<a href="/docs/guide/interop.html">Editors and other agents</a></details>
+<details class="doc-nav-group"><summary>Reference</summary><a href="/docs/guide/doctor.html">Check your installation</a>
+<a href="/docs/guide/troubleshooting.html">Troubleshooting</a>
+<a href="/docs/guide/configuration-reference.html">Configuration essentials</a>
+<a href="/docs/guide/environment-variables.html">Environment essentials</a>
+<a href="/docs/guide/system-one.html">System One decision models</a>
+<a href="/docs/guide/information-flow.html">Information flow</a>
+<a href="/docs/guide/glossary.html">Glossary</a></details></div></div></details></aside>
+  <article class="doc-article"><div class="doc-toolbar"><p id="doc-path">Require project checks</p><a id="doc-github" href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/guide/quality-policy.md">Read the full guide <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div><div class="doc" id="doc" data-doc="guide/quality-policy.md"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#tell-pancode-what-checked-means-in-your-project">Tell PanCode what “checked” means in your project</a>
+<a href="#run-the-declared-checks">Run the declared checks</a>
+<a href="#review-freshness">Review freshness</a>
+<a href="#related-tutorials-and-research">Related tutorials and research</a></details><h1 id="require-project-checks">Require project checks</h1>
+<p>Choose the declared checks a change requires and inspect verification freshness.</p>
+<h2 id="tell-pancode-what-checked-means-in-your-project">Tell PanCode what “checked” means in your project</h2>
+<p>A quality policy names the declared checks required when particular files change. Your repository supplies the standards; PanCode records verification and assesses whether the results still match the current inputs.</p>
+<p>At a Git workspace root, create <code>.pancode/quality.yaml</code>:</p>
+<div class="code-block"><p class="code-label eyebrow">YAML</p><pre tabindex="0" aria-label="Code example 1"><code class="language-yaml">version: 1
+rules:
+  - id: source
+    paths: [&quot;src/**&quot;, &quot;tests/**&quot;]
+    inputs: [&quot;src/**&quot;, &quot;tests/**&quot;, &quot;package.json&quot;, &quot;package-lock.json&quot;]
+    checks: [test]
+    allowLimitations: false</code></pre></div>
+<p>This example assumes the root <code>package.json</code> declares a <code>test</code> script. Adapt the paths, lockfile, and check IDs to your project. Include configuration, fixtures, and helper files that affect the result. PanCode does not create or modify this policy automatically.</p>
+<h2 id="run-the-declared-checks">Run the declared checks</h2>
+<p>Ask PanCode to discover verification checks, then run each required ID through <code>verify</code> without argument or working-directory overrides. For a subproject, declare a root script or a verifier-catalog entry with its working directory.</p>
+<p>The policy names existing checks; it cannot introduce shell commands or bypass approval. A narrowed test run or an unrelated passing command cannot satisfy a required full check.</p>
+<h2 id="review-freshness">Review freshness</h2>
+<p>PanCode compares source, check-declaration, and policy fingerprints. Edits after a passing run can make the result <strong>stale</strong>; a later failing run supersedes an earlier pass. Missing or unavailable evidence remains unverified.</p>
+<p>A valid policy selects high rigor by default, which requests continuation for outstanding checks when recovery is possible. Setting <code>PANCODE_RIGOR=normal</code> makes the assessment advisory. Neither mode grants additional execution authority. A turn the agent declared <code>partly_done</code> or <code>not_done</code> through <code>finish</code> settles as declared, and a declared <code>done</code> with a required check still open is assessed as partly done.</p>
+<p>Snapshots need Git and a workspace at the repository root. They cover tracked and nonignored untracked source, not external datasets, installed dependencies, or running services. Use domain-specific checks for those requirements. The full guide explains bounded snapshots and permitted limitations.</p>
+<p>Try <a href="/tutorials/temperature-calibration.html">the calibration example</a> to see a declared check and its actual result.</p>
+<h2 id="related-tutorials-and-research">Related tutorials and research</h2>
+<nav class="guide-next" aria-label="Related tutorials and research"><ul>
+<li><a href="/tutorials/temperature-calibration.html">A numerical change, checked with PanCode <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/check-a-change-against-your-repository.html">Check a change against your repository <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/pre-register-a-benchmark.html">Pre-register a benchmark before you measure <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/run-a-research-campaign-and-a-blind-arena.html">Run a research campaign and a blind arena <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/accounting.html">Accounting: done, checked against what ran <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/scientific-and-hpc-workflows.html">What would make a scientist trust an agent&#39;s change? <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></div><div class="doc-end"><span>Updated <time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></span><a id="doc-snapshot-source" href="https://github.com/akougkas/pancode/tree/ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-version="0.9.0" data-source-ref="ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-commit="ff215460f467aea6f3b0211a6996e5746e87ae75">Guide to v0.9.0</a><a href="https://github.com/akougkas/pancode/issues">Suggest an improvement <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></article>
+  <aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#tell-pancode-what-checked-means-in-your-project">Tell PanCode what “checked” means in your project</a>
+<a href="#run-the-declared-checks">Run the declared checks</a>
+<a href="#review-freshness">Review freshness</a>
+<a href="#related-tutorials-and-research">Related tutorials and research</a></aside>
+</main><footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

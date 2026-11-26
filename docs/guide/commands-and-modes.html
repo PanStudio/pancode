@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Commands and shortcuts · PanCode</title><meta name="description" content="Navigate the terminal, choose models, and control a session: launch flags, everyday slash commands, and the keys worth learning first."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/docs/guide/commands-and-modes.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/docs/guide/commands-and-modes.html"><meta property="og:title" content="Commands and shortcuts · PanCode"><meta property="og:description" content="Navigate the terminal, choose models, and control a session: launch flags, everyday slash commands, and the keys worth learning first."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Commands and shortcuts · PanCode"><meta name="twitter:description" content="Navigate the terminal, choose models, and control a session: launch flags, everyday slash commands, and the keys worth learning first."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"TechArticle","@id":"https://pancode.dev/docs/guide/commands-and-modes.html#page","name":"Commands and shortcuts · PanCode","description":"Navigate the terminal, choose models, and control a session: launch flags, everyday slash commands, and the keys worth learning first.","url":"https://pancode.dev/docs/guide/commands-and-modes.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Commands and shortcuts","mainEntityOfPage":"https://pancode.dev/docs/guide/commands-and-modes.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/docs/guide/commands-and-modes.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/docs/guide/commands-and-modes.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://pancode.dev/docs.html"},{"@type":"ListItem","position":3,"name":"Commands and shortcuts","item":"https://pancode.dev/docs/guide/commands-and-modes.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main class="page docs-layout" id="content">
+  <aside class="docs-sidebar" aria-label="Documentation"><details class="docs-menu"><summary>Browse documentation</summary><div class="docs-menu-body"><a class="docs-home" href="/docs.html">PanCode docs</a><label class="search-label" for="doc-search">Find a guide</label><input id="doc-search" type="search" placeholder="Search topics…" aria-describedby="search-status" /><p class="search-status" id="search-status" role="status"></p><ul class="search-hits" id="search-hits"></ul><noscript><p class="caption">Browse the guides below. Search requires JavaScript.</p></noscript><div id="all-docs"><details class="doc-nav-group" open><summary>Start</summary><a href="/docs.html">Install PanCode</a>
+<a href="/docs/guide/hpc-clusters.html">Install on a cluster</a>
+<a href="/docs/guide/configuration-and-targets.html">Connect a model</a></details>
+<details class="doc-nav-group" open><summary>Everyday use</summary><a href="/docs/guide/commands-and-modes.html" aria-current="page">Commands and shortcuts</a>
+<a href="/docs/guide/tool-usage.html">Tools and permissions</a>
+<a href="/docs/guide/sandbox-and-safety.html">Sandbox and safety</a>
+<a href="/docs/guide/context-continuity.html">Save and resume work</a>
+<a href="/docs/guide/proactive-memory.html">Memory and lessons</a>
+<a href="/docs/guide/panes-and-files.html">Files and terminal panes</a>
+<a href="/docs/guide/gui.html">The desktop app</a>
+<a href="/docs/guide/quality-policy.html">Require project checks</a>
+<a href="/docs/guide/research-and-arena.html">Climb a metric, compare models</a>
+<a href="/docs/guide/exit-codes-and-output.html">Automate with pancode run</a>
+<a href="/docs/guide/semantic-context.html">Semantic context</a>
+<a href="/docs/guide/built-in-agents.html">Built-in and custom agents</a></details>
+<details class="doc-nav-group"><summary>The family</summary><a href="/docs/guide/panstore.html">Keep results in PanStore</a>
+<a href="/docs/guide/panhub.html">Packs from PanHub</a>
+<a href="/docs/guide/pankit.html">Tool servers with PanKit</a>
+<a href="/docs/guide/sdk.html">Write extensions and tools with PanSDK</a></details>
+<details class="doc-nav-group"><summary>Extend PanCode</summary><a href="/docs/guide/fleet-dispatch.html">Workers and fleets</a>
+<a href="/docs/guide/plugins.html">Install plugins</a>
+<a href="/docs/guide/harness-extensions.html">Write and install extensions</a>
+<a href="/docs/guide/interop.html">Editors and other agents</a></details>
+<details class="doc-nav-group"><summary>Reference</summary><a href="/docs/guide/doctor.html">Check your installation</a>
+<a href="/docs/guide/troubleshooting.html">Troubleshooting</a>
+<a href="/docs/guide/configuration-reference.html">Configuration essentials</a>
+<a href="/docs/guide/environment-variables.html">Environment essentials</a>
+<a href="/docs/guide/system-one.html">System One decision models</a>
+<a href="/docs/guide/information-flow.html">Information flow</a>
+<a href="/docs/guide/glossary.html">Glossary</a></details></div></div></details></aside>
+  <article class="doc-article"><div class="doc-toolbar"><p id="doc-path">Commands and shortcuts</p><a id="doc-github" href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/guide/commands-and-modes.md">Read the full guide <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div><div class="doc" id="doc" data-doc="guide/commands-and-modes.md"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#launch-and-inspect">Launch and inspect</a>
+<a href="#everyday-terminal-commands">Everyday terminal commands</a>
+<a href="#a-few-keys-to-remember">A few keys to remember</a>
+<a href="#related-tutorials">Related tutorials</a></details><h1 id="commands-and-shortcuts">Commands and shortcuts</h1>
+<p>Navigate the terminal, choose models, and control a session.</p>
+<h2 id="launch-and-inspect">Launch and inspect</h2>
+<div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Use it to</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>pancode</code></td>
+<td>Open the terminal in your project</td>
+</tr>
+<tr>
+<td><code>pancode gui --open</code></td>
+<td>Open the local desktop alpha</td>
+</tr>
+<tr>
+<td><code>pancode configure</code></td>
+<td>Connect a model with Guided setup</td>
+</tr>
+<tr>
+<td><code>pancode doctor</code></td>
+<td>Check installation and connections</td>
+</tr>
+<tr>
+<td><code>pancode upgrade</code></td>
+<td>Update PanCode</td>
+</tr>
+<tr>
+<td><code>pancode --help</code></td>
+<td>See installed commands; <code>--help --all</code> lists every command path</td>
+</tr>
+<tr>
+<td><code>pancode --resume</code></td>
+<td>Pick an earlier session to reopen; <code>--continue</code> opens the latest</td>
+</tr>
+<tr>
+<td><code>pancode session history</code></td>
+<td>List saved sessions from the shell</td>
+</tr>
+<tr>
+<td><code>pancode config get &lt;path&gt;</code></td>
+<td>Read one setting; <code>config set</code> and <code>config unset</code> change it</td>
+</tr>
+</tbody></table></div>
+<p>For a single task without the interactive interface:</p>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode run &quot;Explain this project&#39;s test setup. Do not change files.&quot; --cwd /path/to/project</code></pre></div>
+<p>Add <code>--output-format json</code> for one machine-readable result, or <code>--output-format stream-json</code> for events as they happen. A request to avoid edits is task guidance. When execution must be constrained, add <code>--read-only</code> or limit tools with <code>--allow-tools &lt;names&gt;</code>.</p>
+<h2 id="everyday-terminal-commands">Everyday terminal commands</h2>
+<div class="doc-table" role="region" aria-label="Reference table 2" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it opens or does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/help</code></td>
+<td>Commands and effective keybindings</td>
+</tr>
+<tr>
+<td><code>/model</code></td>
+<td>Model picker; apply to this session or save for the project or globally</td>
+</tr>
+<tr>
+<td><code>/settings</code></td>
+<td>Settings, grouped by area</td>
+</tr>
+<tr>
+<td><code>/config</code></td>
+<td>Connections in Settings; <strong>Add a target</strong> runs setup inside the session</td>
+</tr>
+<tr>
+<td><code>/hub</code></td>
+<td>PanHub: skills, prompts, agents, playbooks, plugins, and extensions</td>
+</tr>
+<tr>
+<td><code>/context</code></td>
+<td>Context usage and pending handoffs</td>
+</tr>
+<tr>
+<td><code>/usage</code></td>
+<td>Session usage and supported subscription quotas</td>
+</tr>
+<tr>
+<td><code>/rewind</code></td>
+<td>Preview and restore this session&#39;s file snapshots</td>
+</tr>
+<tr>
+<td><code>/rename [name]</code></td>
+<td>Name the session so <code>/resume</code> can find it</td>
+</tr>
+<tr>
+<td><code>/fork [name]</code></td>
+<td>Fork from an assistant turn into a new session, optionally named</td>
+</tr>
+<tr>
+<td><code>/loop &lt;interval&gt; &lt;task&gt;</code></td>
+<td>Repeat a task on an interval as a bounded job; bare <code>/loop</code> lists jobs and <code>/loop stop</code> ends one</td>
+</tr>
+<tr>
+<td><code>/reload</code></td>
+<td>Reload settings, PanHub packs, and extension runtimes</td>
+</tr>
+<tr>
+<td><code>/restart</code></td>
+<td>Save the session and restart into it</td>
+</tr>
+<tr>
+<td><code>/resume</code></td>
+<td>Previous conversations; <code>/resume &lt;id&gt;</code> reopens one directly</td>
+</tr>
+<tr>
+<td><code>/tree</code></td>
+<td>Conversation history and branches</td>
+</tr>
+<tr>
+<td><code>/new</code></td>
+<td>A fresh conversation</td>
+</tr>
+<tr>
+<td><code>/view</code></td>
+<td>Artifacts and recorded results</td>
+</tr>
+<tr>
+<td><code>/trust</code></td>
+<td>Review the project&#39;s own PanCode configuration and decide whether to activate it</td>
+</tr>
+<tr>
+<td><code>/poll &lt;n&gt; &lt;question&gt;</code></td>
+<td>Ask 2 to 5 independent agents the same question and see how they vote</td>
+</tr>
+<tr>
+<td><code>/report</code></td>
+<td>Draft a report for the maintainers; nothing is sent until you review it</td>
+</tr>
+</tbody></table></div>
+<p>Familiar names work as aliases: <code>/clear</code> is <code>/new</code>, <code>/exit</code> is <code>/quit</code>, <code>/undo</code> is <code>/rewind</code>, <code>/cost</code> and <code>/status</code> open <code>/usage</code>, <code>/login</code> opens connections, and <code>/init</code> writes a project handbook. A mistyped command names the closest one and keeps your draft.</p>
+<h2 id="a-few-keys-to-remember">A few keys to remember</h2>
+<p>Alt+letter runs a PanCode action, and <strong>Ctrl+G</strong> then the same letter runs it in any terminal, including ones that intercept Alt. The menu also lists a few actions with no Alt key; arrows and Enter work too, and Esc closes it. On an empty composer, <code>?</code> shows the keys; <code>/help</code> shows every binding, custom ones included.</p>
+<div class="doc-table" role="region" aria-label="Reference table 3" tabindex="0"><table>
+<thead>
+<tr>
+<th>Default key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Enter</td>
+<td>Send; while running, queue the message for the next pause between tool calls</td>
+</tr>
+<tr>
+<td>Ctrl+J</td>
+<td>Insert a newline</td>
+</tr>
+<tr>
+<td>Alt+S</td>
+<td>Send now: interrupt the run and submit the draft</td>
+</tr>
+<tr>
+<td>Alt+Q</td>
+<td>Open the queue to reorder, edit, or remove waiting messages; <code>a</code> puts them all back in the draft</td>
+</tr>
+<tr>
+<td>Alt+M</td>
+<td>Open the model picker</td>
+</tr>
+<tr>
+<td>Alt+L</td>
+<td>Open PanHub</td>
+</tr>
+<tr>
+<td>Alt+O</td>
+<td>Cycle the output detail level</td>
+</tr>
+<tr>
+<td>Alt+W</td>
+<td>Open Workers: the Fleet Runs board, or the workers dock in a session with panes</td>
+</tr>
+<tr>
+<td>Alt+U</td>
+<td>Open or close the one-page dashboard</td>
+</tr>
+</tbody></table></div>
+<p>Ctrl+C closes an active overlay or cancels a running turn. When idle with no queued messages, two presses within 3 seconds exit; the first press keeps your draft.</p>
+<p>For a course correction, type it in the composer and press <strong>Alt+S</strong> (or <strong>Ctrl+G s</strong>). Work already completed remains in the session record. In the queue, <code>t</code> switches a message between the next pause and the end of the turn.</p>
+<p>A clean exit prints a summary of the session and the <code>pancode --resume &lt;id&gt;</code> line that reopens it. Inside the app, <code>/resume</code> does the same.</p>
+<h2 id="related-tutorials">Related tutorials</h2>
+<nav class="guide-next" aria-label="Related tutorials"><ul>
+<li><a href="/tutorials/first-session.html">Your first session with PanCode <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/run-it-unattended-within-limits.html">Run it unattended within limits <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/script-pancode-in-ci.html">Script PanCode in CI <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/tutorials/ask-several-agents-at-once.html">Ask several agents at once <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></div><div class="doc-end"><span>Updated <time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></span><a id="doc-snapshot-source" href="https://github.com/akougkas/pancode/tree/ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-version="0.9.0" data-source-ref="ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-commit="ff215460f467aea6f3b0211a6996e5746e87ae75">Guide to v0.9.0</a><a href="https://github.com/akougkas/pancode/issues">Suggest an improvement <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></article>
+  <aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#launch-and-inspect">Launch and inspect</a>
+<a href="#everyday-terminal-commands">Everyday terminal commands</a>
+<a href="#a-few-keys-to-remember">A few keys to remember</a>
+<a href="#related-tutorials">Related tutorials</a></aside>
+</main><footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

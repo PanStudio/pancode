@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Memory: context as a priced storage tier · PanCode</title><meta name="description" content="How PanCode tiers the context window, prices an eviction against the prompt cache, and recalls evicted output exactly, with a first experiment."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/research/memory.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/research/memory.html"><meta property="og:title" content="Memory: context as a priced storage tier · PanCode"><meta property="og:description" content="How PanCode tiers the context window, prices an eviction against the prompt cache, and recalls evicted output exactly, with a first experiment."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Memory: context as a priced storage tier · PanCode"><meta name="twitter:description" content="How PanCode tiers the context window, prices an eviction against the prompt cache, and recalls evicted output exactly, with a first experiment."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/research/memory.html#page","name":"Memory: context as a priced storage tier · PanCode","description":"How PanCode tiers the context window, prices an eviction against the prompt cache, and recalls evicted output exactly, with a first experiment.","url":"https://pancode.dev/research/memory.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Memory: context as a priced storage tier","mainEntityOfPage":"https://pancode.dev/research/memory.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/research/memory.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/research/memory.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Research","item":"https://pancode.dev/research.html"},{"@type":"ListItem","position":3,"name":"Memory: context as a priced storage tier","item":"https://pancode.dev/research/memory.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html" aria-current="page">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html" aria-current="page">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/research.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All research</a><p class="guide-review">Design on the development tree. Not yet measured.</p><p class="eyebrow"><span class="chapter">Subsystem</span>6 min read</p><h1>Memory: context as a priced storage tier</h1><p class="lede">How PanCode tiers the context window, prices an eviction against the prompt cache, and recalls evicted output exactly, with a first experiment.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0-dev</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal</dd></div><div><dt class="eyebrow">Basis</dt><dd>Read from source; first experiment not yet run</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#the-design">The design</a>
+<a href="#source-map">Source map</a>
+<a href="#the-question">The question</a>
+<a href="#what-is-known-so-far">What is known so far</a>
+<a href="#why-it-matters">Why it matters</a>
+<a href="#use-pancode-on-it-today">Use PanCode on it today</a>
+<a href="#first-experiment">First experiment</a>
+<a href="#open-questions">Open questions</a>
+<a href="#how-to-join">How to join</a></details><p>A context window is storage that fills, and the provider&#39;s prompt cache makes some of that storage cheap to keep and expensive to disturb. PanCode manages the window as a tiered store: live context, records it can recall exactly, and a summary as the last resort. This page describes that design and how to measure it.</p>
+<aside class="guide-note"><p class="eyebrow">Design described for the 0.9.0 development tree</p><p>The mechanisms here are read from source on the development branch. Nothing on this page is measured yet. The experiment is proposed and not yet run.</p>
+</aside><h2 id="the-design">The design</h2>
+<ul>
+<li><strong>A working set with ordered rungs.</strong> Eviction takes the cheapest material first: output made stale by a later edit, a read replaced by a newer read of the same lines, a failure that was later resolved, a listing already used. Age is the last rung and runs only under pressure. The most recent turns, unresolved failures, and refusals are protected.</li>
+<li><strong>Eviction priced against the cache.</strong> Removing a body near the start of the conversation forces the provider to rewrite everything behind it. PanCode keeps such a body unless the tokens it frees, read over the next ten requests, outweigh rewriting that span at 11.5 times the cached-read price.</li>
+<li><strong>Exact recall.</strong> The session ledger is never rewritten. An evicted body leaves a marker with its tool, path, size, a short preview, and the literal call that returns it unchanged. A body recalled twice is pinned.</li>
+<li><strong>A ladder that depends on the route.</strong> Results replaced by a later identical call are removed only on routes with no prompt cache. Step checkpoints apply only to small or uncached routes. Below a 52,428-token window, the reserve for output is capped at half the window.</li>
+<li><strong>A summary that rides the warm prefix.</strong> When a summary is needed, PanCode checks whether the summarizer request can extend the last request byte for byte. If it can and the cache-weighted cost is lower, the summary call reads the conversation from cache.</li>
+<li><strong>Facts that survive a summary.</strong> Each checkpoint carries facts the host measured: files with their line counts and hashes, the newest numeric tool results, and the active request word for word. A file the checkpoint names must be read again before it is edited.</li>
+</ul>
+<h2 id="source-map">Source map</h2>
+<div class="guide-compare"><div class="doc-table" role="region" aria-label="Reference table 1" tabindex="0"><table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Source</th>
+<th>Default</th>
+<th>Switch</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Working-set rungs</td>
+<td><code>src/domains/context/working-set/policies/</code></td>
+<td>On</td>
+<td><code>context.workingSet.policy</code></td>
+</tr>
+<tr>
+<td>Cache-priced eviction</td>
+<td><code>src/domains/context/working-set/policies/cache-price.ts</code></td>
+<td>On</td>
+<td>None yet</td>
+</tr>
+<tr>
+<td>Rearm band</td>
+<td><code>src/domains/context/fold/pressure.ts</code></td>
+<td>On</td>
+<td><code>context.workingSet.rearmFraction</code></td>
+</tr>
+<tr>
+<td>Exact recall</td>
+<td><code>src/domains/context/working-set/marker.ts</code>, <code>recall.ts</code></td>
+<td>On</td>
+<td>None yet</td>
+</tr>
+<tr>
+<td>Route-conditional ladder</td>
+<td><code>src/domains/context/fold/contract.ts</code></td>
+<td>On</td>
+<td>Target <code>cache.retention</code></td>
+</tr>
+<tr>
+<td>In-prefix summary</td>
+<td><code>src/engine/in-prefix-summary.ts</code></td>
+<td>On</td>
+<td><code>context.compaction.model</code></td>
+</tr>
+<tr>
+<td>Exact facts and edit guard</td>
+<td><code>src/domains/session/compaction/exact-facts.ts</code>, <code>stale-edit-guard.ts</code></td>
+<td>On</td>
+<td>None yet</td>
+</tr>
+</tbody></table></div>
+</div><h2 id="the-question">The question</h2>
+<p>Does pricing eviction against the provider&#39;s cache beat evicting by age on a long task? The measure is the input a session pays for, with the task still passing. The answer could be no, if the rewrite a naive policy causes is small in practice.</p>
+<h2 id="what-is-known-so-far">What is known so far</h2>
+<p>These are facts about the design, read from source. They are not study results.</p>
+<ul>
+<li>The 11.5 ratio comes from one provider&#39;s pricing and is applied to every route.</li>
+<li>Removal of replaced results never runs unless a target declares that it has no prompt cache, because caching is assumed by default, local servers included.</li>
+<li>The per-turn pool for tool output has a floor larger than a 32K window, so on small windows the guard after each tool batch does the protecting.</li>
+<li>Search by meaning is off by default.</li>
+<li>Whether the agent still knows what it needs after a reduction is not measured. That question has its own page below.</li>
+</ul>
+<h2 id="why-it-matters">Why it matters</h2>
+<p>Long tasks routinely outlive a model&#39;s window. Every reduction is a trade: bytes removed now against cached bytes rewritten on the following turns. A policy that counts only tokens can make a session more expensive while making it smaller.</p>
+<h2 id="use-pancode-on-it-today">Use PanCode on it today</h2>
+<ol class="guide-steps"><li class="guide-step"><span class="step-number" aria-hidden="true">01</span><div><h3 id="see-what-fills-the-window">See what fills the window</h3>
+<p>Type <code>/context</code> in a session. It shows what occupies the window.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">02</span><div><h3 id="switch-the-eviction-policy">Switch the eviction policy</h3>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode config set context.workingSet.policy age-horizon</code></pre></div>
+<p><code>structural-v2</code> is the default. <code>age-horizon</code> evicts by age alone.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">03</span><div><h3 id="read-the-cost-per-turn">Read the cost per turn</h3>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 2"><code class="language-sh">pancode telemetry tokens --session &lt;id&gt; --by-source --json</code></pre></div>
+<p>Compare cached and fresh input across the turns that follow an eviction.</p>
+</div></li></ol><h2 id="first-experiment">First experiment</h2>
+<aside class="guide-note"><p class="eyebrow">Proposed, not yet run</p><p>Nobody has run this protocol. If you do, your numbers are the first this page has.</p>
+</aside><p>Take one task long enough to trigger several reductions, forty turns or more. Run it under <code>structural-v2</code>, under <code>age-horizon</code>, and with the working set disabled, three times each on one model. Record fresh input, tokens the provider had to rewrite, the number of summary calls, and whether the task&#39;s check passes.</p>
+<p>Cache-priced eviction itself has no switch yet. Adding one would let the pricing rule be compared with the same rungs unpriced.</p>
+<h2 id="open-questions">Open questions</h2>
+<ul>
+<li><a href="/research/context-and-retrieval.html">What does an agent lose when its context is reduced?</a></li>
+<li><a href="/research/proactive-memory.html">Does agent memory change outcomes?</a></li>
+</ul>
+<h2 id="how-to-join">How to join</h2>
+<p>Open a <a href="https://github.com/akougkas/pancode/issues">GitHub issue</a> that says what you plan to measure, and read the <a href="https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md">contributor guide</a>. Results are published on this page with their numbers, including null and negative ones.</p>
+</article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#the-design">The design</a>
+<a href="#source-map">Source map</a>
+<a href="#the-question">The question</a>
+<a href="#what-is-known-so-far">What is known so far</a>
+<a href="#why-it-matters">Why it matters</a>
+<a href="#use-pancode-on-it-today">Use PanCode on it today</a>
+<a href="#first-experiment">First experiment</a>
+<a href="#open-questions">Open questions</a>
+<a href="#how-to-join">How to join</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

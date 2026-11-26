@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Does agent memory change outcomes? · PanCode</title><meta name="description" content="Whether lessons change what an agent does, whether self-approval is safe, and a first experiment on one repeated mistake."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/research/proactive-memory.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/research/proactive-memory.html"><meta property="og:title" content="Does agent memory change outcomes? · PanCode"><meta property="og:description" content="Whether lessons change what an agent does, whether self-approval is safe, and a first experiment on one repeated mistake."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Does agent memory change outcomes? · PanCode"><meta name="twitter:description" content="Whether lessons change what an agent does, whether self-approval is safe, and a first experiment on one repeated mistake."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/research/proactive-memory.html#page","name":"Does agent memory change outcomes? · PanCode","description":"Whether lessons change what an agent does, whether self-approval is safe, and a first experiment on one repeated mistake.","url":"https://pancode.dev/research/proactive-memory.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Does agent memory change outcomes?","mainEntityOfPage":"https://pancode.dev/research/proactive-memory.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/research/proactive-memory.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/research/proactive-memory.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Research","item":"https://pancode.dev/research.html"},{"@type":"ListItem","position":3,"name":"Does agent memory change outcomes?","item":"https://pancode.dev/research/proactive-memory.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html" aria-current="page">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html" aria-current="page">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/research.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All research</a><p class="guide-review">Open question. Memory has shipped; its effect is unmeasured.</p><p class="eyebrow"><span class="chapter">Memory · Open question</span>8 min read</p><h1>Does agent memory change outcomes?</h1><p class="lede">Whether lessons change what an agent does, whether self-approval is safe, and a first experiment on one repeated mistake.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal</dd></div><div><dt class="eyebrow">Basis</dt><dd>Read from source; first experiment not yet run</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#the-question">The question</a>
+<a href="#what-is-known-so-far">What is known so far</a>
+<a href="#why-it-matters">Why it matters</a>
+<a href="#directions-to-work-on">Directions to work on</a>
+<a href="#use-pancode-on-it-today">Use PanCode on it today</a>
+<a href="#first-experiment">First experiment</a>
+<a href="#how-to-join">How to join</a></details><p>Does memory make an agent better at the next task, or does it only add text to a prompt? PanCode has a working memory system with an approval gate, and it can also approve some of its own lessons. Nobody has yet measured whether any of this changes outcomes.</p>
+<aside class="guide-note"><p class="eyebrow">Open question, described for 0.9.0</p><p>Proactive memory has shipped and is on by default. This page has no outcome numbers because none exist yet, and every experiment here is proposed and not yet run. Contributors and outside researchers are welcome.</p>
+</aside><h2 id="the-question">The question</h2>
+<ul>
+<li><strong>Effect.</strong> With a relevant lesson available, does an agent avoid a mistake it would otherwise repeat, at what model cost?</li>
+<li><strong>Trust.</strong> Is the rule that lets a repository lesson approve itself safe, and how often does it approve something wrong?</li>
+<li><strong>Timing.</strong> When should a reminder appear so that an agent acts on it without being distracted by it?</li>
+</ul>
+<h2 id="what-is-known-so-far">What is known so far</h2>
+<p>These are facts about the design at this version. They are not study results.</p>
+<p>The design follows Wu et al., <em>Remember When It Matters: Proactive Memory Agent for Long-Horizon Agents</em> (2026), adapted to PanCode. A session keeps bounded banks of knowledge, attempts, and diagnoses. A rules tier makes no model calls. A model tier uses the memory route, or the chat route when no memory route is set, so a default install spends model calls on memory.</p>
+<p>Durable lessons are separate from those banks, and only eligible approved records reach a prompt. A person can approve any record.</p>
+<p>Repository knowledge from a task-bank entry can also receive automatic approval once one session records that the lesson held, with no contradiction or recorded regression. It waits for a person if another approved or rejected lesson already carries the same command as evidence.</p>
+<p>In 0.8.0 the gate is narrower. Automatic approval needs a command that could have failed. A lesson backed only by a quote from a repository file waits for a person, and so does one whose only command cannot fail, such as <code>echo</code>, <code>ls</code> or <code>true</code>. Expect more pending lessons than 0.7.0 produced.</p>
+<p>PanCode records two useful observations about an approved lesson: <code>delivered</code> when its reminder was submitted, and <code>held</code> when the recommended command then succeeds exactly. A held lesson did not necessarily cause that success, and the agent might have run the command anyway. That gap is the research problem in one sentence.</p>
+<h2 id="why-it-matters">Why it matters</h2>
+<p>Long agent work fails in repetitive ways: the same wrong command, the same forgotten convention, the same dead end after a reset.</p>
+<p>Memory is the obvious fix, and also an easy way to pay for tokens that do nothing, or to teach an agent something false that then persists across sessions. Evidence here would tell users when to leave it on and developers what to cut.</p>
+<h2 id="directions-to-work-on">Directions to work on</h2>
+<p><strong>Measure counterfactual effect.</strong> Compare paired sessions on seeded tasks with memory on and off, and with a lesson present and absent. Count repeated failures, rounds, and cost, including memory&#39;s own calls.</p>
+<p><strong>Audit the approval gate.</strong> Collect automatically approved lessons from real repositories and have a person grade them. A false-approval rate, even from a small sample, would be new evidence about whether one held session is enough. Lessons approved before and after the 0.8.0 change are separate samples, because the rule changed between them.</p>
+<p><strong>Study reminder timing.</strong> Reminders can land at tool-batch boundaries, at turn end, or on the next prompt. Cadence is configurable, so whether frequent reminders help or distract can be tested.</p>
+<p><strong>Compare memory routes.</strong> A small local model and the main chat model may produce very different lessons at very different costs.</p>
+<h2 id="use-pancode-on-it-today">Use PanCode on it today</h2>
+<ol class="guide-steps"><li class="guide-step"><span class="step-number" aria-hidden="true">01</span><div><h3 id="look-at-what-memory-is-doing">Look at what memory is doing</h3>
+<p>Open <code>/memory</code> in the terminal. Its tabs are <strong>Lessons</strong>, <strong>This task</strong>, <strong>Review</strong>, and <strong>Diagnostics</strong>. In <strong>Review</strong>, <code>a</code> approves a proposal and <code>x</code> rejects it after asking once. From the shell, <code>pancode memory</code> lists, approves, rejects, and prunes durable records.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">02</span><div><h3 id="control-the-conditions">Control the conditions</h3>
+<p>In <code>/settings</code>, under <strong>Context and memory</strong>, then <strong>Proactive memory</strong>, <strong>Memory connection</strong> and <strong>Memory model</strong> choose the route. <strong>Proactive memory</strong> turns the whole system off, or set <code>context.memory.enabled: false</code> in project settings for one arm of a study. Cost appears in <code>/usage</code> and <code>pancode usage report</code>.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">03</span><div><h3 id="capture-more-when-you-need-it">Capture more when you need it</h3>
+<div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">pancode telemetry consent --workspace &lt;dir&gt;</code></pre></div>
+<p>With <code>telemetry.mode: research</code>, consent for that workspace, and <code>telemetry.research.content</code> on, PanCode also records memory traces in the session&#39;s journal. This stores redacted content, so use a repository you may study.</p>
+</div></li></ol><h2 id="first-experiment">First experiment</h2>
+<aside class="guide-note"><p class="eyebrow">Proposed, not yet run</p><p>Nobody has run this protocol. A result of no effect would be just as useful.</p>
+</aside><p><strong>Does one approved lesson stop a repeated mistake?</strong></p>
+<ol class="guide-steps"><li class="guide-step"><span class="step-number" aria-hidden="true">01</span><div><h3 id="seed-a-trap">Seed a trap</h3>
+<p>Make a small repository where the obvious test command fails and a documented, less obvious one succeeds. Put the working command somewhere an agent must look for it. Commit that state.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">02</span><div><h3 id="teach-it-once">Teach it once</h3>
+<p>Run one session that hits the trap and finds the way through. Check <code>/memory</code>, and approve a lesson that names the working command. If none is proposed, write that down, since it is itself a finding.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">03</span><div><h3 id="run-paired-arms">Run paired arms</h3>
+<p>From fresh checkouts, run the same new task five times with the lesson available and five times with <code>context.memory.enabled: false</code>. Keep the model and version fixed.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">04</span><div><h3 id="score-it">Score it</h3>
+<p>For each session, count failed attempts of the obvious command, tool calls, and total cost from <code>pancode telemetry cost &lt;session-id&gt; --json</code>. Report the numbers for each arm and say the sample is small.</p>
+</div></li><li class="guide-step"><span class="step-number" aria-hidden="true">05</span><div><h3 id="report-it">Report it</h3>
+<p>Open a GitHub issue with the setup, the table, and the lesson&#39;s text.</p>
+</div></li></ol><p>Needs: any chat route and a repository you can publish or describe. A local model server avoids keys and spend. Durable memory lives in your own state directory, so set <code>PANCODE_HOME</code> to a separate directory for the study and keep your real lessons out of it.</p>
+<h2 id="how-to-join">How to join</h2>
+<p>Open a GitHub issue on <a href="https://github.com/akougkas/pancode/issues">the repository</a> saying what you want to try, before or after you run it, and read the <a href="https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md">contributor guide</a> for code changes. Negative results and replications are welcome.</p>
+<section class="guide-limits"><p class="eyebrow"><span class="chapter">Boundaries</span></p><ul>
+<li><code>held</code> is an evidence-gate input and is not proof of a general claim.</li>
+<li>Stored memory is not fine-tuning of the underlying model.</li>
+<li>A background model never writes directly to the system prompt.</li>
+</ul>
+</section><nav class="guide-next" aria-label="Next steps"><ul>
+<li><a href="/tutorials/keep-long-coding-tasks-on-track.html">Keep a long coding task on track <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/docs/guide/proactive-memory.html">Proactive memory guide <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/sealed-run-records.html">Can an agent run be a scientific record? <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></article><aside class="docs-toc guide-toc" aria-label="On this page"><h2>On this page</h2><a href="#the-question">The question</a>
+<a href="#what-is-known-so-far">What is known so far</a>
+<a href="#why-it-matters">Why it matters</a>
+<a href="#directions-to-work-on">Directions to work on</a>
+<a href="#use-pancode-on-it-today">Use PanCode on it today</a>
+<a href="#first-experiment">First experiment</a>
+<a href="#how-to-join">How to join</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
+<footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>

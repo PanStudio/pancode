@@ -1,0 +1,426 @@
+[
+  {
+    "path": "README.md",
+    "title": "Install PanCode",
+    "group": "Start",
+    "excerpt": "Install, update, and launch PanCode on your machine.",
+    "headings": [
+      "Install",
+      "macOS, Linux and WSL",
+      "PowerShell",
+      "CMD",
+      "npm",
+      "bun",
+      "Confirm the installation",
+      "Open a project",
+      "Update, roll back and remove",
+      "Give PanCode a useful first task",
+      "Keep going",
+      "When you need more detail"
+    ],
+    "url": "/docs.html"
+  },
+  {
+    "path": "guide/hpc-clusters.md",
+    "title": "Install on a cluster",
+    "group": "Start",
+    "excerpt": "Install PanCode on a login node with an old glibc, a proxy, or no internet.",
+    "headings": [
+      "Install without root",
+      "Work on the cluster",
+      "Old glibc, proxies, and quotas",
+      "Verified downloads",
+      "Airgapped sites and your own Node"
+    ],
+    "url": "/docs/guide/hpc-clusters.html"
+  },
+  {
+    "path": "guide/configuration-and-targets.md",
+    "title": "Connect a model",
+    "group": "Start",
+    "excerpt": "Set up local models, institutional endpoints, and cloud connections.",
+    "headings": [
+      "Connect the way you already work",
+      "Use a local model server",
+      "Settings Center",
+      "Check the connection",
+      "Servers without a built-in runtime"
+    ],
+    "url": "/docs/guide/configuration-and-targets.html"
+  },
+  {
+    "path": "guide/commands-and-modes.md",
+    "title": "Commands and shortcuts",
+    "group": "Everyday use",
+    "excerpt": "Navigate the terminal, choose models, and control a session.",
+    "headings": [
+      "Launch and inspect",
+      "Everyday terminal commands",
+      "A few keys to remember"
+    ],
+    "url": "/docs/guide/commands-and-modes.html"
+  },
+  {
+    "path": "guide/tool-usage.md",
+    "title": "Tools and permissions",
+    "group": "Everyday use",
+    "excerpt": "Read, search, edit, and run commands with PanCode's repository tools.",
+    "headings": [
+      "Ask for a bounded change",
+      "Understand permission requests",
+      "What the sandbox hides",
+      "Verify using your project's checks",
+      "How tools reach the model",
+      "Limit what the agent may use"
+    ],
+    "url": "/docs/guide/tool-usage.html"
+  },
+  {
+    "path": "guide/sandbox-and-safety.md",
+    "title": "Sandbox and safety",
+    "group": "Everyday use",
+    "excerpt": "What a sandboxed command may do, what it hides, and when PanCode asks you.",
+    "headings": [
+      "Check your machine first",
+      "What a sandboxed command may do",
+      "What the sandbox hides",
+      "Commands that leave the sandbox",
+      "Stricter or looser",
+      "Project configuration and /trust"
+    ],
+    "url": "/docs/guide/sandbox-and-safety.html"
+  },
+  {
+    "path": "guide/context-continuity.md",
+    "title": "Save and resume work",
+    "group": "Everyday use",
+    "excerpt": "Resume conversations, manage context, and prepare a handoff.",
+    "headings": [
+      "Pick up a conversation",
+      "Find sessions from the shell",
+      "Keep long work focused",
+      "Recover an interrupted handoff"
+    ],
+    "url": "/docs/guide/context-continuity.html"
+  },
+  {
+    "path": "guide/proactive-memory.md",
+    "title": "Memory and lessons",
+    "group": "Everyday use",
+    "excerpt": "See what PanCode remembers, approve lessons, or turn memory off.",
+    "headings": [
+      "What memory does",
+      "Notes have to be demonstrated",
+      "See and approve lessons",
+      "Turn it off or route it elsewhere",
+      "Settings",
+      "Choose a cheap or local background model",
+      "Cost and budget"
+    ],
+    "url": "/docs/guide/proactive-memory.html"
+  },
+  {
+    "path": "guide/panes-and-files.md",
+    "title": "Files and terminal panes",
+    "group": "Everyday use",
+    "excerpt": "Attach files and open companion terminal panes.",
+    "headings": [
+      "Add a file browser or companion shell",
+      "Use the files pane",
+      "Docks hide instead of closing"
+    ],
+    "url": "/docs/guide/panes-and-files.html"
+  },
+  {
+    "path": "guide/gui.md",
+    "title": "The desktop app",
+    "group": "Everyday use",
+    "excerpt": "Open the desktop alpha, keep tasks in one window, and read the Session column.",
+    "headings": [
+      "Open the desktop app",
+      "One window, many tasks",
+      "Read the Session column",
+      "Approvals"
+    ],
+    "url": "/docs/guide/gui.html"
+  },
+  {
+    "path": "guide/panstore.md",
+    "title": "Keep results in PanStore",
+    "group": "The family",
+    "excerpt": "Keep datasets and results outside the working tree, with a record of where each came from.",
+    "headings": [
+      "Keep results out of your working tree",
+      "Store a file from your shell",
+      "Ask PanCode to use it",
+      "Let workers write",
+      "Limits"
+    ],
+    "url": "/docs/guide/panstore.html"
+  },
+  {
+    "path": "guide/panhub.md",
+    "title": "Packs from PanHub",
+    "group": "The family",
+    "excerpt": "Find, install and manage skills, plugins, extensions and other packs.",
+    "headings": [
+      "Find a useful skill",
+      "Write your own prompts and skills",
+      "Command reference",
+      "Review before installing",
+      "Trust project packs",
+      "Refresh a running session"
+    ],
+    "url": "/docs/guide/panhub.html"
+  },
+  {
+    "path": "guide/pankit.md",
+    "title": "Tool servers with PanKit",
+    "group": "The family",
+    "excerpt": "Run PanKit's MCP tool servers in PanCode or in any other MCP host.",
+    "headings": [
+      "What PanKit gives you",
+      "Check what runs on this host",
+      "Use the servers inside PanCode",
+      "Use them from another MCP host",
+      "Limits"
+    ],
+    "url": "/docs/guide/pankit.html"
+  },
+  {
+    "path": "guide/sdk.md",
+    "title": "Write extensions and tools with PanSDK",
+    "group": "The family",
+    "excerpt": "Scaffold, validate and test extensions, and write MCP tool servers.",
+    "headings": [
+      "What PanSDK holds",
+      "Start an extension",
+      "Write a tool server",
+      "Limits"
+    ],
+    "url": "/docs/guide/sdk.html"
+  },
+  {
+    "path": "guide/fleet-dispatch.md",
+    "title": "Workers and fleets",
+    "group": "Extend PanCode",
+    "excerpt": "Assign focused tasks and combine workers into a workflow.",
+    "headings": [
+      "Delegate a focused task",
+      "Follow the work",
+      "Permissions, sandbox, and merges",
+      "Run a playbook when you need one",
+      "Give workers MCP tools",
+      "Run workers on another machine",
+      "When a worker stops or fails"
+    ],
+    "url": "/docs/guide/fleet-dispatch.html"
+  },
+  {
+    "path": "guide/plugins.md",
+    "title": "Install plugins",
+    "group": "Extend PanCode",
+    "excerpt": "Add reusable resources to your PanCode installation.",
+    "headings": [
+      "Install a bundle of resources",
+      "Keep the installed copy under control",
+      "Choose the right kind of extension"
+    ],
+    "url": "/docs/guide/plugins.html"
+  },
+  {
+    "path": "guide/harness-extensions.md",
+    "title": "Write and install extensions",
+    "group": "Extend PanCode",
+    "excerpt": "Install and write extensions that declare what they may do.",
+    "headings": [
+      "Plugin or extension",
+      "Manage extensions",
+      "Where packages live",
+      "What an extension can add",
+      "Write one"
+    ],
+    "url": "/docs/guide/harness-extensions.html"
+  },
+  {
+    "path": "guide/interop.md",
+    "title": "Editors and other agents",
+    "group": "Extend PanCode",
+    "excerpt": "Use supported agent connections and editor integrations.",
+    "headings": [
+      "Bring an installed coding agent",
+      "Delegate to the Antigravity CLI",
+      "Review resources from another agent",
+      "Connect an ACP frontend",
+      "Built on the Pi SDK"
+    ],
+    "url": "/docs/guide/interop.html"
+  },
+  {
+    "path": "guide/doctor.md",
+    "title": "Check your installation",
+    "group": "Reference",
+    "excerpt": "Diagnose installation and connection problems with doctor.",
+    "headings": [
+      "Start with the standard check",
+      "Read the findings",
+      "Common rows and their fix",
+      "HPC toolchain rows",
+      "Repair or investigate further"
+    ],
+    "url": "/docs/guide/doctor.html"
+  },
+  {
+    "path": "guide/troubleshooting.md",
+    "title": "Troubleshooting",
+    "group": "Reference",
+    "excerpt": "Resolve common connection, terminal, and runtime problems.",
+    "headings": [
+      "First problems",
+      "A connection is unavailable",
+      "Settings fail to load",
+      "A terminal shortcut does not arrive",
+      "Work stopped or a check failed",
+      "Report a problem to the maintainers",
+      "Exit codes"
+    ],
+    "url": "/docs/guide/troubleshooting.html"
+  },
+  {
+    "path": "guide/quality-policy.md",
+    "title": "Require project checks",
+    "group": "Everyday use",
+    "excerpt": "Choose the declared checks a change requires and inspect verification freshness.",
+    "headings": [
+      "Tell PanCode what “checked” means in your project",
+      "Run the declared checks",
+      "Review freshness"
+    ],
+    "url": "/docs/guide/quality-policy.html"
+  },
+  {
+    "path": "guide/research-and-arena.md",
+    "title": "Climb a metric, compare models",
+    "group": "Everyday use",
+    "excerpt": "Improve a measured number with verified research campaigns, and compare models blind in the arena.",
+    "headings": [
+      "Improve a number, and keep only real gains",
+      "Budgets and stopping",
+      "Where results go",
+      "Compare models blind"
+    ],
+    "url": "/docs/guide/research-and-arena.html"
+  },
+  {
+    "path": "guide/exit-codes-and-output.md",
+    "title": "Automate with pancode run",
+    "group": "Everyday use",
+    "excerpt": "Run one task from a script or CI job, read its exit code, and parse its JSON output.",
+    "headings": [
+      "Run one task from a script",
+      "Read the exit code",
+      "Bound the run",
+      "Read structured output"
+    ],
+    "url": "/docs/guide/exit-codes-and-output.html"
+  },
+  {
+    "path": "guide/configuration-reference.md",
+    "title": "Configuration essentials",
+    "group": "Reference",
+    "excerpt": "Find settings layers, save scopes, and the full configuration reference.",
+    "headings": [
+      "Prefer the Settings Center",
+      "Know where a change is saved",
+      "Look up an exact key"
+    ],
+    "url": "/docs/guide/configuration-reference.html"
+  },
+  {
+    "path": "guide/environment-variables.md",
+    "title": "Environment essentials",
+    "group": "Reference",
+    "excerpt": "Use directory overrides and existing provider credentials when needed.",
+    "headings": [
+      "Use settings for ordinary preferences",
+      "Locate or separate installation state",
+      "How each directory is resolved",
+      "Credentials and terminal behavior",
+      "Collect a trace"
+    ],
+    "url": "/docs/guide/environment-variables.html"
+  },
+  {
+    "path": "guide/system-one.md",
+    "title": "System One decision models",
+    "group": "Reference",
+    "excerpt": "Bring a decision model, name a route, and read its limits.",
+    "headings": [
+      "What it is",
+      "Name a route",
+      "The two consult forms",
+      "The judge screen",
+      "Declare an engine",
+      "When it fails",
+      "What to expect"
+    ],
+    "url": "/docs/guide/system-one.html"
+  },
+  {
+    "path": "guide/information-flow.md",
+    "title": "Information flow",
+    "group": "Reference",
+    "excerpt": "Keep named files away from destinations you did not choose.",
+    "headings": [
+      "What it does",
+      "Declare and approve",
+      "Example policy",
+      "What acquires a label",
+      "Read a refusal and recover"
+    ],
+    "url": "/docs/guide/information-flow.html"
+  },
+  {
+    "path": "guide/glossary.md",
+    "title": "Glossary",
+    "group": "Reference",
+    "excerpt": "Plain-language meanings of the words PanCode uses, from target to worktree.",
+    "headings": [
+      "Words you meet first",
+      "Sessions and models",
+      "Safety",
+      "Workers and results",
+      "Packages"
+    ],
+    "url": "/docs/guide/glossary.html"
+  },
+  {
+    "path": "guide/semantic-context.md",
+    "title": "Semantic context",
+    "group": "Everyday use",
+    "excerpt": "Search your project by meaning with a local embedding route.",
+    "headings": [
+      "What it does",
+      "Set it up and search",
+      "Configure the embedding model",
+      "Register inboxes",
+      "Search and ask",
+      "Change the model",
+      "When something fails"
+    ],
+    "url": "/docs/guide/semantic-context.html"
+  },
+  {
+    "path": "guide/built-in-agents.md",
+    "title": "Built-in and custom agents",
+    "group": "Everyday use",
+    "excerpt": "See the agents you can dispatch and add your own.",
+    "headings": [
+      "See the agents",
+      "Shipped agents",
+      "Add your own",
+      "What validation rejects"
+    ],
+    "url": "/docs/guide/built-in-agents.html"
+  }
+]

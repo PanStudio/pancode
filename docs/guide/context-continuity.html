@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Save and resume work · PanCode</title><meta name="description" content="Resume conversations with /resume, manage context as it fills, and prepare a handoff so long work in PanCode continues cleanly."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<link rel="canonical" href="https://pancode.dev/docs/guide/context-continuity.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+// Runs before first paint; explicit choices take priority over the sanctioned default.
+(() => {
+	const defaultTheme = document.querySelector('meta[name="pancode-default-theme"]')?.content ?? "dark";
+	const requested = new URLSearchParams(location.search).get("theme");
+	let saved;
+	try {
+		saved = localStorage.getItem("pancode-theme");
+	} catch {
+		/* Storage is optional. */
+	}
+	const theme = ["light", "dark"].includes(requested)
+		? requested
+		: ["light", "dark"].includes(saved)
+			? saved
+			: defaultTheme === "system"
+				? matchMedia("(prefers-color-scheme: light)").matches
+					? "light"
+					: "dark"
+				: defaultTheme === "light"
+					? "light"
+					: "dark";
+	document.documentElement.dataset.theme = theme;
+	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
+})();</script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/docs/guide/context-continuity.html"><meta property="og:title" content="Save and resume work · PanCode"><meta property="og:description" content="Resume conversations with /resume, manage context as it fills, and prepare a handoff so long work in PanCode continues cleanly."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Save and resume work · PanCode"><meta name="twitter:description" content="Resume conversations with /resume, manage context as it fills, and prepare a handoff so long work in PanCode continues cleanly."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"TechArticle","@id":"https://pancode.dev/docs/guide/context-continuity.html#page","name":"Save and resume work · PanCode","description":"Resume conversations with /resume, manage context as it fills, and prepare a handoff so long work in PanCode continues cleanly.","url":"https://pancode.dev/docs/guide/context-continuity.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Save and resume work","mainEntityOfPage":"https://pancode.dev/docs/guide/context-continuity.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/docs/guide/context-continuity.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/docs/guide/context-continuity.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://pancode.dev/docs.html"},{"@type":"ListItem","position":3,"name":"Save and resume work","item":"https://pancode.dev/docs/guide/context-continuity.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><header class="mast">
+  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+  <div class="mast-row page">
+    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html" aria-current="page">Docs</a><a href="/learn.html">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+  </div>
+</header>
+<main class="page docs-layout" id="content">
+  <aside class="docs-sidebar" aria-label="Documentation"><details class="docs-menu"><summary>Browse documentation</summary><div class="docs-menu-body"><a class="docs-home" href="/docs.html">PanCode docs</a><label class="search-label" for="doc-search">Find a guide</label><input id="doc-search" type="search" placeholder="Search topics…" aria-describedby="search-status" /><p class="search-status" id="search-status" role="status"></p><ul class="search-hits" id="search-hits"></ul><noscript><p class="caption">Browse the guides below. Search requires JavaScript.</p></noscript><div id="all-docs"><details class="doc-nav-group" open><summary>Start</summary><a href="/docs.html">Install PanCode</a>
+<a href="/docs/guide/hpc-clusters.html">Install on a cluster</a>
+<a href="/docs/guide/configuration-and-targets.html">Connect a model</a></details>
+<details class="doc-nav-group" open><summary>Everyday use</summary><a href="/docs/guide/commands-and-modes.html">Commands and shortcuts</a>
+<a href="/docs/guide/tool-usage.html">Tools and permissions</a>
+<a href="/docs/guide/sandbox-and-safety.html">Sandbox and safety</a>
+<a href="/docs/guide/context-continuity.html" aria-current="page">Save and resume work</a>
+<a href="/docs/guide/proactive-memory.html">Memory and lessons</a>
+<a href="/docs/guide/panes-and-files.html">Files and terminal panes</a>
+<a href="/docs/guide/gui.html">The desktop app</a>
+<a href="/docs/guide/quality-policy.html">Require project checks</a>
+<a href="/docs/guide/research-and-arena.html">Climb a metric, compare models</a>
+<a href="/docs/guide/exit-codes-and-output.html">Automate with pancode run</a>
+<a href="/docs/guide/semantic-context.html">Semantic context</a>
+<a href="/docs/guide/built-in-agents.html">Built-in and custom agents</a></details>
+<details class="doc-nav-group"><summary>The family</summary><a href="/docs/guide/panstore.html">Keep results in PanStore</a>
+<a href="/docs/guide/panhub.html">Packs from PanHub</a>
+<a href="/docs/guide/pankit.html">Tool servers with PanKit</a>
+<a href="/docs/guide/sdk.html">Write extensions and tools with PanSDK</a></details>
+<details class="doc-nav-group"><summary>Extend PanCode</summary><a href="/docs/guide/fleet-dispatch.html">Workers and fleets</a>
+<a href="/docs/guide/plugins.html">Install plugins</a>
+<a href="/docs/guide/harness-extensions.html">Write and install extensions</a>
+<a href="/docs/guide/interop.html">Editors and other agents</a></details>
+<details class="doc-nav-group"><summary>Reference</summary><a href="/docs/guide/doctor.html">Check your installation</a>
+<a href="/docs/guide/troubleshooting.html">Troubleshooting</a>
+<a href="/docs/guide/configuration-reference.html">Configuration essentials</a>
+<a href="/docs/guide/environment-variables.html">Environment essentials</a>
+<a href="/docs/guide/system-one.html">System One decision models</a>
+<a href="/docs/guide/information-flow.html">Information flow</a>
+<a href="/docs/guide/glossary.html">Glossary</a></details></div></div></details></aside>
+  <article class="doc-article"><div class="doc-toolbar"><p id="doc-path">Save and resume work</p><a id="doc-github" href="https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/guide/context-continuity.md">Read the full guide <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div><div class="doc" id="doc" data-doc="guide/context-continuity.md"><details class="doc-toc-mobile"><summary>On this page</summary><a href="#pick-up-a-conversation">Pick up a conversation</a>
+<a href="#find-sessions-from-the-shell">Find sessions from the shell</a>
+<a href="#keep-long-work-focused">Keep long work focused</a>
+<a href="#recover-an-interrupted-handoff">Recover an interrupted handoff</a>
+<a href="#related-tutorials-and-research">Related tutorials and research</a></details><h1 id="save-and-resume-work">Save and resume work</h1>
+<p>Resume conversations, manage context, and prepare a handoff.</p>
+<h2 id="pick-up-a-conversation">Pick up a conversation</h2>
+<p>In the terminal, use <code>/resume</code> to choose a previous session, or <code>/rename</code> first so you can resume it by name. On the desktop, open a saved conversation from <strong>Overview</strong> or <strong>Sessions</strong>. Saved history lets you continue with the context of earlier work.</p>
+<p>Use <code>/tree</code> to inspect terminal conversation branches and <code>/fork [name]</code> to fork from an assistant turn into a new session, optionally named. <code>/tree</code> rewinds the conversation; <code>/rewind</code> restores files. On the desktop, open <strong>Branches</strong> in the Session column. Branches let you explore another direction while preserving the earlier conversation.</p>
+<h2 id="find-sessions-from-the-shell">Find sessions from the shell</h2>
+<p><code>pancode session list</code> shows open sessions on this state directory, from any host that shares it, with host, pid, and last heartbeat. <code>pancode session terminate &lt;id&gt;</code> asks the owning process to exit. <code>pancode session history</code> lists saved sessions, <code>pancode --resume &lt;id or prefix&gt;</code> reopens one, and <code>pancode --continue</code> reopens the most recent session for the project.</p>
+<h2 id="keep-long-work-focused">Keep long work focused</h2>
+<p>Open <code>/context</code> to inspect context usage, output reservation, remaining headroom, and any pending handoff. PanCode compacts a long native session automatically when context use crosses its configured threshold, or you can request a focused summary:</p>
+<div class="code-block"><pre tabindex="0" aria-label="Code example 1"><code class="language-text">/context compact Keep the objective, decisions, changed files, test results, and remaining work.</code></pre></div>
+<p>For a fresh session with a stated goal, use <code>/handoff &lt;goal&gt;</code>. When moving work between agents, make sure the handoff includes evidence and unresolved questions, then review what the receiving agent does.</p>
+<p>To keep a session well under the model&#39;s window, start it with <code>pancode --max-context-tokens &lt;N&gt;</code>. <code>pancode run</code> takes the same flag. It caps the context budget and never enlarges the server&#39;s window.</p>
+<h2 id="recover-an-interrupted-handoff">Recover an interrupted handoff</h2>
+<p>If <code>/context</code> shows a pending handoff, use its exact ID:</p>
+<div class="code-block"><pre tabindex="0" aria-label="Code example 2"><code class="language-text">/context recover &lt;handoffId&gt; reduce
+/context recover &lt;handoffId&gt; deliver</code></pre></div>
+<p>Choose <code>reduce</code> when the reduction has not committed and another attempt remains; choose <code>deliver</code> when a validated commit exists. If the continuation still cannot fit, compact more history first.</p>
+<p>A restarted process records an interrupted handoff as paused and waits for your recovery command. A fork receives earlier notes as recall; it does not inherit permission to resume the parent&#39;s handoff.</p>
+<h2 id="related-tutorials-and-research">Related tutorials and research</h2>
+<nav class="guide-next" aria-label="Related tutorials and research"><ul>
+<li><a href="/tutorials/keep-long-coding-tasks-on-track.html">Keep a long coding task on track <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/memory.html">Memory: context as a priced storage tier <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+<li><a href="/research/context-and-retrieval.html">What does an agent lose when its context is reduced? <span class="arrow arrow-forward" aria-hidden="true">→</span></a></li>
+</ul>
+</nav></div><div class="doc-end"><span>Updated <time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></span><a id="doc-snapshot-source" href="https://github.com/akougkas/pancode/tree/ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-version="0.9.0" data-source-ref="ff215460f467aea6f3b0211a6996e5746e87ae75" data-source-commit="ff215460f467aea6f3b0211a6996e5746e87ae75">Guide to v0.9.0</a><a href="https://github.com/akougkas/pancode/issues">Suggest an improvement <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></article>
+  <aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#pick-up-a-conversation">Pick up a conversation</a>
+<a href="#find-sessions-from-the-shell">Find sessions from the shell</a>
+<a href="#keep-long-work-focused">Keep long work focused</a>
+<a href="#recover-an-interrupted-handoff">Recover an interrupted handoff</a>
+<a href="#related-tutorials-and-research">Related tutorials and research</a></aside>
+</main><footer class="colophon page">
+  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
+  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
+</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+</body></html>
