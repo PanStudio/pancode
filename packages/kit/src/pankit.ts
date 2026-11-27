@@ -109,7 +109,7 @@ async function list(json: boolean, host: PankitHost | undefined): Promise<Outcom
 	}
 	let added: PankitAddedServer[] = [];
 	try {
-		added = host ? await host.added() : [];
+		added = host ? (await host.added()).filter((item) => findServer(item.name) === undefined) : [];
 	} catch (error) {
 		return { code: 1, stderr: `pankit list: the added servers: ${message(error)}\n` };
 	}

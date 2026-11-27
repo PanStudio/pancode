@@ -20,7 +20,7 @@ import {
 
 import { registerHubPackage } from "../../src/domains/resources/hub.js";
 import { HUB_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
-import { addKitServer } from "../../src/domains/resources/kit-items.js";
+import { addedKitServers, addKitServer, kitServeLaunch } from "../../src/domains/resources/kit-items.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
@@ -262,6 +262,16 @@ test("addKitServer requires an index row and ignores a local server:<name> direc
 		ok(added.ok, added.ok ? "" : added.message);
 		equal(added.value.version, "1.0.0");
 		equal(added.value.sha256, pluginContentDigest(registered));
+
+		// Malformed state.json reports the copy as unloadable instead of throwing in list or serve.
+		writeFileSync(join(dirname(added.value.destination), "state.json"), "{broken");
+		const listed = addedKitServers(cwd);
+		equal(listed.length, 1);
+		equal(listed[0]?.loadable, false);
+		match(listed[0]?.reason ?? "", /plugin install state/);
+		const launch = kitServeLaunch("example", cwd);
+		ok(launch !== undefined && !launch.ok);
+		match(launch.message, /does not load/);
 	} finally {
 		env.restore();
 	}

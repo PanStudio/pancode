@@ -6,7 +6,8 @@
  * as `pancode hub install server:<name> --user`, so PanCode lists, updates and
  * offers it like any other copy.
  */
-import { realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
 import { readSettings } from "../../core/config.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
 import { loadPluginMcpFile } from "../gateway/mcp/config.js";
@@ -44,9 +45,21 @@ export type KitChangeResult<T> = { ok: true; value: T } | { ok: false; message: 
 
 const refOf = (name: string): string => `server:${name}`;
 
+/** A builtin server pack carries server.json and is never managed as an added launcher server. */
+const isAddedServerCopy = (plugin: { kind?: string; rootPath: string }): boolean =>
+	plugin.kind === "server" && !existsSync(path.join(plugin.rootPath, "server.json"));
+
+function safeInstallRecord(name: string, cwd: string) {
+	try {
+		return readPluginInstallRecord(name, { cwd, scope: "user" });
+	} catch {
+		return undefined;
+	}
+}
+
 function userServerCopy(name: string, cwd: string) {
-	return listInstalledPlugins(cwd, { scope: "user", all: true }).find(
-		(plugin) => plugin.id === name && plugin.kind === "server",
+	return listInstalledPlugins(cwd, { scope: "user", all: true, id: name }).find(
+		(plugin) => plugin.id === name && isAddedServerCopy(plugin),
 	);
 }
 
@@ -59,7 +72,7 @@ function serverTiers(cwd: string): Map<string, HubTier> {
 }
 
 export function addedKitServers(cwd: string): KitAddedServer[] {
-	const copies = listInstalledPlugins(cwd, { scope: "user", all: true }).filter((plugin) => plugin.kind === "server");
+	const copies = listInstalledPlugins(cwd, { scope: "user", all: true }).filter(isAddedServerCopy);
 	if (copies.length === 0) return [];
 	const tiers = serverTiers(cwd);
 	return copies
@@ -70,7 +83,7 @@ export function addedKitServers(cwd: string): KitAddedServer[] {
 			return {
 				name: copy.id,
 				version: copy.version,
-				publisher: readPluginInstallRecord(copy.id, { cwd, scope: "user" })?.publisher ?? "local",
+				publisher: safeInstallRecord(copy.id, cwd)?.publisher ?? "local",
 				...(tier ? { tier } : {}),
 				loadable: copy.loadable,
 				...(copy.loadable ? {} : { reason: detail ? `${state}: ${detail}` : state }),
@@ -178,7 +191,7 @@ export function kitServeLaunch(name: string, cwd: string): KitChangeResult<KitSe
 	if (copy === undefined) return undefined;
 	const refuse = (message: string) => ({ ok: false as const, message });
 	if (!copy.enabled) return refuse(`${name} is disabled; enable it with \`pancode hub enable server:${name} --user\``);
-	const record = readPluginInstallRecord(name, { cwd, scope: "user" });
+	const record = safeInstallRecord(name, cwd);
 	if (record && copy.observedContentDigest !== record.contentDigest)
 		return refuse(
 			`${name} changed since it was added (recorded ${record.contentDigest}, now ${copy.observedContentDigest ?? "unreadable"}); run \`pankit add ${name}\` again`,
