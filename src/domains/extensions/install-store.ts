@@ -183,13 +183,14 @@ export function readInstallState<R>(
 	}
 }
 
-/** Throws unless the state file still holds `expected`, the bytes the caller read. */
+/** Throws unless the managed base is unredirected and the state file still holds `expected`, the bytes the caller read. */
 export function assertUnchangedInstallState<R>(
 	layout: InstallStateLayout<R>,
 	scope: InstallScope,
 	cwd: string,
 	expected: string | undefined,
 ): void {
+	assertManagedBase(layout, scope, cwd);
 	if (stateBytes(layout, installStatePath(layout, scope, cwd)) !== expected)
 		throw new Error(`${layout.noun} install state changed during the operation; retry after reviewing concurrent edits`);
 }

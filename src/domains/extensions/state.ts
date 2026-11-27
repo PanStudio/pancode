@@ -1,16 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import {
-	cpSync,
-	existsSync,
-	lstatSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	realpathSync,
-	renameSync,
-	rmSync,
-} from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionDiagnostic } from "@pancode/sdk/pack";
 import { capabilityEnvelope, envelopeDigest as envelopeDigestOf } from "@pancode/sdk/pack";
@@ -30,6 +20,7 @@ import { evaluatePancodeCompatibility } from "./compatibility.js";
 import { isExtensionId, loadManifestFromRoot, trimString } from "./discovery.js";
 import {
 	assertManagedBase,
+	assertUnchangedInstallState,
 	auditInstallRecords,
 	type DroppedInstallRecord,
 	emptyInstallState,
@@ -127,10 +118,9 @@ function packageRecoveryPath(root: string, label: string): string {
 	return path.join(path.dirname(root), `.${path.basename(root)}.${label}-${process.pid}-${Date.now()}.bak`);
 }
 
-function preserveFile(filePath: string, label: string): string | undefined {
-	if (!existsSync(filePath)) return undefined;
-	const backupPath = recoveryPath(filePath, label);
-	safeResourceWrite(backupPath, readFileSync(filePath));
+function preserveCorruptState(filePath: string, bytes: string): string {
+	const backupPath = recoveryPath(filePath, "corrupt");
+	safeResourceWrite(backupPath, bytes, { mode: 0o600 });
 	return backupPath;
 }
 
@@ -587,6 +577,9 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		}
 	}
 	const stateResult = readState(scope, cwd);
+	if (stateResult.status === "corrupt" && stateResult.bytes === undefined) {
+		return refusal(`extension install state is corrupt: ${stateResult.message}`, statePath(scope, cwd));
+	}
 	if (stateResult.status === "corrupt" && !options.force) {
 		return refusal(
 			`extension install state is corrupt: ${stateResult.message}; retry with --force to back it up and reinstall safely`,
@@ -627,7 +620,6 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		// A writer creates the user config root as PanCode owns it (mode 0700) before its first write beneath it.
 		if (scope === "user") pancodeConfigDir();
 		mkdirSync(parent, { recursive: true });
-		if (stateResult.status === "corrupt") stateBackup = preserveFile(statePath(scope, cwd), "corrupt");
 		cpSync(source, stagingRoot, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
 		const stagedCandidate = loadManifestFromRoot(stagingRoot);
 		if (!stagedCandidate.valid || !stagedCandidate.manifest) {
@@ -648,6 +640,10 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		)
 			throw new Error("staged extension differs from the verified source tree");
 		if (extensionContentDigest(source) !== sourceDigest) throw new Error("extension source changed while staging");
+		assertUnchangedInstallState(EXTENSION_STATE, scope, cwd, stateResult.bytes);
+		if (stateResult.status === "corrupt" && stateResult.bytes !== undefined) {
+			stateBackup = preserveCorruptState(statePath(scope, cwd), stateResult.bytes);
+		}
 		if (lexists(targetRoot)) {
 			renameSync(targetRoot, backupRoot);
 			movedExisting = true;
@@ -672,6 +668,10 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		writeState(scope, cwd, state, stateResult.bytes, stateResult.status === "valid" ? stateResult.invalid : []);
 	} catch (error) {
 		rmSync(stagingRoot, { recursive: true, force: true });
+		if (stateBackup) {
+			rmSync(stateBackup, { force: true });
+			stateBackup = undefined;
+		}
 		// Preserve concurrent changes instead of deleting someone else's work.
 		let changed = false;
 		if (installedReplacement && lexists(targetRoot)) {
@@ -773,7 +773,19 @@ function mutateEnabled(id: string, enabled: boolean, options: ExtensionListOptio
 	const state = stateResult.state;
 	if (enabled) state.disabled = state.disabled.filter((entry) => entry !== id);
 	else if (!state.disabled.includes(id)) state.disabled.push(id);
-	writeState(target.scope, cwd, state, stateResult.bytes, stateResult.invalid);
+	try {
+		writeState(target.scope, cwd, state, stateResult.bytes, stateResult.invalid);
+	} catch (error) {
+		return {
+			diagnostics: [
+				{
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+					path: statePath(target.scope, cwd),
+				},
+			],
+		};
+	}
 	const extension = findInstalled(id, cwd, target.scope) ?? undefined;
 	recordLifecycleReceipt(
 		{
@@ -827,7 +839,19 @@ export function assignExtensionModel(
 		assignment === null
 			? rest
 			: { ...rest, services: { model: { ...assignment, assignedAt: new Date().toISOString() } } };
-	writeState(target.scope, cwd, stateResult.state, stateResult.bytes, stateResult.invalid);
+	try {
+		writeState(target.scope, cwd, stateResult.state, stateResult.bytes, stateResult.invalid);
+	} catch (error) {
+		return {
+			diagnostics: [
+				{
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+					path: statePath(target.scope, cwd),
+				},
+			],
+		};
+	}
 	const extension = findInstalled(id, cwd, target.scope) ?? undefined;
 	return { ...(extension ? { extension } : {}), diagnostics: [] };
 }
@@ -865,11 +889,25 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 		source: stateResult.state.installed[id]?.source ?? target.rootPath,
 	};
 	if (stateResult.status !== "valid") {
+		if (stateResult.status === "corrupt" && stateResult.bytes === undefined) {
+			return {
+				diagnostics: [
+					{
+						type: "error",
+						message: `extension ${id} could not be removed safely: ${stateResult.message}`,
+						path: target.rootPath,
+					},
+				],
+			};
+		}
 		const filePath = statePath(target.scope, cwd);
 		const packageBackup = packageRecoveryPath(target.rootPath, "removed-unverifiable");
 		let stateBackup: string | undefined;
 		try {
-			if (stateResult.status === "corrupt") stateBackup = preserveFile(filePath, "corrupt");
+			assertUnchangedInstallState(EXTENSION_STATE, target.scope, cwd, stateResult.bytes);
+			if (stateResult.status === "corrupt" && stateResult.bytes !== undefined) {
+				stateBackup = preserveCorruptState(filePath, stateResult.bytes);
+			}
 			renameSync(target.rootPath, packageBackup);
 			try {
 				writeState(target.scope, cwd, emptyInstallState(), stateResult.bytes, []);
@@ -894,6 +932,7 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 				diagnostics,
 			};
 		} catch (error) {
+			if (stateBackup) rmSync(stateBackup, { force: true });
 			return {
 				diagnostics: [
 					{
@@ -914,10 +953,12 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 	} catch {
 		preserve = true;
 	}
-	const packageBackup = preserve ? uniqueSibling(target.rootPath, "removed") : undefined;
+	const backup = uniqueSibling(target.rootPath, "removed");
+	let moved = false;
 	try {
-		if (packageBackup) renameSync(target.rootPath, packageBackup);
-		else rmSync(target.rootPath, { recursive: true, force: true });
+		assertUnchangedInstallState(EXTENSION_STATE, target.scope, cwd, stateResult.bytes);
+		renameSync(target.rootPath, backup);
+		moved = true;
 		Reflect.deleteProperty(state.installed, id);
 		state.disabled = state.disabled.filter((entry) => entry !== id);
 		writeState(
@@ -928,8 +969,7 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 			stateResult.invalid.filter((entry) => entry.id !== id),
 		);
 	} catch (error) {
-		if (packageBackup && existsSync(packageBackup) && !lexists(target.rootPath))
-			renameSync(packageBackup, target.rootPath);
+		if (moved && lexists(backup) && !lexists(target.rootPath)) renameSync(backup, target.rootPath);
 		return {
 			diagnostics: [
 				{
@@ -940,6 +980,8 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 			],
 		};
 	}
+	if (!preserve) preserve = retainRecovery(backup, recordedDigest);
+	const packageBackup = preserve ? backup : undefined;
 	recordLifecycleReceipt(receiptIdentity, options.lifecycle);
 	return {
 		removed: { id, scope: target.scope, path: target.rootPath },

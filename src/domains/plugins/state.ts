@@ -895,10 +895,14 @@ export function auditPluginInstallRecords(scope: PluginScope, cwd = process.cwd(
  * does, so the reinstall path is free and no unmatched byte is deleted.
  */
 export function repairPluginInstallRecords(scope: PluginScope, cwd = process.cwd()): InstallRecordReport | null {
+	const precheck = readInstallState(PLUGIN_STATE, scope, cwd);
+	if (precheck.status === "absent") return null;
+	if (precheck.status === "corrupt") throw new Error(precheck.message);
 	const file = pluginStatePath(scope, cwd);
-	if (!existsSync(file)) return null;
 	return withPluginScopeLock(scope, cwd, () => {
-		const { state, bytes, invalid } = readState(scope, cwd);
+		const read = readState(scope, cwd);
+		if (read.status === "absent") return null;
+		const { state, bytes, invalid } = read;
 		const moves: Array<{ from: string; to: string }> = [];
 		const dropped = invalid.map(({ id, pack, reason, raw }): DroppedInstallRecord => {
 			const root = path.join(pluginBaseDir(scope, cwd), id);
