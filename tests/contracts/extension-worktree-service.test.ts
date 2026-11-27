@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -94,13 +94,41 @@ describe("extension worktree service", () => {
 
 	it("runs only reads that cannot write or reach outside the repository", async () => {
 		const p = project();
+		const outside = join(p.root, "outside.txt");
+		writeFileSync(outside, "top-secret\n");
+		symlinkSync(p.root, join(p.repo, "app", "escape-dir"));
 		await assert.rejects(p.service.git("workspace", ["commit", "-m", "x"]), code("refused"));
 		await assert.rejects(p.service.git("workspace", ["diff", "--output=/tmp/x"]), code("refused"));
 		await assert.rejects(p.service.git("workspace", ["diff", "--no-index", "/etc/hosts", "a.txt"]), code("refused"));
+		// Implicit `--no-index` (absolute, `..`, `--`, or symlinked directory) and external exclude files are refused too.
+		await assert.rejects(p.service.git("workspace", ["diff", outside, "/dev/null"]), code("refused"));
+		await assert.rejects(p.service.git("workspace", ["diff", "--", outside, "/dev/null"]), code("refused"));
+		await assert.rejects(p.service.git("workspace", ["diff", "../../outside.txt", "/dev/null"]), code("refused"));
+		await assert.rejects(p.service.git("workspace", ["diff", "escape-dir/outside.txt", "/dev/null"]), code("refused"));
+		await assert.rejects(p.service.git("workspace", ["ls-files", "-X", outside]), code("refused"));
+		await assert.rejects(p.service.git("workspace", ["rev-parse", "--resolve-git-dir", outside]), code("refused"));
 		await assert.rejects(p.service.create({ copy: ["../secret"] }), code("invalid"));
+		await assert.rejects(p.service.create({ copy: ["escape-dir/outside.txt"] }), code("refused"));
+		const tree = await p.service.create({ keep: true });
+		symlinkSync(p.root, join(tree.cwd, "escape-sub"));
+		await assert.rejects(p.service.resolvePlace({ worktree: tree.id, sub: "escape-sub" }), code("refused"));
+		await p.service.remove(tree.id);
 		await assert.rejects(p.service.checkout("k-0000000000000000", "HEAD"), code("unknown_worktree"));
 		const log = await p.service.git("workspace", ["log", "--format=%s"]);
 		assert.equal(log.stdout.trim(), "base");
+		p.cleanup();
+	});
+
+	it("refuses mutating worktree operations in a read-only session while keeping reads", async () => {
+		const p = project();
+		const ro = createExtensionWorktreeService({
+			extensionId: "research",
+			workspace: join(p.repo, "app"),
+			readOnly: () => true,
+		});
+		await assert.rejects(ro.create(), code("refused"));
+		await assert.rejects(ro.refs.create("c1", "HEAD"), code("refused"));
+		assert.equal((await ro.git("workspace", ["log", "--format=%s"])).stdout.trim(), "base");
 		p.cleanup();
 	});
 });

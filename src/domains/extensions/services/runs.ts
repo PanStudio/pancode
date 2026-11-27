@@ -41,13 +41,18 @@ export interface ExtensionRunServiceDeps {
 	resolvePlace(place: ExtensionWorkPlace): ExtensionRunPlace | Promise<ExtensionRunPlace>;
 	/** Where answer files live while their run does. */
 	tempRoot: string;
+	readOnly?: () => boolean;
 	spawn?: typeof runCommandVector;
 }
 
 export interface ExtensionRunService {
 	/** The run belongs to `scope`: it is ended when the scope ends, which waits for it to settle. */
 	start(request: ExtensionRunRequest, scope?: ExtensionRequestScope): Promise<{ id: string }>;
-	frames(id: string, options?: { cursor?: number; limit?: number; waitMs?: number }): Promise<ExtensionRunFrames>;
+	frames(
+		id: string,
+		options?: { cursor?: number; limit?: number; waitMs?: number },
+		scope?: ExtensionRequestScope,
+	): Promise<ExtensionRunFrames>;
 	wait(id: string): Promise<ExtensionRunEnd>;
 	cancel(id: string): Promise<void>;
 	/** End every run and drop every record. */
@@ -245,6 +250,8 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 		async start(request, scope) {
 			const signal = scope?.signal;
 			const run = clampRequest(request, deps.ceilings);
+			if (deps.readOnly?.() === true && (!run.readOnly || run.autonomy === "yolo"))
+				throw new ExtensionRunError("refused", "runs.start: writable or yolo runs are refused in a read-only session");
 			const place = await deps.resolvePlace(request.cwd ?? "workspace");
 			if (active >= deps.ceilings.maxConcurrent)
 				throw new ExtensionRunError("busy", `runs.start: ${deps.ceilings.maxConcurrent} runs are already running`);
@@ -331,20 +338,32 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 			return { id };
 		},
 
-		async frames(id, options = {}) {
+		async frames(id, options = {}, scope) {
 			const record = lookup(id);
-			const cursor = Math.max(0, Math.trunc(options.cursor ?? 0));
-			const limit = Math.min(MAX_PAGE, Math.max(1, Math.trunc(options.limit ?? DEFAULT_PAGE)));
-			const waitMs = Math.min(MAX_WAIT_MS, Math.max(0, Math.trunc(options.waitMs ?? 0)));
-			if (waitMs > 0 && record.end === null && cursor >= record.first + record.frames.length) {
+			const rawCursor = options.cursor;
+			const rawLimit = options.limit;
+			const rawWait = options.waitMs;
+			const cursor = Math.max(0, Math.trunc(typeof rawCursor === "number" && Number.isFinite(rawCursor) ? rawCursor : 0));
+			const limit = Math.min(
+				MAX_PAGE,
+				Math.max(1, Math.trunc(typeof rawLimit === "number" && Number.isFinite(rawLimit) ? rawLimit : DEFAULT_PAGE)),
+			);
+			const waitMs = Math.min(
+				MAX_WAIT_MS,
+				Math.max(0, Math.trunc(typeof rawWait === "number" && Number.isFinite(rawWait) ? rawWait : 0)),
+			);
+			const signal = scope?.signal;
+			if (waitMs > 0 && record.end === null && signal?.aborted !== true && cursor >= record.first + record.frames.length) {
 				await new Promise<void>((resolve) => {
 					const timer = setTimeout(done, waitMs);
 					function done(): void {
 						clearTimeout(timer);
+						signal?.removeEventListener("abort", done);
 						record.waiters.delete(done);
 						resolve();
 					}
 					record.waiters.add(done);
+					signal?.addEventListener("abort", done, { once: true });
 				});
 			}
 			const from = Math.max(cursor, record.first);

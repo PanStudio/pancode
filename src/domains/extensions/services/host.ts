@@ -61,7 +61,8 @@ class Request {
 	}
 	optionalNumber(field: string): number | undefined {
 		const value = this.raw[field];
-		if (value !== undefined && typeof value !== "number") this.fail(field, "a number");
+		if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value)))
+			this.fail(field, "a finite number");
 		return value;
 	}
 	place(field = "place"): ExtensionWorkPlace | undefined {
@@ -110,7 +111,7 @@ export function createExtensionWorkHost(services: ExtensionWorkServices): Extens
 	const host: ExtensionWorkHost = {};
 	const runs = dispatcher("runs", services.runs, {
 		start: (service, request, scope) => service.start(request.object("run") as unknown as ExtensionRunRequest, scope),
-		frames: (service, request) =>
+		frames: (service, request, scope) =>
 			service.frames(
 				request.text("id"),
 				omitUndefined({
@@ -118,6 +119,7 @@ export function createExtensionWorkHost(services: ExtensionWorkServices): Extens
 					limit: request.optionalNumber("limit"),
 					waitMs: request.optionalNumber("waitMs"),
 				}),
+				scope,
 			),
 		wait: (service, request) => service.wait(request.text("id")),
 		cancel: (service, request) => service.cancel(request.text("id")).then(() => null),

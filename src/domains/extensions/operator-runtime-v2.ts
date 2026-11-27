@@ -462,6 +462,7 @@ export class OperatorExtensionRuntimeV2 {
 				workspace: context.workspace,
 				sessionId: context.sessionId,
 				declaration: entry.runtimeV2,
+				readOnly: binding.readOnly,
 			},
 			this.options.work,
 		);

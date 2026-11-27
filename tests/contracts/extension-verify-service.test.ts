@@ -180,6 +180,11 @@ describe("extension claims service", () => {
 		assert.equal(result.ok, true, result.text);
 		const recorded = await claims.finish("run-1", [{ check: "sane", receipt: result.receipt }]);
 		assert.ok(typeof recorded.sane === "string");
+		// A receipt already finished cannot be replayed on a later run.
+		await assert.rejects(
+			claims.finish("run-1-replay", [{ check: "sane", receipt: result.receipt }]),
+			(error: ExtensionClaimsError) => error.code === "unknown_receipt",
+		);
 
 		const log = readClaims(realpathSync(repo));
 		const claim = log.records.find((record) => record.id === recorded.sane);
@@ -190,6 +195,19 @@ describe("extension claims service", () => {
 
 		const read = await claims.read({ types: ["hypothesis-test"], limit: 5 });
 		assert.equal(read.length, 1);
+		// Non-finite limits fall back to the bounded default instead of slicing from 0.
+		const bounded = await claims.read({ types: ["hypothesis-test"], limit: Number.NaN });
+		assert.equal(bounded.length, 1);
+		// A read-only session refuses ledger writes while allowing reads.
+		const roClaims = createExtensionClaimsService({
+			extensionId: "research",
+			workspace: repo,
+			sessionId: null,
+			receipts,
+			readOnly: () => true,
+		});
+		await assert.rejects(roClaims.begin("run-ro", ["sane"]), (error: ExtensionClaimsError) => error.code === "refused");
+		assert.equal((await roClaims.read({ types: ["hypothesis-test"], limit: 5 })).length, 1);
 	});
 
 	it("refuses an outcome whose receipt it never issued or that names another check", async (t) => {

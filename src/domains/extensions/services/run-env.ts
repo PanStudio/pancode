@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The environment an arena contender inherits, by allowlist.
+ * The environment a headless PanCode run inherits, by allowlist.
  *
- * A contender is the operator's own `pancode run`, so it needs the homes
- * and the credentials its target reads, but nothing else the operator's shell
- * holds: another target's key, a cloud login, an agent socket or a terminal
+ * A headless child (`pancode run` or `verifiers dry-run`) needs the homes and
+ * credentials its target reads, but nothing else the operator's shell holds:
+ * another target's key, a cloud login, an agent socket or a terminal
  * multiplexer's pane identity would otherwise reach a model run in yolo or in
  * a worktree it may write freely. Passed on top of the safe-exec allowlist
  * (PATH, HOME, USER, LANG, TMPDIR, the XDG base dirs and the Windows system
  * variables): PanCode's own `PANCODE_*`, locale, terminal, proxy and CA
- * variables, the operator's `safety.sandboxPassEnv`, and for the contender's
- * target only its declared key variable, its runtime's default, the engine's
- * known key names for its provider and the runtime's pass list below.
+ * variables, the operator's `safety.sandboxPassEnv`, and for the run's target
+ * only its declared key variable, its runtime's default, the engine's known
+ * key names for its provider and the runtime's pass list below.
  */
 
 import { existsSync } from "node:fs";

@@ -29,6 +29,7 @@ export interface ExtensionClaimsServiceDeps {
 	workspace: string;
 	sessionId: string | null;
 	receipts: ExtensionCheckReceipts;
+	readOnly?: () => boolean;
 	now?: () => Date;
 }
 
@@ -48,7 +49,7 @@ export interface ExtensionClaimsService {
 
 export class ExtensionClaimsError extends Error {
 	constructor(
-		readonly code: "invalid" | "unknown_receipt",
+		readonly code: "invalid" | "refused" | "unknown_receipt",
 		message: string,
 	) {
 		super(message);
@@ -84,6 +85,11 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 	const now = deps.now ?? (() => new Date());
 	const project = (): string => claimsProjectRoot(deps.workspace);
 	const open = new Map<string, Map<string, string[]>>();
+	const consumed = new Set<string>();
+	const assertWritable = (): void => {
+		if (deps.readOnly?.() === true)
+			throw new ExtensionClaimsError("refused", "claims ledger writes are refused in a read-only session");
+	};
 	const identity = (run: string): CheckRunIdentity => ({
 		channel: "verify",
 		sessionId: deps.sessionId,
@@ -92,6 +98,7 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 
 	return {
 		async hypotheses(slateName, slate) {
+			assertWritable();
 			const key = name("slate name", slateName);
 			if (typeof slate !== "string" || Buffer.byteLength(slate) > MAX_SLATE_BYTES)
 				throw new ExtensionClaimsError("invalid", "a slate is text of at most 256 KiB");
@@ -113,6 +120,7 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 		},
 
 		async begin(run, names) {
+			assertWritable();
 			const key = name("run", run);
 			const bindings = await appendCheckStarts(project(), identity(key), checks(names), now().toISOString());
 			open.set(key, bindings);
@@ -121,10 +129,12 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 		},
 
 		async finish(run, outcomes, options = {}) {
+			assertWritable();
 			const key = name("run", run);
 			if (!Array.isArray(outcomes) || outcomes.length > MAX_CHECKS)
 				throw new ExtensionClaimsError("invalid", `outcomes must be at most ${MAX_CHECKS}`);
 			const root = project();
+			const trustedWorkspace = claimsCaptureCheckout(deps.workspace) !== null;
 			const at = now().toISOString();
 			const source: Extract<ClaimSource, { channel: "verify" }> = {
 				channel: "verify",
@@ -132,23 +142,31 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 				toolCallId: `extension:${deps.extensionId}:${key}`,
 				requestedBy: "harness",
 			};
+			const seenReceipts = new Set<string>();
 			const judged: Array<{ check: string; execution: string; claim: ClaimRecord | null }> = [];
 			for (const outcome of outcomes) {
-				const receipt = deps.receipts.get(String(outcome?.receipt));
+				const receiptId = String(outcome?.receipt);
+				const receipt = deps.receipts.get(receiptId);
 				if (receipt === undefined || receipt.check !== outcome.check)
 					throw new ExtensionClaimsError(
 						"unknown_receipt",
 						`no result of check ${String(outcome?.check)} under that receipt`,
 					);
+				if (consumed.has(receiptId) || seenReceipts.has(receiptId))
+					throw new ExtensionClaimsError("unknown_receipt", `receipt for check ${outcome.check} has already been used`);
+				seenReceipts.add(receiptId);
 				const checkout = claimsCaptureCheckout(receipt.checkout);
 				const linked = checkout?.linked && checkout.project === root ? checkout.checkout : null;
-				const claim = claimFromVerifyResult({
-					details: receipt.result.details,
-					project: root,
-					...(linked !== null ? { checkout: linked } : {}),
-					at,
-					source,
-				});
+				const claim =
+					trustedWorkspace && checkout !== null && checkout.project === root
+						? claimFromVerifyResult({
+								details: receipt.result.details,
+								project: root,
+								...(linked !== null ? { checkout: linked } : {}),
+								at,
+								source,
+							})
+						: null;
 				const judgement = (receipt.result.details as { judgement?: { execution?: unknown } } | undefined)?.judgement;
 				judged.push({
 					check: outcome.check,
@@ -161,9 +179,10 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 					claim,
 				});
 			}
+			for (const receiptId of seenReceipts) consumed.add(receiptId);
 			const claims = judged.flatMap((entry) => (entry.claim !== null ? [entry.claim] : []));
 			// A ledger keyed on a forged worktree pointer records no claims, as main-thread capture does not.
-			if (claims.length > 0 && claimsCaptureCheckout(root) !== null) await recordClaims(claims, new Date(at));
+			if (claims.length > 0 && trustedWorkspace) await recordClaims(claims, new Date(at));
 			const bindings = open.get(key) ?? new Map<string, string[]>();
 			open.delete(key);
 			const without = new Set(options.withoutClaim ?? []);
@@ -187,7 +206,11 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 
 		async read(options = {}) {
 			const types = new Set(options.types ?? ["claim", "hypothesis", "hypothesis-test"]);
-			const limit = Math.min(MAX_READ, Math.max(1, Math.trunc(options.limit ?? DEFAULT_READ)));
+			const rawLimit = options.limit;
+			const limit = Math.min(
+				MAX_READ,
+				Math.max(1, Math.trunc(typeof rawLimit === "number" && Number.isFinite(rawLimit) ? rawLimit : DEFAULT_READ)),
+			);
 			const log = readClaims(project());
 			const records: Array<Readonly<Record<string, unknown>> & { at?: unknown }> = [
 				...(types.has("claim") ? log.records : []),

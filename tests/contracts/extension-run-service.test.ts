@@ -43,7 +43,7 @@ function result(partial: Partial<SafeCommandResult>): SafeCommandResult {
 	};
 }
 
-function harness(ceilings: Partial<ExtensionRunCeilings> = {}, yolo: string | null = null) {
+function harness(ceilings: Partial<ExtensionRunCeilings> = {}, yolo: string | null = null, readOnly = false) {
 	const tempRoot = mkdtempSync(join(tmpdir(), "run-service-"));
 	const calls: Call[] = [];
 	const service = createExtensionRunService({
@@ -52,6 +52,7 @@ function harness(ceilings: Partial<ExtensionRunCeilings> = {}, yolo: string | nu
 		sourceEnv: { PATH: "/bin", SECRET_TOKEN: "x" },
 		envPolicy: { targets: [], passEnv: [] },
 		yoloRefusal: () => yolo,
+		...(readOnly ? { readOnly: () => true } : {}),
 		resolvePlace: (place) =>
 			place === "workspace" ? { cwd: "/w", workspaceRoot: "/w" } : { cwd: `/t/${place.worktree}`, workspaceRoot: "/t" },
 		tempRoot,
@@ -144,8 +145,25 @@ describe("extension run service", () => {
 		const h = harness();
 		const scope = createExtensionRequestScope();
 		const { id } = await h.service.start({ ...base, prompt: "hang" }, scope);
+		const waiting = h.service.frames(id, { cursor: Number.NaN, limit: Number.NaN, waitMs: 30_000 }, scope);
 		await scope.end();
+		const page = await waiting;
+		assert.equal(page.next, 0);
+		assert.equal(page.dropped, 0);
 		assert.equal((await h.service.wait(id)).outcome, "canceled");
+		h.cleanup();
+	});
+
+	it("refuses writable or yolo runs in a read-only session while allowing read-only runs", async () => {
+		const h = harness({ autonomy: ["default", "yolo"] }, null, true);
+		await assert.rejects(h.service.start(base), (error: ExtensionRunError) => error.code === "refused");
+		await assert.rejects(
+			h.service.start({ ...base, readOnly: true, autonomy: "yolo" }),
+			(error: ExtensionRunError) => error.code === "refused",
+		);
+		const { id } = await h.service.start({ ...base, readOnly: true });
+		assert.equal((await h.service.wait(id)).outcome, "succeeded");
+		assert.ok((h.calls[0] as Call).args.includes("--read-only"));
 		h.cleanup();
 	});
 

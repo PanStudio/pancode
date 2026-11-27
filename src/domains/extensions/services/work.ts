@@ -23,6 +23,7 @@ export interface ExtensionWorkBinding {
 	workspace: string;
 	sessionId: string | null;
 	declaration: ExtensionRuntimeDeclarationV2;
+	readOnly?: () => boolean;
 }
 
 export interface ExtensionWorkOptions {
@@ -71,6 +72,7 @@ export function createExtensionWork(
 		? createExtensionWorktreeService({
 				extensionId: binding.extensionId,
 				workspace: binding.workspace,
+				...(binding.readOnly ? { readOnly: binding.readOnly } : {}),
 			})
 		: undefined;
 	const resolvePlace = async (place: ExtensionWorkPlace): Promise<{ cwd: string; root: string }> => {
@@ -95,6 +97,7 @@ export function createExtensionWork(
 					return { cwd, workspaceRoot: root };
 				},
 				tempRoot: os.tmpdir(),
+				...(binding.readOnly ? { readOnly: binding.readOnly } : {}),
 			})
 		: undefined;
 	const receipts = createExtensionCheckReceipts(256);
@@ -118,6 +121,7 @@ export function createExtensionWork(
 				workspace: binding.workspace,
 				sessionId: binding.sessionId,
 				receipts,
+				...(binding.readOnly ? { readOnly: binding.readOnly } : {}),
 			})
 		: undefined;
 	return {
