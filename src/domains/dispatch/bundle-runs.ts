@@ -14,12 +14,13 @@ import type { DispatchRequest, DispatchSnapshot } from "./contract.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { agentRoleFactsResolver, agentRunRoles } from "./execution-role.js";
 import { classifyHeartbeat, heartbeatMonotonicAt } from "./heartbeat.js";
-import type { ResolvedTerminalReason } from "./outcome.js";
+import { settledRowPatch } from "./orphan-recovery.js";
+import { assignmentStatusForOutcome, type ResolvedTerminalReason, runStatusForOutcome } from "./outcome.js";
 import { type DispatchPathScope, runLedgerProjection } from "./path-scope.js";
 import { unobservedRunUsageFacts } from "./run-call-usage.js";
 import { defaultRunEventJournal } from "./run-event-journal.js";
 import { attachRunEventJournalBridge, type RunEventJournalBridge } from "./run-event-journal-bridge.js";
-import { type FinalizingRun, publishedLineage } from "./run-finish.js";
+import { emitSettledDispatchEvent, type FinalizingRun, publishedLineage } from "./run-finish.js";
 import { settleUnfinishedRun } from "./run-settlement.js";
 import { type RunTelemetryJournal, runTelemetryJournal } from "./run-telemetry.js";
 import { type Ledger, openLedger } from "./state.js";
@@ -128,14 +129,19 @@ export function createRunTable(rt: DispatchRuntime) {
 	}
 
 	/**
-	 * Finalization failed before an immutable receipt existed, so the normal
-	 * settlement path (completeAssignmentAttempt) never ran. Mark the durable
-	 * assignment failed against the attempt's run id so a later wait/collect can
-	 * never observe a stuck "running" record. The in-memory terminal promise is
-	 * rejected by the attached finalPromise.catch on the dispatch/retry handle.
+	 * Finalization failed, so the normal settlement path (completeAssignmentAttempt)
+	 * never ran. Settle the durable assignment against the attempt's run id, failed
+	 * unless the run's settlement already landed with another outcome, so a later
+	 * wait/collect can never observe a stuck "running" record. The in-memory
+	 * terminal promise is rejected by the attached finalPromise.catch on the
+	 * dispatch/retry handle.
 	 */
-	function settleAssignmentDurablyWithoutReceipt(rootRunId: string, attemptRunId: string): void {
-		persistAssignment(settleStoredAssignment(rootRunId, attemptRunId, "failed"), `${rootRunId}:finalize-error`);
+	function settleAssignmentDurablyWithoutReceipt(
+		rootRunId: string,
+		attemptRunId: string,
+		status: "succeeded" | "failed" | "canceled",
+	): void {
+		persistAssignment(settleStoredAssignment(rootRunId, attemptRunId, status), `${rootRunId}:finalize-error`);
 		rt.capacity.capacityAdmission.releaseAssignment(rootRunId);
 	}
 
@@ -173,6 +179,8 @@ export function createRunTable(rt: DispatchRuntime) {
 	/**
 	 * Contains a finalization that threw (a worker promise rejection, a ledger or persist failure). Without it the
 	 * run row stays "running" forever, no receipt or terminal event exists, and the active entry leaks until restart.
+	 * A run whose run.settled already landed keeps that outcome: the row, the assignment and the live event follow
+	 * the record, so the journal and every reader agree on how the run ended.
 	 */
 	async function failFinalization(
 		run: FinalizingRun,
@@ -187,6 +195,34 @@ export function createRunTable(rt: DispatchRuntime) {
 	): Promise<void> {
 		const { ledger: ledgerRef, envelope } = state;
 		reportDispatchDiagnostic(`finalize run ${envelope.id}`, error);
+		const landed = state.runJournal?.landed()?.facts;
+		if (landed !== undefined) {
+			state.timing.endedAt = landed.endedAt;
+			try {
+				ledgerRef.update(envelope.id, settledRowPatch(landed));
+				await ledgerRef.persist();
+			} catch (ledgerError) {
+				reportDispatchDiagnostic(`persist settled row for run ${envelope.id}`, ledgerError);
+			}
+			active.delete(envelope.id);
+			settleAssignmentDurablyWithoutReceipt(
+				run.lineage.rootRunId,
+				envelope.id,
+				assignmentStatusForOutcome(landed.outcome),
+			);
+			const exitCode = landed.exitCode ?? landed.processExitCode ?? 1;
+			recordTargetOutcome(
+				envelope.id,
+				run.targetId,
+				run.runtimeId,
+				run.wireModelId,
+				runStatusForOutcome(landed.outcome),
+				exitCode,
+				"internal",
+			);
+			emitSettledDispatchEvent({ context }, run, landed);
+			return;
+		}
 		// The journal still ends with how the worker loop ended, so no reader waits on this run (#425, #434).
 		const endedAt = new Date().toISOString();
 		state.timing.endedAt = endedAt;
@@ -215,7 +251,7 @@ export function createRunTable(rt: DispatchRuntime) {
 			reportDispatchDiagnostic(`persist failed row for run ${envelope.id}`, ledgerError);
 		}
 		active.delete(envelope.id);
-		settleAssignmentDurablyWithoutReceipt(run.lineage.rootRunId, envelope.id);
+		settleAssignmentDurablyWithoutReceipt(run.lineage.rootRunId, envelope.id, "failed");
 		recordTargetOutcome(envelope.id, run.targetId, run.runtimeId, run.wireModelId, "failed", 1, "internal");
 		context.bus.emit("run.failed", {
 			runId: envelope.id,

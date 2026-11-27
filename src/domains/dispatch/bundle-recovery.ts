@@ -3,12 +3,18 @@
 
 import { existsSync } from "node:fs";
 import { pancodeStateDir } from "../../core/xdg.js";
-import { telemetryBundlePath, telemetryJournalPath, telemetryRunDirectory } from "../telemetry/index.js";
+import {
+	readSettledRun,
+	telemetryBundlePath,
+	telemetryJournalPath,
+	telemetryRunDirectory,
+} from "../telemetry/index.js";
 import { reconcileOrphanAssignments } from "./assignment-reconcile.js";
 import { assignmentProcessOwnerAlive, listStoredAssignments, settleStoredAssignment } from "./assignment-store.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { recoverAbandonedRuns } from "./orphan-recovery.js";
+import { assignmentStatusForOutcome } from "./outcome.js";
 import { sealSettledRunJournal, settleOrphanedRunJournal } from "./run-telemetry.js";
 import type { Ledger } from "./state.js";
 
@@ -45,10 +51,14 @@ export function createStartupRecovery(rt: DispatchRuntime) {
 					return existsSync(telemetryJournalPath(directory)) && !existsSync(telemetryBundlePath(directory));
 				},
 			});
-			for (const { runId, settlement } of recovery.unsettled)
-				void rt.runs
-					.trackDurableWrite(settleOrphanedRunJournal(telemetryRunDirectory(pancodeStateDir(), runId), settlement))
-					.catch((error) => reportDispatchDiagnostic(`settle the journal of run ${runId}`, error));
+			// Each abandoned run's record lands before its terminal row does, as a live run's does.
+			await Promise.all(
+				recovery.unsettled.map(({ runId, settlement }) =>
+					rt.runs
+						.trackDurableWrite(settleOrphanedRunJournal(telemetryRunDirectory(pancodeStateDir(), runId), settlement))
+						.catch((error) => reportDispatchDiagnostic(`settle the journal of run ${runId}`, error)),
+				),
+			);
 			// A terminal row persisted before its journal's seal landed gets that seal now (#434).
 			for (const runId of recovery.unsealed)
 				void rt.runs
@@ -73,6 +83,15 @@ export function createStartupRecovery(rt: DispatchRuntime) {
 				listRunning: () => listStoredAssignments().filter((record) => record.status === "running"),
 				ownerAlive: assignmentProcessOwnerAlive,
 				lookupAttempt: (runId) => {
+					// The run's record decides, as it does for a live run's assignment; the row only when none landed.
+					const settled = readSettledRun(pancodeStateDir(), runId)?.settled;
+					if (settled !== undefined)
+						return {
+							runId,
+							terminal: true,
+							succeeded: settled.outcome === "succeeded",
+							terminalStatus: assignmentStatusForOutcome(settled.outcome),
+						};
 					const envelope = runLedger.get(runId) ?? null;
 					if (!envelope) return null;
 					return {

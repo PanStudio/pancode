@@ -13,6 +13,7 @@ import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import type { EffectiveSettings } from "./envelope-stage.js";
 import { decideRetry, type FailureClass, failureClassWords } from "./failure-classification.js";
 import { OBLIGATION_RETRY_LIMIT, type Obligation } from "./obligation.js";
+import { assignmentStatusForOutcome } from "./outcome.js";
 import * as recovery from "./recovery-candidates.js";
 import { getDispatchReservation } from "./reservation-store.js";
 import { planObligationRetry, planOverflowRetry } from "./retry-route-plan.js";
@@ -331,12 +332,7 @@ export function createRetryMachine(rt: DispatchRuntime) {
 		);
 		if (retry.scheduled) return true;
 		const currentStatus = assignments.get(assignment.id)?.status;
-		const terminalStatus =
-			currentStatus === "canceled" || outcome === "canceled"
-				? "canceled"
-				: outcome === "succeeded"
-					? "succeeded"
-					: "failed";
+		const terminalStatus = currentStatus === "canceled" ? "canceled" : assignmentStatusForOutcome(outcome);
 		rt.runs.settleAssignmentDurably(assignment.id, receipt, terminalStatus, retry.settlementDetail);
 		return false;
 	}

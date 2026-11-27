@@ -23,6 +23,8 @@ export interface ReconcileAttemptView {
 	terminal: boolean;
 	/** The attempt verified as a successful terminal outcome. */
 	succeeded: boolean;
+	/** The assignment status the attempt's run.settled states; absent, a terminal attempt settles the assignment failed. */
+	terminalStatus?: Exclude<AssignmentStatus, "running">;
 }
 
 export interface AssignmentReconcileDeps {
@@ -30,7 +32,7 @@ export interface AssignmentReconcileDeps {
 	listRunning: () => ReadonlyArray<DurableAssignmentRecord>;
 	/** Decide liveness from the record's durable pid and process birth token. */
 	ownerAlive: (record: DurableAssignmentRecord) => boolean;
-	/** Resolve one attempt's terminal view from the ledger, or null if pruned. */
+	/** Resolve one attempt's terminal view from its run.settled, else the ledger, or null if pruned. */
 	lookupAttempt: (runId: string) => ReconcileAttemptView | null;
 	/** Persist the reconciled terminal status, as the record's verdict owner when it has one. */
 	settle: (
@@ -55,7 +57,8 @@ export interface AssignmentReconcileSummary {
  *      opener died before reaching a verdict, and a green attempt under it is
  *      one step of a run, never the run's answer;
  *   1. a recovered succeeded terminal attempt wins (`succeeded`);
- *   2. otherwise the last terminal attempt marks the assignment `failed`;
+ *   2. otherwise the last terminal attempt settles the assignment with the
+ *      status its run.settled states (`canceled` or `failed`), else `failed`;
  *   3. otherwise no attempt is recoverable and the assignment is failed
  *      (abandoned) against its last recorded attempt id, or its own id.
  */
@@ -83,7 +86,7 @@ export async function reconcileOrphanAssignments(deps: AssignmentReconcileDeps):
 		}
 		const lastTerminal = [...views].reverse().find((view) => view.terminal);
 		if (lastTerminal) {
-			await deps.settle(record.assignmentId, lastTerminal.runId, "failed");
+			await deps.settle(record.assignmentId, lastTerminal.runId, lastTerminal.terminalStatus ?? "failed");
 			summary.recovered += 1;
 			continue;
 		}
