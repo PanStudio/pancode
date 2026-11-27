@@ -284,7 +284,8 @@ function freshServerState(declaration: GatewayMcpServer): ServerState {
 /**
  * The swap `/reload mcp` makes: the session's declared servers against a fresh resolve. A removed or changed
  * server closes and its tools unregister; an added or changed one enters unlaunched, with the trust its
- * declaration holds now. Nothing is swapped while a server it would close has a call in flight.
+ * declaration holds now. Every declared server left untrusted is named, changed or not. Nothing is swapped while
+ * a server it would close has a call in flight.
  */
 async function swapMcpDeclarations(
 	states: Map<string, ServerState>,
@@ -330,10 +331,10 @@ async function swapMcpDeclarations(
 		for (const name of state.registered) host.unregister(name);
 		states.delete(state.declaration.id);
 	}
-	for (const declaration of entering) {
-		const admitted = host.admit(declaration);
-		states.set(declaration.id, freshServerState(admitted));
-		if (admitted.trust.status !== "trusted") reload.needsTrust.push(declaration.id);
+	for (const declaration of entering) states.set(declaration.id, freshServerState(host.admit(declaration)));
+	for (const state of states.values()) {
+		if (state.declaration.scope !== "client" && state.declaration.trust.status !== "trusted")
+			reload.needsTrust.push(state.declaration.id);
 	}
 	for (const ids of Object.values(reload)) ids.sort();
 	return reload;

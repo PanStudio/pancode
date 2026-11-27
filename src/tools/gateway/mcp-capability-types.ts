@@ -419,7 +419,7 @@ export interface McpDeclarationReload {
 	removed: string[];
 	changed: string[];
 	unchanged: string[];
-	/** Added or changed servers whose declaration is not trusted as it stands now. */
+	/** Declared servers, changed or not, whose declaration is not trusted as it stands now. */
 	needsTrust: string[];
 	diagnostics: string[];
 }
