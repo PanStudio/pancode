@@ -20,12 +20,28 @@ import { readPancodeVersion } from "../../../core/package-root.js";
 import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { clampTimerDelayMs, sleep } from "../../../core/timers.js";
 import { isRecord } from "../../../core/type-guards.js";
+import {
+	MCP_EVENT_LIST_CAP,
+	MCP_EVENT_LIST_PAGE_CAP,
+	type McpEventErrorObject,
+	type McpEventListing,
+	type McpEventOccurrence,
+	type McpEventPollResult,
+	type McpEventRequest,
+	mcpEventErrorObject,
+	mcpEventsOffered,
+	parseEventCursor,
+	parseEventDescriptor,
+	parseEventOccurrence,
+	parseEventPollResult,
+} from "./events.js";
 import { mcpParamHeaders } from "./http-headers.js";
 import { createMcpHttpTransport, type McpHttpServerSpec } from "./http-transport.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
 import {
 	DEFAULT_MAX_LINE_BYTES,
 	JSON_RPC_METHOD_NOT_FOUND,
+	MCP_EVENTS_EXTENSION,
 	MCP_HEADER_MISMATCH,
 	MCP_META_CLIENT_CAPABILITIES,
 	MCP_META_CLIENT_INFO,
@@ -199,6 +215,8 @@ export interface McpSubscriptionFilter {
 	promptsListChanged?: true;
 	resourcesListChanged?: true;
 	resourceSubscriptions?: string[];
+	/** MCP Events: `notifications/events/list_changed`, asked for only of a server whose events settings say listChanged. */
+	eventsListChanged?: true;
 }
 
 export interface McpSubscription {
@@ -208,6 +226,42 @@ export interface McpSubscription {
 	readonly acknowledged: Promise<Record<string, unknown>>;
 	/** Settles when the stream ends: the server answered the listen request, the client closed, or cancel(). */
 	readonly ended: Promise<void>;
+	/** Stop the stream with `notifications/cancelled`. */
+	cancel(): void;
+}
+
+/** What one `events/stream` subscription reports while it is open (MCP Events, push delivery on stdio). */
+export interface McpEventStreamHandlers {
+	/** `notifications/events/active`: first, and again mid-stream when a gap opens (`truncated`). */
+	onActive(cursor: string | null, truncated: boolean): void;
+	onEvent(occurrence: McpEventOccurrence): void;
+	/** `notifications/events/heartbeat`: the cursor advances through quiet periods. */
+	onHeartbeat(cursor: string | null): void;
+	/** `notifications/events/error`: one event failed; the stream stays open. */
+	onError(error: McpEventErrorObject): void;
+}
+
+export interface McpEventStreamOptions {
+	/** Requested heartbeat interval the server may honour. */
+	heartbeatMs?: number;
+	/**
+	 * End the stream with a timeout when nothing arrives for this long. Off by
+	 * default: on stdio a dead stream is a dead server, which EOF reports.
+	 * A transport whose stream can stall silently (Streamable HTTP) sets it to
+	 * three heartbeat intervals.
+	 */
+	silenceMs?: number;
+}
+
+export interface McpEventStream {
+	/** The stream request's id, which tags every notification of the stream; null until it is sent. */
+	readonly id: number | null;
+	/**
+	 * Settles when the stream ends: null when the server completed it or cancel()
+	 * ended it, the error otherwise (an error answer, a terminated notification,
+	 * a server cancel, a closed client, a protocol violation, silence).
+	 */
+	readonly ended: Promise<McpError | null>;
 	/** Stop the stream with `notifications/cancelled`. */
 	cancel(): void;
 }
@@ -237,6 +291,21 @@ export interface McpClient {
 	subscribe(filter: McpSubscriptionFilter, handler: (method: string, params: unknown) => void): McpSubscription;
 	/** Bounded tail of everything the server wrote to stderr. */
 	stderrTail(): string;
+	/** The server's MCP Events settings, or null when it is legacy or does not advertise the extension. */
+	eventsOffered(): { listChanged: boolean } | null;
+	/** `events/list`, every page up to MCP_EVENT_LIST_CAP; refused toward a server that does not offer events. */
+	listEvents(signal?: AbortSignal): Promise<McpEventListing>;
+	/** One `events/poll`; a gap is `truncated` in the result, never an error. */
+	pollEvents(request: McpEventRequest & { maxEvents?: number }, signal?: AbortSignal): Promise<McpEventPollResult>;
+	/** Open one `events/stream` (push); it has no request timeout and lives until it ends or cancel(). */
+	streamEvents(
+		request: McpEventRequest,
+		handlers: McpEventStreamHandlers,
+		options?: McpEventStreamOptions,
+	): McpEventStream;
+	/** Set by `notifications/events/list_changed` on the listen stream; cleared by acknowledgeEventsChanged. */
+	eventsChanged(): boolean;
+	acknowledgeEventsChanged(): void;
 	/**
 	 * The `io.modelcontextprotocol/skills` requests toward this server, or null
 	 * before discovery and when its capabilities do not enable the extension.
@@ -256,6 +325,14 @@ interface ActiveSubscription {
 	acknowledged: boolean;
 	acknowledge(honored: Record<string, unknown>): void;
 	handler: (method: string, params: unknown) => void;
+}
+
+interface ActiveEventStream {
+	handlers: McpEventStreamHandlers;
+	/** Any notification of the stream re-arms its silence watchdog. */
+	touch(): void;
+	/** End the stream from this side with a cause; `cancel` also sends notifications/cancelled. */
+	end(error: McpError, cancel: boolean): void;
 }
 
 interface ProgressRoute {
@@ -505,6 +582,7 @@ export function createMcpProtocolClient(
 	let nextProgressToken = 1;
 	const pending = new Map<number, PendingRequest>();
 	const subscriptions = new Map<number, ActiveSubscription>();
+	const eventStreams = new Map<number, ActiveEventStream>();
 	const progressRoutes = new Map<string, ProgressRoute>();
 	const notificationHandlers = new Map<string, Set<(params: unknown) => void>>();
 	/** The outputSchema of each tool in the latest listing, which its structuredContent is checked against. */
@@ -513,6 +591,7 @@ export function createMcpProtocolClient(
 	let paramHeaders = new Map<string, McpParamHeader[]>();
 	let notifications = 0;
 	let toolsChangedFlag = false;
+	let eventsChangedFlag = false;
 
 	/** The error every later request gets once the client cannot serve it. */
 	const closedError = (): McpError => failure ?? new McpError("closed", `mcp server ${id} is closed`);
@@ -612,6 +691,59 @@ export function createMcpProtocolClient(
 		}
 	};
 
+	/** One notification of an `events/stream` subscription (MCP Events, push delivery). */
+	const routeEventStream = (streamId: number, method: string, params: unknown): void => {
+		const stream = eventStreams.get(streamId);
+		if (stream === undefined) return;
+		stream.touch();
+		const body = isRecord(params) ? params : {};
+		try {
+			switch (method) {
+				case "notifications/events/active": {
+					const cursor = parseEventCursor(body.cursor, "notifications/events/active");
+					if (cursor instanceof McpError) {
+						stream.end(cursor, true);
+						return;
+					}
+					stream.handlers.onActive(cursor, body.truncated === true);
+					return;
+				}
+				case "notifications/events/event": {
+					const occurrence = parseEventOccurrence(body, "notifications/events/event");
+					if (occurrence instanceof McpError) {
+						stream.end(occurrence, true);
+						return;
+					}
+					stream.handlers.onEvent(occurrence);
+					return;
+				}
+				case "notifications/events/heartbeat": {
+					const cursor = parseEventCursor(body.cursor, "notifications/events/heartbeat");
+					if (cursor instanceof McpError) {
+						stream.end(cursor, true);
+						return;
+					}
+					stream.handlers.onHeartbeat(cursor);
+					return;
+				}
+				case "notifications/events/error": {
+					const error = mcpEventErrorObject(body.error);
+					if (error !== null) stream.handlers.onError(error);
+					return;
+				}
+				case "notifications/events/terminated": {
+					const error = mcpEventErrorObject(body.error);
+					const answer: JsonRpcErrorObject = error ?? { code: 0, message: "terminated without an error object" };
+					const cause = serverAnswerError("events/stream", answer);
+					stream.end(new McpError("server", `terminated: ${cause.message}`, answer), false);
+					return;
+				}
+			}
+		} catch {
+			// A subscriber's failure never reaches the protocol.
+		}
+	};
+
 	const dispatch = (frame: JsonRpcMessage): void => {
 		if (frame.kind === "response") {
 			const responseId = frame.message.id;
@@ -666,6 +798,16 @@ export function createMcpProtocolClient(
 					: meta !== null && typeof meta[MCP_META_SUBSCRIPTION_ID] === "number"
 						? meta[MCP_META_SUBSCRIPTION_ID]
 						: null;
+			if (targetId !== null && eventStreams.has(targetId)) {
+				const reason =
+					isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
+						? `: ${serverText(params.reason)}`
+						: "";
+				eventStreams
+					.get(targetId)
+					?.end(new McpError("server", `mcp server ${id} cancelled event stream ${targetId}${reason}`), false);
+				return;
+			}
 			if (targetId !== null && subscriptions.has(targetId)) {
 				const reason =
 					isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
@@ -679,7 +821,12 @@ export function createMcpProtocolClient(
 			}
 		}
 		if (meta !== null && Object.hasOwn(meta, MCP_META_SUBSCRIPTION_ID)) {
-			routeSubscription(meta[MCP_META_SUBSCRIPTION_ID], method, params);
+			const tagged = meta[MCP_META_SUBSCRIPTION_ID];
+			if (typeof tagged === "number" && eventStreams.has(tagged)) {
+				routeEventStream(tagged, method, params);
+				return;
+			}
+			routeSubscription(tagged, method, params);
 			return;
 		}
 		if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
@@ -702,14 +849,33 @@ export function createMcpProtocolClient(
 	 * is added on the legacy path, where initialize declared the skills
 	 * extension once.
 	 */
+	const tasksRevisionUnknown = (): boolean => {
+		const extensions = isRecord(info?.capabilities?.extensions) ? info.capabilities.extensions : null;
+		if (extensions === null || !Object.hasOwn(extensions, MCP_TASKS_EXTENSION)) return false;
+		const declared = extensions[MCP_TASKS_EXTENSION];
+		return !isRecord(declared) || declared.revision !== undefined;
+	};
+
 	const withEnvelope = (method: string, params: unknown): unknown => {
 		if (era !== "modern" && method !== "server/discover") return params;
 		const base = isRecord(params) ? params : {};
 		const meta = isRecord(base._meta) ? base._meta : {};
 		const extensions: Record<string, Record<string, never>> = {};
-		if (method === "tools/call" || method.startsWith("tasks/")) extensions[MCP_TASKS_EXTENSION] = {};
+		if ((method === "tools/call" || method.startsWith("tasks/")) && !tasksRevisionUnknown()) {
+			extensions[MCP_TASKS_EXTENSION] = {};
+		}
 		if ((method.startsWith("skills/") || method.startsWith("resources/")) && skillsSettings() !== null) {
 			extensions[MCP_SKILLS_EXTENSION] = {};
+		}
+		// MCP Events is declared on events/* and on the listen stream that opts into its list changes.
+		if (
+			eventsOffered() !== null &&
+			(method.startsWith("events/") ||
+				(method === "subscriptions/listen" &&
+					isRecord(base.notifications) &&
+					base.notifications.eventsListChanged === true))
+		) {
+			extensions[MCP_EVENTS_EXTENSION] = {};
 		}
 		return {
 			...base,
@@ -922,9 +1088,13 @@ export function createMcpProtocolClient(
 	 * listens again.
 	 */
 	const listenForToolChanges = (capabilities: Record<string, unknown>): void => {
-		if (!isRecord(capabilities.tools) || capabilities.tools.listChanged !== true) return;
-		const stream = subscribe({ toolsListChanged: true }, (method) => {
+		const filter: McpSubscriptionFilter = {};
+		if (isRecord(capabilities.tools) && capabilities.tools.listChanged === true) filter.toolsListChanged = true;
+		if (mcpEventsOffered(capabilities)?.listChanged === true) filter.eventsListChanged = true;
+		if (Object.keys(filter).length === 0) return;
+		const stream = subscribe(filter, (method) => {
 			if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+			if (method === "notifications/events/list_changed") eventsChangedFlag = true;
 		});
 		stream.acknowledged.catch(() => {
 			// A server that refuses or ends the stream still serves calls; the next discovery lists again.
@@ -1448,6 +1618,152 @@ export function createMcpProtocolClient(
 		};
 	};
 
+	const eventsOffered = (): { listChanged: boolean } | null =>
+		era === "modern" && info !== null ? mcpEventsOffered(info.capabilities) : null;
+
+	/** The extension's fallback rule: no events/* request goes to a server that did not advertise it. */
+	const eventsRefusal = (method: string): McpError | null =>
+		eventsOffered() === null
+			? new McpError("protocol", `mcp server ${id} does not offer ${MCP_EVENTS_EXTENSION}; PanCode sends it no ${method}`)
+			: null;
+
+	/** A modern result PanCode reads only when complete; no events/* method defines another resultType. */
+	const completeResult = (method: string, result: unknown): Record<string, unknown> => {
+		if (!isRecord(result)) throw new McpError("protocol", `${method} result is not an object`);
+		if (result.resultType !== undefined && result.resultType !== "complete") {
+			throw new McpError(
+				"protocol",
+				`${method} returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
+			);
+		}
+		return result;
+	};
+
+	const listEvents = async (signal?: AbortSignal): Promise<McpEventListing> => {
+		await ensureReady(signal);
+		const refused = eventsRefusal("events/list");
+		if (refused !== null) throw refused;
+		const events: McpEventListing["events"] = [];
+		let cursor: string | undefined;
+		for (let pages = 1; ; pages += 1) {
+			const result = completeResult(
+				"events/list",
+				await request("events/list", cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal),
+			);
+			if (!Array.isArray(result.events)) throw new McpError("protocol", "events/list result lacks an events array");
+			for (const entry of result.events) {
+				if (events.length >= MCP_EVENT_LIST_CAP) return { events, truncated: true };
+				const descriptor = parseEventDescriptor(entry);
+				if (descriptor instanceof McpError) throw descriptor;
+				if (!events.some((known) => known.name === descriptor.name)) events.push(descriptor);
+			}
+			const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
+			if (next === undefined) return { events, truncated: false };
+			if (pages >= MCP_EVENT_LIST_PAGE_CAP) return { events, truncated: true };
+			cursor = next;
+		}
+	};
+
+	const eventParams = (req: McpEventRequest): Record<string, unknown> => ({
+		name: req.name,
+		arguments: req.arguments,
+		cursor: req.cursor,
+		// maxAgeMs bounds replay from a stored cursor; with a null cursor there is nothing to bound.
+		...(req.cursor !== null && req.maxAgeMs !== undefined ? { maxAgeMs: req.maxAgeMs } : {}),
+	});
+
+	const pollEvents = async (
+		req: McpEventRequest & { maxEvents?: number },
+		signal?: AbortSignal,
+	): Promise<McpEventPollResult> => {
+		await ensureReady(signal);
+		const refused = eventsRefusal("events/poll");
+		if (refused !== null) throw refused;
+		const params = { ...eventParams(req), ...(req.maxEvents !== undefined ? { maxEvents: req.maxEvents } : {}) };
+		const result = completeResult("events/poll", await request("events/poll", params, requestTimeoutMs, signal));
+		const parsed = parseEventPollResult(result);
+		if (parsed instanceof McpError) throw parsed;
+		return parsed;
+	};
+
+	/**
+	 * Open one push subscription. Over stdio every notification of the stream
+	 * carries the stream request's id as its subscription id. The request has
+	 * no timeout: the server answers it only when the stream ends, and cancel()
+	 * ends it from this side with `notifications/cancelled`.
+	 */
+	const streamEvents = (
+		req: McpEventRequest,
+		handlers: McpEventStreamHandlers,
+		streamOptions: McpEventStreamOptions = {},
+	): McpEventStream => {
+		let streamId: number | null = null;
+		let cancelled = false;
+		let watchdog: ReturnType<typeof setTimeout> | null = null;
+		const controller = new AbortController();
+		let endCause: McpError | null = null;
+		const silenceMs = streamOptions.silenceMs !== undefined ? clampTimerDelayMs(streamOptions.silenceMs) : 0;
+		const sendCancel = (requestId: number, reason: string): void => {
+			if (transport.endReported() !== null) return;
+			send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId, reason } });
+		};
+		const end = (error: McpError, cancel: boolean): void => {
+			if (streamId === null || !eventStreams.delete(streamId)) return;
+			if (watchdog !== null) clearTimeout(watchdog);
+			endCause = error;
+			if (cancel) sendCancel(streamId, error.message);
+			pending.get(streamId)?.reject(error);
+		};
+		const touch = (): void => {
+			if (silenceMs <= 0) return;
+			if (watchdog !== null) clearTimeout(watchdog);
+			watchdog = setTimeout(
+				() => end(new McpError("timeout", `events/stream went silent for ${silenceMs}ms`), true),
+				silenceMs,
+			);
+			watchdog.unref?.();
+		};
+		const ended = (async (): Promise<McpError | null> => {
+			await ensureReady(controller.signal);
+			const refused = eventsRefusal("events/stream");
+			if (refused !== null) throw refused;
+			const params = {
+				...eventParams(req),
+				...(streamOptions.heartbeatMs !== undefined ? { heartbeatMs: streamOptions.heartbeatMs } : {}),
+			};
+			const result = await request("events/stream", params, 0, controller.signal, (assigned) => {
+				streamId = assigned;
+				eventStreams.set(assigned, { handlers, touch, end });
+				touch();
+			});
+			completeResult("events/stream", result);
+			return null;
+		})().then(
+			(value) => value,
+			(error: unknown) => {
+				if (cancelled) return null;
+				return endCause ?? (error instanceof McpError ? error : new McpError("protocol", errorMessage(error)));
+			},
+		);
+		void ended.finally(() => {
+			if (watchdog !== null) clearTimeout(watchdog);
+			if (streamId !== null) eventStreams.delete(streamId);
+		});
+		return {
+			get id() {
+				return streamId;
+			},
+			ended,
+			cancel: () => {
+				if (cancelled) return;
+				cancelled = true;
+				if (watchdog !== null) clearTimeout(watchdog);
+				if (streamId !== null && eventStreams.delete(streamId)) sendCancel(streamId, "subscription closed by the client");
+				controller.abort();
+			},
+		};
+	};
+
 	/**
 	 * End the server: every open listen stream is cancelled, every pending
 	 * request rejected, and the transport closed, which runs (or joins) its
@@ -1459,7 +1775,7 @@ export function createMcpProtocolClient(
 			options.signal?.removeEventListener("abort", onParentAbort);
 			if (status !== "failed") status = "closed";
 			if (transport.started() && transport.endReported() === null) {
-				for (const streamId of subscriptions.keys()) {
+				for (const streamId of [...subscriptions.keys(), ...eventStreams.keys()]) {
 					send({
 						jsonrpc: "2.0",
 						method: "notifications/cancelled",
@@ -1468,6 +1784,7 @@ export function createMcpProtocolClient(
 				}
 			}
 			subscriptions.clear();
+			for (const stream of [...eventStreams.values()]) stream.end(closedError(), false);
 			rejectAllPending(closedError());
 			return await transport.close();
 		})();
@@ -1509,6 +1826,14 @@ export function createMcpProtocolClient(
 		onNotification,
 		subscribe,
 		stderrTail: () => transport.stderrTail(),
+		eventsOffered,
+		listEvents,
+		pollEvents,
+		streamEvents,
+		eventsChanged: () => eventsChangedFlag,
+		acknowledgeEventsChanged: () => {
+			eventsChangedFlag = false;
+		},
 		skills,
 	};
 }

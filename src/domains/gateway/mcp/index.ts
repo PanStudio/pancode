@@ -28,6 +28,9 @@ export {
 	type McpClient,
 	type McpClientOptions,
 	type McpContentBlock,
+	type McpEventStream,
+	type McpEventStreamHandlers,
+	type McpEventStreamOptions,
 	type McpHttpServerSpec,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
@@ -61,6 +64,22 @@ export {
 	pluginServerRevocation,
 } from "./config.js";
 export {
+	MCP_EVENT_ERRORS,
+	MCP_EVENT_MIN_POLL_MS,
+	type McpEventDelivery,
+	type McpEventDescriptor,
+	type McpEventErrorName,
+	type McpEventListing,
+	type McpEventOccurrence,
+	type McpEventPollResult,
+	type McpEventRequest,
+	mcpEventDeliveryMode,
+	mcpEventErrorName,
+	mcpEventErrorText,
+	mcpEventsOffered,
+} from "./events.js";
+export {
+	type McpCachedEvent,
 	type McpCatalogIdentity,
 	type McpServerCatalog,
 	mcpCatalogStale,
@@ -155,6 +174,7 @@ export {
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
 } from "./surface.js";
+export { outputSchemaMismatch } from "./tool-results.js";
 export {
 	type ApproveMcpSkillResult,
 	approveMcpSkill,

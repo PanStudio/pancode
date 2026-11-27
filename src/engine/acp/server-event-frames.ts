@@ -76,7 +76,11 @@ export function jobEventPayload(job: JobRecord, complete: boolean, turn: boolean
 		reason: job.reason,
 		runner: runner.kind,
 		taskPreview: safeStoredString(
-			runner.kind === "main" ? runner.prompt : runner.argv.join(" "),
+			runner.kind === "main"
+				? runner.prompt
+				: runner.kind === "mcp_event"
+					? `${runner.server} ${runner.event} ${JSON.stringify(runner.arguments)}`
+					: runner.argv.join(" "),
 			ACP_MAX_JOB_PREVIEW_BYTES,
 		).trim(),
 		intervalMs: count(job.spec.intervalMs),

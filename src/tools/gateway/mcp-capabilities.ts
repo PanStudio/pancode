@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
 import type { TSchema } from "typebox";
-import { neutralizeFraming } from "../../core/reminder-framing.js";
+import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
 import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import { mcpToolName } from "../../core/tool-names.js";
@@ -72,6 +72,7 @@ import type {
 	McpCapabilitySourceOptions,
 	McpCatalogEntry,
 	McpCloseReport,
+	McpServerEventListing,
 	McpServerListing,
 	McpServerSurfaceListing,
 	McpTeardownReport,
@@ -448,6 +449,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		writeMcpServerCatalog(catalogIdentity(state.declaration), {
 			...listing,
 			instructions: state.client?.serverInfo()?.instructions ?? null,
+			...(state.events !== undefined ? { events: state.events.events } : {}),
 		});
 		// Drop the memo of whatever the file said before this listing replaced it.
 		state.catalog = undefined;
@@ -732,6 +734,28 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		return spec;
 	};
 
+	/**
+	 * List the event types of a server that offers MCP Events, before its
+	 * catalog is published, so the recording carries them. A failed events/list
+	 * leaves the tools serving and names the failure in discovery.
+	 */
+	const listEventsOf = async (state: ServerState, client: McpClient, signal?: AbortSignal): Promise<void> => {
+		// A change notified during events/list stays dirty for the next discovery.
+		client.acknowledgeEventsChanged();
+		if (client.eventsOffered() === null) {
+			delete state.events;
+			delete state.eventsFailure;
+			return;
+		}
+		try {
+			state.events = await client.listEvents(signal);
+			delete state.eventsFailure;
+		} catch (error) {
+			delete state.events;
+			state.eventsFailure = errorMessage(error);
+		}
+	};
+
 	const installListing = (state: ServerState, listing: McpToolListing): void => {
 		for (const name of state.registered) registry.unregister?.(name);
 		state.registered = [];
@@ -934,6 +958,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const connection = await loaded;
 				const { client, listing } = await connection.ready;
 				if (closed || controller.signal.aborted || state.client !== client || state.failure !== null) return;
+				await listEventsOf(state, client, controller.signal);
+				if (closed || controller.signal.aborted || state.client !== client || state.failure !== null) return;
 				installListing(state, listing);
 				// Listed beside the tools, not before them: a slow skills/list never holds a tool call back.
 				void listSkills(state);
@@ -969,6 +995,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				state.registered = [];
 				state.unregistrable = [];
 				state.refused.clear();
+				delete state.events;
+				delete state.eventsFailure;
 			})();
 			await state.recovery;
 			delete state.recovery;
@@ -994,13 +1022,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			}
 			const client = state.client;
 			if (closed || client === null || state.failure !== null) return;
-			if (refreshLive || client.toolsChanged() || state.refreshing !== undefined) {
+			if (refreshLive || client.toolsChanged() || client.eventsChanged() || state.refreshing !== undefined) {
 				state.refreshing ??= (async () => {
 					// A notification received during tools/list stays dirty for the next
 					// discovery; acknowledging after the response would lose it.
 					client.acknowledgeToolsChanged();
 					try {
 						const listing = await client.listTools(signal);
+						if (closed || signal?.aborted || state.client !== client || state.failure !== null) return;
+						await listEventsOf(state, client, signal);
 						if (closed || signal?.aborted || state.client !== client || state.failure !== null) return;
 						installListing(state, listing);
 						if (refreshLive) await listSkills(state, signal);
@@ -1044,7 +1074,23 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		// Server-written guidance, shown beside its tools and never in the system prompt.
 		const guided = (instructions: string | null | undefined): { instructions?: string } =>
 			typeof instructions === "string" && instructions.length > 0 ? { instructions: neutralizeFraming(instructions) } : {};
+		// Server-written like the instructions, so its text can never open a host frame.
+		const eventsOf = (
+			events: ReadonlyArray<{
+				name: string;
+				description: string;
+				delivery: string[];
+				inputSchema: Record<string, unknown>;
+			}>,
+		): McpServerEventListing[] =>
+			events.map((event) => ({
+				name: neutralizeFraming(event.name),
+				description: neutralizeFraming(event.description),
+				delivery: [...event.delivery],
+				arguments: neutralizeFramingValue(event.inputSchema) as Record<string, unknown>,
+			}));
 		if (state.client !== null) {
+			const live = state.events;
 			return {
 				...base,
 				status: "connected",
@@ -1056,6 +1102,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				...(state.dropped !== undefined && state.dropped.length > 0 ? { dropped: [...state.dropped] } : {}),
 				...guided(state.client.serverInfo()?.instructions),
 				...surfaced,
+				...(live !== undefined && live.events.length > 0 ? { events: eventsOf(live.events) } : {}),
+				...(live?.truncated === true ? { eventsTruncated: true as const } : {}),
+				...(state.eventsFailure !== undefined ? { eventsFailure: neutralizeFraming(state.eventsFailure) } : {}),
 			};
 		}
 		// A trusted server that was never launched is still only trusted. Its
@@ -1074,6 +1123,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			...(mcpCatalogStale(catalog) ? { catalogStale: true, catalogRemedy: catalogRemedy(declaration.id) } : {}),
 			...guided(catalog.instructions),
 			...surfaced,
+			...(catalog.events !== undefined && catalog.events.length > 0 ? { events: eventsOf(catalog.events) } : {}),
 		};
 	};
 
@@ -1120,6 +1170,31 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			});
 		}
 		return entries;
+	};
+
+	const checkEventAuthority = (id: string, launch?: { readOnly?: boolean }): string | null => {
+		const state = resolveStates().get(id);
+		if (state === undefined) {
+			const declared = [...resolveStates().keys()].sort();
+			return `no MCP server named '${id}' is declared${declared.length > 0 ? `; declared servers: ${declared.join(", ")}` : ""}`;
+		}
+		const { declaration } = state;
+		if (declaration.scope === "client") {
+			return `MCP server '${id}' was supplied by the ACP client for this session only; an event job subscribes only to a server declared in PanCode's MCP config`;
+		}
+		if (declaration.trust.status !== "trusted") {
+			const remedy = mcpTrustRemedy(id);
+			return `MCP server '${id}' is ${declaration.trust.status} (${declaration.trust.reason}); run ${remedy.remedy} (${remedy.interactiveRemedy} in an interactive session)`;
+		}
+		const revoked = declaration.plugin !== undefined ? pluginServerRevocation(declaration.plugin, options.cwd) : null;
+		if (revoked !== null) return revoked;
+		const readOnly = readOnlyLaunchRefusal(declaration, launch?.readOnly);
+		if (readOnly !== null && state.client === null) return readOnly;
+		if (state.surface !== undefined) {
+			const surface = surfaceRefusal(state, `MCP server '${id}'`);
+			if (surface !== null) return surface;
+		}
+		return null;
 	};
 
 	return {
@@ -1202,7 +1277,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				entries: all.flatMap(entriesFor),
 				diagnostics: [...diagnostics],
 				missing: servers.filter((server) => server.catalog === "missing").map((server) => server.id),
-				changed: all.filter((state) => state.client?.toolsChanged() === true).map((state) => state.declaration.id),
+				changed: all
+					.filter((state) => state.client?.toolsChanged() === true || state.client?.eventsChanged() === true)
+					.map((state) => state.declaration.id),
 			};
 		},
 		metadata(name) {
@@ -1405,6 +1482,40 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		},
 		servedSurface(id) {
 			return resolveStates().get(id)?.surface?.served ?? null;
+		},
+		eventAuthorityRefusal(id, launch) {
+			return checkEventAuthority(id, launch);
+		},
+		async eventServer(id, launch) {
+			const authorityRefusal = checkEventAuthority(id, launch);
+			if (authorityRefusal !== null) return { refusal: authorityRefusal };
+			const state = resolveStates().get(id);
+			if (state === undefined) return { refusal: `no MCP server named '${id}' is declared` };
+			// A subscriber reconnecting after the server exited gets a relaunch, the way a failed tool call's next call does.
+			const exited = state.client?.state().status;
+			if (state.failure === null && (exited === "failed" || exited === "closed")) {
+				const reason = state.client?.state();
+				state.failure = reason?.status === "failed" ? reason.reason : "the server exited";
+			}
+			try {
+				await discover(state, launch?.signal);
+			} catch (error) {
+				return { refusal: `MCP server '${id}' could not be reached: ${errorMessage(error)}` };
+			}
+			if (state.failure !== null) return { refusal: `MCP server '${id}' failed: ${state.failure}` };
+			const client = state.client;
+			if (client === null) return { refusal: `MCP server '${id}' is not running` };
+			const surface = surfaceRefusal(state, `MCP server '${id}'`);
+			if (surface !== null) return { refusal: surface };
+			if (client.eventsOffered() === null) {
+				return {
+					refusal: `MCP server '${id}' does not offer MCP Events (io.modelcontextprotocol/events) in its server/discover capabilities`,
+				};
+			}
+			if (state.eventsFailure !== undefined) {
+				return { refusal: `MCP server '${id}' could not list its event types: ${state.eventsFailure}` };
+			}
+			return { client, events: state.events?.events ?? [] };
 		},
 		async skillAccess(id, invokeOptions) {
 			if (invokeOptions?.signal?.aborted) throw new McpError("aborted", "MCP discovery aborted");

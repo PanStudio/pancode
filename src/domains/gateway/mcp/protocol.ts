@@ -25,6 +25,8 @@ export const MCP_OLDEST_PROTOCOL_VERSION = "2024-11-05";
 export const MCP_MODERN_PROTOCOL_VERSION = "2026-07-28";
 /** Extension id of MCP Tasks (modelcontextprotocol/ext-tasks, specification 2026-07-28). */
 export const MCP_TASKS_EXTENSION = "io.modelcontextprotocol/tasks";
+/** Extension id of MCP Events (SEP-3415, Beta, specification 2026-07-28). */
+export const MCP_EVENTS_EXTENSION = "io.modelcontextprotocol/events";
 export const MCP_META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
 export const MCP_META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo";
 export const MCP_META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";

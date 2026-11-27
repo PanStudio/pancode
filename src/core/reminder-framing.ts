@@ -22,6 +22,18 @@ export function neutralizeFraming(text: string): string {
 		.replace(/^\[middleware:/gmu, "[\\middleware:");
 }
 
+/** Make server-written strings and keys unable to open or close a host frame, at any depth of a JSON value. */
+export function neutralizeFramingValue(value: unknown, maxDepth = 32, depth = 0): unknown {
+	if (typeof value === "string") return neutralizeFraming(value);
+	if (depth >= maxDepth || value === null || typeof value !== "object") return value;
+	if (Array.isArray(value)) return value.map((entry) => neutralizeFramingValue(entry, maxDepth, depth + 1));
+	const out: Record<string, unknown> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		out[neutralizeFraming(key)] = neutralizeFramingValue(entry, maxDepth, depth + 1);
+	}
+	return out;
+}
+
 /**
  * Whether text carries a marker `neutralizeFraming` would rewrite. File text the read tool returns stays byte-exact
  * so edit anchors and copied replacement text match the file; a read carrying a marker is flagged instead.

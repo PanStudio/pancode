@@ -451,6 +451,7 @@ function alsoLines(job: JobRecord): string[] {
 function runnerText(job: JobRecord): string {
 	const runner = job.spec.runner;
 	if (runner.kind === "main") return `main turn "${preview(runner.prompt, TASK_PREVIEW_CHARS)}"`;
+	if (runner.kind === "mcp_event") return `MCP event ${preview(`${runner.server} ${runner.event}`, 72)}`;
 	const [program = "", ...rest] = runner.argv;
 	const name = program.split("/").pop() ?? program;
 	return `command ${preview([name, ...rest].join(" "), 72)}`;
@@ -463,6 +464,7 @@ function runnerText(job: JobRecord): string {
 function loopLabel(job: JobRecord): string {
 	const runner = job.spec.runner;
 	if (runner.kind === "main") return `"${preview(runner.prompt, NOTICE_LABEL_CHARS)}"`;
+	if (runner.kind === "mcp_event") return `"${preview(`${runner.server} ${runner.event}`, NOTICE_LABEL_CHARS)}"`;
 	const [program = "", ...rest] = runner.argv;
 	return `"${preview([program.split("/").pop() ?? program, ...rest].join(" "), NOTICE_LABEL_CHARS)}"`;
 }
@@ -475,6 +477,8 @@ function runsText(job: JobRecord): string {
 }
 
 function dueText(job: JobRecord, now: number): string {
+	if (job.state === "active" && job.nextDueAt === null && job.spec.runner.kind === "mcp_event")
+		return "waiting for an event";
 	if (job.state !== "active" || job.nextDueAt === null) return "no next run";
 	const delta = job.nextDueAt - now;
 	return delta >= 0 ? `next in ${formatLoopDuration(delta)}` : `due ${formatLoopDuration(-delta)} ago`;
@@ -517,7 +521,10 @@ function jobWarnings(job: JobRecord, now: number): string[] {
 	if (isStaleLoopJob(job, now))
 		warnings.push("stale: the next run is overdue and nothing is running; the job host may be gone");
 	if (job.persistenceError !== null) warnings.push(`not saved: ${preview(job.persistenceError, SUMMARY_CHARS)}`);
-	if (job.state === "terminal" && job.reason === "failure") warnings.push("ended after repeated failures");
+	if (job.state === "terminal" && job.reason === "failure")
+		warnings.push(
+			job.spec.runner.kind === "mcp_event" ? "ended: its event subscription failed" : "ended after repeated failures",
+		);
 	return warnings;
 }
 
@@ -821,7 +828,7 @@ function endedNotice(job: JobRecord): LoopNotice {
 			const last = job.history[job.history.length - 1]?.evidence?.summary;
 			return {
 				level: "warn",
-				text: `loop ${loopLabel(job)} ended after repeated failures${last ? `: ${preview(last, SUMMARY_CHARS)}` : ""}`,
+				text: `loop ${loopLabel(job)} ${job.spec.runner.kind === "mcp_event" ? "ended: its event subscription failed" : "ended after repeated failures"}${last ? `: ${preview(last, SUMMARY_CHARS)}` : ""}`,
 			};
 		}
 		case "canceled":
