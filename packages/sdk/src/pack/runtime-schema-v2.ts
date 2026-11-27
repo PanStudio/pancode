@@ -275,12 +275,7 @@ function parseBinaries(value: unknown, policy: ManifestKeyPolicy): ExtensionBina
 	const names = new Set<string>();
 	return list(value, "runtime.binaries", RUNTIME_V2_LIMITS.binaries).map((item, index) => {
 		const path = `runtime.binaries[${index}]`;
-		const raw = record(
-			item,
-			path,
-			["name", "version", "license", "homepage", "minimumVersion", "versionArgs", "env", "downloads", "documents"],
-			policy,
-		);
+		const raw = record(item, path, ["name", "version", "license", "homepage", "env", "downloads", "documents"], policy);
 		const name = named(raw.name, `${path}.name`, /^[a-z][a-z0-9._-]*$/, 40);
 		if (names.has(name)) fail(`${path}.name`, `repeats '${name}'`);
 		names.add(name);
@@ -306,18 +301,11 @@ function parseBinaries(value: unknown, policy: ManifestKeyPolicy): ExtensionBina
 				sha256: named(doc.sha256, `${docPath}.sha256`, SHA256, 64),
 			};
 		});
-		const versionArgs =
-			raw.versionArgs === undefined
-				? ["--version"]
-				: list(raw.versionArgs, `${path}.versionArgs`, 4).map((arg, at) => text(arg, `${path}.versionArgs[${at}]`, 40));
 		return {
 			name,
 			version,
 			license: text(raw.license, `${path}.license`, 80),
 			homepage: httpsUrl(raw.homepage, `${path}.homepage`),
-			minimumVersion:
-				raw.minimumVersion === undefined ? version : named(raw.minimumVersion, `${path}.minimumVersion`, VERSION, 40),
-			versionArgs,
 			env,
 			downloads,
 			documents,
@@ -817,8 +805,6 @@ export function capabilityEnvelope(
 					binaries: binaries.map((binary) => ({
 						name: binary.name,
 						version: binary.version,
-						minimumVersion: binary.minimumVersion,
-						versionArgs: binary.versionArgs,
 						env: binary.env,
 						downloads: Object.fromEntries(
 							Object.entries(binary.downloads).flatMap(([platform, download]) =>
@@ -1034,16 +1020,8 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 			const approvedAsset = prior.downloads[platform];
 			return !approvedAsset || approvedAsset.sha256 !== asset.sha256 || approvedAsset.member !== asset.member;
 		});
-		const versionArgsChanged =
-			prior.versionArgs.length !== binary.versionArgs.length ||
-			prior.versionArgs.some((arg, index) => arg !== binary.versionArgs[index]);
-		// Another download, archive member, version probe or lower floor runs bytes or flags the operator never approved.
-		if (
-			prior.version !== binary.version ||
-			prior.minimumVersion !== binary.minimumVersion ||
-			downloadsChanged ||
-			versionArgsChanged
-		)
+		// Another version, download or archive member runs bytes the operator never approved.
+		if (prior.version !== binary.version || downloadsChanged)
 			growth.push(`program ${binary.name} changed: ${binary.version} (approved ${prior.version})`);
 		push(`program ${binary.name} environment`, added(prior.env, binary.env));
 	}

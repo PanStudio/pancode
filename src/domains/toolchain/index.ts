@@ -18,6 +18,7 @@ export {
 	installRemedy,
 	pinnedToolMissing,
 	resolveEntryBinary,
+	resolvePinnedEntryBinary,
 	resolveToolBinary,
 	resolveVendoredBinary,
 	toolStatus,

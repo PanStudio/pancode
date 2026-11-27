@@ -3065,7 +3065,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			frozenTools: toolRegistry.listAll().flatMap((tool) => tool.sourceInfo?.extension || []),
 			services: { providers, telemetry, session },
 			sandboxUnixSockets: () => getCurrentSettings().safety.sandboxUnixSockets,
-			readOnly: () => options.headless?.constraints?.readOnly === true || chat.toolLimits?.()?.readOnly === true,
+			readOnly: () => options.headless?.constraints?.readOnly === true,
 			builtinCommandNames: () => BUILTIN_SLASH_NAMES,
 			notify: (line) => process.stderr.write(`pancode: ${line}\n`),
 			...(ask ? { ask } : {}),

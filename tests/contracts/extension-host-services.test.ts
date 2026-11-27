@@ -23,8 +23,11 @@ import {
 	parseExtensionRuntimeV2,
 } from "@pancode/sdk/pack";
 import { readBlobHistory } from "@pancode/store";
+import { Value } from "typebox/value";
 import { sha256Hex } from "../../src/core/hash.js";
-import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { recentPackageActivity } from "../../src/core/package-activity.js";
+import { ExtensionBinaryRanSchema } from "../../src/core/telemetry/host-schemas.js";
+import { createTelemetryHub, telemetryHub } from "../../src/core/telemetry/hub.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
@@ -48,9 +51,13 @@ import {
 	parsePackBinaryRun,
 	removePackBinaries,
 	resolvePackBinary,
-	runPackBinary,
 	syncPackBinaries,
 } from "../../src/domains/extensions/services/binaries.js";
+import {
+	type PackBinaryCaller,
+	runPackBinary,
+	servePackPane,
+} from "../../src/domains/extensions/services/binary-runs.js";
 import { resolveExtensionKeys } from "../../src/domains/extensions/services/keys.js";
 import { createExtensionPaneHost, type ExtensionPaneOwner } from "../../src/domains/extensions/services/pane.js";
 import {
@@ -644,8 +651,6 @@ function paneBinary(): ExtensionBinaryDeclaration {
 		version: "1.0.0",
 		license: "MIT",
 		homepage: "https://example.invalid",
-		minimumVersion: "1.0.0",
-		versionArgs: ["--version"],
 		env: ["FIXTURE_HOME"],
 		downloads: {},
 		documents: [],
@@ -891,12 +896,18 @@ describe("extension binaries service", () => {
 	let previousPath: string | undefined;
 	let previousData: string | undefined;
 
-	function binary(sha256: string, minimumVersion = "1.0.0"): ExtensionBinaryDeclaration {
+	const caller = (parent = "command", readOnly = false): PackBinaryCaller => ({
+		owner: { kind: "extension", id: "fixture", version: "1.0.0", digest: "", scope: "user" },
+		sessionId: null,
+		parent,
+		readOnly,
+	});
+
+	function binary(sha256: string): ExtensionBinaryDeclaration {
 		const platform = currentToolPlatform();
 		return {
 			...paneBinary(),
 			name: NAME,
-			minimumVersion,
 			downloads: platform ? { [platform]: { url: "https://example.invalid/fixture", sha256, archive: "raw" } } : {},
 		};
 	}
@@ -932,23 +943,75 @@ describe("extension binaries service", () => {
 
 		const store = mkdtempSync(path.join(root, "store-"));
 		const request = parsePackBinaryRun({ name: NAME, args: ["status"], env: { FIXTURE_HOME: "home" } }, [pinned]);
-		const result = await runPackBinary("fixture", [pinned], request, store);
+		const result = await runPackBinary("fixture", [pinned], request, store, caller());
 		deepStrictEqual(result, { exitCode: 0, timedOut: false, stdout: `home|${store}|status`, stderr: "" });
+
+		await rejects(
+			runPackBinary("fixture", [pinned], request, store, caller("observe")),
+			/ctx.binaries runs only from a command, an action or a tool call, not from an event or timer handler/u,
+		);
+		await rejects(runPackBinary("fixture", [pinned], request, store, caller("tool", true)), /read-only turn/u);
+		let served = 0;
+		const serve = async () => {
+			served += 1;
+			return "visible";
+		};
+		const open = { binary: NAME, args: ["status"] };
+		await rejects(servePackPane("fixture", [pinned], "open", open, caller("observe"), serve), /ctx.pane runs only/u);
+		await rejects(servePackPane("fixture", [pinned], "open", open, caller("action", true), serve), /read-only turn/u);
+		await rejects(servePackPane("fixture", [pinned], "state", {}, caller("command", true), serve), /read-only turn/u);
+		strictEqual(await servePackPane("fixture", [pinned], "open", open, caller("action"), serve), "visible");
+		strictEqual(served, 1);
+		deepStrictEqual(
+			recentPackageActivity("fixture")
+				.filter((entry) => entry.kind === "binary:pane")
+				.map((entry) => [entry.outcome, entry.details?.parent]),
+			[
+				["refused", "observe"],
+				["refused", "action"],
+				["ok", "action"],
+			],
+		);
+		const runs = recentPackageActivity("fixture").filter((entry) => entry.kind === "binary:run");
+		deepStrictEqual(
+			runs.slice(-3).map((entry) => [entry.outcome, entry.details?.parent, entry.details?.args]),
+			[
+				["ok", "command", ["status"]],
+				["refused", "observe", ["status"]],
+				["refused", "tool", ["status"]],
+			],
+		);
+
+		const seenJournal: Array<Record<string, unknown>> = [];
+		const offJournal = telemetryHub().subscribe("extension.binary_ran", (payload) => {
+			ok(Value.Check(ExtensionBinaryRanSchema, payload), "emitted payload matches ExtensionBinaryRanSchema");
+			seenJournal.push(payload as Record<string, unknown>);
+		});
+		try {
+			await rejects(runPackBinary("fixture", [pinned], request, store, caller("")), /not from an unknown request/u);
+		} finally {
+			offJournal();
+		}
+		deepStrictEqual(
+			seenJournal.map((entry) => [entry.parent, entry.outcome, entry.reasonCode]),
+			[["unknown", "refused", "background-request"]],
+		);
 
 		removePackBinaries("fixture");
 		strictEqual(resolvePackBinary("fixture", pinned).source, "none");
 	});
 
-	it("prefers a PATH copy at the floor or newer over the pin", () => {
+	it("never runs a same-named program on PATH in place of the pin", () => {
 		const bin = path.join(root, "bin");
 		mkdirSync(bin, { recursive: true });
 		writeFileSync(path.join(bin, NAME), `#!/bin/sh\necho "${NAME} 2.0.0"\n`);
 		chmodSync(path.join(bin, NAME), 0o755);
 		process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
-		const atFloor = resolvePackBinary("fixture", binary("0".repeat(64), "1.5.0"));
-		strictEqual(atFloor.source, "path");
-		strictEqual(atFloor.binaryPath, path.join(bin, NAME));
-		strictEqual(resolvePackBinary("fixture", binary("0".repeat(64), "3.0.0")).source, "none");
+		const shadowed = resolvePackBinary("fixture", binary("0".repeat(64)));
+		strictEqual(shadowed.source, "none");
+		strictEqual(shadowed.binaryPath, null);
+		const missing = packBinaryPath("fixture", binary("0".repeat(64)));
+		strictEqual("reason" in missing && /PATH/u.test(missing.reason), false);
 	});
 
 	it("refuses an undeclared binary, an undeclared or reserved environment key, and runaway arguments", () => {
@@ -1010,7 +1073,7 @@ describe("extension binaries service", () => {
 		strictEqual(existsSync(path.join(store, "ext", "player")), false);
 	});
 
-	it("refuses write-class tools and read-only runtimes for packages declaring binaries, and tracks versionArgs/member growth", () => {
+	it("refuses write-class tools and read-only runtimes for packages declaring binaries, and tracks member growth", () => {
 		const base = {
 			api: 2,
 			entrypoint: "extension.mjs",
@@ -1065,14 +1128,7 @@ describe("extension binaries service", () => {
 				],
 			}),
 		);
-		const envVersionArgs = capabilityEnvelope(
-			parseExtensionRuntimeV2({
-				...base,
-				binaries: [{ ...base.binaries[0], versionArgs: ["-c", "id"] }],
-			}),
-		);
 		ok(envelopeGrowth(envA, envMember).some((line) => /changed/u.test(line)));
-		ok(envelopeGrowth(envA, envVersionArgs).some((line) => /changed/u.test(line)));
 	});
 });
 

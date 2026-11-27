@@ -100,7 +100,7 @@ export interface ExtensionBinaryDownload {
 /**
  * A third-party program at one version, downloaded and verified at install and
  * run by the host outside the runtime sandbox, only through `ctx.binaries` and
- * `ctx.pane`. A copy on PATH whose version meets `minimumVersion` is preferred.
+ * `ctx.pane`. Only the pinned copy runs, never a program of the same name on PATH.
  */
 export interface ExtensionBinaryDeclaration {
 	name: string;
@@ -108,8 +108,6 @@ export interface ExtensionBinaryDeclaration {
 	/** SPDX identifier of the upstream license. */
 	license: string;
 	homepage: string;
-	minimumVersion: string;
-	versionArgs: string[];
 	/** Environment keys a call may set; every other key is the host's safe tool environment. */
 	env: string[];
 	downloads: Partial<Record<ExtensionBinaryPlatform, ExtensionBinaryDownload>>;
@@ -250,9 +248,9 @@ export type ExtensionCapabilityEnvelope = Pick<
 	cli?: Array<Pick<ExtensionCliVerbDeclaration, "verb" | "command">>;
 	/** Bare command names the package claims; absent when none. */
 	aliases?: string[];
-	/** Pinned programs by name, version, probe args and per-platform hash/member; absent when none. */
+	/** Pinned programs by name, version and per-platform hash/member; absent when none. */
 	binaries?: Array<
-		Pick<ExtensionBinaryDeclaration, "name" | "version" | "minimumVersion" | "versionArgs" | "env"> & {
+		Pick<ExtensionBinaryDeclaration, "name" | "version" | "env"> & {
 			downloads: Record<string, { sha256: string; member?: string }>;
 		}
 	>;
