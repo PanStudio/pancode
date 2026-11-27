@@ -34,7 +34,9 @@ export const ElicitationField = Type.Union([
 			kind: Type.Literal("string"),
 			minLength: Type.Optional(Type.Integer({ minimum: 0 })),
 			maxLength: Type.Optional(Type.Integer({ minimum: 0 })),
-			format: Type.Optional(Type.Union(["email", "uri", "date", "date-time"].map((format) => Type.Literal(format)))),
+			format: Type.Optional(
+				Type.Union([Type.Literal("email"), Type.Literal("uri"), Type.Literal("date"), Type.Literal("date-time")]),
+			),
 			default: Type.Optional(Type.String()),
 		},
 		closed,

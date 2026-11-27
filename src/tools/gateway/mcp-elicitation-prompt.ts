@@ -134,7 +134,9 @@ type FieldRead = { value: McpElicitValue } | { unset: true } | { error: string; 
 function readField(field: McpFormField, answer: AskUserAnswer | undefined): FieldRead {
 	if (answer === undefined) return { error: "was not answered" };
 	const { labels, values, unset } = fieldChoices(field);
-	const picked = answer.options ?? (labels.includes(answer.answer) || answer.answer === unset ? [answer.answer] : []);
+	const picked =
+		answer.options ??
+		(answer.value === undefined && (labels.includes(answer.answer) || answer.answer === unset) ? [answer.answer] : []);
 	if (unset !== null && picked.includes(unset) && picked.length === 1) return { unset: true };
 	let value: McpElicitValue;
 	if (field.kind === "string" || field.kind === "number") {

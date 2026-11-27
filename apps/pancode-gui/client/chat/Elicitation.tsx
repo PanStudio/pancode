@@ -281,6 +281,9 @@ function ElicitationDialog({
 								<button type="button" disabled={busy} onClick={() => setStage("ask")}>
 									Edit
 								</button>
+								<button type="button" disabled={busy} onClick={() => submit({ action: "decline" })}>
+									Decline
+								</button>
 								<button
 									className="primary"
 									type="button"

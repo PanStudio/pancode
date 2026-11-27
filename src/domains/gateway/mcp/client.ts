@@ -741,9 +741,8 @@ export function createMcpProtocolClient(
 		if ((method.startsWith("skills/") || method.startsWith("resources/")) && skillsSettings() !== null) {
 			extensions[MCP_SKILLS_EXTENSION] = {};
 		}
-		// Elicitation is declared only where a server may ask through inputRequests (basic/patterns/mrtr).
-		const asksInput =
-			elicitationHandler !== undefined && (drivesTasks || method === "resources/read" || method === "prompts/get");
+		// Elicitation is declared only on requests that actually handle input_required (basic/patterns/mrtr).
+		const asksInput = elicitationHandler !== undefined && drivesTasks;
 		return {
 			...base,
 			_meta: {

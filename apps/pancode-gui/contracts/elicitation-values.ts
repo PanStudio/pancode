@@ -19,9 +19,10 @@ function formatError(format: "email" | "uri" | "date" | "date-time", text: strin
 	if (format === "email") return EMAIL.test(text) ? null : "must be an email address";
 	if (format === "date") return validDate(text) ? null : "must be a date like 2026-07-28";
 	if (format === "date-time")
-		return DATE_TIME.test(text) && validDate(text.slice(0, 10))
+		return DATE_TIME.test(text) && validDate(text.slice(0, 10)) && !Number.isNaN(Date.parse(text))
 			? null
 			: "must be a date and time like 2026-07-28T09:30:00Z";
+	if (!/^[a-z][a-z0-9+.-]*:/iu.test(text) || /[\s\p{Cc}]/u.test(text)) return "must be an absolute URI";
 	try {
 		new URL(text);
 		return null;

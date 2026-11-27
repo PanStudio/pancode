@@ -1457,7 +1457,7 @@ class AskUserOverlayView implements Component {
 				return;
 			}
 			const label = question.options?.[optionIndex]?.label ?? item.label;
-			if (optionAsksForText(label)) {
+			if (question.fixedChoices !== true && optionAsksForText(label)) {
 				this.openNoteField(question, state);
 				return;
 			}
@@ -1498,7 +1498,10 @@ class AskUserOverlayView implements Component {
 			const selected = items.findIndex((item) => item.value === `option:${firstSelected}`);
 			if (selected >= 0) return selected;
 		}
-		if (state.customAnswer.length > 0 || (questionHasOptions(question) && isOtherOption(state.answer))) {
+		if (
+			question.fixedChoices !== true &&
+			(state.customAnswer.length > 0 || (questionHasOptions(question) && isOtherOption(state.answer)))
+		) {
 			const other = items.findIndex((item) => item.value === "other");
 			if (other >= 0) return other;
 		}
