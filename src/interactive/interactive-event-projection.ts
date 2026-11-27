@@ -12,6 +12,7 @@ import type {
 	ToolBudgetExceededPayload,
 } from "../core/telemetry/live-events.js";
 import { ToolNames } from "../core/tool-names.js";
+import type { NoticeLevel, NotificationLevel } from "../core/views/notice-words.js";
 import type { ChatCancelOptions, ChatLoopEvent, QueuedChatMessage } from "../session-control/chat-loop.js";
 import { COMPACTION_LINE_LEAD } from "../session-control/compaction-lines.js";
 import {
@@ -27,9 +28,6 @@ import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 import { budgetAlertNotice, safetyBlockedNotice } from "./bus-notices.js";
 import { classifyNoticeLevel } from "./footer/notifications.js";
 import type { AgentStatus, TurnSummary } from "./status/index.js";
-
-export type InteractiveProjectionNoticeLevel = "info" | "success" | "warning" | "error";
-export type InteractiveTranscriptNoticeLevel = "info" | "success" | "warn" | "error";
 
 export interface InteractiveEventProjectionDeps {
 	bus: TelemetryHub;
@@ -80,11 +78,11 @@ export interface InteractiveEventProjectionDeps {
 	refreshLiveWorkspaceGit: (force: boolean) => void;
 	refreshFooter: () => void;
 	requestRender: () => void;
-	notify: (level: InteractiveProjectionNoticeLevel, text: string, key?: string, ttlMs?: number) => void;
+	notify: (level: NotificationLevel, text: string, key?: string, ttlMs?: number) => void;
 	dismissNotification: (key: string) => void;
 	/** A turn is later work: notices about earlier runs stop reading as current. */
 	supersedeWorkNotifications?: () => void;
-	appendTranscriptNotice: (level: InteractiveTranscriptNoticeLevel, text: string, source?: NoticeSource) => void;
+	appendTranscriptNotice: (level: NoticeLevel, text: string, source?: NoticeSource) => void;
 	refreshSettingsOverlay: () => void;
 	onConfigHotReload?: (settings: Readonly<PancodeSettings>) => void;
 }

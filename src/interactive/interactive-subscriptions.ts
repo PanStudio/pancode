@@ -8,6 +8,7 @@ import type {
 	DispatchRunIdentity,
 	DispatchStartedPayload,
 } from "../core/telemetry/live-events.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import { NEVER_STARTED_WORDS, plainOutcomeLabel, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
 import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { readWorkerRunResultFacts } from "../session-control/worker-run-results.js";
@@ -30,7 +31,7 @@ import {
 	workerSettledFields,
 } from "./worker-replay.js";
 
-export type InteractiveNoticeLevel = "info" | "success" | "warning" | "error";
+export type InteractiveNoticeLevel = NotificationLevel;
 
 const WORKER_PAINT_INTERVAL_MS = 16;
 /** A failover's next attempt starts within this, so a failure it overturns never reaches the footer. */

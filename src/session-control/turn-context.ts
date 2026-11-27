@@ -62,6 +62,7 @@ import type {
 import type { CallSettled } from "../core/telemetry/schemas.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import {
 	createLiveBudgetProducer,
@@ -252,7 +253,7 @@ export interface TurnContextDeps {
 	getLastOutcome?: (() => LiveBudgetOutcomeProjection | null) | undefined;
 	middleware: TurnMiddleware;
 	/** `key` names the notice's kind; a context engine status line carries `CONTEXT_STATUS_NOTICE_KEY`. */
-	emitNotice: (text: string, level?: "info" | "success" | "warning" | "error", key?: string) => void;
+	emitNotice: (text: string, level?: NotificationLevel, key?: string) => void;
 	/**
 	 * Report that the next response's prompt cache may be cold, and why. It is
 	 * telemetry about the run rather than the conversation: the footer's notice

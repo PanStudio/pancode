@@ -15,6 +15,7 @@ import { normalizeTokenUsage } from "../core/token-split.js";
 import { ToolNames } from "../core/tool-names.js";
 import { turnAllowsContinuation, turnAllowsTool } from "../core/turn-constraints.js";
 import { turnOriginMetadata } from "../core/turn-origin.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import {
 	type CompletionFact,
 	MIDDLEWARE_HOOK_TEXT_MAX_CHARS,
@@ -63,7 +64,7 @@ export interface TurnMiddlewareDeps {
 	hostInserts?: HostInserts | undefined;
 	middlewareToolChoice: MiddlewareToolChoiceControl;
 	emitNotice: (text: string, level?: "info" | "warning" | "error", source?: NoticeSource) => void;
-	emitFooterNotice: (level: "info" | "success" | "warning" | "error", text: string, key: string) => void;
+	emitFooterNotice: (level: NotificationLevel, text: string, key: string) => void;
 	/**
 	 * Show an operator-only message from a `notify_operator` effect, such as a
 	 * capability tip. Absent, it becomes an info notice. Either way it never

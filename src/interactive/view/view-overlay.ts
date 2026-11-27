@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { NotificationLevel } from "../../core/views/notice-words.js";
 import type {
 	ArtifactProvider,
 	ViewArtifact,
@@ -56,7 +58,6 @@ function viewUsesSinglePane(bodyWidth: number): boolean {
 }
 
 export type ViewPaneFocus = "list" | "content";
-export type ViewNoticeLevel = "info" | "success" | "warning" | "error";
 export type ViewVerificationState =
 	| { status: "idle" }
 	| { status: "running" }
@@ -103,7 +104,7 @@ export interface ViewOverlayOptions {
 	providers: ReadonlyArray<ArtifactProvider>;
 	getBodyHeight: () => number;
 	initialFilter?: string;
-	notice?: (level: ViewNoticeLevel, text: string, key?: string) => void;
+	notice?: (level: NotificationLevel, text: string, key?: string) => void;
 	onClose: () => void;
 	requestRender?: () => void;
 }

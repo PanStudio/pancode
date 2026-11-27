@@ -10,6 +10,7 @@ import { pancodeProjectRoot } from "../core/project-root.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import { validateSettings } from "../core/settings-validate.js";
 import { isRecord } from "../core/type-guards.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../core/workspace-trust.js";
 import { diffSettings } from "../domains/config/classify.js";
 
@@ -19,7 +20,7 @@ export interface SettingsFileEditDeps {
 	cwd: string;
 	/** Hands the terminal to the editor and takes it back. */
 	suspendTerminal: <T>(run: () => T) => T;
-	notice: (level: "info" | "success" | "warning" | "error", text: string) => void;
+	notice: (level: NotificationLevel, text: string) => void;
 	resolveEditor?: () => string | null;
 	editExternally?: typeof editTextExternally;
 }

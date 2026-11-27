@@ -6,6 +6,7 @@ import { GLYPH } from "../core/glyphs.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import { renderPricingSum } from "../core/telemetry/render.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import { foldWorkingSet } from "../domains/context/working-set/fold.js";
 import type { DispatchContract, FleetRunPreview, FleetRunPreviewInput } from "../domains/dispatch/index.js";
@@ -111,7 +112,7 @@ export interface OverlayGeneralOpenersDeps {
 	submitChat: (text: string) => void;
 	getTaskMemoryStatus?: Parameters<typeof openMemoryOverlay>[1];
 	dataDir: string;
-	notify: (level: "info" | "success" | "warning" | "error", text: string, key?: string) => void;
+	notify: (level: NotificationLevel, text: string, key?: string) => void;
 	dismissNotification?: (key: string) => void;
 	/** Writes a command's record to the transcript. */
 	getSlashNotice?: () => import("./command-fallbacks.js").CommandNotice;

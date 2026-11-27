@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { GLYPH } from "../core/glyphs.js";
+import type { NoticeLevel } from "../core/views/notice-words.js";
 import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { SessionContract, SessionEntry } from "../domains/session/index.js";
 import { suggestSessionName } from "../domains/session/names.js";
@@ -13,7 +14,7 @@ export interface SessionRenameDeps {
 	entries(): ReadonlyArray<SessionEntry>;
 	leaf(): string | undefined;
 	confirm?: AskUserHandler;
-	notice(level: "error" | "info" | "success" | "warn", text: string): void;
+	notice(level: NoticeLevel, text: string): void;
 	refresh(): void;
 }
 

@@ -24,6 +24,7 @@
 import { UNICODE_GLYPH } from "../../core/glyphs.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
 import { reminderGist } from "../../core/reminder-gist.js";
+import type { NotificationLevel } from "../../core/views/notice-words.js";
 import { taskMemoryNoteForDisplay } from "../../domains/memory/task-memory-ref.js";
 import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { redactUrlCredentials } from "../../domains/safety/redaction.js";
@@ -40,7 +41,7 @@ const theme = pancodeTheme();
 const LEADING_TAG = /^(\[[^\]]+\])([\s\S]*)$/u;
 const PRODUCT_TAG = /^\s*\[PanCode\]\s*/u;
 
-export type NoticeMark = "info" | "success" | "warning" | "error" | "retry" | "cancelled";
+export type NoticeMark = NotificationLevel | "retry" | "cancelled";
 
 const MARKS: Readonly<Record<NoticeMark, { glyph: string; token: PancodeToken }>> = {
 	info: { glyph: GLYPH.info, token: "info" },
