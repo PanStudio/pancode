@@ -142,7 +142,11 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 				if (swap === null) return;
 				stop();
 				const section = mcpSection(swap);
-				deps.bus.emit("mcp.servers_reloaded", { text: section.lines.join("\n"), failed: section.failed });
+				const facts = section.lines.slice(1).map((line) => line.trim());
+				deps.bus.emit("mcp.servers_reloaded", {
+					text: `MCP servers swapped after the turn settled: ${facts.join("; ")}`,
+					failed: section.failed,
+				});
 			} catch {
 				// The source closed with its session; nothing is left to swap.
 				stop();
