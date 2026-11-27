@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { gitVia } from "../../core/internal-git-run.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
+import { isPluginId } from "../../core/plugin-id.js";
 import { runStagingCommandSync } from "../../core/safe-exec.js";
 import { isSemanticVersion } from "../extensions/compatibility.js";
 import {
@@ -20,7 +21,6 @@ import {
 	isHubComponentKind,
 	isHubKind,
 } from "../resources/hub-types.js";
-import { isPluginId } from "./discovery.js";
 import { pluginContentDigest } from "./integrity.js";
 
 export type PluginCatalogEntry = HubPackageEntry;

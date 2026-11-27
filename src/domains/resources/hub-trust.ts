@@ -15,11 +15,11 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { readSettings } from "../../core/config.js";
 import { sha256Hex } from "../../core/hash.js";
+import { type HubRevocation, parseHubRevocations } from "../../core/hub-revocations.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { parseHubIndexRows } from "../plugins/catalog.js";
 import { HUB_ROOT_PUBLIC_KEYS } from "./hub-keys.js";
-import { type HubRevocation, parseHubRevocations } from "./hub-revocations.js";
 import {
 	type HubKeyCertificate,
 	type HubRefusalReason,

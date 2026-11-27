@@ -2,7 +2,7 @@
 
 An agent plugin packages a workflow and its supporting resources as one versioned installation: skills, prompt templates, agents, playbooks and the files they read. You write a root `plugin.json`, add your resources, validate the package, and install it from a path or a PanHub index. A plugin is content only: installation and discovery do not execute plugin code, and code that changes PanCode itself ships as a separate [extension](harness-extensions.md). Scripts in a plugin become ordinary executables only when a user or tool explicitly runs them, under normal safety policy.
 
-Its canonical identity is the [Agent Plugins 1.0.0 manifest](https://agent-plugins.org/schemas/1.0.0/plugin.schema.json). PanCode keeps the complete package together, verifies its full-tree digest, and discovers the resources supported by the current runtime. This page owns the manifest fields, and `isPluginId` in [discovery.ts](../../src/domains/plugins/discovery.ts) validates package identifiers. Package invariants are in [PanHub architecture](../architecture/panhub.md) and operator commands are in [PanHub](panhub.md).
+Its canonical identity is the [Agent Plugins 1.0.0 manifest](https://agent-plugins.org/schemas/1.0.0/plugin.schema.json). PanCode keeps the complete package together, verifies its full-tree digest, and discovers the resources supported by the current runtime. This page owns the manifest fields, and `isPluginId` in [plugin-id.ts](../../src/core/plugin-id.ts) validates package identifiers. Package invariants are in [PanHub architecture](../architecture/panhub.md) and operator commands are in [PanHub](panhub.md).
 
 The minimal package has a root `plugin.json` and an immediate child skill directory:
 

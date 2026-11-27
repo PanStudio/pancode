@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { DomainContract } from "../../core/domain-loader.js";
+import type { ExtensionSessionOverlay } from "./listing.js";
 import type {
 	ExtensionListOptions,
 	ExtensionReloadPrepareResult,
 	ExtensionSnapshot,
 	InstalledExtension,
 } from "./manager.js";
-import type { ExtensionSessionOverlay } from "./state.js";
 
 export interface ExtensionsContract extends DomainContract {
 	list(cwd?: string, options?: ExtensionListOptions): InstalledExtension[];

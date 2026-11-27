@@ -58,6 +58,7 @@ import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import { mcpRemoteTransportIdentity, mcpTransportIdentity } from "../../domains/safety/information-flow.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
+import { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation } from "../context/mcp-skills.js";
 import { readMaxBytes } from "../read.js";
 import { MCP_DOWNLOADS_DIR, toolOffloadDir } from "../result-shaping.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
@@ -235,6 +236,15 @@ function preparePluginDataDir(declaration: GatewayMcpServer): void {
 /** Serialize an argv vector for the shell classifier only. No shell executes this text. */
 function quoted(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** The servers whose process group outlived its teardown. */
+function closeReport(teardowns: ReadonlyArray<McpTeardownReport>): McpCloseReport {
+	return {
+		incomplete: teardowns.flatMap(({ id, outcome }) =>
+			outcome.complete ? [] : [{ id, pgid: outcome.pgid, boundMs: outcome.boundMs }],
+		),
+	};
 }
 
 export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): McpCapabilitySource {
@@ -1912,6 +1922,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const held = resolveStates().get(id)?.skills;
 			return held !== undefined && "listing" in held ? held.listing : null;
 		},
+		skillLoading: { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation },
 		connectedIds(options) {
 			return [...(states?.values() ?? [])]
 				.filter((state) => state.client !== null && (!options?.readyOnly || state.client.state().status === "ready"))
@@ -1928,10 +1939,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const all = [...(states?.values() ?? [])];
 				await Promise.all(all.map(closeClient));
 				await Promise.all(all.map((state) => state.connection?.ready));
-				const report: McpCloseReport = { incomplete: [] };
-				for (const { id, outcome } of teardowns) {
-					if (!outcome.complete) report.incomplete.push({ id, pgid: outcome.pgid, boundMs: outcome.boundMs });
-				}
+				const report = closeReport(teardowns);
 				if (exitHookInstalled) {
 					process.removeListener("exit", killLaunchedOnExit);
 					exitHookInstalled = false;

@@ -49,7 +49,7 @@ import {
 	removePlugin,
 } from "../../src/domains/plugins/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
-import { createMcpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import { saveMcpDownloads, transferMcpUploads } from "../../src/tools/gateway/mcp-file-transfer.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { applyRegisteredToolClassification } from "../../src/tools/registry-call-prep.js";

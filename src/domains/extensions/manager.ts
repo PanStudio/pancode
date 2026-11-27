@@ -7,12 +7,11 @@ export {
 	findExtensionManifestPath,
 	parseExtensionManifest,
 } from "./discovery.js";
+export { extensionBaseDir, type InstalledExtensionRecord } from "./listing.js";
 export { extensionSnapshotFor } from "./snapshot-access.js";
-export type { InstalledExtensionRecord } from "./state.js";
 export {
 	disableExtension,
 	enableExtension,
-	extensionBaseDir,
 	installExtension,
 	listInstalledExtensionRecords,
 	listInstalledExtensions,

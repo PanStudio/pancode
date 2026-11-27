@@ -11,7 +11,7 @@ import { mainSandboxWriteHint } from "../core/sandbox/main-session.js";
 import type { DynamicToolName } from "../core/tool-names.js";
 import { parseExtensionManifest } from "../domains/extensions/discovery.js";
 import { extensionContentDigestWithCapture } from "../domains/extensions/integrity.js";
-import { listInstalledExtensions } from "../domains/extensions/state.js";
+import { listExtensionEntries } from "../domains/extensions/listing.js";
 import type { LoadableExtension } from "../domains/extensions/types.js";
 import { isLoadableExtension } from "../domains/extensions/types.js";
 import type { ToolRegistry } from "./registry-contract.js";
@@ -131,9 +131,7 @@ function createCommandTool(extension: LoadableExtension, tool: ExtensionCommandT
 				if (!Value.Check(tool.inputSchema as TSchema, split.input))
 					return { kind: "error", message: `${name}: input does not match its declared JSON schema` };
 				if (options?.signal?.aborted) return { kind: "error", message: `${name}: aborted before execution` };
-				const current = listInstalledExtensions(cwd).find(
-					(entry) => entry.id === extension.id && isLoadableExtension(entry),
-				);
+				const current = listExtensionEntries(cwd).find((entry) => entry.id === extension.id && isLoadableExtension(entry));
 				if (
 					!current ||
 					!isLoadableExtension(current) ||
@@ -206,7 +204,7 @@ function createCommandTool(extension: LoadableExtension, tool: ExtensionCommandT
  */
 export function registerHarnessExtensionTools(registry: ToolRegistry, cwd = process.cwd()): ExtensionDiagnostic[] {
 	const diagnostics: ExtensionDiagnostic[] = [];
-	for (const extension of listInstalledExtensions(cwd)) {
+	for (const extension of listExtensionEntries(cwd)) {
 		if (!isLoadableExtension(extension) || !extension.capabilities) continue;
 		try {
 			const tools = verifiedCommands(extension).map((tool) => createCommandTool(extension, tool, path.resolve(cwd)));

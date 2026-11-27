@@ -50,7 +50,8 @@ import { resolveWorkerPermit, type WorkerMcpAttestation } from "../../src/domain
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
 import { formatDispatchOutput } from "../../src/tools/dispatch-output.js";
-import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { parseWorkerSpec, type WorkerSpec } from "../../src/worker/spec-contract.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
@@ -1069,7 +1070,7 @@ describe("native worker MCP capabilities", () => {
 					noSkills: true,
 					cwd: project,
 					readOnly: true,
-					mcp: admitted(),
+					mcp: { attestation: admitted(), createSource: createMcpCapabilitySource },
 				},
 				(event) => events.push(event),
 			);
@@ -1148,7 +1149,7 @@ describe("native worker MCP capabilities", () => {
 							ownerToken: "owner",
 						},
 					},
-					mcp,
+					mcp: { attestation: mcp, createSource: createMcpCapabilitySource },
 				},
 				() => {},
 			);

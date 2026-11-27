@@ -46,7 +46,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mcpPromptArgumentSource, mcpReferenceSource } from "../../src/interactive/mcp-completion.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
-import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import { mcpSubmitReader } from "../../src/tools/gateway/mcp-submit-reader.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { RegistryDeps, ToolRegistry } from "../../src/tools/registry-contract.js";
@@ -701,7 +702,7 @@ describe("gateway MCP capabilities", () => {
 			import { createWorkerSafety } from ${moduleUrl("src/engine/worker-tools.ts")};
 			import { createRegistry } from ${moduleUrl("src/tools/registry.ts")};
 			import { registerAllTools } from ${moduleUrl("src/tools/bootstrap.ts")};
-			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/index.ts")};
+			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/mcp-capabilities.ts")};
 			import { createMcpClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
 			const registry = createRegistry({ safety: createWorkerSafety({cwd: ${JSON.stringify(scene.project)}}), autonomy: () => "yolo" });
 			let client;
