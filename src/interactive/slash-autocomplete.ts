@@ -8,7 +8,6 @@ import {
 	type AutocompleteProvider,
 	type AutocompleteSuggestions,
 	CombinedAutocompleteProvider,
-	type SlashCommand,
 	truncateToWidth,
 	visibleWidth,
 } from "../engine/tui.js";
@@ -37,8 +36,6 @@ import {
 	type FileReferenceCompletionSource,
 } from "./file-reference-completion.js";
 import { GLYPH } from "./theme/glyphs.js";
-
-export type SlashAutocompleteCommand = SlashCommand;
 
 const ARGUMENT_HINT_BUDGET = 44;
 /** A purpose is one line; the detail panel carries the full sentence, so this only guards runaway copy. */

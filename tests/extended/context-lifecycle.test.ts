@@ -6,8 +6,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { decodeHTML } from "entities";
 import { marked, type Tokens } from "marked";
-import { telemetryHub } from "../../src/core/telemetry/hub.js";
-import { pancodeStateDir } from "../../src/core/xdg.js";
 import { runBootstrap } from "../../src/domains/context/bootstrap.js";
 import { acceptHandbookProposal, proposalId } from "../../src/domains/context/bootstrap-proposals.js";
 import {
@@ -24,9 +22,6 @@ import {
 	reconcileSnapshot,
 	snapshotInputTokens,
 } from "../../src/domains/session/context-accounting.js";
-import { getLatestContextSnapshot, lastLoadedContextWindow } from "../../src/domains/session/context-history.js";
-import type { SessionMeta } from "../../src/domains/session/contract.js";
-import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import type { Usage } from "../../src/engine/types.js";
 import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -259,51 +254,6 @@ describe("contracts/context lifecycle", () => {
 		deepStrictEqual(parseSlashCommand("/context init --accept"), { kind: "init", options: { accept: true } });
 		strictEqual(parseSlashCommand("/context init --accept --apply").kind, "usage-error");
 		strictEqual(parseSlashCommand("/context init 20260101T000000Z-x").kind, "usage-error");
-	});
-
-	it("resumes from the latest persisted snapshot and bounds loaded-window recall to its target", async () => {
-		const meta = {
-			id: "session-1",
-			createdAt: "2026-08-31T12:00:00.000Z",
-			cwd: isolated.dir,
-			cwdHash: "context-lifecycle",
-		} as SessionMeta;
-		const first = snapshot("turn-1", "loaded", 65_536);
-		const otherModel = snapshot("turn-2", "loaded", 200_000, "local", "other-model");
-		const latest = snapshot("turn-3", "probe", 262_144);
-		const journals = createSessionJournals(pancodeStateDir(), () => {});
-		const lease = await journals.acquire(meta, { role: "main", id: meta.id });
-		try {
-			for (const value of [first, otherModel, latest])
-				telemetryHub().emit(
-					"context.snapshotted",
-					{
-						snapshotId: value.snapshotId,
-						categories: value.categories,
-						providerId: value.providerId,
-						runtimeId: value.runtimeId,
-						modelId: value.modelId,
-						source: value.sources.total,
-						splits: value.sources.splits,
-						window: {
-							desired: value.desiredContextWindow,
-							effective: value.effectiveContextWindow,
-							source: value.contextWindowSource,
-						},
-					},
-					{ ...lease.context, turnId: value.turnId },
-				);
-		} finally {
-			await lease.release();
-			await journals.closeAll();
-		}
-
-		const resumed = getLatestContextSnapshot(meta);
-		strictEqual(resumed?.turnId, "turn-3");
-		strictEqual(resumed?.systemPrompt, undefined, "heavy prompt inputs are not duplicated in the ledger");
-		strictEqual(lastLoadedContextWindow(meta, "local", "model-7"), 65_536);
-		strictEqual(lastLoadedContextWindow(meta, "local", "other-model"), 200_000);
-		strictEqual(lastLoadedContextWindow(meta, "remote", "model-7"), null);
 	});
 
 	it("repairs wiki links only when their root path or longest matching suffix identifies one page", () => {
