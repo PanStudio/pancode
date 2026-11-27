@@ -33,7 +33,7 @@ export const MCP_METADATA_CACHE_VERSION = 1;
  * A day matches `TARGET_MODEL_CACHE_TTL_MS`, which solves the same problem for
  * provider model lists, and keeps a server that quietly gained or lost tools
  * from staying wrong across a week of sessions. A modern server's own `ttlMs`
- * shortens it (MCP 2026-07-28 server/utilities/caching), never lengthens it.
+ * only marks the catalog stale sooner (`mcpCatalogStale`); it never lengthens this.
  */
 export const MCP_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
@@ -95,8 +95,8 @@ export interface McpServerCatalog {
 	observedAt: string;
 	/**
 	 * The freshness the server gave the listing, modern era only. Absent for a
-	 * legacy listing, which keeps MCP_METADATA_CACHE_TTL_MS; 0 means the
-	 * catalog is stale at once and the next live connection lists again.
+	 * legacy listing, which is fresh until MCP_METADATA_CACHE_TTL_MS; 0 means
+	 * the catalog is stale at once (MCP 2026-07-28 server/utilities/caching).
 	 */
 	ttlMs?: number;
 	/** The server's own guidance, shown as server-written text beside its tools. */
@@ -232,9 +232,19 @@ export function readMcpServerCatalog(
 	}
 	const observedMs = Date.parse(catalog.observedAt);
 	const nowMs = options.nowMs ?? Date.now();
-	const ttlMs = options.ttlMs ?? Math.min(catalog.ttlMs ?? MCP_METADATA_CACHE_TTL_MS, MCP_METADATA_CACHE_TTL_MS);
+	const ttlMs = options.ttlMs ?? MCP_METADATA_CACHE_TTL_MS;
 	if (observedMs > nowMs || nowMs - observedMs >= ttlMs) return null;
 	return catalog;
+}
+
+/**
+ * The server's own `ttlMs` has passed. A stale catalog still answers discovery,
+ * labelled stale, because discovery never launches a server to fetch it again;
+ * the next live connection lists the tools again, and a call is checked against
+ * that live listing, never against this catalog.
+ */
+export function mcpCatalogStale(catalog: McpServerCatalog, nowMs: number = Date.now()): boolean {
+	return catalog.ttlMs !== undefined && nowMs - Date.parse(catalog.observedAt) >= catalog.ttlMs;
 }
 
 /**

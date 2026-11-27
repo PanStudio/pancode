@@ -62,8 +62,10 @@ export interface McpServerListing {
 	catalog?: McpCatalogProvenance;
 	/** Tools this server's catalog records; the names themselves are in the capability list. */
 	catalogCount?: number;
-	/** The command that lists this server's tools when its catalog is missing. */
+	/** The command that lists this server's tools when its catalog is missing or stale. */
 	catalogRemedy?: string;
+	/** The cached catalog outlived the server's own `ttlMs`; its tools are shown but may have changed. */
+	catalogStale?: true;
 	/** The server's own instructions, live or cached: server-written, at most 2 KiB, never in the system prompt. */
 	instructions?: string;
 	/**
@@ -106,6 +108,8 @@ interface McpCatalog extends McpListing {
 	entries: McpCatalogEntry[];
 	/** Trusted servers with no usable catalog, so discovery can name what it could not answer. */
 	missing: string[];
+	/** Running servers that announced a tool change since their last listing; listing one again launches nothing. */
+	changed?: string[];
 }
 
 /** One MCP capability's full metadata, enough to describe it without a connection. */

@@ -465,10 +465,14 @@ export function createGatewayTool(deps: GatewayToolDeps): ToolSpec {
 					// nothing and cost the model a second find with refresh=true (K10).
 					// When this find names it, list it live now; a launch that fails
 					// leaves the missing catalog and its remedy as before.
+					// A running server that announced a tool change is listed again too,
+					// so this find answers with its current tools.
 					const mcp = deps.mcp;
-					const named = mcp
-						.catalog()
-						.missing.filter((id) => (scoped ? id === server : shownServer(id) && queryNamesServer(query, id, mcp)));
+					const known = mcp.catalog();
+					const named = [
+						...known.missing.filter((id) => (scoped ? id === server : shownServer(id) && queryNamesServer(query, id, mcp))),
+						...(known.changed ?? []).filter(shownServer),
+					];
 					const notes: string[] = [];
 					for (const id of named) {
 						const result = await mcp.refresh(id, mcpLaunchOptions(options));

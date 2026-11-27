@@ -60,6 +60,7 @@ export {
 export {
 	type McpCatalogIdentity,
 	type McpServerCatalog,
+	mcpCatalogStale,
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "./metadata-cache.js";

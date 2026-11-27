@@ -28,6 +28,7 @@ import {
 	McpError,
 	mcpBuiltinLaunchArgs,
 	mcpBuiltinLaunchEnvironment,
+	mcpCatalogStale,
 	mcpSurface,
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
@@ -944,6 +945,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			catalog: "cached",
 			catalogCount: catalog.tools.length,
 			...(catalog.truncated ? { truncated: true } : {}),
+			...(mcpCatalogStale(catalog) ? { catalogStale: true, catalogRemedy: catalogRemedy(declaration.id) } : {}),
 			...guided(catalog.instructions),
 			...surfaced,
 		};
@@ -1072,6 +1074,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				entries: all.flatMap(entriesFor),
 				diagnostics: [...diagnostics],
 				missing: servers.filter((server) => server.catalog === "missing").map((server) => server.id),
+				changed: all.filter((state) => state.client?.toolsChanged() === true).map((state) => state.declaration.id),
 			};
 		},
 		metadata(name) {

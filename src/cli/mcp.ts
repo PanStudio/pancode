@@ -28,7 +28,7 @@ import {
 	trustMcpServer,
 	untrustMcpServer,
 } from "../domains/gateway/mcp/index.js";
-import { readMcpServerCatalog } from "../domains/gateway/mcp/metadata-cache.js";
+import { mcpCatalogStale, readMcpServerCatalog } from "../domains/gateway/mcp/metadata-cache.js";
 import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
 import { printError } from "./shared.js";
@@ -276,6 +276,7 @@ function offlineTools(
 ): {
 	tools: Array<{ name: string; annotations: Record<string, unknown> | null }>;
 	catalog: "shipped" | "cached" | "missing";
+	catalogStale?: true;
 	instructions?: string;
 } {
 	if (server.builtin !== undefined) {
@@ -296,6 +297,7 @@ function offlineTools(
 	return {
 		tools: catalog.tools.map((tool) => ({ name: tool.name, annotations: tool.annotations ?? null })),
 		catalog: "cached",
+		...(mcpCatalogStale(catalog) ? { catalogStale: true as const } : {}),
 		...(catalog.instructions !== undefined ? { instructions: catalog.instructions } : {}),
 	};
 }
@@ -349,6 +351,7 @@ export function mcpCommandOutput(
 								: [{ name: tool.name, capability, actionClass: mcpToolActionClass(server, tool) }];
 						}),
 						catalog: offline.catalog,
+						...(offline.catalogStale === true ? { catalogStale: true } : {}),
 						...(offline.instructions !== undefined ? { instructions: offline.instructions } : {}),
 						...(surface !== null ? { surface } : {}),
 					};
@@ -362,6 +365,8 @@ export function mcpCommandOutput(
 				for (const tool of server.tools) block.push(`  ${tool.capability} actionClass=${tool.actionClass}`);
 				if (server.trust.status === "trusted" && server.catalog === "missing")
 					block.push("  no recorded tool catalog; use pancode mcp list --refresh");
+				if (server.catalogStale === true)
+					block.push("  catalog stale: older than the server's own ttlMs; pancode mcp list --refresh lists it again");
 				if (server.surface !== undefined) block.push(`  ${surfaceLabel(server.surface)}`);
 				if (server.instructions !== undefined) block.push(...instructionsLines(server.instructions));
 				return block;
