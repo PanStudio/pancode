@@ -17,12 +17,12 @@
 
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { CLAUDE_AUTH_ENV } from "../../core/claude-environment.js";
-import { findEngineEnvKeys } from "../../engine/env-api-keys.js";
-import { findBuiltinRuntimeBootMetadata } from "../providers/runtimes/boot-manifest.js";
-import { referencedOpenCodeCredentials } from "../providers/runtimes/external-cli-policy.js";
+import { CLAUDE_AUTH_ENV } from "../../../core/claude-environment.js";
+import { findEngineEnvKeys } from "../../../engine/env-api-keys.js";
+import { findBuiltinRuntimeBootMetadata } from "../../providers/runtimes/boot-manifest.js";
+import { referencedOpenCodeCredentials } from "../../providers/runtimes/external-cli-policy.js";
 
-export interface ArenaEnvPolicy {
+export interface RunEnvPolicy {
 	targets: ReadonlyArray<{
 		id: string;
 		runtime: string;
@@ -91,7 +91,7 @@ const RUNTIME_PASS_ENV: Readonly<Record<string, RuntimePass>> = {
 const NEVER_PREFIXES = ["HERDR_"];
 
 function targetNames(
-	policy: ArenaEnvPolicy,
+	policy: RunEnvPolicy,
 	targetId: string,
 	source: Readonly<Record<string, string>>,
 ): { names: string[]; prefixes: string[] } {
@@ -145,9 +145,9 @@ function nearestTsconfig(entry: string): string | undefined {
  * The variables of `source` one contender is given; the safe-exec allowlist is added when it starts. Reads only the
  * runtime's own configuration. `targetId` null is the arena's own `verifiers dry-run`, which needs no credentials.
  */
-export function arenaContenderEnv(
+export function runEnv(
 	source: Readonly<Record<string, string>>,
-	policy: ArenaEnvPolicy,
+	policy: RunEnvPolicy,
 	targetId: string | null,
 ): Record<string, string> {
 	const scoped = targetId === null ? { names: [], prefixes: [] } : targetNames(policy, targetId, source);

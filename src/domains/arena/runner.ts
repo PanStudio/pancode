@@ -31,9 +31,9 @@ import {
 } from "../../tools/compete-worktrees.js";
 import { type DeclaredCheck, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH } from "../../tools/verify/catalog.js";
 import { resolveVerifyCall, type VerifyResolution } from "../../tools/verify/resolve.js";
+import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "../extensions/services/run-env.js";
 import { withContainedYoloPin } from "../safety/autonomy.js";
 import { blindOrder, labelForContender, newArenaSeed } from "./blind.js";
-import { type ArenaEnvPolicy, arenaContenderEnv, type PancodeLaunch } from "./contender-env.js";
 import { contenderWrites, readArenaStream, readNumstat } from "./facts.js";
 import { arenaRoot, contenderDiffPath, contenderStreamPath, matchDir, newArenaMatchId, writeMatch } from "./store.js";
 import {
@@ -71,7 +71,7 @@ export interface ArenaRunInput {
 	 */
 	env: Record<string, string>;
 	/** The targets and the operator's pass list that scope `env` per contender; absent passes no target's credentials. */
-	envPolicy?: ArenaEnvPolicy;
+	envPolicy?: RunEnvPolicy;
 	signal?: AbortSignal;
 	onStarted?: (match: ArenaMatch) => void;
 	onProgress?: (line: string) => void;
@@ -81,7 +81,7 @@ export interface ArenaRunInput {
 const TIMEOUT_GRACE_SECONDS = 30;
 const CHECK_TIMEOUT_MS = 10 * 60_000;
 const CHECK_TAIL_BYTES = 2000;
-const NO_ENV_POLICY: ArenaEnvPolicy = { targets: [], passEnv: [] };
+const NO_ENV_POLICY: RunEnvPolicy = { targets: [], passEnv: [] };
 
 function git(cwd: string, args: string[]): string {
 	return execFileSync("git", internalGitArgv(["-C", cwd, ...args]), {
@@ -282,7 +282,7 @@ async function runCheck(input: ArenaRunInput, cwd: string, id: string): Promise<
 	const result = await runCommandVector(input.pancode.file, [...input.pancode.args, "verifiers", "dry-run", id], {
 		cwd,
 		workspaceRoot: cwd,
-		env: { ...arenaContenderEnv(input.env, input.envPolicy ?? NO_ENV_POLICY, null), ...input.pancode.env },
+		env: { ...runEnv(input.env, input.envPolicy ?? NO_ENV_POLICY, null), ...input.pancode.env },
 		timeoutMs: CHECK_TIMEOUT_MS,
 		...(input.signal ? { signal: input.signal } : {}),
 	});
@@ -324,7 +324,7 @@ async function runContender(
 	contender.status = "running";
 	save();
 	const env = {
-		...arenaContenderEnv(input.env, input.envPolicy ?? NO_ENV_POLICY, contender.target),
+		...runEnv(input.env, input.envPolicy ?? NO_ENV_POLICY, contender.target),
 		...input.pancode.env,
 	};
 	const fd = openSync(streamPath, "w");

@@ -5,7 +5,6 @@ import { readLayeredSettings } from "../core/settings-layers.js";
 import {
 	ARENA_MAX_CONTENDERS,
 	type ArenaContenderSpec,
-	type ArenaEnvPolicy,
 	type ArenaMatchView,
 	ArenaRevealRefused,
 	ArenaVoteError,
@@ -19,9 +18,9 @@ import {
 	readVote,
 	recordVote,
 	runArenaMatch,
-	selfPancodeLaunch,
 	validateArenaRunInput,
 } from "../domains/arena/index.js";
+import { type RunEnvPolicy, selfPancodeLaunch } from "../domains/extensions/services/run-env.js";
 import { formatColumns, printError } from "./argv.js";
 import { containedYoloRefusal } from "./contained-yolo-gate.js";
 import { writeCliFailure } from "./kit/json-out.js";
@@ -222,7 +221,7 @@ function parentEnv(): Record<string, string> {
 }
 
 /** The targets each contender's credentials are scoped by, as `run --cwd` resolves them, and the operator's pass list. */
-function arenaEnvPolicy(cwd: string): ArenaEnvPolicy {
+function arenaEnvPolicy(cwd: string): RunEnvPolicy {
 	const { settings } = readLayeredSettings(cwd);
 	return { targets: settings.targets, passEnv: settings.safety.sandboxPassEnv };
 }

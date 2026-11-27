@@ -6,7 +6,7 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { isRecord } from "../../core/type-guards.js";
-import { type ArenaEnvPolicy, arenaContenderEnv, type PancodeLaunch } from "../arena/index.js";
+import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "../extensions/services/run-env.js";
 import { withContainedYoloPin } from "../safety/autonomy.js";
 import { type CampaignMetrics, entryRootEnv, entryRoots, foldCampaignMetrics, loadCampaignMetrics } from "./fold.js";
 import type { RosterEntry } from "./roster.js";
@@ -62,7 +62,7 @@ export interface CampaignInput {
 	operatorTools: string;
 	pancode: PancodeLaunch;
 	env: Record<string, string>;
-	envPolicy: ArenaEnvPolicy;
+	envPolicy: RunEnvPolicy;
 	signal?: AbortSignal;
 	onProgress?: (line: string) => void;
 }
@@ -331,7 +331,7 @@ async function runEntry(
 		cpSync(input.fixture, project, { recursive: true });
 		for (const root of [roots.data, roots.state, roots.cache]) mkdirSync(root, { recursive: true, mode: 0o700 });
 		const scoped = {
-			...arenaContenderEnv(input.env, input.envPolicy, entry.target),
+			...runEnv(input.env, input.envPolicy, entry.target),
 			...input.pancode.env,
 			...entryRootEnv(roots),
 		};
