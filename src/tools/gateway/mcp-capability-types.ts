@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { DynamicToolName } from "../../core/tool-names.js";
 import type {
-	McpBuiltinSource,
 	McpClient,
 	McpClientOptions,
 	McpCompletion,
@@ -229,8 +228,6 @@ export interface McpCapabilitySourceOptions {
 	cwd: string;
 	/** Override of the PanCode config directory that holds the user config and the trust file. */
 	configDir?: string;
-	/** Override for the builtin server manifest and the CLI that serves it; defaults to the installed package's. */
-	builtin?: McpBuiltinSource;
 	registry: ToolRegistry;
 	/** Request timeout applied when a declaration names none. */
 	requestTimeoutMs?: number;
@@ -264,9 +261,8 @@ export interface McpCapabilitySourceOptions {
 	attended?: boolean;
 	/**
 	 * What this session may write in the store, for store references in
-	 * declared path arguments and the builtin `store` server's options: the main
-	 * session every tag, a worker its granted tags. Absent means no access, so
-	 * every write reference is refused and the `store` server writes no tag.
+	 * declared path arguments: the main session every tag, a worker its granted
+	 * tags. Absent means no access, so every write reference is refused.
 	 */
 	store?: McpStoreAccess;
 	/** Test seam: the store backend references resolve and commit through. */
@@ -468,8 +464,6 @@ export interface ServerState {
 	catalogChange?: string;
 	/** The surface of the last listing and how it stands against approval; absent until listed. */
 	surface?: { served: McpSurface; status: McpServerSurfaceListing };
-	/** The tags the builtin `store` server was started with --write-tag for; absent for any other server. */
-	launchWriteTags?: ReadonlyArray<string>;
 	/** Tools the last listing dropped for an x-mcp-header PanCode cannot send. */
 	dropped?: Array<{ name: string; reason: string }>;
 	/** Set to close the server and start it again at the next discovery, with its options computed afresh. */

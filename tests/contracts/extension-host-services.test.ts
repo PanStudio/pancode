@@ -451,6 +451,13 @@ const runtimeSource = `export default (api) => {
 		void ctx.complete({ messages: [{ role: "user", text: "left behind" }] }).catch(() => {});
 		return { text: "left" };
 	});
+	api.handle("drop", (args, ctx) => {
+		if (args === "null-proto") Promise.reject(Object.create(null));
+		else if (args === "ansi") Promise.reject("\\u001b[31m");
+		else if (args === "multiline") Promise.reject(new Error("line one\\nline two"));
+		else ctx.store.set("k", "v");
+		return { text: "dropped" };
+	});
 };
 `;
 
@@ -471,7 +478,7 @@ function installScribe(dir: string, declared: Record<string, unknown> | undefine
 			runtime: {
 				api: 2,
 				entrypoint: "extension.mjs",
-				commands: ["members", "write", "hang", "leave"].map((name) => ({ name, description: name })),
+				commands: ["members", "write", "hang", "leave", "drop"].map((name) => ({ name, description: name })),
 				permissions: { fs: { read: ["workspace"] } },
 				...(declared ? { services: declared } : {}),
 			},
@@ -514,6 +521,34 @@ test("a runtime that declares no services gets no service members", async (t) =>
 	cleanup.push(() => operator.dispose());
 	equal((await operator.reload("startup")).status, "committed");
 	equal((await invoke(operator, "members")).text, "undefined undefined");
+});
+
+test("a refused call the handler never awaited is reported once and the runtime keeps serving", async (t) => {
+	const { cleanup } = await inWorkspace(t, undefined);
+	const diagnostics: string[] = [];
+	const operator = new OperatorExtensions({
+		services: createExtensionHostServices({}),
+		context: () => ({ workspace: process.cwd(), sessionId: "attended", mode: "interactive" }),
+		isIdle: () => true,
+		onlyId: "scribe",
+		onDiagnostic: (line) => diagnostics.push(line),
+	});
+	cleanup.push(() => operator.dispose());
+	equal((await operator.reload("startup")).status, "committed");
+	equal((await invoke(operator, "drop")).text, "dropped");
+	equal((await invoke(operator, "drop")).text, "dropped");
+	equal((await invoke(operator, "drop", "null-proto")).text, "dropped");
+	equal((await invoke(operator, "drop", "ansi")).text, "dropped");
+	equal((await invoke(operator, "drop", "multiline")).text, "dropped");
+	for (let spin = 0; spin < 50 && diagnostics.length < 4; spin++)
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	equal((await invoke(operator, "members")).text, "undefined undefined");
+	deepStrictEqual(diagnostics, [
+		"scribe left a rejected promise unhandled: runtime did not declare store",
+		"scribe left a rejected promise unhandled: unprintable error",
+		"scribe left a rejected promise unhandled: unknown error",
+		"scribe left a rejected promise unhandled: line one line two",
+	]);
 });
 
 test("the runtime's ending request and its disposal both abort a model call in flight", async (t) => {

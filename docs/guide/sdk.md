@@ -18,7 +18,7 @@ The extension API lives in the private workspace package `@pancode/sdk`, license
 | `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
 | `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio with no runtime dependencies. |
 
-[PanKit](pankit.md)'s servers are built on `pancode/sdk/tool` and `pancode/sdk/mcp-server`.
+The MCP servers in the hub's `hpc` and `science-data` plugins are built on `pancode/sdk/tool` and `pancode/sdk/mcp-server`.
 
 ## Using the extension API
 
@@ -162,4 +162,4 @@ Then: pancode extensions test /work/.pancode/dev/extensions/lab-hello
 - The test host reads only `pancode-extension.json` by itself; a YAML manifest needs `pancode extensions test` or `services.loadManifest`.
 - The test host does not provide the work services (`ctx.runs`, `ctx.worktrees`, `ctx.verify`, `ctx.claims`) or `ctx.progress`. Test a command that uses them by installing the package and running it with `pancode extensions run`.
 - `pancode/sdk/mcp-server` serves tools only: no resources, prompts or sampling, over stdio only. It refuses an inbound line over 4 MiB, and it does not truncate large results.
-- A server's declared classes are a hint to any host; PanCode applies the classes its operator declares or the policy it ships.
+- A server's declared classes are a hint to any host; PanCode applies the classes its operator declares or a plugin's `mcp.json` sets in `toolActionClasses`.

@@ -18,8 +18,6 @@ import {
 	createMcpClient,
 	DEFAULT_KILL_GRACE_MS,
 	DEFAULT_TEARDOWN_BOUND_MS,
-	defaultMcpBuiltinSource,
-	type McpBuiltinSource,
 	type McpClient,
 	mcpSurface,
 	mcpToolActionClass,
@@ -53,7 +51,6 @@ import { mcpSubmitReader } from "../../src/tools/gateway/mcp-submit-reader.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { RegistryDeps, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { toolResultContextText } from "../../src/tools/result-disposition.js";
-import { builtinFixtureSource, emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**
@@ -71,8 +68,6 @@ interface Scenario {
 	project: string;
 	configDir: string;
 	markerPath: string;
-	/** Ships no server, so only the project declarations are listed and launched. */
-	builtin: McpBuiltinSource;
 }
 
 function scenario(): Scenario {
@@ -84,7 +79,7 @@ function scenario(): Scenario {
 	mkdirSync(configDir, { recursive: true });
 	const markerPath = join(root, "marker-launched");
 	writeConfig(project, markerPath, "normal");
-	return { project, configDir, markerPath, builtin: emptyBuiltinSource(root) };
+	return { project, configDir, markerPath };
 }
 
 /** Two project servers: the fixture (to be trusted) and one that proves launch by writing a marker file. */
@@ -140,7 +135,6 @@ function wire(
 	const source = createMcpCapabilitySource({
 		cwd: scene.project,
 		configDir: scene.configDir,
-		builtin: scene.builtin,
 		registry,
 		requestTimeoutMs: 5_000,
 		clientFactory: (spec, options) => {
@@ -1699,7 +1693,6 @@ describe("gateway MCP capabilities", () => {
 			const source = createMcpCapabilitySource({
 				cwd: scene.project,
 				configDir: scene.configDir,
-				builtin: scene.builtin,
 				registry,
 				requestTimeoutMs: 5_000,
 			});
@@ -1876,246 +1869,6 @@ describe("gateway MCP capabilities", () => {
 		});
 		doesNotMatch(rendered.text, /\n- spoofed \(source: project\):/u);
 	});
-});
-
-describe("builtin MCP servers", () => {
-	let env: IsolatedPancodeEnv;
-	beforeEach(async () => {
-		env = await isolatePancodeEnv("pancode-gateway-builtin-");
-	});
-	afterEach(async () => {
-		env.restore();
-		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-	});
-
-	function builtinScene(edit?: Parameters<typeof builtinFixtureSource>[2]): {
-		project: string;
-		configDir: string;
-		builtin: McpBuiltinSource;
-	} {
-		const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-gateway-builtin-")));
-		roots.push(root);
-		const project = join(root, "project");
-		const configDir = join(root, "config");
-		mkdirSync(project, { recursive: true });
-		mkdirSync(configDir, { recursive: true });
-		return { project, configDir, builtin: builtinFixtureSource(root, ["kitfix", "slurm"], edit) };
-	}
-
-	function wireBuiltin(scene: ReturnType<typeof builtinScene>, level: AutonomyLevel = "default") {
-		const parks: string[] = [];
-		const launches: string[] = [];
-		const registry = createRegistry({ safety: createWorkerSafety({ cwd: scene.project }), autonomy: () => level });
-		const source = createMcpCapabilitySource({
-			cwd: scene.project,
-			configDir: scene.configDir,
-			builtin: scene.builtin,
-			registry,
-			requestTimeoutMs: 10_000,
-			clientFactory: (spec, options) => {
-				launches.push(spec.id);
-				return createMcpClient(spec, { ...options, initializeTimeoutMs: 10_000, killGraceMs: 200 });
-			},
-		});
-		registerCoreTools(registry, { mcpCapabilities: source });
-		registry.onPermissionRequired((call, _decision, meta) => {
-			parks.push(call.tool);
-			registry.cancelParkedCall(meta.requestId, "denied by the test", { denied: true });
-		});
-		return { registry, source, parks, launches };
-	}
-
-	it("lists a builtin server as trusted with its shipped classes and launches nothing to do so", async () => {
-		const scene = builtinScene();
-		const wired = wireBuiltin(scene);
-		try {
-			const catalog = wired.source.catalog();
-			const kitfix = catalog.servers.find((entry) => entry.id === "kitfix");
-			strictEqual(kitfix?.scope, "builtin");
-			strictEqual(kitfix.status, "trusted");
-			deepStrictEqual(catalog.diagnostics, []);
-			deepStrictEqual(wired.source.connectedIds(), []);
-			deepStrictEqual(wired.launches, []);
-			const listed = mcpCommandOutput(["list"], {
-				cwd: scene.project,
-				configDir: scene.configDir,
-				builtin: scene.builtin,
-			});
-			strictEqual(listed.code, 0, listed.text);
-			const servers = (listed.data as { servers: Array<Record<string, unknown>> }).servers;
-			const shipped = servers.find((entry) => entry.id === "kitfix");
-			strictEqual(shipped?.scope, "builtin");
-			deepStrictEqual(shipped?.builtin, { version: "0.0.1", title: "Kit fixture", environment: [] });
-			deepStrictEqual(
-				(shipped?.tools as Array<{ name: string; actionClass: string }>).map((tool) => [tool.name, tool.actionClass]),
-				[
-					["echo", "read"],
-					["env", "read"],
-					["stamp", "execute"],
-				],
-			);
-			strictEqual(shipped?.catalog, "shipped");
-			deepStrictEqual(wired.launches, []);
-		} finally {
-			await wired.source.close();
-		}
-	});
-
-	it("calls a builtin read tool with no trust or surface approval and no park", async () => {
-		const scene = builtinScene();
-		const wired = wireBuiltin(scene);
-		try {
-			strictEqual((await wired.source.ensure("mcp_kitfix__echo")).spec?.baseActionClass, "read");
-			const verdict = await wired.registry.invoke({ tool: "mcp_kitfix__echo", args: { text: "hi" } });
-			ok(verdict.kind === "ok" && verdict.result.kind === "ok", JSON.stringify(verdict));
-			strictEqual(verdict.result.output, "echo: hi");
-			deepStrictEqual(wired.parks, []);
-			deepStrictEqual(wired.launches, ["kitfix"]);
-		} finally {
-			await wired.source.close();
-		}
-	});
-
-	it("starts a builtin server with the variables its manifest names and no others", async (t) => {
-		const values: Record<string, string> = {
-			KITFIX_SITE: "site-a",
-			KITFIX_LAYER_ONE: "one",
-			KITFIX_LAYER_TWO: "two",
-			KITFIX_UNDECLARED: "hidden",
-			KITFIX_LAYER_TOKEN: "masked",
-		};
-		for (const [name, value] of Object.entries(values)) process.env[name] = value;
-		t.after(() => {
-			for (const name of Object.keys(values)) delete process.env[name];
-		});
-		const scene = builtinScene((manifest) => {
-			const kitfix = manifest.servers.find((server) => server.id === "kitfix");
-			if (kitfix === undefined) throw new Error("fixture manifest changed");
-			kitfix.environment = ["KITFIX_LAYER_*", "KITFIX_SITE"];
-		});
-		const wired = wireBuiltin(scene);
-		try {
-			strictEqual((await wired.source.ensure("mcp_kitfix__env")).spec?.baseActionClass, "read");
-			const seen: Record<string, unknown> = {};
-			for (const name of [...Object.keys(values), "KITFIX_ABSENT"]) {
-				const verdict = await wired.registry.invoke({ tool: "mcp_kitfix__env", args: { name } });
-				ok(verdict.kind === "ok" && verdict.result.kind === "ok", JSON.stringify(verdict));
-				seen[name] = (JSON.parse(verdict.result.output) as { value: unknown }).value;
-			}
-			deepStrictEqual(seen, {
-				KITFIX_SITE: "site-a",
-				KITFIX_LAYER_ONE: "one",
-				KITFIX_LAYER_TWO: "two",
-				KITFIX_UNDECLARED: null,
-				KITFIX_LAYER_TOKEN: null,
-				KITFIX_ABSENT: null,
-			});
-			const listed = mcpCommandOutput(["list"], {
-				cwd: scene.project,
-				configDir: scene.configDir,
-				builtin: scene.builtin,
-			});
-			const servers = (listed.data as { servers: Array<{ id: string; builtin?: { environment: string[] } }> }).servers;
-			deepStrictEqual(servers.find((entry) => entry.id === "kitfix")?.builtin?.environment, [
-				"KITFIX_LAYER_*",
-				"KITFIX_SITE",
-			]);
-			match(listed.text, /environment=KITFIX_LAYER_\*,KITFIX_SITE/u);
-			doesNotMatch(JSON.stringify(listed.data), /site-a/u);
-		} finally {
-			await wired.source.close();
-		}
-	});
-
-	it("refuses every tool of a builtin server whose live surface differs from the shipped policy", async () => {
-		const scene = builtinScene((manifest) => {
-			const echo = manifest.servers[0]?.tools.find((tool) => tool.name === "echo");
-			if (echo === undefined) throw new Error("fixture manifest changed");
-			echo.inputSchema = { type: "object", properties: { words: { type: "string" } } };
-		});
-		const wired = wireBuiltin(scene, "yolo");
-		try {
-			for (const call of [
-				{ tool: "mcp_kitfix__echo", args: { text: "hi" } },
-				{ tool: "mcp_kitfix__stamp", args: { path: "out.txt" } },
-			]) {
-				ok((await wired.source.ensure(call.tool)).spec !== null, "the capability is listed; its calls are refused");
-				const verdict = await wired.registry.invoke(call);
-				ok(verdict.kind === "ok" && verdict.result.kind === "error", JSON.stringify(verdict));
-				const message = verdict.result.message;
-				match(message, /builtin server 'kitfix' serves differs from the policy this PanCode ships/u);
-				match(message, /reinstall or rebuild PanCode/u);
-				doesNotMatch(message, /--surface/u);
-			}
-		} finally {
-			await wired.source.close();
-		}
-	});
-
-	it("keeps the Slurm allocation confirmation for a builtin server with id slurm", async () => {
-		const scene = builtinScene();
-		const wired = wireBuiltin(scene);
-		try {
-			const submit = await wired.source.ensure("mcp_slurm__slurm_submit");
-			strictEqual(submit.spec?.confirmationRuleId, "slurm-allocation");
-			strictEqual(submit.spec?.baseActionClass, "execute");
-			const list = await wired.source.ensure("mcp_slurm__slurm_list");
-			strictEqual(list.spec?.baseActionClass, "read");
-			strictEqual(list.spec?.confirmationRuleId, undefined);
-		} finally {
-			await wired.source.close();
-		}
-	});
-
-	it("refuses every trust of a builtin server but its network grant", () => {
-		const scene = builtinScene();
-		const options = { cwd: scene.project, configDir: scene.configDir, builtin: scene.builtin };
-		for (const args of [
-			["trust", "kitfix"],
-			["trust", "kitfix", "--action-class", "read"],
-		]) {
-			const out = mcpCommandOutput(args, options);
-			strictEqual(out.code, 1, `${args.join(" ")}: ${out.text}`);
-			match(out.text, /server 'kitfix' ships with PanCode/u, args.join(" "));
-		}
-		const trusted = trustMcpServer({ ...options, id: "kitfix", actionClass: "read" });
-		strictEqual(trusted.ok, false);
-	});
-
-	it("serves the shipped node server from the real manifest with no approval and no park", async () => {
-		const scene = { ...builtinScene(), builtin: defaultMcpBuiltinSource() };
-		const wired = wireBuiltin(scene);
-		try {
-			const listed = mcpCommandOutput(["list"], {
-				cwd: scene.project,
-				configDir: scene.configDir,
-				builtin: scene.builtin,
-			});
-			strictEqual(listed.code, 0, listed.text);
-			const node = (listed.data as { servers: Array<Record<string, unknown>> }).servers.find(
-				(entry) => entry.id === "node",
-			);
-			strictEqual(node?.scope, "builtin");
-			deepStrictEqual(
-				(node?.tools as Array<{ name: string; actionClass: string }>).map((tool) => [tool.name, tool.actionClass]),
-				["node_cpu", "node_disks", "node_gpus", "node_memory", "node_network", "node_processes"].map((name) => [
-					name,
-					"read",
-				]),
-			);
-			strictEqual((await wired.source.ensure("mcp_node__node_disks")).spec?.baseActionClass, "read");
-			const verdict = await wired.registry.invoke({ tool: "mcp_node__node_disks", args: { path: "." } });
-			ok(verdict.kind === "ok" && verdict.result.kind === "ok", JSON.stringify(verdict));
-			const disk = JSON.parse(String(verdict.result.output)) as { resolvedPath: string; sizeBytes: number };
-			strictEqual(disk.resolvedPath, scene.project, "the server runs in the project");
-			ok(disk.sizeBytes > 0);
-			deepStrictEqual(wired.parks, []);
-			deepStrictEqual(wired.launches, ["node"]);
-		} finally {
-			await wired.source.close();
-		}
-	});
-
 	it("persists prompts and resource counts before close, guards prompt media/ui://, masks duplicate mentions, and sanitizes completion", async () => {
 		const scene = scenario();
 		const server = join(scene.project, "rp-server.mjs");
@@ -2391,7 +2144,6 @@ describe("remote Streamable HTTP MCP safeguards", () => {
 				configDir,
 				registry,
 				attended: true,
-				builtin: emptyBuiltinSource(env.dir),
 				clientFactory: (spec, opts) => createMcpClient(spec, { ...opts, fetch: fakeFetch }),
 			});
 			try {

@@ -23,7 +23,7 @@ import { loadSkills, type Skill } from "./loader.js";
 export type MarketplaceSkillOrigin = "catalog" | "index";
 
 import { relativePathEscapes } from "../../../core/path-containment.js";
-import type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
+import type { HubRequirementRef } from "../hub-types.js";
 
 export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
 
@@ -35,7 +35,7 @@ export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
 export const MARKETPLACE_UNCONFIGURED = "no local skill marketplace catalog or index configured";
 
 export interface MarketplaceSkill {
-	kind: Exclude<HubEntryKind, "plugin">;
+	kind: "skill";
 	name: string;
 	description: string;
 	/** Local path or URL accepted by `pancode hub install`. */
@@ -154,7 +154,7 @@ function parseMarketplaceIndex(indexPath: string, diagnostics: string[] = []): M
 			const category = optionalString(record.category);
 			const triggers = optionalTriggerList(record.triggers);
 			const indexKind = record.kind;
-			if (indexKind !== undefined && !["skill", "agent", "prompt", "playbook"].includes(String(indexKind))) {
+			if (indexKind !== undefined && indexKind !== "skill") {
 				diagnostics.push(`skill marketplace index entry has unsupported kind: ${skill.name}`);
 				return [];
 			}
@@ -165,14 +165,12 @@ function parseMarketplaceIndex(indexPath: string, diagnostics: string[] = []): M
 				diagnostics.push(`hub_requirement_malformed: ${skill.name}`);
 				return [];
 			}
-			const kind: HubEntryKind =
-				indexKind === "agent" || indexKind === "prompt" || indexKind === "playbook" ? indexKind : "skill";
 			const requires = Array.isArray(record.requires)
 				? record.requires.filter((entry): entry is HubRequirementRef => typeof entry === "string")
 				: undefined;
 			return [
 				{
-					kind,
+					kind: "skill" as const,
 					name: skill.name.trim(),
 					description: skill.description.trim(),
 					sourceUrl: skill.sourceUrl.trim(),

@@ -1,27 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-/**
- * PanHub distributes packs; kind describes the pack's public contents. A
- * `server` pack is one PanKit tool server; the seven PanCode carries are built
- * in and have no installed copy, and a third party's server pack installs as a
- * plugin whose `mcp.json` declares that one server.
- */
-export type HubEntryKind = "skill" | "agent" | "prompt" | "playbook" | "plugin" | "extension" | "server";
+/** PanHub distributes packs; kind describes the pack's public contents. */
+export type HubEntryKind = "skill" | "plugin" | "extension";
 export type HubRequirementRef = `${HubEntryKind}:${string}`;
 
-/**
- * Plugin-backed package formats: they install through the plugin writer. A
- * standalone extension has its own manifest and writer. A server pack in the
- * builtin form is never installed; one in the launcher form installs as a plugin.
- */
-export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension">[] = [
-	"plugin",
-	"skill",
-	"agent",
-	"prompt",
-	"playbook",
-	"server",
-];
+/** Plugin-backed package formats: they install through the plugin writer. A standalone extension has its own manifest and writer. */
+export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension">[] = ["plugin", "skill"];
 
 export function isHubKind(value: unknown): value is HubEntryKind {
 	return (
@@ -30,14 +14,17 @@ export function isHubKind(value: unknown): value is HubEntryKind {
 	);
 }
 
-/** The four component kinds. A plugin owns components; it is never a fifth invocable kind, and a server is a pack of tools. */
-export type HubComponentKind = Exclude<HubEntryKind, "plugin" | "extension" | "server">;
+/** The four component kinds a plugin carries. A plugin owns components; it is never a fifth invocable kind. */
+export type HubComponentKind = "skill" | "agent" | "prompt" | "playbook";
 
 export const HUB_COMPONENT_KINDS: readonly HubComponentKind[] = ["skill", "agent", "prompt", "playbook"];
 
 export function isHubComponentKind(value: unknown): value is HubComponentKind {
 	return typeof value === "string" && HUB_COMPONENT_KINDS.includes(value as HubComponentKind);
 }
+
+/** What PanHub browses and filters by: a pack kind or a component kind. */
+export type HubCategory = HubEntryKind | HubComponentKind;
 
 /**
  * Bounded, body-free hint carried by a catalog row. Generated for curated

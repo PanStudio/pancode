@@ -73,7 +73,7 @@ A skill in the package can confine itself to those server tools: its `allowed-to
 | Field | Rule |
 | --- | --- |
 | `manifestVersion` | Must be `1` whenever the object is present. |
-| `kind` | `plugin` (default), `skill`, `agent`, `prompt`, `playbook` or `server`. |
+| `kind` | `plugin` (default) or `skill`. |
 | `requires` | Package dependencies as `kind:name` references (see [Package dependencies](#package-dependencies)). |
 | `compatibility.pancode` | Optional SemVer range. Install and load refuse a package whose range excludes the running PanCode. |
 | `resources` | Map from `skills`, `prompts`, `agents` or `playbooks` to a relative directory inside the package. |
@@ -130,16 +130,13 @@ Create every declared directory and file before validation. A manifest declaring
 
 ### Package kinds
 
-A `plugin` may carry many public components. Every other content kind is a single-component package, and the manifest parser and `hub validate` enforce these rules:
+A `plugin` may carry many public components. A `skill` package is a single-component package, and the manifest parser and `hub validate` enforce these rules:
 
-- It declares exactly one public component of its own kind (`skill`, `agent`, `prompt` or `playbook`).
-- Its `resources` map holds only its own resource root (`skills`, `agents`, `prompts` or `playbooks`).
-- The resource root exposes exactly the declared file: a `SKILL.md` for a skill, a single Markdown file otherwise. Private supporting files may sit elsewhere in the package.
+- It declares exactly one public `skill` component.
+- Its `resources` map holds only its `skills` root.
+- The resource root exposes exactly the declared `SKILL.md`. Private supporting files may sit elsewhere in the package.
 - A standalone skill package uses `resources.skills: "."` with a root `SKILL.md`.
-- A standalone agent package declares `skills: []`, because an agent cannot bind a skill outside its own package.
 - `README.md` stays at the package root, outside any resource directory, so the loader does not discover it as a second public component.
-
-A third-party `server` pack may include files its launcher runs, but no components or `skills/`, `agents/`, `prompts/` or `playbooks/` root, even if undeclared. Its root `mcp.json` declares exactly one stdio server whose id is the pack name and which is not the id of a server PanCode ships. `hub validate` reads that file with the gateway's declaration and size checks. Installed with `pancode hub install server:<name>`, it becomes a plugin-scope declaration that launches only after `pancode mcp trust <name>`; another agent host runs it with `pankit serve <name>` after `pankit add <name>`.
 
 ### Components and references
 
@@ -189,20 +186,16 @@ Extensions are a separate package kind with their own manifest, installation sta
 
 ## Authoring templates and contributor journey
 
-PanCode provides working, valid authoring templates for the five content kinds and a server pack in `hub/_authoring/templates/`:
+PanCode provides working, valid authoring templates for the two content kinds in `hub/_authoring/templates/`:
 
 - `hub/_authoring/templates/skill/`: Standalone skill with house conventions and triggers.
-- `hub/_authoring/templates/agent/`: Standalone agent using strict v1 fields, `skills: []`, and `audience: custom`.
-- `hub/_authoring/templates/prompt/`: Parameterized prompt with path-derived invocation (`/<name>`) and `$ARGUMENTS` expansion.
-- `hub/_authoring/templates/playbook/`: Multi-agent coordination playbook with a valid DAG and documented prerequisites.
 - `hub/_authoring/templates/plugin/`: Plugin showing an agent binding a contained skill, prompts, and supporting assets.
-- `hub/_authoring/templates/server/`: Server pack whose `mcp.json` launches a dependency-free Node MCP server with one read tool.
 
 Templates are reference models: `pnpm run hub:pin` validates them and leaves them out of `hub/index.yaml`. Follow this unified contributor journey:
 
-1. **Choose package kind**: Decide whether your package is a single-kind package (`skill`, `agent`, `prompt`, `playbook`) exposing exactly one public component, or a composite `plugin` combining multiple components. Code that changes PanCode is an extension, authored with `pancode extensions init` and the [extension API](sdk.md) instead.
+1. **Choose package kind**: Decide whether your package is a standalone `skill` exposing exactly one public skill, or a composite `plugin` combining multiple components such as skills, agents, prompts and playbooks. Code that changes PanCode is an extension, authored with `pancode extensions init` and the [extension API](sdk.md) instead.
 2. **Copy authoring template**: Copy from `hub/_authoring/templates/<kind>/` into your project or repository.
-3. **Author resources**: Single-kind packages expose exactly one public resource file in their declared resource directory. Packages may carry explicitly invoked scripts (for example for offline evaluation or verification tasks); these are declared metadata and are strictly distinct from extensions, which run code with hooks and runtime tools.
+3. **Author resources**: A standalone skill package exposes exactly one public `SKILL.md` in its declared resource directory. Packages may carry explicitly invoked scripts (for example for offline evaluation or verification tasks); these are declared metadata and are strictly distinct from extensions, which run code with hooks and runtime tools.
 4. **Validate**: Run `pancode hub validate ./lab-research --json` to verify manifest schemas, resource payloads, reference syntax, and loadability.
 5. **Pin and check**: Maintainers run `pnpm run hub:pin` and `pnpm run hub:check` to refresh and verify full-tree distribution pins, which also refreshes the normalized skill evidence. The registry files and pin stages are described in [PanHub](panhub.md#registry-and-pins).
 6. **Try in an isolated project**: Register locally with `pancode hub register ./lab-research --project`. Registration writes identity, version, source, and full-tree SHA-256 into the scoped `hub.yaml` without installing. Preview and install with `hub install plugin:lab-research --project --dry-run`, then `hub install plugin:lab-research --project`. An operator install into new or already trusted project state can approve the identities it wrote. Identical reinstalls, disables and removals preserve consent; an unapproved identity needs `pancode config trust plugins`. See [project package trust](panhub.md#workspace-trust-for-project-packages). Test invocation through `/skill <name>`, `/run`, prompt slash commands, or `/fleet run <playbook>`.

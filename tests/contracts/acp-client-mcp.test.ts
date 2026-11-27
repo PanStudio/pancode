@@ -12,7 +12,6 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import { emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 test("ACP client stdio MCP server is callable through gateway and closes with its session", async () => {
@@ -153,13 +152,7 @@ test("a read-only or no-tools ACP session registers client stdio MCP servers wit
 	try {
 		for (const { name, operatorToolLimits, extra, readOnly } of sessions) {
 			const registry = createRegistry({ safety: createWorkerSafety({ cwd }), autonomy: () => "yolo" });
-			const source = createMcpCapabilitySource({
-				cwd,
-				registry,
-				configDir: env.dir,
-				builtin: emptyBuiltinSource(env.dir),
-				requestTimeoutMs: 5_000,
-			});
+			const source = createMcpCapabilitySource({ cwd, registry, configDir: env.dir, requestTimeoutMs: 5_000 });
 			const handlers = new Map<string, (params: unknown) => Promise<unknown> | unknown>();
 			let stop: () => void = () => {};
 			const transport: AcpJsonRpcPeerTransport = {

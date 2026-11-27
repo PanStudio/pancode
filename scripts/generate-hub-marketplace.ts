@@ -95,14 +95,6 @@ interface PortableManifest {
  */
 const HOST_SCANNED_ROOTS = ["agents", "commands", "hooks", "output-styles", ".mcp.json", ".claude-plugin"] as const;
 
-/**
- * The one pack published for its root `.mcp.json` alone. Its servers are
- * PanKit's own, launched through `npx -y -p @panstudio/pancode pankit serve <id>`,
- * so the host-native MCP component it presents is exactly what it is. PanCode
- * reads `mcp.json`, never `.mcp.json`, so the same pack declares nothing there.
- */
-const CLAUDE_MCP_PACK = "pankit";
-
 /** PanCode's plugin directory variables and Claude Code's names for the same directories. */
 const CLAUDE_PLUGIN_VARIABLES: ReadonlyArray<[string, string]> = [
 	[`\${PLUGIN_ROOT}`, `\${CLAUDE_PLUGIN_ROOT}`],
@@ -226,20 +218,12 @@ interface Exclusion {
  * Returning a reason rather than throwing is deliberate. A future native-only
  * pack is a normal PanHub contribution, not a pinning failure, so it is
  * reported and skipped instead of breaking `hub:pin` for everything else.
- *
- * `mcpPack` marks `CLAUDE_MCP_PACK`: its root `.mcp.json` is the surface it
- * publishes, so it needs that file and no skill surface; every other
- * default-scanned root still refuses it.
  */
-function portabilityVerdict(
-	directory: string,
-	manifest: PortableManifest,
-	mcpPack: boolean,
-): { publish: boolean; reason?: string } {
+function portabilityVerdict(directory: string, manifest: PortableManifest): { publish: boolean; reason?: string } {
 	// A pack whose `.mcp.json` is generated from its `mcp.json` publishes that server beside its skills.
 	const generatedMcp = existsSync(path.join(directory, "mcp.json"));
 	for (const scanned of HOST_SCANNED_ROOTS) {
-		if ((mcpPack || generatedMcp) && scanned === ".mcp.json") continue;
+		if (generatedMcp && scanned === ".mcp.json") continue;
 		if (existsSync(path.join(directory, scanned))) {
 			return {
 				publish: false,
@@ -247,12 +231,6 @@ function portabilityVerdict(
 			};
 		}
 	}
-	if (mcpPack) {
-		return existsSync(path.join(directory, ".mcp.json"))
-			? { publish: true }
-			: { publish: false, reason: "no root .mcp.json, so a host would load no MCP server" };
-	}
-
 	const skillsDirectory = path.join(directory, "skills");
 	const hasSkillsDirectory = existsSync(skillsDirectory);
 	if (hasSkillsDirectory) {
@@ -378,7 +356,7 @@ export function renderHubMarketplace(options: GenerateMarketplaceOptions = {}): 
 		if (manifest.version !== entry.version) {
 			errors.push(`${entry.name}: manifest version ${manifest.version} does not match pinned ${entry.version}`);
 		}
-		const verdict = portabilityVerdict(directory, manifest, entry.kind === "plugin" && entry.name === CLAUDE_MCP_PACK);
+		const verdict = portabilityVerdict(directory, manifest);
 		if (!verdict.publish) {
 			excluded.push({ name: entry.name, sourceUrl: entry.sourceUrl, reason: verdict.reason ?? "not portable" });
 			continue;

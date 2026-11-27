@@ -10,7 +10,7 @@ The extension API is how you write PanCode extensions, packs, tools and MCP serv
 | `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
 | `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio. |
 
-The [PanKit](/docs/guide/pankit.html) servers are built on the last two.
+The MCP servers in the hub's `hpc` and `science-data` plugins are built on the last two.
 
 ## Start an extension
 
@@ -52,4 +52,4 @@ To use the server from PanCode, declare it in `<config>/mcp.yaml` with its class
 - A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/testing` without `node_modules`.
 - The scaffold's tsconfig names the installed PanCode by its absolute path, so moving PanCode leaves it pointing at the old place.
 - `pancode/sdk/mcp-server` serves tools only, over stdio only, and refuses an inbound line over 4 MiB.
-- A server's declared classes are a hint; PanCode applies the classes its operator declares or the policy it ships.
+- A server's declared classes are a hint; PanCode applies the classes its operator declares or a plugin's `mcp.json` sets.

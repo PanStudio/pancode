@@ -347,7 +347,6 @@ actually contain.
 claude plugin marketplace add PanStudio/pancode
 claude plugin install tdd@pancode
 claude plugin install hpc@pancode
-claude plugin install pankit@pancode
 ```
 
 A local checkout or the installed npm package works the same way, because every
@@ -358,15 +357,15 @@ claude plugin marketplace add ./path/to/pancode
 claude plugin marketplace add "$(npm root -g)/pancode"
 ```
 
-The marketplace publishes 39 entries: the 34 curated skill packs, the four
-science packs (`hpc`, `science-data`, `literature`, `life-science`) and `pankit`.
+The marketplace publishes 38 entries: the 34 curated skill packs and the four
+science packs (`hpc`, `science-data`, `literature`, `life-science`).
 What each entry becomes on the Claude Code side:
 
 | Source layout | What Claude Code loads |
 | --- | --- |
 | `hub/packs/skills/<category>/<name>/` with a root `SKILL.md` | One skill, named by the `SKILL.md` frontmatter, with its `references/` companions |
-| `hub/packs/plugins/<pack>/` for a science pack | The pack's skills from its `skills/` directory. A pack's `mcp.json` is the Agent Plugins file PanCode reads, not the `.mcp.json` Claude Code scans, so Claude Code starts none of its servers. |
-| `hub/packs/plugins/pankit/` | Six PanKit MCP servers (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`) from its root `.mcp.json`, each started as `npx -y -p @panstudio/pancode pankit serve <id>`. `claude plugin install pankit@pancode` installs it. |
+| `hub/packs/plugins/<pack>/` for a science pack | The pack's skills from its `skills/` directory. A pack's `mcp.json` is the Agent Plugins file PanCode reads, not the `.mcp.json` Claude Code scans. |
+| `hub/packs/plugins/hpc/` and `hub/packs/plugins/science-data/` | Also the pack's MCP server (`hpc` or `catalog`) from the root `.mcp.json` that `pnpm run hub:pin` generates from its `mcp.json`, started as `node ${CLAUDE_PLUGIN_ROOT}/server.mjs`. |
 
 Nothing is converted and no component body is duplicated. The packs carry their
 portable Agent Plugins `plugin.json`, which Claude Code does not read; the
@@ -382,11 +381,11 @@ component. Claude Code scans a plugin root for `agents/`, `commands/`, `hooks/`,
 `output-styles/` and `.mcp.json` without being asked, so a pack that keeps
 PanCode agents in a top-level `agents/` directory would have them shown as
 native Claude agents. The generator excludes packs with those conflicting roots, and
-`pnpm run hub:pin` prints the reason. The one exception is `pankit`, which is
-published for its root `.mcp.json` alone: its servers are PanKit's own.
+`pnpm run hub:pin` prints the reason. A root `.mcp.json` that `hub:pin` generates
+from the pack's own `mcp.json` does not exclude it.
 
-Those packs remain valid first-class PanHub packs, and agent-, prompt- and
-playbook-only packs are normal contributions. They simply have no peer-host
+Those packs remain valid first-class PanHub packs, and plugins that carry only
+agents, prompts or playbooks are normal contributions. They simply have no peer-host
 projection. An author who wants one pack to serve both audiences declares its
 PanCode resource roots at paths no host scans, for example `"agents": "native/agents"`,
 and keeps a `skills/` directory or root `SKILL.md` for the portable surface.
@@ -418,10 +417,10 @@ $skill-installer install tdd from PanStudio/pancode/hub/packs/skills/coding/tdd
 
 Disable one without deleting it through `[[skills.config]]` in `~/.codex/config.toml`.
 
-PanKit's servers reach Codex as stdio MCP servers, one `codex mcp add` per server:
+The `hpc` and `catalog` servers reach Codex as stdio MCP servers, one `codex mcp add` per server:
 
 ```bash
-codex mcp add node -- npx -y -p @panstudio/pancode pankit serve node
+codex mcp add hpc -- node /path/to/pancode/hub/packs/plugins/hpc/server.mjs
 ```
 
 There is deliberately no Codex plugin marketplace here. Portable Codex plugins

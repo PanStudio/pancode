@@ -2850,9 +2850,6 @@
 		color: var(--ink);
 		gap: var(--space-3);
 	}
-	.hub-serve-note {
-		margin-block: var(--space-2) 0;
-	}
 	.hub-row .copy {
 		border-color: var(--line-control);
 		color: var(--ink-soft);

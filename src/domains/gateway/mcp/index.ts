@@ -8,12 +8,6 @@
 
 export { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "./action-classes.js";
 export {
-	defaultMcpBuiltinSource,
-	type McpBuiltinLaunchContext,
-	type McpBuiltinSource,
-	mcpBuiltinLaunchArgs,
-} from "./builtin.js";
-export {
 	createMcpClient,
 	createMcpHttpClient,
 	createMcpProtocolClient,
@@ -231,7 +225,6 @@ export {
 	mcpSurface,
 	mcpSurfaceDigest,
 	mcpSurfaceRemedy,
-	mcpSurfaceRemedyFor,
 } from "./surface.js";
 export { outputSchemaMismatch } from "./tool-results.js";
 export {
@@ -241,7 +234,6 @@ export {
 	canonicalProjectRoot,
 	currentMcpSkillApproval,
 	currentMcpSurfaceApproval,
-	grantMcpBuiltinNetwork,
 	judgeMcpSkillApproval,
 	MCP_TRUST_ACTION_CLASSES,
 	MCP_TRUST_CAPS,
@@ -250,13 +242,11 @@ export {
 	type McpSkillApprovalStatus,
 	type McpTrustActionClass,
 	type McpTrustOptions,
-	mcpBuiltinTrustRefusal,
 	mcpSkillApprovalsFor,
 	mcpTrustPath,
 	type ResolvedMcpServer,
 	readMcpTrustState,
 	resolveMcpServers,
-	revokeMcpBuiltinNetwork,
 	revokeMcpSkill,
 	revokeMcpUserTrust,
 	trustMcpServer,

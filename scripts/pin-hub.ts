@@ -45,12 +45,8 @@ if (checkMode && servers.changed.length + claudeForms.changed.length > 0) {
 // ---------------------------------------------------------------------------
 const KIND_DIRS = [
 	{ dirName: "skills", expectedKind: "skill" },
-	{ dirName: "agents", expectedKind: "agent" },
-	{ dirName: "prompts", expectedKind: "prompt" },
-	{ dirName: "playbooks", expectedKind: "playbook" },
 	{ dirName: "plugins", expectedKind: "plugin" },
 	{ dirName: "extensions", expectedKind: "extension" },
-	{ dirName: "servers", expectedKind: "server" },
 ] as const;
 
 interface PackageTarget {

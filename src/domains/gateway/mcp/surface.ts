@@ -72,13 +72,6 @@ export function mcpSurfaceRemedy(id: string): string {
 	return `pancode mcp trust ${id} --surface`;
 }
 
-/** What makes a refused surface callable again: the operator's approval, or for a builtin server a matching install. */
-export function mcpSurfaceRemedyFor(server: { id: string; scope: string }): string {
-	return server.scope === "builtin" ? MCP_BUILTIN_SURFACE_REMEDY : mcpSurfaceRemedy(server.id);
-}
-
-const MCP_BUILTIN_SURFACE_REMEDY = "reinstall or rebuild PanCode";
-
 function named(names: string[], what: string): string[] {
 	if (names.length === 0) return [];
 	const shown = names.slice(0, 5).join(", ");
@@ -115,7 +108,6 @@ export function judgeMcpSurface(
 	served: McpSurface | null,
 ): McpSurfaceStatus {
 	const remedy = mcpSurfaceRemedy(server.id);
-	if (server.scope === "builtin") return judgeBuiltinSurface(server.id, approved, served);
 	if (approved === undefined) {
 		return {
 			status: "unapproved",
@@ -137,23 +129,5 @@ export function judgeMcpSurface(
 		digest: served.digest,
 		approvedDigest: approved.digest,
 		reason: `the tool surface of '${server.id}' changed since it was approved (${surfaceChange(approved.tools, served.tools)}); launch trust stands, and no tool runs until the operator reviews the surface and runs ${remedy}`,
-	};
-}
-
-/**
- * A builtin server's surface against the policy this PanCode ships. No
- * operator approval applies, so the only remedy is an install whose server
- * and manifest match again.
- */
-function judgeBuiltinSurface(id: string, shipped: McpSurface | undefined, served: McpSurface | null): McpSurfaceStatus {
-	if (shipped !== undefined && (served === null || served.digest === shipped.digest)) {
-		return { status: "approved", digest: served?.digest ?? null, approvedDigest: shipped.digest };
-	}
-	const change = shipped !== undefined && served !== null ? ` (${surfaceChange(shipped.tools, served.tools)})` : "";
-	return {
-		status: shipped === undefined ? "unapproved" : "changed",
-		digest: served?.digest ?? null,
-		approvedDigest: shipped?.digest ?? null,
-		reason: `the tool surface builtin server '${id}' serves differs from the policy this PanCode ships${change}; no tool runs until the server and its policy match again: ${MCP_BUILTIN_SURFACE_REMEDY}`,
 	};
 }

@@ -155,10 +155,10 @@ describe("plugin PanHub lifecycle", () => {
 	it("does not mistake a stale pin for an installed resource", () => {
 		writeFileSync(
 			path.join(root, "config", "library-pins.yaml"),
-			stringify({ "prompt:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
+			stringify({ "skill:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
 		);
-		equal(hubEntryInstalled({ kind: "prompt", name: "gone" }), false);
-		throws(() => hubInstallPath({ kind: "prompt", name: "../outside" }), /invalid PanHub entry name/);
+		equal(hubEntryInstalled({ kind: "skill", name: "gone" }), false);
+		throws(() => hubInstallPath({ kind: "skill", name: "../outside" }), /invalid PanHub entry name/);
 	});
 
 	it("records scoped pins, reports drift, refuses repinning drift, and removes the selected scope", () => {
@@ -293,7 +293,7 @@ describe("plugin PanHub lifecycle", () => {
 				.trim()
 				.split("\n")
 				.map((line) => JSON.parse(line) as string[]);
-			const stage = calls[1]?.[INTERNAL_GIT_BASE_OPTIONS.length + 2] ?? "";
+			const stage = calls[1]?.[INTERNAL_GIT_BASE_OPTIONS.length + 4] ?? "";
 			deepStrictEqual(
 				calls.map((call) => call.slice(0, INTERNAL_GIT_BASE_OPTIONS.length)),
 				calls.map(() => [...INTERNAL_GIT_BASE_OPTIONS]),
@@ -301,8 +301,8 @@ describe("plugin PanHub lifecycle", () => {
 			deepStrictEqual(
 				calls.map((call) => call.slice(INTERNAL_GIT_BASE_OPTIONS.length)),
 				[
-					["ls-remote", "--exit-code", "--", "https://github.com/example/repo.git", "v1"],
-					["init", "-q", stage],
+					["-c", "core.hooksPath=/dev/null", "ls-remote", "--exit-code", "--", "https://github.com/example/repo.git", "v1"],
+					["-c", "core.hooksPath=/dev/null", "init", "-q", stage],
 					[
 						"-C",
 						stage,
@@ -412,6 +412,10 @@ describe("plugin PanHub lifecycle", () => {
 		throws(() => resolveHubRequirements(loaded, rows), /hub_requirement_missing/);
 		const cyclic = { ...loaded, requires: ["plugin:fixture" as const] };
 		throws(() => resolveHubRequirements(cyclic, [cyclic]), /hub_requirement_cycle/);
+		for (const retired of ["agent:old", "prompt:old", "playbook:old", "server:old"]) {
+			const malformed = { ...loaded, requires: [retired as unknown as "plugin:old"] };
+			throws(() => resolveHubRequirements(malformed, [malformed]), /hub_requirement_malformed/);
+		}
 	});
 
 	it("refuses unavailable plugin requirements without reactivating installed dependencies", async () => {

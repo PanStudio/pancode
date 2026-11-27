@@ -18,8 +18,7 @@
 #      dependency tree the release was tested with.
 #   4. Writes a small launcher (default ~/.local/bin/pancode) that runs the
 #      new version, replacing it atomically and keeping the previous version
-#      for --rollback, and one beside it for each other command the package
-#      declares (pankit).
+#      for --rollback.
 #
 # Shell startup files are edited only with --modify-path. Proxies are honored
 # through https_proxy/http_proxy (curl and wget both read them).
@@ -85,7 +84,7 @@ Options:
                         PANCODE_INSTALL_GUI=1
   --no-gui              Skip the desktop app. Default: ask on a terminal, skip
                         otherwise. Env: PANCODE_INSTALL_GUI=0
-  --force               Replace a pancode or pankit launcher this installer did not write.
+  --force               Replace a pancode launcher this installer did not write.
   --dry-run             Print the plan; download and change nothing.
   -h, --help            Show this help.
 
@@ -826,7 +825,7 @@ main() {
 
 	if [ "$dry_run" = 1 ]; then
 		log "would unpack the bundle into $install_root/versions/<version>"
-		log "would write $launcher, a launcher beside it for each other command the package declares, and $install_root/install.json, then run: $launcher upgrade --post-install"
+		log "would write $launcher and $install_root/install.json, then run: $launcher upgrade --post-install"
 		# The same prefix checks as a real run, so a dry run that passes names no blocker the install then hits.
 		check_writable_dir "install dir" "$install_root" "--install-dir or PANCODE_INSTALL_DIR"
 		check_writable_dir "bin dir" "$bin_dir" "--bin-dir or PANCODE_BIN_DIR"
@@ -951,7 +950,7 @@ main() {
 		pin="$installed_version"
 		pin_source=bundle-file
 	fi
-	"$node_bin" "$helper" activate "$install_root" "$final_prefix" "$launcher" "$channel" "$pin" "$auto_update" "$post_install" "$pin_source" "$force" </dev/null || {
+	"$node_bin" "$helper" activate "$install_root" "$final_prefix" "$launcher" "$channel" "$pin" "$auto_update" "$post_install" "$pin_source" </dev/null || {
 		# A reused prefix may be the active or previous version, which this run did not bring.
 		[ "$reused" = 1 ] || : >"$final_prefix/$FAILED_CANDIDATE_MARK"
 		active_version="$("$node_bin" -e 'process.stdout.write(require(process.argv[1]).version)' "$(manifest_field current)/lib/node_modules/pancode/package.json" 2>/dev/null)" || active_version=""

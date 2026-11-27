@@ -165,7 +165,7 @@
     "path": "guide/panstore.md",
     "source": "docs/guide/panstore.md",
     "title": "Keep results in PanStore",
-    "group": "Store, hub and toolkit",
+    "group": "Store and hub",
     "excerpt": "Keep datasets and results outside the working tree, with a record of where each came from.",
     "description": "Keep datasets and results outside the working tree with PanStore, with a record of where each file came from and whether it changed.",
     "summary": "panstore.md",
@@ -181,7 +181,7 @@
     "path": "guide/panhub.md",
     "source": "docs/guide/panhub.md",
     "title": "Packs from PanHub",
-    "group": "Store, hub and toolkit",
+    "group": "Store and hub",
     "excerpt": "Find, install and manage skills, plugins, extensions and other packs.",
     "description": "Find, review and install PanHub packs with pancode hub or /hub, choose user or project scope, and trust the packs a project brings.",
     "summary": "panhub.md",
@@ -192,22 +192,6 @@
       "Review before installing",
       "Trust project packs",
       "Refresh a running session"
-    ]
-  },
-  {
-    "path": "guide/pankit.md",
-    "source": "docs/guide/pankit.md",
-    "title": "Tool servers with PanKit",
-    "group": "Store, hub and toolkit",
-    "excerpt": "Run PanKit's MCP tool servers in PanCode or in any other MCP host.",
-    "description": "Check, serve and trust PanKit's MCP tool servers for HPC and scientific work, inside PanCode or from any other MCP host.",
-    "summary": "pankit.md",
-    "headings": [
-      "What PanKit gives you",
-      "Check what runs on this host",
-      "Use the servers inside PanCode",
-      "Use them from another MCP host",
-      "Limits"
     ]
   },
   {

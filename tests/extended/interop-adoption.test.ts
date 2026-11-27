@@ -354,13 +354,11 @@ describe("interop discovery and adoption", () => {
 		strictEqual(statSync(configFile).mode & 0o777, 0o600);
 		const loaded = loadMcpServerConfig({ cwd });
 		deepStrictEqual(
-			loaded.servers
-				.filter((server) => server.scope !== "builtin")
-				.map((server) =>
-					server.url === undefined
-						? [server.id, server.command, server.args, server.env]
-						: [server.id, server.url, { ...server.headers }],
-				),
+			loaded.servers.map((server) =>
+				server.url === undefined
+					? [server.id, server.command, server.args, server.env]
+					: [server.id, server.url, { ...server.headers }],
+			),
 			[
 				["files", "node", ["srv.js"], { TOKEN: "never-show-this" }],
 				["remote", "https://example.invalid/mcp", { Authorization: "remote-authorization" }],

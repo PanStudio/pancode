@@ -29,7 +29,6 @@ import {
 	sharedStagingDir,
 	storeProjectDir,
 	storeProjectKey,
-	storeRootOption,
 	validateBlobName,
 	validateTagName,
 } from "../paths/index.js";
@@ -145,11 +144,10 @@ adopt without a key lists store directories whose project root no longer
 exists and that carry no project id; with a key it moves that store to this
 project, refusing when this project already has one. On a shared store it
 lists and moves the projects in the folder's log. It is refused on s3.
-where prints the store's locations, each root's id and the pankit command
-line that serves the store over MCP from any directory. A project id keys the store by that id instead of the
-main checkout's path; where then names a store left under the path key, which
-adopt moves. On an s3 store where prints its location and there is no store
-server.
+where prints the store's locations and each root's id. A project id keys the
+store by that id instead of the main checkout's path; where then names a store
+left under the path key, which adopt moves. On an s3 store where prints its
+location.
 locks lists the project's store locks with each holder's key, pid, host and
 time, and its state: live (this host, pid alive, same boot), dead (this host,
 pid gone or another boot), remote (another host) or unreadable. On a shared or
@@ -650,22 +648,6 @@ export async function storeCliReclaim(context: StoreCliContext, apply: boolean) 
 	return { location: backend.location, ...(await backend.log.reclaim(apply)) };
 }
 
-function shellWord(word: string): string {
-	return /^[A-Za-z0-9_@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
-}
-
-/** The `pankit serve store` command line that serves the store `context` names over MCP, from any directory. */
-export function storeServerInvocation(context: StoreCliContext): string {
-	const words = ["pankit", "serve", "store"];
-	context.roots.forEach((root, index) => {
-		words.push("--root", storeRootOption(root, index === 0));
-	});
-	if (context.shared === true) words.push("--shared");
-	words.push("--cache", context.cacheDir, "--project", context.projectRoot);
-	if (context.projectId !== undefined) words.push("--project-id", context.projectId);
-	return words.map(shellWord).join(" ");
-}
-
 /**
  * Where the store is. It reads each root's id and never creates one. With a project id, `previousKey` is the
  * path key when its directory still exists on the primary: that store is moved only by `adopt`.
@@ -695,11 +677,10 @@ export async function storeCliWhere(context: StoreCliContext) {
 				: storeProjectDir(storeRoot, context.projectKey),
 		...(previousKey !== null ? { previousKey } : {}),
 		roots,
-		storeServer: storeServerInvocation(context),
 	};
 }
 
-/** Where a store without local roots is: its backend's location, and no store server. */
+/** Where a store without local roots is: its backend's location. */
 export async function storeCliLocation(context: StoreCliContext) {
 	const backend = await open(context);
 	return {
@@ -708,7 +689,6 @@ export async function storeCliLocation(context: StoreCliContext) {
 		projectRoot: context.projectRoot,
 		projectId: context.projectId ?? null,
 		projectKey: context.projectKey,
-		storeServer: null,
 	};
 }
 
@@ -1031,7 +1011,6 @@ async function execute(
 					`project root ${data.projectRoot}`,
 					`project id   ${data.projectId ?? "(none)"}`,
 					`project key  ${data.projectKey}`,
-					`store server (none: the PanKit store server serves local roots)`,
 				].join("\n");
 				return { code: 0, data, text };
 			}
@@ -1043,7 +1022,6 @@ async function execute(
 				`project key  ${data.projectKey}`,
 				`project dir  ${data.projectDir}`,
 				...data.roots.map((root) => `root ${root.name}  ${root.path}  id ${root.id ?? "(none yet)"}`),
-				`store server ${data.storeServer}`,
 				...(data.previousKey !== undefined
 					? [
 							`previous key ${data.previousKey}`,

@@ -95,7 +95,7 @@ function run(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): GitResul
 		encoding: "utf8",
 		timeout: 60_000,
 		maxBuffer: 16 * 1024 * 1024,
-		// A merge runs the repository's hooks: away from the TUI's terminal and its pane host (M-12).
+		// A merge or commit still runs the repository's filters and signing program: away from the TUI's terminal and its pane host (M-12).
 		...TOOL_SESSION_SPAWN,
 		env: { ...dropHostTerminalEnv(withoutRepositoryEnv()), LC_ALL: "C", LANGUAGE: "", ...env },
 	});

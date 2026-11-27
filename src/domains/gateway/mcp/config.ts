@@ -34,12 +34,6 @@ import { resolveSafeCwd } from "../../../core/safe-exec.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
 import { bundledPluginCatalog, listInstalledPlugins, pluginDataDir } from "../../plugins/index.js";
-import {
-	defaultMcpBuiltinSource,
-	loadMcpBuiltinServers,
-	type McpBuiltinPolicy,
-	type McpBuiltinSource,
-} from "./builtin.js";
 import { isLoopbackHost } from "./files.js";
 import { parsePassedVariables } from "./passed-environment.js";
 import { mcpCredentialKeyRefusal, mcpDeclaredHeaderRefusal, mcpRemoteEndpoint } from "./remote.js";
@@ -119,7 +113,7 @@ const SHELL_EXECUTABLES = new Set([
 	"zsh",
 ]);
 
-export type McpServerScope = "user" | "project" | "plugin" | "builtin";
+export type McpServerScope = "user" | "project" | "plugin";
 
 /**
  * How PanCode signs in to a remote server that declares no headers, all
@@ -217,8 +211,6 @@ interface McpServerDeclarationBase {
 	plugin?: McpServerPlugin;
 	/** Set for a project-scope declaration whose command or any file argument is a file in, or linked from, the project; never empty. */
 	entryScripts?: McpServerEntryScript[];
-	/** Set for a builtin-scope declaration: the policy this PanCode ships for the server. */
-	builtin?: McpBuiltinPolicy;
 }
 
 /** A server PanCode starts as a local process and speaks to over its stdio. */
@@ -286,8 +278,6 @@ export interface McpConfigLoadOptions {
 	cwd: string;
 	/** Override for the user config directory; defaults to pancodeConfigDir(). */
 	configDir?: string;
-	/** Override for the builtin server manifest and the CLI that serves it; defaults to the installed package's. */
-	builtin?: McpBuiltinSource;
 }
 
 type DeclaredServerFields = (
@@ -1404,46 +1394,20 @@ function loadPluginServers(cwd: string): McpConfigLoadResult {
 }
 
 /**
- * Load every scope. A user declaration wins an id collision, then a builtin
- * server PanCode ships, then a project declaration, then the first plugin by
- * id; the loser is dropped with a diagnostic so nobody wonders why its command
- * never runs. The operator may prefer their own server to a builtin one, so
- * that diagnostic is a warning; a repository may not take a builtin id. A
- * malformed file contributes nothing (fail closed).
+ * Load every scope. A user declaration wins an id collision, then a project
+ * declaration, then the first plugin by id; the loser is dropped with a
+ * diagnostic so nobody wonders why its command never runs. A malformed file
+ * contributes nothing (fail closed).
  */
 export function loadMcpServerConfig(options: McpConfigLoadOptions): McpConfigLoadResult {
 	const paths = mcpConfigPaths(options);
 	const configDir = options.configDir ?? pancodeConfigDir();
 	const user = loadFile(paths.user, "user", configDir);
-	const source = options.builtin ?? defaultMcpBuiltinSource();
-	const builtin = loadMcpBuiltinServers(options.cwd, source);
 	const project = loadFile(paths.project, "project", mcpProjectRoot(options.cwd));
 	const servers = [...user.servers];
-	const diagnostics = [...user.diagnostics, ...builtin.diagnostics, ...project.diagnostics];
+	const diagnostics = [...user.diagnostics, ...project.diagnostics];
 	const userIds = new Set(user.servers.map((server) => server.id));
-	const builtinIds = new Set<string>();
-	for (const server of builtin.servers) {
-		if (userIds.has(server.id)) {
-			diagnostics.push({
-				scope: "builtin",
-				path: server.path,
-				message: `builtin server '${server.id}' that PanCode ships in ${server.path} is overridden by the user declaration in ${paths.user}`,
-				severity: "warning",
-			});
-			continue;
-		}
-		builtinIds.add(server.id);
-		servers.push(server);
-	}
 	for (const server of project.servers) {
-		if (builtinIds.has(server.id)) {
-			diagnostics.push({
-				scope: "project",
-				path: server.path,
-				message: `server '${server.id}' is shadowed by the builtin server PanCode ships in ${source.manifestPath}; a project cannot take a builtin server's id`,
-			});
-			continue;
-		}
 		if (userIds.has(server.id)) {
 			diagnostics.push({
 				scope: "project",
@@ -1463,9 +1427,7 @@ export function loadMcpServerConfig(options: McpConfigLoadOptions): McpConfigLoa
 			diagnostics.push({
 				scope: "plugin",
 				path: server.path,
-				message: builtinIds.has(server.id)
-					? `server '${server.id}' from plugin ${server.plugin?.id ?? "?"} is shadowed by the builtin server PanCode ships in ${winner}; a plugin cannot take a builtin server's id`
-					: `server '${server.id}' from plugin ${server.plugin?.id ?? "?"} is shadowed by the declaration in ${winner}`,
+				message: `server '${server.id}' from plugin ${server.plugin?.id ?? "?"} is shadowed by the declaration in ${winner}`,
 			});
 			continue;
 		}

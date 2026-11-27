@@ -24,7 +24,7 @@ Seven pages cover extending PanCode. Start from what you want to do:
 | --- | --- |
 | Reuse a prompt I type often, or teach the agent a procedure as a skill | [Prompts, skills, and share archives](extensions-and-sharing.md) |
 | Use the prompts and skills Claude Code, Codex or OpenCode already have | [Trust and compatibility roots](extensions-and-sharing.md#trust-and-compatibility-roots), then [Adopt foreign resources](interop.md#inbound-review-and-adopt-foreign-resources) to adopt them |
-| Find and install a skill, agent or plugin someone published | [PanHub](panhub.md#browse-and-install) |
+| Find and install a skill or plugin someone published | [PanHub](panhub.md#browse-and-install) |
 | Package my skills, prompts and agents for others to install | [Authoring plugins](authoring-plugins.md) |
 | Add code that changes PanCode: hooks, tools, commands, a workspace | [Extensions](harness-extensions.md) |
 | Write and test that code, or an MCP tool server, against PanCode's extension API | [Extension API (unstable)](sdk.md) |
@@ -34,15 +34,12 @@ Seven pages cover extending PanCode. Start from what you want to do:
 
 ## Package kinds
 
-PanHub distributes six package kinds. The five content kinds share one engine, one state file per scope, and one lifecycle. The sixth, `extension`, is code that runs in its own process and has its own manifest, state file, and consent. A kind names what a package exposes.
+PanHub distributes three package kinds. The two content kinds, `plugin` and `skill`, share one engine, one state file per scope, and one lifecycle. The third, `extension`, is code that runs in its own process and has its own manifest, state file, and consent. A kind names what a package exposes.
 
 | Kind | Exposes |
 | --- | --- |
-| `plugin` | Any mix of skills, prompts, agents, playbooks, scripts, and reference files. The default content kind. |
+| `plugin` | Any mix of skills, prompts, agents, playbooks, MCP servers, scripts, and reference files. The default content kind. |
 | `skill` | One skill. |
-| `agent` | One strict-v1 agent definition. |
-| `prompt` | One prompt template. |
-| `playbook` | One playbook, the plan the fleet runs. |
 | `extension` | Code that runs in its own process; see [Extensions](harness-extensions.md). |
 
 User plugins install under `<configDir>/plugins/<name>/` and project plugins under `.pancode/plugins/<name>/`; extensions install under `<configDir>/extensions/<id>/` and `.pancode/extensions/<id>/`. A valid project copy wins over the user copy, and a disabled project copy still suppresses it. A project copy loads only while the operator has approved the workspace's `.pancode/plugins/state.json` (or `.pancode/extensions/state.json` for an extension); an unapproved project copy neither loads nor suppresses the user copy. See [Scopes and installed state](panhub.md#scopes-and-installed-state).

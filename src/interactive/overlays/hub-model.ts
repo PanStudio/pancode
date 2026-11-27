@@ -19,6 +19,7 @@ import { hubCopyStateWords, hubOriginLabel } from "../../core/views/hub-words.js
 import type { PluginScope } from "../../domains/plugins/types.js";
 import {
 	describeHubPair,
+	type HubCategory,
 	type HubComponent,
 	type HubComponentKind,
 	type HubCopy,
@@ -59,7 +60,7 @@ import { type ListOverlayItem, markdownRows } from "./list-overlay-model.js";
 export type HubMode = "browse" | "installed";
 
 export interface HubView {
-	category: HubEntryKind;
+	category: HubCategory;
 	mode: HubMode;
 	scope: PluginScope;
 	/** Set while drilled into one package's members. */
@@ -79,7 +80,6 @@ export const HUB_GROUP_INSTALLED = "Installed";
 export const HUB_GROUP_AVAILABLE = "Available";
 export const HUB_GROUP_MEMBERS = "Members";
 export const HUB_GROUP_UNMANAGED = "Not a pack";
-export const HUB_GROUP_BUILT_IN = "Built in";
 export const HUB_GROUP_NOTICES = "Notices";
 
 /** Fact tables keep their label column at every width, the way the key detail does. */
@@ -266,13 +266,6 @@ export function hubRowActions(subject: HubRowSubject, view: HubView): HubRowActi
 		reasons: [],
 	};
 	if (subject.kind === "notice") return none;
-	if (subject.kind === "package" && subject.record.builtIn)
-		return {
-			...none,
-			reasons: [
-				"Built into PanCode, so there is no copy to install, update, enable or remove; pancode mcp list shows it.",
-			],
-		};
 	if (subject.kind === "package") {
 		const here = ownerScopeOf(subject.record, view.scope);
 		const reasons: string[] = [];
@@ -584,11 +577,9 @@ function packageDetail(
 	const here = record.copies.find((copy) => copy.scope === view.scope);
 	const kindText = `${record.kind}${provider ? ` provider pack for ${view.category} components` : " pack"}`;
 	const status = [
-		record.builtIn
-			? statusChip(theme, "ok", "built in")
-			: here
-				? statusChip(theme, copyStateStatus(here.state), `installed in ${here.scope} scope, ${copyStateWords(here.state)}`)
-				: chip(theme, `not installed in ${view.scope} scope`, "muted", GLYPH.phaseWaiting),
+		here
+			? statusChip(theme, copyStateStatus(here.state), `installed in ${here.scope} scope, ${copyStateWords(here.state)}`)
+			: chip(theme, `not installed in ${view.scope} scope`, "muted", GLYPH.phaseWaiting),
 		here?.update ? statusChip(theme, "warning", hubUpdateLabel(here.update)) : null,
 		record.refusal ? statusChip(theme, "error", "cannot be installed") : null,
 		// A requirement changes what install will write, so it is said before i is pressed.
@@ -603,18 +594,15 @@ function packageDetail(
 	const contents =
 		loaded.length > 0
 			? `${loaded.length} loaded ${loaded.length === 1 ? "component" : "components"}`
-			: record.builtIn
-				? `a tool server; pancode hub inspect ${record.ref} lists its tools`
-				: hints.length > 0
-					? `${hints.length} catalog ${hints.length === 1 ? "hint" : "hints"} (${view.category === "plugin" ? "all kinds" : view.category})`
-					: record.provides === undefined && record.copies.length === 0
-						? "unknown until this pack is inspected or installed"
-						: "none listed";
+			: hints.length > 0
+				? `${hints.length} catalog ${hints.length === 1 ? "hint" : "hints"} (${view.category === "plugin" ? "all kinds" : view.category})`
+				: record.provides === undefined && record.copies.length === 0
+					? "unknown until this pack is inspected or installed"
+					: "none listed";
 	const copies: Fact = {
 		label: "Installed copies",
-		value: record.builtIn
-			? "none, built in"
-			: record.copies.length === 0
+		value:
+			record.copies.length === 0
 				? "none"
 				: record.copies
 						.map(
@@ -1129,7 +1117,7 @@ export function selectForCategory(inventory: HubInventory, view: HubView): HubIn
 	const provided = new Set(resources.map((resource) => resource.owner?.ref).filter(Boolean));
 	return {
 		...inventory,
-		packages: inventory.packages.filter((record) => record.builtIn && record.kind === view.category),
+		packages: [],
 		copies: inventory.copies.filter((copy) => copy.kind === view.category && !provided.has(copy.ref)),
 		resources,
 	};
@@ -1205,13 +1193,12 @@ export function buildHubRows(options: HubRowOptions): HubRowSet {
 				columns: {
 					status: (withScope) => [
 						...worstFirst([
-							record.builtIn ? ["ok", "built in"] : undefined,
 							here ? copyStateChip(here.scope, here.state, withScope) : undefined,
 							here?.update ? ["warning", hubUpdateLabel(here.update as HubCopyUpdate)] : undefined,
 							record.refusal ? ["error", "refused"] : undefined,
 						]),
 						// Not here is a fact about the selected scope, not a state of the package.
-						...(here || record.builtIn
+						...(here
 							? []
 							: [() => chip(theme, record.copies.length > 0 ? `not in ${view.scope} scope` : "not installed", "muted")]),
 					],
@@ -1219,9 +1206,8 @@ export function buildHubRows(options: HubRowOptions): HubRowSet {
 					// The version on disk when there is a copy here; the update chip names the catalog's.
 					version: version(here?.version ?? record.version),
 				},
-				group: record.builtIn
-					? HUB_GROUP_BUILT_IN
-					: record.kind !== view.category
+				group:
+					record.kind !== view.category
 						? "Provider packs"
 						: record.copies.length > 0
 							? HUB_GROUP_INSTALLED
@@ -1311,8 +1297,6 @@ export function buildHubRows(options: HubRowOptions): HubRowSet {
 	} else if (view.mode === "browse") {
 		for (const record of inventory.packages) packageRow(record);
 	} else {
-		// Built-in servers have no copy, so Installed lists the catalog rows themselves.
-		for (const record of inventory.packages) packageRow(record);
 		for (const copy of inventory.copies) {
 			const subject: HubRowSubject = { kind: "copy", copy };
 			const actions = hubRowActions(subject, view);

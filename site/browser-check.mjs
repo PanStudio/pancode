@@ -210,7 +210,7 @@ try {
 	}
 	await hubPage.locator('.hub-chip[data-hub-kind=""]').click();
 	// A row's Copy button copies the command printed on the row.
-	const copyRow = hubPage.locator('.hub-group .hub-row[data-hub-kind="server"]').first();
+	const copyRow = hubPage.locator(".hub-group .hub-row").first();
 	if (await copyRow.count()) {
 		await copyRow.locator(".copy").click();
 		assert.equal(await hubPage.evaluate(() => navigator.clipboard.readText()), await copyRow.locator("code").innerText());
@@ -248,7 +248,7 @@ try {
 	await page.waitForURL("**/docs/guide/tool-usage.html");
 	await page.goto(`${values.url}/start.html`);
 	await page.waitForURL("**/#start");
-	for (const name of ["panstore", "pankit", "sdk"])
+	for (const name of ["panstore", "sdk"])
 		assert.equal((await page.goto(`${values.url}/${name}.html`)).status(), 404, `/${name}.html is gone`);
 	const missing = await page.goto(`${values.url}/does-not-exist`);
 	assert.equal(missing.status(), 404);

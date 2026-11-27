@@ -36,18 +36,15 @@ it("activates every bundled skill from its native package in a workspace with pe
 			recursive: true,
 		});
 		const catalog = discoverHub({ cwd }).entries;
-		// 52 = 40 local packages + 7 core servers + 5 community rows (wtfp plugin
-		// and extension, zulipchat, autotldr, cite-nexus; be4807251), each pinned
-		// to a GitHub commit. Installing a community row fetches it over the
-		// network, which this offline test lane must not depend on, so those
-		// entries are excluded from the install loop below and their skills are
-		// not counted in the `skills.length` assertion. The core servers are built
-		// into PanCode and hold no skills, so the loop leaves them out too.
-		strictEqual(catalog.length, 52);
-		const installableCatalog = catalog.filter(
-			(entry) => entry.kind !== "server" && !/^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(entry.sourceUrl),
-		);
-		strictEqual(installableCatalog.length, 40);
+		// 44 = 39 local packages + 5 community rows (wtfp plugin and extension,
+		// zulipchat, autotldr, cite-nexus; be4807251), each pinned to a GitHub
+		// commit. Installing a community row fetches it over the network, which
+		// this offline test lane must not depend on, so those entries are excluded
+		// from the install loop below and their skills are not counted in the
+		// `skills.length` assertion.
+		strictEqual(catalog.length, 44);
+		const installableCatalog = catalog.filter((entry) => !/^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(entry.sourceUrl));
+		strictEqual(installableCatalog.length, 39);
 		const refresh = (project: string) => reloadPluginResources(project);
 		refresh(cwd);
 		// Skills first: a pack such as hpc requires a bundled skill, and a plan without requirements refuses it.
