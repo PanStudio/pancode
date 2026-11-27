@@ -285,7 +285,7 @@ The enforced import rules below are complemented by the maintained
 [Pi SDK boundary table](pi-boundary.md), which records the semantic owner of
 each overlapping helper and the PanCode deltas that must survive an SDK upgrade.
 
-Nine import rules apply. The same checker also runs rules 10 to 14, which hold telemetry accounting rather than imports and are described in [Telemetry](telemetry.md), rules 15 to 18, and rule 23. Rule 15 holds [orchestrator.ts](../../src/entry/orchestrator.ts) to wiring: no value import of a feature module's internals, no module-scope function outside the declared wiring helpers, and at most 4,800 lines. Rule 16 lets only `chat-loop.ts` and `turn-state.ts` in `src/session-control/` name `ChatTurnState`, and only `turn-state.ts` assign a continuation field. Rule 17 keeps a domain owner's capability inside its domain and its declared holders. Rule 18 forbids branching on a built-in recipe id outside `src/domains/agents/`. Rule 23 holds every function under `src/` to 500 lines, counted from the line of its first token to the line of its last, with a nested function counted on its own as well as inside its parent. The functions over that when the rule landed are listed in `FUNCTION_LINE_EXEMPTIONS` at their sizes; an entry may only shrink, and the check fails on an entry whose function shrank or no longer exists until the entry is lowered or removed. Rules 1, 3, 4, 5, 7, 8, and 9 hold for every import form, type-only and dynamic included. Rule 2 and rule 6 treat a type-only import differently from a value import, because a type-only import erases at compile time. A dynamic `import()` counts as a value import, except in rule 2's worker closure, which measures what loads before the worker reads its spec.
+Ten import rules apply: rules 1 to 9 and rule 25, the layer rule. The same checker also runs rules 10 to 14, which hold telemetry accounting rather than imports and are described in [Telemetry](telemetry.md), rules 15 to 18, and rule 23. Rule 15 holds [orchestrator.ts](../../src/entry/orchestrator.ts) to wiring: no value import of a feature module's internals, no module-scope function outside the declared wiring helpers, and at most 4,800 lines. Rule 16 lets only `chat-loop.ts` and `turn-state.ts` in `src/session-control/` name `ChatTurnState`, and only `turn-state.ts` assign a continuation field. Rule 17 keeps a domain owner's capability inside its domain and its declared holders. Rule 18 forbids branching on a built-in recipe id outside `src/domains/agents/`. Rule 23 holds every function under `src/` to 500 lines, counted from the line of its first token to the line of its last, with a nested function counted on its own as well as inside its parent. The functions over that when the rule landed are listed in `FUNCTION_LINE_EXEMPTIONS` at their sizes; an entry may only shrink, and the check fails on an entry whose function shrank or no longer exists until the entry is lowered or removed. Rules 1, 3, 4, 5, 7, 8, and 9 hold for every import form, type-only and dynamic included. Rule 2 and rule 6 treat a type-only import differently from a value import, because a type-only import erases at compile time. A dynamic `import()` counts as a value import, except in rule 2's worker closure, which measures what loads before the worker reads its spec.
 
 ### Rule 1: `@earendil-works/pi-*` imports stay in `src/engine/**`
 
@@ -307,7 +307,7 @@ The rule also holds the worker's whole static value-import closure. Starting at 
 
 ### Rule 3: Domains do not import each other's `extension.ts`
 
-A file under `src/domains/<x>/**` must not import `src/domains/<y>/extension.ts` for `y != x`. Cross-domain behavior flows through the public contracts a domain exports from its `index.ts` barrel, the domain loader's `getContract`, event buses, or serialized manifests. This rule forbids only `extension.ts`. Other files inside a domain can be imported across domains by relative path, so the barrel is the convention for a domain's public surface and rule 3 and rule 7 are what the checker holds.
+A file under `src/domains/<x>/**` must not import `src/domains/<y>/extension.ts` for `y != x`. Cross-domain behavior flows through the public contracts a domain exports from its `index.ts` barrel, the domain loader's `getContract`, event buses, or serialized manifests. This rule forbids only `extension.ts`, for value and type-only imports alike. Rule 25 (b) holds the barrel for value imports: a cross-domain value import that bypasses `index.ts` fails unless its domain pair is listed in the shrink-only exemptions.
 
 ### Rule 4: Tool substrate is surface-agnostic (`src/tools/**` never imports `src/interactive/**`)
 
@@ -330,6 +330,16 @@ Files under `src/domains/turn-control/**` import no `src/interactive/**`, `src/e
 ### Rules 8 and 9: Session control and engine do not depend on terminal rendering
 
 Neither `src/session-control/**` nor `src/engine/**` may import `src/interactive/**`, including type-only imports. The TUI, headless main, and ACP server share the session-control contract; ACP reaches session behavior through that contract. Terminal rendering remains a consumer of session behavior. These are rules 8 and 9 in [check-boundaries.ts](https://github.com/PanStudio/pancode/blob/main/tests/boundaries/check-boundaries.ts).
+
+### Rule 25: The layers point down
+
+Rule 25 counts value imports only: static, dynamic, side-effect, and re-export. An import or export marked `type`, or whose every named binding is marked `type`, erases at compile time and is exempt. It counts each import statement once, and only relative specifiers that resolve inside `src/`. It has three parts:
+
+- (a) A file under `src/core/**` or `src/lib/**` value-imports only `src/core/**` and `src/lib/**`. Keyed `importer file -> target unit`, where a unit is `src/domains/<x>`, `src/lib/<x>`, or the top-level `src/<layer>`.
+- (b) A file under `src/domains/<x>/**` value-imports another domain only through `src/domains/<y>/index.ts`. Keyed `src/domains/<x> -> src/domains/<y>`.
+- (c) A lifecycle domain, one whose `manifest.ts` declares `dependsOn`, value-imports another lifecycle domain only when its `dependsOn`, followed transitively, reaches it. Keyed `<x> -> <y>`.
+
+The edges that existed when the rule landed are listed per key, with their counts, in [layer-exemptions.ts](https://github.com/PanStudio/pancode/blob/main/tests/boundaries/layer-exemptions.ts). A count may only shrink, the rule 23 pattern. The check fails when a key not listed gains a value import, when a listed key grows past its count, and when a listed key falls below its count or to zero, until the entry is lowered or removed. A new value import that crosses a layer goes down into `src/core` or `src/lib`, through the target's barrel, or behind a declared `dependsOn`; it never goes into the list.
 
 ---
 
