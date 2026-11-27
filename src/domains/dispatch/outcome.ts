@@ -103,6 +103,11 @@ export function runStatusForOutcome(outcome: RunOutcome): RunStatus {
 	}
 }
 
+/** An assignment's terminal status for its last attempt's outcome: only success and cancellation keep their name. */
+export function assignmentStatusForOutcome(outcome: RunOutcome): "succeeded" | "failed" | "canceled" {
+	return outcome === "canceled" ? "canceled" : outcome === "succeeded" ? "succeeded" : "failed";
+}
+
 /**
  * Whether a declared result contract was ever due for this attempt.
  *

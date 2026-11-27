@@ -52,9 +52,13 @@ function isProcessAlive(pid: number | null): boolean {
 
 const NON_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["queued", "running", "stale", "dead"]);
 
-/** The ledger patch a settled run's record states: the row then reads as the run settled. */
-function settledRowPatch(run: SettledRunRecord): Partial<RunEnvelope> {
-	const settled = run.settled;
+/** The ledger row patch a run's run.settled states. */
+export function settledRowPatch(
+	settled: Pick<
+		SettledRunRecord["settled"],
+		"outcome" | "outcomeCode" | "outcomeDetail" | "endedAt" | "exitCode" | "processExitCode"
+	>,
+): Partial<RunEnvelope> {
 	return {
 		status: runStatusForOutcome(settled.outcome),
 		outcome: settled.outcome,
@@ -72,7 +76,7 @@ function settledRowPatch(run: SettledRunRecord): Partial<RunEnvelope> {
 export function sealRowFromSettledRun(ledger: Ledger, runId: string, stateDir = pancodeStateDir()): boolean {
 	const run = readSettledRun(stateDir, runId);
 	if (run === null) return false;
-	ledger.update(runId, settledRowPatch(run));
+	ledger.update(runId, settledRowPatch(run.settled));
 	return true;
 }
 
