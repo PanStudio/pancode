@@ -6,11 +6,15 @@
  * as `pancode hub install server:<name> --user`, so PanCode lists, updates and
  * offers it like any other copy.
  */
+import { realpathSync, statSync } from "node:fs";
+import { readSettings } from "../../core/config.js";
+import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
 import { loadPluginMcpFile } from "../gateway/mcp/config.js";
 import { isPluginId, listInstalledPlugins, readPluginInstallRecord } from "../plugins/index.js";
 import { discoverHub } from "./hub.js";
 import { applyHubLifecycle, type HubOperation, planHubLifecycle } from "./hub-actions.js";
 import { hubCopyState } from "./hub-inventory.js";
+import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
 import type { HubTier } from "./hub-types.js";
 
 export interface KitAddedServer {
@@ -138,4 +142,70 @@ export function removeKitServer(name: string, cwd: string): KitChangeResult<{ de
 	} catch (error) {
 		return { ok: false, message: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+/** How `pankit serve` starts an added server: the declared command, never through a shell. */
+export interface KitServeLaunch {
+	command: string;
+	args: string[];
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+}
+
+function trustsForeignPacks(): boolean {
+	try {
+		return readSettings().integrations.projectResources.trustProjectImports;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The launch of an added server, or why it may not start. It answers from the
+ * copy and its install record alone; the operator's MCP trust records govern
+ * PanCode's own sessions and play no part here. Undefined when no user copy of
+ * that name was added.
+ */
+export function kitServeLaunch(name: string, cwd: string): KitChangeResult<KitServeLaunch> | undefined {
+	const copy = userServerCopy(name, cwd);
+	if (copy === undefined) return undefined;
+	const refuse = (message: string) => ({ ok: false as const, message });
+	if (!copy.enabled) return refuse(`${name} is disabled; enable it with \`pancode hub enable server:${name} --user\``);
+	const record = readPluginInstallRecord(name, { cwd, scope: "user" });
+	if (record && copy.observedContentDigest !== record.contentDigest)
+		return refuse(
+			`${name} changed since it was added (recorded ${record.contentDigest}, now ${copy.observedContentDigest ?? "unreadable"}); run \`pankit add ${name}\` again`,
+		);
+	const revocation = revokedHubDigests().get(record?.contentDigest ?? copy.observedContentDigest ?? "");
+	if (revocation) return refuse(packRevokedMessage(name, revocation));
+	if (!copy.loadable || copy.provenance === undefined) {
+		const detail = copy.diagnostics.find((item) => item.type === "error")?.message ?? hubCopyState(copy);
+		return refuse(`${name} does not load: ${detail}`);
+	}
+	if (copy.trust === "foreign" && !trustsForeignPacks())
+		return refuse(
+			`${name} is a foreign pack and runs only while integrations.projectResources.trustProjectImports is on`,
+		);
+	const loaded = loadPluginMcpFile({
+		id: name,
+		scope: "user",
+		rootPath: copy.provenance.canonicalRoot,
+		contentDigest: copy.provenance.contentDigest,
+	});
+	const server = loaded.servers.find((item) => item.id === name);
+	const failure = loaded.diagnostics.find((item) => item.severity !== "warning");
+	if (server === undefined || failure)
+		return refuse(`${name} does not load: ${failure?.message ?? `its mcp.json declares no server ${name}`}`);
+	let launchCwd: string;
+	try {
+		launchCwd = realpathSync(server.cwd);
+		resolveSafeCwd(launchCwd, realpathSync(server.cwdRoot));
+		if (!statSync(launchCwd).isDirectory()) return refuse(`${name} does not load: cwd is not a directory: ${server.cwd}`);
+	} catch (error) {
+		return refuse(`${name} does not load: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	return {
+		ok: true,
+		value: { command: server.command, args: [...server.args], cwd: launchCwd, env: buildSafeToolEnv({ ...server.env }) },
+	};
 }

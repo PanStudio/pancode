@@ -98,6 +98,7 @@ A project's [PanStore](panstore.md): its tags, blobs, records and read-only copi
 ```bash
 pankit serve <server> [options...]  # serve one server over MCP stdio; stdout carries protocol frames only
 pankit serve <server> --help        # the options one server takes
+pankit serve <added>                # run a server pankit add installed, as its pack declares
 pankit add <name>                   # install the PanHub server pack <name> in user scope
 pankit remove <name>                # remove a server pack pankit add installed
 pankit list [--json]                # the servers, their titles and tool counts, then the added ones
@@ -113,6 +114,7 @@ Exit codes are 0 for success, 1 for an operational failure and 2 for a usage err
 | --- | --- |
 | `pankit` with no command | 2, with the help on stderr |
 | `pankit serve <server>` | 0 when the client closes the connection; 2 for an unknown server (stderr lists the registered ones), for an option the server refuses, or for any option to a server that takes none; 1 when the server cannot load or its options cannot be applied |
+| `pankit serve <added>` | the server's own exit code; 2 for any option; 1 without starting it when the copy is disabled, changed since it was added, revoked, does not load, or is a foreign pack while `integrations.projectResources.trustProjectImports` is off |
 | `pankit serve <server> --help`, or `--help` after `serve` with no server | 0, with the usage on stdout |
 | `pankit add <name>` | 0 when the copy is written, and for a server PanKit carries, which it names as built in; 1 when no PanHub row is named `server:<name>`, the row is revoked, or the install fails; 2 without exactly one name |
 | `pankit remove <name>` | 0 when the copy is removed; 1 for a server PanKit carries or a name `pankit add` did not add; 2 without exactly one name |
@@ -123,6 +125,8 @@ Exit codes are 0 for success, 1 for an operational failure and 2 for a usage err
 `pankit doctor` prints one line per server, `<id>: available` or `<id>: unavailable: <reason>`, followed by the sources it looked for and whether each was found. `pankit doctor --json` adds each source's detail, such as the path a missing `scidata` reader would be copied to. The probe starts no server.
 
 `pankit add <name>` installs the PanHub row `server:<name>` in user scope with the same plan and writer as `pancode hub install server:<name> --user`, so `pancode hub list --user` shows the copy. It prints the publisher, tier, licence, version, tree digest, source and commit, the command the pack's `mcp.json` launches, and the host entry to paste into another agent host. Adding a name again replaces the copy. `pankit list` names each added server after the seven with its version, publisher and tier, and says why a copy does not load; `pankit list --json` gives them as `added`.
+
+`pankit serve <added>` checks the copy against its install record, then runs the command and arguments the pack's `mcp.json` declares, without a shell, in the declared working directory and with the environment PanCode gives a plugin server. It passes the streams through, forwards SIGINT, SIGTERM and SIGHUP, and exits with the server's code. It does not read the `pancode mcp trust` records, which govern PanCode's own sessions.
 
 `pankit manifest` prints the same JSON as `packages/kit/servers.json`: for each server its id, version, title and declared `environment`, and for each tool its `actionClass`, `pathArguments`, input schema and annotations.
 

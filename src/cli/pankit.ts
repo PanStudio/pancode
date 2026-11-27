@@ -7,6 +7,8 @@
  * PanHub loads by dynamic import only for those, so the other commands load
  * what PanKit alone loads.
  */
+import { spawn } from "node:child_process";
+import { constants } from "node:os";
 import { type PankitHost, type PankitOutcome, runPankit } from "@pancode/kit";
 
 /** A command that writes the PanCode home keeps a process journal, as `pancode hub` does. */
@@ -28,7 +30,49 @@ async function journaled(run: () => Promise<PankitOutcome>): Promise<PankitOutco
 	return outcome;
 }
 
+const FORWARDED: ReadonlyArray<NodeJS.Signals> = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/**
+ * Runs the declared command as this process's stand-in: no shell, the streams
+ * passed through, the signals forwarded, and the child's exit code returned.
+ */
+function runChild(name: string, launch: { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) {
+	return new Promise<number>((resolve) => {
+		const child = spawn(launch.command, launch.args, {
+			cwd: launch.cwd,
+			env: launch.env,
+			stdio: "inherit",
+			shell: false,
+		});
+		const forward = (signal: NodeJS.Signals) => child.kill(signal);
+		for (const signal of FORWARDED) process.on(signal, forward);
+		const done = (code: number) => {
+			for (const signal of FORWARDED) process.off(signal, forward);
+			resolve(code);
+		};
+		child.once("error", (error) => {
+			process.stderr.write(`pankit serve ${name}: ${launch.command} cannot start: ${error.message}\n`);
+			done(1);
+		});
+		child.once("exit", (code, signal) => done(code ?? 128 + (signal ? (constants.signals[signal] ?? 0) : 0)));
+	});
+}
+
 const host: PankitHost = {
+	async serve(name, options) {
+		const { kitServeLaunch } = await import("../domains/resources/kit-items.js");
+		const launch = kitServeLaunch(name, process.cwd());
+		if (launch === undefined) return undefined;
+		if (options.length > 0) {
+			process.stderr.write(`pankit serve ${name}: an added server takes no options, not ${options[0]}\n`);
+			return 2;
+		}
+		if (!launch.ok) {
+			process.stderr.write(`pankit serve ${name}: ${launch.message}\n`);
+			return 1;
+		}
+		return runChild(name, launch.value);
+	},
 	async added() {
 		const { addedKitServers } = await import("../domains/resources/kit-items.js");
 		return addedKitServers(process.cwd());

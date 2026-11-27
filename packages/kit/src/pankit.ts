@@ -19,6 +19,8 @@ export interface PankitHost {
 	add(name: string): Promise<PankitOutcome>;
 	/** Removes the user-scope copy `add` wrote. */
 	remove(name: string): Promise<PankitOutcome>;
+	/** Serves an added server and returns its exit code; undefined when no server of that name was added. */
+	serve(name: string, options: ReadonlyArray<string>): Promise<number | undefined>;
 }
 
 export interface PankitAddedServer {
@@ -45,6 +47,8 @@ Usage:
                             that server, and one that takes none refuses them
   pankit serve <server> --help
                             the options one server takes
+  pankit serve <added>      run a server pankit add installed, as its pack
+                            declares; it takes no options
   pankit add <name>         install a server pack from PanHub to serve here
   pankit remove <name>      remove a server pack pankit add installed
   pankit list [--json]      the servers, their titles and tool counts, then
@@ -225,7 +229,7 @@ function serverHelp(id: string, loaded: Awaited<ReturnType<typeof loadServer>>):
 	return `Usage: pankit serve ${id} [options...]\n\n${title}.\n\n${options}\n`;
 }
 
-async function serve(rest: ReadonlyArray<string>): Promise<number> {
+async function serve(rest: ReadonlyArray<string>, host: PankitHost | undefined): Promise<number> {
 	const [id, ...options] = rest;
 	if (isHelp(id)) {
 		process.stdout.write(`${SERVE_HELP}\n${knownServers()}\n`);
@@ -236,6 +240,8 @@ async function serve(rest: ReadonlyArray<string>): Promise<number> {
 		return 2;
 	}
 	const entry = findServer(id);
+	const added = entry === undefined && host ? await host.serve(id, options) : undefined;
+	if (added !== undefined) return added;
 	if (entry === undefined) {
 		process.stderr.write(`pankit: unknown server ${id}\n${knownServers()}\n`);
 		return 2;
@@ -269,7 +275,7 @@ async function serve(rest: ReadonlyArray<string>): Promise<number> {
 /** Runs one `pankit` command line and returns its exit code; output goes to this process's streams. */
 export async function runPankit(argv: ReadonlyArray<string>, host?: PankitHost): Promise<number> {
 	try {
-		if (argv[0] === "serve") return await serve(argv.slice(1));
+		if (argv[0] === "serve") return await serve(argv.slice(1), host);
 		const outcome = await pankit(argv, host);
 		if (outcome.stdout !== undefined) process.stdout.write(outcome.stdout);
 		if (outcome.stderr !== undefined) process.stderr.write(outcome.stderr);
