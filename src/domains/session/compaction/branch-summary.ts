@@ -46,13 +46,6 @@ export interface CodeReadSkeleton {
 	bodies: number;
 }
 
-export interface PreparedBranchEntries {
-	/** Entries up to (exclusive) the first-kept index. These get summarized. */
-	pre: SessionEntry[];
-	/** Entries at and after the first-kept index. These remain verbatim. */
-	post: SessionEntry[];
-}
-
 /**
  * Keeps a body's head and tail around the omission marker, so a value near the
  * end of a long read reaches the summarizer as well as its opening does.

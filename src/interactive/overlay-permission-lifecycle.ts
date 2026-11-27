@@ -36,18 +36,6 @@ import type {
 import { formatElapsed } from "./theme/index.js";
 import { startUnattendedCountdown, type UnattendedCountdown, type UnattendedTimers } from "./unattended-countdown.js";
 
-/**
- * What the card advisory is told about a parked call: the sanitized target the
- * operator is looking at, never the raw arguments. `requestId` joins the
- * advisory to the operator's answer.
- */
-export interface ToolRiskSubject {
-	readonly tool: string;
-	readonly actionClass: string;
-	readonly target: string;
-	readonly requestId?: string;
-}
-
 /** Worker tools whose effect runs as a child the worker's exec seams spawn under its OS sandbox. */
 const WORKER_SANDBOXED_TOOLS: ReadonlySet<string> = new Set([ToolNames.Bash, ToolNames.RunScript, ToolNames.Verify]);
 

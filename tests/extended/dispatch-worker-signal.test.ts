@@ -13,7 +13,7 @@ import {
 	WORKER_PROTOCOL_VERSION,
 } from "../../src/domains/dispatch/worker-protocol.js";
 import { type SpawnedWorker, spawnWorkerProcess } from "../../src/domains/dispatch/worker-spawn.js";
-import { verifyRunRecordReport } from "../../src/interactive/view/artifacts.js";
+import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

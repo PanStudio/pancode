@@ -15,7 +15,7 @@ import { type DispatchIntent, declaredScopeIntent } from "../../src/domains/disp
 import { UNMEDIATED_ENFORCEMENT } from "../../src/domains/providers/runtime-enforcement.js";
 import codexCliRuntime from "../../src/domains/providers/runtimes/codex/codex-cli.js";
 import { opencodeCliRuntime, piCliRuntime } from "../../src/domains/providers/runtimes/external-cli-peers.js";
-import { verifyRunRecordReport } from "../../src/interactive/view/artifacts.js";
+import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 
