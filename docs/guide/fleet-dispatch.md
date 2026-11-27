@@ -1763,8 +1763,11 @@ is sealed and intact, 1 on an integrity break or read error, 2 on a usage
 error, 3 when the journal read so far is intact but not sealed and `--follow`
 was not given, and 4 when `--follow` stopped because the fleet can no longer
 seal its journal (its root record is gone, it ended without a seal, or the
-process running it is gone). This journal belongs to the
-whole fleet; individual worker transcripts use `fleet view`. Source:
+process running it is gone). The fleet appends each record to a write queue
+that lands a tick later, and it flushes the queue before it settles the fleet,
+so a follower sees `fleet_sealed` only after every record before it. This
+journal belongs to the whole fleet; individual worker transcripts use
+`fleet view`. Source:
 `src/cli/fleet-events.ts` and `src/domains/dispatch/fleet-event-journal.ts`.
 
 ### Why a second fleet run waits

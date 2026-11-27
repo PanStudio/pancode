@@ -12,6 +12,7 @@ import { unobservedRunUsageFacts } from "../../src/core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { takeRunCancelRequest } from "../../src/domains/dispatch/cancel-requests.js";
 import { createCrossProcessFleet } from "../../src/domains/dispatch/cross-process-fleet.js";
+import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-writes.js";
 import { writeRunOwnerRecord } from "../../src/domains/dispatch/run-directory-records.js";
 import { appendRunFeed } from "../../src/domains/dispatch/run-feed.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
@@ -148,6 +149,7 @@ test("a live run another PanCode process owns becomes a board row fed from its r
 			verb: "reading",
 			detail: "src/a.ts",
 		});
+		drainDeferredWritesSync();
 		viewer.poll();
 		store.reconcile();
 		const row = store.liveRows().find((candidate) => candidate.runId === "run-f");
@@ -164,6 +166,7 @@ test("a live run another PanCode process owns becomes a board row fed from its r
 		// A feed line over the fold bound is skipped, not waited on: the row after it still lands.
 		appendRunFeed("run-f", { kind: "event", type: "pancode_run_outcome", detail: "x".repeat(300 * 1024) });
 		appendRunFeed("run-f", { kind: "event", type: "pancode_tool_start", tool: "grep", callId: "c2" });
+		drainDeferredWritesSync();
 		viewer.poll();
 		viewer.poll();
 		assert.equal(projection.snapshot().runs[0]?.progress?.currentAction?.tool, "grep");

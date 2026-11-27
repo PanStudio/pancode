@@ -290,8 +290,11 @@ export function foldCallJournal(
 /** A run snapshot includes its constituent calls. Pick one accounting source, independent of replay order (#434). */
 function foldRunScope(records: Iterable<TelemetryRecord>, options: FoldOptions) {
 	const rows = [...records];
-	const calls = foldCallJournal(rows, undefined, options);
 	const aggregates = rows.flatMap((row) => (row.k === "run.usage_reported" ? [row.data] : []));
+	return runScopeOf(foldCallJournal(rows, undefined, options), aggregates);
+}
+
+function runScopeOf(calls: JournalFold, aggregates: readonly TelemetryRecord<"run.usage_reported">["data"][]) {
 	const revision = aggregates.reduce((maximum, row) => Math.max(maximum, row.revision), -1);
 	const latest = aggregates.filter((row) => row.revision === revision);
 	const aggregate = latest[0];
@@ -403,6 +406,24 @@ function settledUsage(rows: readonly TelemetryRecord[], base: ReturnType<typeof 
 	};
 }
 
+function allKnownFree(scope: ReturnType<typeof runScopeOf>): boolean {
+	const invoked = scope.calls.attempts.filter((attempt) => attempt.settled?.disposition !== "never_sent");
+	return scope.source === "aggregate"
+		? scope.aggregate?.pricing.pricedBy === "free"
+		: scope.source === "calls" &&
+				invoked.length > 0 &&
+				invoked.every((attempt) => attempt.settled?.pricing.pricedBy === "free");
+}
+
+/**
+ * {@link foldRunJournal} of records that hold no `run.usage_reported` and no `run.settled`, from a folder a live meter
+ * keeps up to date record by record, so each record folds once (#434).
+ */
+export function foldRunCalls(calls: JournalFold) {
+	const base = runScopeOf(calls, []);
+	return { ...base, allKnownFree: allKnownFree(base) };
+}
+
 /** Parts are disjoint reported contributions, not inferred calls; a whole-scope snapshot replaces them (#434). */
 export function foldRunJournal(records: Iterable<TelemetryRecord>, options: FoldOptions = {}) {
 	const rows = [...records];
@@ -415,14 +436,6 @@ export function foldRunJournal(records: Iterable<TelemetryRecord>, options: Fold
 		group.push(row);
 		parts.set(row.data.partId, group);
 	}
-	const allKnownFree = (scope: ReturnType<typeof foldRunScope>) => {
-		const invoked = scope.calls.attempts.filter((attempt) => attempt.settled?.disposition !== "never_sent");
-		return scope.source === "aggregate"
-			? scope.aggregate?.pricing.pricedBy === "free"
-			: scope.source === "calls" &&
-					invoked.length > 0 &&
-					invoked.every((attempt) => attempt.settled?.pricing.pricedBy === "free");
-	};
 	if (base.source === "calls" && parts.size === 0 && base.calls.attempts.length === 0) {
 		const settled = settledUsage(rows, base);
 		if (settled !== null) return settled;

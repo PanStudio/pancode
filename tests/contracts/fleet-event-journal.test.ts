@@ -293,6 +293,7 @@ test("fleet events prints the stored lines verbatim and ends at the seal", async
 			stepCount: 0,
 			manifestDigest: "d".repeat(64),
 		});
+		await journal.flush();
 		const out = process.stdout.write.bind(process.stdout);
 		let printed = "";
 		// Without --follow every write happens before the first await, so the

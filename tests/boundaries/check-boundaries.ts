@@ -785,7 +785,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/core/settings-validate.ts#validateSettings", 1332],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
-	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1055],
+	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 741],
 	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
 	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],

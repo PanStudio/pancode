@@ -11,6 +11,7 @@ import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { ForeignApprovalChangedPayload } from "../../src/core/telemetry/live-events.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { createCrossProcessFleet } from "../../src/domains/dispatch/cross-process-fleet.js";
+import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-writes.js";
 import { evaluateJudgedGrant, evaluateMainGrant } from "../../src/domains/dispatch/grant-authority.js";
 import {
 	createGrantBroker,
@@ -619,6 +620,13 @@ describe("cross-process grant records (M11)", () => {
 				escalation: true,
 				timeoutMs: 60_000,
 			});
+			drainDeferredWritesSync();
+		};
+		// The owner's records land off its emitter; another process sees them once they are on disk.
+		const viewerPoll = viewer.poll.bind(viewer);
+		viewer.poll = () => {
+			drainDeferredWritesSync();
+			viewerPoll();
 		};
 		const answerPath = (requestId: string): string =>
 			join(stateDir, "runs", "run-x", "grants", `${requestId}.answer.json`);
@@ -740,6 +748,7 @@ describe("cross-process grant records (M11)", () => {
 			pair.state.refuse = "the ask is held by session s-2";
 			pair.owner.poll();
 			strictEqual(pair.applied.length, 0);
+			drainDeferredWritesSync();
 			const record = JSON.parse(readFileSync(join(stateDir, "runs", "run-x", "grants", "grant-1.json"), "utf8"));
 			deepStrictEqual([record.state, record.lastRefusal?.reason], ["pending", "the ask is held by session s-2"]);
 			pair.viewer.poll();

@@ -18,20 +18,13 @@
  * Bounding follows the telemetry journal: past {@link RUN_FEED_CAP_BYTES} display `event` rows are dropped behind one
  * `journal_truncated` row, while `open`, `result` and `terminal` always land. The `terminal` row closes the feed.
  * Nothing here throws into a dispatch.
+ *
+ * Rows are numbered, redacted and counted against the cap as they are appended, then land off the emitter in batches
+ * (deferred-writes.ts). A run's end awaits {@link flushRunFeed} before its terminal event, so every reader of an ended
+ * run reads its whole feed.
  */
 
-import {
-	closeSync,
-	constants,
-	lstatSync,
-	mkdirSync,
-	openSync,
-	readdirSync,
-	readSync,
-	rmSync,
-	statSync,
-	writeSync,
-} from "node:fs";
+import { closeSync, constants, lstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { unlinkedStateDirectory } from "../../core/state-boundary.js";
 import { isRecord } from "../../core/type-guards.js";
@@ -53,6 +46,7 @@ import {
 	openNameStart,
 	SCHEME_CHAR_RE,
 } from "../safety/redaction.js";
+import { deferAppend, deferredWritePending, dropDeferredWrite, flushDeferredWrite } from "./deferred-writes.js";
 import type { RunEventJournalBody } from "./run-event-journal.js";
 
 export const RUN_FEED_VERSION = 1;
@@ -123,6 +117,7 @@ export function removeRunFeeds(stateDir: string, runIds: Iterable<string>): void
 		if (!isSafeRunId(runId)) continue;
 		try {
 			const path = runFeedPath(runId, stateDir);
+			dropDeferredWrite(path);
 			if (unlinkedStateDirectory(stateDir, dirname(path))) rmSync(path, { force: true });
 		} catch {
 			// A feed we could not remove is retained display state, not an error.
@@ -206,7 +201,9 @@ function writerFor(path: string): WriterState {
 		if (writers.size <= WRITER_LIMIT) break;
 		// A later row reloads seq from the file, but held prose and a guard do not survive that, so a writer holding either
 		// stays past the limit until its run ends: writing it early would split it from the text still to come (#446).
-		if (key !== path && held.carry.length === 0 && held.headGuard === null) writers.delete(key);
+		// One with rows still to land would reload a seq the file does not have yet.
+		if (key !== path && held.carry.length === 0 && held.headGuard === null && !deferredWritePending(key))
+			writers.delete(key);
 	}
 	return state;
 }
@@ -214,16 +211,7 @@ function writerFor(path: string): WriterState {
 function writeRow(path: string, state: WriterState, body: RunEventJournalBody, at: string): void {
 	const row = redactSecretsDeep({ v: RUN_FEED_VERSION, seq: state.seq + 1, at, ...body }, createRedactionTally());
 	const line = `${JSON.stringify(row)}\n`;
-	const handle = openSync(
-		path,
-		constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
-		0o600,
-	);
-	try {
-		writeSync(handle, line);
-	} finally {
-		closeSync(handle);
-	}
+	deferAppend(path, line);
 	state.seq += 1;
 	state.bytes += Buffer.byteLength(line);
 }
@@ -408,6 +396,11 @@ export function appendRunFeed(
 		// Display state is best-effort; the run's telemetry journal still holds its structural feed.
 		return undefined;
 	}
+}
+
+/** Land every row appended to a run's feed so far. */
+export function flushRunFeed(runId: string, stateDir: string = pancodeStateDir()): Promise<void> {
+	return isSafeRunId(runId) ? flushDeferredWrite(runFeedPath(runId, stateDir)) : Promise.resolve();
 }
 
 // ---------------------------------------------------------------------------

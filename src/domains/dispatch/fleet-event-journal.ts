@@ -6,8 +6,11 @@
  *
  * Layout: `fleet-runs/<fleetRootId>.events.ndjson` under `pancodeStateDir()`,
  * beside the root record `fleet-runs/<fleetRootId>.json`. Append-only, one
- * JSON object per line, written synchronously as each fact happens, so a
- * reader tailing the file sees a step the moment it settles.
+ * JSON object per line. Each line is chained as its fact happens and lands off
+ * the emitter in the next batch (deferred-writes.ts), so a reader tailing the
+ * file sees a step one event-loop turn after it settles. The fleet awaits
+ * {@link FleetEventJournal.flush} before it settles, and a forced seal is
+ * written synchronously, since the process is going down.
  *
  * Every line carries `v` (1), `seq` (from 1), `at` (ISO), `rootId`, `type`,
  * `prev` (the previous line's digest, null on the first) and `digest`
@@ -37,14 +40,16 @@
  * waiting for the fleet (`pancode fleet events --follow --json`).
  *
  * A write failure turns the journal off for the rest of the run after one
- * notice. It never fails the fleet it describes.
+ * notice, and drops the lines queued behind it, so no line lands after a gap.
+ * It never fails the fleet it describes.
  */
 
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
 import { pancodeStateDir } from "../../core/xdg.js";
+import { deferAppend, drainDeferredWritesSync, dropDeferredWrite, flushDeferredWrite } from "./deferred-writes.js";
 
 export const FLEET_EVENT_JOURNAL_VERSION = 1;
 
@@ -126,6 +131,8 @@ function lineDigest(line: Omit<FleetEventLine, "digest">): string {
 
 export interface FleetEventJournal {
 	append(body: FleetEventBody): void;
+	/** Land every line appended so far. */
+	flush(): Promise<void>;
 }
 
 export function createFleetEventJournal(
@@ -139,6 +146,12 @@ export function createFleetEventJournal(
 	let prev: string | null = null;
 	let off = false;
 	let sealed = false;
+	const turnOff = (error: unknown): void => {
+		if (off) return;
+		off = true;
+		dropDeferredWrite(path);
+		warn(`fleet event journal ${path} is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+	};
 	return {
 		append(body) {
 			if (off || sealed) return;
@@ -155,17 +168,18 @@ export function createFleetEventJournal(
 					...body,
 				} as Omit<FleetEventLine, "digest">;
 				line = { ...unsigned, digest: lineDigest(unsigned) } as FleetEventLine;
-				mkdirSync(dirname(path), { recursive: true });
-				appendFileSync(path, `${JSON.stringify(line)}\n`, "utf8");
+				if (seq === 0) mkdirSync(dirname(path), { recursive: true });
+				deferAppend(path, `${JSON.stringify(line)}\n`, turnOff);
+				if (body.type === "fleet_sealed" && body.forced === true) drainDeferredWritesSync([path]);
 			} catch (error) {
-				off = true;
-				warn(`fleet event journal ${path} is off for this run: ${error instanceof Error ? error.message : String(error)}`);
+				turnOff(error);
 				return;
 			}
 			seq = line.seq;
 			prev = line.digest;
 			if (body.type === "fleet_sealed") sealed = true;
 		},
+		flush: () => flushDeferredWrite(path),
 	};
 }
 

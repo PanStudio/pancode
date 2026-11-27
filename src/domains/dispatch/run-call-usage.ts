@@ -15,7 +15,7 @@ import {
 import { abandonedSettlement } from "../../core/telemetry/producer.js";
 import type { CallSettled, RunUsageFacts } from "../../core/telemetry/schemas.js";
 import type { CallTotals, FoldOptions } from "../telemetry/folds.js";
-import { addCallTotals, emptyCallTotals, foldRunJournal } from "../telemetry/folds.js";
+import { addCallTotals, callJournalFolder, emptyCallTotals, foldRunCalls, foldRunJournal } from "../telemetry/folds.js";
 
 export interface RunCallUsage {
 	callIds: string[];
@@ -43,6 +43,12 @@ type MeasuredSource = Extract<Fact<number>, { kind: "measured" }>["source"];
 /** Where each quantity's facts came from, keyed by field name, so a collapsed fact names a real method or source. */
 function provenanceOf(payloads: readonly unknown[]): Map<string, Provenance> {
 	const found = new Map<string, Provenance>();
+	for (const payload of payloads) noteProvenance(found, payload);
+	return found;
+}
+
+/** Add one payload's provenance to `found`; a union, so the order payloads arrive in never changes the result. */
+function noteProvenance(found: Map<string, Provenance>, payload: unknown): void {
 	const note = (key: string, method: EstimateMethod | undefined, source: MeasuredSource | undefined) => {
 		const entry = found.get(key) ?? { methods: new Set(), sources: new Set() };
 		if (method !== undefined) entry.methods.add(method);
@@ -71,8 +77,7 @@ function provenanceOf(payloads: readonly unknown[]): Map<string, Provenance> {
 		// A cache bill prices re-prefill, which is not the run's spend.
 		for (const [child, item] of Object.entries(value)) if (child !== "cache") visit(item, child, priced);
 	};
-	for (const payload of payloads) visit(payload, "", undefined);
-	return found;
+	visit(payload, "", undefined);
 }
 
 /**
@@ -136,8 +141,8 @@ function pricingBasisOf(
 function runUsageFacts(
 	records: readonly TelemetryRecord[],
 	folded: ReturnType<typeof foldRunJournal>,
+	provenance: Map<string, Provenance> = provenanceOf(records.map((record) => record.data)),
 ): { facts: RunUsageFacts; freeRuleMixed: boolean } {
-	const provenance = provenanceOf(records.map((record) => record.data));
 	const field = (key: string, sum: FactSum, fallback: MeasuredSource = "provider") =>
 		collapse(sum, provenance.get(key), fallback);
 	const pricing = pricingBasisOf(records, folded);
@@ -201,8 +206,15 @@ export function runUsageFromCalls(calls: readonly CallSpend[]): {
 /** Live meters and run settlement project the same fold as session replay; unknown facts retain coverage (#434). */
 export function runUsageFromCallRecords(input: Iterable<TelemetryRecord>, options: FoldOptions = {}): RunCallUsage {
 	const records = [...input];
-	const folded = foldRunJournal(records, options);
-	const { facts, freeRuleMixed } = runUsageFacts(records, folded);
+	return runCallUsageOf(records, foldRunJournal(records, options));
+}
+
+function runCallUsageOf(
+	records: readonly TelemetryRecord[],
+	folded: ReturnType<typeof foldRunJournal>,
+	provenance?: Map<string, Provenance>,
+): RunCallUsage {
+	const { facts, freeRuleMixed } = runUsageFacts(records, folded, provenance);
 	return {
 		callIds: [...new Set(folded.calls.attempts.map(({ started }) => started.callId))].sort(),
 		callFacts: folded.calls.totals,
@@ -235,32 +247,49 @@ export function runUsageFromJournal(records: readonly TelemetryRecord[]): RunCal
 	return runUsageFromCallRecords(spent);
 }
 
-/** The receipt path drains this same stream before sealing; display replay never updates this projection (#434). */
+/**
+ * The receipt path drains this same stream before sealing; display replay never updates this projection (#434). Each
+ * record folds once into a call folder and the provenance it adds, so a snapshot costs the run's attempts, not a refold
+ * of every record. It equals {@link runUsageFromCallRecords} over the same records; a reported usage snapshot, rare and
+ * never per call, takes that full fold.
+ */
 export function createRunCallUsage(context: WorkerTelemetryContext) {
 	const records: TelemetryRecord[] = [];
+	const folder = callJournalFolder();
+	const provenance = new Map<string, Provenance>();
+	let reported = false;
 	let snapshot: RunCallUsage | undefined;
+	const fold = (added: readonly TelemetryRecord[]): void => {
+		for (const record of added) {
+			records.push(record);
+			folder.add(record);
+			noteProvenance(provenance, record.data);
+			if (record.k === "run.usage_reported") reported = true;
+		}
+		snapshot = reported
+			? runUsageFromCallRecords(records)
+			: runCallUsageOf(records, foldRunCalls(folder.fold()), provenance);
+	};
 	return {
 		observe(frame: unknown): boolean {
 			const record = readWorkerTelemetryRecord(frame, context);
 			if (!record) return false;
 			if (record.k === "process.started") {
-				snapshot ??= runUsageFromCallRecords(records);
+				if (snapshot === undefined) fold([]);
 				return true;
 			}
 			if (!metersSpend(record)) return true;
-			records.push(record);
-			snapshot = runUsageFromCallRecords(records);
+			fold([record]);
 			return true;
 		},
 		gap(count = 1): void {
 			if (!snapshot || count < 1) return;
-			records.push(
+			fold([
 				makeTelemetryRecord("journal.gap", { sink: "worker-ndjson", reason: "writer-drop", count }, context, {
 					t: new Date().toISOString(),
 					mono: performance.now(),
 				}),
-			);
-			snapshot = runUsageFromCallRecords(records);
+			]);
 		},
 		/**
 		 * Settle every attempt the worker started and never settled, once its stream has ended. A killed worker cannot
@@ -283,8 +312,7 @@ export function createRunCallUsage(context: WorkerTelemetryContext) {
 				),
 			);
 			if (settled.length === 0) return settled;
-			records.push(...settled);
-			snapshot = runUsageFromCallRecords(records);
+			fold(settled);
 			return settled;
 		},
 		snapshot: () => snapshot,
