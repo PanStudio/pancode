@@ -3,11 +3,12 @@
 // Recurring job rows: what one canonical `AcpJob` says, in words, and which controls it admits. No React and no
 // clock of its own; the caller passes `now`. Every number shown is the engine's own, never derived here.
 
+import type { JobControlAction } from "../../../../src/core/views/job-words.js";
 import { USAGE_NOT_MEASURED } from "../../../../src/core/views/usage-words.js";
 import type { AcpJob } from "../../contracts/wire.js";
 import type { StatusTone } from "../design/status.js";
 
-export type JobAction = "pause" | "resume" | "stop" | "cancel";
+export type JobAction = JobControlAction;
 
 export interface JobRowView {
 	readonly jobId: string;

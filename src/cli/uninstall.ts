@@ -27,6 +27,7 @@ import { PACKAGE_NAME, resolvePackageRoot } from "../core/package-root.js";
 import { runCommandVector } from "../core/safe-exec.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import {
+	type PancodeDirRole,
 	pancodeDirLayoutProblems,
 	removablePancodeRootProblem,
 	resetXdgCache,
@@ -743,7 +744,7 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	}
 
 	// A root that is not provably PanCode's is never deleted recursively; it is kept and named.
-	const notPancode = (role: "config" | "data" | "state" | "cache", exists: boolean): string | null => {
+	const notPancode = (role: PancodeDirRole, exists: boolean): string | null => {
 		const problem = exists ? removablePancodeRootProblem(role, dirs[role]) : null;
 		return problem ? `not a PanCode-only directory (${problem}); remove PanCode's files inside it by hand` : null;
 	};

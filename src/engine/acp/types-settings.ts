@@ -5,8 +5,9 @@
  * the target list and probe result, and the model-to-target setting paths.
  */
 
-import type { Static, TLiteral } from "typebox";
+import type { Static } from "typebox";
 import { Type } from "typebox";
+import { literalUnion } from "../../core/telemetry/enums.js";
 import { THINKING_LEVELS } from "../../core/views/thinking-levels.js";
 import {
 	ACP_MAX_MODEL_ID_BYTES,
@@ -27,10 +28,7 @@ const settingModel = Type.Union([
 	Type.String({ minLength: 1, maxLength: ACP_MAX_MODEL_ID_BYTES, pattern: noControls }),
 	Type.Null(),
 ]);
-type LiteralTuple<T extends readonly string[]> = { -readonly [K in keyof T]: TLiteral<T[K]> };
-export const AcpThinkingLevelSchema = Type.Union(
-	THINKING_LEVELS.map((level) => Type.Literal(level)) as LiteralTuple<typeof THINKING_LEVELS>,
-);
+export const AcpThinkingLevelSchema = literalUnion(THINKING_LEVELS);
 export type AcpAutonomyLevel = "default" | "yolo";
 export const AcpAutonomyLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("yolo")]);
 export const ACP_SAFE_SETTINGS_KEYS = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"] as const;

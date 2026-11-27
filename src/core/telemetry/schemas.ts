@@ -9,6 +9,7 @@ import type { Static, TSchema } from "typebox";
 import { Type } from "typebox";
 import { SURFACE_IDS } from "../side-surfaces.js";
 import { THINKING_LEVELS } from "../views/thinking-levels.js";
+import { CACHE_VERDICTS } from "../views/usage-words.js";
 import { WIRE_EFFORT_PATTERN } from "./call-effort.js";
 import {
 	CallEconomicsSchema,
@@ -321,7 +322,7 @@ export const CallSettledSchema = Type.Object(
 				uncachedPrefillTokens: factSchema(count),
 				/** rePrefilledTokens priced at the input rate less the cache-read rate, fixed at settle, so also an upper bound (#434). */
 				bill: Type.Optional(PricingSchema),
-				verdict: vocabulary(["hot", "partial", "cold", "small", "unknown"]),
+				verdict: vocabulary(CACHE_VERDICTS),
 				/**
 				 * The request's structure as short digests, so a later process can name where a resumed request departs
 				 * from the last one journaled on its route. `entries` are `role:digest` past the first `base` entries of

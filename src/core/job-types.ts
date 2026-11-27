@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { TurnConstraints } from "./turn-constraints.js";
+import type { JobControlAction } from "./views/job-words.js";
 
 /** Host identity; generation changes on navigation, never on ordinary turns (#411). */
 export interface JobOwner {
@@ -105,8 +107,10 @@ export function turnContinuationDelayMs(attempt: number, retryAfterMs?: number):
 	return Math.max(TURN_CONTINUATION_FAILURE_DELAYS_MS[index] ?? 0, retryAfterMs ?? 0);
 }
 export type JobEndReason = "count" | "condition" | "stopped" | "canceled" | "deadline" | "failure";
+export const JOB_OUTCOMES = ["succeeded", "failed", "noop", "canceled", "timed_out", "interrupted"] as const;
+export const JOB_DELIVERY_STATES = ["pending", "running", "delivered", "dropped", "failed"] as const;
 export interface JobEvidence {
-	outcome: "succeeded" | "failed" | "noop" | "canceled" | "timed_out" | "interrupted";
+	outcome: (typeof JOB_OUTCOMES)[number];
 	summary: string;
 	json: unknown;
 	jsonComplete: boolean;
@@ -129,7 +133,7 @@ export interface JobDelivery {
 	id: string;
 	occurrenceId: string;
 	kind: "notice" | "main_turn";
-	state: "pending" | "running" | "delivered" | "dropped" | "failed";
+	state: (typeof JOB_DELIVERY_STATES)[number];
 	createdAt: number;
 	startedAt: number | null;
 	endedAt: number | null;
@@ -176,7 +180,7 @@ export interface JobRecord {
 	costUsd: number | null;
 	persistenceError: string | null;
 }
-export type JobControlAction = "pause" | "resume" | "stop" | "cancel";
+export type { JobControlAction };
 export interface JobChangedPayload {
 	job: JobRecord;
 	/** Recurrence may be terminal while analysis delivery still owns live work. */
