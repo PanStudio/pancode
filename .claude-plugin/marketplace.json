@@ -181,16 +181,6 @@
 			"license": "LicenseRef-PanCode-1.0"
 		},
 		{
-			"name": "pankit",
-			"source": "./hub/packs/plugins/pankit",
-			"description": "PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @panstudio/pancode package.",
-			"version": "0.1.0",
-			"license": "LicenseRef-PanCode-1.0",
-			"author": {
-				"name": "PanCode"
-			}
-		},
-		{
 			"name": "plan-interview",
 			"source": "./hub/packs/skills/workflow/plan-interview",
 			"description": "Stress-tests a plan, design, or idea through a phased one-question-at-a-time interview before code is written, ending in a compact decision log. Not for a multi-perspective debate; use design-council.",

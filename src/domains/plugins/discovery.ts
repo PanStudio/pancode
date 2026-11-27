@@ -118,8 +118,7 @@ function pancodeConfiguration(value: unknown, root: string): PancodePluginConfig
 	);
 	if (value !== undefined && raw.manifestVersion !== 1) throw new Error("PanCode plugin manifestVersion must be 1");
 	const kind = raw.kind ?? "plugin";
-	if (!isHubKind(kind) || kind === "extension")
-		throw new Error("package kind must be plugin, skill, agent, prompt, playbook, or server");
+	if (!isHubKind(kind) || kind === "extension") throw new Error("package kind must be plugin or skill");
 	if (
 		raw.requires !== undefined &&
 		(!Array.isArray(raw.requires) ||
@@ -177,14 +176,7 @@ function pancodeConfiguration(value: unknown, root: string): PancodePluginConfig
 		if (resourceRoot === undefined || !isSameOrDescendant(pluginResourcePath(root, item.path), resourceRoot))
 			throw new Error(`component ${item.kind}:${item.id} is outside its declared resource root`);
 	}
-	if (kind === "server") {
-		// A server pack's one server is its server.json or mcp.json; hub validation checks which.
-		const resource = PLUGIN_RESOURCE_KINDS.find(
-			(key) => resources[key] !== undefined || statSync(path.join(root, key), { throwIfNoEntry: false })?.isDirectory(),
-		);
-		if (resource !== undefined) throw new Error(`a server package has no ${resource} root`);
-		if (inventory.length > 0) throw new Error("a server package declares no components");
-	} else if (kind !== "plugin") {
+	if (kind !== "plugin") {
 		const publicItems = inventory.filter((item) => ["prompt", "agent", "skill", "playbook"].includes(item.kind));
 		if (publicItems.length !== 1 || publicItems[0]?.kind !== kind)
 			throw new Error(`a ${kind} package must declare exactly one public ${kind} component`);

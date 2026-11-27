@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * The variables a local MCP server may take from the environment PanCode runs
- * in, beyond the fixed tool allowlist: a plugin's `envVars` and a builtin
- * manifest's `environment`. An entry is a variable name, or a prefix of at
+ * in, beyond the fixed tool allowlist: a plugin's `envVars`. An entry is a
+ * variable name, or a prefix of at
  * least four characters followed by `*` for every variable starting with it,
  * so a server can read families such as `LMOD_*` that no fixed list names. A
  * name PanCode keeps for itself, one that changes how a program starts, or one

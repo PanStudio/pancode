@@ -66,7 +66,7 @@ export function servedMcpSkills(
 	const skills: McpServedSkill[] = [];
 	const diagnostics: ResourceDiagnostic[] = [];
 	for (const server of resolved.servers) {
-		if (server.trust.status !== "trusted" || server.scope === "builtin") continue;
+		if (server.trust.status !== "trusted") continue;
 		const catalog = readMcpSkillCatalog({
 			projectRoot,
 			scope: server.scope,

@@ -339,7 +339,7 @@ function Install-Pancode {
 		if ($Options.AutoUpdate) { $auto = "1" }
 		$post = if ($Options.NoPostInstall) { "0" } else { "1" }
 		$pinSource = if ($Options.Bundle) { "bundle-file" } else { "version-flag" }
-		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource $(if ($Options.Force) { "1" } else { "0" })
+		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource
 		# The pancode on PATH is still the previous version, and a version that predates a repair reports nothing to fix.
 		# A reused prefix may be the active or previous version, which this run did not bring.
 		if ($LASTEXITCODE -ne 0 -and -not $reused) { New-Item -ItemType File -Force -Path (Join-Path $final ".pancode-refused-candidate") | Out-Null }

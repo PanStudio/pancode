@@ -193,7 +193,6 @@ describe("pancode store", () => {
 			strictEqual(where.projectId, "where-proof");
 			strictEqual(where.projectKey, storeProjectKeyForId("where-proof"));
 			strictEqual(where.previousKey, pathKey);
-			ok(where.storeServer.includes("--project-id where-proof"), where.storeServer);
 			strictEqual(where.roots.length, 1);
 			ok(/^[0-9a-f-]{36}$/u.test(where.roots[0]?.id ?? ""), String(where.roots[0]?.id));
 		}));

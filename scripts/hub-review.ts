@@ -248,14 +248,6 @@ export function reviewHubChanges(
 					failures.push({ file: item.file, row: ref, message: messages.join("; ") || "package failed validation" });
 					continue;
 				}
-				if (result.manifest.pancode.kind === "server" && existsSync(path.join(fetched.root, "server.json"))) {
-					failures.push({
-						file: item.file,
-						row: ref,
-						message: "a community server pack must declare its server in mcp.json, not server.json",
-					});
-					continue;
-				}
 				const regenerated = buildRegistryRow(
 					fetched.root,
 					result,

@@ -89,7 +89,7 @@ export function mcpFileEffects(
 					}))
 				: [],
 		),
-		...storeReferenceEffects(references, null, cwd, store),
+		...storeReferenceEffects(references, cwd, store),
 	];
 }
 
@@ -109,7 +109,7 @@ export function mcpOutboundFiles(
 	return sources.map((source) => {
 		if (source.kind === "store") {
 			const { tag, blob } = source.reference;
-			const [effect] = storeReferenceEffects([source.reference], null, cwd, store);
+			const [effect] = storeReferenceEffects([source.reference], cwd, store);
 			return {
 				consequence: `sends store:${tag}:${blob} ${to}`,
 				source: effect?.call ?? { tool: ToolNames.Store, args: { op: "get", tag, blob } },

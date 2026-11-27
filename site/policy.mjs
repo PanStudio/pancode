@@ -116,7 +116,7 @@ export async function checkPolicy() {
 		)
 			errors.push(`${label} navigation must start with Overview, Docs, Tutorials, Research, then PanHub`);
 	}
-	// One platform: PanStore, PanHub and PanKit are parts of PanCode. Nothing a
+	// One platform: PanStore and PanHub are parts of PanCode. Nothing a
 	// visitor or crawler reads names PanSDK, a product family or the removed
 	// panstore command.
 	const summaries = (await readdir(join(root, "content/doc-summaries")))

@@ -6,11 +6,10 @@ The commands are `runHubCommand` in [hub.ts](../../src/cli/hub.ts). Discovery an
 
 ## What PanHub is
 
-A **pack** is one installable unit, and each pack has one kind: `plugin`, `extension`, `skill`, `agent`, `prompt`, `playbook` or `server`.
+A **pack** is one installable unit, and each pack has one kind: `plugin`, `skill` or `extension`.
 
-- The five content kinds carry a root `plugin.json`, an explicit Semantic Version and a full-tree SHA-256 pin, and share one installation state. A plugin carries several components; each other content kind exposes one public component and may include supporting files.
+- The two content kinds, `plugin` and `skill`, carry a root `plugin.json`, an explicit Semantic Version and a full-tree SHA-256 pin, and share one installation state. A plugin carries several components (skills, agents, prompts, playbooks and MCP servers); a skill pack exposes one public skill and may include supporting files.
 - An `extension` is code that runs in its own process. It carries `pancode-extension.yaml`, has its own installation state, and installs only after the operator reviews its capability envelope. A plugin and an extension are always separate packs.
-- A `server` is one [PanKit](pankit.md) tool server. The seven core rows (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`, `store`) are built in and have no installed copy. A third-party server pack declares its launcher in `mcp.json` and installs as a plugin-scope MCP server.
 
 PanHub has three parts:
 
@@ -50,7 +49,7 @@ pancode hub refresh [--json]
 pancode hub status [--json]
 ```
 
-`--kind` takes the seven kinds; `components` takes the four component kinds. `--from <index.yaml>` adds an index with the highest priority. `-f` is short for `--force`. `--dry-run` is accepted by `install`, `import`, `package`, `update`, `enable`, `disable` and `remove`, and `--source` only by `components`, where it narrows the loader diagnostics as it narrows the rows. `--user` and `--project` are mutually exclusive. `install` and `register` default to user scope; other mutations select the project copy when one exists, and an explicit scope selects exactly that copy.
+`--kind` takes the three kinds; `components` takes the four component kinds. `--from <index.yaml>` adds an index with the highest priority. `-f` is short for `--force`. `--dry-run` is accepted by `install`, `import`, `package`, `update`, `enable`, `disable` and `remove`, and `--source` only by `components`, where it narrows the loader diagnostics as it narrows the rows. `--user` and `--project` are mutually exclusive. `install` and `register` default to user scope; other mutations select the project copy when one exists, and an explicit scope selects exactly that copy.
 
 Exit codes: 0 for success; 1 for an operational failure, an invalid pack, a refused plan, a refused refresh, or a `drift` report that is not clean; 2 for a usage error such as an unknown subcommand or flag, both scope flags, or a bare `pancode hub`.
 
@@ -65,7 +64,7 @@ pancode hub install plugin:hpc --project --dry-run
 pancode hub install plugin:hpc --project
 ```
 
-`list` and `search` answer with install targets. `--kind` and a query also match the components a plugin provides and return the owning pack. Plain output is a table that fits the terminal: one row per pack with `kind:name`, version, the state of each installed copy (`scope:state`), `available`, or `built in` for a server PanCode carries, origin, then publisher, tier and licence, and the description on the line below. Outside PanCode's own checkout, the plain listing leaves out PanCode's authoring skills (`pancode-dev`, `pancode-test`) unless they are installed; `--all` lists them, and `--json` always carries the whole catalog.
+`list` and `search` answer with install targets. `--kind` and a query also match the components a plugin provides and return the owning pack. Plain output is a table that fits the terminal: one row per pack with `kind:name`, version, the state of each installed copy (`scope:state`) or `available`, origin, then publisher, tier and licence, and the description on the line below. Outside PanCode's own checkout, the plain listing leaves out PanCode's authoring skills (`pancode-dev`, `pancode-test`) unless they are installed; `--all` lists them, and `--json` always carries the whole catalog.
 
 ```text
 pack                            version  state      origin   publisher
@@ -75,11 +74,9 @@ extension:wtfp                  0.9.0    available  bundled  panstudio verified 
   The WTF-P writing desk for PanCode; paper state, gates and the write guard run in code.
 ```
 
-`inspect` reads a local pack directory, an installed copy (the project copy first) or an indexed pack staged without installing, and exits 1 when the manifest is invalid. For a built-in server, by `server:<id>` or by its directory under `hub/packs/servers/`, it shows the row, each tool with its action class, and the environment variable names the server passes through, read from the shipped PanKit policy; `--json` carries them as `tools` and `environment`. When the pack is missing, fails validation, differs from the row's pinned digest or holds a `server.json` that differs from that policy, it lists no tools, names the damage as `damaged` and exits 1. The install review names the publisher, tier and licence, and the commit a remote source is fetched at. `--force` replaces an ordinary installed pack and keeps edited files in a reported recovery directory; it never overrides a source pin, identity or version mismatch. Without `--force`, installing over an existing copy is refused with ``<ref> is already installed in <scope> scope; update it instead, or reinstall it with `pancode hub install <ref> --force` ``.
+`inspect` reads a local pack directory, an installed copy (the project copy first) or an indexed pack staged without installing, and exits 1 when the manifest is invalid. The install review names the publisher, tier and licence, and the commit a remote source is fetched at. `--force` replaces an ordinary installed pack and keeps edited files in a reported recovery directory; it never overrides a source pin, identity or version mismatch. Without `--force`, installing over an existing copy is refused with ``<ref> is already installed in <scope> scope; update it instead, or reinstall it with `pancode hub install <ref> --force` ``.
 
 An existing local directory wins over an indexed name with the same spelling. A source that is neither fails with ``<source> is not a PanHub pack or a local pack directory; find the name with `pancode hub search` ``. Pack names share one namespace per scope, and a replacement cannot change a pack's kind. A GitHub URL that no index row names cannot be installed: use `hub import` for a reviewed import, or add a pinned row to your own index.
-
-A built-in server has no copy to change. `install` and `update` on `server:<id>` exit 0 with `server:<id> is built into PanCode <version>; pancode mcp list shows it` and write nothing; `enable`, `disable` and `remove` exit 1 with `server:<id> is built into PanCode and has no installed copy; a user declaration with the same id in <config>/mcp.yaml overrides it`. With `--json`, install and update print the plan of no steps and empty `writes`, and a refusal carries `error`. A revoked row gets no successful answer: install and update exit 1 with its `pack_revoked` line, and on a damaged pack they exit 1 naming the damage. `update --all` plans no step for them. So a `built in` row in `list` or `search` is not an install target: `--user`, `--project` and `--force` change nothing for it, and plain `--dry-run` prints the same answer instead of a plan.
 
 `--with-requirements` adds missing dependencies to the plan and installs them in dependency order. Each pack is atomic, so a later failure does not undo a dependency already installed.
 
@@ -129,7 +126,7 @@ pancode hub install plugin:lab-workflow --project
 
 ## Interactive PanHub
 
-**Alt+L** (`pancode.hub.toggle`) or `/hub` opens the fullscreen PanHub browser, and Alt+L inside it returns to the composer draft. `/hub skills`, `/hub agents`, `/hub prompts`, `/hub playbooks`, `/hub plugins`, `/hub extensions` and `/hub servers` open it on that tab; bare `/hub` opens on Plugins. The Servers tab lists the seven PanKit servers PanCode carries under Built in, in Browse and in Installed; they offer no install, update, enable or remove key, and their detail says why. `/hub interop` opens local-agent discovery and reviewed adoption. Keybinding overrides are in [commands-and-modes.md](commands-and-modes.md).
+**Alt+L** (`pancode.hub.toggle`) or `/hub` opens the fullscreen PanHub browser, and Alt+L inside it returns to the composer draft. `/hub skills`, `/hub agents`, `/hub prompts`, `/hub playbooks`, `/hub plugins` and `/hub extensions` open it on that tab; bare `/hub` opens on Plugins. `/hub interop` opens local-agent discovery and reviewed adoption. Keybinding overrides are in [commands-and-modes.md](commands-and-modes.md).
 
 | Key | Action |
 | --- | --- |
@@ -257,7 +254,7 @@ A private index repository may opt into Git synchronization. Set `integrations.h
 
 ## Science packs
 
-The bundled index carries four science plugins, published by `pancode` at tier `core`. None is installed automatically. Each pack's `README.md` under `hub/packs/plugins/<name>/` lists its setup, offline behaviour and the terms of any data source it queries.
+The bundled index carries four science plugins, published by `pancode` at tier `core`. None is installed automatically. When a core plugin from the bundled index installs with files that match the checksum its row pins, its MCP server is trusted on install; any other pack's server needs `pancode mcp trust <id>`. Each pack's `README.md` under `hub/packs/plugins/<name>/` lists its setup, offline behaviour and the terms of any data source it queries.
 
 | Pack | Skills | Servers it uses | Needs |
 | --- | --- | --- | --- |
@@ -287,8 +284,6 @@ Run `/reload hub` in a running session afterwards.
 **Hypothesis workflow.** `hypothesis-workflow` turns a research question into ranked, testable hypotheses: intake through `ask_user`, literature grounding with every statement cited or marked unsourced, independent council proposals, a testability ranking, the smallest experiment for each top hypothesis, and a hazard checkpoint. The bundled `hypothesis_slate.py` checks the slate offline. The workflow never picks the question or the hypothesis: it asks that choice as an [`operator_only`](tool-usage.md#askuser-host-owned-operator-interviews) `ask_user` question, which nobody answers for an absent operator, and a headless run ends with the ranked options. PanCode records each hypothesis in the project's [claims ledger](../architecture/evidence-and-memory.md#claims-ledger) as proposed and moves it only when the check it names runs; `pancode claims` reports that status.
 
 **Life science.** Each skill answers from a live GET request and stamps the answer with the source's entry revision or release. Offline, each skill says the source could not be reached instead of answering from memory.
-
-The builtin servers ship inside PanCode as PanKit and appear in PanHub as the seven `server` rows; their tools, action classes, configuration and limits are in [PanKit](pankit.md).
 
 **Launcher pins.** A pack's digest covers its `mcp.json`, not what the launcher fetches. A `uvx` or `npx` version pin, such as `uvx --from cite-nexus-mcp==0.2.5`, fixes the launcher's input, not the bytes it downloads: uv or npm resolves the package and its dependencies from its registry on first launch.
 

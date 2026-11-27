@@ -50,13 +50,17 @@ describe("the portable inclusion rule", () => {
 	const TEMPLATES = join(REPO_ROOT, "hub", "_authoring", "templates");
 
 	/** A throwaway repository root holding just the named packages and their pins. */
-	function fixtureRoot(name: string, packages: ReadonlyArray<{ name: string; template: string }>): string {
+	function fixtureRoot(
+		name: string,
+		packages: ReadonlyArray<{ name: string; template: string; drop?: ReadonlyArray<string> }>,
+	): string {
 		const root = join(fixtures, name);
 		mkdirSync(join(root, "hub", "packs", "plugins"), { recursive: true });
 		writeFileSync(join(root, "package.json"), JSON.stringify({ homepage: "https://example.invalid" }));
 		const pins = packages.map((pkg) => {
 			const directory = join(root, "hub", "packs", "plugins", pkg.name);
 			cpSync(join(TEMPLATES, pkg.template), directory, { recursive: true });
+			for (const dir of pkg.drop ?? []) rmSync(join(directory, dir), { recursive: true, force: true });
 			const manifest = JSON.parse(readFileSync(join(directory, "plugin.json"), "utf8")) as {
 				name: string;
 				version: string;
@@ -91,15 +95,14 @@ describe("the portable inclusion rule", () => {
 	});
 
 	it("refuses to publish native-only packages, naming the missing skill surface", () => {
-		const root = fixtureRoot("native-only", [
-			{ name: "agent-only", template: "agent" },
-			{ name: "prompt-only", template: "prompt" },
-			{ name: "fleet-only", template: "playbook" },
-		]);
+		const root = fixtureRoot("native-only", [{ name: "prompt-only", template: "plugin", drop: ["agents", "skills"] }]);
 		const result = renderHubMarketplace({ root });
 		deepStrictEqual(result.errors, []);
 		deepStrictEqual(result.entries, []);
-		deepStrictEqual(result.excluded.map((entry) => entry.name).sort(), ["agent-only", "fleet-only", "prompt-only"]);
+		deepStrictEqual(
+			result.excluded.map((entry) => entry.name),
+			["prompt-only"],
+		);
 		const promptOnly = result.excluded.find((entry) => entry.name === "prompt-only");
 		ok(promptOnly?.reason.includes("no portable skill surface"), `actionable reason expected: ${promptOnly?.reason}`);
 	});
@@ -107,7 +110,7 @@ describe("the portable inclusion rule", () => {
 	it("still publishes a standalone skill package alongside them", () => {
 		const root = fixtureRoot("mixed", [
 			{ name: "portable-skill", template: "skill" },
-			{ name: "agent-only", template: "agent" },
+			{ name: "prompt-only", template: "plugin", drop: ["agents", "skills"] },
 		]);
 		const result = renderHubMarketplace({ root });
 		deepStrictEqual(result.errors, []);
@@ -117,7 +120,7 @@ describe("the portable inclusion rule", () => {
 		);
 		deepStrictEqual(
 			result.excluded.map((entry) => entry.name),
-			["agent-only"],
+			["prompt-only"],
 		);
 	});
 

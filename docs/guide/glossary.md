@@ -28,14 +28,13 @@ The words you meet first, each in a sentence or two, with the guide that explain
 | Skill | Written instructions for a procedure, in a `SKILL.md` file, that the agent loads when the task needs it. See [Prompts, skills, and share archives](extensions-and-sharing.md). |
 | Prompt template | A saved prompt you run as a slash command, such as `/bugfix`. |
 | PanHub | The collection of installable packs PanCode knows about, browsed with `/hub` and managed with `pancode hub`. See [PanHub](panhub.md). |
-| Pack | One installable unit in PanHub. Its kind is `plugin`, `extension`, `skill`, `agent`, `prompt` or `playbook`. See [PanHub](panhub.md). |
+| Pack | One installable unit in PanHub. Its kind is `plugin`, `skill` or `extension`. See [PanHub](panhub.md). |
 | Plugin | A package of content only: skills, prompts, agents and playbooks. Installing one never runs code. See [Plugins](plugins.md). |
 | Extension | A package of code that changes PanCode itself. It runs in its own process, after you review what it may do. See [Extensions](harness-extensions.md). |
 | Handbook | `PANCODE.md` at the repository root: the project's name, conventions and rules, written by you and kept in Git. |
 | Memory | Notes PanCode keeps while you work, such as your requirements and what failed, so it can remind the agent later. See [Proactive memory](proactive-memory.md). |
 | Compaction | Shortening a long conversation into a summary so it fits the model's context window. See [Context continuity](context-continuity.md). |
 | PanStore | The project store: a place outside your working tree for result files and datasets, shared by every checkout of the project. See [PanStore](panstore.md). |
-| PanKit | PanCode's agent toolkit: MCP tool servers for HPC and scientific work, run inside PanCode or shared with any other MCP host through `pankit serve <id>`. See [PanKit](pankit.md). |
 | Extension API | The contract for authoring extensions, packs, tools and MCP servers, shipped in the `@panstudio/pancode` package as `pancode/sdk/<subpath>`. Unstable until PanCode defines it. See [Extension API (unstable)](sdk.md). |
 | Research campaign | A loop where workers try changes that improve one measured number while every check still passes. See [Research and arena](research-and-arena.md). |
 | Model campaign | One seeded project run across a roster of models with `pancode campaign run`, each in a fresh copy, to compare how far each gets. |

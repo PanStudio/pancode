@@ -34,7 +34,6 @@ import {
 	listMcpSkills,
 	McpError,
 	type McpFileArgument,
-	mcpBuiltinLaunchArgs,
 	mcpCatalogDigest,
 	mcpCatalogStale,
 	mcpClientSkills,
@@ -45,7 +44,6 @@ import {
 	mcpPassedEnvironment,
 	mcpSurface,
 	mcpSurfaceRemedy,
-	mcpSurfaceRemedyFor,
 	openMcpHeaderCredentialStore,
 	pluginServerRevocation,
 	readMcpServerCatalog,
@@ -114,12 +112,8 @@ import {
 	visibleResources,
 } from "./mcp-resources.js";
 import {
-	builtinStoreWrite,
-	builtinStoreWriteCall,
 	commitStoreReferences,
 	defaultOpenStoreBackend,
-	isBuiltinStoreWriteTool,
-	launchedWithTag,
 	namedStoreReferences,
 	type PreparedStoreReferences,
 	prepareStoreReferences,
@@ -127,7 +121,6 @@ import {
 	storedLines,
 	storeReferenceEffects,
 	storeReferencesRefusal,
-	storeServerLaunchContext,
 } from "./mcp-store-references.js";
 
 /** How long a remote server's client stays open with no call, and how often that is checked. */
@@ -310,7 +303,6 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	const trustOptions = {
 		cwd: options.cwd,
 		...(options.configDir ? { configDir: options.configDir } : {}),
-		...(options.builtin !== undefined ? { builtin: options.builtin } : {}),
 	};
 	const attended = options.attended ?? (process.env.PANCODE_INTERACTIVE === "1" && process.stdin.isTTY === true);
 
@@ -320,7 +312,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		recorded = false,
 	): McpServerSurfaceListing => ({
 		...status,
-		...(status.status !== "approved" ? { remedy: mcpSurfaceRemedyFor(declaration) } : {}),
+		...(status.status !== "approved" ? { remedy: mcpSurfaceRemedy(declaration.id) } : {}),
 		...(recorded ? { recorded: true as const } : {}),
 	});
 
@@ -364,10 +356,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			status: attested === null ? "unapproved" : "changed",
 			digest: served.digest,
 			approvedDigest: attested,
-			reason:
-				declaration.scope === "builtin"
-					? `the tool surface builtin server '${declaration.id}' serves (${served.digest}) is not the policy this PanCode ships, which this run was admitted with (${attested ?? "none"}); ${mcpSurfaceRemedyFor(declaration)}, and dispatch again`
-					: `the tool surface MCP server '${declaration.id}' serves (${served.digest}) is not the one this run was admitted with (${attested ?? "none"}); review it, run ${mcpSurfaceRemedy(declaration.id)}, and dispatch again`,
+			reason: `the tool surface MCP server '${declaration.id}' serves (${served.digest}) is not the one this run was admitted with (${attested ?? "none"}); review it, run ${mcpSurfaceRemedy(declaration.id)}, and dispatch again`,
 		});
 	};
 
@@ -397,8 +386,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	};
 
 	const launchPlacement = (declaration: GatewayMcpServer): { cwd: string; workspaceRoot: string } => {
-		// A builtin server starts in the project root, so in a worker it starts in the worker's tree as a project server does.
-		if (options.launchRoot === undefined || (declaration.scope !== "project" && declaration.scope !== "builtin")) {
+		if (options.launchRoot === undefined || declaration.scope !== "project") {
 			return { cwd: declaration.cwd, workspaceRoot: declaration.cwdRoot };
 		}
 		const relative = path.relative(declaration.cwdRoot, declaration.cwd);
@@ -433,10 +421,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				trust: {
 					status: "stale",
 					actionClass: "unknown",
-					reason:
-						declaration.scope === "builtin"
-							? `builtin server '${declaration.id}' changed since this run was admitted; dispatch again`
-							: `declaration of '${declaration.id}' changed since this run was admitted; review it, run pancode mcp trust ${declaration.id}, and dispatch again`,
+					reason: `declaration of '${declaration.id}' changed since this run was admitted; review it, run pancode mcp trust ${declaration.id}, and dispatch again`,
 				},
 			};
 		}
@@ -604,7 +589,6 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				: undefined;
 		// The server resolves a relative path against the cwd it was started in.
 		const pathCwd = launchPlacement(declaration).cwd;
-		const writesStore = isBuiltinStoreWriteTool(declaration.id, declaration.scope, tool.name);
 		// Experimental MCP files extension: the model names files by path, and PanCode sends their bytes.
 		const presentation = toolFilePresentation(declaration, tool, state.client?.filesOffered() != null);
 		const { fileArguments } = presentation;
@@ -643,25 +627,22 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					message: `${name}: ${message}`,
 					details: { refusal: { kind: "mcp_path_argument" } },
 				});
-				// A store reference or the builtin store server's own write that the session may not make, or that
-				// names a missing tag or blob, is refused before the server starts; the checks repeat before the call.
+				// A store reference the session may not make, or that names a missing tag or blob, is refused
+				// before the server starts; the checks repeat before the call.
 				const references = pathArguments === undefined ? [] : namedStoreReferences(pathArguments, args);
 				if (typeof references === "string") return refusedReference(references);
 				const fileSources = fileArguments === null ? [] : mcpFileSources(fileArguments, args, options.cwd);
 				if (typeof fileSources === "string") return refusedReference(fileSources);
 				const fileReferences = fileSources.flatMap((source) => (source.kind === "store" ? [source.reference] : []));
 				const backend = storeBackend();
-				const storeWrite = writesStore ? builtinStoreWrite(tool.name, args, pathCwd) : null;
 				const storeRefusal = await storeReferencesRefusal({
 					references,
-					write: storeWrite,
 					access: options.store,
 					backend,
 				});
 				if (storeRefusal !== null) return refusedReference(storeRefusal);
 				const fileStoreRefusal = await storeReferencesRefusal({
 					references: fileReferences,
-					write: null,
 					access: options.store,
 					backend,
 				});
@@ -692,26 +673,6 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				if (pathRefusal !== null) {
 					return { kind: "error", message: pathRefusal, details: { refusal: { kind: "mcp_path_argument" } } };
 				}
-				let callClient = client;
-				if (storeWrite !== null) {
-					// A tag created after the server started: start it again once, with the tags the store lists now.
-					if (
-						options.store?.writable === true &&
-						state.launchWriteTags !== undefined &&
-						!launchedWithTag(state.launchWriteTags, storeWrite.tag)
-					) {
-						state.relaunch = true;
-						await discover(state, invokeOptions?.signal);
-						const relaunched = state.client as McpClient | null;
-						if (relaunched === null || relaunched.state().status !== "ready") {
-							return {
-								kind: "error",
-								message: `${name}: mcp server ${declaration.id} did not start again for tag '${storeWrite.tag}'${state.failure ? ` (${state.failure})` : ""}; the next call can retry`,
-							};
-						}
-						callClient = relaunched;
-					}
-				}
 				let prepared: PreparedStoreReferences | null = null;
 				if (references.length > 0) {
 					const resolved = await prepareStoreReferences({
@@ -727,7 +688,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				}
 				let files: McpPreparedFiles | null = null;
 				if (fileArguments !== null) {
-					const offered = callClient.filesOffered();
+					const offered = client.filesOffered();
 					if (offered === null) {
 						if (prepared !== null) await removeTemporaries(prepared);
 						return withCatalogChange(state, {
@@ -778,7 +739,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				let headerMismatchResult: ToolResult | null = null;
 				try {
 					const held = files?.held;
-					const result = await callClient.callTool(tool.name, files?.args ?? prepared?.args ?? args, {
+					const result = await client.callTool(tool.name, files?.args ?? prepared?.args ?? args, {
 						...(invokeOptions?.signal ? { signal: invokeOptions.signal } : {}),
 						...(files !== null && held !== undefined
 							? {
@@ -891,7 +852,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							result.downloads.targets,
 							path.join(toolOffloadDir(invokeOptions?.sessionId), MCP_DOWNLOADS_DIR),
 							{
-								context: { ...callClient.fileConnection(), fileTargets },
+								context: { ...client.fileConnection(), fileTargets },
 								admitTarget: invokeOptions?.flowAdmitsFileTarget,
 								signal: invokeOptions?.signal,
 							},
@@ -920,7 +881,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					};
 				} catch (error) {
 					if (headerMismatchResult !== null) return headerMismatchResult;
-					const stopped = callClient.state().status === "failed" || callClient.state().status === "closed";
+					const stopped = client.state().status === "failed" || client.state().status === "closed";
 					if (stopped) {
 						state.failure = null;
 						failWith(state, error);
@@ -951,17 +912,16 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		// command does; read runs everywhere and unknown asks everywhere. The
 		// marker keeps the main-session sandbox from vouching for a call that
 		// runs on the server's own process.
-		if (pathArguments !== undefined || writesStore || fileArguments !== null) {
+		if (pathArguments !== undefined || fileArguments !== null) {
 			spec.hostEffectCalls = (args) => {
 				const named = pathArguments === undefined ? [] : namedPathArguments(pathArguments, args, pathCwd);
 				const references = pathArguments === undefined ? [] : namedStoreReferences(pathArguments, args);
 				const fileSources = fileArguments === null ? [] : mcpFileSources(fileArguments, args, options.cwd);
 				// A malformed argument is refused by the body before the server sees it.
 				if (typeof named === "string" || typeof references === "string" || typeof fileSources === "string") return [];
-				const write = writesStore ? builtinStoreWrite(tool.name, args, pathCwd) : null;
 				return [
 					...pathArgumentEffects(named),
-					...storeReferenceEffects(references, write, options.cwd, options.store),
+					...storeReferenceEffects(references, options.cwd, options.store),
 					...mcpFileEffects(fileSources, options.cwd, options.store),
 				];
 			};
@@ -978,13 +938,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				args: { command: [declaration.command, ...declaration.args].map(quoted).join(" ") },
 				projection: "mcp-server",
 			};
-			// The builtin store server writes only the tags it was started with, so its write is admitted as the
-			// store tool's own put or note into that tag. Projected to its launch command it was an opaque ask that
-			// contained yolo's safety judge could not decide, and so refused every granted write.
-			spec.safetyCall = (args): ClassifierCall => {
-				const write = writesStore ? builtinStoreWrite(tool.name, args, pathCwd) : null;
-				return write === null ? launchCall : builtinStoreWriteCall(write, options.cwd, options.store);
-			};
+			spec.safetyCall = (): ClassifierCall => launchCall;
 		}
 		return spec;
 	};
@@ -1097,26 +1051,6 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		// PERF W3: reserve ownership before the lazy import, so close can fence acquisition.
 		const loaded = (async () => {
 			const { createMcpConnection } = await import("../../domains/gateway/mcp/connection-lifecycle.js");
-			// Launch-only options of a builtin server, outside its declaration and digest. A store that
-			// cannot be resolved fails the launch with its reason; the acquire step below reports it.
-			let launchArgs: string[] = [];
-			let launchRefusal: string | null = null;
-			if (declaration.scope === "builtin" && declaration.id === "store") {
-				try {
-					const launch = await storeServerLaunchContext({
-						cwd: options.cwd,
-						launchCwd: placement.cwd,
-						access: options.store,
-						backend: storeBackend(),
-					});
-					launchArgs = mcpBuiltinLaunchArgs(declaration.id, launch.context);
-					state.launchWriteTags = launch.writeTags;
-				} catch (error) {
-					launchRefusal = `the builtin store server cannot start without this session's store: ${errorMessage(error)}`;
-				}
-			} else if (declaration.scope === "builtin") {
-				launchArgs = mcpBuiltinLaunchArgs(declaration.id, {});
-			}
 			return createMcpConnection({
 				signal: controller.signal,
 				acquire: () => {
@@ -1139,7 +1073,6 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							);
 						}
 					}
-					if (launchRefusal !== null) throw new Error(launchRefusal);
 					preparePluginDataDir(declaration);
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
@@ -1192,12 +1125,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						{
 							id: declaration.id,
 							command: declaration.command,
-							args: launchArgs.length > 0 ? [...declaration.args, ...launchArgs] : declaration.args,
+							args: declaration.args,
 							cwd: placement.cwd,
 							...(declaration.plugin !== undefined ? { ownNodeFirst: true as const } : {}),
-							// Builtin manifest or plugin envVars names pass from this process; no other scope gains any.
+							// A plugin's envVars names pass from this process; no other scope gains any.
 							env: {
-								...mcpPassedEnvironment(declaration.builtin?.environment ?? declaration.envVars ?? []),
+								...mcpPassedEnvironment(declaration.envVars ?? []),
 								...declaration.env,
 							},
 						},
@@ -1796,17 +1729,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const serverClass = declaration.trust.actionClass;
 			const remote = declaration.url !== undefined;
 			const effect =
-				actionClass === "execute" && isBuiltinStoreWriteTool(declaration.id, declaration.scope, toolName)
-					? "calls are admitted as the store tool's own put or note into the named tag, which the session must be allowed to write"
-					: actionClass === "read"
-						? "calls run as reads at every autonomy level"
-						: actionClass === "execute"
-							? remote
-								? "calls run as executing actions (ask at default, run at yolo, and read-only denies them)"
-								: "calls are admitted like an unrecognized shell command"
-							: actionClass === "destructive"
-								? "every call asks at default, runs at yolo, and read-only denies it"
-								: "every call asks for approval and read-only denies it";
+				actionClass === "read"
+					? "calls run as reads at every autonomy level"
+					: actionClass === "execute"
+						? remote
+							? "calls run as executing actions (ask at default, run at yolo, and read-only denies them)"
+							: "calls are admitted like an unrecognized shell command"
+						: actionClass === "destructive"
+							? "every call asks at default, runs at yolo, and read-only denies it"
+							: "every call asks for approval and read-only denies it";
 			const rule = mcpToolConfirmationRule(declaration, toolName);
 			const confirmation =
 				rule === null

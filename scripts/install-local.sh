@@ -8,8 +8,8 @@ usage() {
 	cat <<'USAGE'
 Usage: scripts/install-local.sh [--skip-deps] [--no-build] [--dry-run] [--force]
 
-Install PanCode from this source checkout by placing deterministic symlinks at:
-  ${PANCODE_BIN_DIR:-$HOME/.local/bin}/pancode, and beside it pankit
+Install PanCode from this source checkout by placing a deterministic symlink at:
+  ${PANCODE_BIN_DIR:-$HOME/.local/bin}/pancode
 After linking, the script runs the installed CLI's post-install checks and
 structure repair so a fresh install passes plain pancode doctor.
 
@@ -17,7 +17,7 @@ Options:
   --skip-deps    Skip the frozen pnpm dependency sync.
   --no-build     Do not run pnpm run build; require an existing dist/cli/index.js.
   --dry-run      Print planned actions without changing files.
-  --force        Replace an existing pancode or pankit symlink even if it points outside this repo.
+  --force        Replace an existing pancode symlink even if it points outside this repo.
   -h, --help     Show this help.
 USAGE
 }
@@ -232,7 +232,6 @@ else
 	log "would create bin dir if needed: $bin_dir"
 fi
 
-# Every link is checked before any is written, so a refusal leaves the bin dir as it was.
 check_link() {
 	local name="$1" link="$2" target="$3" raw_target existing_target current_target
 	[[ -e "$link" || -L "$link" ]] || return 0
@@ -255,42 +254,13 @@ check_link() {
 	fi
 }
 
-# The package's other commands (pankit), from its bin map, so a source install offers what a
-# tarball install does. A command whose built file is missing is named and skipped.
-companions=()
-while IFS=$'\t' read -r name target; do
-	[[ -n "$name" ]] || continue
-	if [[ $dry_run -eq 0 && ! -f "$repo_root/$target" ]]; then
-		warn "missing built $name: $repo_root/$target; it is not linked"
-		continue
-	fi
-	companions+=("$name"$'\t'"$repo_root/$target")
-done < <(node -e '
-	const bin = require(process.argv[1]).bin;
-	if (bin && typeof bin === "object")
-		for (const [name, target] of Object.entries(bin))
-			if (name !== "pancode" && /^[a-z][a-z0-9-]*$/.test(name) && typeof target === "string" && !target.includes("..") && !target.startsWith("/"))
-				console.log(`${name}\t${target.replace(/^\.\//, "")}`);
-' "$repo_root/package.json")
-
 check_link pancode "$link_path" "$cli_target"
-for entry in ${companions[@]+"${companions[@]}"}; do
-	check_link "${entry%%$'\t'*}" "$bin_dir/${entry%%$'\t'*}" "${entry#*$'\t'}"
-done
 
 if [[ $dry_run -eq 1 ]]; then
 	log "would link: $link_path -> $cli_target"
-	for entry in ${companions[@]+"${companions[@]}"}; do
-		log "would link: $bin_dir/${entry%%$'\t'*} -> ${entry#*$'\t'}"
-	done
 else
 	ln -sfn "$cli_target" "$link_path"
 	ok "linked $link_path -> $cli_target"
-	for entry in ${companions[@]+"${companions[@]}"}; do
-		chmod +x "${entry#*$'\t'}"
-		ln -sfn "${entry#*$'\t'}" "$bin_dir/${entry%%$'\t'*}"
-		ok "linked $bin_dir/${entry%%$'\t'*} -> ${entry#*$'\t'}"
-	done
 	version_output="$("$link_path" --version 2>/dev/null || true)"
 	if [[ -n "$version_output" ]]; then
 		ok "$version_output"

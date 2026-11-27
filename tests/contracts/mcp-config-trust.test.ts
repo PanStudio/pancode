@@ -25,12 +25,10 @@ import {
 	approveMcpSkill,
 	canonicalProjectRoot,
 	currentMcpSkillApproval,
-	grantMcpBuiltinNetwork,
 	judgeMcpSurface,
 	loadMcpServerConfig,
 	MCP_CONFIG_CAPS,
 	MCP_TRUST_CAPS,
-	type McpBuiltinSource,
 	mcpConfigPaths,
 	mcpFileInput,
 	mcpServerDigest,
@@ -39,7 +37,6 @@ import {
 	parseMcpConfigText,
 	readMcpTrustState,
 	resolveMcpServers,
-	revokeMcpBuiltinNetwork,
 	trustMcpServer,
 	untrustMcpServer,
 } from "../../src/domains/gateway/mcp/index.js";
@@ -57,14 +54,13 @@ import { saveMcpDownloads, transferMcpUploads } from "../../src/tools/gateway/mc
 import { createRegistry } from "../../src/tools/registry.js";
 import { applyRegisteredToolClassification } from "../../src/tools/registry-call-prep.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
-import { builtinFixtureSource, emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const roots: string[] = [];
 
-/** A project and config directory, and a builtin source that ships no server so only the scopes under test declare. */
-function scratch(): { project: string; configDir: string; builtin: McpBuiltinSource } {
+/** A project and config directory. */
+function scratch(): { project: string; configDir: string } {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-mcp-config-")));
 	roots.push(root);
 	const project = join(root, "project");
@@ -72,7 +68,7 @@ function scratch(): { project: string; configDir: string; builtin: McpBuiltinSou
 	mkdirSync(join(project, ".pancode"), { recursive: true });
 	mkdirSync(join(project, "tools"), { recursive: true });
 	mkdirSync(configDir, { recursive: true });
-	return { project, configDir, builtin: emptyBuiltinSource(root) };
+	return { project, configDir };
 }
 
 function writeProjectConfig(project: string, text: string): void {
@@ -256,10 +252,10 @@ describe("mcp server configuration", () => {
 	});
 
 	it("reads config files through a bounded read and refuses one over the cap on disk", () => {
-		const { project, configDir, builtin } = scratch();
+		const { project, configDir } = scratch();
 		writeUserConfig(configDir, `version: 1\nservers: []\n# ${"x".repeat(MCP_CONFIG_CAPS.fileBytes)}\n`);
 		writeProjectConfig(project, PROJECT_CONFIG);
-		const loaded = loadMcpServerConfig({ cwd: project, configDir, builtin });
+		const loaded = loadMcpServerConfig({ cwd: project, configDir });
 		deepStrictEqual(
 			loaded.servers.map((server) => server.id),
 			["files"],
@@ -269,10 +265,7 @@ describe("mcp server configuration", () => {
 		match(loaded.diagnostics[0]?.message ?? "", /file exceeds the 262144-byte cap/);
 		rmSync(join(configDir, "mcp.yaml"));
 		mkdirSync(join(configDir, "mcp.yaml"));
-		match(
-			loadMcpServerConfig({ cwd: project, configDir, builtin }).diagnostics[0]?.message ?? "",
-			/must be a regular file/,
-		);
+		match(loadMcpServerConfig({ cwd: project, configDir }).diagnostics[0]?.message ?? "", /must be a regular file/);
 	});
 
 	it("resolves user-scope cwd values as absolute or config-relative directories", () => {
@@ -309,13 +302,13 @@ describe("mcp server configuration", () => {
 	});
 
 	it("loads both scopes, lets the user declaration shadow a project id, and fails a malformed file closed", () => {
-		const { project, configDir, builtin } = scratch();
+		const { project, configDir } = scratch();
 		writeUserConfig(
 			configDir,
 			"version: 1\nservers:\n  - id: files\n    command: user-files\n  - id: docs\n    command: docs\n",
 		);
 		writeProjectConfig(project, PROJECT_CONFIG);
-		const loaded = loadMcpServerConfig({ cwd: project, configDir, builtin });
+		const loaded = loadMcpServerConfig({ cwd: project, configDir });
 		deepStrictEqual(
 			loaded.servers.map((server) => [server.id, server.scope, server.command]),
 			[
@@ -331,14 +324,14 @@ describe("mcp server configuration", () => {
 			project: join(project, ".pancode", "mcp.yaml"),
 		});
 		writeProjectConfig(project, "version: 1\nservers:\n  - id: broken\n    command: a b\n");
-		const partial = loadMcpServerConfig({ cwd: project, configDir, builtin });
+		const partial = loadMcpServerConfig({ cwd: project, configDir });
 		deepStrictEqual(
 			partial.servers.map((server) => server.id),
 			["files", "docs"],
 		);
 		match(partial.diagnostics[0]?.message ?? "", /one executable token/);
 		rmSync(join(configDir, "mcp.yaml"));
-		deepStrictEqual(loadMcpServerConfig({ cwd: project, configDir, builtin }).servers, []);
+		deepStrictEqual(loadMcpServerConfig({ cwd: project, configDir }).servers, []);
 	});
 });
 
@@ -432,10 +425,10 @@ describe("mcp server trust", () => {
 	});
 
 	it("parses declared path arguments into the digest and refuses a write path on a read tool", () => {
-		const { project, configDir, builtin } = scratch();
+		const { project, configDir } = scratch();
 		const declared = `${PROJECT_CONFIG}    toolPathArguments: { save: { dest: write }, open: { path: read } }\n`;
 		writeProjectConfig(project, declared);
-		const files = loadMcpServerConfig({ cwd: project, configDir, builtin }).servers[0];
+		const files = loadMcpServerConfig({ cwd: project, configDir }).servers[0];
 		deepStrictEqual(JSON.parse(JSON.stringify(files?.toolPathArguments)), {
 			save: { dest: "write" },
 			open: { path: "read" },
@@ -521,7 +514,7 @@ describe("mcp server trust", () => {
 
 	it("a snapshotted project entry cannot launch after its trusted bytes change", async () => {
 		for (const phase of ["before launch", "during import", "recovery", "retrusted"]) {
-			const { project, configDir, builtin } = scratch();
+			const { project, configDir } = scratch();
 			writeFileSync(join(project, "tools", "server.mjs"), "console.log('v1');\n");
 			writeProjectConfig(project, PROJECT_CONFIG);
 			ok(trustMcpServer({ cwd: project, configDir, id: "files", actionClass: "read" }).ok);
@@ -529,7 +522,6 @@ describe("mcp server trust", () => {
 			const source = createMcpCapabilitySource({
 				cwd: project,
 				configDir,
-				builtin,
 				registry: createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" }),
 				clientFactory: () => {
 					launches++;
@@ -769,15 +761,15 @@ describe("mcp server trust", () => {
 	});
 
 	it("drops a server's project skill approvals when untrusting the server so re-trusting never revives them", () => {
-		const { project, configDir, builtin } = scratch();
+		const { project, configDir } = scratch();
 		const otherProject = realpathSync(mkdtempSync(join(tmpdir(), "pancode-mcp-other-")));
 		roots.push(otherProject);
 		mkdirSync(join(otherProject, ".pancode"), { recursive: true });
 		mkdirSync(join(otherProject, "tools"), { recursive: true });
 		writeProjectConfig(project, PROJECT_CONFIG);
 		writeProjectConfig(otherProject, PROJECT_CONFIG);
-		ok(trustMcpServer({ cwd: project, configDir, builtin, id: "files" }).ok);
-		ok(trustMcpServer({ cwd: otherProject, configDir, builtin, id: "files" }).ok);
+		ok(trustMcpServer({ cwd: project, configDir, id: "files" }).ok);
+		ok(trustMcpServer({ cwd: otherProject, configDir, id: "files" }).ok);
 		const skill = {
 			uri: "skill://files/lint/SKILL.md",
 			name: "lint",
@@ -785,12 +777,10 @@ describe("mcp server trust", () => {
 			files: 1,
 			bytes: 42,
 		};
-		ok(approveMcpSkill({ cwd: project, configDir, builtin, id: "files", skill }).ok);
-		ok(approveMcpSkill({ cwd: otherProject, configDir, builtin, id: "files", skill }).ok);
-		const server = resolveMcpServers({ cwd: project, configDir, builtin }).servers.find((entry) => entry.id === "files");
-		const otherServer = resolveMcpServers({ cwd: otherProject, configDir, builtin }).servers.find(
-			(entry) => entry.id === "files",
-		);
+		ok(approveMcpSkill({ cwd: project, configDir, id: "files", skill }).ok);
+		ok(approveMcpSkill({ cwd: otherProject, configDir, id: "files", skill }).ok);
+		const server = resolveMcpServers({ cwd: project, configDir }).servers.find((entry) => entry.id === "files");
+		const otherServer = resolveMcpServers({ cwd: otherProject, configDir }).servers.find((entry) => entry.id === "files");
 		ok(server !== undefined && otherServer !== undefined);
 		ok(currentMcpSkillApproval(server, skill.uri, { cwd: project, configDir }) !== undefined);
 
@@ -802,20 +792,20 @@ describe("mcp server trust", () => {
 		);
 
 		// Re-trusting the same declaration must not revive the dropped skill approval.
-		ok(trustMcpServer({ cwd: project, configDir, builtin, id: "files" }).ok);
+		ok(trustMcpServer({ cwd: project, configDir, id: "files" }).ok);
 		strictEqual(currentMcpSkillApproval(server, skill.uri, { cwd: project, configDir }), undefined);
 	});
 
 	it("keeps trust records per project root", () => {
-		const { project, configDir, builtin } = scratch();
+		const { project, configDir } = scratch();
 		const other = join(project, "..", "other");
 		mkdirSync(join(other, ".pancode"), { recursive: true });
 		mkdirSync(join(other, "tools"));
 		writeProjectConfig(project, PROJECT_CONFIG);
 		writeProjectConfig(other, PROJECT_CONFIG);
 		ok(trustMcpServer({ cwd: project, configDir, id: "files" }).ok);
-		strictEqual(resolveMcpServers({ cwd: project, configDir, builtin }).servers[0]?.trust.status, "trusted");
-		strictEqual(resolveMcpServers({ cwd: other, configDir, builtin }).servers[0]?.trust.status, "untrusted");
+		strictEqual(resolveMcpServers({ cwd: project, configDir }).servers[0]?.trust.status, "trusted");
+		strictEqual(resolveMcpServers({ cwd: other, configDir }).servers[0]?.trust.status, "untrusted");
 		ok(trustMcpServer({ cwd: other, configDir, id: "files" }).ok);
 		strictEqual(readMcpTrustState(configDir).state.records.length, 2);
 	});
@@ -827,9 +817,9 @@ describe("mcp server trust", () => {
 			const configDir = process.env.PANCODE_CONFIG_DIR ?? "";
 			ok(configDir.length > 0);
 			strictEqual(mcpTrustPath(), join(configDir, "mcp-trust.json"));
-			const { project, builtin } = scratch();
+			const { project } = scratch();
 			strictEqual(mcpConfigPaths({ cwd: project }).user, join(configDir, "mcp.yaml"));
-			deepStrictEqual(resolveMcpServers({ cwd: project, builtin }).servers, []);
+			deepStrictEqual(resolveMcpServers({ cwd: project }).servers, []);
 			ok(!existsSync(mcpTrustPath()));
 		} finally {
 			env?.restore();
@@ -846,7 +836,7 @@ describe("plugin mcp.json declarations", () => {
 
 	it("declares an installed, enabled plugin's servers under explicit trust bound to the plugin's content", async () => {
 		env = await isolatePancodeEnv("pancode-mcp-plugin-");
-		const { project, builtin } = scratch();
+		const { project } = scratch();
 		const source = join(env.dir, "source", "zulip-kit");
 		mkdirSync(join(source, "skills", "notes"), { recursive: true });
 		writeFileSync(
@@ -867,7 +857,7 @@ describe("plugin mcp.json declarations", () => {
 			}),
 		);
 		strictEqual(installPlugin(source, { cwd: project }).plugin?.loadable, true);
-		const declared = resolveMcpServers({ cwd: project, builtin });
+		const declared = resolveMcpServers({ cwd: project });
 		const server = declared.servers.find((entry) => entry.id === "zulipchat");
 		strictEqual(server?.scope, "plugin");
 		strictEqual(server?.plugin?.id, "zulip-kit");
@@ -880,17 +870,17 @@ describe("plugin mcp.json declarations", () => {
 		strictEqual(remote?.url, "https://example.invalid/mcp");
 		strictEqual(remote?.trust.status, "untrusted");
 		ok(trustMcpServer({ cwd: project, id: "zulipchat", actionClass: "read" }).ok);
-		strictEqual(resolveMcpServers({ cwd: project, builtin }).servers[0]?.trust.status, "trusted");
+		strictEqual(resolveMcpServers({ cwd: project }).servers[0]?.trust.status, "trusted");
 
 		writeFileSync(join(source, "skills", "notes", "SKILL.md"), "---\nname: notes\ndescription: Notes\n---\nChanged.\n");
 		ok(installPlugin(source, { cwd: project, force: true }).plugin?.loadable);
 		strictEqual(
-			resolveMcpServers({ cwd: project, builtin }).servers[0]?.trust.status,
+			resolveMcpServers({ cwd: project }).servers[0]?.trust.status,
 			"stale",
 			"a changed plugin tree needs a new trust decision even with an identical mcp.json",
 		);
 		disablePlugin("zulip-kit", { cwd: project });
-		deepStrictEqual(resolveMcpServers({ cwd: project, builtin }).servers, []);
+		deepStrictEqual(resolveMcpServers({ cwd: project }).servers, []);
 	});
 
 	function pluginWithServer(dir: string, name: string, serverId: string): string {
@@ -909,13 +899,12 @@ describe("plugin mcp.json declarations", () => {
 
 	it("stops launching a trusted plugin server once its plugin is disabled mid-session", async () => {
 		env = await isolatePancodeEnv("pancode-mcp-plugin-");
-		const { project, builtin } = scratch();
+		const { project } = scratch();
 		ok(installPlugin(pluginWithServer(env.dir, "zulip-kit", "zulipchat"), { cwd: project }).plugin?.loadable);
 		ok(trustMcpServer({ cwd: project, id: "zulipchat", actionClass: "read" }).ok);
 		const launches: string[] = [];
 		const source = createMcpCapabilitySource({
 			cwd: project,
-			builtin,
 			registry: createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" }),
 			clientFactory: (spec) => {
 				launches.push(spec.id);
@@ -973,27 +962,6 @@ describe("plugin mcp.json declarations", () => {
 		const server = resolveMcpServers({ cwd: project }).servers.find((entry) => entry.id === "slurm");
 		strictEqual(server?.trust.status, "trusted");
 		strictEqual(mcpToolActionClass(server, { name: "get_queue_info", annotations: null }), "unknown");
-	});
-
-	it("shadows a plugin server that takes a builtin id, naming the manifest that ships it", async () => {
-		env = await isolatePancodeEnv("pancode-mcp-plugin-");
-		const { project, configDir } = scratch();
-		const builtin = builtinFixtureSource(join(configDir, ".."), ["kitfix"]);
-		ok(installPlugin(pluginWithServer(env.dir, "kit-clone", "kitfix"), { cwd: project }).plugin?.loadable);
-		const loaded = loadMcpServerConfig({ cwd: project, configDir, builtin });
-		deepStrictEqual(
-			loaded.servers.map((server) => [server.id, server.scope]),
-			[["kitfix", "builtin"]],
-		);
-		deepStrictEqual(
-			loaded.diagnostics.map(({ scope, message }) => ({ scope, message })),
-			[
-				{
-					scope: "plugin",
-					message: `server 'kitfix' from plugin kit-clone is shadowed by the builtin server PanCode ships in ${builtin.manifestPath}; a plugin cannot take a builtin server's id`,
-				},
-			],
-		);
 	});
 
 	it("classifies a trusted plugin server's tools by the per-tool classes its mcp.json declares", async () => {
@@ -1207,161 +1175,5 @@ describe("plugin mcp.json declarations", () => {
 				`${denied} must report an envVars diagnostic`,
 			);
 		}
-	});
-});
-
-describe("builtin mcp servers", () => {
-	it("lets a user declaration override a builtin id and shadows a project declaration of one, each with a diagnostic", () => {
-		const { project, configDir } = scratch();
-		const builtin = builtinFixtureSource(join(configDir, ".."), ["kitfix", "slurm"]);
-		writeUserConfig(configDir, "version: 1\nservers:\n  - id: slurm\n    command: node\n    args: [my-slurm.mjs]\n");
-		writeProjectConfig(project, "version: 1\nservers:\n  - id: kitfix\n    command: node\n    args: [takeover.mjs]\n");
-		const loaded = loadMcpServerConfig({ cwd: project, configDir, builtin });
-		deepStrictEqual(
-			loaded.servers.map((server) => [server.id, server.scope]),
-			[
-				["slurm", "user"],
-				["kitfix", "builtin"],
-			],
-		);
-		const paths = mcpConfigPaths({ cwd: project, configDir });
-		deepStrictEqual(loaded.diagnostics, [
-			{
-				scope: "builtin",
-				path: builtin.manifestPath,
-				message: `builtin server 'slurm' that PanCode ships in ${builtin.manifestPath} is overridden by the user declaration in ${paths.user}`,
-				severity: "warning",
-			},
-			{
-				scope: "project",
-				path: paths.project,
-				message: `server 'kitfix' is shadowed by the builtin server PanCode ships in ${builtin.manifestPath}; a project cannot take a builtin server's id`,
-			},
-		]);
-		const kitfix = resolveMcpServers({ cwd: project, configDir, builtin }).servers.find((s) => s.id === "kitfix");
-		strictEqual(kitfix?.trust.status, "trusted");
-		strictEqual(kitfix.trust.network, undefined, "a builtin server holds no network grant");
-		deepStrictEqual(kitfix.toolActionClasses, { echo: "read", stamp: "execute", env: "read" });
-		deepStrictEqual(kitfix.toolPathArguments, { stamp: { path: "write" } });
-	});
-
-	it("reads a server's environment and drops a server that names a malformed, reserved or credential variable", () => {
-		const { project, configDir } = scratch();
-		const lists = [
-			["KITFIX_SITE", "KITFIX_LAYER_*"],
-			["KITFIX-SITE"],
-			["PANCODE_HOME"],
-			["KITFIX_API_TOKEN"],
-			Array.from({ length: 33 }, (_, index) => `KITFIX_V${index}`),
-		];
-		const builtin = builtinFixtureSource(join(configDir, ".."), ["kitfix"], (manifest) => {
-			const [kitfix] = manifest.servers;
-			if (kitfix === undefined) throw new Error("fixture manifest changed");
-			manifest.servers = lists.map((environment, index) => ({
-				...kitfix,
-				id: index === 0 ? "kitfix" : `kitfix${index}`,
-				environment,
-			}));
-		});
-		const loaded = loadMcpServerConfig({ cwd: project, configDir, builtin });
-		deepStrictEqual(
-			loaded.servers.map((server) => [server.id, server.builtin?.environment]),
-			[["kitfix", ["KITFIX_LAYER_*", "KITFIX_SITE"]]],
-		);
-		deepStrictEqual(
-			loaded.diagnostics.map((entry) => entry.message),
-			[
-				"servers[1].environment[0] must be a variable name, or a prefix of at least 4 characters followed by *; the server is not declared",
-				"servers[2].environment[0] names PANCODE_HOME, which is never passed: PANCODE_ variables are PanCode's own; the server is not declared",
-				"servers[3].environment[0] names KITFIX_API_TOKEN, which is never passed: it reads as a credential; the server is not declared",
-				"servers[4].environment lists more than 32 entries; the server is not declared",
-			],
-		);
-	});
-
-	it("puts a builtin server's environment names in its digest and never their values", (t) => {
-		const { project, configDir } = scratch();
-		const declare = (dir: string, environment: string[]) =>
-			builtinFixtureSource(dir, ["kitfix"], (manifest) => {
-				const [kitfix] = manifest.servers;
-				if (kitfix === undefined) throw new Error("fixture manifest changed");
-				kitfix.environment = environment;
-			});
-		const digestOf = (builtin: ReturnType<typeof declare>) =>
-			loadMcpServerConfig({ cwd: project, configDir, builtin }).servers.find((server) => server.id === "kitfix")?.digest;
-		const builtin = declare(join(configDir, ".."), ["KITFIX_SITE"]);
-		t.after(() => {
-			delete process.env.KITFIX_SITE;
-		});
-		process.env.KITFIX_SITE = "first-session";
-		const first = digestOf(builtin);
-		process.env.KITFIX_SITE = "second-session";
-		const second = digestOf(builtin);
-		ok(first !== undefined);
-		strictEqual(second, first);
-		const other = mkdtempSync(join(configDir, "other-"));
-		ok(digestOf(declare(other, ["KITFIX_ROOT"])) !== first, "the names are part of the digest");
-	});
-
-	it("keeps a builtin network grant by id across project trust changes and an upgrade, and only for the builtin scope", () => {
-		const { project, configDir } = scratch();
-		const shipped = (dir: string, version: string) =>
-			builtinFixtureSource(dir, ["kitfix"], (manifest) => {
-				const [kitfix] = manifest.servers;
-				if (kitfix === undefined) throw new Error("fixture manifest changed");
-				kitfix.version = version;
-			});
-		const before = shipped(mkdtempSync(join(configDir, "..", "before-")), "1.0.0");
-		const after = shipped(mkdtempSync(join(configDir, "..", "after-")), "2.0.0");
-		const kitfix = (builtin: McpBuiltinSource) =>
-			resolveMcpServers({ cwd: project, configDir, builtin }).servers.find((server) => server.id === "kitfix");
-		writeProjectConfig(project, PROJECT_CONFIG);
-		const granted = grantMcpBuiltinNetwork({ cwd: project, configDir, builtin: before, id: "kitfix" });
-		ok(granted.ok);
-		strictEqual(grantMcpBuiltinNetwork({ cwd: project, configDir, builtin: before, id: "files" }).ok, false);
-		ok(trustMcpServer({ cwd: project, configDir, builtin: before, id: "files" }).ok);
-		ok(untrustMcpServer({ cwd: project, configDir, builtin: before, id: "files" }).ok);
-		deepStrictEqual(readMcpTrustState(configDir).state, { version: 1, records: [], builtins: [granted.grant] });
-		ok(kitfix(before)?.digest !== kitfix(after)?.digest, "the upgrade changes the declaration digest");
-		const upgraded = kitfix(after)?.trust;
-		ok(upgraded?.status === "trusted");
-		strictEqual(upgraded.network, true, "the grant survives the upgrade");
-		writeUserConfig(configDir, "version: 1\nservers:\n  - id: kitfix\n    command: node\n");
-		const overridden = kitfix(after);
-		ok(overridden?.trust.status === "trusted");
-		deepStrictEqual([overridden.scope, overridden.trust.network], ["user", undefined]);
-		writeFileSync(
-			mcpTrustPath(configDir),
-			JSON.stringify({ version: 1, records: [], builtins: [{ id: "kitfix", grantedAt: "now" }] }),
-		);
-		match(readMcpTrustState(configDir).diagnostics[0] ?? "", /builtins\[0\]\.network must be true/);
-		strictEqual(revokeMcpBuiltinNetwork({ cwd: project, configDir, id: "kitfix" }).ok, false);
-	});
-
-	it("reads the manifest strictly: a malformed server entry is a diagnostic and declares nothing", () => {
-		const { project, configDir } = scratch();
-		const builtin = builtinFixtureSource(join(configDir, ".."), ["kitfix", "slurm"], (manifest) => {
-			const [kitfix, slurm] = manifest.servers;
-			if (kitfix?.tools[0] === undefined || slurm === undefined) throw new Error("fixture manifest changed");
-			(kitfix.tools[0] as { actionClass: string }).actionClass = "unknown";
-			(slurm as unknown as Record<string, unknown>).network = true;
-		});
-		const loaded = loadMcpServerConfig({ cwd: project, configDir, builtin });
-		deepStrictEqual(loaded.servers, []);
-		deepStrictEqual(
-			loaded.diagnostics.map((entry) => [entry.scope, entry.message]),
-			[
-				[
-					"builtin",
-					"servers[0].tools[0].actionClass must be one of read, execute, destructive; the server is not declared",
-				],
-				["builtin", "servers[1] has unknown field network; the server is not declared"],
-			],
-		);
-		writeFileSync(builtin.manifestPath, JSON.stringify({ version: 1, servers: [], extra: true }));
-		deepStrictEqual(
-			loadMcpServerConfig({ cwd: project, configDir, builtin }).diagnostics.map((entry) => entry.message),
-			["the manifest has unknown field extra"],
-		);
 	});
 });

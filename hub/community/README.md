@@ -20,10 +20,6 @@ rows:
     tier: listed
 ```
 
-A server pack's row is the same with `kind: server`. Its pack holds a root `mcp.json` declaring one stdio server named
-like the pack (see the template in `hub/_authoring/templates/server/`), and the pinned row carries that file's
-`mcpDigest`.
-
 `pnpm hub:pin` fetches that exact commit, refuses a tree whose digest differs from `sha256`, and writes the index
 row from the tree. Every field the row file states must hold at the commit. Hints such as `provides`, `requires`,
 `envelopeDigest` and `mcpDigest` are derived, so you may leave them out.
@@ -47,7 +43,7 @@ A maintainer moves a row to `tier: verified` only when all of these hold at the 
 - No skill or prompt body carries instructions aimed at the host: overriding earlier instructions or the system
   prompt, changing settings or trust, or piping a download to a shell.
 - The extension envelope, if any, has been read and its reach matches what the pack says it does.
-- A server pack's launch command, which the review prints, runs what the pack says it does.
+- An MCP server's launch command, which the review prints, runs what the pack says it does.
 - The pack builds and its tests pass at the commit.
 
 A listing, at any tier, is not an endorsement. PanCode checks that the bytes you install are the bytes the row

@@ -31,9 +31,7 @@
 			"@pancode/store": ["./packages/store/src/index.ts"],
 			"@pancode/store/*": ["./packages/store/src/*/index.ts"],
 			"@pancode/scidata": ["./packages/scidata/src/index.ts"],
-			"@pancode/scidata/*": ["./packages/scidata/src/*/index.ts"],
-			"@pancode/kit": ["./packages/kit/src/index.ts"],
-			"@pancode/kit/*": ["./packages/kit/src/*/index.ts"]
+			"@pancode/scidata/*": ["./packages/scidata/src/*/index.ts"]
 		}
 	},
 	"include": ["src/**/*"],

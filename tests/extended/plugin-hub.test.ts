@@ -155,10 +155,10 @@ describe("plugin PanHub lifecycle", () => {
 	it("does not mistake a stale pin for an installed resource", () => {
 		writeFileSync(
 			path.join(root, "config", "library-pins.yaml"),
-			stringify({ "prompt:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
+			stringify({ "skill:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
 		);
-		equal(hubEntryInstalled({ kind: "prompt", name: "gone" }), false);
-		throws(() => hubInstallPath({ kind: "prompt", name: "../outside" }), /invalid PanHub entry name/);
+		equal(hubEntryInstalled({ kind: "skill", name: "gone" }), false);
+		throws(() => hubInstallPath({ kind: "skill", name: "../outside" }), /invalid PanHub entry name/);
 	});
 
 	it("records scoped pins, reports drift, refuses repinning drift, and removes the selected scope", () => {

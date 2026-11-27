@@ -823,15 +823,12 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				stdio: "pipe",
 			});
 
-			// One package, two commands: npm links each bin from the one tarball alone.
-			for (const command of ["pancode", "pankit"])
-				ok(existsSync(join(prefix, "node_modules", ".bin", command)), `npm must link the ${command} bin`);
+			// One package, one command: npm links the pancode bin from the tarball alone.
+			ok(existsSync(join(prefix, "node_modules", ".bin", "pancode")), "npm must link the pancode bin");
 			ok(!existsSync(join(prefix, "node_modules", ".bin", "panstore")), "pancode store is PanStore's one command");
 			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "the package installs with no @pancode/* package");
 			const storeHelp = await run(bin, ["store", "--help"], foreign, isolatedEnv(home));
 			strictEqual(storeHelp.code, 0, storeHelp.stderr);
-			const kitList = await run(join(prefix, "node_modules", ".bin", "pankit"), ["list"], foreign, isolatedEnv(home));
-			strictEqual(kitList.code, 0, kitList.stderr);
 			const version = await run(bin, ["--version"], foreign, isolatedEnv(home));
 			strictEqual(version.code, 0, version.stderr);
 			// A development tree packs as `0.6.0-dev (unreleased · <commit>)`; a release packs as the bare version.
@@ -1169,7 +1166,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				authored.entries.map((entry) => `${entry.kind}:${entry.name}`).sort(),
 				"the installed marketplace must expose every bundled package",
 			);
-			strictEqual(authored.entries.length, 52, "catalog contains 47 bundled packages and five remote packages");
+			strictEqual(authored.entries.length, 44, "catalog contains 39 bundled packages and five remote packages");
 
 			const standaloneSkill = authored.entries.find((entry) => entry.kind === "skill");
 			ok(standaloneSkill);

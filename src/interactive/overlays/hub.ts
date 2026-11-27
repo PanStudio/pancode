@@ -20,8 +20,8 @@ import type { HubImportPlan } from "../../domains/interop/index.js";
 import { applyHubImport, planHubImport, releaseHubImport } from "../../domains/interop/index.js";
 import type { PluginScope } from "../../domains/plugins/types.js";
 import type {
+	HubCategory,
 	HubCopyInspection,
-	HubEntryKind,
 	HubInventory,
 	HubInventoryOptions,
 } from "../../domains/resources/index.js";
@@ -76,7 +76,7 @@ export interface HubOverlayDeps {
 	notice: (level: NoticeLevel, text: string) => void;
 	onClose: () => void;
 	/** Category the browser opens on. */
-	initialTab?: HubEntryKind;
+	initialTab?: HubCategory;
 	initialMode?: HubMode;
 	initialScope?: PluginScope;
 	/** A package ref or resource key to select on open, from `/hub inspect <ref>`. */
@@ -251,7 +251,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 
 	/** Rows for one category, and the subjects behind them, rebuilt on demand. */
 	let rowSet: HubRowSet = { items: [], subjects: new Map(), notices: 0, truncated: false };
-	const rowsFor = (category: HubEntryKind): ListOverlayItem[] => {
+	const rowsFor = (category: HubCategory): ListOverlayItem[] => {
 		const scoped: HubView = { ...view, category };
 		const set = buildHubRows({
 			inventory: selectForCategory(inventory(), scoped),
@@ -266,7 +266,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 	};
 
 	/** How many packages a tab lists outside any drill-in, the count its tab states while its rows are members. */
-	const packageCount = (category: HubEntryKind): number => {
+	const packageCount = (category: HubCategory): number => {
 		const scoped: HubView = { ...view, category, member: undefined };
 		const set = buildHubRows({
 			inventory: selectForCategory(inventory(), scoped),
@@ -503,8 +503,6 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			const here = subject.record.copies.find((copy) => copy.scope === view.scope) ?? subject.record.copies[0];
 			if (!here) {
 				handle.openDetail();
-				// A built-in server has no copy by design; its detail already says so.
-				if (subject.record.builtIn) return;
 				// Said once per package while PanHub is open: a second Enter on the
 				// same row repeated the same line into the transcript and told nothing new.
 				if (!toldNotInstalled.has(subject.record.ref)) {

@@ -19,11 +19,6 @@
  * sandboxed process in a fleet worker. The grant sits outside the digest and
  * lasts until untrust or a re-trust without --network replaces the record.
  *
- * A builtin server ships with PanCode and takes no trust record, but the
- * operator may grant its sandboxed process network in fleet workers. That
- * grant is keyed by the server id alone, not by a project or a digest, so it
- * survives an upgrade that changes what the server ships; untrust removes it.
- *
  * Launch trust lets a server start; the tools it then serves need a second
  * approval, the surface digest (surface.ts). A project or plugin record holds
  * it beside launch trust. A user-scope server has no record, since authorship
@@ -38,7 +33,6 @@ import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../../core/state-file-lock.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
-import type { McpBuiltinSource } from "./builtin.js";
 import {
 	loadMcpServerConfig,
 	type McpConfigDiagnostic,
@@ -56,7 +50,7 @@ export const MCP_TRUST_VERSION = 1;
 
 /**
  * Bounds on the trust file, read on every resolve; a file past either is unusable until repaired. The record
- * cap counts launch records, user-scope surface records, builtin network grants and skill approvals together.
+ * cap counts launch records, user-scope surface records and skill approvals together.
  */
 export const MCP_TRUST_CAPS = Object.freeze({
 	fileBytes: 1024 * 1024,
@@ -103,13 +97,6 @@ export interface McpUserSurfaceRecord {
 	surface: McpApprovedSurface;
 }
 
-/** The operator's network grant for a builtin server, which holds wherever that id is a builtin server. */
-export interface McpBuiltinGrant {
-	id: string;
-	network: true;
-	grantedAt: string;
-}
-
 /**
  * The operator's approval of one version of a skill an MCP server serves. It
  * binds the server's identity (its id and declaration digest, and the project
@@ -136,8 +123,6 @@ export interface McpTrustState {
 	records: McpTrustRecord[];
 	/** Absent when empty, so a file without user-scope surfaces keeps its earlier shape. */
 	surfaces?: McpUserSurfaceRecord[];
-	/** Absent when empty, so a file without builtin grants keeps its earlier shape. */
-	builtins?: McpBuiltinGrant[];
 	/** Absent when empty, so a file without skill approvals keeps its earlier shape. */
 	skills?: McpSkillApproval[];
 }
@@ -165,8 +150,6 @@ export interface McpTrustOptions {
 	cwd: string;
 	/** Override for the user config directory; defaults to pancodeConfigDir(). */
 	configDir?: string;
-	/** Override for the builtin server manifest and the CLI that serves it; defaults to the installed package's. */
-	builtin?: McpBuiltinSource;
 }
 
 export interface McpTrustReadResult {
@@ -231,16 +214,12 @@ function parseTrustState(text: string): McpTrustState | Error {
 	if (parsed.surfaces !== undefined && !Array.isArray(parsed.surfaces)) {
 		return new Error("trust state surfaces must be an array");
 	}
-	if (parsed.builtins !== undefined && !Array.isArray(parsed.builtins)) {
-		return new Error("trust state builtins must be an array");
-	}
 	if (parsed.skills !== undefined && !Array.isArray(parsed.skills)) {
 		return new Error("trust state skills must be an array");
 	}
 	const rawSurfaces: unknown[] = parsed.surfaces ?? [];
-	const rawBuiltins: unknown[] = parsed.builtins ?? [];
 	const rawSkills: unknown[] = parsed.skills ?? [];
-	if (parsed.records.length + rawSurfaces.length + rawBuiltins.length + rawSkills.length > MCP_TRUST_CAPS.records) {
+	if (parsed.records.length + rawSurfaces.length + rawSkills.length > MCP_TRUST_CAPS.records) {
 		return new Error(`trust state exceeds the ${MCP_TRUST_CAPS.records}-record cap`);
 	}
 	const records: McpTrustRecord[] = [];
@@ -290,18 +269,6 @@ function parseTrustState(text: string): McpTrustState | Error {
 		if (surface instanceof Error) return surface;
 		surfaces.push({ id: raw.id as string, digest: raw.digest as string, surface });
 	}
-	const builtins: McpBuiltinGrant[] = [];
-	for (const [index, raw] of rawBuiltins.entries()) {
-		if (!isRecord(raw)) return new Error(`builtins[${index}] must be an object`);
-		for (const field of ["id", "grantedAt"] as const) {
-			if (typeof raw[field] !== "string" || raw[field].length === 0) {
-				return new Error(`builtins[${index}].${field} must be a non-empty string`);
-			}
-		}
-		if (raw.network !== true) return new Error(`builtins[${index}].network must be true`);
-		if (builtins.some((entry) => entry.id === raw.id)) return new Error(`builtins[${index}] repeats id ${raw.id}`);
-		builtins.push({ id: raw.id as string, network: true, grantedAt: raw.grantedAt as string });
-	}
 	const skills: McpSkillApproval[] = [];
 	for (const [index, raw] of rawSkills.entries()) {
 		if (!isRecord(raw)) return new Error(`skills[${index}] must be an object`);
@@ -338,7 +305,6 @@ function parseTrustState(text: string): McpTrustState | Error {
 		version: MCP_TRUST_VERSION,
 		records,
 		...(surfaces.length > 0 ? { surfaces } : {}),
-		...(builtins.length > 0 ? { builtins } : {}),
 		...(skills.length > 0 ? { skills } : {}),
 	};
 }
@@ -363,11 +329,8 @@ export function readMcpTrustState(configDir?: string): McpTrustReadResult {
 
 /** Persist the state, or name why it would not be readable again under the caps. */
 function writeTrustState(state: Omit<McpTrustState, "version">, configDir?: string): string | null {
-	const { records, surfaces, builtins, skills } = state;
-	if (
-		records.length + (surfaces?.length ?? 0) + (builtins?.length ?? 0) + (skills?.length ?? 0) >
-		MCP_TRUST_CAPS.records
-	) {
+	const { records, surfaces, skills } = state;
+	if (records.length + (surfaces?.length ?? 0) + (skills?.length ?? 0) > MCP_TRUST_CAPS.records) {
 		return `trust state would exceed the ${MCP_TRUST_CAPS.records}-record cap; untrust servers you no longer use first`;
 	}
 	const sorted = [...records].sort(
@@ -376,7 +339,6 @@ function writeTrustState(state: Omit<McpTrustState, "version">, configDir?: stri
 	const sortedSurfaces = [...(surfaces ?? [])].sort(
 		(left, right) => left.id.localeCompare(right.id) || left.digest.localeCompare(right.digest),
 	);
-	const sortedBuiltins = [...(builtins ?? [])].sort((left, right) => left.id.localeCompare(right.id));
 	const sortedSkills = [...(skills ?? [])].sort(
 		(left, right) =>
 			(left.projectRoot ?? "").localeCompare(right.projectRoot ?? "") ||
@@ -388,7 +350,6 @@ function writeTrustState(state: Omit<McpTrustState, "version">, configDir?: stri
 			version: MCP_TRUST_VERSION,
 			records: sorted,
 			...(sortedSurfaces.length > 0 ? { surfaces: sortedSurfaces } : {}),
-			...(sortedBuiltins.length > 0 ? { builtins: sortedBuiltins } : {}),
 			...(sortedSkills.length > 0 ? { skills: sortedSkills } : {}),
 		},
 		null,
@@ -414,25 +375,7 @@ function unreadableEntryMessage(id: string, entry: { path: string; error: string
 	return `project-scope server '${id}' runs entry script '${entry.path}', which cannot be read to bind its trust (${entry.error})`;
 }
 
-/** The approval time a builtin server's shipped surface reports: it was approved when this PanCode was built. */
-const SHIPPED_SURFACE = "shipped";
-
-/** Why an operator trust decision other than the network grant cannot apply to a builtin server. */
-export function mcpBuiltinTrustRefusal(id: string): string {
-	return `server '${id}' ships with PanCode; it is trusted by authorship and its tools run under the policy this PanCode ships, which no trust decision changes`;
-}
-
 function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state: McpTrustState): McpTrustStatus {
-	if (server.scope === "builtin") {
-		// No record: the shipped surface is the only approval, and the operator's grant adds only network.
-		const granted = state.builtins?.some((item) => item.id === server.id) === true;
-		return {
-			status: "trusted",
-			actionClass: server.actionClass,
-			...(granted ? { network: true } : {}),
-			...(server.builtin !== undefined ? { surface: { ...server.builtin.surface, approvedAt: SHIPPED_SURFACE } } : {}),
-		};
-	}
 	if (server.scope === "user") {
 		const recorded = state.surfaces?.find((item) => item.id === server.id && item.digest === server.digest)?.surface;
 		return {
@@ -581,7 +524,6 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 	if (server.scope === "user") {
 		return { ok: false, message: `server '${options.id}' is a user-scope declaration; it is trusted by authorship` };
 	}
-	if (server.scope === "builtin") return { ok: false, message: mcpBuiltinTrustRefusal(server.id) };
 	const contradiction = mcpWritePathOnReadTool(server, actionClass);
 	if (contradiction !== null) {
 		return {
@@ -677,59 +619,6 @@ export function revokeMcpUserTrust(options: McpTrustOptions & { id: string }): U
 	});
 }
 
-export type GrantMcpBuiltinNetworkResult = { ok: true; grant: McpBuiltinGrant } | { ok: false; message: string };
-
-/**
- * Record the operator's grant that the builtin server `id` may use the network
- * inside a fleet worker's sandbox. It changes nothing else about that server.
- */
-export function grantMcpBuiltinNetwork(
-	options: McpTrustOptions & { id: string; now?: () => Date },
-): GrantMcpBuiltinNetworkResult {
-	return withStateFileLockSync(mcpTrustPath(options.configDir), () => grantMcpBuiltinNetworkLocked(options));
-}
-
-function grantMcpBuiltinNetworkLocked(
-	options: McpTrustOptions & { id: string; now?: () => Date },
-): GrantMcpBuiltinNetworkResult {
-	const server = loadMcpServerConfig(options).servers.find((entry) => entry.id === options.id);
-	if (server?.scope !== "builtin") return { ok: false, message: `no builtin MCP server with id '${options.id}'` };
-	const trust = readMcpTrustState(options.configDir);
-	if (trust.diagnostics.length > 0) {
-		return { ok: false, message: `trust state is unusable; repair or remove it first: ${trust.diagnostics.join("; ")}` };
-	}
-	const grant: McpBuiltinGrant = {
-		id: server.id,
-		network: true,
-		grantedAt: (options.now?.() ?? new Date()).toISOString(),
-	};
-	const builtins = [...(trust.state.builtins ?? []).filter((entry) => entry.id !== server.id), grant];
-	const refused = writeTrustState({ ...trust.state, builtins }, options.configDir);
-	if (refused !== null) return { ok: false, message: refused };
-	return { ok: true, grant };
-}
-
-/** Remove the network grant of the builtin server `id`, whether or not it still ships. */
-export function revokeMcpBuiltinNetwork(options: McpTrustOptions & { id: string }): UntrustMcpServerResult {
-	return withStateFileLockSync(mcpTrustPath(options.configDir), () => {
-		const trust = readMcpTrustState(options.configDir);
-		if (trust.diagnostics.length > 0) {
-			return {
-				ok: false,
-				message: `trust state is unusable; repair or remove it first: ${trust.diagnostics.join("; ")}`,
-			};
-		}
-		const before = trust.state.builtins ?? [];
-		const builtins = before.filter((entry) => entry.id !== options.id);
-		const removed = builtins.length !== before.length;
-		if (removed) {
-			const refused = writeTrustState({ ...trust.state, builtins }, options.configDir);
-			if (refused !== null) return { ok: false, message: refused };
-		}
-		return { ok: true, removed };
-	});
-}
-
 export interface ApproveMcpSurfaceOptions extends McpTrustOptions {
 	id: string;
 	/** The surface the server serves now, as the operator reviewed it. */
@@ -766,7 +655,6 @@ function approveMcpSurfaceLocked(options: ApproveMcpSurfaceOptions): ApproveMcpS
 	const loaded = loadMcpServerConfig(options);
 	const server = loaded.servers.find((entry) => entry.id === options.id);
 	if (server === undefined) return { ok: false, message: `no declared MCP server with id '${options.id}'` };
-	if (server.scope === "builtin") return { ok: false, message: mcpBuiltinTrustRefusal(server.id) };
 	const projectRoot = canonicalProjectRoot(options.cwd);
 	const status = trustStatusFor(server, projectRoot, trust.state);
 	if (status.status !== "trusted") {
@@ -890,7 +778,6 @@ function approveMcpSkillLocked(options: ApproveMcpSkillOptions): ApproveMcpSkill
 	}
 	const server = loadMcpServerConfig(options).servers.find((entry) => entry.id === options.id);
 	if (server === undefined) return { ok: false, message: `no declared MCP server with id '${options.id}'` };
-	if (server.scope === "builtin") return { ok: false, message: mcpBuiltinTrustRefusal(server.id) };
 	const projectRoot = canonicalProjectRoot(options.cwd);
 	const status = trustStatusFor(server, projectRoot, trust.state);
 	if (status.status !== "trusted") {

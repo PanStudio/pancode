@@ -61,7 +61,7 @@ export interface McpRecordedSkill {
  */
 export interface McpAttestedSkill extends McpRecordedSkill {
 	serverId: string;
-	serverScope: Exclude<McpServerScope, "builtin">;
+	serverScope: McpServerScope;
 	/** The declaration digest the approval binds. */
 	digest: string;
 	/** The name the recipe binds and the run lists it by, `<server id>:<name>`. */
@@ -164,9 +164,7 @@ function decodeCatalog(value: unknown): McpSkillCatalog | null {
 		const entry = value[field];
 		if (typeof entry !== "string" || entry.length === 0) return null;
 	}
-	if (value.scope !== "user" && value.scope !== "project" && value.scope !== "plugin" && value.scope !== "builtin") {
-		return null;
-	}
+	if (value.scope !== "user" && value.scope !== "project" && value.scope !== "plugin") return null;
 	if (typeof value.truncated !== "boolean") return null;
 	const ttlMs = value.ttlMs;
 	if (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs < 0) return null;

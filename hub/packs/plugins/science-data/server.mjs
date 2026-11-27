@@ -615,7 +615,7 @@ import { readFile, stat as stat2 } from "node:fs/promises";
 
 // hub/packs/plugins/science-data/src/net.ts
 var MAX_REDIRECTS = 5;
-var USER_AGENT = "pankit-catalog/0.1.0";
+var USER_AGENT = "pancode-science-data/0.5.0";
 var REDIRECT_STATUSES = /* @__PURE__ */ new Set([301, 302, 303, 307, 308]);
 var message = (error) => error instanceof Error ? error.message : String(error);
 function urlRefusal(target, source, catalogFile) {
@@ -1107,7 +1107,7 @@ async function writeStaged(chunks, options, onChunk) {
   const { destination } = options;
   const temporary = path.join(
     path.dirname(destination),
-    `.${path.basename(destination)}.${randomBytes(6).toString("hex")}.pankit-part`
+    `.${path.basename(destination)}.${randomBytes(6).toString("hex")}.partial`
   );
   const handle = await open(temporary, "wx");
   let placed = false;

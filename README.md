@@ -125,15 +125,13 @@ pancode run --read-only "Summarize this repository and how to run its tests."
 - **Memory.** PanCode keeps requirements, failed attempts and diagnoses in
   session memory, and `pancode memory` reviews the notes that outlive a
   session. [Proactive memory](docs/guide/proactive-memory.md)
-- **PanHub packs and skills.** `pancode hub` installs plugins, skills, agents,
-  prompts, playbooks and extensions, each pinned by a SHA-256 of its whole
-  tree, with `/hub` or Alt+L in the terminal. [PanHub](hub/README.md)
-- **PanKit, the agent toolkit.** PanCode ships MCP servers for node facts,
-  software modules, Spack, Darshan I/O traces, scientific data, dataset
-  catalogs and the project store. PanHub lists them as built-in `server`
-  packs, `pankit serve <id>` serves one to Codex or any other MCP host, and
-  `claude plugin install pankit@pancode` gives Claude Code six of them.
-  [PanKit](packages/kit/README.md)
+- **PanHub packs and skills.** `pancode hub` installs plugins, skills and
+  extensions, each pinned by a SHA-256 of its whole tree, with `/hub` or Alt+L in the terminal. [PanHub](hub/README.md)
+- **HPC and science packs.** The hub's `hpc` plugin carries an MCP server for
+  node facts, software modules, Spack and Darshan I/O traces, and the
+  `science-data` plugin one for dataset catalogs. `pancode hub install
+  plugin:hpc` adds it, and Claude Code and Codex can run the same servers.
+  [Science packs](docs/guide/panhub.md#science-packs)
 - **ACP beside other agents.** `pancode acp` serves PanCode to ACP editors, and
   Panos can delegate a task to an installed coding agent, and
   `pancode interop adopt` brings that agent's skills, agents and prompts in
@@ -176,7 +174,7 @@ documents every `pancode run` flag, exit code and JSON field.
 | --- | --- |
 | Get productive in the first hour | [Documentation map](docs/README.md) |
 | Install, connect, troubleshoot | [Installation](docs/guide/installation-and-lifecycle.md) · [Connect a model](docs/guide/configuration-and-targets.md) · [Troubleshooting](docs/guide/troubleshooting.md) |
-| Run on a cluster | [HPC clusters](docs/guide/hpc-clusters.md) · [PanStore](docs/guide/panstore.md) · [PanKit](docs/guide/pankit.md) |
+| Run on a cluster | [HPC clusters](docs/guide/hpc-clusters.md) · [PanStore](docs/guide/panstore.md) · [Science packs](docs/guide/panhub.md#science-packs) |
 | Find a command or setting | [Commands and modes](docs/guide/commands-and-modes.md) · [Configuration reference](docs/guide/configuration-reference.md) · [Environment variables](docs/guide/environment-variables.md) |
 | Script it | [Exit codes and output](docs/guide/exit-codes-and-output.md) · [Tool usage](docs/guide/tool-usage.md) |
 | Define checks or coordinate workers | [Quality policies](docs/guide/quality-policy.md) · [Fleet dispatch](docs/guide/fleet-dispatch.md) |
