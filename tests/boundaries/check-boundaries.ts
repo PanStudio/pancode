@@ -885,7 +885,7 @@ function functionNameSegment(node: ts.FunctionLikeDeclaration | ts.ClassLikeDecl
  * can report entries whose function is gone.
  */
 function checkFunctionLengths(file: string, source: string, seen: Set<string>): string[] {
-	if (file.endsWith(".d.ts")) return [];
+	if (/\.d\.[cm]?ts$/.test(file)) return [];
 	const violations: string[] = [];
 	const tree = parseTree(file, source);
 	const lineOf = (position: number): number => tree.getLineAndCharacterOfPosition(position).line + 1;
@@ -893,13 +893,14 @@ function checkFunctionLengths(file: string, source: string, seen: Set<string>): 
 	const visit = (node: ts.Node, scope: string): void => {
 		let inner = scope;
 		const isFunction =
-			ts.isFunctionDeclaration(node) ||
-			ts.isFunctionExpression(node) ||
-			ts.isArrowFunction(node) ||
-			ts.isMethodDeclaration(node) ||
-			ts.isConstructorDeclaration(node) ||
-			ts.isGetAccessorDeclaration(node) ||
-			ts.isSetAccessorDeclaration(node);
+			(ts.isFunctionDeclaration(node) ||
+				ts.isFunctionExpression(node) ||
+				ts.isArrowFunction(node) ||
+				ts.isMethodDeclaration(node) ||
+				ts.isConstructorDeclaration(node) ||
+				ts.isGetAccessorDeclaration(node) ||
+				ts.isSetAccessorDeclaration(node)) &&
+			node.body !== undefined;
 		if (isFunction || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
 			let name = `${scope}${scope ? "." : ""}${functionNameSegment(node, tree)}`;
 			const occurrence = (occurrences.get(name) ?? 0) + 1;
@@ -913,20 +914,24 @@ function checkFunctionLengths(file: string, source: string, seen: Set<string>): 
 			const key = `${file}#${inner}`;
 			const allowed = FUNCTION_LINE_EXEMPTIONS.get(key);
 			if (allowed !== undefined) seen.add(key);
-			if (allowed === undefined && lines > FUNCTION_LINE_CEILING)
+			if (allowed === undefined) {
+				if (lines > FUNCTION_LINE_CEILING)
+					violations.push(
+						`rule23: ${file}:${start} ${inner} is ${lines} lines, over the ${FUNCTION_LINE_CEILING}-line function ceiling; split it into functions that each do one job. If an exempt function only moved or was renamed, rekey its old FUNCTION_LINE_EXEMPTIONS entry (tests/boundaries/check-boundaries.ts) to ${key} at the same number`,
+					);
+			} else if (lines <= FUNCTION_LINE_CEILING) {
 				violations.push(
-					`rule23: ${file}:${start} ${inner} is ${lines} lines, over the ${FUNCTION_LINE_CEILING}-line function ceiling; split it into functions that each do one job. If an exempt function only moved or was renamed, rekey its old FUNCTION_LINE_EXEMPTIONS entry (tests/boundaries/check-boundaries.ts) to ${key} at the same number`,
+					`rule23: FUNCTION_LINE_EXEMPTIONS lists ${key}, which is now ${lines} lines, within the ${FUNCTION_LINE_CEILING}-line ceiling; remove the entry`,
 				);
-			else if (allowed !== undefined && lines > allowed)
+			} else if (lines > allowed) {
 				violations.push(
 					`rule23: ${file}:${start} ${inner} grew to ${lines} lines, past the ${allowed} its FUNCTION_LINE_EXEMPTIONS entry allows; an exempt function may only shrink, so move the new logic out of it`,
 				);
-			else if (allowed !== undefined && lines < allowed)
+			} else if (lines < allowed) {
 				violations.push(
-					lines > FUNCTION_LINE_CEILING
-						? `rule23: FUNCTION_LINE_EXEMPTIONS allows ${key} ${allowed} lines and it is now ${lines}; lower the entry to ${lines}`
-						: `rule23: FUNCTION_LINE_EXEMPTIONS lists ${key}, which is now ${lines} lines, within the ${FUNCTION_LINE_CEILING}-line ceiling; remove the entry`,
+					`rule23: FUNCTION_LINE_EXEMPTIONS allows ${key} ${allowed} lines and it is now ${lines}; lower the entry to ${lines}`,
 				);
+			}
 		}
 		ts.forEachChild(node, (child) => visit(child, inner));
 	};
