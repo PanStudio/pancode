@@ -25,6 +25,7 @@ import { pancodeCacheDir } from "../../../core/xdg.js";
 import { MCP_INSTRUCTIONS_BYTES, MCP_TOOL_LIST_CAP, type McpToolDescriptor } from "./client.js";
 import type { McpServerScope } from "./config.js";
 import { readBoundedFileText } from "./config.js";
+import { MCP_EVENT_LIST_CAP, type McpEventDescriptor } from "./events.js";
 import { MCP_PROMPT_LIST_CAP } from "./resources.js";
 
 export const MCP_METADATA_CACHE_VERSION = 1;
@@ -43,6 +44,7 @@ export const MCP_METADATA_CACHE_CAPS = Object.freeze({
 	/** 500 tools at a generous 2 KiB of schema each, with headroom. */
 	fileBytes: 2 * 1024 * 1024,
 	tools: MCP_TOOL_LIST_CAP,
+	events: MCP_EVENT_LIST_CAP,
 	toolNameBytes: 512,
 	descriptionBytes: 8 * 1024,
 	schemaBytes: 64 * 1024,
@@ -100,6 +102,13 @@ export interface McpCachedPrompts {
 	ttlMs?: number;
 }
 
+/** One MCP Events event type as discovery shows it offline; subscribing always lists it live again. */
+export interface McpCachedEvent {
+	name: string;
+	description: string;
+	delivery: string[];
+	inputSchema: Record<string, unknown>;
+}
 export interface McpServerCatalog {
 	version: typeof MCP_METADATA_CACHE_VERSION;
 	projectRoot: string;
@@ -132,6 +141,8 @@ export interface McpServerCatalog {
 	/** Present when the server declared prompts and listed them. */
 	prompts?: McpCachedPrompts;
 	tools: McpCachedTool[];
+	/** Event types the server listed through MCP Events; absent when it offers none. */
+	events?: McpCachedEvent[];
 }
 
 export interface McpCatalogOptions {
@@ -230,6 +241,19 @@ function decodePrompts(value: unknown): McpCachedPrompts | null {
 	};
 }
 
+function decodeEvent(value: unknown): McpCachedEvent | null {
+	if (!isRecord(value)) return null;
+	const { name, description, delivery, inputSchema } = value;
+	if (typeof name !== "string" || name.length === 0) return null;
+	if (Buffer.byteLength(name, "utf8") > MCP_METADATA_CACHE_CAPS.toolNameBytes) return null;
+	if (typeof description !== "string") return null;
+	if (Buffer.byteLength(description, "utf8") > MCP_METADATA_CACHE_CAPS.descriptionBytes) return null;
+	if (!Array.isArray(delivery) || delivery.length === 0 || delivery.length > 3) return null;
+	if (!delivery.every((mode) => mode === "poll" || mode === "push" || mode === "webhook")) return null;
+	if (!isRecord(inputSchema)) return null;
+	if (Buffer.byteLength(JSON.stringify(inputSchema), "utf8") > MCP_METADATA_CACHE_CAPS.schemaBytes) return null;
+	return { name, description, delivery: [...delivery] as string[], inputSchema };
+}
 /** Decode a whole file or reject it. A single bad tool fails the catalog: half a listing is not a listing. */
 export interface McpResourceCount {
 	resources: number;
@@ -279,6 +303,18 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		seen.add(tool.name);
 		tools.push(tool);
 	}
+	let events: McpCachedEvent[] | undefined;
+	if (value.events !== undefined) {
+		if (!Array.isArray(value.events) || value.events.length > MCP_METADATA_CACHE_CAPS.events) return null;
+		events = [];
+		const seenEvents = new Set<string>();
+		for (const entry of value.events) {
+			const event = decodeEvent(entry);
+			if (event === null || seenEvents.has(event.name)) return null;
+			seenEvents.add(event.name);
+			events.push(event);
+		}
+	}
 	return {
 		version: MCP_METADATA_CACHE_VERSION,
 		projectRoot: value.projectRoot as string,
@@ -296,6 +332,7 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		...(value.completions === true ? { completions: true as const } : {}),
 		...(prompts === undefined ? {} : { prompts }),
 		tools,
+		...(events === undefined ? {} : { events }),
 	};
 }
 
@@ -430,6 +467,7 @@ export function writeMcpServerCatalog(
 			observedAt?: string;
 			ttlMs?: number;
 		} | null;
+		events?: ReadonlyArray<McpEventDescriptor>;
 	},
 	options: Pick<McpCatalogOptions, "cacheDir" | "nowMs"> = {},
 ): boolean {
@@ -446,6 +484,15 @@ export function writeMcpServerCatalog(
 		// than written, so a round trip is never the thing that invalidates a file.
 		if (encoded !== null) tools.push(encoded);
 	}
+	const events = (listing.events ?? []).slice(0, MCP_METADATA_CACHE_CAPS.events).flatMap((event) => {
+		const encoded = decodeEvent({
+			name: event.name,
+			description: event.description,
+			delivery: event.delivery,
+			inputSchema: event.inputSchema,
+		});
+		return encoded === null ? [] : [encoded];
+	});
 	const catalog: McpServerCatalog = {
 		version: MCP_METADATA_CACHE_VERSION,
 		projectRoot: identity.projectRoot,
@@ -467,6 +514,7 @@ export function writeMcpServerCatalog(
 		...(listing.completions === true ? { completions: true as const } : {}),
 		...(listing.prompts ? { prompts: encodePrompts(listing.prompts) } : {}),
 		tools,
+		...(events.length > 0 ? { events } : {}),
 	};
 	const text = `${JSON.stringify(catalog, null, 2)}\n`;
 	if (Buffer.byteLength(text, "utf8") > MCP_METADATA_CACHE_CAPS.fileBytes) return false;

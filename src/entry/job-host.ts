@@ -15,10 +15,12 @@ import type { JobExecutionContext, JobStore } from "../domains/scheduling/job-ty
 import type { SessionContract } from "../domains/session/contract.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
+import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import { createJobTool } from "../tools/job.js";
 import type { JobOperations } from "../tools/job-types.js";
 import type { ToolRegistry } from "../tools/registry-contract.js";
 import type { ToolSpec } from "../tools/tool-spec.js";
+import { createJobEventHub, jobEventRunResult, mcpEventJobRefusal } from "./job-events.js";
 import { createJobRuntime, jobAuthorityRefusal } from "./job-runtime.js";
 
 export interface JobHostDeps {
@@ -47,6 +49,8 @@ export interface JobHostDeps {
 	createSession(): void;
 	notice(text: string): void;
 	store?: JobStore;
+	/** The MCP gateway an mcp_event job subscribes through; absent or null refuses every event job. */
+	mcpEvents?(): McpCapabilitySource | null;
 }
 
 export interface JobHost {
@@ -124,6 +128,13 @@ export function createJobHost(deps: JobHostDeps): JobHost {
 		return current;
 	};
 	const admissionAutonomy = deps.admissionAutonomy ?? deps.autonomy;
+	const mcpEvents = (): McpCapabilitySource | null => deps.mcpEvents?.() ?? null;
+	const events = createJobEventHub({
+		source: mcpEvents,
+		wake: (id) => controller.wake(id),
+		recordCursor: (id, cursor) => controller.recordEventCursor(id, cursor),
+		notice: deps.notice,
+	});
 	const runtimeDeps = {
 		chat: () => chat,
 		isCurrent,
@@ -144,12 +155,21 @@ export function createJobHost(deps: JobHostDeps): JobHost {
 		},
 		permissionPending: () => deps.registry.hasParkedCalls(),
 		runCommand: (context: JobExecutionContext) => tool.runCommand(context),
+		eventRefusal: (
+			runner: Parameters<typeof mcpEventJobRefusal>[1],
+			constraints: Parameters<typeof mcpEventJobRefusal>[2],
+			signal: AbortSignal,
+			phase: Parameters<typeof mcpEventJobRefusal>[4],
+		) => mcpEventJobRefusal(mcpEvents(), runner, constraints, signal, phase),
+		drainEvents: (job: JobRecord) => jobEventRunResult(job, events.drain(job.id)),
 		notice: deps.notice,
 	};
 	const controller = createJobController({
 		ports: createJobRuntime(runtimeDeps),
 		store: deps.store ?? createJobStore(),
 		onChange(payload) {
+			// Only the process that owns an active event job holds its subscription.
+			events.reconcile(payload.job, payload.job.process.pid === process.pid && isCurrent(payload.job.owner));
 			deps.bus.emit("job.changed", payload);
 			const meta = deps.session?.current();
 			if (meta?.id !== payload.job.owner.sessionId || payload.job.owner.cwd !== cwd) return;
@@ -252,6 +272,7 @@ export function createJobHost(deps: JobHostDeps): JobHost {
 			detachChat();
 			for (const unsubscribe of subscriptions) unsubscribe();
 			closing = (async () => {
+				events.close();
 				await controller.close();
 				await Promise.allSettled([...retiring]);
 				listeners.clear();

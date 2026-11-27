@@ -7,6 +7,8 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import {
+	JOB_EVENT_CURSOR_BYTES,
+	JOB_EVENT_IDS_LIMIT,
 	JOB_HISTORY_LIMIT,
 	JOB_SESSION_LIMIT,
 	jobIsComplete,
@@ -68,6 +70,17 @@ function validateRecord(value: unknown, owner: JobOwner): asserts value is JobRe
 			(Number.isSafeInteger(value.failedPolls) && (value.failedPolls as number) >= 0)
 		) ||
 		!(value.pollFailureWoken === undefined || value.pollFailureWoken === true) ||
+		!(
+			value.eventCursor === undefined ||
+			value.eventCursor === null ||
+			(typeof value.eventCursor === "string" && Buffer.byteLength(value.eventCursor) <= JOB_EVENT_CURSOR_BYTES)
+		) ||
+		!(
+			value.eventIds === undefined ||
+			(Array.isArray(value.eventIds) &&
+				value.eventIds.length <= JOB_EVENT_IDS_LIMIT &&
+				value.eventIds.every((entry) => typeof entry === "string" && Buffer.byteLength(entry) <= 512))
+		) ||
 		!Array.isArray(value.history) ||
 		value.history.length > JOB_HISTORY_LIMIT
 	)

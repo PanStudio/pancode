@@ -22,6 +22,10 @@ export const JOB_SUMMARY_BYTES = 2048;
 export const JOB_JSON_BYTES = 16_384;
 /** Further conditions a command job may wait on besides its own until, so a poll stays one bounded occurrence. */
 export const JOB_CONDITION_LIMIT = 7;
+/** The newest delivered eventIds an mcp_event job keeps, so a resubscribe from an older cursor wakes nothing twice. */
+export const JOB_EVENT_IDS_LIMIT = 256;
+/** The protocol bounds an event cursor at 4096 bytes. */
+export const JOB_EVENT_CURSOR_BYTES = 4096;
 const MAX_DURATION_MS = 31 * 24 * 60 * 60_000;
 
 function integer(value: unknown, min: number, max: number, label: string): asserts value is number {
@@ -142,24 +146,45 @@ export function normalizeJobSpec(input: JobCreateInput, now: number): JobSpec {
 		keys(input.runner, ["kind", "prompt"], "main runner");
 		text(input.runner.prompt, 8192, "prompt");
 		runner = { kind: "main", prompt: input.runner.prompt };
-	} else throw new Error("job: Stage 1 supports command and main runners only");
+	} else if (input.runner.kind === "mcp_event") {
+		keys(input.runner, ["kind", "server", "event", "arguments"], "mcp_event runner");
+		text(input.runner.server, 256, "MCP server id");
+		text(input.runner.event, 256, "event name");
+		const args = input.runner.arguments;
+		if (!isRecord(args)) throw new Error("job: an mcp_event runner's arguments must be a JSON object");
+		let encoded: string;
+		try {
+			encoded = JSON.stringify(args);
+		} catch {
+			throw new Error("job: an mcp_event runner's arguments must be JSON");
+		}
+		if (Buffer.byteLength(encoded) > JOB_JSON_BYTES)
+			throw new Error(`job: an mcp_event runner's arguments exceed ${JOB_JSON_BYTES} bytes`);
+		runner = {
+			kind: "mcp_event",
+			server: input.runner.server,
+			event: input.runner.event,
+			arguments: JSON.parse(encoded) as Record<string, unknown>,
+		};
+	} else throw new Error("job: the runner must be command, main or mcp_event");
 	if (input.untilStopped !== undefined && input.untilStopped !== true) throw new Error("job: invalid untilStopped");
 	if (input.untilStopped === true && (input.count !== undefined || input.deadlineAt !== undefined))
 		throw new Error("job: a job that runs until stopped takes no count or deadline");
 	if (input.count !== undefined) integer(input.count, 1, 100_000, "count");
 	if (input.deadlineAt !== undefined) integer(input.deadlineAt, now + 1, now + MAX_DURATION_MS, "deadlineAt");
 	const timeoutMs =
-		input.timeoutMs ?? (runner.kind === "command" ? JOB_COMMAND_TIMEOUT_DEFAULT_MS : JOB_MAIN_TIMEOUT_DEFAULT_MS);
+		input.timeoutMs ?? (runner.kind === "main" ? JOB_MAIN_TIMEOUT_DEFAULT_MS : JOB_COMMAND_TIMEOUT_DEFAULT_MS);
 	integer(timeoutMs, 1, MAX_DURATION_MS, "timeoutMs");
 	const until = input.until === undefined ? null : validateJobPredicate(input.until);
-	if (until !== null && runner.kind !== "command")
-		throw new Error("job: typed JSON predicates require a command runner");
+	if (until !== null && runner.kind === "main")
+		throw new Error("job: typed JSON predicates require a command or mcp_event runner");
 	const onMatch = input.onMatch ?? { kind: "notice" };
 	if (!isRecord(onMatch)) throw new Error("job: invalid onMatch");
 	if (onMatch.kind === "main_turn") {
 		keys(onMatch, ["kind", "prompt"], "match action");
 		text(onMatch.prompt, 8192, "follow-up prompt");
-		if (until === null) throw new Error("job: analysis wake requires a predicate");
+		// Any arrival is an event job's match, so its wake needs no predicate.
+		if (until === null && runner.kind !== "mcp_event") throw new Error("job: analysis wake requires a predicate");
 	} else if (onMatch.kind === "notice") keys(onMatch, ["kind"], "match action");
 	else throw new Error("job: invalid match action");
 	if (input.originTurnId !== undefined) text(input.originTurnId, 256, "origin turn id");
@@ -219,8 +244,17 @@ export function projectJobPredicate(predicate: JobPredicate, json: unknown): unk
 	if (value !== null && typeof value === "object") value = {};
 	return predicate.path.reduceRight<unknown>((inner, segment) => ({ [segment]: inner }), value);
 }
-/** The host's verdict on every condition a command job waits on, in order: its own until first, then each of also. */
+/**
+ * The host's verdict on every condition a command job waits on, in order: its own until first, then each of also.
+ * An mcp_event occurrence that delivered an arrival has one condition, read from that event's `data`; with no until,
+ * the arrival itself is the match.
+ */
 export function jobConditionsMet(spec: JobSpec, evidence: JobEvidence): boolean[] {
+	if (spec.runner.kind === "mcp_event") {
+		const arrival = evidence.outcome === "succeeded" && evidence.jsonComplete && isRecord(evidence.json);
+		if (!arrival) return [false];
+		return [spec.until === null || matchesJobPredicate(spec.until, (evidence.json as Record<string, unknown>).data)];
+	}
 	if (spec.until === null || spec.runner.kind !== "command") return [];
 	const usable = ["succeeded", "noop"].includes(evidence.outcome) && evidence.jsonComplete;
 	const also = spec.runner.also;

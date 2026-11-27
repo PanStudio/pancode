@@ -98,7 +98,7 @@ export const AcpJob = Type.Object(
 			Type.Literal("failure"),
 			Type.Null(),
 		]),
-		runner: Type.Union([Type.Literal("main"), Type.Literal("command")]),
+		runner: Type.Union([Type.Literal("main"), Type.Literal("command"), Type.Literal("mcp_event")]),
 		taskPreview: Type.String({ maxLength: 192 }),
 		intervalMs: jobCount,
 		count: jobCount,
