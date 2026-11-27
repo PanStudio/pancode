@@ -12,7 +12,7 @@
  * entry registers, nothing further is written, and the exit code cannot be 0.
  */
 
-import type { WorkerStdoutFailure } from "./protocol.js";
+import type { WorkerStdoutFailure } from "../core/telemetry/run-vocabulary.js";
 import {
 	WORKER_BULK_FRAME_MAX_BYTES,
 	WORKER_STDOUT_BACKLOG_MAX_BYTES,

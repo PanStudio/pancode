@@ -27,6 +27,15 @@ import { FactSumSchema, factSchema } from "./fact.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId, TelemetryAgentSchema } from "./id-schemas.js";
 import { RunFeedBodySchema, RunResultObjectSchema, RunSettledSchema } from "./run-schemas.js";
 import {
+	HOST_CHECK_NOT_RUN_REASONS,
+	HOST_VERIFICATION_STATUSES,
+	RECEIPT_VERIFICATION_BASES,
+	RECEIPT_VERIFICATION_STATES,
+	ROUTING_POSTURES,
+	VALIDATION_GROUNDING_BASES,
+	WORKER_CHANNEL_FAILURES,
+} from "./run-vocabulary.js";
+import {
 	CallSettledSchema,
 	ObjectRefSchema,
 	PricingSchema,
@@ -1020,14 +1029,7 @@ const TimelineEntrySchema = Type.Union([
 			frameType: Type.Union([text, Type.Null()]),
 			errno: Type.Union([text, Type.Null()]),
 			afterExit: Type.Boolean(),
-			failure: vocabulary([
-				"write-failed",
-				"oversize-frame",
-				"unserializable-frame",
-				"backlog-full",
-				"undrained",
-				"invalid-frame",
-			]),
+			failure: vocabulary(WORKER_CHANNEL_FAILURES),
 		},
 		closed,
 	),
@@ -1061,7 +1063,7 @@ const RunTimelineEntrySchema = Type.Union([
 			kind: Type.Literal("route"),
 			...at,
 			mode: vocabulary(["fixed", "shadow", "active"]),
-			posture: vocabulary(["manual", "quality", "balanced", "latency", "economy"]),
+			posture: vocabulary(ROUTING_POSTURES),
 			decisionHash: ExistingId,
 			executed: Type.Object(
 				{ agentId: ExistingId, targetId: ExistingId, modelId: ExistingId, runtimeId: ExistingId, nodeId: ExistingId },
@@ -1174,18 +1176,8 @@ const RunEvidenceSchema = Type.Object(
 					verification: nullable(
 						Type.Object(
 							{
-								state: vocabulary(["verified", "unverified", "not_applicable", "unknown"]),
-								basis: vocabulary([
-									"validation-tool",
-									"host-observed-command",
-									"read-only-agent",
-									"no-validation-tool",
-									"retired-by-change",
-									"dispatch-run-record",
-									"acp-external-unobserved",
-									"host-verification",
-									"result-unavailable",
-								]),
+								state: vocabulary(RECEIPT_VERIFICATION_STATES),
+								basis: vocabulary(RECEIPT_VERIFICATION_BASES),
 								detail: Type.Optional(text),
 							},
 							closed,
@@ -1198,7 +1190,7 @@ const RunEvidenceSchema = Type.Object(
 					hostVerification: nullable(
 						Type.Object(
 							{
-								status: vocabulary(["verified", "rejected", "skipped", "not_implicated"]),
+								status: vocabulary(HOST_VERIFICATION_STATUSES),
 								reason: nullable(text),
 								strategy: vocabulary(["single", "batch-settled"]),
 								checks: Type.Array(
@@ -1207,9 +1199,7 @@ const RunEvidenceSchema = Type.Object(
 											check: text,
 											exitCode: Type.Integer(),
 											/** Set when the check never started, so `exitCode` reports no run; absent when it started. */
-											notRun: Type.Optional(
-												vocabulary(["refused", "unconfigured", "spawn-failed", "nothing-changed", "shutdown", "no-tests"]),
-											),
+											notRun: Type.Optional(vocabulary(HOST_CHECK_NOT_RUN_REASONS)),
 											durationMs: nonNegative,
 											memo: Type.Boolean(),
 											outputTail: Type.String({ maxLength: 16_384 }),
@@ -1254,13 +1244,7 @@ const RunEvidenceSchema = Type.Object(
 								claimed: count,
 								grounded: count,
 								ungrounded: Type.Array(text),
-								basis: vocabulary([
-									"grounded",
-									"no-command-executed",
-									"unmatched-command",
-									"unattributable-status",
-									"unobserved-lane",
-								]),
+								basis: vocabulary(VALIDATION_GROUNDING_BASES),
 							},
 							closed,
 						),

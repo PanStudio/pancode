@@ -11,11 +11,11 @@ import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isMcpToolName, mcpToolName, type ToolName } from "../core/tool-names.js";
 import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
+import { RUN_ROLES, type RunRole } from "../core/views/run-roles.js";
 import type { ResultContract } from "../domains/agents/result-contract-types.js";
 import type { AgentProduct } from "../domains/agents/spec.js";
 import type { WorkerContextSeed } from "../domains/context/worker/contract.js";
 import type { WorkerEnvelope } from "../domains/dispatch/envelope.js";
-import type { RunRole } from "../domains/dispatch/obligation.js";
 import type { RunLimits } from "../domains/dispatch/run-limits.js";
 import type { MiddlewareEffectKind, MiddlewareHook, MiddlewareSnapshot } from "../domains/middleware/index.js";
 import type {
@@ -377,14 +377,6 @@ const TOOL_PROFILE_NAMES = [
 	"council-read-only",
 ] as const satisfies ReadonlyArray<ToolProfileName>;
 const WORKER_PRODUCTS = ["orientation"] as const satisfies ReadonlyArray<AgentProduct>;
-const WORKER_RUN_ROLES = [
-	"explorer",
-	"builder",
-	"checker",
-	"reviewer",
-	"judge",
-	"seat",
-] as const satisfies ReadonlyArray<RunRole>;
 const TARGET_LIFECYCLES = ["user-managed", "pancode-managed"] as const;
 const RESIDENCY_ROLES = ["chat", "memory", "worker", "target-default"] as const satisfies ReadonlyArray<ResidencyRole>;
 const MIDDLEWARE_HOOKS = [
@@ -619,7 +611,6 @@ function validateCapabilityPatch(value: unknown, source: string): void {
 	}
 }
 
-const ENVELOPE_ROLES = ["explorer", "builder", "checker", "reviewer", "judge", "seat"] as const;
 const ENVELOPE_SKILL_DISCOVERY = ["off", "bound-only", "ranked"] as const;
 const ENVELOPE_SHELLS = ["none", "sandboxed", "host"] as const;
 const ENVELOPE_CHECKS = ["none", "declared", "any"] as const;
@@ -733,7 +724,7 @@ function validateWorkerEnvelope(value: unknown): void {
 		"WorkerSpec.envelope",
 	);
 	if (envelope.version !== 1) throw new Error("WorkerSpec.envelope.version must be 1");
-	readEnum(envelope.role, "WorkerSpec.envelope.role", ENVELOPE_ROLES);
+	readEnum(envelope.role, "WorkerSpec.envelope.role", RUN_ROLES);
 	const tools = readRecord(envelope.tools, "WorkerSpec.envelope.tools");
 	exactKeys(tools, ["direct", "gateway"], "WorkerSpec.envelope.tools");
 	for (const key of ["direct", "gateway"] as const) {
@@ -1402,7 +1393,7 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 	}
 	readOptionalEnum(spec, "toolProfile", "WorkerSpec", TOOL_PROFILE_NAMES);
 	readOptionalEnum(spec, "product", "WorkerSpec", WORKER_PRODUCTS);
-	readOptionalEnum(spec, "role", "WorkerSpec", WORKER_RUN_ROLES);
+	readOptionalEnum(spec, "role", "WorkerSpec", RUN_ROLES);
 	if (spec.escalation !== undefined) {
 		const escalation = readRecord(spec.escalation, "WorkerSpec.escalation");
 		const timeoutMs = escalation.timeoutMs;

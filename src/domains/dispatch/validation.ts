@@ -13,6 +13,7 @@ import { THINKING_LEVELS, type ThinkingLevel } from "../../core/defaults.js";
 import { asDirectoryPathBoundary, resolvePathBoundary } from "../../core/path-boundary.js";
 import { cloneValidatedResponseSchema } from "../../core/response-schema.js";
 import { validateTagName } from "../../core/store-paths.js";
+import { DISPATCH_REQUEST_ORIGINS } from "../../core/telemetry/run-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { isToolProfileName, type ToolProfileName } from "../../tools/profiles.js";
 import type { AgentProduct } from "../agents/spec.js";
@@ -241,7 +242,7 @@ const KNOWN_KEYS = new Set([
 ]);
 const VALID_COMPETE_STANCES = new Set<string>(COMPETE_STANCES);
 const VALID_THINKING = new Set<string>(THINKING_LEVELS);
-const VALID_REQUEST_ORIGINS = new Set(["user", "agent", "internal", "harness"]);
+const VALID_REQUEST_ORIGINS = new Set<string>(DISPATCH_REQUEST_ORIGINS);
 const VALID_FAILOVER_MODES = new Set(["none", "approved", "automatic"]);
 
 export function validateJobSpec(spec: unknown): Validated {

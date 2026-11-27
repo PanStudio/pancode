@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { responseModelIdObservationFromRecord } from "../../core/response-model-id.js";
 import { wireEffortFact } from "../../core/telemetry/call-effort.js";
 import { providerChargeEconomics } from "../../core/telemetry/economy.js";
@@ -8,6 +9,7 @@ import type { EventPayload } from "../../core/telemetry/events.js";
 import type { Fact } from "../../core/telemetry/fact.js";
 import type { PricingBasisSource } from "../../core/telemetry/pricing.js";
 import { pricedUsd, pricingBasis } from "../../core/telemetry/pricing.js";
+import { CALL_STOP_REASONS } from "../../core/telemetry/run-vocabulary.js";
 import type { CallSettled, CallStarted, CallUsage } from "../../core/telemetry/schemas.js";
 import { terminationPhase } from "../../core/termination-phase.js";
 import { ceilChars, normalizeTokenUsage } from "../../core/token-split.js";
@@ -460,7 +462,7 @@ function reasoningFact(reported: Fact<number>, content: unknown, output: Fact<nu
 	};
 }
 
-const STOP_REASONS = new Set(["stop", "toolUse", "length", "error", "aborted"]);
+const STOP_REASONS = new Set<string>(CALL_STOP_REASONS);
 
 /**
  * A turn's terminal facts come from its own calls, never from prose (#430, #434). `fallbackCause` is a cause the

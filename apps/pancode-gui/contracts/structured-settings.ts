@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Presentation metadata only. PanCode's settings parser remains the authority for every write. */
+import { RUN_ROLES } from "../../../src/core/views/run-roles.js";
+
 export type StructuredField = { key: string; label: string; kind?: "number" | "list"; choices?: readonly string[] };
 export type StructuredSettingEditor = {
 	kind: "map" | "values" | "list" | "rosters";
@@ -58,7 +60,7 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 			{
 				key: "executionRole",
 				label: "Execution role",
-				choices: ["builder", "explorer", "seat", "checker", "reviewer", "judge"],
+				choices: RUN_ROLES,
 			},
 		],
 	},

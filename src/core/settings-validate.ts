@@ -14,7 +14,6 @@ import { validationWrapperProblem } from "../domains/safety/validation-wrappers.
 import { TURN_CONTROL_WORKFLOWS } from "../domains/turn-control/settings.js";
 import type { PancodeSettings } from "./config.js";
 import {
-	ACTIVE_AGENT_AUTOMATION_ROLES,
 	ACTIVE_ROUTING_POSTURES,
 	ACTIVE_ROUTING_ROLES,
 	COUNCIL_MEMBER_LABEL_PATTERN,
@@ -60,6 +59,7 @@ import {
 import { fundingMap, TOOL_GOVERNANCE, validateFundingPool, validateTarget } from "./settings-validate-target.js";
 import { MAX_TIMER_DELAY_MS } from "./timers.js";
 import { isRecord } from "./type-guards.js";
+import { RUN_ROLES } from "./views/run-roles.js";
 
 const TOP_LEVEL_KEYS = [
 	"version",
@@ -512,12 +512,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 							}
 							issues.unknownKeys(path, value, ["agentId", "executionRole"]);
 							const agentId = expectString(issues, `${path}.agentId`, value.agentId);
-							const executionRole = expectEnum(
-								issues,
-								`${path}.executionRole`,
-								value.executionRole,
-								ACTIVE_AGENT_AUTOMATION_ROLES,
-							);
+							const executionRole = expectEnum(issues, `${path}.executionRole`, value.executionRole, RUN_ROLES);
 							if (agentId === "auto")
 								issues.add(`${path}.agentId`, "'auto' is reserved for coordinator-owned agent selection");
 							if (agentId === undefined || agentId === "auto" || executionRole === undefined) continue;

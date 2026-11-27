@@ -19,6 +19,8 @@ import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
 import type { SandboxMode, UnixSocketMode } from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
+import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
+import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
 
 export type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 export type { AutonomyLevel } from "../domains/safety/autonomy.js";
@@ -585,20 +587,19 @@ export interface FleetSettings extends FleetRouteSettings {
 	history: FleetHistorySettings;
 }
 
-/** Roles whose authority is narrow enough for active joint routing. */
-export const ACTIVE_ROUTING_ROLES = ["explorer", "seat", "checker", "reviewer", "judge"] as const;
+/** Roles whose authority is narrow enough for active joint routing: every role but the builder. */
+export const ACTIVE_ROUTING_ROLES = RUN_ROLES.filter((role): role is Exclude<RunRole, "builder"> => role !== "builder");
 export type ActiveRoutingRole = (typeof ACTIVE_ROUTING_ROLES)[number];
 
 /** Manual is exact rather than adaptive, so it is never an activated posture. */
-export const ACTIVE_ROUTING_POSTURES = ["quality", "balanced", "latency", "economy"] as const;
+export const ACTIVE_ROUTING_POSTURES = ROUTING_POSTURES.filter(
+	(posture): posture is Exclude<RoutingPosture, "manual"> => posture !== "manual",
+);
 export type ActiveRoutingPosture = (typeof ACTIVE_ROUTING_POSTURES)[number];
-
-export const ACTIVE_AGENT_AUTOMATION_ROLES = ["builder", "explorer", "seat", "checker", "reviewer", "judge"] as const;
-type ActiveAgentAutomationRole = (typeof ACTIVE_AGENT_AUTOMATION_ROLES)[number];
 
 export interface ActiveAgentRole {
 	agentId: string;
-	executionRole: ActiveAgentAutomationRole;
+	executionRole: RunRole;
 }
 
 interface AdaptiveRoutingSettings {

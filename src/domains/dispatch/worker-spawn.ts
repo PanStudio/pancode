@@ -50,6 +50,7 @@ import {
 	SAFE_EXEC_GROUP_TEARDOWN_BOUND_MS,
 	SAFE_EXEC_PIPE_DRAIN_BOUND_MS,
 } from "../../core/safe-exec.js";
+import { WORKER_STDOUT_FAILURES } from "../../core/telemetry/run-vocabulary.js";
 import type { WorkerSpec } from "../../worker/spec-contract.js";
 import type { HeartbeatStamp } from "./heartbeat.js";
 import {
@@ -1038,14 +1039,13 @@ function attachWorkerChannel(
 
 	/** The worker's own typed twin of its incomplete-output line; anything unreadable is an invalid frame. */
 	function reportStdoutFailure(json: string): void {
-		const known = ["write-failed", "oversize-frame", "unserializable-frame", "backlog-full", "undrained"] as const;
 		let value: { failure?: unknown; errno?: unknown; frameType?: unknown } = {};
 		try {
 			value = JSON.parse(json) as typeof value;
 		} catch {
 			// Reported below as an invalid frame.
 		}
-		const failure = known.find((kind) => kind === value.failure) ?? "invalid-frame";
+		const failure = WORKER_STDOUT_FAILURES.find((kind) => kind === value.failure) ?? "invalid-frame";
 		reportChannel({
 			lane: "stdout",
 			frameType: typeof value.frameType === "string" && FRAME_TYPE.test(value.frameType) ? value.frameType : null,
