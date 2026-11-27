@@ -24,7 +24,12 @@ import { git as researchGit } from "../../src/domains/research/git.js";
 import { createGitHookDriftGuard } from "../../src/domains/safety/hook-drift.js";
 import { createInternalGitPolicy, type InternalGitDriftRecord } from "../../src/domains/safety/internal-git-policy.js";
 import { probeGit } from "../../src/domains/session/workspace/git-probe.js";
-import { createTaskWorktree, snapshotTaskWorktree } from "../../src/tools/task-worktree.js";
+import {
+	applyTaskWorktree,
+	cleanupTaskWorktree,
+	createTaskWorktree,
+	snapshotTaskWorktree,
+} from "../../src/tools/task-worktree.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let env: IsolatedPancodeEnv;
@@ -81,7 +86,7 @@ function session(root: string, scratch: string, autonomy: "default" | "yolo" = "
 	return { guard, records };
 }
 
-test("a post-checkout hook planted after the baseline does not run in PanCode's worktree add, and one in the baseline does", (t) => {
+test("a post-checkout hook planted after the baseline does not run in PanCode's worktree add, and one in the baseline does not either", (t) => {
 	t.after(() => installInternalGitPolicy(null));
 	const planted = repository();
 	const late = join(planted.scratch, "late-hook-ran");
@@ -99,10 +104,88 @@ test("a post-checkout hook planted after the baseline does not run in PanCode's 
 	markerScript(join(baseline.root, ".git", "hooks", "post-checkout"), early);
 	const steady = session(baseline.root, baseline.scratch);
 	createTaskWorktree(baseline.root, "run-steady");
-	ok(existsSync(early), "the hook the session started with ran");
+	strictEqual(existsSync(early), false, "the hook the session started with did not run");
 	deepStrictEqual(steady.records, []);
+
+	const yoloRepo = repository();
+	const yoloHook = join(yoloRepo.scratch, "yolo-hook-ran");
+	const yoloSession = session(yoloRepo.root, yoloRepo.scratch, "yolo");
+	markerScript(join(yoloRepo.root, ".git", "hooks", "post-checkout"), yoloHook);
+	createTaskWorktree(yoloRepo.root, "run-yolo");
+	strictEqual(existsSync(yoloHook), false, "the hook did not run under yolo either");
+	strictEqual(yoloSession.records[0]?.outcome, "yolo");
+
 	rmSync(planted.scratch, { recursive: true, force: true });
 	rmSync(baseline.scratch, { recursive: true, force: true });
+	rmSync(yoloRepo.scratch, { recursive: true, force: true });
+});
+
+test("PanCode's task worktree add, commit, merge and cleanup run no hook from core.hooksPath via includeIf, .git/hooks or GIT_CONFIG_COUNT", () => {
+	const names = [
+		"post-checkout",
+		"pre-commit",
+		"prepare-commit-msg",
+		"commit-msg",
+		"post-commit",
+		"pre-merge-commit",
+		"post-merge",
+		"reference-transaction",
+		"post-index-change",
+	];
+	const hooks = (dir: string, markers: string): void => {
+		mkdirSync(dir, { recursive: true });
+		for (const name of names) markerScript(join(dir, name), join(markers, `ran-${name}`));
+	};
+	const included = repository();
+	const includedHooks = join(included.scratch, "hooks");
+	hooks(includedHooks, included.scratch);
+	writeFileSync(join(included.scratch, "hooks.inc"), `[core]\n\thooksPath = ${includedHooks}\n`);
+	git(included.root, "config", `includeIf.gitdir:${included.root}/.path`, join(included.scratch, "hooks.inc"));
+	strictEqual(
+		gitExecFileSync(["rev-parse", "--git-path", "hooks"], { cwd: included.root, encoding: "utf8" }).trim(),
+		includedHooks,
+		"internal rev-parse still reports the repository's real hooks path",
+	);
+	strictEqual(
+		gitExecFileSync(["config", "--get", "core.hooksPath"], { cwd: included.root, encoding: "utf8" }).trim(),
+		includedHooks,
+		"internal git config still reports the repository's real core.hooksPath",
+	);
+	const local = repository();
+	hooks(join(local.root, ".git", "hooks"), local.scratch);
+	const inherited = repository();
+	const inheritedHooks = join(inherited.scratch, "hooks");
+	hooks(inheritedHooks, inherited.scratch);
+	// afterEach restores process.env, the inherited pair included.
+	for (const [label, fixture, env] of [
+		["includeIf core.hooksPath", included, {}],
+		[".git/hooks", local, {}],
+		[
+			"GIT_CONFIG_COUNT core.hooksPath",
+			inherited,
+			{ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: inheritedHooks },
+		],
+	] as const) {
+		Object.assign(process.env, env);
+		const worktree = createTaskWorktree(fixture.root, "run-hooks");
+		writeFileSync(join(worktree.path, "a.txt"), "two\n");
+		const receipt = applyTaskWorktree({ worktree, apply: "merge", authoredPaths: null });
+		strictEqual(receipt.applied, true, `${label}: the task merged`);
+		strictEqual(readFileSync(join(fixture.root, "a.txt"), "utf8"), "two\n");
+		cleanupTaskWorktree(worktree, true);
+		deepStrictEqual(
+			names.filter((name) => existsSync(join(fixture.scratch, `ran-${name}`))),
+			[],
+			`${label}: no hook ran`,
+		);
+		git(fixture.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "live");
+		ok(
+			existsSync(join(fixture.scratch, "ran-post-commit")),
+			`${label}: a plain git commit runs it, so the fixture is live`,
+		);
+		process.env.GIT_CONFIG_COUNT = "0";
+		rmSync(fixture.scratch, { recursive: true, force: true });
+	}
 });
 
 test("PanCode's status probe does not run a configured core.fsmonitor command", () => {
