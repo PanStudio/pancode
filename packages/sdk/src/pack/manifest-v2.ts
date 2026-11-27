@@ -212,9 +212,11 @@ export type ExtensionCapabilityEnvelope = Pick<
 	workspaces: Array<Pick<ExtensionWorkspaceDeclaration, "id" | "regions" | "board" | "keys">>;
 	/** Bare command names the package claims; absent when none. */
 	aliases?: string[];
-	/** Pinned programs by name, version and per-platform hash; absent when none. */
+	/** Pinned programs by name, version, probe args and per-platform hash/member; absent when none. */
 	binaries?: Array<
-		Pick<ExtensionBinaryDeclaration, "name" | "version" | "minimumVersion" | "env"> & { sha256: string[] }
+		Pick<ExtensionBinaryDeclaration, "name" | "version" | "minimumVersion" | "versionArgs" | "env"> & {
+			downloads: Record<string, { sha256: string; member?: string }>;
+		}
 	>;
 	/** Global keys; absent when none. */
 	keys?: ExtensionKeyDeclaration[];

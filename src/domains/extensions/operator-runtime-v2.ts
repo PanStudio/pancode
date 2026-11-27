@@ -462,8 +462,9 @@ export class OperatorExtensionRuntimeV2 {
 		};
 		const complete = entry.runtimeV2.services?.model ? services?.complete : undefined;
 		const blobs = entry.runtimeV2.services?.store ? services?.blobs : undefined;
-		const binaries = entry.runtimeV2.binaries ?? [];
-		const pane = entry.runtimeV2.services?.pane ? this.options.pane : undefined;
+		const readOnly = this.options.readOnly?.() === true;
+		const binaries = readOnly ? [] : (entry.runtimeV2.binaries ?? []);
+		const pane = !readOnly && entry.runtimeV2.services?.pane ? this.options.pane : undefined;
 		const unixSockets = this.options.sandboxUnixSockets?.();
 		const sandboxMode = (this.options.sandboxMode ?? layeredSandboxMode)(context.workspace);
 		created.process = new ExtensionRuntimeProcessV2(entry, {
