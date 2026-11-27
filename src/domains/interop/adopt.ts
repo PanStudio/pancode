@@ -43,8 +43,6 @@ export const ADOPTION_KINDS: ReadonlyArray<AdoptionKind> = [
 	"hook",
 	"instructions",
 ];
-/** Kinds that install as packs; the rest write a PanCode config file. */
-type PackageAdoptionKind = Exclude<AdoptionKind, "mcp" | "hook" | "instructions">;
 /** Whether an inventory kind has an adoption path; the rest are listed with the reason they are not migrated. */
 export function isAdoptableKind(kind: string): kind is AdoptionKind {
 	return (ADOPTION_KINDS as ReadonlyArray<string>).includes(kind);
@@ -114,7 +112,7 @@ export function preparePortablePackage(root: string): PreparedAdoption {
 		throw new Error("Not adoptable: retained resources require omitted executable components.");
 	// Preserve the declared package kind; a kind whose only public component is dropped is not a useful plugin.
 	const kind = manifest.pancode.kind ?? "plugin";
-	if (!["plugin", "skill", "agent", "prompt"].includes(kind))
+	if (kind !== "plugin" && kind !== "skill")
 		throw new Error(`Not adoptable: ${kind} packages have no data-only projection; install them through PanHub instead.`);
 	if (kind !== "plugin" && !components.some((component) => component.kind === kind))
 		throw new Error(`Not adoptable: the ${kind} package's public ${kind} component is not projectable.`);
@@ -299,7 +297,8 @@ function prepared(item: InteropInventoryItem, host: InteropAgentId): PreparedAdo
 				extensions: {
 					[PLUGIN_EXTENSION_KEY]: {
 						manifestVersion: 1,
-						kind: item.kind,
+						// An adopted agent or prompt is a plugin that carries it.
+						...(item.kind === "skill" ? { kind: "skill" } : {}),
 						resources: { [plural]: plural },
 						components: [{ kind: item.kind, id: resource.id, path: resource.componentPath }],
 					},
@@ -852,7 +851,7 @@ export function applyInteropAdoption(
 				throw new Error(candidate.diagnostics.map((d) => d.message).join("; "));
 			const installed = installHubPackage({
 				sourcePath: staging,
-				kind: entry.item.kind as PackageAdoptionKind,
+				kind: entry.item.kind === "skill" ? "skill" : "plugin",
 				trust: adoptedPackageTrust(entry.item),
 				cwd: plan.cwd,
 				scope: plan.scope,

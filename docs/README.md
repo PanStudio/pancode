@@ -90,7 +90,6 @@ in your browser.
 | PanHub and `pancode hub`: browse, install, update, pin and drift for packs of every kind, scopes and workspace trust, the bundled index and the planned signed refresh, receipts, skills and their pins, and submitting a pack | [PanHub](guide/panhub.md) |
 | The HPC, science-data, literature and life-science packs, the hypothesis workflow, and their stated limits | [Science Packs](guide/panhub.md#science-packs) |
 | Package kinds, how plugins differ from extensions and how the two pair, and where each contract lives | [Plugins](guide/plugins.md) |
-| PanKit, PanCode's agent toolkit: MCP servers for node facts, modules, Spack, Darshan, scientific files, catalogs and the store, inside PanCode or another MCP host | [PanKit](guide/pankit.md) |
 | The extension API's entry points for writing an extension, pack, tool or MCP server, and `pancode extensions init\|validate\|test` (unstable) | [Extension API (unstable)](guide/sdk.md) |
 | Package manifests and component references | [Authoring Plugins](guide/authoring-plugins.md) |
 | Extensions: code in its own process, capability envelope, sandbox, hooks, runtime tools, commands, workspaces, and lifecycle | [Extensions](guide/harness-extensions.md) |
@@ -107,9 +106,9 @@ in your browser.
 | --- | --- |
 | Reuse a prompt I type often, or teach the agent a procedure as a skill | [Prompts, skills, and share archives](guide/extensions-and-sharing.md) |
 | Use the prompts and skills Claude Code, Codex or OpenCode already have | [Trust and compatibility roots](guide/extensions-and-sharing.md#trust-and-compatibility-roots), then [Adopt foreign resources](guide/interop.md#inbound-review-and-adopt-foreign-resources) to adopt them |
-| Find and install a skill, agent or plugin someone published | [PanHub](guide/panhub.md) |
+| Find and install a skill or plugin someone published | [PanHub](guide/panhub.md) |
 | Package my skills, prompts and agents for others to install | [Authoring plugins](guide/authoring-plugins.md), then [Extension API](guide/sdk.md) |
-| Give PanCode or another MCP host tools for my cluster and data | [PanKit](guide/pankit.md) |
+| Give PanCode or another MCP host tools for my cluster and data | [Science packs](guide/panhub.md#science-packs) |
 | Add code that changes PanCode: hooks, tools, commands, a workspace | [Extensions](guide/harness-extensions.md) |
 | Hand a task to Claude Code, Codex or OpenCode | [Coding agent interoperability](guide/interop.md) |
 | Move my prompts, skills and settings to another machine | [Share archives](guide/extensions-and-sharing.md#share-archives) |
@@ -170,7 +169,7 @@ reference data, and review define the acceptance criteria for a change.
 | --- | --- |
 | Source layout, compile-time boundaries, domain loading, and runtime flow | [Architecture](architecture/architecture.md) |
 | Package identity, envelope, integrity, install state, dependency rule, trust by origin, the shared inventory, and the signed hub index design | [PanHub Architecture](architecture/panhub.md) |
-| The components inside PanCode (the harness, PanStore, PanKit, PanHub, the extension API), their workspace packages, boundaries, licences and dependencies, and how the harness reaches them | [Components and workspace packages](architecture/components.md) |
+| The components inside PanCode (the harness, PanStore, PanHub, the extension API), their workspace packages, boundaries, licences and dependencies, and how the harness reaches them | [Components and workspace packages](architecture/components.md) |
 | Pi framework boundary and PanCode-owned policy | [Pi Boundary](architecture/pi-boundary.md) |
 | Clock, duration, timestamp, and ordering conventions | [Time Conventions](architecture/time-conventions.md) |
 | Boot sequence, startup presentation modes, and how to benchmark boot on a machine | [TUI Boot Performance](architecture/tui-boot-performance.md) |

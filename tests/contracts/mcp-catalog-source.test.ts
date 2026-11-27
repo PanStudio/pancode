@@ -9,7 +9,6 @@ import type { ToolName } from "../../src/core/tool-names.js";
 import {
 	approveMcpSurface,
 	createMcpClient,
-	type McpBuiltinSource,
 	type McpClient,
 	type McpClientOptions,
 	type McpServerSpec,
@@ -19,7 +18,6 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { ToolRegistry } from "../../src/tools/registry-contract.js";
-import { emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**
@@ -37,8 +35,6 @@ interface Scenario {
 	project: string;
 	configDir: string;
 	markerPath: string;
-	/** Ships no server, so only the project declarations are listed. */
-	builtin: McpBuiltinSource;
 }
 
 /** Two project servers: the fixture, and one that proves a launch by writing a marker file. */
@@ -65,7 +61,7 @@ function scenario(): Scenario {
 			"",
 		].join("\n"),
 	);
-	return { project, configDir, markerPath, builtin: emptyBuiltinSource(root) };
+	return { project, configDir, markerPath };
 }
 
 interface Wired {
@@ -81,7 +77,6 @@ function wire(scene: Scenario, factory?: (spec: McpServerSpec, options: McpClien
 	const source = createMcpCapabilitySource({
 		cwd: scene.project,
 		configDir: scene.configDir,
-		builtin: scene.builtin,
 		registry,
 		requestTimeoutMs: 5_000,
 		clientFactory: (spec, options) => {

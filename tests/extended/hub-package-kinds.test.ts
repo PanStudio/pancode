@@ -17,10 +17,7 @@ import {
 	removePlugin,
 	updatePlugin,
 } from "../../src/domains/plugins/index.js";
-
-import { registerHubPackage } from "../../src/domains/resources/hub.js";
 import { HUB_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
-import { addedKitServers, addKitServer, kitServeLaunch } from "../../src/domains/resources/kit-items.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
@@ -30,12 +27,12 @@ function write(root: string, file: string, body: string): void {
 	mkdirSync(dirname(join(root, file)), { recursive: true });
 	writeFileSync(join(root, file), body);
 }
-function fixture(root: string, kind: HubEntryKind, version = "1.0.0"): void {
-	const file = kind === "skill" ? "skills/example/SKILL.md" : `${kind}s/example.md`;
-	const bare = kind === "plugin" || kind === "server";
+/** A pack of `kind`; `carries` puts one public component in it, and a plugin carrying a prompt is the prompt case. */
+function fixture(root: string, kind: HubEntryKind, version = "1.0.0", carries?: "skill" | "prompt"): void {
+	const component = kind === "skill" ? "skill" : carries;
+	const file = component === "skill" ? "skills/example/SKILL.md" : `${component}s/example.md`;
+	const bare = component === undefined;
 	if (!bare) write(root, file, `---\nname: example\ndescription: Fixture content\n---\nContent ${version}\n`);
-	if (kind === "server")
-		write(root, "mcp.json", JSON.stringify({ mcpServers: { example: { command: "node", args: ["server.mjs"] } } }));
 	write(root, "assets/proof.txt", version);
 	write(
 		root,
@@ -48,8 +45,8 @@ function fixture(root: string, kind: HubEntryKind, version = "1.0.0"): void {
 				"dev.pancode": {
 					manifestVersion: 1,
 					kind,
-					resources: bare ? {} : { [`${kind}s`]: `${kind}s` },
-					components: bare ? [] : [{ kind, id: "example", path: file }],
+					resources: bare ? {} : { [`${component}s`]: `${component}s` },
+					components: bare ? [] : [{ kind: component, id: "example", path: file }],
 				},
 			},
 		}),
@@ -116,9 +113,17 @@ for (const kind of ["skill", "prompt"] as const)
 			const cwd = join(env.dir, "workspace");
 			mkdirSync(cwd);
 			const source = join(env.dir, "host");
-			fixture(source, kind);
+			const packKind = kind === "skill" ? "skill" : "plugin";
+			fixture(source, packKind, "1.0.0", kind);
 			const origin = { kind: "interop" as const, host: "claude-code", source };
-			const installed = installHubPackage({ kind, sourcePath: source, scope: "user", cwd, origin, trust: "foreign" });
+			const installed = installHubPackage({
+				kind: packKind,
+				sourcePath: source,
+				scope: "user",
+				cwd,
+				origin,
+				trust: "foreign",
+			});
 			ok(installed.plugin?.valid);
 			const before = readPluginInstallRecord("example", { cwd, scope: "user" });
 			deepStrictEqual(before?.origin, origin);
@@ -182,7 +187,7 @@ test("manifest kind and explicit version cannot be substituted or changed with f
 		fixture(source, "skill");
 		ok(
 			installHubPackage({
-				kind: "prompt",
+				kind: "plugin",
 				sourcePath: source,
 				scope: "user",
 				origin: { kind: "local", source },
@@ -191,7 +196,7 @@ test("manifest kind and explicit version cannot be substituted or changed with f
 		);
 		ok(installPlugin(source).plugin?.valid);
 		rmSync(join(source, "skills"), { recursive: true });
-		fixture(source, "prompt");
+		fixture(source, "plugin", "1.0.0", "prompt");
 		match(installPlugin(source, { force: true }).diagnostics[0]?.message ?? "", /kind cannot change/);
 		const manifest = JSON.parse(readFileSync(join(source, "plugin.json"), "utf8"));
 		delete manifest.version;
@@ -223,86 +228,9 @@ test("package versions share strict prerelease validation and single kinds canno
 			fixture(root, "plugin", version);
 			equal(readPluginManifest(root).valid, false, version);
 		}
-		fixture(root, "prompt");
-		write(root, "prompts/undeclared.md", "Unexpected public prompt");
+		fixture(root, "skill");
+		write(root, "skills/undeclared/SKILL.md", "---\nname: undeclared\ndescription: Unexpected public skill\n---\n");
 		equal(readPluginManifest(root).valid, false);
-	} finally {
-		env.restore();
-	}
-});
-
-test("addKitServer requires an index row and ignores a local server:<name> directory in cwd", async () => {
-	const env = await isolatePancodeEnv("kit-add-catalog-only-");
-	try {
-		const cwd = join(env.dir, "workspace");
-		mkdirSync(cwd);
-		const registered = join(env.dir, "registered");
-		fixture(registered, "server", "1.0.0");
-		const shadow = join(cwd, "server:example");
-		fixture(shadow, "server", "9.9.9");
-
-		// A project-only install with no PanHub row is refused even though discoverHub lists it as origin: installed.
-		ok(
-			installHubPackage({
-				kind: "server",
-				sourcePath: registered,
-				scope: "project",
-				cwd,
-				origin: { kind: "local", source: registered },
-				trust: "trusted",
-			}).plugin?.valid,
-		);
-		const missing = addKitServer("example", cwd);
-		equal(missing.ok, false);
-		match(missing.message, /no PanHub server pack is named example/);
-
-		// Once registered in PanHub, cwd/server:example must not shadow the indexed row.
-		registerHubPackage(registered, { scope: "user", cwd });
-		const added = addKitServer("example", cwd);
-		ok(added.ok, added.ok ? "" : added.message);
-		equal(added.value.version, "1.0.0");
-		equal(added.value.sha256, pluginContentDigest(registered));
-
-		// Malformed state.json reports the copy as unloadable instead of throwing in list or serve.
-		writeFileSync(join(dirname(added.value.destination), "state.json"), "{broken");
-		const listed = addedKitServers(cwd);
-		equal(listed.length, 1);
-		equal(listed[0]?.loadable, false);
-		match(listed[0]?.reason ?? "", /plugin install state/);
-		const launch = kitServeLaunch("example", cwd);
-		ok(launch !== undefined && !launch.ok);
-		match(launch.message, /does not load/);
-	} finally {
-		env.restore();
-	}
-});
-
-test("an added server keeps its install tier and remains repairable when its tree changes", async () => {
-	const env = await isolatePancodeEnv("kit-copy-");
-	try {
-		const source = join(env.dir, "source");
-		fixture(source, "server");
-		registerHubPackage(source, { cwd: env.dir, scope: "user" });
-		const installed = installHubPackage({
-			kind: "server",
-			sourcePath: source,
-			scope: "user",
-			cwd: env.dir,
-			origin: { kind: "catalog", source },
-			tier: "listed",
-			trust: "foreign",
-		}).plugin;
-		ok(installed?.valid);
-		const row = addedKitServers(env.dir)[0];
-		equal(row?.tier, "listed");
-		equal(row.loadable, false);
-		match(row.reason ?? "", /trustProjectImports/);
-		write(installed.rootPath, "server.json", "{}");
-		const launch = kitServeLaunch("example", env.dir);
-		ok(launch && !launch.ok);
-		match(launch.message, /pankit add example/);
-		ok(addKitServer("example", env.dir).ok);
-		equal(existsSync(join(installed.rootPath, "server.json")), false);
 	} finally {
 		env.restore();
 	}

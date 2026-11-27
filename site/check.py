@@ -473,7 +473,7 @@ if cast_pages:
             errors.append(f'{path}: the first play exceeds the 1.5 MB recording media budget')
 # One platform: the 0.9.0 family pages are gone, neither built nor redirected,
 # and nothing a visitor or crawler reads names a family, PanSDK or a panstore command.
-for path in ('/panstore.html', '/pankit.html', '/sdk.html'):
+for path in ('/panstore.html', '/sdk.html'):
     if path in redirects or (root / path.lstrip('/')).exists():
         errors.append(f'{path}: the family pages are gone; build neither the page nor a redirect')
 for file in sorted(root.rglob('*')):
@@ -496,14 +496,9 @@ catalog = json.loads((site / 'content/hub-catalog.json').read_text())
 hub_page = (root / 'hub.html').read_text() if (root / 'hub.html').is_file() else ''
 listed = re.findall(r'<li class="hub-row" id="([^"]+)".*?<code>([^<]+)</code><button', hub_page, re.S)
 # build.mjs groups the rows by kind in this order, any other kind after them.
-kinds = ['plugin', 'extension', 'server', 'skill', 'agent', 'prompt', 'playbook']
+kinds = ['plugin', 'extension', 'skill']
 expected = sorted(catalog['rows'], key=lambda row: (kinds.index(row['kind']) if row['kind'] in kinds else len(kinds), row['kind'], row['name']))
-# A core server is built in; its row gives the command another agent host runs to serve it.
-def hub_command(row):
-    if row['kind'] == 'server' and row['tier'] == 'core':
-        return f"npx -y -p @panstudio/pancode pankit serve {row['name']}"
-    return row['install']
-if listed != [(f"{row['kind']}-{row['name']}", hub_command(row)) for row in expected]:
+if listed != [(f"{row['kind']}-{row['name']}", row['install']) for row in expected]:
     errors.append(f"/hub.html does not list exactly the {len(catalog['rows'])} rows of hub-catalog.json with their commands")
 chips = re.findall(r'<button type="button" class="hub-chip" data-hub-kind="([^"]+)"', hub_page)
 if chips != list(dict.fromkeys(row['kind'] for row in expected)):

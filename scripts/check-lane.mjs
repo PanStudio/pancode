@@ -242,8 +242,6 @@ async function main() {
 		runPnpm("skills:check", ["run", "skills:check"]);
 		runPnpm("hub:check", ["run", "hub:check"]);
 	}
-	if (changed.some((path) => path.startsWith("packages/kit/") || path.startsWith("hub/packs/servers/")))
-		runPnpm("kit:check", ["run", "kit:check"]);
 
 	// 6-8. Affected and unlisted tests.
 	const lists = await import("./ci-tests.mjs");

@@ -1,25 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { HPC_TOOLS, hpcToolchainFindings, pankitFindings } from "../../src/cli/doctor-hpc.js";
+import { HPC_TOOLS, hpcToolchainFindings } from "../../src/cli/doctor-hpc.js";
 import { pdfAttachmentFinding } from "../../src/cli/doctor-toolchain.js";
 import { formatDoctorReport } from "../../src/domains/lifecycle/doctor.js";
 import { popplerInstallHint } from "../../src/tools/read-documents/pdf.js";
-import { builtinFixtureSource } from "../fixtures/mcp-builtin-server.js";
-import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let root: string;
 let bin: string;
@@ -158,131 +147,5 @@ describe("doctor pdf attachments row (#438)", () => {
 			level: "ok",
 			detail: `${path.join(bin, "pdftotext")}: pdftotext version 24.02.0; pdfinfo ${path.join(bin, "pdfinfo")}`,
 		});
-	});
-});
-
-/** A stand-in for `pankit` whose `doctor --json` runs `body` (an ES module body with `argv` in scope). */
-function fakeKit(body: string): string {
-	const file = path.join(root, "fake-kit.mjs");
-	writeFileSync(file, `const argv = process.argv.slice(2);\n${body}\n`);
-	return file;
-}
-
-function report(servers: unknown[], exitCode = 0): string {
-	return `process.stdout.write(JSON.stringify(${JSON.stringify({ servers })})); process.exitCode = ${exitCode};`;
-}
-
-function filesIn(dir: string): string[] {
-	return readdirSync(dir, { recursive: true, encoding: "utf8" }).sort();
-}
-
-describe("doctor PanKit rows", () => {
-	it("is one row per manifest server: ok with the sources found, info with the reason verbatim, store available in sessions", async () => {
-		const entry = fakeKit(
-			report([
-				{ id: "store", available: false, reason: "no store root: pass --root" },
-				{ id: "slurm", available: false, reason: "needs Slurm: sbatch is not on PATH", sources: [] },
-				{
-					id: "kitfix",
-					available: true,
-					sources: [
-						{ name: "fix", found: true },
-						{ name: "other", found: false },
-					],
-				},
-			]),
-		);
-		const source = { ...builtinFixtureSource(root, ["kitfix", "slurm", "store"]), entry };
-		deepStrictEqual(await pankitFindings({ workspaceRoot: workspace, source }), [
-			{ ok: true, name: "pankit kitfix", level: "ok", detail: "available; found: fix" },
-			{ ok: true, name: "pankit slurm", level: "info", detail: "needs Slurm: sbatch is not on PATH" },
-			{
-				ok: true,
-				name: "pankit store",
-				level: "ok",
-				detail: "available in sessions: PanCode passes this project's store roots",
-			},
-		]);
-	});
-
-	it("warns for a server the kit did not report and for a probe that failed, even on exit 1", async () => {
-		const entry = fakeKit(
-			report([{ id: "slurm", available: false, reason: "the probe failed: EACCES reading /etc/slurm" }], 1),
-		);
-		const source = { ...builtinFixtureSource(root, ["kitfix", "slurm"]), entry };
-		deepStrictEqual(await pankitFindings({ workspaceRoot: workspace, source }), [
-			{ ok: true, name: "pankit kitfix", level: "warn", detail: "the kit did not report this server" },
-			{ ok: true, name: "pankit slurm", level: "warn", detail: "the probe failed: EACCES reading /etc/slurm" },
-		]);
-	});
-
-	it("bounds a kit that never answers to one warn row", async () => {
-		const entry = fakeKit('process.stderr.write("probing modules\\n"); setInterval(() => {}, 1000);');
-		const source = { ...builtinFixtureSource(root, ["kitfix", "slurm"]), entry };
-		// The row names the bound that fired; a kit that stalled the probe would never return it.
-		const findings = await pankitFindings({ workspaceRoot: workspace, source, timeoutMs: 300 });
-		deepStrictEqual(findings, [
-			{ ok: true, name: "pankit", level: "warn", detail: "pankit doctor did not answer within 300ms: probing modules" },
-		]);
-	});
-
-	it("passes the kit a variable the manifest declares and withholds one it does not", async () => {
-		const entry = fakeKit(
-			`process.stdout.write(JSON.stringify({ servers: [{ id: "kitfix", available: false, reason: \`declared=\${process.env.KITFIX_DECLARED} undeclared=\${process.env.KITFIX_UNDECLARED} argv=\${argv.join(" ")}\` }] }));`,
-		);
-		const source = {
-			...builtinFixtureSource(root, ["kitfix"], (manifest) => {
-				(manifest.servers[0] as { environment: string[] }).environment = ["KITFIX_DECLARED"];
-			}),
-			entry,
-		};
-		process.env.KITFIX_DECLARED = "yes";
-		process.env.KITFIX_UNDECLARED = "leaked";
-		try {
-			const [row] = await pankitFindings({ workspaceRoot: workspace, source });
-			strictEqual(row?.detail, "declared=yes undeclared=undefined argv=doctor --json");
-		} finally {
-			delete process.env.KITFIX_DECLARED;
-			delete process.env.KITFIX_UNDECLARED;
-		}
-	});
-
-	it("spawns nothing when the manifest ships no server", async () => {
-		const marker = path.join(root, "spawned");
-		const entry = fakeKit(`(await import("node:fs")).writeFileSync(${JSON.stringify(marker)}, "");`);
-		const source = { ...builtinFixtureSource(root, []), entry };
-		deepStrictEqual(await pankitFindings({ workspaceRoot: workspace, source }), [
-			{ ok: true, name: "pankit", level: "info", detail: "this PanCode ships no PanKit servers" },
-		]);
-		ok(!existsSync(marker));
-	});
-
-	it("probes the shipped kit on an untouched home: a row per shipped server, catalog and scidata naming PanCode's paths", async () => {
-		const env = await isolatePancodeEnv("pancode-doctor-pankit-");
-		const savedHome = process.env.HOME;
-		process.env.HOME = env.dir;
-		try {
-			const shipped = JSON.parse(readFileSync(new URL("../../packages/kit/servers.json", import.meta.url), "utf8")) as {
-				servers: Array<{ id: string }>;
-			};
-			const before = filesIn(env.dir);
-			const findings = await pankitFindings({ workspaceRoot: workspace });
-			deepStrictEqual(
-				findings.map((finding) => finding.name),
-				shipped.servers.map((server) => `pankit ${server.id}`),
-			);
-			const byName = new Map(findings.map((finding) => [finding.name, finding]));
-			strictEqual(byName.get("pankit node")?.level, "ok");
-			const catalogFile = path.join(env.dir, "config", "science-data", "catalog.json");
-			const catalog = byName.get("pankit catalog")?.detail ?? "";
-			ok(catalog.includes(catalogFile), catalog);
-			const scidata = byName.get("pankit scidata")?.detail ?? "";
-			ok(scidata.includes(path.join(env.dir, "cache", "pankit", "data-readers")), scidata);
-			deepStrictEqual(filesIn(env.dir), before);
-		} finally {
-			if (savedHome === undefined) delete process.env.HOME;
-			else process.env.HOME = savedHome;
-			env.restore();
-		}
 	});
 });

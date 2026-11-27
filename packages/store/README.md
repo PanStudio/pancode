@@ -66,7 +66,6 @@ its settings: `tags`, `ls`, `stat`, `history`, `verify`, `put`, `get`, `rm`, `rm
 `store.projectId` keys the store by that id instead, so checkouts at different paths on different hosts reach one
 store. The records these commands write name the actor `standalone`. `locks` lists the project's store locks and
 their state (`live`, `dead`, `remote`, `unreadable`); `locks break <id>` removes one that is not live.
-`pancode store where` prints the `pankit serve store` command line that serves a PanCode project's store over MCP.
 
 ## Limits
 

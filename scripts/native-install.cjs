@@ -216,23 +216,6 @@ function packageVersion(prefix) {
 	}
 }
 
-// The commands the package declares besides pancode (pankit), each with its file inside the package.
-function packageBins(prefix) {
-	const pkg = path.join(prefix, "lib", "node_modules", "pancode");
-	let bin;
-	try {
-		bin = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8")).bin;
-	} catch {
-		return new Map();
-	}
-	const bins = new Map();
-	if (!bin || typeof bin !== "object") return bins;
-	for (const [name, file] of Object.entries(bin))
-		if (name !== "pancode" && /^[a-z][a-z0-9-]*$/u.test(name) && typeof file === "string")
-			if (inside(pkg, path.resolve(pkg, file))) bins.set(name, path.resolve(pkg, file));
-	return bins;
-}
-
 // The bootstrap every launcher of this root runs: this helper, stored once under its own hash.
 function bootstrapFor(root) {
 	const helper = fs.readFileSync(__filename, "utf8");
@@ -241,70 +224,6 @@ function bootstrapFor(root) {
 	const bootstrap = path.join(helpers, `${crypto.createHash("sha256").update(helper).digest("hex")}.cjs`);
 	if (!fs.existsSync(bootstrap)) atomic(bootstrap, helper);
 	return bootstrap;
-}
-
-// The root a launcher this installer wrote runs: the whole quoted argument after its bin or launch verb.
-function launcherRoot(text) {
-	const posix = /^exec '(?:[^']|'\\'')*' '(?:[^']|'\\'')*' (?:bin|launch) '((?:[^']|'\\'')*)'/mu.exec(text);
-	if (posix) return posix[1].replaceAll("'\\''", "'");
-	const cmd = /^"[^"]*" "[^"]*" (?:bin|launch) "([^"]*)"/mu.exec(text);
-	return cmd ? cmd[1] : null;
-}
-
-// A launcher this installer wrote for this root: a regular file with the mark whose root is this one.
-function ownedLauncher(file, root) {
-	try {
-		if (!fs.lstatSync(file).isFile()) return false;
-		const text = fs.readFileSync(file, "utf8");
-		if (!text.includes(MARK)) return false;
-		const owner = launcherRoot(text);
-		return owner !== null && samePath(owner, root);
-	} catch {
-		return false;
-	}
-}
-
-// One launcher per declared command beside pancode's, running through the manifest as pancode's does, so
-// an upgrade or rollback moves them together. A launcher a version no longer declares goes, and only when
-// this installer wrote it; a file someone else put there is replaced only under the installer's --force.
-function syncBinLaunchers(root, prefix, binDir, launcherNode, recorded, force = false) {
-	const bins = packageBins(prefix);
-	const written = [];
-	if (bins.size > 0) {
-		const bootstrap = bootstrapFor(root);
-		const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-		for (const name of bins.keys()) {
-			const file = path.join(binDir, process.platform === "win32" ? `${name}.cmd` : name);
-			let present = false;
-			try {
-				fs.lstatSync(file);
-				present = true;
-			} catch {
-				/* Nothing there yet. */
-			}
-			if (present && !ownedLauncher(file, root)) {
-				const flag = process.platform === "win32" ? "-Force" : "--force";
-				if (!force || fs.lstatSync(file).isDirectory()) {
-					process.stderr.write(
-						`[install] ${file} exists and this installer did not write it, so ${name} was not linked; move it aside and rerun the installer${force ? "" : `, or rerun it with ${flag}`}\n`,
-					);
-					continue;
-				}
-				process.stderr.write(`[install] replacing ${file} (${flag})\n`);
-			}
-			const body =
-				process.platform === "win32"
-					? `@echo off\r\nsetlocal DisableDelayedExpansion\r\nrem ${MARK}\r\n"${launcherNode}" "${bootstrap}" bin "${root}" ${name} %*\r\nexit /b %errorlevel%\r\n`
-					: `#!/bin/sh\n${MARK}\nexec ${quote(launcherNode)} ${quote(bootstrap)} bin ${quote(root)} ${name} "$@"\n`;
-			fs.mkdirSync(binDir, { recursive: true });
-			atomic(file, body, 0o755);
-			written.push(file);
-		}
-	}
-	for (const file of Array.isArray(recorded) ? recorded : [])
-		if (typeof file === "string" && !written.some((kept) => samePath(kept, file)) && ownedLauncher(file, root))
-			fs.rmSync(file, { force: true });
-	return written;
 }
 
 // Writes the pancode launcher for `node` and returns its path. A POSIX launcher execs its Node, so replacing the
@@ -574,8 +493,6 @@ function prune(root, options = {}) {
 		}
 	};
 	if (installed?.launcher) readText(installed.launcher, "launcher");
-	for (const file of Array.isArray(installed?.binLaunchers) ? installed.binLaunchers : [])
-		if (typeof file === "string") readText(file, "launcher");
 	// The native Windows launcher names its bootstrap in the sidecar, not in its own bytes.
 	if (/\.exe$/iu.test(installed?.launcher ?? ""))
 		readText(`${installed.launcher.slice(0, -".exe".length)}.launch`, "launcher");
@@ -871,25 +788,6 @@ async function main() {
 		}
 		return;
 	}
-	if (action === "bin") {
-		const [name, ...rest] = args;
-		const current = record(root);
-		if (!current) throw new Error(`No installer manifest in ${root}`);
-		if (fs.existsSync(path.join(root, ".install-lock", "uninstall")))
-			throw new Error("Uninstall is in progress; retry after it exits");
-		const file = packageBins(current.current).get(name);
-		if (!file || !fs.existsSync(file))
-			throw new Error(
-				`PanCode ${packageVersion(current.current) || current.current} has no ${name} command; pancode upgrade installs a version that has it`,
-			);
-		const result = spawnSync(current.node, [file, ...rest], {
-			stdio: "inherit",
-			env: { ...process.env, PANCODE_LAUNCHER_PID: String(process.pid) },
-		});
-		if (result.error) throw result.error;
-		process.exitCode = result.status ?? 1;
-		return;
-	}
 	if (action === "prune") {
 		if (!record(root)) throw new Error(`No installer manifest in ${root}`);
 		const dryRun = args.includes("--dry-run");
@@ -949,7 +847,6 @@ async function main() {
 		// replaced version, the next upgrade or installer run reinstalled exactly it.
 		const pin = old.versionPin ? packageVersion(old.previous) || old.versionPin : "";
 		const launcher = writeLauncher(root, node, old.launcher);
-		const binLaunchers = syncBinLaunchers(root, old.previous, path.dirname(launcher), node, old.binLaunchers);
 		const bundle = bundleInfo(old.previous);
 		atomic(
 			path.join(root, "install.json"),
@@ -965,7 +862,6 @@ async function main() {
 					versionPin: pin,
 					...pinRecord(old, pin, "rollback"),
 					autoUpdate: false,
-					binLaunchers,
 				},
 				null,
 				2,
@@ -979,7 +875,7 @@ async function main() {
 		return;
 	}
 	if (action !== "activate") throw new Error(`Unknown installer action ${action}`);
-	let [current, launcher, channel, pin, autoUpdate, postInstall, pinSource, force] = args;
+	let [current, launcher, channel, pin, autoUpdate, postInstall, pinSource] = args;
 	const node = nodeOf(current);
 	if (process.env.PANCODE_BACKGROUND_UPDATE === "1") {
 		if (
@@ -1010,7 +906,6 @@ async function main() {
 	const previous = old?.current && !samePath(old.current, current) ? old.current : old?.previous || "";
 	// Activation has one commit point: launchers read this manifest on each invocation.
 	launcher = writeLauncher(root, node, launcher);
-	const binLaunchers = syncBinLaunchers(root, current, path.dirname(launcher), node, old?.binLaunchers, force === "1");
 	const bundle = bundleInfo(current);
 	atomic(
 		path.join(root, "install.json"),
@@ -1025,7 +920,6 @@ async function main() {
 				desktopManager: current,
 				previous,
 				launcher,
-				binLaunchers,
 				channel,
 				manager: process.env.PANCODE_INSTALL_MANAGER || old?.manager || "",
 				pathAdded: old?.pathAdded === true,

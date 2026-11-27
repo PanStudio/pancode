@@ -72,20 +72,14 @@
     {
       "path": "guide/panstore.md",
       "source": "docs/guide/panstore.md",
-      "sha256": "327f1bb1ebdca1b73a34447baae7eb61f09d6d85366b10446965583c912db857",
+      "sha256": "3548fdbbd77f0638470f3920872808bd6ab241862b2bb09c246c50e14aa1fbce",
       "sourceSha256": "7c7a43ff1e53df04df440bfc2ec6bad59e43c5f27da589e14d2079321c4e213e"
     },
     {
       "path": "guide/panhub.md",
       "source": "docs/guide/panhub.md",
-      "sha256": "469d6332696fa66d928a7c4d2ee9627a38607ab4e094ef2b4a754ad6a5b1c4b6",
+      "sha256": "98f58cf43f2fefccc80b54a7e9d1a1806174d48080699a1d8e5e550fac7e9a90",
       "sourceSha256": "a1b6738c933836c9efd8d8ee77799d5147aeec2f03d6c849a2e1a39da6feb3f3"
-    },
-    {
-      "path": "guide/pankit.md",
-      "source": "docs/guide/pankit.md",
-      "sha256": "87364dea1fb13ac14a19f30e96dc2a7cf18039daa3e8a22f067771a5c1984e7f",
-      "sourceSha256": "5760d1119b786c5d7216862a9d4e6ed92449304bae1ae8a97fcab0f8c2a1133c"
     },
     {
       "path": "guide/fleet-dispatch.md",
@@ -108,7 +102,7 @@
     {
       "path": "guide/sdk.md",
       "source": "docs/guide/sdk.md",
-      "sha256": "0c1ffb3f20ef24e61b9cf6ad889b9c1159003ca794d19e680446a0f8f377918a",
+      "sha256": "a56a4e3583532301bfb2804411fe0fcd0d5384fddfeae38dc2bd8e9315eb75f2",
       "sourceSha256": "288da0cf844267800b6687970688b8a94580e152da732b0c699b859ea8e5d8bc"
     },
     {

@@ -10,10 +10,8 @@ import {
 	MCP_PROJECT_CONFIG_RELATIVE_PATH,
 	MCP_TRUST_FILENAME,
 	MCP_USER_CONFIG_FILENAME,
-	mcpBuiltinTrustRefusal,
 	readMcpTrustState,
 } from "../../src/domains/gateway/mcp/index.js";
-import { builtinFixtureSource, emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 const CLI = new URL("../../dist/cli/index.js", import.meta.url).pathname;
@@ -99,12 +97,7 @@ it("lists, trusts, detects stale declarations, untrusts and returns error exits"
 		strictEqual(trust.status, "trusted");
 		const listedCli = cli("list", "--json");
 		strictEqual(listedCli.status, 0, listedCli.stderr);
-		// The built CLI serves a builtin server from dist and this process from source, so their launch args differ.
-		const withoutBuiltin = (data: { servers: Array<{ scope: string }> }) => ({
-			...data,
-			servers: data.servers.filter((server) => server.scope !== "builtin"),
-		});
-		deepStrictEqual(withoutBuiltin(JSON.parse(listedCli.stdout)), withoutBuiltin(JSON.parse(JSON.stringify(listed))));
+		deepStrictEqual(JSON.parse(listedCli.stdout), JSON.parse(JSON.stringify(listed)));
 		const missingCli = cli("trust", "missing");
 		strictEqual(missingCli.status, 1);
 		strictEqual(missingCli.stderr.trim().split("\n").length, 1);
@@ -462,67 +455,6 @@ it("records a JSON-RPC error answer as that call's error and runs the later call
 			],
 		);
 		match(calls[0].text, /invalid params/u);
-	} finally {
-		scratch.cleanup();
-	}
-});
-
-it("records, lists and removes a builtin server's network grant and refuses any other trust of it", () => {
-	const scratch = makeScratchHome("pancode-mcp-cli-builtin-");
-	const project = join(scratch.dir, "project");
-	const other = join(scratch.dir, "other");
-	const config = join(scratch.dir, "config");
-	for (const dir of [project, other, config]) mkdirSync(dir, { recursive: true });
-	const builtin = builtinFixtureSource(scratch.dir, ["kitfix"]);
-	const run = (cwd: string, ...args: string[]) => mcpCommandOutput(args, { cwd, configDir: config, builtin });
-	const kitfix = (cwd: string) =>
-		(run(cwd, "list").data as { servers: Array<Record<string, unknown>> }).servers.find(
-			(server) => server.id === "kitfix",
-		);
-	try {
-		const refusal = mcpBuiltinTrustRefusal("kitfix");
-		for (const args of [[], ["--action-class", "read"], ["--network", "--action-class", "read"]]) {
-			const refused = run(project, "trust", "kitfix", ...args);
-			strictEqual(refused.code, 1, args.join(" "));
-			strictEqual(refused.text, refusal);
-		}
-		strictEqual(existsSync(join(config, MCP_TRUST_FILENAME)), false, "a refused trust writes nothing");
-		deepStrictEqual([kitfix(project)?.network, kitfix(project)?.networkSource], [false, undefined]);
-
-		const granted = run(project, "trust", "kitfix", "--network");
-		strictEqual(granted.code, 0, granted.text);
-		const grant = (granted.data as { grant: { id: string; network: boolean; grantedAt: string } }).grant;
-		deepStrictEqual([grant.id, grant.network], ["kitfix", true]);
-		deepStrictEqual(readMcpTrustState(config).state, { version: 1, records: [], builtins: [grant] });
-		for (const cwd of [project, other]) {
-			const listed = kitfix(cwd);
-			deepStrictEqual([listed?.network, listed?.networkSource], [true, "trust"], "the grant holds in every project");
-			deepStrictEqual(listed?.trust, {
-				status: "trusted",
-				actionClass: "unknown",
-				network: true,
-				surface: (listed?.trust as { surface: unknown }).surface,
-			});
-		}
-		match(run(project, "list").text, /kitfix scope=builtin .*network=true \(trust record\)/);
-
-		let untrusted = run(other, "untrust", "kitfix");
-		strictEqual(untrusted.code, 0, untrusted.text);
-		strictEqual(untrusted.text, "mcp: untrusted kitfix (network grant removed)");
-		deepStrictEqual(readMcpTrustState(config).state, { version: 1, records: [] });
-		const revoked = kitfix(project);
-		strictEqual(revoked?.network, false);
-		strictEqual((revoked?.trust as { network?: boolean }).network, undefined);
-		untrusted = run(project, "untrust", "kitfix");
-		strictEqual(untrusted.text, "mcp: untrusted kitfix (network grant already absent)");
-
-		// A grant whose server a later PanCode no longer ships is still removable.
-		ok(run(project, "trust", "kitfix", "--network").code === 0);
-		mkdirSync(join(scratch.dir, "later"));
-		const shipsNone = emptyBuiltinSource(join(scratch.dir, "later"));
-		const later = (...args: string[]) => mcpCommandOutput(args, { cwd: project, configDir: config, builtin: shipsNone });
-		strictEqual(later("untrust", "kitfix").text, "mcp: untrusted kitfix (network grant removed)");
-		strictEqual(later("untrust", "kitfix").text, "no declared MCP server with id 'kitfix'");
 	} finally {
 		scratch.cleanup();
 	}

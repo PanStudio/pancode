@@ -8,16 +8,9 @@
  * committed as the blob with a put record (actor `mcp`) only when the call
  * succeeded. Admission judges each reference as the `store` call it stands
  * for, so the store's own access rule decides who may write which tag.
- *
- * The builtin `store` server's writes are judged here too: its `store_put` and
- * `store_note` name a tag the session must be allowed to write and that must
- * already exist, and the server starts with this session's store as options.
- * Such a call is admitted as the `store` tool's own put or note into that tag,
- * never as an opaque command on the server's process: the server writes only
- * the tags it was started with, and `store_put`'s source is a declared read.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, statSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { lstat, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { StoreBackend } from "@pancode/store";
@@ -25,16 +18,12 @@ import {
 	isRecordsTag,
 	STORE_REPLACES_ARG,
 	storeBackendKind,
-	storeProjectIdFor,
-	storeProjectRoot,
-	storeRootSpecs,
 	storeWriteTarget,
 	validateBlobName,
 	validateTagName,
 } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
-import { pancodeCachePath } from "../../core/xdg.js";
-import type { McpBuiltinLaunchContext, McpPathArgumentAccess } from "../../domains/gateway/mcp/index.js";
+import type { McpPathArgumentAccess } from "../../domains/gateway/mcp/index.js";
 import type { HostEffectCall } from "../registry-contract.js";
 import { prepareStoreAdmissionArguments, type StoreAccess, storeAccessRefusal } from "../store/surface.js";
 
@@ -53,13 +42,6 @@ export interface StoreReference {
 	access: McpPathArgumentAccess;
 	tag: string;
 	blob: string;
-}
-
-/** A write the builtin `store` server makes itself, judged as the `store` tool's own op on the same tag. */
-export interface BuiltinStoreWrite {
-	op: "put" | "note";
-	tag: string;
-	blob: string | null;
 }
 
 /** Whether a declared path argument's value is a store reference rather than a file path. */
@@ -106,36 +88,6 @@ export function namedStoreReferences(
 	return references;
 }
 
-/** The builtin `store` server's tools that write, and so must be judged as the store writes they are. */
-export function isBuiltinStoreWriteTool(serverId: string, scope: string, tool: string): boolean {
-	return scope === "builtin" && serverId === "store" && (tool === "store_put" || tool === "store_note");
-}
-
-/**
- * The write a builtin `store_put` or `store_note` call makes, or null when its
- * `tag` is not a string (the server refuses that itself). A put's blob
- * defaults to the source's basename as the server's does; a source that is a
- * store reference reaches the server as a cache copy named for its blob.
- */
-export function builtinStoreWrite(
-	tool: string,
-	args: Readonly<Record<string, unknown>>,
-	cwd: string,
-): BuiltinStoreWrite | null {
-	if (typeof args.tag !== "string") return null;
-	const op = tool === "store_put" ? "put" : "note";
-	if (typeof args.blob === "string" || op === "note") {
-		return { op, tag: args.tag, blob: typeof args.blob === "string" ? args.blob : null };
-	}
-	const source = args.source;
-	if (typeof source !== "string" || source.length === 0) return { op, tag: args.tag, blob: null };
-	if (isStoreReference(source)) {
-		const parsed = parseStoreReference(source);
-		return { op, tag: args.tag, blob: typeof parsed === "string" ? null : path.posix.basename(parsed.blob) };
-	}
-	return { op, tag: args.tag, blob: path.basename(path.resolve(cwd, source)) };
-}
-
 /** The admission arguments of a store put: the `store` tool's own, marked when it replaces a blob. */
 function putAdmission(tag: string, blob: string | null, cwd: string, access: StoreAccess): Record<string, unknown> {
 	const prepared = prepareStoreAdmissionArguments({ op: "put", tag, ...(blob !== null ? { blob } : {}) }, cwd, access);
@@ -155,41 +107,17 @@ function putAdmission(tag: string, blob: string | null, cwd: string, access: Sto
 }
 
 /**
- * The `store` tool call the builtin server's own write stands for: its `put` or
- * `note` into the same tag, with the arguments admission gives the store tool.
- */
-export function builtinStoreWriteCall(
-	write: BuiltinStoreWrite,
-	cwd: string,
-	access: McpStoreAccess = NO_ACCESS,
-): HostEffectCall["call"] {
-	return {
-		tool: ToolNames.Store,
-		args:
-			write.op === "put"
-				? putAdmission(write.tag, write.blob, cwd, access)
-				: prepareStoreAdmissionArguments(
-						{ op: "note", tag: write.tag, ...(write.blob !== null ? { blob: write.blob } : {}) },
-						cwd,
-						access,
-					),
-	};
-}
-
-/**
- * Each reference, and the builtin server's own write, as the `store` call it
- * stands for: a read reference is a `get`, a write reference a `put` and the
- * server's write its `put` or `note`. So admission judges a read-only turn, an
+ * Each reference as the `store` call it stands for: a read reference is a
+ * `get`, a write reference a `put`. So admission judges a read-only turn, an
  * ungranted worker, a write outside a worker's boundaries and a put over an
  * existing blob exactly as it judges the `store` tool.
  */
 export function storeReferenceEffects(
 	references: ReadonlyArray<StoreReference>,
-	write: BuiltinStoreWrite | null,
 	cwd: string,
 	access: McpStoreAccess = NO_ACCESS,
 ): HostEffectCall[] {
-	const effects: HostEffectCall[] = references.map((reference) => ({
+	return references.map((reference) => ({
 		label: `${reference.access} store reference '${reference.argument}' (store:${reference.tag}:${reference.blob})`,
 		call: {
 			tool: ToolNames.Store,
@@ -199,10 +127,6 @@ export function storeReferenceEffects(
 					: putAdmission(reference.tag, reference.blob, cwd, access),
 		},
 	}));
-	if (write !== null) {
-		effects.push({ label: `store ${write.op} into tag '${write.tag}'`, call: builtinStoreWriteCall(write, cwd, access) });
-	}
-	return effects;
 }
 
 function missingTag(tag: string): string {
@@ -218,36 +142,17 @@ export async function defaultOpenStoreBackend(cwd: string): Promise<StoreBackend
 	return openStoreBackend(cwd);
 }
 
-/** Why the builtin server's own write is refused before the call, or null. */
-async function builtinStoreWriteRefusal(
-	write: BuiltinStoreWrite,
-	backend: () => Promise<StoreBackend>,
-	access: McpStoreAccess = NO_ACCESS,
-): Promise<string | null> {
-	const refused = storeAccessRefusal({ op: write.op, tag: write.tag }, access);
-	if (refused !== null) return refused;
-	// The server refuses an invalid name with the package's own message.
-	if (validateTagName(write.tag) !== null) return null;
-	try {
-		if (!(await (await backend()).tagExists(write.tag))) return missingTag(write.tag);
-	} catch (error) {
-		return `store: ${messageOf(error)}`;
-	}
-	return null;
-}
-
 /** An s3 store has no local path a server could write a blob to, so a write reference is refused by name. */
 const S3_WRITE_REFERENCE_LIMIT =
 	"an s3 store takes no write store references: a server has no local path to write the blob to; put its output with the store tool";
 
 /**
- * Why a call's store references or the builtin server's own write are refused,
- * or null: a malformed write the session may not make, a missing tag, a missing
- * read blob. Nothing here needs the server, so the call is refused before it starts.
+ * Why a call's store references are refused, or null: a malformed write the
+ * session may not make, a missing tag, a missing read blob. Nothing here needs
+ * the server, so the call is refused before it starts.
  */
 export async function storeReferencesRefusal(input: {
 	references: ReadonlyArray<StoreReference>;
-	write: BuiltinStoreWrite | null;
 	access: McpStoreAccess | undefined;
 	backend: () => Promise<StoreBackend>;
 }): Promise<string | null> {
@@ -269,7 +174,7 @@ export async function storeReferencesRefusal(input: {
 			return `${named}: ${messageOf(error)}`;
 		}
 	}
-	return input.write === null ? null : builtinStoreWriteRefusal(input.write, input.backend, access);
+	return null;
 }
 
 /** A read reference resolved for the call, as the put record's `used` names it. */
@@ -471,63 +376,4 @@ export async function commitStoreReferences(input: {
 		}
 	}
 	return { stored };
-}
-
-/**
- * The options the builtin `store` server starts with in this session: every
- * root in settings order, the cache the session's backend uses, the project and its id,
- * and the tags it may write. The main session writes every tag the project's
- * store lists now, a worker exactly its granted tags, anything else none.
- * Throws when the host store cannot be resolved: invalid store settings or a
- * further root that is not a directory, so the server never starts without
- * the session's roots. Throws under an s3 store, which the server cannot open.
- */
-export async function storeServerLaunchContext(input: {
-	cwd: string;
-	launchCwd: string;
-	access: McpStoreAccess | undefined;
-	backend: () => Promise<StoreBackend>;
-}): Promise<{ context: McpBuiltinLaunchContext; writeTags: string[] }> {
-	if (storeBackendKind() === "s3")
-		throw new Error(
-			"the PanKit store server does not run on an s3 store: it opens local store roots only; use the store tool",
-		);
-	const roots = storeRootSpecs();
-	// A local primary is created on its first write; a shared folder and any further root must already be mounted.
-	for (const root of storeBackendKind() === "shared" ? roots : roots.slice(1)) {
-		let problem: string | null = null;
-		try {
-			if (!statSync(root.path).isDirectory()) problem = "is not a directory";
-		} catch (error) {
-			problem = (error as NodeJS.ErrnoException).code === "ENOENT" ? "is missing" : messageOf(error);
-		}
-		if (problem !== null) throw new Error(`store root ${root.name} (${root.path}) ${problem}`);
-	}
-	const access = input.access ?? NO_ACCESS;
-	let writeTags: string[] = [];
-	if (access.writable) {
-		writeTags = (await (await input.backend()).listTags()).filter((tag) => !isRecordsTag(tag));
-	} else if (access.grant !== undefined) {
-		writeTags = [...access.grant.tags];
-	}
-	writeTags = [...new Set(writeTags)].filter((tag) => validateTagName(tag) === null).sort();
-	const projectId = storeProjectIdFor(storeProjectRoot(input.launchCwd));
-	return {
-		context: {
-			store: {
-				roots: roots.map((root) => ({ name: root.name, path: root.path })),
-				...(storeBackendKind() === "shared" ? { shared: true } : {}),
-				cache: pancodeCachePath(),
-				project: input.launchCwd,
-				...(projectId !== undefined ? { projectId } : {}),
-				writeTags,
-			},
-		},
-		writeTags,
-	};
-}
-
-/** Whether a server started with `writeTags` may write `tag`: one of them or nested under one, as it judges. */
-export function launchedWithTag(writeTags: ReadonlyArray<string>, tag: string): boolean {
-	return writeTags.some((allowed) => tag === allowed || tag.startsWith(`${allowed}/`));
 }

@@ -108,13 +108,9 @@ and run it with `run_script`, declaring the file in `inputs` (a store blob as
 
 ## Other harnesses
 
-Outside PanCode there is no `data` tool or `store` capability. The same reads
-are the `scidata` server's `mcp_scidata__scidata_inspect`,
-`mcp_scidata__scidata_select` and `mcp_scidata__scidata_stats`, from the same
-library as `data`, and the store is the `store` server's tools
-(`mcp_store__store_tags`, `mcp_store__store_get`, `mcp_store__store_put` and
-the rest), which there need `--root` options; `pancode store where` prints
-them. Declare each as `npx -y -p @panstudio/pancode pankit serve <id>`.
+Outside PanCode there is no `data` tool or `store` capability. Read the file
+with a short read-only script as in step 2, run in the host's own shell, and
+ask the operator for dataset paths instead of taking them from a store tag.
 
 ## Final answer
 

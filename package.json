@@ -37,8 +37,7 @@
 		"node": ">=22.19.0"
 	},
 	"bin": {
-		"pancode": "bin/pancode.cjs",
-		"pankit": "dist/kit/cli.js"
+		"pancode": "bin/pancode.cjs"
 	},
 	"exports": {
 		"./package.json": "./package.json",
@@ -77,8 +76,6 @@
 		"!scripts/README.md",
 		"src/**",
 		"packages/*/src/**",
-		"packages/kit/servers.json",
-		"!packages/kit/README.md",
 		"!packages/scidata/README.md",
 		"!packages/sdk/README.md",
 		"!packages/store/README.md",
@@ -147,8 +144,6 @@
 		"hub:pin": "node --import tsx scripts/pin-hub.ts",
 		"hub:check": "node --import tsx scripts/pin-hub.ts --check",
 		"hub:review": "node --import tsx scripts/hub-review.ts",
-		"kit:manifest": "node --import tsx scripts/kit-manifest.ts",
-		"kit:check": "node --import tsx scripts/kit-manifest.ts --check",
 		"economy:check": "node --import tsx scripts/check-economy-rates.ts",
 		"pretest:full": "node scripts/check-dist.mjs",
 		"test:full": "node scripts/ci-tests.mjs full",

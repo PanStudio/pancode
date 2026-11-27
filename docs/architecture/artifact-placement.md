@@ -85,7 +85,6 @@ problem.
 | `plugins/` | PanHub plugin pack state (`state.json`) and one directory per installed pack |
 | `hub.yaml`, `skill-marketplace.json`, `skill-promotion-declines.json` | The user PanHub catalog, the user skill index that overrides the shipped one in `hub/packs/skills/`, and declined skill promotions |
 | `mcp.yaml`, `mcp-trust.json` | User MCP servers and the trust records for project-declared servers |
-| `science-data/catalog.json` | The catalog file PanCode's builtin PanKit `catalog` server reads. PanCode passes it as `--file`, so a server it launches never reads the operator's own `~/.config/science-data/catalog.json` ([builtin.ts](../../src/domains/gateway/mcp/builtin.ts)) |
 | `hooks.yaml` | User middleware hooks, trusted as the operator's own and loaded ahead of project hooks |
 | `PANCODE.md` | User handbook, loaded ahead of project handbooks in every session; `interop adopt` writes marked sections into it |
 | `workspace-trust/` | Per-workspace approvals from `pancode config trust` |
@@ -169,7 +168,6 @@ persisted. Route history is a fold over `run.settled` records in the run journal
 | `data-readers/<package>@<version>/` | The HDF5, NetCDF and Parquet readers of the `data` tool, fetched as pinned npm tarballs on first use, with the same 10-minute retry window after a failure ([assets.ts](../../packages/scidata/src/assets.ts)) |
 | `store/<key>/<tag>/<blob>` | The copies `store get` hands back ([paths/index.ts](../../packages/store/src/paths/index.ts)) |
 | `store/index/<key>.db` | The PanStore listing and lineage index of one project (`node:sqlite`). It is only a cache: a scope whose stat fingerprint changed is rescanned, nothing that writes or checks a grant reads it, and the store works with it deleted ([index-db](../../packages/store/src/index-db/index.ts)) |
-| `pankit/data-readers/<package>@<version>/` | The same readers for the builtin PanKit `scidata` server, a separate cache that PanCode passes as `--cache`, so a server it launches never writes `~/.cache/pankit/data-readers` ([builtin.ts](../../src/domains/gateway/mcp/builtin.ts)) |
 | `sandbox-cache/` | The persistent cache of contained commands: the sandbox points `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`, `UV_CACHE_DIR` and `PLAYWRIGHT_BROWSERS_PATH` here, so a contained command does not write the operator's `~/.cache` or `~/.npm`; pruned to `safety.sandboxCacheMaxGiB`, least recently used tool directory first ([sandbox-cache.ts](../../src/core/sandbox/sandbox-cache.ts)) |
 | `sandbox-cache-leases/` | One lock per process that ran a contained command (`<host>-<pid>.lock`, held until it exits), the pruner's lock and its daily stamp; the pruner removes nothing from `sandbox-cache/` while a lease is live |
 | `sandbox-npmrc` | The empty npm user config contained commands read when the operator's `~/.npmrc` is masked |

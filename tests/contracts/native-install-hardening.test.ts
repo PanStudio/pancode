@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { activatedPackageRoot, pendingInstalledVersion } from "../../src/core/running-build.js";
@@ -317,65 +317,6 @@ test("activation moves a POSIX launcher to the new version's Node and collects t
 	assert.equal(f.run("rollback").status, 0);
 	assert.match(readFileSync(f.record.launcher, "utf8"), new RegExp(`exec '${join(second, "bin/node")}'`));
 	assert.equal(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).node, join(second, "bin/node"));
-});
-
-test("every command the package declares gets a launcher, and rollback and the next activation keep them in step", {
-	skip: process.platform === "win32",
-}, (t) => {
-	const f = fixture(t);
-	rmSync(join(f.root, "install.json"));
-	const activate = (version: string, bins: Record<string, string>) => {
-		const dir = f.prefix(version);
-		f.node(dir);
-		mkdirSync(join(dir, suffix, "dist/cli"), { recursive: true });
-		writeFileSync(join(dir, suffix, "dist/cli/index.js"), `console.log(${JSON.stringify(version)});`);
-		const bin: Record<string, string> = { pancode: "dist/cli/index.js" };
-		for (const [name, file] of Object.entries(bins)) {
-			bin[name] = file;
-			mkdirSync(dirname(join(dir, suffix, file)), { recursive: true });
-			writeFileSync(join(dir, suffix, file), `console.log(${JSON.stringify(`${name} ${version}`)}, process.argv[2]);`);
-		}
-		writeFileSync(join(dir, suffix, "package.json"), JSON.stringify({ name: "@panstudio/pancode", version, bin }));
-		const result = f.run("activate", dir, f.record.launcher, "latest", "-", "0", "0");
-		assert.equal(result.status, 0, result.stderr);
-		return result;
-	};
-	const binDir = dirname(f.record.launcher);
-	const toola = join(binDir, "toola");
-	const toolb = join(binDir, "toolb");
-	activate("0.8.9", {});
-	assert.equal(existsSync(toola), false);
-	// Someone else's toolb stays, and the operator is told why that command is missing.
-	writeFileSync(toolb, "#!/bin/sh\necho mine\n");
-	const warned = activate("0.9.0", { toola: "dist/a/cli.js", toolb: "dist/b/cli.js" });
-	assert.match(warned.stderr, /toolb exists and this installer did not write it/u);
-	assert.equal(readFileSync(toolb, "utf8"), "#!/bin/sh\necho mine\n");
-	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, [toola]);
-	const ran = spawnSync(toola, ["list"], { encoding: "utf8", env: { ...process.env, HOME: join(f.root, "home") } });
-	assert.equal(ran.stdout, "toola 0.9.0 list\n", ran.stderr);
-	// Rolling back to a version without the command removes its launcher; the unowned file is still left alone.
-	assert.equal(f.run("rollback").status, 0);
-	assert.equal(existsSync(toola), false);
-	assert.equal(existsSync(toolb), true);
-	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, []);
-	// A launcher another install wrote for a root whose path only starts with this one is not ours either.
-	const ownText = readFileSync(join(binDir, "pancode"), "utf8");
-	assert.ok(ownText.includes(`'${f.root}'`));
-	const sibling = ownText.replaceAll(`'${f.root}'`, `'${f.root}-tools'`);
-	writeFileSync(toolb, sibling);
-	assert.match(
-		activate("0.9.0b", { toolb: "dist/b/cli.js" }).stderr,
-		/toolb exists and this installer did not write it/u,
-	);
-	assert.equal(readFileSync(toolb, "utf8"), sibling);
-	rmSync(toolb);
-	activate("0.9.1", { toola: "dist/a/cli.js", toolb: "dist/b/cli.js" });
-	assert.equal(spawnSync(toolb, ["x"], { encoding: "utf8" }).stdout, "toolb 0.9.1 x\n");
-	// The next version that no longer declares the commands removes both launchers.
-	activate("0.9.2", {});
-	assert.equal(existsSync(toola), false);
-	assert.equal(existsSync(toolb), false);
-	assert.deepEqual(JSON.parse(readFileSync(join(f.root, "install.json"), "utf8")).binLaunchers, []);
 });
 
 test("probe accepts a kept prefix only when its CLI passes the --version check activation runs", {

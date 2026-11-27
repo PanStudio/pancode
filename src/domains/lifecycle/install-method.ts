@@ -69,8 +69,6 @@ export interface InstallerRecord {
 	manager?: string;
 	pathAdded?: boolean;
 	pathEntry?: string;
-	/** Launchers written beside `launcher` for the package's other commands (pankit). */
-	binLaunchers?: string[];
 }
 
 export const INSTALLER_MANIFEST_KIND = "pancode-installer";
@@ -145,9 +143,6 @@ export function readInstallerRecord(installRoot: string): InstallerRecord | null
 		manager: text("manager"),
 		pathAdded: record.pathAdded === true,
 		pathEntry: text("pathEntry"),
-		binLaunchers: Array.isArray(record.binLaunchers)
-			? record.binLaunchers.filter((file): file is string => typeof file === "string" && isAbsolute(file))
-			: [],
 	};
 }
 

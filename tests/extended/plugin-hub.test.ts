@@ -155,10 +155,10 @@ describe("plugin PanHub lifecycle", () => {
 	it("does not mistake a stale pin for an installed resource", () => {
 		writeFileSync(
 			path.join(root, "config", "library-pins.yaml"),
-			stringify({ "prompt:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
+			stringify({ "skill:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
 		);
-		equal(hubEntryInstalled({ kind: "prompt", name: "gone" }), false);
-		throws(() => hubInstallPath({ kind: "prompt", name: "../outside" }), /invalid PanHub entry name/);
+		equal(hubEntryInstalled({ kind: "skill", name: "gone" }), false);
+		throws(() => hubInstallPath({ kind: "skill", name: "../outside" }), /invalid PanHub entry name/);
 	});
 
 	it("records scoped pins, reports drift, refuses repinning drift, and removes the selected scope", () => {
@@ -412,6 +412,10 @@ describe("plugin PanHub lifecycle", () => {
 		throws(() => resolveHubRequirements(loaded, rows), /hub_requirement_missing/);
 		const cyclic = { ...loaded, requires: ["plugin:fixture" as const] };
 		throws(() => resolveHubRequirements(cyclic, [cyclic]), /hub_requirement_cycle/);
+		for (const retired of ["agent:old", "prompt:old", "playbook:old", "server:old"]) {
+			const malformed = { ...loaded, requires: [retired as unknown as "plugin:old"] };
+			throws(() => resolveHubRequirements(malformed, [malformed]), /hub_requirement_malformed/);
+		}
 	});
 
 	it("refuses unavailable plugin requirements without reactivating installed dependencies", async () => {

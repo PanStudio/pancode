@@ -31,7 +31,6 @@ use system `/tmp` or commit run output under `scripts/`.
 | `pnpm run hub:check` / `pnpm run skills:check` | Verify local catalog content and generated projections against committed pins. |
 | `pnpm run hub:pin` / `pnpm run skills:pin` | Refresh generated catalogs. PanHub pinning also fetches blessed remote packs. |
 | `pnpm run hub:review -- --base <ref>` | Review every community row file that differs from a base ref. |
-| `pnpm run kit:manifest` / `pnpm run kit:check` | Write `packages/kit/servers.json` and each core server pack's `hub/packs/servers/<id>/server.json` from the PanKit server registry, or fail when a tracked file differs. |
 | `pnpm run economy:check` | Validate the public API reference tariff in `models/economy-rates.json` and print witness quotes. `-- --as-of <YYYY-MM-DD>` audits another day. |
 | `pnpm run pi:surface-diff` / `pnpm run pi:surface-snapshot` | Review the consumed Pi declarations against their snapshot, or refresh it during dependency maintenance. |
 | `pnpm run acp:schema` / `acp:schema:write` / `acp:schema:bump` | Check that the generated ACP wire-shape module matches the pinned upstream schemas, regenerate it from the pin, or move the pin to the newest upstream tags and regenerate. |
@@ -89,7 +88,6 @@ Catalogs and pins:
 - `hub-review.ts`: `pnpm run hub:review`.
 - `hub-root.mjs`: PanHub root key tool, run by the maintainer on an offline machine.
 - `hub-sign.mjs`: PanHub index signing tool, run by CI with a certified signing key.
-- `kit-manifest.ts`: `pnpm run kit:manifest` and `kit:check`.
 - `acp-schema.ts`, `acp-schema.pin.json`: `pnpm run acp:schema` and the upstream schema pin it reads.
 - `herdr-pin.ts`: `pnpm run herdr:pin`.
 - `pi-surface-diff.ts`: `pnpm run pi:surface-diff` and `pi:surface-snapshot`.
@@ -110,7 +108,7 @@ Release (see [release/README.md](release/README.md)):
 - `release/smoke.mjs`: `pnpm run release:smoke`.
 - `release/publish.mjs`: the `publish` job's step: npm, the GitHub release, `main`, then the website and the channel files.
 - `release/tested-run.mjs`: the `tested run` and `publish` jobs' check: finds the green push run of the commit being released and checks its `release` artifact against `SHA256SUMS` and the commit.
-- `release/installed-commands.mjs`: checks of the installed `pancode` and `pankit` commands.
+- `release/installed-commands.mjs`: checks of the installed `pancode` command.
 - `release-version-policy.mjs` (+ `.d.mts`): which package versions and changelog headings a checkout or release accepts.
 - `check-release.mjs`: audits the built `dist/` and the packed tarball's contents.
 - `release-manifest.json`: runtime files the installed package must contain.

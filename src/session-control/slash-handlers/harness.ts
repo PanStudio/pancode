@@ -3,7 +3,7 @@
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
 import { mcpCommandOutput, mcpSkillApprovalOutput, mcpSkillRevokeOutput } from "../../cli/mcp.js";
 import { isHubKind } from "../../domains/resources/hub-types.js";
-import { type HubEntryKind, parseSkillCommand, SKILL_SURFACE_CLEAR_ARG } from "../../domains/resources/index.js";
+import { type HubCategory, parseSkillCommand, SKILL_SURFACE_CLEAR_ARG } from "../../domains/resources/index.js";
 import type {
 	BuiltinSlashCommand,
 	HubBrowseIntent,
@@ -13,10 +13,10 @@ import type {
 import { fromArgsOrUsage, usageError } from "./usage-error.js";
 
 /** `/hub <kind>` completes the plurals and also accepts the singular tab ids. */
-const HUB_KIND_PLURALS = ["skills", "agents", "prompts", "playbooks", "plugins", "extensions", "servers"] as const;
-const HUB_KIND_WORDS = new Map<string, HubEntryKind>(
+const HUB_KIND_PLURALS = ["skills", "agents", "prompts", "playbooks", "plugins", "extensions"] as const;
+const HUB_KIND_WORDS = new Map<string, HubCategory>(
 	HUB_KIND_PLURALS.flatMap((plural) => {
-		const kind = plural.slice(0, -1) as HubEntryKind;
+		const kind = plural.slice(0, -1) as HubCategory;
 		return [
 			[plural, kind],
 			[kind, kind],
@@ -281,7 +281,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					kind: "usage-error",
 					command: "hub",
 					reason:
-						"Use /hub [skills|agents|prompts|playbooks|plugins|extensions|servers] to browse, /hub inspect|install|update|enable|disable|remove <ref>, /hub import <path-or-url>, or /hub interop",
+						"Use /hub [skills|agents|prompts|playbooks|plugins|extensions] to browse, /hub inspect|install|update|enable|disable|remove <ref>, /hub import <path-or-url>, or /hub interop",
 				};
 			return { kind: "resources", tab };
 		},

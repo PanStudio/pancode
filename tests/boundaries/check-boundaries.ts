@@ -780,7 +780,7 @@ const FUNCTION_LINE_CEILING = 500;
  */
 const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 865],
-	["src/cli/uninstall.ts#runUninstallCommand", 555],
+	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 569],
 	["src/core/settings-validate.ts#validateSettings", 1332],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
@@ -792,7 +792,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
 	["src/domains/providers/extension.ts#createProvidersBundle", 625],
-	["src/domains/resources/hub-validation.ts#validateHubPackage", 577],
+	["src/domains/resources/hub-validation.ts#validateHubPackage", 567],
 	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1713],
 	["src/domains/scheduling/job-controller.ts#createJobController", 979],
 	["src/domains/session/compaction/compact.ts#compactWithCalls", 738],
@@ -815,7 +815,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 741],
 	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 607],
 	["src/interactive/overlay-permission-lifecycle.ts#createOverlayPermissionLifecycle", 671],
-	["src/interactive/overlays/hub.ts#openHubOverlay", 606],
+	["src/interactive/overlays/hub.ts#openHubOverlay", 604],
 	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 587],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
@@ -836,7 +836,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
-	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1767],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1705],
 	["src/tools/registry.ts#createRegistry", 2346],
 ]);
 
@@ -1429,14 +1429,12 @@ function isAllowedWorkerProviderValueImport(resolved: string, providersDomainRoo
 
 /**
  * The workspace packages each package under packages/ may import by name (rule21). The SDK is the base;
- * the store and the scientific data library build on it; the kit composes all three. A package not
- * listed here imports none.
+ * the store and the scientific data library build on it. A package not listed here imports none.
  */
 const PACKAGE_IMPORTS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
 	["sdk", new Set<string>()],
 	["store", new Set(["sdk"])],
 	["scidata", new Set(["sdk"])],
-	["kit", new Set(["sdk", "store", "scidata"])],
 ]);
 const WORKSPACE_PACKAGE = /^@pancode\/([^/]+)(?:\/|$)/;
 
