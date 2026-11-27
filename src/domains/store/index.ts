@@ -16,8 +16,8 @@ export { compileBlobPattern, StoreRefusal } from "@pancode/store/backend";
 
 /**
  * The store backend for this project, of the kind `store.backend` selects: local, plain files under the
- * configured roots; shared, plain files in a folder several hosts mount; or s3, a bucket of an S3-compatible
- * service.
+ * configured roots; shared, a fenced change log in a folder several hosts mount; or s3, a bucket of an
+ * S3-compatible service.
  */
 export async function openStoreBackend(cwd: string): Promise<StoreBackend> {
 	const kind = storeBackendKind();

@@ -75,6 +75,21 @@ function listedKey(value: string): string {
 	return decodeURIComponent(value.replaceAll("+", " "));
 }
 
+/** How many times a request dropped on a stale keep-alive socket is retried on a fresh connection. */
+const SOCKET_RETRIES = 4;
+const STALE_SOCKET_CODES = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE", "UND_ERR_CLOSED"]);
+
+function isStaleSocketError(error: unknown): boolean {
+	let current: unknown = error;
+	for (let depth = 0; depth < 4 && current !== null && typeof current === "object"; depth++) {
+		const record = current as { code?: unknown; message?: unknown; cause?: unknown };
+		if (typeof record.code === "string" && STALE_SOCKET_CODES.has(record.code)) return true;
+		if (typeof record.message === "string" && record.message.includes("other side closed")) return true;
+		current = record.cause ?? null;
+	}
+	return false;
+}
+
 function messageOf(error: unknown): string {
 	const cause = (error as { cause?: unknown } | null)?.cause;
 	const base = error instanceof Error ? error.message : String(error);
@@ -122,50 +137,56 @@ export class S3Client {
 		const url = this.url(key, request.query ?? {});
 		const body = request.body;
 		const payload = body === undefined ? EMPTY_SHA256 : body instanceof Uint8Array ? sha256Hex(body) : body.sha256;
-		const amzDate = new Date().toISOString().replace(/[-:]|\.\d{3}/gu, "");
-		const day = amzDate.slice(0, 8);
-		const signed: Record<string, string> = {
-			host: url.host,
-			"x-amz-content-sha256": payload,
-			"x-amz-date": amzDate,
-		};
-		for (const [name, value] of Object.entries(request.headers ?? {})) signed[name.toLowerCase()] = value.trim();
-		const names = Object.keys(signed).sort();
-		const canonical = [
-			method,
-			url.pathname,
-			url.search.slice(1),
-			names.map((name) => `${name}:${signed[name]}\n`).join(""),
-			names.join(";"),
-			payload,
-		].join("\n");
-		const scope = `${day}/${this.options.region}/s3/aws4_request`;
-		const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256Hex(canonical)].join("\n");
-		const signingKey = hmac(
-			hmac(hmac(hmac(`AWS4${this.options.secretAccessKey}`, day), this.options.region), "s3"),
-			"aws4_request",
-		);
-		const signature = createHmac("sha256", signingKey).update(toSign).digest("hex");
-		const headers: Record<string, string> = { ...signed };
-		delete headers.host;
-		headers.authorization = `AWS4-HMAC-SHA256 Credential=${this.options.accessKeyId}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}`;
-		const init: RequestInit & { duplex?: "half" } = { method, headers, redirect: "error" };
-		if (body instanceof Uint8Array) init.body = body;
-		else if (body !== undefined) {
-			// The length is fixed up front, so the bytes go as one plain body; S3 refuses a chunked one.
-			headers["content-length"] = String(body.bytes);
-			init.body = createReadStream(body.file) as unknown as NonNullable<RequestInit["body"]>;
-			init.duplex = "half";
-		}
-		if (request.signal !== undefined) init.signal = request.signal;
-		try {
-			return await fetch(url, init);
-		} catch (error) {
-			if (request.signal?.aborted) throw new StoreRefusal("io", `The S3 request for ${this.location(key)} was aborted.`);
-			throw new StoreRefusal(
-				"unavailable",
-				`The S3 store at ${this.endpoint.origin} cannot be reached: ${messageOf(error)}`,
+		for (let attempt = 0; ; attempt++) {
+			const amzDate = new Date().toISOString().replace(/[-:]|\.\d{3}/gu, "");
+			const day = amzDate.slice(0, 8);
+			const signed: Record<string, string> = {
+				host: url.host,
+				"x-amz-content-sha256": payload,
+				"x-amz-date": amzDate,
+			};
+			for (const [name, value] of Object.entries(request.headers ?? {})) signed[name.toLowerCase()] = value.trim();
+			const names = Object.keys(signed).sort();
+			const canonical = [
+				method,
+				url.pathname,
+				url.search.slice(1),
+				names.map((name) => `${name}:${signed[name]}\n`).join(""),
+				names.join(";"),
+				payload,
+			].join("\n");
+			const scope = `${day}/${this.options.region}/s3/aws4_request`;
+			const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256Hex(canonical)].join("\n");
+			const signingKey = hmac(
+				hmac(hmac(hmac(`AWS4${this.options.secretAccessKey}`, day), this.options.region), "s3"),
+				"aws4_request",
 			);
+			const signature = createHmac("sha256", signingKey).update(toSign).digest("hex");
+			const headers: Record<string, string> = { ...signed };
+			delete headers.host;
+			headers.authorization = `AWS4-HMAC-SHA256 Credential=${this.options.accessKeyId}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}`;
+			const init: RequestInit & { duplex?: "half" } = { method, headers, redirect: "error" };
+			let fileStream: ReturnType<typeof createReadStream> | null = null;
+			if (body instanceof Uint8Array) init.body = body;
+			else if (body !== undefined) {
+				// The length is fixed up front, so the bytes go as one plain body; S3 refuses a chunked one.
+				headers["content-length"] = String(body.bytes);
+				fileStream = createReadStream(body.file);
+				init.body = fileStream as unknown as NonNullable<RequestInit["body"]>;
+				init.duplex = "half";
+			}
+			if (request.signal !== undefined) init.signal = request.signal;
+			try {
+				return await fetch(url, init);
+			} catch (error) {
+				fileStream?.destroy();
+				if (request.signal?.aborted) throw new StoreRefusal("io", `The S3 request for ${this.location(key)} was aborted.`);
+				if (attempt < SOCKET_RETRIES && isStaleSocketError(error)) continue;
+				throw new StoreRefusal(
+					"unavailable",
+					`The S3 store at ${this.endpoint.origin} cannot be reached: ${messageOf(error)}`,
+				);
+			}
 		}
 	}
 

@@ -521,3 +521,41 @@ test("store_note notes an existing blob with actor mcp, under the same write rul
 	assert.equal(untouched.length, 1);
 	configure([]);
 });
+
+test("shared store_put with --project-id records projectId in the shared log binding", async () => {
+	const dir = join(base, "shared-project-id");
+	const root = join(dir, "root");
+	const cache = join(dir, "cache");
+	const project = join(dir, "project");
+	mkdirSync(root, { recursive: true });
+	mkdirSync(project, { recursive: true });
+	const source = writeSource(project, "out.txt", "ok\n");
+	configure([
+		"--root",
+		root,
+		"--shared",
+		"--cache",
+		cache,
+		"--project",
+		project,
+		"--project-id",
+		"sim",
+		"--write-tag",
+		"results",
+	]);
+	const put = await call("store_put", { tag: "results", source });
+	assert.equal(put.stored, true);
+	assert.equal(put.recorded, true);
+	const { createSharedStoreBackend, storeProjectKeyForId } = await import("@pancode/store");
+	const shared = createSharedStoreBackend({
+		root,
+		cacheDir: cache,
+		projectKey: storeProjectKeyForId("sim"),
+		projectId: "sim",
+		projectRoot: storeProjectRootOf(project),
+	});
+	const bindings = await shared.log.projects();
+	assert.equal(bindings.length, 1);
+	assert.equal(bindings[0]?.projectId, "sim");
+	configure([]);
+});

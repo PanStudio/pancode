@@ -3,12 +3,16 @@
 // Inputs are constructed: hand-written owner files for this host, another host ("other-node") and garbage.
 import { ok, rejects, strictEqual } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { createSharedStoreBackend, StoreRefusal, storeLockId, withStoreLock } from "../src/index.js";
 import { storeLocksDir } from "../src/paths/index.js";
+import { S3Client } from "../src/s3/client.js";
 
 const WAIT = { waitMs: 150 };
 
@@ -90,5 +94,53 @@ describe("store locks", () => {
 		await rejects(backend.delTag("sim"), unavailable);
 		await rejects(backend.listLocks(), unavailable);
 		strictEqual(existsSync(missing), false);
+	});
+
+	it("retries S3 requests dropped on a stale keep-alive socket on a fresh connection", async (t) => {
+		const dir = mkdtempSync(join(tmpdir(), "store-s3-retry-"));
+		const payload = Buffer.from("staged file payload\n");
+		const file = join(dir, "payload.bin");
+		writeFileSync(file, payload);
+		const sha256 = createHash("sha256").update(payload).digest("hex");
+		let attempts = 0;
+		let drops = 2;
+		const server = http.createServer((req, res) => {
+			attempts++;
+			const chunks: Buffer[] = [];
+			req.on("data", (chunk: Buffer) => chunks.push(chunk));
+			req.on("end", () => {
+				if (req.method === "PUT" && drops > 0) {
+					drops--;
+					req.socket.destroy();
+					return;
+				}
+				res.writeHead(200, { Date: new Date().toUTCString() });
+				res.end(`${req.method}:${Buffer.concat(chunks).length}`);
+			});
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		t.after(() => {
+			server.close();
+			rmSync(dir, { recursive: true, force: true });
+		});
+		const { port } = server.address() as AddressInfo;
+		const client = new S3Client({
+			endpoint: `http://127.0.0.1:${port}`,
+			region: "us-east-1",
+			bucket: "b",
+			accessKeyId: "k",
+			secretAccessKey: "s",
+			pathStyle: true,
+		});
+		const bufRes = await client.send("PUT", "k1", { headers: { "if-none-match": "*" }, body: Buffer.from("hello") });
+		strictEqual(bufRes.status, 200);
+		strictEqual(await bufRes.text(), "PUT:5");
+		const fileRes = await client.send("PUT", "k2", {
+			headers: { "if-none-match": "*" },
+			body: { file, bytes: payload.length, sha256 },
+		});
+		strictEqual(fileRes.status, 200);
+		strictEqual(await fileRes.text(), `PUT:${payload.length}`);
+		strictEqual(attempts, 4);
 	});
 });

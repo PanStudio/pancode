@@ -248,7 +248,7 @@ export class LogMachine {
 				throw error;
 			});
 			await this.qualified;
-			const started = Date.now();
+			const started = performance.now();
 			let late = false;
 			for (let attempt = 0; ; attempt++) {
 				const tip = await this.tip();
@@ -267,7 +267,7 @@ export class LogMachine {
 				const claim = await this.medium.claimProposal(slot, proposal.id, JSON.stringify(proposal));
 				if (!claim.won) {
 					// Past the wait the plan is still rebuilt once, so a writer that stalled meets the new tip's own refusal.
-					if (Date.now() - started > COMMIT_WAIT_MS) {
+					if (performance.now() - started > COMMIT_WAIT_MS) {
 						if (late)
 							throw new StoreRefusal(
 								"unavailable",

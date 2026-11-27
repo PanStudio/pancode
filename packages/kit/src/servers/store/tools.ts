@@ -81,6 +81,7 @@ async function openStore(tool: string, forWrite: boolean): Promise<Opened> {
 		const project = {
 			cacheDir: config.cacheDir,
 			projectKey: config.projectKey,
+			...(config.projectId !== undefined ? { projectId: config.projectId } : {}),
 			projectRoot: config.projectRoot,
 		};
 		const backend = config.shared

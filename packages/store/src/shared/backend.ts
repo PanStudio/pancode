@@ -172,7 +172,7 @@ function sharedMedium(root: string): LogMedium {
 			} catch (error) {
 				if (errnoOf(error) !== "EEXIST") throw error;
 				// NFS answers a retried LINK whose first try made the name with EEXIST: the bytes tell.
-				return (await readOrNull(target)) === text;
+				if ((await readOrNull(target)) !== text) return false;
 			}
 			await syncDir(path.dirname(target));
 			return true;

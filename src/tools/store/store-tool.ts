@@ -28,7 +28,6 @@ import {
 	type StoreBlobStat,
 	StoreRefusal,
 	type StoreTagClass,
-	withStoreLock,
 } from "../../domains/store/index.js";
 import { buildPutRecord, putHashObservation } from "../../domains/store/provenance.js";
 import { STORE_OBSERVATION_SELF_CAP_BYTES } from "../gateway/caps.js";
@@ -305,7 +304,7 @@ async function runOp(
 		if (typeof tagClass !== "string" || !TAG_CLASSES.has(tagClass)) {
 			throw new StoreRefusal("invalid-name", `class must be one of ${[...TAG_CLASSES].join(", ")}.`);
 		}
-		const created = await withStoreLock(cwd, `tag\0${tag}`, async () => {
+		const created = await backend.withLock(`tag\0${tag}`, async () => {
 			const result = await backend.getOrCreateTag(tag, { class: tagClass as StoreTagClass });
 			// A create that crashed after the tag existed left it without attributes; the next create completes it.
 			const present = result.created ? {} : await backend.getTagXattrs(tag);

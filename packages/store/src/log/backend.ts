@@ -310,7 +310,7 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 
 	/** Take the lease for `key`, waiting while another writer renews it; answers the epoch granted. */
 	async function acquire(lease: string, key: string): Promise<number> {
-		const started = Date.now();
+		const started = performance.now();
 		for (;;) {
 			const tip = await machine.tip();
 			const current = tip.root.leases[lease];
@@ -324,7 +324,7 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 				if (decision?.accepted) return decision.slot;
 				if (decision?.reason !== "held") throw new StoreRefusal("io", `The store's log refused the lock for ${key}.`);
 			}
-			if (Date.now() - started > LOCK_WAIT_MS) {
+			if (performance.now() - started > LOCK_WAIT_MS) {
 				const holder = (await machine.tip()).root.leases[lease];
 				if (holder !== undefined) throw holderRefusal(key, holder);
 			}
@@ -369,7 +369,12 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 				await renewing;
 				if (!held.lost)
 					await machine
-						.commit(async () => ({ ops: [{ op: "release", lease, epoch: held.epoch }], held: [] }))
+						.commit(async (tip) => {
+							const current = tip.root.leases[lease];
+							if (current === undefined || current.epoch !== held.epoch || current.owner.token !== machine.owner.token)
+								return null;
+							return { ops: [{ op: "release", lease, epoch: held.epoch }], held: [] };
+						})
 						.catch(() => undefined);
 			}
 		});
@@ -678,7 +683,7 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 				const garbage: Array<{ kind: "page" | "payload"; id: string; bytes: number }> = [];
 				// Anything written since the tip was decided may belong to a change still being built.
 				for await (const item of medium.listStored()) {
-					if (item.modifiedMs >= tip.decidedAt) continue;
+					if (!Number.isFinite(item.modifiedMs) || item.modifiedMs >= tip.decidedAt) continue;
 					if (item.kind === "page" ? pages.has(item.id) : payloads.has(item.id)) continue;
 					garbage.push(item);
 				}
@@ -722,16 +727,22 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 				checkLockId(id);
 				const found = (await projectLeases()).find((entry) => entry.id === id);
 				if (found === undefined) throw new StoreRefusal("not-found", `No store lock ${id} in this project.`);
-				const decision = await machine.commit(async () => ({
-					ops: [{ op: "break", lease: found.name, epoch: found.lease.epoch }],
-					held: [],
-				}));
+				let target = found.lease;
+				const decision = await machine.commit(async (tip) => {
+					const current = tip.root.leases[found.name];
+					if (current === undefined) throw new StoreRefusal("not-found", `No store lock ${id} in this project.`);
+					target = current;
+					return {
+						ops: [{ op: "break", lease: found.name, epoch: current.epoch }],
+						held: [],
+					};
+				});
 				if (decision !== null && !decision.accepted)
 					throw new StoreRefusal(
 						"unavailable",
-						`Store lock ${id} is held by pid ${found.lease.owner.pid} on ${found.lease.owner.host} with a live lease; it is not broken while its writer runs.`,
+						`Store lock ${id} is held by pid ${target.owner.pid} on ${target.owner.host} with a live lease; it is not broken while its writer runs.`,
 					);
-				return lockInfo(id, found.lease, decision?.witness.lo ?? found.lease.deadline);
+				return lockInfo(id, target, decision?.witness.lo ?? target.deadline);
 			}),
 
 		usage: (tag) =>

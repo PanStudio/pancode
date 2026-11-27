@@ -218,7 +218,8 @@ function s3Medium(client: S3Client, base: string): LogMedium {
 		},
 
 		async putPage(id, text) {
-			await create(pageKey(id), text, `page ${id}`, (existing) => existing === text);
+			const made = await create(pageKey(id), text, `page ${id}`, (existing) => existing === text);
+			if (!made.made) throw new StoreRefusal("io", `Page ${id} already exists with different bytes.`);
 		},
 
 		async getPage(id) {
@@ -247,6 +248,22 @@ function s3Medium(client: S3Client, base: string): LogMedium {
 			} catch (error) {
 				if (options.signal?.aborted) throw aborted();
 				throw error;
+			}
+			if (response.status === 412) {
+				// A retry after the server accepted our unique signed PUT answers 412: confirm our size landed.
+				await discard(response);
+				const head = await client.send(
+					"HEAD",
+					objectKey(id),
+					options.signal !== undefined ? { signal: options.signal } : {},
+				);
+				await discard(head);
+				if (head.status === 200 && Number(head.headers.get("content-length")) === info.size)
+					return { id, bytes: info.size, sha256, link: "copy" };
+				throw new StoreRefusal(
+					"io",
+					`S3 refused staging ${source} (unexpected existing object at ${client.location(objectKey(id))}).`,
+				);
 			}
 			if (response.status !== 200) throw await client.refusal(response, `staging ${source}`);
 			await discard(response);

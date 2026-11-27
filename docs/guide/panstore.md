@@ -2,7 +2,7 @@
 
 PanStore is PanCode's project store: it keeps files as blobs in named tags outside the working tree, with a record of who put each one, from where and with which hash.
 
-The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), `createSharedStoreBackend` in the same file for a store in a folder several hosts mount ([Storing in a shared folder](#storing-in-a-shared-folder)), or `createS3StoreBackend` in [s3/backend.ts](../../packages/store/src/s3/backend.ts) for a store in an S3 bucket ([Storing in an S3 bucket](#storing-in-an-s3-bucket)), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
+The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), `createSharedStoreBackend` in [shared/backend.ts](../../packages/store/src/shared/backend.ts) for a store in a folder several hosts mount ([Storing in a shared folder](#storing-in-a-shared-folder)), or `createS3StoreBackend` in [s3/backend.ts](../../packages/store/src/s3/backend.ts) for a store in an S3 bucket ([Storing in an S3 bucket](#storing-in-an-s3-bucket)), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
 
 Its code is the private workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
 
