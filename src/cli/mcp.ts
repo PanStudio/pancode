@@ -115,6 +115,10 @@ JSON responses (--json):
     reason}]} or {reason} when none could be listed. approval is approved,
     unapproved or changed for this project. Listing reads no skill file and
     records the listing that dispatch admission reads.
+    A server that offers the io.modelcontextprotocol/events extension also
+    carries events: [{name, description, delivery, arguments}],
+    eventsTruncated when the listing stopped at PanCode's cap, or
+    eventsFailure when events/list failed; text prints one event line each.
     The supported seam for external integration checks; nothing outside
     PanCode needs to import its source.
   trust: {ok: true, record: {projectRoot, id, digest, actionClass, trustedAt, network?,
