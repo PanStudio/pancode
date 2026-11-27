@@ -144,18 +144,11 @@ async function readLockSeen(file: string): Promise<SeenLock | null> {
 
 /**
  * The time now by the clock of the file system `dir` is on: the modification time of a file written there and
- * removed. A file server sets that time itself, so hosts whose clocks differ judge a lease alike. This host's
- * clock when `dir` cannot be written.
+ * removed. A file server sets that time itself, so hosts whose clocks differ judge a lease alike.
  */
 async function storeNow(dir: string): Promise<number> {
 	const probe = path.join(dir, `.clock.${process.pid}.${randomBytes(6).toString("hex")}`);
-	let handle: FileHandle;
-	try {
-		handle = await open(probe, "wx", 0o600);
-	} catch {
-		// A locks directory this process cannot write to: only this host's clock is left to judge by.
-		return Date.now();
-	}
+	const handle = await open(probe, "wx", 0o600);
 	try {
 		await handle.write("t");
 		await handle.datasync();
@@ -186,15 +179,8 @@ function infoOf(id: string, file: string, seen: SeenLock, judge: Judge): StoreLo
 	};
 }
 
-/**
- * Remove the lock at `file` only while it is still the file `expected` saw,
- * unrenewed. A verdict reached without holding anything can be out of date by
- * the time it acts: another breaker may already have replaced the lock with
- * its own, or its holder renewed it. So breakers take turns through an O_EXCL
- * `.break` file and compare the lock again while they hold it. A `.break` file
- * left by a breaker that died is cleared after BREAK_STALE_MS.
- */
-async function removeIfUnchanged(file: string, expected: SeenLock, now: number): Promise<boolean> {
+/** Serialize a break with other breaks and shared-owner changes; null means another turn is in progress. */
+async function withLockTurn(file: string, now: number, change: () => Promise<boolean>): Promise<boolean | null> {
 	const breaker = `${file}.break`;
 	try {
 		await (await open(breaker, "wx", 0o600)).close();
@@ -205,17 +191,25 @@ async function removeIfUnchanged(file: string, expected: SeenLock, now: number):
 		} catch (statError) {
 			if (errnoOf(statError) !== "ENOENT") throw statError;
 		}
-		return false;
+		return null;
 	}
 	try {
-		const now = await readLockSeen(file);
-		if (now === null || now.text !== expected.text || now.ino !== expected.ino || now.mtimeMs !== expected.mtimeMs)
-			return false;
-		await rm(file, { force: true });
-		return true;
+		return await change();
 	} finally {
 		await rm(breaker, { force: true });
 	}
+}
+
+async function removeIfUnchanged(file: string, expected: SeenLock, now: number): Promise<boolean> {
+	return (
+		(await withLockTurn(file, now, async () => {
+			const seen = await readLockSeen(file);
+			if (seen === null || seen.text !== expected.text || seen.ino !== expected.ino || seen.mtimeMs !== expected.mtimeMs)
+				return false;
+			await rm(file, { force: true });
+			return true;
+		})) === true
+	);
 }
 
 /** The id of the lock for `key`: the file name under the project's locks directory, without `.lock`. */
@@ -285,7 +279,7 @@ async function acquire(file: string, key: string, waitMs: number, lease: boolean
 		await handle.writeFile(body);
 		await handle.sync();
 		const ino = (await handle.stat()).ino;
-		const deadline = Date.now() + waitMs;
+		const deadline = performance.now() + waitMs;
 		for (;;) {
 			try {
 				await link(temp, file);
@@ -303,7 +297,7 @@ async function acquire(file: string, key: string, waitMs: number, lease: boolean
 			const judge = await judgeFor(path.dirname(file), lease);
 			const info = infoOf(id, file, seen, judge);
 			if (info.state === "dead" && (await removeIfUnchanged(file, seen, judge.lease ? judge.now : Date.now()))) continue;
-			if (Date.now() >= deadline) throw holderRefusal(key, info, lease);
+			if (performance.now() >= deadline) throw holderRefusal(key, info, lease);
 			await new Promise((resolve) => setTimeout(resolve, lease ? LEASE_POLL_MS : LOCK_POLL_MS));
 		}
 	} finally {
@@ -318,18 +312,27 @@ async function stillHeld(file: string, held: HeldLock): Promise<boolean> {
 	return seen !== null && seen.ino === held.ino && parseOwner(seen.text)?.token === held.token;
 }
 
-/** Rewrite the lease's own bytes so the file server stamps it renewed; false once it is not this writer's. */
-async function renewLease(file: string, held: HeldLock): Promise<boolean> {
-	if (!(await stillHeld(file, held))) return false;
-	try {
-		await held.handle.write(held.body, 0, "utf8");
-		await held.handle.datasync();
-	} catch (error) {
-		// The file was removed under an open handle on another host: the lease is gone.
-		if (errnoOf(error) === "ESTALE") return false;
-		throw error;
+/** The breaker and owner take the same turn before changing the current lease. An expired owner cannot revive it. */
+async function changeHeldLease(file: string, held: HeldLock, release: boolean): Promise<boolean> {
+	const dir = path.dirname(file);
+	const deadline = performance.now() + LOCK_WAIT_MS;
+	for (;;) {
+		const changed = await withLockTurn(file, await storeNow(dir), async () => {
+			const seen = await readLockSeen(file);
+			if (seen === null || seen.ino !== held.ino || seen.text !== held.body) return false;
+			if ((await storeNow(dir)) - seen.mtimeMs > STORE_LEASE_EXPIRY_MS) return false;
+			if (release) await rm(file);
+			else {
+				await held.handle.write(held.body, 0, "utf8");
+				await held.handle.datasync();
+			}
+			return true;
+		});
+		if (changed !== null) return changed;
+		if (performance.now() >= deadline)
+			throw new StoreRefusal("unavailable", `Timed out waiting to update lease ${file}.`);
+		await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
 	}
-	return stillHeld(file, held);
 }
 
 async function release(file: string, held: HeldLock): Promise<void> {
@@ -374,7 +377,16 @@ export async function withStoreLock<T>(
 		}
 	}
 	try {
-		return await withLease(key, { renew: () => renewLease(file, held), release: () => release(file, held) }, fn);
+		return await withLease(
+			key,
+			{
+				renew: () => changeHeldLease(file, held, false),
+				release: async () => {
+					await changeHeldLease(file, held, true);
+				},
+			},
+			fn,
+		);
 	} finally {
 		await held.handle.close();
 	}

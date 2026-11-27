@@ -82,6 +82,25 @@ describe("store locks", () => {
 		strictEqual(existsSync(rebooted), false);
 	});
 
+	it("does not revive an expired shared lease to publish a blob", async () => {
+		const dir = project();
+		const key = "0123456789abcdef";
+		const backend = createSharedStoreBackend({ root: dir, cacheDir: dir, projectKey: key, projectRoot: dir });
+		await backend.getOrCreateTag("t");
+		const source = join(dir, "source");
+		writeFileSync(source, "pending");
+		const file = join(storeLocksDir(join(dir, "projects", key)), `${storeLockId("write")}.lock`);
+		await rejects(
+			backend.withLock("write", async () => {
+				const expired = new Date(Date.now() - 120_000);
+				utimesSync(file, expired, expired);
+				await backend.putBlobFromFile("t", "b", source);
+			}),
+			/lost while it was held/u,
+		);
+		strictEqual(await backend.statBlob("t", "b"), null);
+	});
+
 	it("refuses shared backend calls on a missing folder without creating it", async () => {
 		const scratch = mkdtempSync(join(tmpdir(), "store-shared-missing-"));
 		const missing = join(scratch, "unmounted");
