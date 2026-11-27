@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * The recorded put and remove: the one sequence every host uses to change a blob. Each holds the blob's lock
- * across the change and its record, so no other writer's change lands between them.
+ * across the change and its record, so no other writer's change lands between them. A backend that keeps a
+ * fenced change log publishes the change and its record in one transition instead.
  */
 import type { StoreBackend } from "./backend/backend.js";
 import { type StoreBlobPut, type StorePutMode, StoreRefusal } from "./backend/types.js";
@@ -64,6 +65,35 @@ function reasonOf(error: unknown): string {
  */
 export async function recordedPut(backend: StoreBackend, options: RecordedPutOptions): Promise<RecordedPutResult> {
 	const { tag, blob } = options;
+	const body = async (put: StoreBlobPut): Promise<StoreRecordBody> => {
+		const fields = typeof options.record === "function" ? await options.record(put) : (options.record ?? {});
+		return {
+			kind: "put",
+			tag,
+			blob,
+			identity: fields.identity ?? { bytes: put.bytes, modifiedMs: put.modifiedMs, sha256: put.sha256 },
+			receipt: fields.receipt ?? { backend: backend.kind, key: put.key, version: put.version },
+			...(fields.source !== undefined ? { source: fields.source } : {}),
+			producedBy: options.actor,
+			...(fields.generatedBy !== undefined ? { generatedBy: fields.generatedBy } : {}),
+			...(fields.used !== undefined ? { used: fields.used } : {}),
+			...(fields.note !== undefined ? { note: fields.note } : {}),
+			...(fields.labels !== undefined ? { labels: fields.labels } : {}),
+		};
+	};
+	if (backend.log !== undefined) {
+		// One transition publishes the bytes and their record; a record that cannot be built refuses the put.
+		const result = await backend.log.recordedPut({
+			tag,
+			blob,
+			source: options.source,
+			record: body,
+			...(options.mode !== undefined ? { mode: options.mode } : {}),
+			...(options.ifAbsent ? { ifAbsent: true } : {}),
+			...(options.signal !== undefined ? { signal: options.signal } : {}),
+		});
+		return { stored: true, put: result.put, replaced: result.replaced, recorded: true, record: result.record };
+	}
 	return backend.withLock(storeBlobLockKey(tag, blob), async (): Promise<RecordedPutResult> => {
 		const replaced = (await backend.statBlob(tag, blob)) !== null;
 		if (replaced && options.ifAbsent)
@@ -75,21 +105,7 @@ export async function recordedPut(backend: StoreBackend, options: RecordedPutOpt
 		// From here the bytes are in the store. The record names what this put streamed; the blob is never
 		// re-read, as a later writer may own its name by then.
 		try {
-			const fields = typeof options.record === "function" ? await options.record(put) : (options.record ?? {});
-			const body: StoreRecordBody = {
-				kind: "put",
-				tag,
-				blob,
-				identity: fields.identity ?? { bytes: put.bytes, modifiedMs: put.modifiedMs, sha256: put.sha256 },
-				receipt: fields.receipt ?? { backend: backend.kind, key: put.key, version: put.version },
-				...(fields.source !== undefined ? { source: fields.source } : {}),
-				producedBy: options.actor,
-				...(fields.generatedBy !== undefined ? { generatedBy: fields.generatedBy } : {}),
-				...(fields.used !== undefined ? { used: fields.used } : {}),
-				...(fields.note !== undefined ? { note: fields.note } : {}),
-				...(fields.labels !== undefined ? { labels: fields.labels } : {}),
-			};
-			return { stored: true, put, replaced, recorded: true, record: await appendRecord(backend, body) };
+			return { stored: true, put, replaced, recorded: true, record: await appendRecord(backend, await body(put)) };
 		} catch (error) {
 			return { stored: true, put, replaced, recorded: false, reason: reasonOf(error) };
 		}
@@ -106,6 +122,20 @@ export async function recordedRemove(
 	options: { tag: string; blob: string; actor: StoreRecordProducer },
 ): Promise<RecordedRemoveResult> {
 	const { tag, blob } = options;
+	if (backend.log !== undefined) {
+		const record = await backend.log.recordedRemove({
+			tag,
+			blob,
+			body: (last) => ({
+				kind: "remove",
+				tag,
+				blob,
+				producedBy: options.actor,
+				...(last?.identity !== undefined ? { identity: last.identity } : {}),
+			}),
+		});
+		return { removed: true, recorded: true, record };
+	}
 	return backend.withLock(storeBlobLockKey(tag, blob), async (): Promise<RecordedRemoveResult> => {
 		const last = currentState((await readBlobHistory(backend, tag, blob)).records).put;
 		if (!(await backend.delBlob(tag, blob))) {

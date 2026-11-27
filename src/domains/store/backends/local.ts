@@ -15,6 +15,7 @@ import {
 } from "../../../core/store-paths.js";
 import { pancodeCachePath, pancodeDataDir } from "../../../core/xdg.js";
 import { withFileMutationQueue } from "../../../tools/file-mutation-queue.js";
+import { invalidatingTagList } from "../workspace-signal.js";
 
 function projectOptions(cwd: string) {
 	const projectRoot = storeProjectRoot(cwd);
@@ -24,7 +25,6 @@ function projectOptions(cwd: string) {
 		projectKey: storeProjectKeyFor(projectRoot),
 		...(projectId !== undefined ? { projectId } : {}),
 		projectRoot,
-		serialize: withFileMutationQueue,
 	};
 }
 
@@ -38,10 +38,14 @@ export function createLocalStoreBackend(cwd: string): StoreBackend {
 		prepareRoot: () => {
 			pancodeDataDir();
 		},
+		serialize: withFileMutationQueue,
 	});
 }
 
-/** The shared backend for the project `cwd` belongs to: plain files in the folder `store.shared` names. */
+/** The shared backend for the project `cwd` belongs to: the fenced log in the folder `store.shared` names. */
 export function createSharedStoreBackend(cwd: string): StoreBackend {
-	return createPackageSharedBackend({ root: (storeRootSpecs()[0] as StoreRootSpec).path, ...projectOptions(cwd) });
+	return invalidatingTagList(
+		cwd,
+		createPackageSharedBackend({ root: (storeRootSpecs()[0] as StoreRootSpec).path, ...projectOptions(cwd) }),
+	);
 }

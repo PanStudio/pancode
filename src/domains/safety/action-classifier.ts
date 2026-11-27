@@ -7,7 +7,13 @@ import { artifactDefaultPath } from "../../core/artifact-paths.js";
 import { canonicalizeExistingPath, canonicalizePath, canonicalizeRawPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant, isStrictDescendant } from "../../core/path-containment.js";
 import { shellQuote } from "../../core/shell-quote.js";
-import { storeReadRoots, storeReplacedBytes, storeS3WriteTarget, storeWriteTarget } from "../../core/store-paths.js";
+import {
+	storeBackendKind,
+	storeReadRoots,
+	storeReplacedBytes,
+	storeS3WriteTarget,
+	storeWriteTarget,
+} from "../../core/store-paths.js";
 import { isHarnessExtensionToolName, ToolNames } from "../../core/tool-names.js";
 import { resolvePancodeDirs } from "../../core/xdg.js";
 import { expandPath, normalizeToolPath, runScriptCwd } from "../../tools/path-utils.js";
@@ -1279,16 +1285,18 @@ function classifyStore(args: Record<string, unknown> | undefined): Classificatio
 	}
 	let target: string | null = null;
 	let reasonTarget: string | null = null;
+	let local = false;
 	try {
 		target = storeWriteTarget(process.cwd(), args);
 		reasonTarget = target ?? storeS3WriteTarget(process.cwd(), args);
+		local = storeBackendKind() === "local";
 	} catch {
 		// An unresolvable PanCode home names no target; the tool refuses the call too.
 	}
 	// The local backend keeps no blob versions and no snapshot covers the store, so a put over an
 	// existing blob destroys its bytes like remove does and is admitted like remove. Another backend's
 	// blob is stat before admission and marked on the arguments.
-	if (op === "put" && (storeReplacedBytes(args) !== null || (target !== null && isRegularFile(target)))) {
+	if (op === "put" && (storeReplacedBytes(args) !== null || (local && target !== null && isRegularFile(target)))) {
 		const blob = typeof args?.blob === "string" && args.blob.length > 0 ? args.blob : path.basename(String(sourceArg));
 		return { actionClass: "destructive", reasons: [`store-replace: ${String(args?.tag)}:${blob}`] };
 	}

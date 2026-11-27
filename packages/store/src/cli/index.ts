@@ -20,12 +20,13 @@ import {
 import { safeResourceWriteAsync } from "../durable-write.js";
 import { readStoreRootId } from "../identity.js";
 import { openStoreIndex, type StoreIndex } from "../index-db/index.js";
-import { createLocalStoreBackend, createSharedStoreBackend } from "../local.js";
+import { createLocalStoreBackend } from "../local.js";
 import {
 	recordsTag,
 	STORE_PUT_TAG_CLASS,
 	type StorePlacementRules,
 	type StoreRootSpec,
+	sharedStagingDir,
 	storeProjectDir,
 	storeProjectKey,
 	storeRootOption,
@@ -41,6 +42,7 @@ import {
 	type StoreRecordProducer,
 	summarizeRecords,
 } from "../records.js";
+import { createSharedStoreBackend } from "../shared/backend.js";
 import { allStoreBlobs, type StoreVerifyResult, verifyStoreTag } from "../verify.js";
 
 /** What a `put` hands the host's provenance finder: the stored bytes and where they came from. */
@@ -60,7 +62,7 @@ export interface StoreCliContext {
 	cwd: string;
 	/** The local roots, the first the primary; empty for a backend that keeps no store on a local path. */
 	roots: ReadonlyArray<StoreRootSpec>;
-	/** The one root is a folder several hosts share, whose locks are leases (`createSharedStoreBackend`). */
+	/** The one root is a folder several hosts share, holding one change log for its projects (`createSharedStoreBackend`). */
 	shared?: boolean;
 	placement?: StorePlacementRules;
 	cacheDir: string;
@@ -100,6 +102,7 @@ const VERBS = [
 	"where",
 	"usage",
 	"locks",
+	"reclaim",
 ];
 
 export function storeCliHelp(command: string): string {
@@ -123,6 +126,7 @@ Commands:
   ${command} usage [tag] [--json]
   ${command} locks [--json]
   ${command} locks break <id> --yes [--json]
+  ${command} reclaim [--yes] [--json]
 
 pattern is a regular expression matched against the whole blob name.
 verify compares each recorded blob's size and mtime with its record, and its
@@ -139,7 +143,8 @@ rm and rm-tag without --yes delete nothing, print what they would delete and
 exit 0; a missing tag or blob exits 1.
 adopt without a key lists store directories whose project root no longer
 exists and that carry no project id; with a key it moves that store to this
-project, refusing when this project already has one. It needs local roots.
+project, refusing when this project already has one. On a shared store it
+lists and moves the projects in the folder's log. It is refused on s3.
 where prints the store's locations, each root's id and the pankit command
 line that serves the store over MCP from any directory. A project id keys the store by that id instead of the
 main checkout's path; where then names a store left under the path key, which
@@ -148,10 +153,17 @@ server.
 locks lists the project's store locks with each holder's key, pid, host and
 time, and its state: live (this host, pid alive, same boot), dead (this host,
 pid gone or another boot), remote (another host) or unreadable. On a shared or
-s3 store a lock is a lease: live while renewed within 60 s, dead after. A writer takes
+s3 store a lock is a lease in the store's log: live while renewed within 60 s
+by the store's clock, dead after, and a change made under a lease another
+writer took over is refused. A writer takes
 over only a dead lock; locks break removes any lock that is not live, and
 without --yes prints what it would remove and exits 0. It never touches a blob
 or a record.
+reclaim, on a shared or s3 store, deletes the pages and blob bytes no project
+in the store's log names any more: those left by removed blobs, replaced
+pages and interrupted puts. It is refused while any lock is held, so run it
+when no writer is using the store; without --yes it prints what it would
+delete and exits 0.
 Exit codes: 0 success; 1 operational failure or verify not ok; 2 invalid usage.
 `;
 }
@@ -180,10 +192,10 @@ const NO_INDEX: StoreIndex = { tags: async () => null, blobs: async () => null, 
 /**
  * The host-local index over the store `context` names, for listing and history display only (N8). Each answer is
  * null when the index cannot give it, and the verb then scans the store as before. Its freshness is a stat of the
- * local roots, so only a store kept in directories is indexed.
+ * local roots, so another kind of backend is never indexed.
  */
 function storeIndex(context: StoreCliContext, backend: StoreBackend): StoreIndex {
-	if (backend.kind !== "local" && backend.kind !== "shared") return NO_INDEX;
+	if (backend.kind !== "local") return NO_INDEX;
 	return openStoreIndex({ backend, roots: context.roots, cacheDir: context.cacheDir, projectKey: context.projectKey });
 }
 
@@ -553,6 +565,7 @@ async function exists(target: string): Promise<boolean> {
  */
 export async function storeCliAdopt(context: StoreCliContext, key?: string) {
 	await needsLocalRoots(context, "adopt", "Move blobs between stores with get and put.");
+	if (context.shared === true) return sharedAdopt(context, key);
 	const root = context.projectRoot;
 	const storeRoot = primaryRoot(context);
 	const currentKey = context.projectKey;
@@ -599,6 +612,44 @@ export async function storeCliAdopt(context: StoreCliContext, key?: string) {
 	};
 }
 
+/** adopt on a shared folder: its projects are bindings in the folder's log, moved in one transition. */
+async function sharedAdopt(context: StoreCliContext, key?: string) {
+	const backend = await open(context);
+	if (backend.log === undefined)
+		throw new StoreRefusal("unavailable", `The ${backend.kind} backend keeps no change log.`);
+	const storeRoot = primaryRoot(context);
+	const currentKey = context.projectKey;
+	if (key === undefined) {
+		const orphans = [];
+		for (const entry of await backend.log.projects()) {
+			if (entry.key === currentKey || entry.projectId !== null) continue;
+			if (!(await exists(entry.root))) orphans.push({ key: entry.key, root: entry.root, dir: storeRoot });
+		}
+		return { adopted: false as const, project: { key: currentKey, root: context.projectRoot }, orphans };
+	}
+	if (!/^[0-9a-f]{16}$/u.test(key)) {
+		throw new StoreCliUsageError(`'${key}' is not a store project key (16 hex digits)`);
+	}
+	if (key === currentKey) throw new StoreRefusal("exists", `${key} is already this project's store.`);
+	const moved = await backend.log.adopt(key);
+	return {
+		adopted: true as const,
+		from: { ...moved.from, dir: storeRoot },
+		to: { ...moved.to, dir: storeRoot },
+	};
+}
+
+/** Pages and blob bytes no project in a log-kept store names any more; deleted with `apply`. */
+export async function storeCliReclaim(context: StoreCliContext, apply: boolean) {
+	const backend = await open(context);
+	if (backend.log === undefined)
+		throw new StoreRefusal(
+			"unavailable",
+			`reclaim is for a shared or s3 store; the ${backend.kind} backend deletes a blob's bytes when it removes it.`,
+		);
+	return { location: backend.location, ...(await backend.log.reclaim(apply)) };
+}
+
 function shellWord(word: string): string {
 	return /^[A-Za-z0-9_@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 }
@@ -625,18 +676,23 @@ export async function storeCliWhere(context: StoreCliContext) {
 	for (const root of context.roots)
 		roots.push({ name: root.name, path: root.path, id: await readStoreRootId(root.path) });
 	const pathKey = storeProjectKey(context.projectRoot);
+	const pathKeyStored = async () => {
+		if (context.shared !== true) return exists(storeProjectDir(storeRoot, pathKey));
+		const log = (await open(context)).log;
+		return log !== undefined && (await log.projects()).some((entry) => entry.key === pathKey);
+	};
 	const previousKey =
-		context.projectId !== undefined &&
-		pathKey !== context.projectKey &&
-		(await exists(storeProjectDir(storeRoot, pathKey)))
-			? pathKey
-			: null;
+		context.projectId !== undefined && pathKey !== context.projectKey && (await pathKeyStored()) ? pathKey : null;
 	return {
 		storeRoot,
 		projectRoot: context.projectRoot,
 		projectId: context.projectId ?? null,
 		projectKey: context.projectKey,
-		projectDir: storeProjectDir(storeRoot, context.projectKey),
+		// A shared folder keeps the project in its log; the directory is where workers stage what they put.
+		projectDir:
+			context.shared === true
+				? sharedStagingDir(storeRoot, context.projectKey)
+				: storeProjectDir(storeRoot, context.projectKey),
 		...(previousKey !== null ? { previousKey } : {}),
 		roots,
 		storeServer: storeServerInvocation(context),
@@ -900,7 +956,9 @@ async function execute(
 			const text = [
 				`from ${data.from.key}  ${data.from.root ?? "(unknown root)"}`,
 				`to   ${data.to.key}  ${data.to.root}`,
-				`Moved ${data.from.dir} to ${data.to.dir}.`,
+				context.shared === true
+					? `Moved the store under ${data.from.key} to ${data.to.key} in ${data.to.dir}.`
+					: `Moved ${data.from.dir} to ${data.to.dir}.`,
 			].join("\n");
 			return { code: 0, data, text };
 		}
@@ -955,6 +1013,14 @@ async function execute(
 			}
 			const data = { ...lockView(await backend.breakLock(second)), broken: true };
 			return { code: 0, data, text: `Removed ${what}.` };
+		}
+		case "reclaim": {
+			if (first !== undefined) throw new StoreCliUsageError(`reclaim takes no argument, not '${first}'`);
+			const apply = args.yes;
+			const data = await storeCliReclaim(context, apply);
+			const what = `${data.pages} page(s) and ${data.payloads} blob payload(s), ${bytesLabel(data.bytes)}, from ${data.location}`;
+			const text = apply ? `Deleted ${what}.` : `Would delete ${what}. Nothing deleted; rerun with --yes.`;
+			return { code: 0, data, text };
 		}
 		case "where": {
 			if (context.roots.length === 0) {

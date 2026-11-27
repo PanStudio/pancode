@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { StoreLog } from "../log/types.js";
 import type {
 	StoreBackendFacts,
 	StoreBackendKind,
@@ -19,6 +20,8 @@ export interface StoreBackend {
 	readonly kind: StoreBackendKind;
 	/** Where this project's store lives, as an operator names it: a directory, or an object store URL. */
 	readonly location: string;
+	/** Present on the kinds that keep a fenced change log: a recorded change is then one transition of it. */
+	readonly log?: StoreLog;
 	facts(): Promise<StoreBackendFacts>;
 	// Tags.
 	/**

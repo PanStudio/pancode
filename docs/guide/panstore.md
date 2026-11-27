@@ -32,6 +32,7 @@ Each command below runs as `pancode store <command>`. Changing the backend does 
 | `usage [tag]` | Count blobs and bytes per tag and per root by walking the store, with each root's file system free space. |
 | `locks` | List the project's store locks: each holder's key, pid, host and time, and its state (see [Locks](#locks)). |
 | `locks break <id> --yes` | Remove a lock that is not `live`. Without `--yes` it removes nothing, prints what it would remove and exits 0. It never touches a blob or a record. |
+| `reclaim [--yes]` | On a shared or s3 store, delete the pages and blob bytes that no project in the store's log names any more: those of removed or replaced blobs and of interrupted puts. Refused while any lock is held. Without `--yes` it deletes nothing, prints what it would delete and exits 0. |
 
 Every command takes `--json`. Exit codes: 0 success; 1 operational failure (a missing tag or blob, a refused write) or `verify` not ok; 2 invalid usage.
 
@@ -133,7 +134,7 @@ store:
 
 Each host lists the shared roots in its own `store.roots`; the mount paths may differ, since root ids match them. The primary must be shared as well, because it holds the records and the locks.
 
-A dispatch that grants tags to a worker on an SSH fleet node needs `store.projectId`; without one it is refused at admission, naming the setting. With one, the dispatcher refuses a root that is on a file system local to its host, and sends the worker the project key, the id of each root involved (the primary and the roots holding the granted tags) and each tag's directory relative to its root. Before it runs, the worker checks every name against its own configuration: its checkout must have the same project key, each root id must match exactly one of its roots, and each tag must resolve to the same directory. The grant also names the dispatcher's `store.backend`, and the worker refuses it unless its own is the same, because a `local` and a `shared` host take over locks by different rules. The first mismatch refuses the grant, so a worker whose store is not the dispatcher's writes nothing.
+A dispatch that grants tags to a worker on an SSH fleet node needs `store.projectId`; without one it is refused at admission, naming the setting. With one, the dispatcher refuses a root that is on a file system local to its host, and sends the worker the project key, the id of each root involved (the primary and the roots holding the granted tags) and each tag's directory relative to its root. Before it runs, the worker checks every name against its own configuration: its checkout must have the same project key, each root id must match exactly one of its roots, and each tag must resolve to the same directory. The grant also names the dispatcher's `store.backend`, and the worker refuses it unless its own is the same, because a `local` and a `shared` host take over locks by different rules. A shared grant also names the project's incarnation in the folder's log, and the worker refuses it when the project has been adopted or recreated since. The first mismatch refuses the grant, so a worker whose store is not the dispatcher's writes nothing.
 
 ## Storing in a shared folder
 
@@ -146,11 +147,15 @@ store:
     root: /mnt/lab/pancode-store
 ```
 
-With `shared`, `store.shared.root` is required (an absolute path; the mount path may differ between hosts) and `store.roots` and `store.placement` must be empty: the folder is the only root, laid out like a local root, and holds records, locks and every tag. The folder must exist; a host where it is missing refuses writes as `unavailable` instead of creating it locally, and `pancode doctor` shows it and its free space. Set `store.projectId` so checkouts at different paths reach one project directory ([Sharing a store across hosts](#sharing-a-store-across-hosts)). The backend reports `multiNode: true` and `sharedFs: true`.
+With `shared`, `store.shared.root` is required (an absolute path; the mount path may differ between hosts) and `store.roots` and `store.placement` must be empty: the folder is the only root and holds every project stored in it. The folder must exist; a host where it is missing refuses writes as `unavailable` instead of creating it locally, and `pancode doctor` shows it and its free space. Set `store.projectId` so checkouts at different paths reach one project directory ([Sharing a store across hosts](#sharing-a-store-across-hosts)). The backend reports `multiNode: true` and `sharedFs: true`.
 
-Locks are leases. The holder links its lock file into place and renews it every 10 seconds. A lease is `dead` after 60 seconds without renewal by the file server's clock, measured with a probe file, or when its holder process is gone on this host. A writer waits up to 30 seconds and can take over a dead lease from any host. Renewal, release and breaking use the same turn file. An expired holder cannot renew. The writer checks its lease before publishing a change, but the check and the file operation are separate: after a stalled writer resumes, verify the affected tag. `locks` lists leases as `live`, `dead` or `unreadable`, and `locks break` refuses a live one.
+The folder holds one change log for all its projects (`log/`), the pages that log's state is kept in (`pages/`), blob bytes (`objects/`) and `staging/<projectKey>/<tag>/`, where a granted worker or an MCP server writes a file before the host puts it; nothing in `staging/` is part of the store. Every change is a numbered slot of the log: a writer copies the bytes to a new file under `objects/`, then creates the slot's proposal and its decision, each a complete file linked into place once, so of two writers only one takes a slot. A put's record is built before the change is published, and the put is refused when it cannot be. Bytes under `objects/` are never rewritten: a replaced or removed blob's bytes stay until `reclaim` deletes them.
 
-Everything a local store does works on a shared one: `adopt`, `put --link`, the index, tag grants to a worker on an SSH node (whose host also sets `store.backend: shared`), store references and the PanKit `store` server, which PanCode launches with `--shared`.
+Locks are leases in the log. The holder renews its lease every 10 seconds. A lease not renewed for 60 seconds by the file server's clock, measured with a probe file, is `dead`, and a writer waits up to 30 seconds and can take it over from any host. Each change names the leases it was made under, and the decision rejects it when another writer has taken one over, so a writer that stalled past its lease publishes nothing, whether it resumes before or after its successor writes. A blob changed under another writer's lease is refused once the wait ends, naming the holder. `locks` lists leases as `live` or `dead`, and `locks break` refuses a live one.
+
+The folder must be on Linux, on a file system that links atomically: a local one, or NFS mounted with `lookupcache=positive` or `lookupcache=none`, so a host sees a name another host has just created. Anything else is refused as `unavailable` before the first write.
+
+Everything a local store does works on a shared one except the index: `adopt` (one change in the log), `put --link`, tag grants to a worker on an SSH node (whose host also sets `store.backend: shared`), store references and the PanKit `store` server, which PanCode launches with `--shared`.
 
 ## Storing in an S3 bucket
 
@@ -175,13 +180,9 @@ pancode store login     # prompts, or reads the key from stdin
 pancode store logout    # removes it
 ```
 
-`login` lists the bucket with the key before it keeps it in PanCode's credential store, so a wrong key or bucket is refused and nothing is stored. `pancode doctor` shows the bucket and whether a key is stored. The bucket's objects are `<prefix>projects/<key>/` per project, laid out like a local root, so hosts that use one bucket and prefix reach one store under the same project key; set `store.projectId` for checkouts at different paths ([Sharing a store across hosts](#sharing-a-store-across-hosts)). `where` prints the bucket location.
+`login` lists the bucket with the key before it keeps it in PanCode's credential store, so a wrong key or bucket is refused and nothing is stored. `pancode doctor` shows the bucket and whether a key is stored. The bucket's objects are `<prefix>projects/<key>/` per project, holding that project's change log, pages and blob bytes, so hosts that use one bucket and prefix reach one store under the same project key; set `store.projectId` for checkouts at different paths ([Sharing a store across hosts](#sharing-a-store-across-hosts)). `where` prints the bucket location.
 
-A put uploads the file in one request and a `get` downloads it into the store cache. A new blob, tag or record requires an absent key (`If-None-Match`). Replacing a blob requires the ETag seen before the upload (`If-Match`).
-
-Each lease is an object under the project's `locks/`. The holder renews it every 10 seconds. A lease not renewed for 60 seconds by the object store's clock is `dead`; a writer waits up to 30 seconds and can take over a dead lease from any host. Release and break conditionally replace the lease with an empty object, which the next holder reuses. `locks` omits released leases and `locks break` refuses a live one.
-
-The lease and the blob are separate objects, not a transaction. Losing a lease cancels an in-flight upload but cannot undo an accepted change. An ETag cannot distinguish rewrites of identical bytes, and some S3-compatible services ignore `If-Match` on a blob delete. Run `verify` on the tag after a stalled writer resumes.
+A put uploads the file in one request to a new object under `objects/`, and a `get` downloads it into the store cache. The change is then published as the shared folder's are: a proposal and a decision under `log/`, each created only when its key is absent (`If-None-Match`), so of two writers only one takes a slot, with leases, records and `reclaim` working the same way ([Storing in a shared folder](#storing-in-a-shared-folder)). The store's clock is the object store's `Date` header. A bucket that does not refuse an existing key on `If-None-Match`, or does not list keys in order, is refused as `unavailable` before the first write.
 
 An s3 store refuses, naming the limit:
 
@@ -199,7 +200,7 @@ There is no host-local index and no free-space figure; `put --link` copies.
 
 ## The model's `store` tool
 
-The model reaches the same store through the `store` tool. Its eight ops (`tags`, `create`, `list`, `stat`, `get`, `put`, `note` and `remove`) and the admission each one gets are in [tool-usage.md](tool-usage.md#store-keep-results-and-datasets-outside-the-working-tree). An S3 put admitted as a creation cannot replace an object: if the name is taken, submit the put again for replacement approval. `get` returns a path to a read-only copy that the model passes unchanged to `data`, `read`, `run_script` or an MCP tool.
+The model reaches the same store through the `store` tool. Its eight ops (`tags`, `create`, `list`, `stat`, `get`, `put`, `note` and `remove`) and the admission each one gets are in [tool-usage.md](tool-usage.md#store-keep-results-and-datasets-outside-the-working-tree). On a shared or s3 store, a put admitted as a creation cannot replace a blob: if the name is taken, submit the put again for replacement approval. `get` returns a path to a read-only copy that the model passes unchanged to `data`, `read`, `run_script` or an MCP tool.
 
 ## Workers and tags
 
@@ -216,7 +217,7 @@ To run several granted writers at once on the local node, check the worker limit
 An MCP server's declared path argument can name a blob instead of a file with the value `store:<tag>:<blob>` (`./store:a:b` is still a path). PanCode resolves it before the call, in [mcp-store-references.ts](../../src/tools/gateway/mcp-store-references.ts):
 
 - On a read argument the server receives the path of a read-only (0400) copy under the store cache.
-- On a write argument the server receives a hidden temporary file in the tag's directory. Its bytes are committed as the blob, with a put record by actor `mcp` naming the server, only when the call succeeded: no error result, no protocol error, no timeout or abort, and a regular file at the temporary path. Otherwise the temporary file is removed.
+- On a write argument the server receives a hidden temporary file in the tag's directory, or its staging directory on a shared store, where the write commits only a blob that does not exist yet. Its bytes are committed as the blob, with a put record by actor `mcp` naming the server, only when the call succeeded: no error result, no protocol error, no timeout or abort, and a regular file at the temporary path. Otherwise the temporary file is removed.
 
 Admission judges each reference as the `store` call it stands for, so a reference to a records tag or a malformed reference is refused, and a worker writes only the tags its dispatch granted.
 
@@ -228,6 +229,7 @@ The builtin PanKit `store` server is launched by PanCode with this session's roo
 - On a local store, a root on a network file system is reported as `sharedFs: unverified`, and the backend still reports `multiNode: false`; a shared store reports `multiNode: true`. Two Linux hosts writing one root have been tested over NFS 4.2 (hard mounts) only; the store does not check which network file system a root is on. A worker on an SSH node gets a tag grant only as described in [Sharing a store across hosts](#sharing-a-store-across-hosts).
 - On a local store, a `remote` or `unreadable` lock is never broken automatically: a host that crashed while writing blocks that blob or tag until an operator runs `locks break`.
 - PanStore keeps no blob versions and does no deduplication. A put replaces the blob's bytes; its records remain.
+- On a shared or s3 store, each change writes a new page listing every blob of its tag, so a change to a tag holding many blobs costs time and space in proportion to them, until `reclaim` deletes the old pages.
 - An s3 store refuses puts over 5 GiB, `adopt`, SSH tag grants, write store references and the PanKit `store` server ([Storing in an S3 bucket](#storing-in-an-s3-bucket)).
 - A tag grant is a permission, not a confinement, outside the parallel-batch case in [Workers and tags](#workers-and-tags).
 - The builtin `store` server's writes are limited to the tags it was started with, but its reads are not confined: it can read every tag of the project, whatever the session's grants.

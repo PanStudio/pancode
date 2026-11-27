@@ -230,8 +230,8 @@ async function statShape(
 /**
  * A put's admission arguments with STORE_REPLACES_ARG set to the existing blob's size when its blob
  * already exists, so the put is admitted as the replace it is and the safety judge can say what it
- * replaces. Any value the model sent is dropped; an unreachable backend sets nothing, and on a
- * bucket the put may then only create a new object.
+ * replaces. Any value the model sent is dropped; an unreachable backend sets nothing, and on an
+ * s3 or shared store the put may then only create a new blob.
  */
 export async function storeAdmissionFacts(
 	args: Record<string, unknown>,
@@ -256,7 +256,7 @@ export async function storeAdmissionFacts(
 		const existing = await backend.statBlob(tag, blob);
 		if (existing !== null) out[STORE_REPLACES_ARG] = existing.bytes;
 	} catch {
-		// Without a positive replacement observation an S3 put uses If-None-Match.
+		// Without a positive replacement observation an s3 or shared put may only create its blob.
 	}
 	return out;
 }
@@ -360,7 +360,7 @@ async function runOp(
 		const result = await recordedPut(backend, {
 			tag,
 			blob,
-			...(backend.kind === "s3" && storeReplacedBytes(args) === null ? { ifAbsent: true } : {}),
+			...(backend.kind !== "local" && storeReplacedBytes(args) === null ? { ifAbsent: true } : {}),
 			source: source.abs,
 			actor: producedBy,
 			...(signal !== undefined ? { signal } : {}),

@@ -5,14 +5,22 @@
  * project by its `store.projectId` key, each root by the id in its `root.json`
  * and each granted tag by its directory relative to that root; mount paths may
  * differ between hosts, so the ids decide. The grant also names the
- * dispatcher's backend kind, whose lock rule both hosts must follow. The
- * receiving worker checks every name against its own configuration before it
- * starts and refuses on the first mismatch, so a worker whose store is not the
- * dispatcher's writes nothing.
+ * dispatcher's backend kind, whose lock rule both hosts must follow. A shared
+ * folder's grant names each tag's staging directory and the project's
+ * incarnation in the folder's log, so a project adopted or rebound since the
+ * dispatch is not the one granted. The receiving worker checks every name
+ * against its own configuration before it starts and refuses on the first
+ * mismatch, so a worker whose store is not the dispatcher's writes nothing.
  */
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { ensureStoreRootId, readStoreRootId, recordsTag, type StoreRootSpec } from "@pancode/store";
+import {
+	createSharedStoreBackend,
+	ensureStoreRootId,
+	readStoreRootId,
+	recordsTag,
+	type StoreRootSpec,
+} from "@pancode/store";
 import type { StoreBackendSetting } from "./defaults.js";
 import {
 	storeBackendKind,
@@ -22,11 +30,14 @@ import {
 	storeRootSpecs,
 	storeTagDir,
 } from "./store-paths.js";
+import { pancodeCachePath } from "./xdg.js";
 
 export interface SharedStoreGrant {
 	/** local takes over only a lock whose holder died on its own host; shared takes over a lease left unrenewed. */
 	backend: StoreBackendSetting;
 	projectId: string;
+	/** The project's incarnation in a shared folder's log; absent for local. */
+	incarnation?: string;
 	projectKey: string;
 	roots: ReadonlyArray<{ id: string; name: string }>;
 	/** `path` is the tag's directory relative to the root whose id is `rootId`. */
@@ -61,18 +72,24 @@ export async function prepareSharedStoreGrant(
 		throw new Error(
 			`dispatch: admission denied: node '${nodeId}' reaches this project's store only when the project's tracked .pancode/settings.yaml sets store.projectId`,
 		);
+	const shared = storeBackendKind() === "shared";
+	const incarnation = shared ? await sharedProjectIncarnation(cwd) : null;
+	if (shared && incarnation === null)
+		throw new Error(
+			`dispatch: admission denied: this project has nothing in the shared folder's log yet, so node '${nodeId}' cannot be granted tags ${JSON.stringify(tags)}; create them first`,
+		);
 	const roots = storeRootSpecs();
 	const primary = roots[0] as StoreRootSpec;
 	const placed: Array<{ tag: string; root: StoreRootSpec; dir: string }> = [];
 	for (const tag of tags) {
-		for (const name of [tag, recordsTag(tag)]) {
+		// A shared folder keeps records in its log: the tag's staging directory is all a grant names.
+		for (const name of shared ? [tag] : [tag, recordsTag(tag)]) {
 			const dir = storeTagDir(cwd, name);
 			const root = rootOf(roots, dir) ?? primary;
 			placed.push({ tag: name, root, dir });
 		}
 	}
 	const used = [primary, ...roots.filter((root) => root !== primary && placed.some((entry) => entry.root === root))];
-	const shared = storeBackendKind() === "shared";
 	const ids = new Map<StoreRootSpec, string>();
 	for (const root of used) {
 		if (sharedFsOf(root) === false)
@@ -88,6 +105,7 @@ export async function prepareSharedStoreGrant(
 	return {
 		backend: storeBackendKind(),
 		projectId,
+		...(shared ? { incarnation: incarnation as string } : {}),
 		projectKey: storeProjectKeyFor(projectRoot),
 		roots: used.map((root) => ({ id: ids.get(root) as string, name: root.name })),
 		tags: placed.map((entry) => ({
@@ -96,6 +114,20 @@ export async function prepareSharedStoreGrant(
 			path: path.relative(entry.root.path, entry.dir),
 		})),
 	};
+}
+
+/** The project's incarnation in this host's shared folder's log, or null before anything was stored for it. */
+async function sharedProjectIncarnation(cwd: string): Promise<string | null> {
+	const projectRoot = storeProjectRoot(cwd);
+	const projectId = storeProjectIdFor(projectRoot);
+	const backend = createSharedStoreBackend({
+		root: (storeRootSpecs()[0] as StoreRootSpec).path,
+		cacheDir: pancodeCachePath(),
+		projectKey: storeProjectKeyFor(projectRoot),
+		...(projectId !== undefined ? { projectId } : {}),
+		projectRoot,
+	});
+	return backend.log.projectIncarnation();
 }
 
 function physical(target: string): string {
@@ -146,6 +178,13 @@ export async function verifySharedStoreGrant(cwd: string, grant: SharedStoreGran
 				`store grant refused: root ${name} id ${id} not found on this node${matches.length > 1 ? ` (${matches.length} roots carry it)` : ""}`,
 			);
 		byId.set(id, matches[0] as StoreRootSpec);
+	}
+	if (backend === "shared") {
+		const own = await sharedProjectIncarnation(cwd);
+		if (own !== grant.incarnation)
+			throw new Error(
+				`store grant refused: project incarnation: the shared folder's log has ${own ?? "no binding"} for project ${projectKey}, the dispatcher granted ${grant.incarnation ?? "none"}; the project was adopted or rebound since the dispatch`,
+			);
 	}
 	const dirs: string[] = [];
 	for (const { tag, rootId, path: relative } of grant.tags) {

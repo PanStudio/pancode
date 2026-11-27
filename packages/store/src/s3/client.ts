@@ -31,7 +31,7 @@ export interface S3Request {
 }
 
 export interface S3ListPage {
-	objects: Array<{ key: string; bytes: number }>;
+	objects: Array<{ key: string; bytes: number; modifiedMs: number }>;
 	prefixes: string[];
 	next: string | null;
 }
@@ -186,10 +186,11 @@ export class S3Client {
 	/** One ListObjectsV2 page under `prefix`, keys decoded; `delimiter` groups the rest of a key into `prefixes`. */
 	async list(
 		prefix: string,
-		options: { delimiter?: string; next?: string | null; startAfter?: string } = {},
+		options: { delimiter?: string; next?: string | null; startAfter?: string; maxKeys?: number } = {},
 	): Promise<S3ListPage> {
 		const query: Record<string, string> = { "list-type": "2", prefix, "encoding-type": "url" };
 		if (options.delimiter !== undefined) query.delimiter = options.delimiter;
+		if (options.maxKeys !== undefined) query["max-keys"] = String(options.maxKeys);
 		if (options.next !== undefined && options.next !== null) query["continuation-token"] = options.next;
 		else if (options.startAfter !== undefined) query["start-after"] = options.startAfter;
 		const response = await this.send("GET", "", { query });
@@ -211,6 +212,7 @@ export class S3Client {
 			objects: xmlBlocks(xml, "Contents").map((block) => ({
 				key: listedKey(xmlField(block, "Key") ?? ""),
 				bytes: Number(xmlField(block, "Size") ?? "0"),
+				modifiedMs: Date.parse(xmlField(block, "LastModified") ?? ""),
 			})),
 			prefixes: xmlBlocks(xml, "CommonPrefixes").map((block) => listedKey(xmlField(block, "Prefix") ?? "")),
 			next,

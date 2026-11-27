@@ -13,7 +13,9 @@
  * writes from its arguments alone, the way it predicts the `artifact` default
  * path (`src/core/artifact-paths.ts`). The backend kind, roots and placement
  * rules come from settings through `provideStoreSettings`. A shared store has
- * one root, the folder several hosts mount. An s3 store has no local roots: a store call writes no path on this host, so every prediction
+ * one root, the folder several hosts mount: its log, pages and objects are the
+ * store's bookkeeping, and the only directories a grant or a write reference
+ * names are the project's `staging/<key>/<tag>/`. An s3 store has no local roots: a store call writes no path on this host, so every prediction
  * below is empty and the store's own paths refuse.
  */
 import { readFileSync, statSync } from "node:fs";
@@ -24,7 +26,6 @@ import {
 	storeBookkeepingPaths as bookkeepingPathsIn,
 	storeCacheDir as cacheDirIn,
 	emptyStorePlacement,
-	encodeTagSegment,
 	isRecordsTag,
 	parseStorePlacement,
 	storeProjectDir as projectDirIn,
@@ -36,6 +37,8 @@ import {
 	type StorePlacementMap,
 	type StorePlacementRules,
 	type StoreRootSpec,
+	sharedBookkeepingDirs,
+	sharedStagingDir,
 	storeMainCheckout,
 	storePlacementPath,
 	storeProjectKey,
@@ -211,6 +214,12 @@ function withoutLocalRoots(): boolean {
 	return hostStore().roots.length === 0;
 }
 
+/** The shared folder when this host's store is shared, else null. */
+function sharedFolder(): string | null {
+	const { kind, roots } = hostStore();
+	return kind === "shared" ? (roots[0] as StoreRootSpec).path : null;
+}
+
 /** The roots this host's store keeps tags under; the first is the primary. Empty for an s3 store. */
 export function storeRootSpecs(): StoreRootSpec[] {
 	return hostStore().roots.map((root) => ({ ...root }));
@@ -284,7 +293,10 @@ function tagProjectDir(cwd: string, tag: string, createClass?: StoreTagClass): s
 	return projectDirOn(cwd, name) ?? primaryDir;
 }
 
+/** A tag's directory; in a shared folder, its staging directory, the only part of the tag a path names. */
 export function storeTagDir(cwd: string, tag: string): string {
+	const shared = sharedFolder();
+	if (shared !== null) return sharedStagingDir(shared, projectKeyOf(cwd), tag);
 	return tagDirIn(tagProjectDir(cwd, tag), tag);
 }
 
@@ -297,9 +309,12 @@ export function storeBlobPath(cwd: string, tag: string, blob: string): string {
  * scope (M-31): each tag's directory on its root and its records tag on the
  * primary. A tag not created yet gets its directory on every root placement
  * could create it on, since the worker names its class only when it creates it.
+ * In a shared folder a grant is each tag's staging directory alone: its records live in the log.
  */
 export function storeGrantBoundaries(cwd: string, tags: ReadonlyArray<string>): string[] {
 	if (withoutLocalRoots()) return [];
+	const shared = sharedFolder();
+	if (shared !== null) return tags.map((tag) => `${sharedStagingDir(shared, projectKeyOf(cwd), tag)}/`);
 	const primaryDir = storeProjectDir(cwd);
 	const { roots, rules } = hostStore();
 	const mapping = roots.length === 1 ? emptyStorePlacement() : placementIn(primaryDir);
@@ -328,9 +343,14 @@ function storeCacheDir(cwd: string): string {
 	return cacheDirIn(pancodeCachePath(), projectKeyOf(cwd));
 }
 
-/** This project's directory on every store root, the primary first. One root gives `[storeProjectDir(cwd)]`. */
+/**
+ * This project's directory on every store root, the primary first. One root gives `[storeProjectDir(cwd)]`;
+ * a shared folder gives the project's staging directory.
+ */
 export function storeProjectDirs(cwd: string): string[] {
 	const key = projectKeyOf(cwd);
+	const shared = sharedFolder();
+	if (shared !== null) return [sharedStagingDir(shared, key)];
 	return hostStore().roots.map((root) => projectDirIn(root.path, key));
 }
 
@@ -348,11 +368,14 @@ export function storeReadRoots(cwd: string): string[] {
  * remove and note append a record there), `project.json` and `placement.json`
  * (written when a tag or records tag is first created; a tag created on another
  * root writes that root's `project.json` too) and the store lock directory.
- * Empty for read ops and malformed calls.
+ * Empty for read ops and malformed calls. In a shared folder: the target in the
+ * tag's staging directory, then the folder's log, pages and objects.
  */
 export function storeWriteSet(cwd: string, args: Record<string, unknown> | undefined): string[] {
 	const primary = storeWriteTarget(cwd, args);
 	if (primary === null) return [];
+	const shared = sharedFolder();
+	if (shared !== null) return [primary, ...sharedBookkeepingDirs(shared)];
 	const tag = String(args?.tag);
 	const tagDir = tagProjectDir(cwd, tag, createClassOf(args));
 	const primaryDir = storeProjectDir(cwd);
@@ -370,11 +393,14 @@ export function storeWriteSet(cwd: string, args: Record<string, unknown> | undef
  * What the store itself writes for any write into `tag`, besides the op's
  * own target: the records tag directory itself, `project.json` (on the primary
  * and on each other root a tag can be created on), `placement.json` and the
- * lock directory. A grant does not add these to a worker's write roots (its
- * shell must not write them); the policy engine admits them with a granted call.
+ * lock directory; in a shared folder, its log, pages and objects. A grant does
+ * not add these to a worker's write roots (its shell must not write them); the
+ * policy engine admits them with a granted call.
  */
 export function storeBookkeepingPaths(cwd: string, tag: string): string[] {
 	if (withoutLocalRoots()) return [];
+	const shared = sharedFolder();
+	if (shared !== null) return sharedBookkeepingDirs(shared);
 	const primaryDir = storeProjectDir(cwd);
 	const key = projectKeyOf(cwd);
 	const others = hostStore()
@@ -386,11 +412,14 @@ export function storeBookkeepingPaths(cwd: string, tag: string): string[] {
 /**
  * Paths strictly inside the call's tag directory and inside its records tag
  * directory. Write roots that cover both hold the grant `storeGrantBoundaries`
- * gives for the tag. Empty for read ops and malformed calls.
+ * gives for the tag; in a shared folder, a path inside its staging directory.
+ * Empty for read ops and malformed calls.
  */
 export function storeGrantProbes(cwd: string, args: Record<string, unknown> | undefined): string[] {
 	if (storeWriteTarget(cwd, args) === null) return [];
 	const tag = String(args?.tag);
+	const shared = sharedFolder();
+	if (shared !== null) return [join(sharedStagingDir(shared, projectKeyOf(cwd), tag), ".probe")];
 	return [
 		join(tagDirIn(tagProjectDir(cwd, tag, createClassOf(args)), tag), "blobs"),
 		join(tagDirIn(storeProjectDir(cwd), recordsTag(tag)), "blobs"),
@@ -411,22 +440,28 @@ function createClassOf(args: Record<string, unknown> | undefined): StoreTagClass
 
 /**
  * Where a store write lands, from tool arguments alone; null for read ops and malformed calls. A `put`
- * or `create` that will make its tag lands where creation places it.
+ * or `create` that will make its tag lands where creation places it. In a shared folder every op names
+ * the tag's staging directory, and a put or remove the blob's name inside it: the store publishes
+ * through its log, so no op writes a path a model can name.
  */
 export function storeWriteTarget(cwd: string, args: Record<string, unknown> | undefined): string | null {
 	if (args === undefined || withoutLocalRoots()) return null;
 	const tag = args.tag;
 	if (typeof tag !== "string" || validateTagName(tag) !== null) return null;
 	const createClass = createClassOf(args);
+	const shared = sharedFolder();
+	const staging = shared === null ? null : sharedStagingDir(shared, projectKeyOf(cwd), tag);
 	const blobTarget = (blob: unknown): string | null =>
-		typeof blob === "string" && validateBlobName(blob) === null
-			? blobPathIn(tagProjectDir(cwd, tag, createClass), tag, blob)
-			: null;
+		typeof blob !== "string" || validateBlobName(blob) !== null
+			? null
+			: staging !== null
+				? join(staging, blob)
+				: blobPathIn(tagProjectDir(cwd, tag, createClass), tag, blob);
 	switch (args.op) {
 		case "create":
-			return tagDirIn(tagProjectDir(cwd, tag, createClass), tag);
+			return staging ?? tagDirIn(tagProjectDir(cwd, tag, createClass), tag);
 		case "note":
-			return tagDirIn(storeProjectDir(cwd), recordsTag(tag));
+			return staging ?? tagDirIn(storeProjectDir(cwd), recordsTag(tag));
 		case "remove":
 			return blobTarget(args.blob);
 		case "put":
@@ -444,8 +479,9 @@ export function storeWriteTarget(cwd: string, args: Record<string, unknown> | un
 }
 
 /**
- * The `s3://` URI a store write targets when `store.backend` is `s3`, from tool arguments alone; null
- * for any other backend, read ops, malformed calls, or an unconfigured bucket.
+ * What a store write changes when `store.backend` is `s3`, from tool arguments alone: the tag or
+ * `tag:blob` and the `s3://` prefix of the project's log that publishes it; null for any other backend,
+ * read ops, malformed calls, or an unconfigured bucket.
  */
 export function storeS3WriteTarget(cwd: string, args: Record<string, unknown> | undefined): string | null {
 	if (args === undefined || storeBackendKind() !== "s3") return null;
@@ -453,14 +489,14 @@ export function storeS3WriteTarget(cwd: string, args: Record<string, unknown> | 
 	if (s3 === null) return null;
 	const tag = args.tag;
 	if (typeof tag !== "string" || validateTagName(tag) !== null) return null;
-	const base = `s3://${s3.bucket}/${s3.prefix}projects/${projectKeyOf(cwd)}/tags/`;
+	const where = ` in s3://${s3.bucket}/${s3.prefix}projects/${projectKeyOf(cwd)}/`;
 	const blobTarget = (blob: unknown): string | null =>
-		typeof blob === "string" && validateBlobName(blob) === null ? `${base}${encodeTagSegment(tag)}/blobs/${blob}` : null;
+		typeof blob === "string" && validateBlobName(blob) === null ? `${tag}:${blob}${where}` : null;
 	switch (args.op) {
 		case "create":
-			return `${base}${encodeTagSegment(tag)}`;
+			return `${tag}${where}`;
 		case "note":
-			return `${base}${encodeTagSegment(recordsTag(tag))}`;
+			return `${recordsTag(tag)}${where}`;
 		case "remove":
 			return blobTarget(args.blob);
 		case "put":

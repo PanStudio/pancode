@@ -1432,6 +1432,8 @@ function validateSharedStoreGrant(value: unknown): void {
 	if (shared.backend !== "local" && shared.backend !== "shared")
 		throw new Error(`${source}.backend must be local or shared`);
 	readString(shared.projectId, `${source}.projectId`);
+	if (shared.backend === "shared") readString(shared.incarnation, `${source}.incarnation`);
+	else if (shared.incarnation !== undefined) throw new Error(`${source}.incarnation is a shared folder's only`);
 	if (typeof shared.projectKey !== "string" || !/^[0-9a-f]{16}$/u.test(shared.projectKey))
 		throw new Error(`${source}.projectKey must be 16 lowercase hex characters`);
 	if (!Array.isArray(shared.roots) || shared.roots.length === 0)

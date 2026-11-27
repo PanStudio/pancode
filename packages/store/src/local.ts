@@ -37,7 +37,6 @@ import { writeCacheCopy } from "./cache-copy.js";
 import { fsyncDirectoryAsync, safeResourceWriteAsync } from "./durable-write.js";
 import { hashStoreFile } from "./hash.js";
 import { ensureStoreRootId, readStoreRootId } from "./identity.js";
-import { fenceHeldLeases } from "./lease.js";
 import { breakStoreLock, listStoreLocks, readStoreLock, withStoreLock } from "./lock.js";
 import {
 	decodeTagSegment,
@@ -46,7 +45,6 @@ import {
 	isRecordsTag,
 	parseStorePlacement,
 	resolvePlacement,
-	STORE_DEFAULT_ROOT_NAME,
 	type StorePlacementMap,
 	type StorePlacementRules,
 	type StoreRootSpec,
@@ -89,15 +87,6 @@ export interface LocalStoreOptions {
 	 * Default: run `fn` directly.
 	 */
 	serialize?: <T>(path: string, fn: () => Promise<T>) => Promise<T>;
-}
-
-/**
- * A store in one folder that several hosts mount, the same directory on each (an NFS export, for one): the local
- * layout on that single root, whose locks are leases any host takes over once their holder stops renewing them.
- */
-export interface SharedStoreOptions extends Omit<LocalStoreOptions, "roots" | "placement"> {
-	/** The shared folder, absolute. */
-	root: string;
 }
 
 /** The tag attribute holding a tag's class, written by the host that created the tag. */
@@ -287,22 +276,7 @@ interface PlacedTag {
  * map live under the primary.
  */
 export function createLocalStoreBackend(options: LocalStoreOptions): StoreBackend {
-	return createFolderStoreBackend(options, false);
-}
-
-export function createSharedStoreBackend(options: SharedStoreOptions): StoreBackend {
-	const { root, ...rest } = options;
-	return createFolderStoreBackend(
-		{ ...rest, roots: [{ name: STORE_DEFAULT_ROOT_NAME, path: root, durable: true, purge: null }] },
-		true,
-	);
-}
-
-/** A store of directories and files under `options.roots`; `shared` makes its one root a folder hosts share. */
-function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): StoreBackend {
 	const { projectRoot, projectId } = options;
-	const kind = shared ? "shared" : "local";
-	const lockOptions = { lease: shared };
 	const rootProblem = validateStoreRoots(options.roots);
 	if (rootProblem !== null) throw new StoreRefusal("invalid-name", rootProblem);
 	const roots = options.roots.map((root) => ({ ...root }));
@@ -347,12 +321,11 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 	}
 
 	/**
-	 * Refuse `unavailable` unless the root's directory is there, and writable for a write. A local primary is
-	 * exempt: it is created on first write. A shared folder never is, so a host where it is not mounted writes
-	 * nothing in its place.
+	 * Refuse `unavailable` unless the root's directory is there, and writable for a write. The primary is
+	 * exempt: it is created on first write.
 	 */
 	async function requireRoot(root: StoreRootSpec, write: boolean): Promise<void> {
-		if (root === primary && !shared) return;
+		if (root === primary) return;
 		let problem: string | null = null;
 		try {
 			if (!(await stat(root.path)).isDirectory()) problem = "is not a directory";
@@ -372,10 +345,7 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 	/** Where an existing tag lives, through the placement map alone. */
 	async function placeOf(tag: string, write: boolean): Promise<PlacedTag> {
 		const name = resolvePlacement(await readPlacement(), null, tag);
-		if (name === null) {
-			if (shared) await requireRoot(primary, write);
-			return onPrimary;
-		}
+		if (name === null) return onPrimary;
 		const root = rootNamed(name);
 		if (root === undefined) {
 			throw new StoreRefusal(
@@ -517,35 +487,28 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 		// Blobs and records hold workspace bytes, argv and session ids, so the store is owner-only;
 		// the host's prepareRoot gives a missing data root its own mode and marker first.
 		options.prepareRoot?.();
-		if (shared) await requireRoot(primary, true);
 		// Records tags live on the primary and never have an entry, so they skip the placement lock.
 		if (isRecordsTag(tag)) return materializeTag(onPrimary, tag);
 		// Refuse an unreachable root before the lock, which itself writes under the primary.
 		await chooseRoot(await readPlacement(), tag, tagClass);
-		return withStoreLock(
-			projectDir,
-			"placement.json",
-			async () => {
-				const mapping = await readPlacement();
-				if (Object.hasOwn(mapping.tags, tag)) {
-					const existing = await placeOf(tag, true);
-					const present = (await lstatOrNull(path.join(storeTagDir(existing.projectDir, tag), "tag.json")))?.isFile();
-					if (present !== true) await requireDurableOrCache(existing, tag, tagClass);
-					return materializeTag(existing, tag);
-				}
-				const place = await chooseRoot(mapping, tag, tagClass);
-				const root = place.root;
-				// The decision is written down before the tag exists, so no reader ever finds the tag on a root
-				// the map does not name.
-				await mkdir(projectDir, { recursive: true, mode: 0o700 });
-				await fenceHeldLeases();
-				await safeResourceWriteAsync(placementFile, serializeStorePlacement(mapping, tag, root.name), { mode: 0o600 });
-				const made = await materializeTag(place, tag);
-				await tickTagList(place);
-				return made;
-			},
-			lockOptions,
-		);
+		return withStoreLock(projectDir, "placement.json", async () => {
+			const mapping = await readPlacement();
+			if (Object.hasOwn(mapping.tags, tag)) {
+				const existing = await placeOf(tag, true);
+				const present = (await lstatOrNull(path.join(storeTagDir(existing.projectDir, tag), "tag.json")))?.isFile();
+				if (present !== true) await requireDurableOrCache(existing, tag, tagClass);
+				return materializeTag(existing, tag);
+			}
+			const place = await chooseRoot(mapping, tag, tagClass);
+			const root = place.root;
+			// The decision is written down before the tag exists, so no reader ever finds the tag on a root
+			// the map does not name.
+			await mkdir(projectDir, { recursive: true, mode: 0o700 });
+			await safeResourceWriteAsync(placementFile, serializeStorePlacement(mapping, tag, root.name), { mode: 0o600 });
+			const made = await materializeTag(place, tag);
+			await tickTagList(place);
+			return made;
+		});
 	}
 
 	/** Give the put's own temp file its blob name; the stat is of the temp, before a concurrent put can take the name. */
@@ -565,7 +528,6 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 		await fsyncFile(temp);
 		if (put.signal?.aborted) throw new StoreRefusal("io", `The put of ${put.blob} into ${put.tag} was aborted.`);
 		const modifiedMs = (await lstat(temp)).mtimeMs;
-		await fenceHeldLeases();
 		if (ifAbsent) {
 			try {
 				await link(temp, target);
@@ -680,7 +642,7 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 	}
 
 	const backend: StoreBackend = {
-		kind,
+		kind: "local",
 		location: projectDir,
 
 		facts: () =>
@@ -691,13 +653,13 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 						name: root.name,
 						id: await readStoreRootId(root.path),
 						durable: root.durable,
-						sharedFs: shared || (await sharedFsOf(root.path)),
+						sharedFs: await sharedFsOf(root.path),
 						purge: root.purge,
 						freeBytes: await freeBytesOf(root.path),
 					});
 				}
 				return {
-					kind,
+					kind: "local",
 					mapping: "a tag is a directory and a blob is a regular file under it",
 					tiers:
 						rootFacts.length === 1
@@ -707,7 +669,7 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 									score: rootFacts.length - index,
 									freeBytes: root.freeBytes,
 								})),
-					multiNode: shared,
+					multiNode: false,
 					durable: true,
 					conditionalPut: "if-absent",
 					blobVersions: false,
@@ -717,28 +679,13 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				};
 			}),
 
-		withLock: async (key, fn) => {
-			if (shared) await guarded(() => requireRoot(primary, true));
-			return withStoreLock(projectDir, key, fn, lockOptions);
-		},
+		withLock: (key, fn) => withStoreLock(projectDir, key, fn),
 
-		listLocks: () =>
-			guarded(async () => {
-				if (shared) await requireRoot(primary, false);
-				return listStoreLocks(projectDir, lockOptions);
-			}),
+		listLocks: () => guarded(() => listStoreLocks(projectDir)),
 
-		readLock: (id) =>
-			guarded(async () => {
-				if (shared) await requireRoot(primary, false);
-				return readStoreLock(projectDir, id, lockOptions);
-			}),
+		readLock: (id) => guarded(() => readStoreLock(projectDir, id)),
 
-		breakLock: (id) =>
-			guarded(async () => {
-				if (shared) await requireRoot(primary, true);
-				return breakStoreLock(projectDir, id, lockOptions);
-			}),
+		breakLock: (id) => guarded(() => breakStoreLock(projectDir, id)),
 
 		usage: (tag) =>
 			guarded(async (): Promise<StoreUsage> => {
@@ -785,7 +732,6 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 
 		listTags: () =>
 			guarded(async () => {
-				if (shared) await requireRoot(primary, false);
 				const mapping = await readPlacement();
 				const tags = await tagsOn(onPrimary, mapping);
 				const placedRoots = new Set(Object.values(mapping.tags));
@@ -809,21 +755,14 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				const place = await placeOf(tag, true);
 				const dir = storeTagDir(place.projectDir, tag);
 				await assertUnder(place, dir);
-				await fenceHeldLeases();
 				await rm(dir, { recursive: true, force: true });
 				if (isRecordsTag(tag) || !Object.hasOwn((await readPlacement()).tags, tag)) return;
 				// A deleted tag gives up its placement: a tag created later under the same name is a new tag.
-				await withStoreLock(
-					projectDir,
-					"placement.json",
-					async () => {
-						const mapping = await readPlacement();
-						if (!Object.hasOwn(mapping.tags, tag)) return;
-						await fenceHeldLeases();
-						await safeResourceWriteAsync(placementFile, serializeStorePlacement(mapping, tag, null), { mode: 0o600 });
-					},
-					lockOptions,
-				);
+				await withStoreLock(projectDir, "placement.json", async () => {
+					const mapping = await readPlacement();
+					if (!Object.hasOwn(mapping.tags, tag)) return;
+					await safeResourceWriteAsync(placementFile, serializeStorePlacement(mapping, tag, null), { mode: 0o600 });
+				});
 				await tickTagList(place);
 			}),
 
@@ -838,17 +777,11 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				const file = path.join((await requireTag(tag, true)).dir, "tag.json");
 				// The queue orders writers in this process; the store lock orders them across processes.
 				await serialize(file, () =>
-					withStoreLock(
-						projectDir,
-						`tag.json\0${tag}`,
-						async () => {
-							const current = await readTagFile(tag);
-							current.xattrs = { ...current.xattrs, [key]: value };
-							await fenceHeldLeases();
-							await safeResourceWriteAsync(file, `${JSON.stringify(current)}\n`, { mode: 0o600 });
-						},
-						lockOptions,
-					),
+					withStoreLock(projectDir, `tag.json\0${tag}`, async () => {
+						const current = await readTagFile(tag);
+						current.xattrs = { ...current.xattrs, [key]: value };
+						await safeResourceWriteAsync(file, `${JSON.stringify(current)}\n`, { mode: 0o600 });
+					}),
 				);
 			}),
 
@@ -936,7 +869,6 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				// A record in a tag nobody created would be invisible to listTags, so the tag comes first.
 				await getOrCreateTag(tag);
 				const { target } = await blobTarget(tag, blob, true);
-				await fenceHeldLeases();
 				return (await createExclusive(target, data)) ? "written" : "exists";
 			}),
 
@@ -1003,7 +935,6 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				const { target, place } = await blobTarget(tag, blob, true);
 				const info = await lstatOrNull(target);
 				if (!info?.isFile()) return false;
-				await fenceHeldLeases();
 				await unlink(target);
 				const blobsDir = path.join(storeTagDir(place.projectDir, tag), "blobs");
 				let dir = path.dirname(target);
@@ -1061,4 +992,3 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 }
 
 registerStoreBackend("local", createLocalStoreBackend);
-registerStoreBackend("shared", createSharedStoreBackend);

@@ -362,3 +362,14 @@ export function resolvePlacement(
 	}
 	return null;
 }
+
+/** Where a project's staging lives in a shared folder: a worker's grant for a tag is its directory under it. */
+export function sharedStagingDir(root: string, projectKey: string, tag?: string): string {
+	const dir = join(root, "staging", projectKey);
+	return tag === undefined ? dir : join(dir, encodeTagSegment(tag));
+}
+
+/** The parts of a shared folder that are the store itself: never a write grant's, never a file to edit. */
+export function sharedBookkeepingDirs(root: string): string[] {
+	return [join(root, "log"), join(root, "pages"), join(root, "objects")];
+}

@@ -23,8 +23,8 @@ import { ServerUsageError } from "../../registry.js";
 export const USAGE = `options: --root [<name>=]<dir> [--root <name>=<dir> ...] [--shared] [--cache <dir>] [--project <dir>] [--project-id <id>] [--write-tag <tag> ...]
   --root       a store root; the first is the primary. Repeat with <name>=<dir> for each further root.
                The first is named default unless given as <name>=<dir> too.
-  --shared     the one root is a folder several hosts share (store.backend shared): its locks are leases
-               renewed while held and taken over from any host 60 s after the last renewal.
+  --shared     the one root is a folder several hosts share (store.backend shared): every write publishes
+               through its log, under a lease taken over from any host 60 s after its last renewal by the folder's clock.
   --cache      where store_get keeps its read-only copies; default ~/.cache/panstore.
   --project    any directory of the project; default the directory the server starts in.
   --project-id the project's store.projectId, which keys its store wherever it is checked out;
@@ -48,7 +48,7 @@ export interface StoreServerConfig {
 	projectId?: string;
 	/** Tags the server may write, with the tags nested under each. */
 	writeTags: string[];
-	/** The one root is a folder several hosts share, whose locks are leases. */
+	/** The one root is a folder several hosts share, written through its log. */
 	shared: boolean;
 }
 

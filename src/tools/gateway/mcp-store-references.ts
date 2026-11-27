@@ -18,7 +18,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, statSync } from "node:fs";
-import { lstat, rm } from "node:fs/promises";
+import { lstat, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { StoreBackend } from "@pancode/store";
 import {
@@ -140,7 +140,9 @@ export function builtinStoreWrite(
 function putAdmission(tag: string, blob: string | null, cwd: string, access: StoreAccess): Record<string, unknown> {
 	const prepared = prepareStoreAdmissionArguments({ op: "put", tag, ...(blob !== null ? { blob } : {}) }, cwd, access);
 	// The classifier looks for the blob from the process cwd; the replaced blob is found from the project's.
+	// A shared folder keeps no blob at a path, so its write reference commits only a new blob.
 	try {
+		if (storeBackendKind() !== "local") return prepared;
 		const target = storeWriteTarget(cwd, prepared);
 		if (target !== null) {
 			const info = lstatSync(target, { throwIfNoEntry: false });
@@ -305,7 +307,8 @@ export interface PreparedStoreReferences {
 /**
  * The hidden sibling the server writes for `tag:blob`: `.<name>.<pid>.<12 hex>.tmp`, the shape the
  * backend's own temporaries have, so a listing never shows it. It lies in the blob's directory when
- * that exists, else in the nearest existing directory of the tag's blobs; nothing is created.
+ * that exists, else in the nearest existing directory of the tag's blobs; nothing is created. In a
+ * shared folder that directory is the tag's staging directory, which the caller creates.
  */
 function temporaryPath(cwd: string, tag: string, blob: string): string {
 	const target = storeWriteTarget(cwd, { op: "put", tag, blob });
@@ -345,6 +348,7 @@ export async function prepareStoreReferences(input: {
 			if (!(await backend.tagExists(reference.tag))) return `${named}: ${missingTag(reference.tag)}`;
 			if (reference.access === "write") {
 				const temp = temporaryPath(input.cwd, reference.tag, reference.blob);
+				if (storeBackendKind() === "shared") await mkdir(path.dirname(temp), { recursive: true });
 				writes.push({ argument: reference.argument, tag: reference.tag, blob: reference.blob, temp });
 				args[reference.argument] = temp;
 				continue;
@@ -426,6 +430,8 @@ export async function commitStoreReferences(input: {
 				blob: write.blob,
 				source: write.temp,
 				mode: "link",
+				// Admission judged a shared folder's write as a new blob, so it may not replace one.
+				...(backend.kind === "local" ? {} : { ifAbsent: true }),
 				actor: { actor: "mcp", client: input.serverId, ...input.ids },
 				...(input.signal !== undefined ? { signal: input.signal } : {}),
 				record: (put) => {

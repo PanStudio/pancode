@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	provideStoreSettings,
+	recordsTag,
 	storeBlobPath,
 	storeGrantBoundaries,
 	storeProjectDir,
@@ -157,18 +158,18 @@ describe("store safety admission", () => {
 		}));
 		try {
 			const key = storeProjectKeyFor(storeProjectRoot(cwd));
-			const base = `s3://lab-store/team/projects/${key}/tags`;
+			const where = `in s3://lab-store/team/projects/${key}/`;
 			deepStrictEqual(classify({ tool: ToolNames.Store, args: { op: "put", tag: "sim", path: "out/a.txt" } }), {
 				actionClass: "write",
-				reasons: [`store-write: ${base}/sim/blobs/a.txt`],
+				reasons: [`store-write: sim:a.txt ${where}`],
 			});
 			deepStrictEqual(classify({ tool: ToolNames.Store, args: { op: "create", tag: "sim" } }), {
 				actionClass: "write",
-				reasons: [`store-write: ${base}/sim`],
+				reasons: [`store-write: sim ${where}`],
 			});
 			deepStrictEqual(classify({ tool: ToolNames.Store, args: { op: "note", tag: "sim", blob: "a.txt", note: "ok" } }), {
 				actionClass: "write",
-				reasons: [`store-write: ${base}/sim%2F.records`],
+				reasons: [`store-write: ${recordsTag("sim")} ${where}`],
 			});
 			deepStrictEqual(storeWriteSet(cwd, { op: "put", tag: "sim", path: "out/a.txt" }), []);
 		} finally {

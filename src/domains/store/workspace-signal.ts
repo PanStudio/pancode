@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { StoreBackend } from "@pancode/store";
 import {
 	decodeTagSegment,
 	isRecordsTag,
@@ -43,29 +44,50 @@ export function workspaceStoreTags(cwd: string): ReadonlyArray<string> {
 	return workspaceStore(cwd).tags;
 }
 
-const s3Listings = new Map<string, { store: WorkspaceStore; retryAt: number }>();
+const logListings = new Map<string, { store: WorkspaceStore; retryAt: number }>();
 
-function s3ListingKey(cwd: string): string {
+function logListingKey(cwd: string): string {
 	const s3 = storeS3Settings();
-	return `${s3?.endpoint ?? ""}\0${s3?.bucket ?? ""}\0${s3?.prefix ?? ""}\0${storeProjectKeyFor(storeProjectRoot(cwd))}`;
+	const where =
+		storeBackendKind() === "s3"
+			? `${s3?.endpoint ?? ""}\0${s3?.bucket ?? ""}\0${s3?.prefix ?? ""}`
+			: (storeRootSpecs()[0]?.path ?? "");
+	return `${storeBackendKind()}\0${where}\0${storeProjectKeyFor(storeProjectRoot(cwd))}`;
 }
 
-export function invalidateS3TagList(cwd: string): void {
-	s3Listings.delete(s3ListingKey(cwd));
+/** `backend` forgetting the project's tag listing whenever this process creates or deletes a tag through it. */
+export function invalidatingTagList(cwd: string, backend: StoreBackend): StoreBackend {
+	return {
+		...backend,
+		async getOrCreateTag(tag, options) {
+			const result = await backend.getOrCreateTag(tag, options);
+			if (result.created) logListings.delete(logListingKey(cwd));
+			return result;
+		},
+		async delTag(tag) {
+			await backend.delTag(tag);
+			logListings.delete(logListingKey(cwd));
+		},
+	};
 }
 
-/** Keep a successful listing until this process changes the project's tags. A turn never waits for S3. */
-function s3WorkspaceStore(cwd: string): WorkspaceStore {
-	const key = s3ListingKey(cwd);
-	const entry = s3Listings.get(key) ?? { store: NO_STORE, retryAt: 0 };
+/**
+ * An s3 or shared store keeps its tags in its log. Keep a successful listing until this process changes
+ * the project's tags. A turn never waits for the store.
+ */
+function logWorkspaceStore(cwd: string): WorkspaceStore {
+	const key = logListingKey(cwd);
+	const entry = logListings.get(key) ?? { store: NO_STORE, retryAt: 0 };
 	if (performance.now() < entry.retryAt) return entry.store;
 	entry.retryAt = Number.POSITIVE_INFINITY;
-	s3Listings.set(key, entry);
-	void import("./backends/s3.js")
-		.then(async ({ createS3StoreBackend }) => {
-			const tags = (await createS3StoreBackend(cwd).listTags()).filter(
-				(tag) => !isRecordsTag(tag) && validateTagName(tag) === null,
-			);
+	logListings.set(key, entry);
+	const open =
+		storeBackendKind() === "s3"
+			? import("./backends/s3.js").then(({ createS3StoreBackend }) => createS3StoreBackend(cwd))
+			: import("./backends/local.js").then(({ createSharedStoreBackend }) => createSharedStoreBackend(cwd));
+	void open
+		.then(async (backend) => {
+			const tags = (await backend.listTags()).filter((tag) => !isRecordsTag(tag) && validateTagName(tag) === null);
 			entry.store = tags.length > 0 ? { signals: [ToolNames.Store, ToolNames.Data], tags: tags.sort() } : NO_STORE;
 		})
 		.catch(() => {
@@ -81,7 +103,7 @@ function s3WorkspaceStore(cwd: string): WorkspaceStore {
  * makes or removes a tag elsewhere, and `placement.json` names those tags.
  */
 function workspaceStore(cwd: string): WorkspaceStore {
-	if (storeBackendKind() === "s3") return s3WorkspaceStore(cwd);
+	if (storeBackendKind() !== "local") return logWorkspaceStore(cwd);
 	const root = storeRootSpecs()[0]?.path ?? storeRoot();
 	const project = `${root}\0${cwd}`;
 	let tags = tagDirs.get(project);
