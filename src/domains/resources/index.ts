@@ -54,6 +54,7 @@ export {
 	planHubLifecycle,
 	releaseHubLifecycle,
 	retryHubRefresh,
+	syncHubPackBinaries,
 	verifyHubStep,
 } from "./hub-actions.js";
 export {

@@ -39,11 +39,12 @@ import { HUB_TIERS, isHubKind } from "../resources/hub-types.js";
 import { isPluginId, readPluginManifest } from "./discovery.js";
 import { passPluginCandidate } from "./discovery-pass.js";
 import { pluginContentDigest } from "./integrity.js";
-import { pluginBaseDir } from "./paths.js";
+import { pluginBaseDir, pluginDataDir } from "./paths.js";
 import { derivedPublisher, publisherCollision, readPublisher } from "./publisher.js";
 import type {
 	HubPackageInstallInput,
 	InstalledPlugin,
+	PluginDiagnostic,
 	PluginDiagnosticCode,
 	PluginExpectedCopy,
 	PluginExpectedState,
@@ -866,19 +867,30 @@ export function removePlugin(id: string, options: PluginMutationOptions = {}): P
 		}
 		if (moved && !preserve) preserve = retainRecovery(backup, previousDigest);
 		if (moved && preserve) sweepRecoveryCopies(target);
+		const diagnostics: PluginDiagnostic[] = preserve
+			? [
+					{
+						type: "warning",
+						message: "removed plugin contained changed or unverified files; preserved recovery copy",
+						path: backup,
+					},
+				]
+			: [];
+		const dataDir = pluginDataDir(scope, target);
+		try {
+			rmSync(dataDir, { recursive: true, force: true });
+		} catch (error) {
+			diagnostics.push({
+				type: "warning",
+				message: `the plugin's data directory was not removed: ${error instanceof Error ? error.message : String(error)}`,
+				path: dataDir,
+			});
+		}
 		recordLifecycleReceipt(receiptIdentity, options.lifecycle);
 		return {
 			removed: { id, scope, path: target },
 			...(preserve ? { recovery: { packageBackup: backup } } : {}),
-			diagnostics: preserve
-				? [
-						{
-							type: "warning",
-							message: "removed plugin contained changed or unverified files; preserved recovery copy",
-							path: backup,
-						},
-					]
-				: [],
+			diagnostics,
 		};
 	});
 }

@@ -81,12 +81,29 @@ export function envelopeLines(envelope: ExtensionCapabilityEnvelope, extensionId
 				.join("; ")}`,
 		);
 	if (envelope.watch.length > 0) lines.push(`Watches: ${envelope.watch.join(", ")}`);
+	if (envelope.aliases) lines.push(`Claims: ${list(envelope.aliases.map((name) => `/${name}`))}`);
+	if (envelope.keys)
+		lines.push(`Keys: ${list(envelope.keys.map((binding) => `${formatAltKey(binding.key)} runs ${binding.label}`))}`);
+	if (envelope.services?.pane)
+		lines.push("Terminal pane: one pane in the dock below PanCode, running a program listed here");
+	for (const binary of envelope.binaries ?? [])
+		lines.push(
+			`Runs outside the sandbox: ${binary.name} ${binary.version} (pinned by sha256; a copy on PATH at ${binary.minimumVersion} or newer is used first${binary.env.length > 0 ? `; it may set ${binary.env.join(", ")}` : ""})`,
+		);
 	lines.push(
 		`Content it may read: ${list(envelope.access)}`,
 		`Files: read ${list(envelope.permissions.fs.read)}; write ${list(envelope.permissions.fs.write)}`,
 		`Programs: ${envelope.permissions.exec ? "may run programs" : "none"}; network: ${envelope.permissions.net ? "may use the network" : "none"}`,
 	);
 	return lines;
+}
+
+/** `alt+a` as the operator reads it: `Alt+A`. */
+function formatAltKey(key: string): string {
+	return key
+		.split("+")
+		.map((part) => (part.length === 1 ? part.toUpperCase() : `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`))
+		.join("+");
 }
 
 export interface ExtensionEnvelopeReview {

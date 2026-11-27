@@ -217,6 +217,31 @@ function operatorServices(message) {
 	};
 }
 
+function binaries(parentRequestId) {
+	return Object.freeze({
+		run: (name, args = [], opts = {}) =>
+			call("binaries", {
+				request: {
+					name,
+					args,
+					...(opts.env !== undefined ? { env: opts.env } : {}),
+					...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+				},
+				parentRequestId,
+			}),
+	});
+}
+function pane(parentRequestId) {
+	const run = (op, payload = {}) => call("pane", { request: { ...payload, op }, parentRequestId });
+	return Object.freeze({
+		open: (request) => run("open", request),
+		close: () => run("close"),
+		hide: () => run("hide"),
+		reveal: () => run("reveal"),
+		state: () => run("state"),
+		palette: () => run("palette"),
+	});
+}
 async function dispose(reason) {
 	if (disposing) return;
 	disposing = true;
@@ -309,6 +334,8 @@ async function serve(message) {
 			: {}),
 		...(declaration.services?.store ? { blobs: blobs(message.id) } : {}),
 		...(storeDir !== undefined ? { storeDir } : {}),
+		...(declaration.binaries?.length ? { binaries: binaries(message.id) } : {}),
+		...(declaration.services?.pane ? { pane: pane(message.id) } : {}),
 		...operatorServices(message),
 	});
 	const input =

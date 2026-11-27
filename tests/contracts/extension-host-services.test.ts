@@ -1,12 +1,29 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, equal, match, ok, rejects } from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { deepStrictEqual, equal, match, ok, rejects, strictEqual, throws } from "node:assert/strict";
+import {
+	appendFileSync,
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, before, describe, it, test } from "node:test";
 import type { ExtensionCompletionRequest } from "@pancode/sdk/extension";
-import { capabilityEnvelope, envelopeGrowth, parseExtensionRuntimeV2 } from "@pancode/sdk/pack";
+import {
+	capabilityEnvelope,
+	type ExtensionBinaryDeclaration,
+	envelopeGrowth,
+	parseExtensionRuntimeV2,
+} from "@pancode/sdk/pack";
 import { readBlobHistory } from "@pancode/store";
+import { sha256Hex } from "../../src/core/hash.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
@@ -17,10 +34,34 @@ import {
 	type ExtensionServiceBinding,
 	type ExtensionServiceHost,
 } from "../../src/domains/extensions/host-services.js";
-import { extensionInvocation } from "../../src/domains/extensions/operator-commands.js";
+import {
+	type ExtensionCommandRow,
+	extensionInvocation,
+	resolveExtensionAliases,
+} from "../../src/domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import { createExtensionRuntimeHookBridge } from "../../src/domains/extensions/runtime-hook-bridge.js";
-import { installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
+import { readOnlyRuntimeDeclaration } from "../../src/domains/extensions/runtime-sandbox.js";
+import {
+	installPackBinaries,
+	packBinaryPath,
+	parsePackBinaryRun,
+	removePackBinaries,
+	resolvePackBinary,
+	runPackBinary,
+	syncPackBinaries,
+} from "../../src/domains/extensions/services/binaries.js";
+import { resolveExtensionKeys } from "../../src/domains/extensions/services/keys.js";
+import { createExtensionPaneHost, type ExtensionPaneOwner } from "../../src/domains/extensions/services/pane.js";
+import {
+	installExtension,
+	installedExtensionClaims,
+	listInstalledExtensions,
+	removeExtension,
+} from "../../src/domains/extensions/state.js";
+import type { MuxContract, MuxOpenUtilityPaneRequest } from "../../src/domains/mux/contract.js";
+import { createDockKeyGate } from "../../src/domains/mux/dock-keys.js";
+import type { MuxPaneRecord } from "../../src/domains/mux/types.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { modelEndpointKey } from "../../src/domains/providers/index.js";
 import type { RuntimeDescriptor } from "../../src/domains/providers/types/runtime-descriptor.js";
@@ -30,8 +71,12 @@ import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
+import { currentToolPlatform } from "../../src/domains/toolchain/index.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { startExtensionHost } from "../../src/entry/extension-host.js";
+import { createKeybindingManagerForTesting } from "../../src/interactive/keybinding-manager.js";
+import { settleExtensionKeys } from "../../src/interactive/surfaces/extension-pane-keys.js";
+import { resolveExtensionLine } from "../../src/session-control/extension-line.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 type Faux = ReturnType<typeof registerEngineFauxProvider>;
@@ -341,6 +386,49 @@ test("adding either service, raising the budget or adding a tag is envelope grow
 	);
 });
 
+test("a bare alias, a program, a changed pin, a program's new key, a global key and the pane are envelope growth", () => {
+	const program = (name: string, version: string, sha: string, env: string[]) => ({
+		name,
+		version,
+		license: "MIT",
+		homepage: "https://example.invalid",
+		env,
+		downloads: { "linux-x64": { url: "https://example.invalid/p", sha256: sha.repeat(64) } },
+	});
+	const envelope = (extra: Record<string, unknown>) =>
+		capabilityEnvelope(
+			parseExtensionRuntimeV2({
+				api: 2,
+				entrypoint: "extension.mjs",
+				commands: [{ name: "play", description: "play" }],
+				...extra,
+			}),
+		);
+	const base = envelope({ binaries: [program("player", "1.0.0", "a", ["THEME"])] });
+	const grown = envelope({
+		commands: [{ name: "play", description: "play", alias: "tunes" }],
+		binaries: [program("player", "1.0.0", "b", ["THEME", "VOLUME"]), program("helper", "2.0.0", "c", [])],
+		keys: [{ key: "alt+m", action: "play", label: "Play" }],
+		services: { pane: true },
+		events: ["pane_changed"],
+	});
+	deepStrictEqual(envelopeGrowth(base, grown), [
+		"claims bare commands: /tunes",
+		"may open a pane below PanCode",
+		"program player changed: 1.0.0 (approved 1.0.0)",
+		"program player environment: VOLUME",
+		"new program: helper 2.0.0",
+		"new keys: alt+m:play",
+		"new events: pane_changed",
+	]);
+	deepStrictEqual(envelopeGrowth(grown, grown), []);
+	throws(() => envelope({ services: { pane: true } }), /needs a declared binary/u);
+	throws(
+		() => envelope({ binaries: [program("player", "1.0.0", "a", [])], events: ["pane_changed"] }),
+		/declares no runtime.services.pane/u,
+	);
+});
+
 const runtimeSource = `export default (api) => {
 	api.handle("members", (_args, ctx) => ({ text: [typeof ctx.complete, typeof ctx.blobs].join(" ") }));
 	api.handle("write", async (args, ctx) => {
@@ -504,4 +592,589 @@ test("the noninteractive host completes and puts the same as the attended one", 
 		{ actor: "extension", extensionId: "scribe", sessionId: "attended" },
 		{ actor: "extension", extensionId: "scribe", sessionId: "headless-session" },
 	]);
+});
+
+/**
+ * The services a package's manifest unlocks beyond model calls and blobs.
+ * `ctx.pane`: one pane per extension in the dock slot the View dock shares,
+ * running only a declared binary, with taps and the global key classified by
+ * one gate and every change reported to the package.
+ */
+
+const BINARY = "pancode-pane-fixture";
+
+function paneBinary(): ExtensionBinaryDeclaration {
+	return {
+		name: BINARY,
+		version: "1.0.0",
+		license: "MIT",
+		homepage: "https://example.invalid",
+		minimumVersion: "1.0.0",
+		versionArgs: ["--version"],
+		env: ["FIXTURE_HOME"],
+		downloads: {},
+		documents: [],
+	};
+}
+
+interface FakeMux {
+	mux: MuxContract;
+	opened: MuxOpenUtilityPaneRequest[];
+	closed: string[];
+	slot: { paneId: string; label: string; hidden: boolean } | null;
+	exit(): void;
+}
+
+function fakeMux(options: { available?: boolean } = {}): FakeMux {
+	const gone = new Set<(record: MuxPaneRecord) => void>();
+	let next = 1;
+	const fake: FakeMux = {
+		opened: [],
+		closed: [],
+		slot: null,
+		exit() {
+			const slot = fake.slot;
+			if (!slot) return;
+			fake.slot = null;
+			for (const handler of gone)
+				handler({
+					ref: { paneId: slot.paneId, tabId: "t", workspaceId: "w" },
+					purpose: "utility",
+					label: slot.label,
+					openedAt: 0,
+				});
+		},
+		mux: undefined as unknown as MuxContract,
+	};
+	fake.mux = {
+		available: () => options.available !== false,
+		detection: () => ({ reason: "not inside herdr" }),
+		onPaneGone(handler: (record: MuxPaneRecord) => void) {
+			gone.add(handler);
+			return () => gone.delete(handler);
+		},
+		docks: () => (fake.slot ? [{ slot: "extension", paneId: fake.slot.paneId, hidden: fake.slot.hidden }] : []),
+		dockVisibility: () => (fake.slot ? (fake.slot.hidden ? "hidden" : "visible") : "closed"),
+		async openUtilityPane(request: MuxOpenUtilityPaneRequest) {
+			fake.opened.push(request);
+			const paneId = `p${next++}`;
+			fake.slot = { paneId, label: request.label, hidden: request.dock?.hidden === true };
+			return { paneId, tabId: "t", workspaceId: "w" };
+		},
+		async closePane(paneId: string) {
+			fake.closed.push(paneId);
+			if (fake.slot?.paneId === paneId) fake.exit();
+			return true;
+		},
+		async hideDock() {
+			if (fake.slot) fake.slot.hidden = true;
+			return fake.slot !== null;
+		},
+		async showDock() {
+			if (!fake.slot) return null;
+			fake.slot.hidden = false;
+			return { paneId: fake.slot.paneId, tabId: "t", workspaceId: "w" };
+		},
+		async focusSelf() {
+			return true;
+		},
+	} as unknown as MuxContract;
+	return fake;
+}
+
+describe("extension pane service", () => {
+	let root: string;
+	let previousData: string | undefined;
+	const owner = (extensionId: string): ExtensionPaneOwner => ({
+		extensionId,
+		declaration: { binaries: [paneBinary()] },
+		storeDir: path.join(root, "store", extensionId),
+	});
+
+	before(() => {
+		root = mkdtempSync(path.join(tmpdir(), "pane-service-"));
+		previousData = process.env.PANCODE_DATA_DIR;
+		process.env.PANCODE_DATA_DIR = path.join(root, "data");
+		for (const id of ["music", "other"]) {
+			const dir = path.join(root, "data", "tools", "ext", id, BINARY, "1.0.0");
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(path.join(dir, BINARY), "#!/bin/sh\n");
+			chmodSync(path.join(dir, BINARY), 0o755);
+			mkdirSync(path.join(root, "store", id), { recursive: true });
+		}
+	});
+	after(() => {
+		if (previousData === undefined) delete process.env.PANCODE_DATA_DIR;
+		else process.env.PANCODE_DATA_DIR = previousData;
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("opens the declared binary in the shared dock slot, once, and reports each change", async () => {
+		const fake = fakeMux();
+		const changes: string[] = [];
+		const host = createExtensionPaneHost({
+			mux: () => fake.mux,
+			press: () => undefined,
+			changed: (id, change) => changes.push(`${id}:${change.state}:${change.reason}`),
+		});
+		const music = owner("music");
+		const state = await host.call(music, "open", {
+			binary: BINARY,
+			args: ["--playlist", "pancode"],
+			env: { FIXTURE_HOME: "home" },
+			title: "music",
+			rows: 18,
+			share: 0.05,
+		});
+		strictEqual(state, "visible");
+		strictEqual(fake.opened.length, 1);
+		const request = fake.opened[0];
+		deepStrictEqual(request?.argv.slice(1), ["--playlist", "pancode"]);
+		strictEqual(path.basename(request?.argv[0] ?? ""), BINARY);
+		strictEqual(request?.cwd, music.storeDir);
+		deepStrictEqual(request?.env, { FIXTURE_HOME: "home" });
+		deepStrictEqual(request?.dock, { slot: "extension", share: 0.05, minCells: 18 });
+		strictEqual(await host.call(music, "open", { binary: BINARY }), "visible");
+		strictEqual(fake.opened.length, 1);
+
+		strictEqual(await host.call(music, "hide", {}), "hidden");
+		strictEqual(await host.call(music, "state", {}), "hidden");
+		strictEqual(await host.call(music, "reveal", {}), "visible");
+		fake.exit();
+		strictEqual(await host.call(music, "state", {}), "closed");
+		deepStrictEqual(changes, [
+			"music:visible:opened",
+			"music:hidden:hidden",
+			"music:visible:revealed",
+			"music:closed:exited",
+		]);
+	});
+
+	it("refuses what the manifest did not declare and anything outside the store", async () => {
+		const host = createExtensionPaneHost({ mux: () => fakeMux().mux, press: () => undefined, changed: () => undefined });
+		const music = owner("music");
+		await rejects(host.call(music, "open", { binary: "sh" }), /pane binary 'sh' is not declared/u);
+		await rejects(
+			host.call(music, "open", { binary: BINARY, env: { LD_PRELOAD: "x" } }),
+			/does not declare the environment key LD_PRELOAD/u,
+		);
+		await rejects(
+			host.call(music, "open", { binary: BINARY, tap: { file: "../escape", action: "toggle" } }),
+			/inside the extension's store/u,
+		);
+		const victim = path.join(root, "victim.txt");
+		writeFileSync(victim, "keep-me");
+		symlinkSync(victim, path.join(music.storeDir, "escape-link"));
+		await rejects(
+			host.call(music, "open", { binary: BINARY, tap: { file: "escape-link", action: "toggle" } }),
+			/symbolic link/u,
+		);
+		strictEqual(readFileSync(victim, "utf8"), "keep-me");
+		symlinkSync(path.join(root, "dangling-target"), path.join(music.storeDir, "dangling-link"));
+		await rejects(
+			host.call(music, "open", { binary: BINARY, tap: { file: "dangling-link", action: "toggle" } }),
+			/symbolic link/u,
+		);
+		strictEqual(existsSync(path.join(root, "dangling-target")), false);
+		await rejects(host.call(music, "open", { binary: BINARY, rows: 40 }), /rows must be a whole number from 1 to 24/u);
+		const none = createExtensionPaneHost({
+			mux: () => fakeMux({ available: false }).mux,
+			press: () => undefined,
+			changed: () => undefined,
+		});
+		await rejects(none.call(music, "open", { binary: BINARY }), /herdr panes are not available \(not inside herdr\)/u);
+		const headless = createExtensionPaneHost({ mux: () => null, press: () => undefined, changed: () => undefined });
+		await rejects(headless.call(music, "open", { binary: BINARY }), /no pane host/u);
+	});
+
+	it("takes the slot from the View dock and from another extension's pane", async () => {
+		const fake = fakeMux();
+		const changes: string[] = [];
+		let viewClosed = 0;
+		const host = createExtensionPaneHost({
+			mux: () => fake.mux,
+			press: () => undefined,
+			changed: (id, change) => changes.push(`${id}:${change.state}:${change.reason}`),
+			closeViewDock: async () => {
+				viewClosed += 1;
+				fake.slot = null;
+				return true;
+			},
+		});
+		fake.slot = { paneId: "viewer", label: "extension", hidden: false };
+		await host.call(owner("music"), "open", { binary: BINARY });
+		strictEqual(viewClosed, 1);
+		await host.call(owner("other"), "open", { binary: BINARY });
+		strictEqual(host.owns("other"), true);
+		strictEqual(await host.call(owner("music"), "state", {}), "closed");
+		deepStrictEqual(changes, ["music:visible:opened", "music:closed:replaced", "other:visible:opened"]);
+		strictEqual(await host.yieldSlot(), true);
+		strictEqual(fake.slot, null);
+		await host.call(owner("music"), "open", { binary: BINARY });
+		await host.release("music");
+		deepStrictEqual(changes.slice(-3), ["other:closed:replaced", "music:visible:opened", "music:closed:closed"]);
+	});
+
+	it("presses the tap action from the pane's tap file and the global key through one double-tap gate", async () => {
+		const fake = fakeMux();
+		let clock = 0;
+		const presses: string[] = [];
+		const host = createExtensionPaneHost({
+			mux: () => fake.mux,
+			press: (id, action) => presses.push(`${id}:${action.id}:${action.source}:${action.key}`),
+			changed: () => undefined,
+			gate: createDockKeyGate({ now: () => clock }),
+		});
+		const music = owner("music");
+		await host.call(music, "open", { binary: BINARY, tap: { file: "taps/pane", action: "toggle" } });
+		appendFileSync(path.join(music.storeDir, "taps", "pane"), "tap\n");
+		for (let wait = 0; wait < 40 && presses.length === 0; wait += 1) await new Promise((done) => setTimeout(done, 25));
+		clock = 100;
+		host.key("music", "toggle");
+		clock = 200;
+		host.key("music", "next");
+		clock = 5000;
+		host.key("music", "toggle");
+		await new Promise((done) => setTimeout(done, 10));
+		deepStrictEqual(presses, [
+			"music:toggle:dock:tap",
+			"music:toggle:key:double",
+			"music:next:key:tap",
+			"music:toggle:key:tap",
+		]);
+		strictEqual(host.owner(), "music");
+		await host.dispose();
+		strictEqual(host.owner(), null);
+		strictEqual(fake.slot, null);
+	});
+});
+
+describe("extension binaries service", () => {
+	const NAME = "pancode-bin-fixture";
+	const script = Buffer.from(`#!/bin/sh\nprintf '%s|%s|%s' "$FIXTURE_HOME" "$(pwd)" "$1"\n`);
+	let root: string;
+	let previousPath: string | undefined;
+	let previousData: string | undefined;
+
+	function binary(sha256: string, minimumVersion = "1.0.0"): ExtensionBinaryDeclaration {
+		const platform = currentToolPlatform();
+		return {
+			...paneBinary(),
+			name: NAME,
+			minimumVersion,
+			downloads: platform ? { [platform]: { url: "https://example.invalid/fixture", sha256, archive: "raw" } } : {},
+		};
+	}
+
+	before(() => {
+		root = mkdtempSync(path.join(tmpdir(), "binary-service-"));
+		previousPath = process.env.PATH;
+		previousData = process.env.PANCODE_DATA_DIR;
+		process.env.PANCODE_DATA_DIR = root;
+	});
+	after(() => {
+		process.env.PATH = previousPath;
+		if (previousData === undefined) delete process.env.PANCODE_DATA_DIR;
+		else process.env.PANCODE_DATA_DIR = previousData;
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("installs only bytes matching the pinned sha256 and runs the pin in the store with declared keys", async () => {
+		const wrong = await installPackBinaries("fixture", [binary("0".repeat(64))], {
+			fetch: async () => script,
+			mirror: null,
+		});
+		strictEqual(wrong[0]?.ok, false);
+		strictEqual(/checksum mismatch/u.test(wrong[0]?.message ?? ""), true);
+
+		const pinned = binary(sha256Hex(script));
+		const missing = packBinaryPath("fixture", pinned);
+		strictEqual("reason" in missing && /pancode hub install extension:fixture/u.test(missing.reason), true);
+		strictEqual("reason" in missing && /pancode tools install/u.test(missing.reason), false);
+		const [installed] = await installPackBinaries("fixture", [pinned], { fetch: async () => script, mirror: null });
+		strictEqual(installed?.ok, true);
+		strictEqual(resolvePackBinary("fixture", pinned).source, "vendored");
+
+		const store = mkdtempSync(path.join(root, "store-"));
+		const request = parsePackBinaryRun({ name: NAME, args: ["status"], env: { FIXTURE_HOME: "home" } }, [pinned]);
+		const result = await runPackBinary("fixture", [pinned], request, store);
+		deepStrictEqual(result, { exitCode: 0, timedOut: false, stdout: `home|${store}|status`, stderr: "" });
+
+		removePackBinaries("fixture");
+		strictEqual(resolvePackBinary("fixture", pinned).source, "none");
+	});
+
+	it("prefers a PATH copy at the floor or newer over the pin", () => {
+		const bin = path.join(root, "bin");
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(path.join(bin, NAME), `#!/bin/sh\necho "${NAME} 2.0.0"\n`);
+		chmodSync(path.join(bin, NAME), 0o755);
+		process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+		const atFloor = resolvePackBinary("fixture", binary("0".repeat(64), "1.5.0"));
+		strictEqual(atFloor.source, "path");
+		strictEqual(atFloor.binaryPath, path.join(bin, NAME));
+		strictEqual(resolvePackBinary("fixture", binary("0".repeat(64), "3.0.0")).source, "none");
+	});
+
+	it("refuses an undeclared binary, an undeclared or reserved environment key, and runaway arguments", () => {
+		const pinned = binary("0".repeat(64));
+		const loader = { ...pinned, env: ["FIXTURE_HOME", "LD_PRELOAD"] };
+		throws(() => parsePackBinaryRun({ name: "sh" }, [pinned]), /binary 'sh' is not declared/u);
+		throws(() => parsePackBinaryRun({ name: NAME, env: { OTHER: "x" } }, [pinned]), /environment key OTHER/u);
+		throws(() => parsePackBinaryRun({ name: NAME, env: { LD_PRELOAD: "x" } }, [loader]), /environment key LD_PRELOAD/u);
+		throws(() => parsePackBinaryRun({ name: NAME, args: Array(65).fill("a") }, [pinned]), /at most 64 strings/u);
+		throws(() => parsePackBinaryRun({ name: NAME, timeoutMs: 60_000 }, [pinned]), /from 1 to 10000/u);
+	});
+
+	it("follows the installed copies: an install downloads the pin and removing the last copy deletes it", async (t) => {
+		const platform = currentToolPlatform();
+		if (!platform) return t.skip("no pinned platform here");
+		const env = await isolatePancodeEnv("pancode-ext-binaries-");
+		t.after(() => env.restore());
+		const source = path.join(env.dir, "player");
+		const cwd = path.join(env.dir, "workspace");
+		mkdirSync(source);
+		mkdirSync(cwd);
+		writeFileSync(
+			path.join(source, "pancode-extension.json"),
+			JSON.stringify({
+				id: "player",
+				version: "1.0.0",
+				description: "Plays",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					commands: [{ name: "play", description: "play", alias: "tunes" }],
+					binaries: [
+						{
+							name: NAME,
+							version: "1.0.0",
+							license: "MIT",
+							homepage: "https://example.invalid",
+							downloads: { [platform]: { url: "https://example.invalid/fixture", sha256: sha256Hex(script) } },
+						},
+					],
+				},
+			}),
+		);
+		writeFileSync(
+			path.join(source, "extension.mjs"),
+			`export default (api) => api.handle("play", () => ({ text: "ok" }));\n`,
+		);
+		ok(installExtension(source, { cwd, scope: "user" }).extension?.loadable);
+		strictEqual(installedExtensionClaims("tunes", cwd), true);
+
+		const store = path.join(env.dir, "tools");
+		const orphan = path.join(store, "ext", "player", "stale-bin", "1.0.0");
+		mkdirSync(orphan, { recursive: true });
+		deepStrictEqual(await syncPackBinaries("player", cwd, { root: store, fetch: async () => script, mirror: null }), []);
+		strictEqual(existsSync(path.join(store, "ext", "player", NAME)), true);
+		strictEqual(existsSync(path.join(store, "ext", "player", "stale-bin")), false);
+		ok(removeExtension("player", { cwd, scope: "user" }).removed);
+		deepStrictEqual(await syncPackBinaries("player", cwd, { root: store }), []);
+		strictEqual(existsSync(path.join(store, "ext", "player")), false);
+	});
+
+	it("refuses write-class tools and read-only runtimes for packages declaring binaries, and tracks versionArgs/member growth", () => {
+		const base = {
+			api: 2,
+			entrypoint: "extension.mjs",
+			permissions: { fs: { write: ["out"] } },
+			binaries: [
+				{
+					name: NAME,
+					version: "1.0.0",
+					license: "MIT",
+					homepage: "https://example.invalid",
+					downloads: {
+						"linux-x64": { url: "https://example.invalid/a.tgz", sha256: "a".repeat(64), archive: "tar.gz", member: "bin/a" },
+					},
+				},
+			],
+		};
+		throws(
+			() =>
+				parseExtensionRuntimeV2({
+					...base,
+					tools: [{ name: "mutate", description: "mutate", inputSchema: { type: "object" }, actionClass: "write" }],
+				}),
+			/no exec or binaries/u,
+		);
+		const parsed = parseExtensionRuntimeV2(base);
+		throws(
+			() =>
+				readOnlyRuntimeDeclaration(parsed, {
+					available: true,
+					backend: "bwrap",
+					executable: "/usr/bin/bwrap",
+					reason: null,
+				}),
+			/external programs that run outside the sandbox/u,
+		);
+		const envA = capabilityEnvelope(parsed);
+		const envMember = capabilityEnvelope(
+			parseExtensionRuntimeV2({
+				...base,
+				binaries: [
+					{
+						...base.binaries[0],
+						downloads: {
+							"linux-x64": {
+								url: "https://example.invalid/a.tgz",
+								sha256: "a".repeat(64),
+								archive: "tar.gz",
+								member: "bin/evil",
+							},
+						},
+					},
+				],
+			}),
+		);
+		const envVersionArgs = capabilityEnvelope(
+			parseExtensionRuntimeV2({
+				...base,
+				binaries: [{ ...base.binaries[0], versionArgs: ["-c", "id"] }],
+			}),
+		);
+		ok(envelopeGrowth(envA, envMember).some((line) => /changed/u.test(line)));
+		ok(envelopeGrowth(envA, envVersionArgs).some((line) => /changed/u.test(line)));
+	});
+});
+
+describe("extension keys and aliases", () => {
+	it("binds an Alt+letter key once and refuses taken, shared and malformed keys", () => {
+		const { bound, refused } = resolveExtensionKeys(
+			[
+				{ extensionId: "music", keys: [{ key: "Alt+A", action: "toggle", label: "Music" }] },
+				{
+					extensionId: "radio",
+					keys: [
+						{ key: "alt+r", action: "play", label: "Radio" },
+						{ key: "alt+q", action: "quit", label: "Quit" },
+					],
+				},
+				{
+					extensionId: "clock",
+					keys: [
+						{ key: "alt+r", action: "show", label: "Clock" },
+						{ key: "ctrl+k", action: "show", label: "Clock" },
+						{ key: "alt+b", action: "show", label: "Clock" },
+					],
+				},
+			],
+			new Map([["alt+q", "pancode.app.quit"]]),
+			new Map([["b", "the extension workspace"]]),
+		);
+		deepStrictEqual(bound, [{ extensionId: "music", key: "alt+a", letter: "a", action: "toggle", label: "Music" }]);
+		deepStrictEqual(
+			refused.map((entry) => `${entry.extensionId} ${entry.reason}`),
+			[
+				"radio alt+r is also claimed by clock",
+				"radio alt+q already runs pancode.app.quit",
+				"clock alt+r is also claimed by radio",
+				"clock ctrl+k is not an Alt+letter key",
+			],
+		);
+	});
+
+	it("gives a bare alias to one extension and refuses one a built-in, a prompt or another alias holds", () => {
+		const row = (extensionId: string, invocation: string, command: string): ExtensionCommandRow => ({
+			origin: "extension",
+			invocation,
+			extensionId,
+			scope: "user",
+			description: "",
+			generation: 1,
+			available: true,
+			alias: { command },
+		});
+		const settled = resolveExtensionAliases(
+			[
+				row("music", "music", "music"),
+				row("shadow", "model", "pick"),
+				row("notes", "review", "review"),
+				row("a", "twin", "go"),
+				row("b", "twin", "go"),
+			],
+			new Set(["model"]),
+			["review"],
+		);
+		deepStrictEqual(
+			settled.map((entry) => `${entry.invocation} ${entry.available} ${entry.reason ?? ""}`.trim()),
+			[
+				"music true",
+				"model false /model is a built-in command; use /ext:shadow:pick",
+				"review false /review belongs to an existing prompt template; use /ext:notes:review",
+				"twin false /twin is also claimed by b; use /ext:a:go",
+				"twin false /twin is also claimed by a; use /ext:b:go",
+			],
+		);
+		const transientRefused = resolveExtensionAliases(
+			[{ ...row("notes", "review", "review"), available: false, transient: true }],
+			new Set(),
+			["Review"],
+		);
+		strictEqual(transientRefused[0]?.transient, undefined);
+		const stubRuntime = { commands: () => transientRefused } as unknown as OperatorExtensions;
+		strictEqual(resolveExtensionLine("/review", "review", stubRuntime, [{ name: "Review" }]), null);
+	});
+
+	it("keeps built-in default keys reserved even when rebound and starts deferred extensions on key press", async (t) => {
+		const manager = createKeybindingManagerForTesting({ "pancode.output.cycle": "alt+z", "pancode.leader": [] });
+		const settled = settleExtensionKeys(
+			[
+				{
+					extensionId: "music",
+					keys: [
+						{ key: "alt+o", action: "a", label: "A" },
+						{ key: "alt+z", action: "b", label: "B" },
+					],
+				},
+			],
+			manager,
+		);
+		strictEqual(settled.bound.length, 0);
+		strictEqual(settled.refused.length, 2);
+
+		const env = await isolatePancodeEnv("pancode-ext-key-ondemand-");
+		const previous = process.cwd();
+		t.after(() => {
+			process.chdir(previous);
+			env.restore();
+		});
+		const source = path.join(env.dir, "keyed");
+		const cwd = path.join(env.dir, "workspace");
+		mkdirSync(source);
+		mkdirSync(cwd);
+		writeFileSync(
+			path.join(source, "pancode-extension.json"),
+			JSON.stringify({
+				id: "keyed",
+				version: "1.0.0",
+				description: "Key-driven on-demand extension",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					commands: [{ name: "ping", description: "ping" }],
+					keys: [{ key: "alt+k", action: "toggle", label: "Keyed" }],
+				},
+			}),
+		);
+		writeFileSync(
+			path.join(source, "extension.mjs"),
+			`export default (api) => { api.handle("ping", () => ({ text: "ok" })); api.action("toggle", (e) => ({ text: e.source + ":" + e.key })); };\n`,
+		);
+		ok(installExtension(source, { cwd, scope: "user" }).extension?.loadable);
+		process.chdir(cwd);
+		const operator = new OperatorExtensions({
+			context: () => ({ workspace: cwd, sessionId: "s1", mode: "interactive" }),
+			isIdle: () => true,
+		});
+		t.after(() => operator.dispose());
+		equal((await operator.reload("startup")).status, "committed");
+		equal(operator.entries()[0]?.state, "inactive");
+		const out = await operator.action("keyed", { id: "toggle", source: "key", key: "tap" });
+		equal(out.text, "key:tap");
+		equal(operator.entries()[0]?.state, "ready");
+	});
 });

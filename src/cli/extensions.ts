@@ -18,6 +18,7 @@ import {
 	listInstalledExtensions,
 	readExtensionInstallRecord,
 	removeExtension,
+	syncPackBinaries,
 } from "../domains/extensions/index.js";
 import { extensionInvocation } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
@@ -289,7 +290,8 @@ export function runExtensionsCommand(argv: ReadonlyArray<string>): number | Prom
 						);
 				}
 			}
-			return hasErrors(result.diagnostics) ? 1 : 0;
+			const code = hasErrors(result.diagnostics) ? 1 : 0;
+			return result.extension ? withPackBinaries(result.extension.id, code, parsed.json) : code;
 		}
 		case "enable":
 		case "disable": {
@@ -318,13 +320,25 @@ export function runExtensionsCommand(argv: ReadonlyArray<string>): number | Prom
 				printDiagnostics(result.diagnostics);
 				if (result.removed) printOk(`removed ${result.removed.id} (${result.removed.scope})`);
 			}
-			return hasErrors(result.diagnostics) ? 1 : 0;
+			const code = hasErrors(result.diagnostics) ? 1 : 0;
+			return result.removed ? withPackBinaries(result.removed.id, code, parsed.json) : code;
 		}
 		default:
 			printError(`unknown extensions command: ${parsed.command}`);
 			process.stderr.write(HELP);
 			return 2;
 	}
+}
+
+/** The committed install or removal stands; a pinned program that did not download fails the command. */
+async function withPackBinaries(id: string, code: number, json: boolean): Promise<number> {
+	const failures = await syncPackBinaries(id, process.cwd(), {
+		onProgress: (message) => {
+			if (!json) process.stderr.write(`${message}\n`);
+		},
+	});
+	for (const failure of failures) printError(`a pinned program did not download: ${failure}`);
+	return failures.length > 0 ? 1 : code;
 }
 
 async function runOperatorCommand(parsed: Parsed): Promise<number> {

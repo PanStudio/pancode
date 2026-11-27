@@ -25,6 +25,11 @@ export interface ExtensionCommandDeclarationV2 {
 	 * operator's next command does not wait for it. Only in a package that declares `runtime.services.runs`.
 	 */
 	long?: true;
+	/**
+	 * A bare `/<alias>` the operator may type for this command. The host refuses it while a built-in
+	 * command, a loaded prompt or another extension holds the name.
+	 */
+	alias?: string;
 }
 
 export interface ExtensionHookDeclaration {
@@ -80,6 +85,46 @@ export interface ExtensionPermissionsDeclaration {
 	net: boolean;
 }
 
+/** Platforms a pinned binary may name a download for. */
+export type ExtensionBinaryPlatform = "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64";
+
+/** One platform's release asset, verified by the hash of the bytes as downloaded. */
+export interface ExtensionBinaryDownload {
+	url: string;
+	sha256: string;
+	archive: "raw" | "zip" | "tar.gz";
+	/** Path of the executable inside a zip or tar.gz; absent for `raw`. */
+	member?: string;
+}
+
+/**
+ * A third-party program at one version, downloaded and verified at install and
+ * run by the host outside the runtime sandbox, only through `ctx.binaries` and
+ * `ctx.pane`. A copy on PATH whose version meets `minimumVersion` is preferred.
+ */
+export interface ExtensionBinaryDeclaration {
+	name: string;
+	version: string;
+	/** SPDX identifier of the upstream license. */
+	license: string;
+	homepage: string;
+	minimumVersion: string;
+	versionArgs: string[];
+	/** Environment keys a call may set; every other key is the host's safe tool environment. */
+	env: string[];
+	downloads: Partial<Record<ExtensionBinaryPlatform, ExtensionBinaryDownload>>;
+	/** License or notice files fetched beside the binary, pinned like it. */
+	documents: Array<{ name: string; url: string; sha256: string }>;
+}
+
+/** A global key that presses one of the package's actions, outside any workspace. */
+export interface ExtensionKeyDeclaration {
+	/** `alt+<letter>`; the leader menu gets the same letter. */
+	key: string;
+	action: string;
+	label: string;
+}
+
 export interface ExtensionConfigField {
 	key: string;
 	type: "string" | "number" | "boolean";
@@ -118,6 +163,10 @@ export interface ExtensionRuntimeDeclarationV2 {
 	config: ExtensionConfigField[];
 	/** Top-level `pancode <verb>` names for commands; absent when none, which keeps existing declarations stable. */
 	cli?: ExtensionCliVerbDeclaration[];
+	/** Pinned external programs; absent when none, which keeps existing declarations stable. */
+	binaries?: ExtensionBinaryDeclaration[];
+	/** Global keys; absent when none. */
+	keys?: ExtensionKeyDeclaration[];
 }
 
 /** `pancode <verb> [args]` runs `command` headlessly with the raw arguments. A built-in verb always wins. */
@@ -158,6 +207,8 @@ export interface ExtensionRunsServiceDeclaration {
 
 export interface ExtensionServicesDeclaration {
 	embedding: boolean;
+	/** One terminal pane in the host's dock, running a declared binary. */
+	pane?: boolean;
 	model?: ExtensionModelServiceDeclaration;
 	store?: ExtensionStoreServiceDeclaration;
 	/** Headless `pancode run` processes, reached from commands and actions only. */
@@ -197,4 +248,14 @@ export type ExtensionCapabilityEnvelope = Pick<
 	long?: string[];
 	/** Top-level verbs the package claims; absent when none. */
 	cli?: Array<Pick<ExtensionCliVerbDeclaration, "verb" | "command">>;
+	/** Bare command names the package claims; absent when none. */
+	aliases?: string[];
+	/** Pinned programs by name, version, probe args and per-platform hash/member; absent when none. */
+	binaries?: Array<
+		Pick<ExtensionBinaryDeclaration, "name" | "version" | "minimumVersion" | "versionArgs" | "env"> & {
+			downloads: Record<string, { sha256: string; member?: string }>;
+		}
+	>;
+	/** Global keys; absent when none. */
+	keys?: ExtensionKeyDeclaration[];
 };

@@ -23,6 +23,7 @@ import {
 	enableExtension,
 	removeExtension,
 	reviewExtensionEnvelope,
+	syncPackBinaries,
 } from "../extensions/index.js";
 import { MCP_USER_CONFIG_FILENAME } from "../gateway/mcp/config.js";
 import type { HubImportApplyResult, HubImportPlan } from "../interop/import.js";
@@ -1010,6 +1011,26 @@ export function applyHubLifecycle(
 		for (const outcome of committed)
 			annotateVerification(outcome, plan.cwd, "post-refresh", outcome.operation === "remove");
 	return summarize(plan, false, outcomes, refresh);
+}
+
+/**
+ * Pinned programs follow the extension copies an apply committed: downloaded
+ * after the reviewed install, pruned on an update, deleted with the last copy.
+ * The writers hold scope locks and run synchronously, so this runs after them.
+ */
+export async function syncHubPackBinaries(
+	apply: HubApplyResult,
+	cwd: string,
+	onProgress?: (message: string) => void,
+): Promise<string[]> {
+	const ids = new Set(
+		apply.outcomes
+			.filter((outcome) => outcome.status === "committed" && outcome.identity.kind === "extension")
+			.map((outcome) => outcome.identity.name),
+	);
+	const failures: string[] = [];
+	for (const id of ids) failures.push(...(await syncPackBinaries(id, cwd, onProgress ? { onProgress } : {})));
+	return failures;
 }
 
 function summarize(

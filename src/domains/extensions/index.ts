@@ -42,6 +42,7 @@ export {
 	type ExtensionRuntimeHookBridge,
 	type ExtensionRuntimeHookExecutor,
 } from "./runtime-hook-bridge.js";
+export { syncPackBinaries } from "./services/binaries.js";
 export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
 export {
 	assignExtensionModel,

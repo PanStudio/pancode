@@ -22,6 +22,7 @@ import {
 	type OperatorRuntimeEntry,
 	type OperatorRuntimeV2Options,
 } from "./operator-runtime-v2.js";
+import type { ExtensionKeyClaims } from "./services/keys.js";
 import type { ExtensionSurfaceModel } from "./surface-model.js";
 
 export type OperatorExtensionsOptions = Pick<
@@ -40,6 +41,8 @@ export type OperatorExtensionsOptions = Pick<
 	| "surface"
 	| "pruneOrphanedSessionState"
 	| "work"
+	| "pane"
+	| "builtinCommandNames"
 > & {
 	embed?: (request: ExtensionEmbeddingRequest, signal: AbortSignal, workspace: string) => Promise<EmbeddingResponse>;
 	/** See `OperatorRuntimeV2Options.services`. */
@@ -139,6 +142,12 @@ export class OperatorExtensions {
 	}
 	observeV2(observation: ExtensionObservationV2): void {
 		this.v2.observe(observation);
+	}
+	keyClaims(): ExtensionKeyClaims[] {
+		return this.v2.keyClaims();
+	}
+	observeExtension(extensionId: string, observation: ExtensionObservationV2): void {
+		this.v2.observeExtension(extensionId, observation);
 	}
 	action(extensionId: string, event: ExtensionUiAction): Promise<ExtensionOutputV2> {
 		return this.v2.action(extensionId, event);

@@ -35,6 +35,8 @@ export function readOnlyRuntimeDeclaration(
 	declaration: ExtensionRuntimeDeclarationV2,
 	availability: SandboxAvailability = sandboxAvailability(),
 ): ExtensionRuntimeDeclarationV2 {
+	if ((declaration.binaries?.length ?? 0) > 0)
+		throw new Error("this session is read-only and the runtime declares external programs that run outside the sandbox");
 	if (declaration.permissions.exec && !(availability.available && availability.backend === "bwrap"))
 		throw new Error(
 			"this session is read-only and the runtime may run programs, which only a bubblewrap sandbox keeps from changing user files",

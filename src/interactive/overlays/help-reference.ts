@@ -125,73 +125,78 @@ export function openHelpOverlay(
 	// skin change repaints the chip instead of showing the colors of the skin
 	// the help was built under.
 	const extensionItems = (): ListOverlayItem[] =>
-		displaySafe(extensionCommands).map((row): ListOverlayItem => {
-			// The row is one line; the pane's Does fact keeps the description's lines.
-			const summary = sanitizeCallTargetText(row.description);
-			picks.set(`extension:${row.invocation}`, `/${row.invocation}`);
-			const facts = (width: number, withDescription: boolean): string[] => {
-				const theme = pancodeTheme();
-				const rows: Fact[] = [
-					...(withDescription ? [{ label: "Does", value: row.description }] : []),
-					{ label: "Owner", value: `${row.extensionId} (${row.scope} scope), operator generation ${row.generation}` },
-					{
-						label: "Status",
-						value: row.available
-							? statusChip(theme, "ok", "ready; runs installed operator code and its results stay local to you")
-							: statusChip(theme, "warning", row.reason ?? "runtime unavailable"),
-					},
-				];
-				return factRows(theme, rows, width, FACT_OPTIONS);
-			};
-			return {
-				id: `extension:${row.invocation}`,
-				label: `/${row.invocation}  ${summary}`,
-				cells: { lead: `/${row.invocation}`, text: described() ? summary : "" },
-				group: "Operator extensions",
-				get meta() {
-					return row.available
-						? statusChip(pancodeTheme(), "ok", "ready")
-						: statusChip(pancodeTheme(), "warning", "unavailable");
-				},
-				// The row states the summary from standard up, so the facts under the list leave it out.
-				facts: (width) => facts(width, !described()),
-				...detailWithHead((width) => ({
-					head: [titleRow(pancodeTheme(), `/${row.invocation}`, width, { meta: "operator extension" })],
-					rest: facts(width, true),
-				})),
-			};
-		});
-
-	// A plugin's prompts are commands the palette offers, so help finds them too
-	// (WTF-P F11). A name an extension command took over is listed once, as that command.
-	const promptItems = (): ListOverlayItem[] =>
-		displaySafe(prompts.filter((prompt) => !extensionCommands.some((row) => row.invocation === prompt.name))).map(
-			(prompt): ListOverlayItem => {
-				const usage = prompt.argumentHint ? `/${prompt.name} ${prompt.argumentHint}` : `/${prompt.name}`;
-				picks.set(`prompt:${prompt.name}`, `/${prompt.name}${prompt.argumentHint ? " " : ""}`);
+		displaySafe(extensionCommands.filter((row) => !(row.alias !== undefined && !row.available))).map(
+			(row): ListOverlayItem => {
+				// The row is one line; the pane's Does fact keeps the description's lines.
+				const summary = sanitizeCallTargetText(row.description);
+				picks.set(`extension:${row.invocation}`, `/${row.invocation}`);
 				const facts = (width: number, withDescription: boolean): string[] => {
 					const theme = pancodeTheme();
 					const rows: Fact[] = [
-						{ label: "Usage", value: theme.fg("inlineCode", usage) },
-						...(withDescription && prompt.description ? [{ label: "Does", value: prompt.description }] : []),
-						{ label: "From", value: prompt.source },
+						...(withDescription ? [{ label: "Does", value: row.description }] : []),
+						{ label: "Owner", value: `${row.extensionId} (${row.scope} scope), operator generation ${row.generation}` },
+						{
+							label: "Status",
+							value: row.available
+								? statusChip(theme, "ok", "ready; runs installed operator code and its results stay local to you")
+								: statusChip(theme, "warning", row.reason ?? "runtime unavailable"),
+						},
 					];
 					return factRows(theme, rows, width, FACT_OPTIONS);
 				};
 				return {
-					id: `prompt:${prompt.name}`,
-					label: `/${prompt.name}  ${prompt.description}  ${prompt.source}`,
-					cells: { lead: `/${prompt.name}`, text: described() ? prompt.description : "" },
-					group: "Prompts",
-					...(described() ? { meta: prompt.source } : {}),
+					id: `extension:${row.invocation}`,
+					label: `/${row.invocation}  ${summary}`,
+					cells: { lead: `/${row.invocation}`, text: described() ? summary : "" },
+					group: "Operator extensions",
+					get meta() {
+						return row.available
+							? statusChip(pancodeTheme(), "ok", "ready")
+							: statusChip(pancodeTheme(), "warning", "unavailable");
+					},
+					// The row states the summary from standard up, so the facts under the list leave it out.
 					facts: (width) => facts(width, !described()),
 					...detailWithHead((width) => ({
-						head: [titleRow(pancodeTheme(), `/${prompt.name}`, width, { meta: "prompt" })],
+						head: [titleRow(pancodeTheme(), `/${row.invocation}`, width, { meta: "operator extension" })],
 						rest: facts(width, true),
 					})),
 				};
 			},
 		);
+
+	// A plugin's prompts are commands the palette offers, so help finds them too
+	// (WTF-P F11). A name an extension command took over is listed once, as that command.
+	const promptItems = (): ListOverlayItem[] =>
+		displaySafe(
+			prompts.filter(
+				(prompt) =>
+					!extensionCommands.some((row) => row.replaces === "prompt" && row.available && row.invocation === prompt.name),
+			),
+		).map((prompt): ListOverlayItem => {
+			const usage = prompt.argumentHint ? `/${prompt.name} ${prompt.argumentHint}` : `/${prompt.name}`;
+			picks.set(`prompt:${prompt.name}`, `/${prompt.name}${prompt.argumentHint ? " " : ""}`);
+			const facts = (width: number, withDescription: boolean): string[] => {
+				const theme = pancodeTheme();
+				const rows: Fact[] = [
+					{ label: "Usage", value: theme.fg("inlineCode", usage) },
+					...(withDescription && prompt.description ? [{ label: "Does", value: prompt.description }] : []),
+					{ label: "From", value: prompt.source },
+				];
+				return factRows(theme, rows, width, FACT_OPTIONS);
+			};
+			return {
+				id: `prompt:${prompt.name}`,
+				label: `/${prompt.name}  ${prompt.description}  ${prompt.source}`,
+				cells: { lead: `/${prompt.name}`, text: described() ? prompt.description : "" },
+				group: "Prompts",
+				...(described() ? { meta: prompt.source } : {}),
+				facts: (width) => facts(width, !described()),
+				...detailWithHead((width) => ({
+					head: [titleRow(pancodeTheme(), `/${prompt.name}`, width, { meta: "prompt" })],
+					rest: facts(width, true),
+				})),
+			};
+		});
 
 	// Editor, selection and viewport primitives are tables inside two topics, and
 	// an action with no key and no menu letter is named in the keyboard topic.

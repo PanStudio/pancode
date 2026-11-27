@@ -115,6 +115,8 @@ export interface ApplicationControllerDeps {
 	isAutocompleteVisible?: () => boolean;
 	matchesRepeatableInput?: (data: string) => boolean;
 	routeComposerKey?: (data: string) => boolean;
+	/** A global key an installed extension holds; true when it took the press. */
+	extensionKey?: (data: string) => boolean;
 	hasQueuedMessages?: () => boolean;
 	explainProtectedExit?: () => void;
 	/** An Esc was absorbed because it followed one that closed a surface; the run is still going. */
@@ -534,6 +536,7 @@ export function createApplicationController(deps: ApplicationControllerDeps): Ap
 			if (!deps.matchesAction(data, id)) continue;
 			return deps.dispatchAction(id) ? { consume: true } : undefined;
 		}
+		if (!isKeyRelease(data) && deps.extensionKey?.(data)) return { consume: true };
 		if (deps.routeComposerKey?.(data)) return { consume: true };
 		return undefined;
 	};

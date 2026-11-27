@@ -45,6 +45,7 @@ export type ExtensionObservationEventV2 =
 	| "fs_changed"
 	| "workspace_enter"
 	| "workspace_leave"
+	| "pane_changed"
 	| "tick";
 
 export type ExtensionHookPoint = "prompt_submit" | "before_tool" | "after_tool" | "turn_start" | "turn_end";
@@ -119,6 +120,7 @@ export type ExtensionObservationV2 =
 	| { event: "fs_changed"; paths: string[] }
 	| { event: "workspace_enter"; workspace: string }
 	| { event: "workspace_leave"; workspace: string }
+	| { event: "pane_changed"; state: ExtensionPaneState; reason: ExtensionPaneChangeReason }
 	| { event: "tick"; intervalMs: number };
 
 /** Where a path-taking tool (`read`, `ls`, `grep`, `find`, `write`, `edit`, `artifact`) lands its `path`. */
@@ -465,7 +467,7 @@ export interface ExtensionUiAction {
 	id: string;
 	/** Row, card or node key when the press came from a table, list, board or tree. */
 	key?: string;
-	source: "band" | "card" | "panel" | "dock" | "header" | "board" | "island" | "footer" | "leader";
+	source: "band" | "card" | "panel" | "dock" | "header" | "board" | "island" | "footer" | "leader" | "key";
 }
 
 export interface ExtensionKeyValue {
@@ -529,6 +531,76 @@ export interface ExtensionBlobs {
 	): Promise<{ bytes: number; sha256: string }>;
 }
 
+/** `closed` once the program exits or the host closes it; `hidden` keeps the program running out of sight. */
+export type ExtensionPaneState = "visible" | "hidden" | "closed";
+/** `replaced`: another extension's pane or the View dock took the shared slot. */
+export type ExtensionPaneChangeReason = "opened" | "hidden" | "revealed" | "closed" | "exited" | "replaced";
+
+export interface ExtensionPaneOpenRequest {
+	/** A binary from `runtime.binaries`. */
+	binary: string;
+	args?: string[];
+	/** Only keys the binary declares in `env`. */
+	env?: Record<string, string>;
+	/** Plain text, at most 40 characters; the binary's name by default. */
+	title?: string;
+	/** Rows the pane keeps however small its share, 1 to 24. */
+	rows?: number;
+	/** Fraction of the window's height, above 0 and at most 0.5. */
+	share?: number;
+	/** Start parked out of sight, with the program running. */
+	hidden?: boolean;
+	/**
+	 * A store-relative file the program appends a line to; each line presses `action`
+	 * as `source: "dock"`, and a second line within 400 ms arrives as `key: "double"`.
+	 */
+	tap?: { file: string; action: string };
+}
+
+/** Colors for the background PanCode detected, as `#rrggbb`, so a pane program can match the theme. */
+export interface ExtensionPanePalette {
+	background: "dark" | "light" | null;
+	accent: string;
+	strong: string;
+	text: string;
+	low: string;
+	mid: string;
+	high: string;
+}
+
+/**
+ * One terminal pane in the dock below PanCode, running a declared binary. It
+ * shares its slot with the View dock and every other extension's pane, so
+ * opening one closes the others. Each change arrives as `pane_changed`.
+ */
+export interface ExtensionPane {
+	/** Opens the pane, or answers its state when it is already open. Throws the reason it cannot. */
+	open(request: ExtensionPaneOpenRequest): Promise<ExtensionPaneState>;
+	close(): Promise<ExtensionPaneState>;
+	hide(): Promise<ExtensionPaneState>;
+	reveal(): Promise<ExtensionPaneState>;
+	state(): Promise<ExtensionPaneState>;
+	palette(): Promise<ExtensionPanePalette>;
+}
+
+export interface ExtensionBinaryRunResult {
+	/** Null when the program was stopped by a signal or the timeout. */
+	exitCode: number | null;
+	timedOut: boolean;
+	/** At most 64 KiB each. */
+	stdout: string;
+	stderr: string;
+}
+
+/** The programs in `runtime.binaries`, run by the host outside the sandbox, in the store directory, with no shell. */
+export interface ExtensionBinaries {
+	run(
+		name: string,
+		args?: string[],
+		options?: { env?: Record<string, string>; timeoutMs?: number },
+	): Promise<ExtensionBinaryRunResult>;
+}
+
 export interface ExtensionContextV2 {
 	readonly snapshot: Readonly<ExtensionRuntimeSnapshotV2>;
 	readonly requestId: string;
@@ -551,6 +623,10 @@ export interface ExtensionContextV2 {
 	readonly blobs?: ExtensionBlobs;
 	/** Absolute path of the files directory `permissions.fs.write: [store]` opens; absent without it. */
 	readonly storeDir?: string;
+	/** Present when runtime.binaries is declared, in a host that runs them. */
+	readonly binaries?: ExtensionBinaries;
+	/** Present when runtime.services.pane is declared, in a host with a pane dock: an interactive session inside herdr. */
+	readonly pane?: ExtensionPane;
 	/** Present in a command or an action when runtime.services.runs is declared and approved. */
 	readonly runs?: ExtensionRuns;
 	/** Present in a command or an action when runtime.services.worktrees is declared and approved. */

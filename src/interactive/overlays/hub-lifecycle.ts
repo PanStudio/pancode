@@ -27,6 +27,7 @@ import {
 	planHubLifecycle,
 	releaseHubLifecycle,
 	retryHubRefresh,
+	syncHubPackBinaries,
 } from "../../domains/resources/index.js";
 
 export type {
@@ -63,7 +64,11 @@ export interface HubLifecyclePort {
  * never restates a successful write as a failure, and retrying it never
  * re-applies the plan.
  */
-export function createHubLifecycle(refresh: HubRefreshHost): HubLifecyclePort {
+export function createHubLifecycle(
+	refresh: HubRefreshHost,
+	/** A pinned program an extension declared did not download; the install itself stands. */
+	onBinaryFailure?: (message: string) => void,
+): HubLifecyclePort {
 	// A retry follows the apply it belongs to, so it reloads extensions exactly
 	// when that apply committed one.
 	let touched: HubRefreshTouch = { extensions: false };
@@ -72,6 +77,9 @@ export function createHubLifecycle(refresh: HubRefreshHost): HubLifecyclePort {
 		apply: (plan) => {
 			const result = applyHubLifecycle(plan, { refresh });
 			touched = hubRefreshTouch(result.outcomes);
+			void syncHubPackBinaries(result, plan.cwd).then((failures) => {
+				for (const failure of failures) onBinaryFailure?.(failure);
+			});
 			return result;
 		},
 		release: (plan) => releaseHubLifecycle(plan),
