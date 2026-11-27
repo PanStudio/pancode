@@ -10,7 +10,6 @@ import {
 	findMcpSkill,
 	judgeMcpSkillApproval,
 	type McpAttestedSkill,
-	type McpBuiltinSource,
 	mcpCatalogDigest,
 	mcpServerFileArguments,
 	mcpSkillReferenceServer,
@@ -44,8 +43,6 @@ export interface WorkerMcpAdmissionInput {
 	skills?: ReadonlyArray<string>;
 	/** Override for the user config directory; defaults to pancodeConfigDir(). */
 	configDir?: string;
-	/** Override for the builtin server manifest and the CLI that serves it; defaults to the installed package's. */
-	builtin?: McpBuiltinSource;
 	/** A read-only worker takes a read class only from the operator, never from a server's readOnlyHint. */
 	readOnly?: boolean;
 }
@@ -59,7 +56,6 @@ export function resolveWorkerMcpAdmission(input: WorkerMcpAdmissionInput): Worke
 	const resolved = resolveMcpServers({
 		cwd: input.projectCwd,
 		...(input.configDir !== undefined ? { configDir: input.configDir } : {}),
-		...(input.builtin !== undefined ? { builtin: input.builtin } : {}),
 	});
 	const projectRoot = canonicalProjectRoot(input.projectCwd);
 	const tools: WorkerMcpToolAttestation[] = [];
@@ -142,7 +138,6 @@ function attestMcpSkill(
 	if (declaration === undefined) {
 		throw denied(`no MCP server '${serverId}' is declared for ${projectRoot}`);
 	}
-	if (declaration.scope === "builtin") throw denied(`builtin server '${serverId}' serves no skills`);
 	if (declaration.trust.status !== "trusted") {
 		throw denied(
 			`MCP server '${serverId}' is ${declaration.trust.status} for ${projectRoot} (${declaration.trust.reason}); review its declaration and run \`pancode mcp trust ${serverId}\``,

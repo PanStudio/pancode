@@ -70,7 +70,6 @@ import {
 	remoteIndexRows,
 } from "../../src/domains/resources/hub-trust.js";
 import type { HubTier } from "../../src/domains/resources/hub-types.js";
-import { emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const SAMPLE_KIT = path.resolve(import.meta.dirname, "../fixtures/plugins/sample-kit");
@@ -563,8 +562,7 @@ test("a revoked plugin digest is not loadable and its MCP declaration disappears
 	const source = pluginSource(env.dir, "notes-kit", true);
 	const digest = pluginContentDigest(source);
 	ok(installPlugin(source, { cwd, scope: "user" }).plugin?.loadable);
-	const builtin = emptyBuiltinSource(scratchDir("pancode-hub-builtin-"));
-	const servers = () => loadMcpServerConfig({ cwd, builtin }).servers.map((server) => server.id);
+	const servers = () => loadMcpServerConfig({ cwd }).servers.map((server) => server.id);
 	deepStrictEqual(servers(), ["notes"]);
 
 	mkdirSync(pancodeStateDir(), { recursive: true });

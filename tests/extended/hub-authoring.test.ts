@@ -8,18 +8,14 @@ import { describe, it } from "node:test";
 import { parse as parseYaml } from "yaml";
 
 import { runHubCommand } from "../../src/cli/hub.js";
-import { parseFrontmatter } from "../../src/domains/agents/frontmatter.js";
-import { parsePlaybook } from "../../src/domains/agents/playbook.js";
-import { parseAgentRecipeSchema } from "../../src/domains/agents/recipe-schema.js";
 import { listInstalledPlugins, readPluginManifest } from "../../src/domains/plugins/index.js";
 import { validateHubPackage } from "../../src/domains/resources/hub-validation.js";
-import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills, skillCatalogValidity } from "../../src/domains/resources/skills/loader.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const TEMPLATES_DIR = join(REPO_ROOT, "hub", "_authoring", "templates");
-const TEMPLATE_KINDS = ["skill", "agent", "playbook", "prompt", "plugin"] as const;
+const TEMPLATE_KINDS = ["skill", "plugin"] as const;
 
 function computeDirectoryFingerprint(dir: string): Record<string, string> {
 	const result: Record<string, string> = {};
@@ -40,7 +36,7 @@ function computeDirectoryFingerprint(dir: string): Record<string, string> {
 }
 
 describe("PanHub pack authoring templates", () => {
-	it("all 5 templates load cleanly through native domain loaders", () => {
+	it("both templates load cleanly through native domain loaders", () => {
 		// 1. Skill template
 		const skillRoot = join(TEMPLATES_DIR, "skill");
 		const skillManifest = readPluginManifest(skillRoot);
@@ -54,57 +50,7 @@ describe("PanHub pack authoring templates", () => {
 		equal(loadedSkills.items.length, 1);
 		equal(loadedSkills.items[0]?.name, "citation-check");
 
-		// 2. Agent template
-		const agentRoot = join(TEMPLATES_DIR, "agent");
-		const agentManifest = readPluginManifest(agentRoot);
-		ok(agentManifest.valid, `agent manifest should be valid: ${JSON.stringify(agentManifest.diagnostics)}`);
-		equal(agentManifest.manifest?.pancode.kind, "agent");
-		const agentRecipePath = join(agentRoot, "agents", "benchmark-scout.md");
-		ok(existsSync(agentRecipePath), "benchmark-scout.md must exist");
-		const rawAgent = readFileSync(agentRecipePath, "utf8");
-		const { frontmatter: agentFm, body: agentBody } = parseFrontmatter(rawAgent, agentRecipePath);
-		const parsedAgent = parseAgentRecipeSchema({
-			id: "benchmark-scout",
-			source: "plugin",
-			filepath: agentRecipePath,
-			body: agentBody,
-			frontmatter: agentFm,
-		});
-		equal(parsedAgent.id, "benchmark-scout");
-		equal(parsedAgent.audience, "custom");
-		deepStrictEqual(parsedAgent.skills, []);
-		ok(parsedAgent.description.length > 0);
-		ok(parsedAgent.budget !== undefined);
-
-		// 3. Fleet template
-		const fleetRoot = join(TEMPLATES_DIR, "playbook");
-		const fleetManifest = readPluginManifest(fleetRoot);
-		ok(fleetManifest.valid, `fleet manifest should be valid: ${JSON.stringify(fleetManifest.diagnostics)}`);
-		equal(fleetManifest.manifest?.pancode.kind, "playbook");
-		const fleetPath = join(fleetRoot, "playbooks", "pipeline-review.md");
-		ok(existsSync(fleetPath), "pipeline-review.md must exist");
-		const parsedFleet = parsePlaybook(readFileSync(fleetPath, "utf8"), fleetPath);
-		equal(parsedFleet.name, "pipeline-review");
-		equal(parsedFleet.steps.length, 2);
-		equal(parsedFleet.steps[0]?.id, "inspect-pipeline");
-		equal(parsedFleet.steps[1]?.id, "verify-invariants");
-		deepStrictEqual(parsedFleet.steps[1]?.dependencies, ["inspect-pipeline"]);
-		equal(parsedFleet.onFailure, "stop");
-
-		// 4. Prompt template
-		const promptRoot = join(TEMPLATES_DIR, "prompt");
-		const promptManifest = readPluginManifest(promptRoot);
-		ok(promptManifest.valid, `prompt manifest should be valid: ${JSON.stringify(promptManifest.diagnostics)}`);
-		equal(promptManifest.manifest?.pancode.kind, "prompt");
-		const loadedPrompts = loadPromptTemplates({
-			roots: [{ path: join(promptRoot, "prompts"), scope: "package", rootPath: promptRoot, plugin: true, trusted: true }],
-		});
-		equal(loadedPrompts.items.length, 1);
-		equal(loadedPrompts.items[0]?.name, "paper-summary");
-		ok(loadedPrompts.items[0]?.content.includes("$ARGUMENTS"));
-		equal(loadedPrompts.items[0]?.unavailable, undefined);
-
-		// 5. Plugin template (composite)
+		// 2. Plugin template (composite)
 		const pluginRoot = join(TEMPLATES_DIR, "plugin");
 		const pluginManifest = readPluginManifest(pluginRoot);
 		ok(pluginManifest.valid, `plugin manifest should be valid: ${JSON.stringify(pluginManifest.diagnostics)}`);
@@ -123,7 +69,7 @@ describe("PanHub pack authoring templates", () => {
 		);
 	});
 
-	it("all 5 templates pass validateHubPackage and pancode hub validate CLI", async () => {
+	it("both templates pass validateHubPackage and pancode hub validate CLI", async () => {
 		for (const kind of TEMPLATE_KINDS) {
 			const templateDir = join(TEMPLATES_DIR, kind);
 			const validation = validateHubPackage(templateDir);
@@ -139,12 +85,6 @@ describe("PanHub pack authoring templates", () => {
 			const exitCode = await runHubCommand(["validate", templateDir, "--json"]);
 			equal(exitCode, 0, `CLI validation failed for template '${kind}'`);
 		}
-
-		// Fleet template surfaces external agent prerequisites
-		const fleetVal = validateHubPackage(join(TEMPLATES_DIR, "playbook"));
-		const agentPrereqs = fleetVal.validation.prerequisites.filter((p) => p.type === "agent");
-		ok(agentPrereqs.some((p) => p.identifier === "scout"));
-		ok(agentPrereqs.some((p) => p.identifier === "verifier"));
 	});
 
 	it("validation rejects manifest-valid malformed agent", async () => {
@@ -162,7 +102,6 @@ describe("PanHub pack authoring templates", () => {
 					extensions: {
 						"dev.pancode": {
 							manifestVersion: 1,
-							kind: "agent",
 							resources: { agents: "agents" },
 							components: [{ kind: "agent", id: "bad-agent", path: "agents/bad-agent.md" }],
 						},
@@ -203,7 +142,6 @@ describe("PanHub pack authoring templates", () => {
 					extensions: {
 						"dev.pancode": {
 							manifestVersion: 1,
-							kind: "playbook",
 							resources: { playbooks: "playbooks" },
 							components: [{ kind: "playbook", id: "cyclic-fleet", path: "playbooks/cyclic-fleet.md" }],
 						},
@@ -260,7 +198,6 @@ Fleet instructions.
 					extensions: {
 						"dev.pancode": {
 							manifestVersion: 1,
-							kind: "prompt",
 							resources: { prompts: "prompts" },
 							components: [{ kind: "prompt", id: "broken-prompt", path: "prompts/broken-prompt.md" }],
 						},
@@ -289,7 +226,7 @@ Refer to \${component:resource:missing-document} before proceeding.
 		}
 	});
 
-	it("validation rejects unsupported cross-package skill binding on standalone agent", async () => {
+	it("validation rejects an agent binding a skill outside its package", async () => {
 		const env = await isolatePancodeEnv("val-unsupported-skill-");
 		try {
 			const pkgDir = join(env.dir, "cross-skill-agent-pkg");
@@ -304,7 +241,6 @@ Refer to \${component:resource:missing-document} before proceeding.
 					extensions: {
 						"dev.pancode": {
 							manifestVersion: 1,
-							kind: "agent",
 							resources: { agents: "agents" },
 							components: [{ kind: "agent", id: "cross-agent", path: "agents/cross-agent.md" }],
 						},
@@ -362,7 +298,6 @@ Persona body.
 					extensions: {
 						"dev.pancode": {
 							manifestVersion: 1,
-							kind: "prompt",
 							resources: { prompts: "prompts" },
 							components: [{ kind: "prompt", id: "missing-body", path: "prompts/missing-body.md" }],
 						},
@@ -448,25 +383,13 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		}
 	});
 
-	it("all 46 curated packs pass validation", () => {
+	it("all 38 curated packs pass validation", () => {
 		const isDir = (p: string) => statSync(p).isDirectory();
 		const hubDir = join(REPO_ROOT, "hub", "packs");
 
 		const packagePaths: string[] = [
-			...readdirSync(join(hubDir, "agents"))
-				.map((d) => join(hubDir, "agents", d))
-				.filter(isDir),
-			...readdirSync(join(hubDir, "playbooks"))
-				.map((d) => join(hubDir, "playbooks", d))
-				.filter(isDir),
 			...readdirSync(join(hubDir, "plugins"))
 				.map((d) => join(hubDir, "plugins", d))
-				.filter(isDir),
-			...readdirSync(join(hubDir, "prompts"))
-				.map((d) => join(hubDir, "prompts", d))
-				.filter(isDir),
-			...readdirSync(join(hubDir, "servers"))
-				.map((d) => join(hubDir, "servers", d))
 				.filter(isDir),
 			...readdirSync(join(hubDir, "skills"))
 				.filter((d) => !d.endsWith(".yaml") && !d.endsWith(".md") && !d.endsWith(".json"))
@@ -478,7 +401,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 				),
 		];
 
-		equal(packagePaths.length, 46, `expected 46 curated packs, found ${packagePaths.length}`);
+		equal(packagePaths.length, 38, `expected 38 curated packs, found ${packagePaths.length}`);
 
 		for (const pkgPath of packagePaths) {
 			const res = validateHubPackage(pkgPath);
@@ -505,9 +428,8 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			entries: Array<{ name: string; sourceUrl?: string; source?: { repo: string; subdir?: string } }>;
 		};
 
-		// 47 locally scanned packages (34 skills, the HPC, science-data, literature,
-		// life-science and pankit plugins, the local-status extension and the
-		// seven core servers) plus every row
+		// 39 locally scanned packages (34 skills, the HPC, science-data, literature
+		// and life-science plugins and the local-status extension) plus every row
 		// the community row files under hub/community/ state; those packs have no
 		// local directory under hub/ and so are never in packagePaths.
 		const communityDir = join(REPO_ROOT, "hub", "community");
@@ -524,8 +446,8 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			.reduce((sum, count) => sum + count, 0);
 		equal(
 			hubRegistry.entries.length,
-			47 + communityRows,
-			`PanHub index must contain the 47 local packs and ${communityRows} community rows`,
+			39 + communityRows,
+			`PanHub index must contain the 39 local packs and ${communityRows} community rows`,
 		);
 
 		// None of the entries should reference _authoring or templates
@@ -537,14 +459,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 				`entry '${entry.name}' has unexpected source '${where}'`,
 			);
 			ok(
-				![
-					"citation-check",
-					"scientific-eval",
-					"benchmark-scout",
-					"pipeline-review",
-					"paper-summary",
-					"data-curation",
-				].includes(entry.name),
+				!["citation-check", "data-curation"].includes(entry.name),
 				`authoring template '${entry.name}' found in the PanHub index`,
 			);
 		}

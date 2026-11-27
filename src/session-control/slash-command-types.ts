@@ -21,12 +21,7 @@ import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanePeerId, PanesOperations, PanesPresetId } from "../domains/mux/operations.js";
 import type { ProvidersContract, ResolvedModelRef } from "../domains/providers/index.js";
 import type { ReportTextDuplicate, ReportTextHost } from "../domains/report/text-flow.js";
-import type {
-	HubEntryKind,
-	PromptTemplate,
-	PromptTemplateExpansion,
-	ResourceList,
-} from "../domains/resources/index.js";
+import type { HubCategory, PromptTemplate, PromptTemplateExpansion, ResourceList } from "../domains/resources/index.js";
 import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { ShareImportPlan } from "../domains/share/index.js";
@@ -84,7 +79,7 @@ export type HubBrowseIntent = "install" | "update" | "enable" | "disable" | "rem
  * that command produced before any of it lands.
  */
 export interface HubBrowseRequest {
-	tab?: HubEntryKind;
+	tab?: HubCategory;
 	focus?: string;
 	intent?: HubBrowseIntent;
 	importSource?: string;
@@ -109,7 +104,7 @@ type SlashCommandVariant =
 	| {
 			kind: "resources";
 			family?: "extensions";
-			tab?: HubEntryKind;
+			tab?: HubCategory;
 			action?: "dev" | "mute" | "unmute" | "leave" | "card";
 			/** The folder or extension id a dev, mute or unmute action names; the card number `card` names. */
 			target?: string;

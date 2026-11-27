@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, doesNotMatch, match, ok, rejects, strictEqual, throws } from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { mcpCommandOutput } from "../../src/cli/mcp.js";
@@ -33,8 +33,6 @@ import {
 	approveMcpSurface,
 	canonicalProjectRoot,
 	createMcpClient,
-	grantMcpBuiltinNetwork,
-	type McpBuiltinSource,
 	type McpClient,
 	type McpSurface,
 	mcpSurface,
@@ -55,7 +53,6 @@ import { formatDispatchOutput } from "../../src/tools/dispatch-output.js";
 import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { parseWorkerSpec, type WorkerSpec } from "../../src/worker/spec-contract.js";
-import { builtinFixtureSource } from "../fixtures/mcp-builtin-server.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
@@ -157,7 +154,6 @@ describe("native worker MCP capabilities", () => {
 		launches?: Array<{ sandboxNetwork?: boolean }>,
 		/** A writable worker confined to these write roots; the default is a read-only one. */
 		writeRoots?: string[],
-		builtin?: McpBuiltinSource,
 	) {
 		let source!: McpCapabilitySource;
 		const registry = createWorkerToolRegistry(
@@ -181,7 +177,6 @@ describe("native worker MCP capabilities", () => {
 					registry,
 					persistCatalog: false,
 					admitted: attestation,
-					...(builtin !== undefined ? { builtin } : {}),
 					clientFactory: (spec, options) => {
 						launches?.push(options);
 						const client = createMcpClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
@@ -918,196 +913,6 @@ describe("native worker MCP capabilities", () => {
 			refused.result.message,
 			/not the one this run was admitted with.*pancode mcp trust fake --surface.*dispatch again/,
 		);
-	});
-
-	it("admits a builtin server under the surface it ships and refuses a worker served another", async () => {
-		const tools: ToolName[] = [ToolNames.Gateway, "mcp_kitfix__echo" as ToolName];
-		const kitCall = {
-			tool: ToolNames.Gateway,
-			args: { op: "call", capability: "mcp_kitfix__echo", args: { text: "x" } },
-		};
-		const shipped = builtinFixtureSource(env.dir, ["kitfix"]);
-		const attestation = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
-		ok(attestation);
-		const declared = resolveMcpServers({ cwd: project, builtin: shipped }).servers.find((s) => s.id === "kitfix");
-		ok(declared?.builtin);
-		deepStrictEqual(
-			attestation.tools.map((entry) => [entry.serverId, entry.tool, entry.actionClass, entry.surfaceDigest]),
-			[["kitfix", "echo", "read", declared.builtin.surface.digest]],
-		);
-		const ran = await wire(attestation, undefined, undefined, shipped).registry.invoke(kitCall, { allowedTools: tools });
-		ok(ran.kind === "ok" && ran.result.kind === "ok", JSON.stringify(ran));
-		strictEqual(ran.result.output, "echo: x");
-
-		// The manifest ships a surface the server does not serve; admission
-		// attests the shipped policy and the worker refuses what it is served.
-		const driftedDir = join(env.dir, "drifted");
-		mkdirSync(driftedDir);
-		const drifted = builtinFixtureSource(driftedDir, ["kitfix"], (manifest) => {
-			const echo = manifest.servers[0]?.tools.find((tool) => tool.name === "echo");
-			if (echo === undefined) throw new Error("fixture manifest changed");
-			echo.annotations = { ...echo.annotations, openWorldHint: true };
-		});
-		const driftedAdmission = resolveWorkerMcpAdmission({
-			agentId: "coder",
-			projectCwd: project,
-			tools,
-			builtin: drifted,
-		});
-		ok(driftedAdmission);
-		const refused = await wire(driftedAdmission, undefined, undefined, drifted).registry.invoke(kitCall, {
-			allowedTools: tools,
-		});
-		ok(refused.kind === "ok" && refused.result.kind === "error", JSON.stringify(refused));
-		match(refused.result.message, /builtin server 'kitfix' serves .* is not the policy this PanCode ships/u);
-		match(refused.result.message, /reinstall or rebuild PanCode, and dispatch again/u);
-		doesNotMatch(refused.result.message, /--surface/u);
-	});
-
-	it("starts an admitted builtin server with its declared variables, which the worker's shell does not gain", async (t) => {
-		const envTool = "mcp_kitfix__env" as ToolName;
-		const tools: ToolName[] = [ToolNames.Gateway, ToolNames.Bash, envTool];
-		t.after(() => {
-			delete process.env.KITFIX_SITE;
-		});
-		const shipped = builtinFixtureSource(env.dir, ["kitfix"], (manifest) => {
-			const [kitfix] = manifest.servers;
-			if (kitfix === undefined) throw new Error("fixture manifest changed");
-			kitfix.environment = ["KITFIX_SITE"];
-		});
-		process.env.KITFIX_SITE = "first-session";
-		const attestation = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
-		ok(attestation);
-		// Another value in the next session attests the same digest, so the admission above still launches.
-		process.env.KITFIX_SITE = "second-session";
-		const again = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
-		deepStrictEqual(
-			again?.tools.map((entry) => entry.digest),
-			attestation.tools.map((entry) => entry.digest),
-		);
-		// A writing worker, so its shell may run `env`.
-		const { registry } = wire(attestation, undefined, [project], shipped);
-		const shellNames = async (): Promise<string[]> => {
-			const shell = await registry.invoke({ tool: ToolNames.Bash, args: { command: "env" } }, { allowedTools: tools });
-			ok(shell.kind === "ok" && shell.result.kind === "ok", JSON.stringify(shell));
-			return shell.result.output
-				.split("\n")
-				.map((line) => line.slice(0, line.indexOf("=")))
-				.filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))
-				.sort();
-		};
-		const before = await shellNames();
-		const parent = Object.keys(process.env).sort();
-		const read = await registry.invoke(
-			{ tool: ToolNames.Gateway, args: { op: "call", capability: envTool, args: { name: "KITFIX_SITE" } } },
-			{ allowedTools: tools },
-		);
-		ok(read.kind === "ok" && read.result.kind === "ok", JSON.stringify(read));
-		deepStrictEqual(JSON.parse(read.result.output), { name: "KITFIX_SITE", value: "second-session" });
-		// The launch hands the values to the server's process alone: the worker's environment and its shell's are as they were.
-		deepStrictEqual(Object.keys(process.env).sort(), parent);
-		deepStrictEqual(await shellNames(), before);
-	});
-
-	it("attests a builtin server's network grant and withholds it from a writer that can change what it runs", () => {
-		const tools: ToolName[] = [ToolNames.Gateway, "mcp_node__node_cpu" as ToolName];
-		const admit = () => resolveWorkerMcpAdmission({ agentId: "scout", projectCwd: project, tools });
-		strictEqual(admit()?.tools[0]?.network, undefined, "no grant is attested before the operator records one");
-		ok(grantMcpBuiltinNetwork({ cwd: project, id: "node" }).ok);
-		const attestation = admit();
-		ok(attestation);
-		deepStrictEqual(
-			attestation.tools.map((entry) => [entry.serverId, entry.network]),
-			[["node", true]],
-		);
-		const scoped = (writeRoots: string[]) => withholdWritableMcpNetwork(attestation, { writeRoots, launchRoot: project });
-		deepStrictEqual(scoped([]).withheld, [], "a read-only run keeps the grant");
-		const elsewhere = join(env.dir, "elsewhere");
-		mkdirSync(elsewhere);
-		deepStrictEqual(scoped([elsewhere]).withheld, [], "a writer outside the project and the server's files keeps it");
-		// The server starts in the project, so a writer there loses the grant.
-		match(scoped([project]).withheld[0]?.reason ?? "", /overlaps its launch cwd /u);
-		// Its entry file is the kit CLI this PanCode runs, inside the checkout here and the install elsewhere.
-		const node = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "node");
-		const entry = node?.args?.find((arg) => existsSync(arg) && statSync(arg).isFile());
-		ok(entry !== undefined, JSON.stringify(node?.args));
-		const inEntry = scoped([dirname(entry)]);
-		strictEqual(inEntry.attestation.tools[0]?.network, undefined);
-		match(inEntry.withheld[0]?.reason ?? "", /overlaps the directory of its entry script /u);
-	});
-
-	it("admits the shipped node server and gives its result to the native model loop", { timeout: 30_000 }, async () => {
-		const cpu = "mcp_node__node_cpu" as ToolName;
-		const tools: ToolName[] = [ToolNames.Read, ToolNames.Gateway, cpu];
-		const attestation = resolveWorkerMcpAdmission({ agentId: "scout", projectCwd: project, tools });
-		ok(attestation);
-		const shipped = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "node");
-		ok(shipped?.builtin, "the default builtin source ships the node server");
-		deepStrictEqual(
-			attestation.tools.map((entry) => [entry.serverId, entry.tool, entry.actionClass, entry.surfaceDigest]),
-			[["node", "node_cpu", "read", shipped.builtin.surface.digest]],
-		);
-		const cpuCall = { op: "call", capability: cpu, args: {} };
-		const bodies: Array<Record<string, unknown>> = [];
-		const server = createServer(async (req, res) => {
-			bodies.push(JSON.parse(await readRequestBody(req)));
-			const first = bodies.length === 1;
-			const delta = first
-				? {
-						role: "assistant",
-						tool_calls: [
-							{
-								index: 0,
-								id: "node-cpu",
-								type: "function",
-								function: { name: "gateway", arguments: JSON.stringify(cpuCall) },
-							},
-						],
-					}
-				: { role: "assistant", content: "Reported the CPU." };
-			res.setHeader("content-type", "text/event-stream");
-			res.end(
-				`data: ${JSON.stringify({ model: "fixture", choices: [{ index: 0, delta, finish_reason: first ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
-			);
-		});
-		await new Promise<void>((settle) => server.listen(0, "127.0.0.1", settle));
-		const events: unknown[] = [];
-		try {
-			const run = startWorkerRun(
-				{
-					agentId: "scout",
-					systemPrompt: "Report this machine's CPU.",
-					task: "How many threads does this machine have?",
-					target: { id: "fixture", runtime: "litellm", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` },
-					runtime: litellm,
-					wireModelId: "fixture",
-					apiKey: "fixture",
-					thinkingLevel: "off",
-					modelCapabilities: { contextWindow: 131072, maxTokens: 2048, tools: true },
-					allowedTools: tools,
-					budget: { mode: "advisory", toolCalls: 6, synthesis: true, hardCap: 20 },
-					noSkills: true,
-					cwd: project,
-					readOnly: true,
-					mcp: attestation,
-				},
-				(event) => events.push(event),
-			);
-			const result = await run.promise;
-			strictEqual(result.exitCode, 0, JSON.stringify(events).slice(0, 2000));
-			strictEqual(bodies.length, 2);
-			const messages = bodies[1]?.messages as Array<{ role: string; content: unknown }>;
-			const toolResult = messages.find((message) => message.role === "tool");
-			ok(toolResult, JSON.stringify(messages));
-			const text = Array.isArray(toolResult.content)
-				? toolResult.content.map((part: { text?: string }) => part.text ?? "").join("")
-				: String(toolResult.content);
-			const facts = JSON.parse(text) as { threads: number; sources: string[] };
-			ok(facts.threads > 0, text);
-			ok(facts.sources.includes("node:os"), text);
-		} finally {
-			await closeServer(server);
-		}
 	});
 
 	it("judges the paths a call names in declared path arguments and passes undeclared ones untouched", async () => {

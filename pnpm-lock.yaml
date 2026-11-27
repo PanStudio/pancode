@@ -192,18 +192,6 @@ importers:
         specifier: 8.3.3
         version: 8.3.3(@types/node@24.12.2)(esbuild@0.28.1)(tsx@4.23.15)(yaml@2.9.0)
 
-  packages/kit:
-    dependencies:
-      '@pancode/scidata':
-        specifier: workspace:*
-        version: link:../scidata
-      '@pancode/sdk':
-        specifier: workspace:*
-        version: link:../sdk
-      '@pancode/store':
-        specifier: workspace:*
-        version: link:../store
-
   packages/scidata: {}
 
   packages/sdk: {}

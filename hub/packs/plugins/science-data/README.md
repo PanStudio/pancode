@@ -8,8 +8,7 @@ filtered aggregates, correlations, hypothesis tests, pivots) does it write a
 short read-only h5py, netCDF4, pyarrow or pandas script and run it through
 `run_script`. The pack ships one MCP server, `catalog`, to find datasets
 outside the project. It is the bundled `server.mjs`, started as
-`node server.mjs`, with no dependencies to install. Outside PanCode the skill
-also uses the `scidata` and `store` servers.
+`node server.mjs`, with no dependencies to install.
 
 ```bash
 pancode hub install plugin:science-data --project
@@ -73,10 +72,8 @@ goes over https to the source's own host or a host in its `resourceHosts`
 
 The pack's `.mcp.json` declares the `catalog` server for Claude Code, and any
 other MCP host runs it as a stdio server with `node <pack>/server.mjs`
-(Node.js 22 or later). Declare `npx -y -p @panstudio/pancode pankit serve <id>`
-(`scidata`, `store`) as a stdio MCP server yourself. The skill's `data` reads
-are then the `scidata` server's tools, and its store is the `store` server's,
-which needs `--root` options there (`pancode store where` prints them).
+(Node.js 22 or later). Outside PanCode there is no `data` tool or store, so the
+skill reads files with a short read-only script and asks for dataset paths.
 
 ## Datasets and results in the store
 

@@ -51,7 +51,7 @@ import { workspaceSnapshotRepositoryPresent } from "../domains/workspace-snapsho
 import { classifyDefaultTarget, describeVerdict, firstMissing } from "./default-target.js";
 import { copilotSignInReport } from "./doctor-copilot.js";
 import { dispatchAdmissionFindings } from "./doctor-dispatch-admission.js";
-import { hpcToolchainFindings, pankitFindings } from "./doctor-hpc.js";
+import { hpcToolchainFindings } from "./doctor-hpc.js";
 import { installRecordFindings } from "./doctor-install-records.js";
 import { installationFindings } from "./doctor-installation.js";
 import { panesFindings } from "./doctor-panes.js";
@@ -401,7 +401,7 @@ export function chatReadinessFinding(untouched: boolean, connectionRows: Readonl
 
 /**
  * The plain text report: the chat verdict, the version, and every row that needs attention, then one line counting
- * the rest. A configured home printed 60 rows, most of them compilers, PanKit probes and state plumbing a reader had
+ * the rest. A configured home printed 60 rows, most of them compilers, store roots and state plumbing a reader had
  * no reason to read; `--verbose` and `--json` keep every row.
  */
 function attentionReport(findings: ReadonlyArray<DoctorFinding>): string {
@@ -494,14 +494,8 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 	const toolChecks = [...(untouched ? [] : toolchainFindings({ filesEnabled, fix })), await pdfAttachmentFinding()];
 	// Compilers, MPI, build systems, and the scheduler. Each probe resolves PATH
 	// and runs a bounded `--version` in a scratch directory, so it creates
-	// nothing and runs on an untouched home too. Beside them, the builtin PanKit
-	// servers: one bounded `pankit doctor --json` with the launch environment,
-	// whose probes look programs up and run none, so it creates nothing and runs
-	// on an untouched home too.
-	const [hpcChecks, pankitChecks] = await Promise.all([
-		hpcToolchainFindings({ workspaceRoot }),
-		pankitFindings({ workspaceRoot }),
-	]);
+	// nothing and runs on an untouched home too.
+	const hpcChecks = await hpcToolchainFindings({ workspaceRoot });
 	// The store roots and their free space, and tags placed on a root no longer
 	// configured. It reads statfs and placement.json and creates nothing, so it
 	// runs on an untouched home too.
@@ -541,7 +535,6 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 		...harnessChecks,
 		...toolChecks,
 		...hpcChecks,
-		...pankitChecks,
 		...storeChecks,
 		...paneChecks,
 		...contractChecks,

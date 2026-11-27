@@ -8,8 +8,8 @@
  * Each row's commit is fetched as untrusted data (hooks off, nothing in the
  * tree runs), validated, and its digests recomputed. Schema, path, digest,
  * licence and launcher-pin failures fail the review. Envelope growth, the
- * command a server pack launches and body scan hits are findings a reviewer
- * reads; they do not fail it. With
+ * commands a pack's MCP servers launch and body scan hits are findings a
+ * reviewer reads; they do not fail it. With
  * `--submission`, a change to more than one row file or to anything outside
  * `hub/community/` fails. Output goes to stdout and, when set, to
  * `$GITHUB_STEP_SUMMARY`.
@@ -108,18 +108,27 @@ export function unpinnedLaunches(root: string): string[] {
 	return problems;
 }
 
-/** The command line a server pack's one server runs, with its directory when it names one. */
-export function serverLaunch(root: string): string | undefined {
-	let parsed: { mcpServers?: Record<string, { command?: unknown; args?: unknown; cwd?: unknown }> };
+/** The commands or endpoints declared by a pack's `mcp.json`, one entry per server. */
+export function serverLaunches(root: string): string[] {
+	const file = path.join(root, "mcp.json");
+	if (!existsSync(file)) return [];
+	let parsed: { mcpServers?: Record<string, { command?: unknown; args?: unknown; cwd?: unknown; url?: unknown }> };
 	try {
-		parsed = JSON.parse(readFileSync(path.join(root, "mcp.json"), "utf8")) as typeof parsed;
+		parsed = JSON.parse(readFileSync(file, "utf8")) as typeof parsed;
 	} catch {
-		return undefined;
+		return [];
 	}
-	const [server] = Object.values(parsed.mcpServers ?? {});
-	if (typeof server?.command !== "string") return undefined;
-	const args = Array.isArray(server.args) ? server.args.map(String) : [];
-	return [server.command, ...args].join(" ") + (typeof server.cwd === "string" ? ` (in ${server.cwd})` : "");
+	const launches: string[] = [];
+	for (const [id, server] of Object.entries(parsed.mcpServers ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+		if (typeof server?.command === "string") {
+			const args = Array.isArray(server.args) ? server.args.map(String) : [];
+			const cmd = [server.command, ...args].join(" ") + (typeof server.cwd === "string" ? ` (in ${server.cwd})` : "");
+			launches.push(`${id}: runs ${cmd}`);
+		} else if (typeof server?.url === "string") {
+			launches.push(`${id}: connects to ${server.url}`);
+		}
+	}
+	return launches;
 }
 
 /** Text in a skill or prompt body that addresses the host rather than the task. */
@@ -248,14 +257,6 @@ export function reviewHubChanges(
 					failures.push({ file: item.file, row: ref, message: messages.join("; ") || "package failed validation" });
 					continue;
 				}
-				if (result.manifest.pancode.kind === "server" && existsSync(path.join(fetched.root, "server.json"))) {
-					failures.push({
-						file: item.file,
-						row: ref,
-						message: "a community server pack must declare its server in mcp.json, not server.json",
-					});
-					continue;
-				}
 				const regenerated = buildRegistryRow(
 					fetched.root,
 					result,
@@ -307,13 +308,8 @@ export function reviewHubChanges(
 							});
 					}
 				}
-				if (row.kind === "server")
-					findings.push({
-						file: item.file,
-						row: ref,
-						kind: "server-launch",
-						message: `runs ${serverLaunch(fetched.root) ?? "no command"}`,
-					});
+				for (const message of serverLaunches(fetched.root))
+					findings.push({ file: item.file, row: ref, kind: "server-launch", message });
 				for (const message of scanBodies(fetched.root))
 					findings.push({ file: item.file, row: ref, kind: "body-scan", message });
 			} catch (error) {
