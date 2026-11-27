@@ -200,7 +200,7 @@ const CLAIMS_EXCLUDE_PATTERN = "/.pancode/worktrees/";
  * `.pancode/` in the operator's repo is noise PanCode must not create. The
  * checkout's own `info/exclude` is used so no tracked file changes.
  */
-function excludeClaimsFromStatus(root: string): void {
+export function excludeProjectWorktreesFromStatus(root: string): void {
 	try {
 		const excludePath = git(root, ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
 		const current = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
@@ -232,7 +232,7 @@ export function createTaskWorktree(
 	const path = join(parent, runId);
 	const branch = `pancode/task/${runId}`;
 	mkdirSync(claimParent, { recursive: true });
-	excludeClaimsFromStatus(canonical);
+	excludeProjectWorktreesFromStatus(canonical);
 	// Off the project root the directory may sit on a filesystem other users
 	// share (/dev/shm), so it is ours alone.
 	mkdirSync(parent, { recursive: true, mode: 0o700 });

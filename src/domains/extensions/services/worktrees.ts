@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * `services.worktrees`: detached git worktrees of the workspace's repository that the host creates for an extension
- * under its store directory, the few writes an experiment needs in them (checkout, clean, copy, commit), refs under the
+ * under the project's `.pancode/worktrees/ext-<id>/`, beside task and research worktrees, the few writes an experiment needs in them (checkout, clean, copy, commit), refs under the
  * extension's own `refs/heads/pancode/<id>/` namespace, and read-only git anywhere it may look. Every call goes through
  * the internal git argv, so repository configuration never runs a program, and a worktree the request did not keep is
  * removed when the request ends.
@@ -23,13 +23,14 @@ import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import type { ExtensionGitResult, ExtensionWorkPlace, ExtensionWorktree } from "@pancode/sdk/extension";
 import { withoutRepositoryEnv } from "../../../core/internal-git.js";
 import { gitExecFile } from "../../../core/internal-git-run.js";
+import { taskWorktreeClaimParent } from "../../../core/task-worktree-claim.js";
+import { excludeProjectWorktreesFromStatus } from "../../../tools/task-worktree.js";
 import { hostCommitIdentity } from "../../../tools/worktree-commit.js";
 import type { ExtensionRequestScope } from "./scope.js";
 
 export interface ExtensionWorktreeServiceDeps {
 	extensionId: string;
 	workspace: string;
-	storeDir: string;
 	gitTimeoutMs?: number;
 }
 
@@ -124,11 +125,12 @@ function exactPattern(entry: string): string {
 
 export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDeps): ExtensionWorktreeService {
 	const timeout = deps.gitTimeoutMs ?? 60_000;
-	const parent = join(deps.storeDir, "worktrees");
 	const refPrefix = `refs/heads/pancode/${deps.extensionId}/`;
 	const identity = `pancode-${deps.extensionId}`;
 	const owned = new Set<string>();
-	let repository: Promise<{ root: string; prefix: string }> | null = null;
+	// Under the project, not PanCode's state: a run in a worktree writes there, and the safety floor refuses any
+	// write into PanCode's own trees.
+	let repository: Promise<{ root: string; prefix: string; parent: string }> | null = null;
 
 	const run = (cwd: string, args: ReadonlyArray<string>): Promise<ExtensionGitResult> =>
 		new Promise((done) => {
@@ -155,13 +157,18 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 		return result.stdout;
 	};
 
-	const repo = (): Promise<{ root: string; prefix: string }> => {
+	const repo = (): Promise<{ root: string; prefix: string; parent: string }> => {
 		repository ??= (async () => {
 			const out = await run(deps.workspace, ["rev-parse", "--show-toplevel", "--show-prefix"]);
 			if (out.exitCode !== 0)
 				throw new ExtensionWorktreeError("no_repository", "the workspace is not inside a git repository");
-			const [root = "", prefix = ""] = out.stdout.split("\n");
-			return { root: resolve(root), prefix: prefix.replace(/\/+$/u, "") };
+			const [top = "", prefix = ""] = out.stdout.split("\n");
+			const root = resolve(top);
+			return {
+				root,
+				prefix: prefix.replace(/\/+$/u, ""),
+				parent: join(taskWorktreeClaimParent(root), `ext-${deps.extensionId}`),
+			};
 		})();
 		repository.catch(() => {
 			repository = null;
@@ -182,7 +189,7 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 
 	/** Worktrees of this repository under the extension's directory, by id. */
 	const registered = async (): Promise<Map<string, { path: string; head: string }>> => {
-		const { root } = await repo();
+		const { root, parent } = await repo();
 		const found = new Map<string, { path: string; head: string }>();
 		if (!existsSync(parent)) return found;
 		const real = realpathSync(parent);
@@ -207,7 +214,7 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 	};
 
 	const removeAt = async (id: string): Promise<void> => {
-		const { root } = await repo();
+		const { root, parent } = await repo();
 		const path = join(parent, id);
 		try {
 			if (existsSync(path)) await must(root, ["worktree", "remove", "--force", path]);
@@ -220,6 +227,7 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 
 	/** A worktree a crashed process created and did not keep. */
 	const pruneOrphans = async (): Promise<void> => {
+		const { parent } = await repo();
 		if (!existsSync(parent)) return;
 		for (const name of readdirSync(parent)) {
 			if (!name.endsWith(".owner")) continue;
@@ -276,11 +284,12 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 		async create(options = {}, scope) {
 			if (scope?.signal.aborted === true)
 				throw new ExtensionWorktreeError("refused", "worktrees.create: the request has ended");
-			const { root } = await repo();
+			const { root, parent } = await repo();
 			const sha = await commitOf(root, options.base ?? "HEAD");
 			const keep = options.keep === true;
 			await pruneOrphans();
 			mkdirSync(parent, { recursive: true });
+			excludeProjectWorktreesFromStatus(root);
 			const id = `${keep ? "k" : "t"}-${randomBytes(8).toString("hex")}`;
 			const path = join(parent, id);
 			if (!keep) {

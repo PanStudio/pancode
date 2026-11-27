@@ -214,7 +214,6 @@ describe("extension claims service", () => {
 		const worktrees = createExtensionWorktreeService({
 			extensionId: "research",
 			workspace: repo,
-			storeDir: join(repo, "..", "store"),
 		});
 		t.after(() => worktrees.dispose());
 		const verify = createExtensionVerifyService({

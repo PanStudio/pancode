@@ -22,8 +22,6 @@ export interface ExtensionWorkBinding {
 	/** The session's workspace, a real path. */
 	workspace: string;
 	sessionId: string | null;
-	/** The extension's store files directory, where its worktrees live. */
-	storeDir: string;
 	declaration: ExtensionRuntimeDeclarationV2;
 }
 
@@ -73,7 +71,6 @@ export function createExtensionWork(
 		? createExtensionWorktreeService({
 				extensionId: binding.extensionId,
 				workspace: binding.workspace,
-				storeDir: binding.storeDir,
 			})
 		: undefined;
 	const resolvePlace = async (place: ExtensionWorkPlace): Promise<{ cwd: string; root: string }> => {

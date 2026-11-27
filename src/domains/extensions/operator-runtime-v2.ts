@@ -461,7 +461,6 @@ export class OperatorExtensionRuntimeV2 {
 				extensionId: entry.id,
 				workspace: context.workspace,
 				sessionId: context.sessionId,
-				storeDir: paths.storeDir,
 				declaration: entry.runtimeV2,
 			},
 			this.options.work,

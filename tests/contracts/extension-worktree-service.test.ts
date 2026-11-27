@@ -29,7 +29,6 @@ function project() {
 	const service = createExtensionWorktreeService({
 		extensionId: "research",
 		workspace: join(repo, "app"),
-		storeDir: join(root, "store"),
 	});
 	return { root, repo, service, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
@@ -41,7 +40,8 @@ describe("extension worktree service", () => {
 		const p = project();
 		writeFileSync(join(p.repo, "app", "input.txt"), "uncommitted\n");
 		const tree = await p.service.create({ copy: ["input.txt"], keep: true });
-		assert.ok(tree.path.startsWith(join(p.root, "store", "worktrees")));
+		assert.ok(tree.path.startsWith(join(p.repo, ".pancode", "worktrees", "ext-research")));
+		assert.doesNotMatch(git(p.repo, "status", "--porcelain"), /\.pancode/u);
 		assert.equal(tree.cwd, join(tree.path, "app"));
 		assert.equal(readFileSync(join(tree.cwd, "input.txt"), "utf8"), "uncommitted\n");
 		writeFileSync(join(tree.cwd, "a.txt"), "two\n");
