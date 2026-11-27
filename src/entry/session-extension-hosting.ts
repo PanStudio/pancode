@@ -52,11 +52,22 @@ export function createSessionExtensionHosting(deps: SessionExtensionHostingDeps)
 	const deferral = createIdleDeferral(deps.bus, deps.idle);
 	let current: ExtensionHost | null = null;
 	let starting: Promise<ExtensionHost | null> | undefined;
+	let disposed = false;
+	let deferralGen = 0;
+	const cancelDeferral = (): void => {
+		deferralGen += 1;
+		deferral.cancel();
+	};
 	const ensure = (): Promise<ExtensionHost | null> => {
+		if (disposed) return Promise.resolve(null);
 		if (current) return Promise.resolve(current);
 		starting ??= deps
 			.start()
-			.then((host) => {
+			.then(async (host) => {
+				if (disposed) {
+					await host?.dispose();
+					return null;
+				}
 				current = host;
 				return host;
 			})
@@ -66,45 +77,64 @@ export function createSessionExtensionHosting(deps: SessionExtensionHostingDeps)
 		return starting;
 	};
 	const applyNow = async (): Promise<OperatorReloadSummary> => {
+		if (disposed) return refused("session is closing");
 		const outcome = deps.commit();
 		if (outcome.status !== "committed") return refused(`hook generation rejected: ${outcome.reason}`);
 		const running = current;
 		const host = running ?? (await ensure());
+		if (disposed) return refused("session is closing");
 		if (!host)
 			return { status: "committed", message: "no installed extension has a runtime", failures: [], nextSession: [] };
 		return operatorReloadSummary(running ? await host.restart() : await host.ready, host.operator);
 	};
 	// A deferred reload still restarting the runtimes finishes before an immediate one commits.
 	let applying: Promise<unknown> = Promise.resolve();
-	const apply = (): Promise<OperatorReloadSummary> => {
-		const next = applying.then(applyNow, applyNow);
+	const serialize = <T>(step: () => Promise<T>): Promise<T> => {
+		const next = applying.then(step, step);
 		applying = next.catch(() => undefined);
 		return next;
 	};
+	const apply = (): Promise<OperatorReloadSummary> => serialize(applyNow);
 	return {
 		get current() {
 			return current;
 		},
 		ensure,
 		reload() {
+			cancelDeferral();
 			const outcome = deps.commit();
-			if (outcome.status !== "committed") return outcome;
-			if (current) void current.restart();
-			else
-				ensure().catch((error: unknown) =>
-					deps.report(`extension host failed to start: ${error instanceof Error ? error.message : String(error)}`),
-				);
+			if (outcome.status !== "committed" || disposed) return outcome;
+			void serialize(async () => {
+				if (disposed) return;
+				if (current) await current.restart();
+				else
+					await ensure().catch((error: unknown) =>
+						deps.report(`extension host failed to start: ${error instanceof Error ? error.message : String(error)}`),
+					);
+			});
 			return outcome;
 		},
 		async reloadStep() {
 			if (!deps.idle()) {
+				const gen = ++deferralGen;
 				deferral.defer(async () => {
-					const summary = await apply();
-					deps.bus.emit("reload.applied", {
-						target: "extensions",
-						text: appliedText(summary),
-						failed: summary.status === "rejected" || summary.failures.length > 0,
-					});
+					if (disposed || gen !== deferralGen) return true;
+					try {
+						const summary = await apply();
+						if (disposed || gen !== deferralGen) return true;
+						deps.bus.emit("reload.applied", {
+							target: "extensions",
+							text: appliedText(summary),
+							failed: summary.status === "rejected" || summary.failures.length > 0,
+						});
+					} catch (error) {
+						if (disposed || gen !== deferralGen) return true;
+						deps.bus.emit("reload.applied", {
+							target: "extensions",
+							text: `Extensions reload failed after the turn settled: ${error instanceof Error ? error.message : String(error)}`,
+							failed: true,
+						});
+					}
 					return true;
 				});
 				return {
@@ -114,13 +144,17 @@ export function createSessionExtensionHosting(deps: SessionExtensionHostingDeps)
 					nextSession: [],
 				};
 			}
-			deferral.cancel();
+			cancelDeferral();
 			return apply();
 		},
 		async dispose() {
-			deferral.cancel();
+			disposed = true;
+			cancelDeferral();
+			await applying;
 			await starting?.catch(() => undefined);
-			await current?.dispose();
+			const host = current;
+			current = null;
+			await host?.dispose();
 		},
 	};
 }

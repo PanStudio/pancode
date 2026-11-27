@@ -2166,4 +2166,46 @@ describe("remote Streamable HTTP MCP safeguards", () => {
 			env.restore();
 		}
 	});
+
+	it("reloadDeclarations detects user fileTargets changes even though fileTargets is outside the digest", async () => {
+		const env = await isolatePancodeEnv("pancode-mcp-reload-targets-");
+		try {
+			const project = join(env.dir, "project");
+			const configDir = join(env.dir, "config");
+			mkdirSync(project, { recursive: true });
+			mkdirSync(configDir, { recursive: true });
+			const writeCfg = (targets: string[]) =>
+				writeFileSync(
+					join(configDir, "mcp.yaml"),
+					[
+						"version: 1",
+						"servers:",
+						"  - id: files",
+						`    command: ${JSON.stringify(process.execPath)}`,
+						`    args: [${JSON.stringify(FIXTURE)}]`,
+						`    fileTargets: [${targets.map((t) => JSON.stringify(t)).join(", ")}]`,
+						"",
+					].join("\n"),
+				);
+			writeCfg(["https://a.example.com"]);
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" });
+			const source = createMcpCapabilitySource({ cwd: project, configDir, registry, attended: true });
+			try {
+				source.catalog();
+				writeCfg(["https://a.example.com", "https://b.example.com"]);
+				const first = await source.reloadDeclarations();
+				ok(first !== null);
+				deepStrictEqual(first.changed, ["files"]);
+				deepStrictEqual(first.unchanged, []);
+				const second = await source.reloadDeclarations();
+				ok(second !== null);
+				deepStrictEqual(second.changed, []);
+				deepStrictEqual(second.unchanged, ["files"]);
+			} finally {
+				await source.close();
+			}
+		} finally {
+			env.restore();
+		}
+	});
 });

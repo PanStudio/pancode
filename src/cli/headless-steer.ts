@@ -32,6 +32,7 @@ function reloadSteerLines(
 	note: (lineNumber: number, status: SteerLineStatus, reason?: string) => void,
 ): SteerLine {
 	if (reload === undefined) return steer;
+	let pending: Promise<unknown> = Promise.resolve();
 	return (line, lineNumber) => {
 		if (!/^\/reload(?:\s|$)/u.test(line)) return steer(line, lineNumber);
 		const command = parseSlashCommand(line);
@@ -40,10 +41,12 @@ function reloadSteerLines(
 			return;
 		}
 		note(lineNumber, "accepted");
-		reload(command.target).then(
-			(report) => process.stderr.write(`${report.text}\n`),
-			(error: unknown) =>
-				process.stderr.write(`pancode run: reload failed: ${error instanceof Error ? error.message : String(error)}\n`),
-		);
+		const step = () =>
+			reload(command.target).then(
+				(report) => process.stderr.write(`${report.text}\n`),
+				(error: unknown) =>
+					process.stderr.write(`pancode run: reload failed: ${error instanceof Error ? error.message : String(error)}\n`),
+			);
+		pending = pending.then(step, step);
 	};
 }

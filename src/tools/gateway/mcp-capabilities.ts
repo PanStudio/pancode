@@ -238,7 +238,40 @@ function quoted(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** Whether `current` admits what the session's snapshot `admitted` did: same file, digest, trust, classes and network grant. */
+function createMcpDeclarationReloader(deps: {
+	isClosed: () => boolean;
+	trustOptions: Parameters<typeof resolveMcpServers>[0];
+	states: () => Map<string, ServerState>;
+	close: (state: ServerState) => Promise<unknown> | undefined;
+	unregister: (name: DynamicToolName) => void;
+	admit: (declaration: ResolvedMcpServer) => GatewayMcpServer;
+	setDiagnostics: (next: string[]) => void;
+}): () => Promise<McpDeclarationReload | null> {
+	let tail: Promise<unknown> = Promise.resolve();
+	const run = async (): Promise<McpDeclarationReload | null> => {
+		if (deps.isClosed()) throw new Error("MCP capability source is closed");
+		const resolved = resolveMcpServers(deps.trustOptions);
+		const reload = await swapMcpDeclarations(deps.states(), resolved.servers, deps);
+		if (reload === null) return null;
+		const nextDiagnostics = resolvedDiagnostics(resolved);
+		deps.setDiagnostics(nextDiagnostics);
+		return { ...reload, diagnostics: [...nextDiagnostics] };
+	};
+	return () => {
+		const next = tail.then(run, run);
+		tail = next.catch(() => undefined);
+		return next;
+	};
+}
+
+function sameStringList(a: ReadonlyArray<string> | undefined, b: ReadonlyArray<string> | undefined): boolean {
+	if (a === b) return true;
+	if (!a || !b || a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+	return true;
+}
+
+/** Whether `current` admits what the session's snapshot `admitted` did: same file, digest, trust, classes, network grant and file targets. */
 function sameMcpAdmission(current: ResolvedMcpServer, admitted: GatewayMcpServer): boolean {
 	return (
 		current.scope === admitted.scope &&
@@ -247,7 +280,8 @@ function sameMcpAdmission(current: ResolvedMcpServer, admitted: GatewayMcpServer
 		current.trust.status === admitted.trust.status &&
 		current.trust.actionClass === admitted.trust.actionClass &&
 		(current.trust.status === "trusted" ? current.trust.network : undefined) ===
-			(admitted.trust.status === "trusted" ? admitted.trust.network : undefined)
+			(admitted.trust.status === "trusted" ? admitted.trust.network : undefined) &&
+		sameStringList(current.fileTargets, admitted.fileTargets)
 	);
 }
 
@@ -1580,18 +1614,17 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				all.delete(state.declaration.id);
 			}
 		},
-		async reloadDeclarations() {
-			if (closed) throw new Error("MCP capability source is closed");
-			const resolved = resolveMcpServers(trustOptions);
-			const reload = await swapMcpDeclarations(resolveStates(), resolved.servers, {
-				close: closeClient,
-				unregister: (name) => registry.unregister?.(name),
-				admit: admittedDeclaration,
-			});
-			if (reload === null) return null;
-			diagnostics = resolvedDiagnostics(resolved);
-			return { ...reload, diagnostics: [...diagnostics] };
-		},
+		reloadDeclarations: createMcpDeclarationReloader({
+			isClosed: () => closed,
+			trustOptions,
+			states: resolveStates,
+			close: closeClient,
+			unregister: (name) => registry.unregister?.(name),
+			admit: admittedDeclaration,
+			setDiagnostics: (next) => {
+				diagnostics = next;
+			},
+		}),
 		async list(invokeOptions) {
 			if (invokeOptions?.signal?.aborted) throw new McpError("aborted", "MCP discovery aborted");
 			const all = [...resolveStates().values()];

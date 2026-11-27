@@ -124,21 +124,41 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 	});
 	// A swap that waited for a turn or a call in flight runs once the session settles, and reports as a notice.
 	const mcpDeferral = createIdleDeferral(deps.bus, () => deps.mcp?.idle() ?? false);
-	const deferMcpSwap = (source: Pick<McpCapabilitySource, "reloadDeclarations">): void =>
+	let mcpDeferralGen = 0;
+	const cancelMcpDeferral = (): void => {
+		mcpDeferralGen += 1;
+		mcpDeferral.cancel();
+	};
+	const deferMcpSwap = (source: Pick<McpCapabilitySource, "reloadDeclarations">): void => {
+		const gen = ++mcpDeferralGen;
 		mcpDeferral.defer(async () => {
-			const swap = await source.reloadDeclarations();
-			if (swap === null) return false;
-			const section = mcpSection(swap);
-			deps.bus.emit("reload.applied", {
-				target: "mcp",
-				text: `MCP servers swapped after the turn settled: ${section.lines
-					.slice(1)
-					.map((line) => line.trim())
-					.join("; ")}`,
-				failed: section.failed,
-			});
-			return true;
+			try {
+				const swap = await source.reloadDeclarations();
+				if (gen !== mcpDeferralGen) return true;
+				if (swap === null) return false;
+				const section = mcpSection(swap);
+				deps.bus.emit("reload.applied", {
+					target: "mcp",
+					text: `MCP servers swapped after the turn settled: ${section.lines
+						.slice(1)
+						.map((line) => line.trim())
+						.join("; ")}`,
+					failed: section.failed,
+				});
+				return true;
+			} catch (error) {
+				if (gen !== mcpDeferralGen) return true;
+				const message = error instanceof Error ? error.message : String(error);
+				if (message === "MCP capability source is closed") return true;
+				deps.bus.emit("reload.applied", {
+					target: "mcp",
+					text: `MCP servers swap failed after the turn settled: ${message}`,
+					failed: true,
+				});
+				return true;
+			}
 		});
+	};
 	return {
 		get active() {
 			return active;
@@ -175,6 +195,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 						// The watcher intentionally swallows invalid files. Validate before invoking it,
 						// and retain its namespace rejection for the report as well.
 						readStrictLayeredSettings(deps.cwd());
+						configFailure = null;
 						config.reload();
 						if (configFailure) throw new Error(configFailure);
 						const after = config.get();
@@ -251,7 +272,9 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 				if (target === "all" || target === "mcp") {
 					try {
 						const source = deps.mcp?.source();
-						const swap = source && deps.mcp?.idle() ? await source.reloadDeclarations() : null;
+						const idle = deps.mcp?.idle() === true;
+						if (source && idle) cancelMcpDeferral();
+						const swap = source && idle ? await source.reloadDeclarations() : null;
 						if (!source)
 							lines.push("MCP servers", "  this session loaded no MCP source; a new session reads its MCP declarations");
 						else if (swap === null) {
@@ -261,7 +284,6 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 								"  deferred: a turn or an MCP call is running; the swap runs once it settles and reports then",
 							);
 						} else {
-							mcpDeferral.cancel();
 							const section = mcpSection(swap);
 							lines.push(...section.lines);
 							if (section.failed) failed = true;
