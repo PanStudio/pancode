@@ -72,7 +72,8 @@ import { createWorkerObservationStore } from "../domains/context/worker/recall.j
 import { workerEconomicsView } from "../domains/dispatch/economics-view.js";
 import { HANDBACK_CONTEXT_SHARE, HANDBACK_NOTE_SHARE, WALL_HANDBACK_SHARE } from "../domains/dispatch/handback.js";
 import type { RunRole } from "../domains/dispatch/obligation.js";
-import { createMiddlewareToolChoiceControl, createReadStreakRegistration } from "../domains/middleware/index.js";
+import { createReadStreakRegistration } from "../domains/middleware/read-streak.js";
+import { createMiddlewareToolChoiceControl } from "../domains/middleware/tool-choice-control.js";
 import { openAuthStorage } from "../domains/providers/auth/index.js";
 import type { AuthResolution } from "../domains/providers/auth/storage.js";
 import { compactionBudget, resolveEffectivePricing } from "../domains/providers/catalog.js";

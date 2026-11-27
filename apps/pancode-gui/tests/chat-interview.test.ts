@@ -6,7 +6,7 @@ import { test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Value } from "typebox/value";
-import { elicitationValueError } from "../contracts/elicitation-values.js";
+import { elicitationValueError } from "../contracts/elicitation.js";
 import { INTERVIEW_META_KEY, InterviewRound } from "../contracts/interviews.js";
 import { Interviews } from "../server/acp/interviews.js";
 
@@ -76,20 +76,11 @@ test("the review page draws a question's markdown as the question page did, not 
 });
 
 test("elicitation value validation rejects impossible date-time and whitespace-padded uri values", () => {
-	assert.notEqual(
-		elicitationValueError(
-			{ key: "when", label: "When", kind: "string", required: true, format: "date-time" },
-			"2026-07-28T25:00:00Z",
-		),
-		null,
-	);
-	assert.equal(
-		elicitationValueError(
-			{ key: "when", label: "When", kind: "string", required: true, format: "date-time" },
-			"2026-07-28T12:00:00Z",
-		),
-		null,
-	);
+	const when = { key: "when", label: "When", kind: "string", required: true, format: "date-time" } as const;
+	for (const bad of ["2026-07-28T25:00:00Z", "2026-07-28T24:00:00Z", "2026-07-28 09:30:00+25:00"])
+		assert.notEqual(elicitationValueError(when, bad), null, bad);
+	for (const good of ["2026-07-28T12:00:00Z", "2026-07-28 09:30:00+02:30"])
+		assert.equal(elicitationValueError(when, good), null, good);
 	assert.notEqual(
 		elicitationValueError(
 			{ key: "link", label: "Link", kind: "string", required: true, format: "uri" },

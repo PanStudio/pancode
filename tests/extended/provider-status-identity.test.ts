@@ -7,10 +7,10 @@ import { test } from "node:test";
 import { updateSettings } from "../../src/core/config.js";
 import { loadDomains } from "../../src/core/domain-loader.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
-import { ConfigDomainModule } from "../../src/domains/config/index.js";
+import { ConfigDomainModule } from "../../src/domains/config/module.js";
 import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
 import type { TargetStatus } from "../../src/domains/providers/contract.js";
-import { ProvidersDomainModule } from "../../src/domains/providers/index.js";
+import { ProvidersDomainModule } from "../../src/domains/providers/module.js";
 import {
 	readTargetModelSnapshot,
 	recordTargetModelSnapshot,

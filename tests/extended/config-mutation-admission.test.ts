@@ -8,8 +8,8 @@ import { settingsPath, updateSettings } from "../../src/core/config.js";
 import { loadDomains } from "../../src/core/domain-loader.js";
 import { readStrictLayeredSettings } from "../../src/core/settings-layers.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
-import { AgentsDomainModule } from "../../src/domains/agents/index.js";
-import { ConfigDomainModule, createConfigDomainModule } from "../../src/domains/config/index.js";
+import { AgentsDomainModule } from "../../src/domains/agents/module.js";
+import { ConfigDomainModule, createConfigDomainModule } from "../../src/domains/config/module.js";
 import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

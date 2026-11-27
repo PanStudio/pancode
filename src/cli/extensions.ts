@@ -400,10 +400,10 @@ function cliServiceDomains(): { providers: () => Promise<ProvidersContract>; sto
 					{ TelemetryDomainModule },
 					{ ensurePancodeState },
 				] = await Promise.all([
-					import("../domains/config/index.js"),
-					import("../domains/providers/index.js"),
-					import("../domains/session/index.js"),
-					import("../domains/telemetry/index.js"),
+					import("../domains/config/module.js"),
+					import("../domains/providers/module.js"),
+					import("../domains/session/module.js"),
+					import("../domains/telemetry/module.js"),
 					import("../domains/lifecycle/index.js"),
 				]);
 				ensurePancodeState();

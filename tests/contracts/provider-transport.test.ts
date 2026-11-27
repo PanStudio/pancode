@@ -19,11 +19,12 @@ import { loadDomains } from "../../src/core/domain-loader.js";
 import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
 import type { TelemetryHub } from "../../src/core/telemetry/hub.js";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
-import { ConfigDomainModule } from "../../src/domains/config/index.js";
+import { ConfigDomainModule } from "../../src/domains/config/module.js";
 import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
 import { isOrchestratorEligibleRuntime } from "../../src/domains/providers/eligibility.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
-import { listProviderSupportEntries, ProvidersDomainModule } from "../../src/domains/providers/index.js";
+import { listProviderSupportEntries } from "../../src/domains/providers/index.js";
+import { ProvidersDomainModule } from "../../src/domains/providers/module.js";
 import { loadPluginRuntimes } from "../../src/domains/providers/plugins.js";
 import { createRuntimeRegistry, getRuntimeRegistry } from "../../src/domains/providers/registry.js";
 import antigravityCodeRuntime, {
