@@ -12,6 +12,7 @@ import type {
 	ExtensionRuntimeSnapshot,
 	ExtensionRuntimeSnapshotV2,
 	ExtensionSkin,
+	ExtensionStatus,
 	ExtensionToolResult,
 	ExtensionUiAction,
 	InterviewAnswer,
@@ -33,16 +34,22 @@ import {
 	promptRefName,
 	resolveExtensionCommands,
 } from "./operator-commands.js";
-import { ClosedDuringReload, type OperatorReloadResult, type OperatorRuntimeEntry } from "./operator-runtime.js";
 import { extensionOwnerLabel } from "./owner-label.js";
-import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2 } from "./runtime-process-v2.js";
+import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcessState } from "./runtime-process-v2.js";
+import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
 import { type ExtensionGlobWatch, watchExtensionGlobs } from "./runtime-watch.js";
 import { pruneOrphanedExtensionSessionState } from "./session-state.js";
 import { validateSkin } from "./skin-schema.js";
 import { listInstalledExtensions } from "./state.js";
 import { type ActiveExtensionWorkspace, ExtensionSurfaceModel } from "./surface-model.js";
-import { type InstalledExtension, isLoadableExtension, type LoadableExtension } from "./types.js";
+import {
+	type ExtensionLoadScope,
+	type ExtensionProvenance,
+	type InstalledExtension,
+	isLoadableExtension,
+	type LoadableExtension,
+} from "./types.js";
 import { readSessionWorkspace, writeSessionWorkspace } from "./workspace-session.js";
 
 type RuntimeContext = Omit<ExtensionRuntimeSnapshot, "generation">;
@@ -53,6 +60,34 @@ export type ExtensionHookOutcome =
 	| { kind: "timeout" }
 	| { kind: "error"; message: string };
 type ReloadReason = "startup" | "reload" | "session-change";
+
+export interface OperatorRuntimeEntry {
+	id: string;
+	scope: ExtensionLoadScope;
+	generation: number;
+	state: RuntimeProcessState | "inactive";
+	/** Verified owner of this instance, not a subsequent installed-inventory observation. */
+	provenance?: ExtensionProvenance;
+	reason?: string;
+	status?: ExtensionStatus;
+	/** What confines this runtime beyond its Node flags; present while the runtime is running. */
+	sandbox?: ExtensionSandboxReport;
+	/** Actual schema admission is still owned by the session/worker registry. */
+	newSessionReasons: string[];
+	toolEvidence: "frozen-registry" | "runtime-startup-observation";
+}
+export interface OperatorReloadResult {
+	status: "committed" | "deferred" | "rejected";
+	generation: number;
+	message: string;
+	degraded?: number;
+}
+/** The runtime closed while a reload ran: a shutdown race, not a failed reload, so it is never reported. */
+export class ClosedDuringReload extends Error {
+	constructor() {
+		super("operator runtime is disposed");
+	}
+}
 
 export interface OperatorRuntimeV2Options {
 	context(): RuntimeContext;
@@ -76,8 +111,10 @@ export interface OperatorRuntimeV2Options {
 	 */
 	sandboxMode?: (workspace: string) => SandboxMode;
 	surface?: ExtensionSurfaceModel;
-	/** Processes another manager already holds against the shared cap. */
-	reserved?: () => number;
+	/** Captured from the existing registry, never inferred from runtime activation. */
+	frozenTools?: ReadonlyArray<ExtensionProvenance>;
+	/** Synchronous paired snapshot/hook commit, skipped on startup, which pairs with the boot generation. Runtimes have a separate readiness clock. */
+	commitHooks?: () => { status: string; generation: number; reason?: string };
 	onChange?: () => void;
 	onDiagnostic?: (message: string) => void;
 	onReload?: (result: OperatorReloadResult, reason: ReloadReason) => void;
@@ -221,10 +258,9 @@ interface ObservationQueue {
 }
 
 /**
- * Owns api 2 runtimes for the operator surfaces. A sibling of the api 1
- * manager rather than a mode of it: state, store and the picture live in the
- * host, so a reload restarts every process and loses nothing but in-flight
- * requests. A result is applied only while the process that produced it is
+ * Owns api 2 runtimes for the operator surfaces. State, store and the picture
+ * live in the host, so a reload restarts every process and loses nothing but
+ * in-flight requests. A result is applied only while the process that produced it is
  * still the current one for the same session and installation. Never used by
  * native workers or model tool bootstrap.
  */
@@ -273,9 +309,18 @@ export class OperatorExtensionRuntimeV2 {
 	private reloadTask: Promise<OperatorReloadResult> | undefined;
 	private lastScanMs = 0;
 	private lastIssue: string | undefined;
+	/** The command-tool packages the session's tool registry holds, by id; see `entries`. */
+	private initialTools: Map<string, string> | undefined;
 
 	constructor(private readonly options: OperatorRuntimeV2Options) {
 		this.surface = options.surface ?? new ExtensionSurfaceModel();
+		if (options.frozenTools)
+			this.initialTools = new Map(
+				options.frozenTools.map((provenance) => [
+					provenance.id,
+					`${provenance.id}:${provenance.scope}:${provenance.canonicalRoot}:${provenance.contentDigest}`,
+				]),
+			);
 	}
 
 	get activeGeneration(): number {
@@ -289,7 +334,7 @@ export class OperatorExtensionRuntimeV2 {
 	get onDemandCount(): number {
 		return this.deferred.size;
 	}
-	/** Live processes, for the cap shared with the api 1 manager. */
+	/** Live processes, counted against the runtime cap. */
 	get processCount(): number {
 		const live = [...this.processes.values()].filter(
 			(process) => process.state !== "failed" && process.state !== "disposed",
@@ -342,10 +387,10 @@ export class OperatorExtensionRuntimeV2 {
 		}
 	}
 	private capacity(): number {
-		return RUNTIME_V2_LIMITS.processes - (this.options.reserved?.() ?? 0) - this.processCount;
+		return RUNTIME_V2_LIMITS.processes - this.processCount;
 	}
 	private limitReason(): string {
-		return `operator runtime limit is ${RUNTIME_V2_LIMITS.processes} across api 1 and api 2; disable another runtime and reload`;
+		return `operator runtime limit is ${RUNTIME_V2_LIMITS.processes}; disable another runtime and reload`;
 	}
 	/** `after` holds the disposal until it settles; the process is out of the generation at once. */
 	private retire(process: ExtensionRuntimeProcessV2, reason: string, after?: Promise<void>): void {
@@ -568,6 +613,11 @@ export class OperatorExtensionRuntimeV2 {
 			const key = contextKey(context);
 			const list = this.list();
 			this.inventory = list;
+			this.initialTools ??= new Map(
+				list
+					.filter((entry) => entry.loadable && entry.capabilities?.tools.length)
+					.map((entry) => [entry.id, identity(entry)]),
+			);
 			// A session host starts once per process: state its deleted sessions left behind goes then (C-35).
 			if (reason === "startup" && this.options.onlyId === undefined && this.options.pruneOrphanedSessionState !== false)
 				pruneOrphanedExtensionSessionState((this.options.stateDir ?? pancodeStateDir)(), context.sessionId);
@@ -617,6 +667,11 @@ export class OperatorExtensionRuntimeV2 {
 				this.queued = true;
 				throw new SessionBusyWhileStaging();
 			}
+			// Boot already published the hook generation this startup pairs with (applyBoot), and committing it again
+			// only republished the same snapshot and reloaded unchanged plugin resources a second time (C-34).
+			const hooks = reason === "startup" ? undefined : this.options.commitHooks?.();
+			if (hooks && hooks.status !== "committed")
+				throw new Error(`hook generation rejected: ${hooks.reason ?? hooks.status}`);
 			// The TUI has no session id until its first turn, and that turn's session
 			// inherits what was open before it, as its state does (spawn).
 			const sameSession =
@@ -822,30 +877,44 @@ export class OperatorExtensionRuntimeV2 {
 		return resolveExtensionCommands(rows, promptNames);
 	}
 
+	/** One row per installed package, so a command-tool package reports when its tools need a new session. */
 	entries(): OperatorRuntimeEntry[] {
-		return this.inventory
-			.filter((entry) => entry.runtimeV2)
-			.map((entry) => {
-				const process = this.processes.get(entry.id);
-				const current = process && identity(process.extension) === identity(entry) ? process : undefined;
-				const reason =
-					this.failures.get(entry.id) ??
+		return this.inventory.map((entry) => {
+			const process = this.processes.get(entry.id);
+			const current = process && identity(process.extension) === identity(entry) ? process : undefined;
+			const deferred = this.deferred.get(entry.id);
+			const isDeferred = deferred !== undefined && identity(deferred) === identity(entry);
+			const reason = !entry.runtimeV2
+				? undefined
+				: ((entry.effective ? this.failures.get(entry.id) : undefined) ??
 					current?.failure ??
-					(!current && this.deferred.has(entry.id) ? "starts on first command" : undefined) ??
-					(current ? undefined : inactiveReason(entry));
-				const status = current?.state === "ready" ? this.surface.entry(entry.id)?.status : undefined;
-				return {
-					id: entry.id,
-					scope: entry.scope,
-					generation: this.generation,
-					state: current?.state ?? "inactive",
-					...(current ? { provenance: current.extension.provenance, sandbox: current.sandbox } : {}),
-					...(reason ? { reason } : {}),
-					...(status ? { status } : {}),
-					newSessionReasons: [],
-					toolEvidence: "runtime-startup-observation" as const,
-				};
-			});
+					(!current && isDeferred ? "starts on first command" : undefined) ??
+					(current ? undefined : inactiveReason(entry)));
+			const status = current?.state === "ready" ? this.surface.entry(entry.id)?.status : undefined;
+			const initial = this.initialTools?.get(entry.id);
+			const tracksToolDrift =
+				entry.effective ||
+				(initial !== undefined && !this.inventory.some((other) => other.id === entry.id && other.effective));
+			const newSessionReasons =
+				tracksToolDrift && (entry.capabilities?.tools.length || initial) && initial !== identity(entry)
+					? [
+							this.options.frozenTools
+								? "installed package differs from the frozen tool registry (or was not admitted there); a new session is required for tool admission"
+								: "package differs from the runtime-startup observation; actual frozen tool binding is unknown here, inspect the registry or start a new session",
+						]
+					: [];
+			return {
+				id: entry.id,
+				scope: entry.scope,
+				generation: this.generation,
+				state: current?.state ?? "inactive",
+				...(current ? { provenance: current.extension.provenance, sandbox: current.sandbox } : {}),
+				...(reason ? { reason } : {}),
+				...(status ? { status } : {}),
+				newSessionReasons,
+				toolEvidence: this.options.frozenTools ? "frozen-registry" : "runtime-startup-observation",
+			};
+		});
 	}
 
 	/**
@@ -1102,7 +1171,7 @@ export class OperatorExtensionRuntimeV2 {
 
 	/**
 	 * Passive delivery to every ready runtime that declared the event, in order
-	 * per runtime. Unlike api 1 nothing is coalesced, because usage and file
+	 * per runtime. Nothing is coalesced, because usage and file
 	 * changes carry data; a runtime that falls far behind loses the oldest.
 	 */
 	observe(event: ExtensionObservationV2): void {

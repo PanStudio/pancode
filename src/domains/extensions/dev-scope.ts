@@ -318,11 +318,10 @@ export class ExtensionDevScope implements ExtensionSessionOverlay {
 			...(diagnostic.path ? { path: diagnostic.path.replace(root, source) } : {}),
 		}));
 		// The envelope is what the operator approves. A hooks.yaml command hook or
-		// an api 1 runtime would run outside it, so a dev package carries neither.
+		// command tools would run outside it, so a dev package carries neither.
 		if (existsSync(path.join(root, "hooks.yaml")))
 			diagnostics.push({ type: "error", message: "a dev package declares its hooks in the manifest, not hooks.yaml" });
-		if (manifest?.runtime || manifest?.capabilities)
-			diagnostics.push({ type: "error", message: "dev scope loads api 2 runtimes only" });
+		if (manifest?.capabilities) diagnostics.push({ type: "error", message: "dev scope loads api 2 runtimes only" });
 		if (manifest && !manifest.runtimeV2)
 			diagnostics.push({ type: "error", message: "a dev package needs runtime.api: 2" });
 		const pancodeRange = manifest?.compatibility?.pancode;

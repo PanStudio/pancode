@@ -34,7 +34,7 @@ export function readHub(input: { cwd: string; kind: "inventory" | "extensions" }
 			effective: row.effective,
 			loadable: row.loadable,
 			capabilities: row.capabilities ?? null,
-			runtime: row.runtime ?? null,
+			runtime: row.runtimeV2 ?? null,
 			provenance: row.provenance ?? null,
 			diagnostics: row.diagnostics,
 		})),

@@ -2,14 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ExtensionRuntimeDeclarationV2 } from "./manifest-v2.js";
 
-export interface ExtensionRuntimeDeclaration {
-	api: 1;
-	entrypoint: string;
-	commands: Array<{ name: string; description: string; timeoutMs: number }>;
-	events: Array<"session_open" | "turn_end">;
-	ui: Array<"status" | "panel">;
-}
-
 export interface ExtensionCommandTool {
 	name: string;
 	description: string;
@@ -31,8 +23,7 @@ export interface ExtensionCapabilities {
  * playbooks, and reference files are plugin content and have no manifest key.
  */
 export interface PancodeExtensionManifest {
-	runtime?: ExtensionRuntimeDeclaration;
-	/** An `api: 2` runtime block. Held apart from `runtime` so api 1 readers never see a shape they cannot run. */
+	/** The manifest's `runtime` block, which must declare `api: 2`. */
 	runtimeV2?: ExtensionRuntimeDeclarationV2;
 	id: string;
 	name: string;

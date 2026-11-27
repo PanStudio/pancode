@@ -311,7 +311,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	let refreshOperatorUi = (): void => {};
 	let scheduleOperatorMaintenance = (): void => {};
 	let operatorTimer: ReturnType<typeof setTimeout> | undefined;
-	let operatorPanelValid: (() => boolean) | undefined;
 	// The startup reload starts runtimes after the first frame, so a prompt
 	// submitted as soon as the editor takes keys ran its prompt_submit and
 	// before_tool hooks against no runtime and they failed open. Hook and tool
@@ -470,12 +469,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				leave: () => {
 					operatorExtensions.leaveWorkspace();
 				},
-				// An approval owns the footer, so extension statuses step aside while it is open.
-				otherStatuses: () =>
-					overlayLifecycle?.getState() === "permission-confirm"
-						? []
-						: operatorExtensions.entries().flatMap((entry) => (entry.status ? [{ id: entry.id, status: entry.status }] : [])),
-
 				focusBoard: (extensionId, title, view) => {
 					if (!ambientSurfaces?.focusRegion(extensionId, title, view, "board"))
 						notify("info", "Close the open panel first; the board opens over the composer.");
@@ -553,7 +546,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		getLeaderArmed: () => leaderArmed,
 		extensionCommands: () => operatorExtensions?.commands() ?? [],
 		...(workspaceSurfaces ? { workspaceSurfaces } : {}),
-		// Extension statuses reach the footer once, through the workspace surfaces' status facts (`otherStatuses`), which
+		// Extension statuses reach the footer once, through the workspace surfaces' status facts, which
 		// also drop an owner name the text repeats. A second feed here printed each one twice (tui-verify 16).
 		getShutdownArmed: () => shutdownArmed,
 		isAwaitingApproval: () => overlayLifecycle?.getState() === "permission-confirm",
@@ -703,10 +696,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	refreshPresentationFooter = () => footer.refresh();
 	refreshOperatorUi = () => {
 		scheduleOperatorMaintenance();
-		if (operatorPanelValid && !operatorPanelValid() && overlayLifecycle?.getState() === "extensions") {
-			operatorPanelValid = undefined;
-			overlayLifecycle.closeOverlay();
-		}
 		footer.refresh();
 		tui.requestRender();
 	};
@@ -805,7 +794,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		onTurnEnded: () => {
 			desktopNotifications.turnEnded();
 			detachedBatchWake.poke();
-			operatorExtensions?.observe({ event: "turn_end", reason: "completed" });
 			devSession?.poke();
 			staleBuildNotice();
 			firePendingModelRestart();
@@ -956,32 +944,20 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				return;
 			}
 			// An operator who typed the command is owed a visible answer. Surface events
-			// and persistent entries draw api 2 results, but a footer status or band can
+			// and persistent entries draw the result, but a footer status or band can
 			// change by nothing, or not at all, so the text still reaches the transcript
 			// unless the result opened something of its own.
-			if (output.api === 2) {
-				if (output.text && !opensOwnSurface(output))
-					slashRuntime.context.showReference?.({
-						command: invocation,
-						source: extensionOwnerLabel(id),
-						kind: "result",
-						text: output.text,
-					});
-				else if (!output.text && !hasExtensionDrawing(output))
-					slashRuntime.context.notice("info", `/${invocation} ran and returned nothing to show.`);
-				else if (!output.text && !opensOwnSurface(output))
-					slashRuntime.context.notice("info", `/${invocation} ran; its result is in ${ambientDrawingPlace(output)}.`);
-				return;
-			}
-			if (output.panel && !deps.chat.isStreaming() && overlayLifecycle.openExtensionPanelState(id, output.panel, valid))
-				operatorPanelValid = valid;
-			else
+			if (output.text && !opensOwnSurface(output))
 				slashRuntime.context.showReference?.({
 					command: invocation,
 					source: extensionOwnerLabel(id),
 					kind: "result",
 					text: output.text,
 				});
+			else if (!output.text && !hasExtensionDrawing(output))
+				slashRuntime.context.notice("info", `/${invocation} ran and returned nothing to show.`);
+			else if (!output.text && !opensOwnSurface(output))
+				slashRuntime.context.notice("info", `/${invocation} ran; its result is in ${ambientDrawingPlace(output)}.`);
 		},
 		io,
 		bus: deps.bus,
