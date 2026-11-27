@@ -7,10 +7,10 @@ import { factKnownValue } from "../../src/core/telemetry/known.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { capacityLeaseUsage } from "../../src/domains/dispatch/capacity-lease.js";
 import { runUsageFromCallRecords } from "../../src/domains/dispatch/run-call-usage.js";
+import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
 import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
-import { verifyRunRecordReport } from "../../src/interactive/view/artifacts.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 
