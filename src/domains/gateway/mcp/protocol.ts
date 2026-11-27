@@ -146,6 +146,40 @@ export function classifyJsonRpcMessage(value: unknown): JsonRpcMessage | McpErro
 	return { kind: "response", message: response };
 }
 
+/**
+ * Canonical decimal form of a JSON number literal (sign, trimmed significant
+ * digits, decimal exponent) so pure notation differences like 0.0, 1.0, 2.50,
+ * or 1e5 compare equal to JS's shortest round-trip serialization.
+ */
+function canonicalDecimal(literal: string): string | null {
+	const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/u.exec(literal);
+	if (match === null) return null;
+	const intDigits = match[2] ?? "";
+	const fracDigits = match[3] ?? "";
+	let digits = (intDigits + fracDigits).replace(/^0+/u, "");
+	if (digits.length === 0) return "0";
+	const rawExp = Number(match[4] ?? "0");
+	if (!Number.isSafeInteger(rawExp)) return null;
+	let exponent = rawExp - fracDigits.length;
+	const trimmed = digits.replace(/0+$/u, "");
+	exponent += digits.length - trimmed.length;
+	digits = trimmed;
+	return `${match[1] === "-" ? "-" : ""}${digits}e${exponent}`;
+}
+
+/**
+ * True when storing a JSON number token as a plain JS number would lose value
+ * or sign (overflow, underflow, -0, unsafe integers, >17 significant digits, or
+ * inexact decimals), not when only the notation differs (e.g. 0.0, 1.0, 2.50).
+ */
+function needsNumericLiteralTag(source: string, value: number): boolean {
+	if (!Number.isFinite(value) || Object.is(value, -0)) return true;
+	const canonical = canonicalDecimal(source);
+	if (canonical === null) return true;
+	if (value === 0) return canonical !== "0";
+	return canonical !== canonicalDecimal(String(value));
+}
+
 /** Decode one complete line (without its terminator) into a message or a protocol error. */
 export function parseJsonRpcLine(line: Buffer): JsonRpcMessage | McpError {
 	let text: string;
@@ -195,12 +229,14 @@ export function parseJsonRpcLine(line: Buffer): JsonRpcMessage | McpError {
 				return source === undefined ? value : rawJSON(source);
 			});
 			// Plain JSON evidence must survive cloning and serialization as well.
-			// Tag tokens that Number cannot round-trip instead of retaining rounded
-			// numbers, Infinity (which serializes to null), or a signless zero.
+			// Tag only tokens whose numeric value or sign JS cannot hold without loss,
+			// keeping ordinary floats such as 0.0, 1.0, or 2.50 as plain numbers.
 			toolResult.structuredContent = JSON.parse(
 				JSON.stringify(content, function (this: object, key: string, value: unknown) {
 					const source = sourceOf(this, key, value);
-					return source !== undefined && JSON.stringify(value) !== source ? { $literal: source } : value;
+					return source !== undefined && typeof value === "number" && needsNumericLiteralTag(source, value)
+						? { $literal: source }
+						: value;
 				}),
 			) as unknown;
 			structuredJson.set(toolResult, exact);

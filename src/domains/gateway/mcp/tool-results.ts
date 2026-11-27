@@ -211,7 +211,13 @@ function outputSchemaRefusal(schema: Record<string, unknown>): string | null {
 	const resolves = (pointer: string): boolean => {
 		let node: unknown = schema;
 		for (const raw of pointer.split("/").slice(1)) {
-			const key = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~");
+			let decoded: string;
+			try {
+				decoded = decodeURIComponent(raw);
+			} catch {
+				return false;
+			}
+			const key = decoded.replace(/~1/g, "/").replace(/~0/g, "~");
 			if (Array.isArray(node)) node = node[Number(key)];
 			else if (isRecord(node) && Object.hasOwn(node, key)) node = node[key];
 			else return false;
@@ -246,26 +252,33 @@ function outputSchemaRefusal(schema: Record<string, unknown>): string | null {
 	return walk(schema, 0);
 }
 
-/** The value a validator sees: a {$literal} tag stands for the number its source token spells. */
-function literalNumbers(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(literalNumbers);
-	if (!isRecord(value)) return value;
-	const keys = Object.keys(value);
-	if (keys.length === 1 && keys[0] === "$literal" && typeof value.$literal === "string") return Number(value.$literal);
-	return Object.fromEntries(keys.map((key) => [key, literalNumbers(value[key])]));
-}
-
 /**
  * Check one result's structuredContent against the tool's outputSchema with
  * the JSON Schema validator PanCode ships. Null means it conforms; otherwise
  * the reason names the failing paths, or why the schema could not be used,
  * since a schema that cannot be evaluated is not treated as permissive.
+ *
+ * When `rawJson` (the wire JSON of `structuredContent` before non-round-trip
+ * numbers were wrapped as `{$literal}`) is present, parsing it hands the
+ * validator the exact values the server sent without colliding with a genuine
+ * object whose own property happens to be named `$literal`.
  */
-export async function outputSchemaMismatch(schema: Record<string, unknown>, value: unknown): Promise<string | null> {
+export async function outputSchemaMismatch(
+	schema: Record<string, unknown>,
+	value: unknown,
+	rawJson?: string,
+): Promise<string | null> {
 	const refused = outputSchemaRefusal(schema);
 	if (refused !== null) return `its outputSchema cannot be checked: ${refused}`;
 	const { Value } = await import("typebox/value");
-	const candidate = literalNumbers(value);
+	let candidate: unknown = value;
+	if (rawJson !== undefined) {
+		try {
+			candidate = JSON.parse(rawJson) as unknown;
+		} catch {
+			return "its outputSchema cannot be checked: structuredContent could not be parsed";
+		}
+	}
 	try {
 		if (Value.Check(schema as never, candidate)) return null;
 		const failures: string[] = [];

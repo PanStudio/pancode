@@ -234,6 +234,7 @@ interface PendingRequest {
 	sent: boolean;
 	resolve(value: unknown): void;
 	reject(error: McpError): void;
+	abandon(): void;
 }
 
 interface ActiveSubscription {
@@ -579,7 +580,11 @@ export function createMcpProtocolClient(
 			if (entry === undefined) return;
 			const error = frame.message.error;
 			if (error !== undefined) {
-				if (error.code === MCP_UNSUPPORTED_PROTOCOL_VERSION && entry.method !== "server/discover") {
+				if (
+					error.code === MCP_UNSUPPORTED_PROTOCOL_VERSION &&
+					entry.method !== "server/discover" &&
+					entry.method !== "initialize"
+				) {
 					fail(unsupportedVersionError(entry.method, error));
 					void close();
 					return;
@@ -612,6 +617,27 @@ export function createMcpProtocolClient(
 		notifications += 1;
 		const { method, params } = frame.message;
 		const meta = isRecord(params) && isRecord(params._meta) ? params._meta : null;
+		// On stdio, a server terminates a subscriptions/listen stream with
+		// notifications/cancelled referencing the listen request's id (2026-07-28 basic/patterns/cancellation).
+		if (method === "notifications/cancelled") {
+			const targetId =
+				isRecord(params) && typeof params.requestId === "number"
+					? params.requestId
+					: meta !== null && typeof meta[MCP_META_SUBSCRIPTION_ID] === "number"
+						? meta[MCP_META_SUBSCRIPTION_ID]
+						: null;
+			if (targetId !== null && subscriptions.has(targetId)) {
+				const reason =
+					isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
+						? `: ${serverText(params.reason)}`
+						: "";
+				subscriptions.delete(targetId);
+				pending
+					.get(targetId)
+					?.reject(new McpError("server", `mcp server ${id} cancelled subscription ${targetId}${reason}`));
+				return;
+			}
+		}
 		if (meta !== null && Object.hasOwn(meta, MCP_META_SUBSCRIPTION_ID)) {
 			routeSubscription(meta[MCP_META_SUBSCRIPTION_ID], method, params);
 			return;
@@ -730,6 +756,7 @@ export function createMcpProtocolClient(
 				sent: false,
 				resolve: (value) => settle(() => resolve(value)),
 				reject: (error) => settle(() => reject(error)),
+				abandon: () => settle(() => {}),
 			});
 			onId?.(requestId);
 			if (timeoutMs > 0) {
@@ -793,10 +820,13 @@ export function createMcpProtocolClient(
 	 * Any other error answer, or silence until the initialize timeout, means a
 	 * legacy server, and null sends the client down the handshake path.
 	 */
-	const discoverEra = async (signal?: AbortSignal): Promise<McpServerInfo | null> => {
+	const discoverEra = async (
+		signal?: AbortSignal,
+		onId?: (requestId: number) => void,
+	): Promise<McpServerInfo | null> => {
 		let result: unknown;
 		try {
-			result = await request("server/discover", {}, initializeTimeoutMs, signal);
+			result = await request("server/discover", {}, initializeTimeoutMs, signal, onId);
 		} catch (error) {
 			const cause = error instanceof McpError ? error : new McpError("protocol", errorMessage(error));
 			const answered = cause.code === "server" && isRecord(cause.data) ? cause.data : null;
@@ -847,6 +877,8 @@ export function createMcpProtocolClient(
 				await close();
 				throw closedError();
 			}
+			let probeId: number | null = null;
+			let handshakeId: number | null = null;
 			const handshake = (): Promise<unknown> =>
 				request(
 					"initialize",
@@ -857,6 +889,9 @@ export function createMcpProtocolClient(
 					},
 					initializeTimeoutMs,
 					signal,
+					(assigned) => {
+						handshakeId = assigned;
+					},
 				);
 			// Many legacy servers drop an unknown method without answering, and
 			// waiting out the whole initialize timeout for each of them would slow
@@ -864,7 +899,9 @@ export function createMcpProtocolClient(
 			// pending probe and the first decisive answer picks the era. Servers
 			// read stdin in order, so a modern server that is merely slow to start
 			// still answers the probe it read first.
-			const probe = discoverEra(signal);
+			const probe = discoverEra(signal, (assigned) => {
+				probeId = assigned;
+			});
 			probe.catch(() => {
 				// Observed through the races below; a fatal probe has already failed the client.
 			});
@@ -894,12 +931,14 @@ export function createMcpProtocolClient(
 				]);
 			}
 			if (discovered !== null) {
+				if (handshakeId !== null) pending.get(handshakeId)?.abandon();
 				era = "modern";
 				info = discovered;
 				if (status === "starting") status = "ready";
 				listenForToolChanges(discovered.capabilities);
 				return discovered;
 			}
+			if (probeId !== null) pending.get(probeId)?.abandon();
 			let result: unknown;
 			try {
 				result = await (pendingHandshake ?? handshake());
@@ -1012,7 +1051,7 @@ export function createMcpProtocolClient(
 		if (parsed instanceof McpError) throw parsed;
 		const schema = outputSchemas.get(name);
 		if (parsed.isError || schema === undefined || parsed.structuredContent === undefined) return parsed;
-		const mismatch = await outputSchemaMismatch(schema, parsed.structuredContent);
+		const mismatch = await outputSchemaMismatch(schema, parsed.structuredContent, parsed.structuredContentJson);
 		if (mismatch === null) return parsed;
 		return { ...parsed, isError: true, outputSchemaMismatch: serverText(`mcp server ${id}, tool ${name}: ${mismatch}`) };
 	};
@@ -1027,15 +1066,16 @@ export function createMcpProtocolClient(
 		await ensureReady(signal);
 		const timeoutMs = clampTimerDelayMs(callOptions.timeoutMs ?? requestTimeoutMs);
 		const startedAt = performance.now();
-		const progress = callOptions.onProgress === undefined ? null : trackProgress(callOptions.onProgress);
-		try {
-			let params: Record<string, unknown> = { name, arguments: args };
-			for (let round = 1; ; round += 1) {
-				let budget = timeoutMs;
-				if (round > 1 && timeoutMs > 0) {
-					budget = Math.ceil(startedAt + timeoutMs - performance.now());
-					if (budget <= 0) throw new McpError("timeout", `tools/call timed out after ${timeoutMs}ms`);
-				}
+		let params: Record<string, unknown> = { name, arguments: args };
+		for (let round = 1; ; round += 1) {
+			let budget = timeoutMs;
+			if (round > 1 && timeoutMs > 0) {
+				budget = Math.ceil(startedAt + timeoutMs - performance.now());
+				if (budget <= 0) throw new McpError("timeout", `tools/call timed out after ${timeoutMs}ms`);
+			}
+			// Each request round gets its own progressToken so a retry under MRTR starts with a fresh counter.
+			const progress = callOptions.onProgress === undefined ? null : trackProgress(callOptions.onProgress);
+			try {
 				const sent = progress === null ? params : { ...params, _meta: { progressToken: progress.token } };
 				const result = await request("tools/call", sent, budget, signal);
 				if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
@@ -1050,9 +1090,9 @@ export function createMcpProtocolClient(
 					);
 				}
 				return await finishToolResult(name, result);
+			} finally {
+				progress?.release();
 			}
-		} finally {
-			progress?.release();
 		}
 	};
 

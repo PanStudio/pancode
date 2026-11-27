@@ -9,12 +9,15 @@ import { afterEach, describe, it } from "node:test";
 import {
 	classifyJsonRpcMessage,
 	createLineFramer,
+	createMcpProtocolClient,
 	createMcpStdioClient,
 	encodeJsonRpcMessage,
 	MCP_PROTOCOL_VERSION,
 	MCP_TOOL_LIST_CAP,
 	type McpClient,
 	McpError,
+	type McpTransportEvents,
+	parseJsonRpcLine,
 	renderMcpContent,
 } from "../../src/domains/gateway/mcp/index.js";
 
@@ -822,8 +825,7 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 	it("sends an input_required call again with its requestState and refuses one that asks for input", async () => {
 		const c = client("modern");
 		strictEqual((await c.callTool("confirm", {})).text, "confirmed round-1");
-		strictEqual(countOf(c, "confirm state=none"), 1);
-		strictEqual(countOf(c, "confirm state=round-1"), 1);
+		await waitFor(() => countOf(c, "confirm state=none") === 1 && countOf(c, "confirm state=round-1") === 1);
 		await rejectsWithCode(c.callTool("confirm", { ask: true }), "protocol", /asking for elicitation\/create/);
 	});
 
@@ -866,5 +868,197 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 		);
 		await waitFor(() => countOf(c, "tasks/cancel task-1") === 1);
 		strictEqual(c.state().status, "ready");
+	});
+
+	it("handles server-cancelled subscriptions, slow modern probe races, MRTR progress resets and outputSchema edge cases", async () => {
+		let events: McpTransportEvents | null = null;
+		let started = false;
+		const sent: Array<Record<string, unknown>> = [];
+		const deliver = (payload: Record<string, unknown>): void => {
+			const frame = parseJsonRpcLine(Buffer.from(JSON.stringify(payload), "utf8"));
+			ok(!(frame instanceof McpError));
+			events?.message(frame);
+		};
+		const c = createMcpProtocolClient(
+			"inmem",
+			(e) => {
+				events = e;
+				return {
+					pid: undefined,
+					start: async () => {
+						started = true;
+						return true;
+					},
+					started: () => started,
+					endReported: () => null,
+					send: (message, opts) => {
+						const record = message as unknown as Record<string, unknown>;
+						sent.push(record);
+						opts?.onSent?.();
+						const method = "method" in message ? message.method : undefined;
+						const id = "id" in message ? message.id : undefined;
+						if (method === "initialize") {
+							// Slow modern server answers discover first, then rejects speculative initialize with -32022.
+							const discoverReq = sent.find((m) => m.method === "server/discover");
+							queueMicrotask(() => {
+								deliver({
+									jsonrpc: "2.0",
+									id: discoverReq?.id,
+									result: {
+										resultType: "complete",
+										supportedVersions: ["2026-07-28"],
+										capabilities: { tools: {} },
+										_meta: { "io.modelcontextprotocol/serverInfo": { name: "slow-modern", version: "1.0" } },
+									},
+								});
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									error: {
+										code: -32022,
+										message: "Unsupported protocol version",
+										data: { supported: ["2026-07-28"], requested: "2025-11-25" },
+									},
+								});
+							});
+						} else if (method === "tools/list") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										tools: [
+											{
+												name: "bad-ref",
+												description: "bad percent ref",
+												inputSchema: { type: "object" },
+												outputSchema: { $ref: "#/%ZZ" },
+											},
+											{
+												name: "literal-key",
+												description: "real $literal property",
+												inputSchema: { type: "object" },
+												outputSchema: {
+													type: "object",
+													properties: { $literal: { type: "string" } },
+													required: ["$literal"],
+												},
+											},
+											{
+												name: "mrtr-progress",
+												description: "mrtr with progress reset",
+												inputSchema: { type: "object" },
+											},
+										],
+									},
+								}),
+							);
+						} else if (method === "tools/call" && "params" in message) {
+							const params = message.params as {
+								name: string;
+								requestState?: string;
+								_meta?: { progressToken?: string };
+							};
+							queueMicrotask(() => {
+								if (params.name === "bad-ref") {
+									deliver({
+										jsonrpc: "2.0",
+										id,
+										result: { resultType: "complete", content: [], structuredContent: { a: 1 } },
+									});
+								} else if (params.name === "literal-key") {
+									deliver({
+										jsonrpc: "2.0",
+										id,
+										result: { resultType: "complete", content: [], structuredContent: { $literal: "hello" } },
+									});
+								} else if (params.name === "mrtr-progress") {
+									const token = params._meta?.progressToken;
+									if (params.requestState === undefined) {
+										deliver({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: 50 } });
+										deliver({ jsonrpc: "2.0", id, result: { resultType: "input_required", requestState: "step-2" } });
+									} else {
+										deliver({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: 10 } });
+										deliver({
+											jsonrpc: "2.0",
+											id,
+											result: { resultType: "complete", content: [{ type: "text", text: "done" }] },
+										});
+									}
+								}
+							});
+						} else if (method === "subscriptions/listen") {
+							queueMicrotask(() => {
+								deliver({
+									jsonrpc: "2.0",
+									method: "notifications/subscriptions/acknowledged",
+									params: { _meta: { "io.modelcontextprotocol/subscriptionId": id }, notifications: { toolsListChanged: true } },
+								});
+								deliver({
+									jsonrpc: "2.0",
+									method: "notifications/cancelled",
+									params: { requestId: id, reason: "server shutting down stream" },
+								});
+							});
+						}
+						return { kind: "queued" };
+					},
+					withdraw: () => {},
+					close: async () => ({ complete: true }),
+					killOwnedOnExit: () => {},
+					stderrTail: () => "",
+					teardown: () => ({ complete: true }),
+				};
+			},
+			{},
+		);
+		clients.push(c);
+		const info = await c.initialize();
+		strictEqual(info.protocolVersion, "2026-07-28");
+		strictEqual(c.state().status, "ready");
+
+		await c.listTools();
+		const badRef = await c.callTool("bad-ref", {});
+		strictEqual(badRef.isError, true);
+		match(badRef.outputSchemaMismatch ?? "", /does not resolve/);
+
+		const literal = await c.callTool("literal-key", {});
+		strictEqual(literal.isError, false);
+		strictEqual(literal.outputSchemaMismatch, undefined);
+
+		const progressValues: number[] = [];
+		const mrtr = await c.callTool("mrtr-progress", {}, { onProgress: (u) => progressValues.push(u.progress) });
+		strictEqual(mrtr.text, "done");
+		deepStrictEqual(progressValues, [50, 10]);
+
+		const sub = c.subscribe({ toolsListChanged: true }, () => {});
+		deepStrictEqual(await sub.acknowledged, { toolsListChanged: true });
+		await sub.ended;
+		await c.close();
+		strictEqual(
+			sent.some(
+				(m) => m.method === "notifications/cancelled" && (m.params as { requestId?: unknown })?.requestId === sub.id,
+			),
+			false,
+			"client does not cancel a stream the server already cancelled",
+		);
+
+		// Ordinary floats (0.0, 1.0, 2.50, 1e5) stay plain numbers; only lossy tokens become $literal.
+		const rawLine =
+			'{"jsonrpc":"2.0","id":9,"result":{"content":[],"structuredContent":{"z":0.0,"one":1.0,"half":2.50,"sci":1e5,"under":1e-400,"over":1e400,"negZero":-0,"big":9007199254740993,"inexact":1.0000000000000001}}}';
+		const parsed = parseJsonRpcLine(Buffer.from(rawLine, "utf8"));
+		ok(!(parsed instanceof McpError) && parsed.kind === "response");
+		deepStrictEqual((parsed.message.result as { structuredContent: unknown }).structuredContent, {
+			z: 0,
+			one: 1,
+			half: 2.5,
+			sci: 100000,
+			under: { $literal: "1e-400" },
+			over: { $literal: "1e400" },
+			negZero: { $literal: "-0" },
+			big: { $literal: "9007199254740993" },
+			inexact: { $literal: "1.0000000000000001" },
+		});
 	});
 });
