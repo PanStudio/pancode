@@ -313,7 +313,10 @@ const scidataStats = defineTool({
 	async run(args: Args, context) {
 		const problem = checkArguments("scidata_stats", STATS_ARGUMENTS, args);
 		if (problem !== null) return { error: problem };
-		const result = await scidata().statsData(path.resolve(args.path as string), libraryOptions(args, context.signal));
+		const result = await scidata().statsData(path.resolve(args.path as string), {
+			...libraryOptions(args, context.signal),
+			onProgress: (values) => context.progress(values, undefined, `${values} values read`),
+		});
 		return returned("scidata_stats", "stats", result, args);
 	},
 });
