@@ -830,7 +830,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/chat-loop.ts#createChatLoop", 1576],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
-	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 587],
+	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
 	["src/session-control/turn-context.ts#createTurnContext", 2789],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
 	["src/session-control/turn-recovery.ts#createTurnRecovery", 681],
