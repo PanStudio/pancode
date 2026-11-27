@@ -595,3 +595,58 @@ it("clears a removed server's trust record while keeping credentials, and preser
 		scratch.cleanup();
 	}
 });
+
+it("gives an actionable remedy on mcp test --call confirmation refusal and does not repeat needs-auth remedy on mcp list", () => {
+	const scratch = makeScratchHome("pancode-mcp-cli-remedies-");
+	try {
+		const project = join(scratch.dir, "project");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(join(scratch.dir, "config"), { recursive: true });
+		const run = (args: string[]) =>
+			spawnSync(process.execPath, [CLI, "mcp", ...args], {
+				cwd: project,
+				env: { ...process.env, ...scratch.env },
+				encoding: "utf8",
+				timeout: 10_000,
+			});
+
+		// 1. User-scope server with an unknown-class tool gives a concrete actionClass/toolActionClasses remedy on mcp test --call.
+		const server = [
+			"let buf='';",
+			"process.stdin.on('data',c=>{buf+=c;for(const line of buf.split('\\n')){if(!line.trim())continue;const m=JSON.parse(line);",
+			"if(m.method==='initialize')process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'u',version:'1'}}})+'\\n');",
+			"if(m.method==='tools/list')process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'search',description:'s',inputSchema:{type:'object'}}]}})+'\\n');",
+			"}buf='';});",
+		].join("");
+		writeFileSync(
+			join(scratch.dir, "config", "mcp.yaml"),
+			[
+				"version: 1",
+				"servers:",
+				"  - id: unk",
+				`    command: ${JSON.stringify(process.execPath)}`,
+				`    args: ["-e", ${JSON.stringify(server)}]`,
+				"  - id: authed",
+				"    url: http://127.0.0.1:49997/mcp",
+				"    headers:",
+				"      Authorization: missing-tok",
+			].join("\n"),
+		);
+		approveSurface(project, scratch.env, "unk");
+		const tested = run(["test", "unk", "--call", "search", "--json"]);
+		strictEqual(tested.status, 1, tested.stderr);
+		const call = JSON.parse(tested.stdout).calls[0];
+		strictEqual(call.refused, true);
+		strictEqual(call.text.includes("no permission listener"), false);
+		match(call.text, /actionClass=unknown/u);
+		match(call.text, /toolActionClasses: \{ search: read \}/u);
+
+		// 2. mcp list --refresh shows the needs-auth login remedy once instead of repeating it.
+		const listed = run(["list", "--refresh"]);
+		const authedLine = listed.stdout.split("\n").find((line) => line.includes("needs-auth:"));
+		ok(authedLine !== undefined, listed.stdout);
+		strictEqual(authedLine.match(/pancode mcp login authed/gu)?.length, 1, authedLine);
+	} finally {
+		scratch.cleanup();
+	}
+});

@@ -16,11 +16,13 @@ import {
 	createMcpOAuthAuthorizer,
 	discoverMcpAuthorizationServer,
 	discoverMcpProtectedResource,
+	exchangeMcpAuthorizationCode,
 	type McpAuthorizationServer,
 	type McpProtectedResource,
 	mcpAuthorizationCode,
 	mcpOAuthGrantFor,
 	mcpOAuthScopes,
+	parseWwwAuthenticate,
 	storeMcpOAuthGrant,
 } from "../../src/domains/gateway/mcp/index.js";
 import { mcpOAuthLogin } from "../../src/domains/gateway/mcp/oauth-login.js";
@@ -419,9 +421,86 @@ describe("sign-in", () => {
 
 		const held = mcpOAuthGrantFor({ id: "docs", url: ENDPOINT }, storage);
 		ok(held !== null);
-		await createMcpOAuthAuthorizer(held.ref, held.grant, fetch, storage).insufficientScope(["mcp:write"]);
+		const authorizer = createMcpOAuthAuthorizer(held.ref, held.grant, fetch, storage);
+		strictEqual(authorizer.stale(), false, "a 60s token is not immediately stale");
+		await authorizer.insufficientScope(["mcp:write"]);
 		await signIn();
 		strictEqual(authorizations[1]?.searchParams.get("scope"), "mcp:read mcp:write");
 		strictEqual(seen.filter((entry) => entry.url === `${AS}/register`).length, 1, "the registration is reused");
+	});
+
+	it("parses multi-challenge WWW-Authenticate, rejects loopback SSRF/fragments/duplicates, accepts null registration_endpoint, and encodes Basic per RFC 6749", async () => {
+		const multi = parseWwwAuthenticate(
+			`DPoP algs="ES256", Bearer resource_metadata="${RS}/meta", scope="mcp:read", Basic realm="other", error="insufficient_scope"`,
+		);
+		strictEqual(multi?.scheme, "Bearer");
+		deepStrictEqual(multi?.params, { resource_metadata: `${RS}/meta`, scope: "mcp:read" });
+
+		const afterToken68 = parseWwwAuthenticate(`Negotiate YII123==, Bearer error="insufficient_scope", scope="mcp:write"`);
+		strictEqual(afterToken68?.scheme, "Bearer");
+		deepStrictEqual(afterToken68?.params, { error: "insufficient_scope", scope: "mcp:write" });
+
+		await rejects(
+			discoverMcpProtectedResource(
+				ENDPOINT,
+				{ scheme: "Bearer", params: { resource_metadata: "http://127.0.0.1:9999/admin" } },
+				fakeFetch([]).fetch,
+			),
+			/non-loopback/u,
+		);
+		await rejects(
+			discoverMcpProtectedResource(
+				ENDPOINT,
+				{ scheme: "Bearer", params: { resource_metadata: `${RS}/meta` } },
+				fakeFetch([at(`${RS}/meta`, () => prm(`${ENDPOINT}#frag`))]).fetch,
+			),
+			/fragment/u,
+		);
+		await rejects(
+			discoverMcpProtectedResource(
+				ENDPOINT,
+				{ scheme: "Bearer", params: { resource_metadata: `${RS}/meta` } },
+				fakeFetch([at(`${RS}/meta`, () => prm(ENDPOINT, { authorization_servers: ["http://127.0.0.1:9999"] }))]).fetch,
+			),
+			/non-loopback/u,
+		);
+
+		const asWithNullReg = await discoverMcpAuthorizationServer(
+			AS,
+			fakeFetch([at(`${AS}/.well-known/oauth-authorization-server`, () => asMetadata({ registration_endpoint: null }))])
+				.fetch,
+		);
+		strictEqual(asWithNullReg.registrationEndpoint, undefined);
+
+		const dup = mcpAuthorizationCode(new URLSearchParams("code=a&state=s&state=s2"), {
+			state: "s",
+			issuer: AS,
+			issParameterSupported: false,
+		});
+		ok("refused" in dup);
+		match(dup.refused, /repeats the state parameter/u);
+
+		const ansiErr = mcpAuthorizationCode(
+			new URLSearchParams(`state=s&error=access_denied&error_description=${encodeURIComponent("bad\u001b[31mred")}`),
+			{ state: "s", issuer: AS, issParameterSupported: false },
+		);
+		ok("refused" in ansiErr);
+		strictEqual(ansiErr.refused.includes("\u001b"), false);
+
+		const { fetch: tokenFetch, seen: tokenSeen } = fakeFetch([
+			at(`${AS}/token`, () => json({ access_token: "tok", token_type: "bearer", expires_in: 300 })),
+		]);
+		await exchangeMcpAuthorizationCode(
+			{
+				tokenEndpoint: `${AS}/token`,
+				client: { clientId: "id!*", clientSecret: "sec'()", authMethod: "client_secret_basic" },
+				code: "c",
+				verifier: "v",
+				redirectUri: "http://127.0.0.1:33418/callback",
+				resource: ENDPOINT,
+			},
+			tokenFetch,
+		);
+		strictEqual(tokenSeen[0]?.authorization, `Basic ${Buffer.from("id%21%2A:sec%27%28%29").toString("base64")}`);
 	});
 });

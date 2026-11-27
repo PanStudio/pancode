@@ -10,6 +10,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { escapeTerminalControls } from "../../../core/terminal-controls.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { mcpRemoteEndpoint } from "./remote.js";
 
@@ -54,6 +55,8 @@ export interface McpTokenResponse {
 	access: string;
 	refresh?: string;
 	expiresAt?: number;
+	/** Epoch ms at which proactive renewal should start (bounded for short-lived tokens). */
+	refreshAt?: number;
 	scope?: string[];
 }
 
@@ -70,24 +73,112 @@ export const MCP_OAUTH_DEFAULT_REDIRECT_PORT = 33418;
 
 const METADATA_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const EXPIRY_MARGIN_MS = 60_000;
 const SCOPE_TOKEN = /^[\x21\x23-\x5b\x5d-\x7e]+$/u;
+const AUTH_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+/u;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 export class McpOAuthError extends Error {
 	override name = "McpOAuthError";
 }
 
-/** `key=value` and `key="value"` parameters of a WWW-Authenticate challenge (RFC 9110 11.6.1). */
+/**
+ * Parse a `WWW-Authenticate` header (RFC 9110 11.6.1), handling comma-joined
+ * multi-challenge lists without bleeding parameters across challenges. Prefers
+ * the `Bearer` challenge when present, otherwise returns the first challenge.
+ */
 export function parseWwwAuthenticate(header: string | null): McpAuthChallenge | null {
 	if (header === null) return null;
-	const scheme = /^\s*([!#$%&'*+\-.^_`|~0-9A-Za-z]+)/u.exec(header)?.[1];
-	if (scheme === undefined) return null;
-	const params: Record<string, string> = {};
-	const pattern = /([!#$%&'*+\-.^_`|~0-9A-Za-z]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))/gu;
-	for (const match of header.slice(header.indexOf(scheme) + scheme.length).matchAll(pattern)) {
-		const key = (match[1] as string).toLowerCase();
-		if (!Object.hasOwn(params, key)) params[key] = match[2]?.replace(/\\(.)/gu, "$1") ?? match[3] ?? "";
+	const challenges: McpAuthChallenge[] = [];
+	const len = header.length;
+	let i = 0;
+	const skipWs = (): void => {
+		while (i < len && (header[i] === " " || header[i] === "\t")) i++;
+	};
+	const readToken = (): string | null => {
+		const match = AUTH_TOKEN.exec(header.slice(i));
+		if (match === null) return null;
+		i += match[0].length;
+		return match[0];
+	};
+	const isParamEquals = (): boolean => {
+		let j = i;
+		while (j < len && (header[j] === " " || header[j] === "\t")) j++;
+		if (header[j] !== "=") return false;
+		j++;
+		while (j < len && (header[j] === " " || header[j] === "\t")) j++;
+		// A trailing `=` (token68 padding), `,`, or end-of-header is not `key=value`.
+		return j < len && header[j] !== "=" && header[j] !== ",";
+	};
+	while (i < len) {
+		skipWs();
+		while (i < len && header[i] === ",") {
+			i++;
+			skipWs();
+		}
+		if (i >= len) break;
+		const scheme = readToken();
+		if (scheme === null) break;
+		const params: Record<string, string> = {};
+		challenges.push({ scheme, params });
+		while (i < len) {
+			skipWs();
+			if (i >= len) break;
+			if (header[i] === ",") {
+				i++;
+				skipWs();
+				if (i >= len) break;
+				// Peek at the next token: if it is not followed by `= value`, a new challenge begins.
+				const start = i;
+				const next = readToken();
+				if (next === null) break;
+				if (!isParamEquals()) {
+					i = start;
+					break;
+				}
+				i = start;
+			}
+			const start = i;
+			const key = readToken();
+			if (key === null) break;
+			if (!isParamEquals()) {
+				// Token68 credential (e.g. `Negotiate YII...==`): skip through the rest of the token until `,`.
+				i = start;
+				while (i < len && header[i] !== ",") i++;
+				continue;
+			}
+			skipWs();
+			i++; // consume `=`
+			skipWs();
+			let value = "";
+			if (header[i] === '"') {
+				i++;
+				let closed = false;
+				while (i < len) {
+					const ch = header[i];
+					if (ch === "\\" && i + 1 < len) {
+						value += header[i + 1];
+						i += 2;
+					} else if (ch === '"') {
+						i++;
+						closed = true;
+						break;
+					} else {
+						value += ch;
+						i++;
+					}
+				}
+				if (!closed) break;
+			} else {
+				const valueStart = i;
+				while (i < len && header[i] !== "," && header[i] !== " " && header[i] !== "\t") i++;
+				value = header.slice(valueStart, i);
+			}
+			const lower = key.toLowerCase();
+			if (!Object.hasOwn(params, lower)) params[lower] = value;
+		}
 	}
-	return { scheme, params };
+	return challenges.find((challenge) => challenge.scheme.toLowerCase() === "bearer") ?? challenges[0] ?? null;
 }
 
 /** The scope tokens of a space-separated `scope` value; malformed tokens are dropped. */
@@ -130,11 +221,22 @@ export function mcpResourceCovers(resource: string, endpoint: string): boolean {
 	return prefix === "" || path === prefix || path.startsWith(`${prefix}/`);
 }
 
-/** An https URL, or http on loopback: where every authorization endpoint must live (security considerations). */
-function securedUrl(raw: unknown, what: string): string {
+function isLoopbackUrl(url: URL): boolean {
+	return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
+}
+
+/**
+ * An https URL, or http on loopback when `allowLoopback` is set (security considerations).
+ * A non-loopback remote server may not steer discovery, registration, or token
+ * requests to loopback addresses.
+ */
+function securedUrl(raw: unknown, what: string, allowLoopback: boolean): string {
 	if (typeof raw !== "string" || raw.length === 0) throw new McpOAuthError(`${what} is missing`);
 	const checked = mcpRemoteEndpoint(raw);
 	if (typeof checked === "string") throw new McpOAuthError(`${what} ${raw} ${checked}`);
+	if (!allowLoopback && (checked.protocol !== "https:" || isLoopbackUrl(checked))) {
+		throw new McpOAuthError(`${what} ${raw} must use https on a non-loopback host`);
+	}
 	return checked.href;
 }
 
@@ -213,6 +315,7 @@ export async function discoverMcpProtectedResource(
 	signal?: AbortSignal,
 ): Promise<McpProtectedResource> {
 	const target = new URL(endpoint);
+	const allowLoopback = isLoopbackUrl(target);
 	const pointed = challenge?.params.resource_metadata;
 	const candidates: Array<{ url: string; expect: string | null }> = [];
 	if (pointed !== undefined && pointed.length > 0) {
@@ -222,7 +325,7 @@ export async function discoverMcpProtectedResource(
 		} catch {
 			throw new McpOAuthError(`the server's resource_metadata ${JSON.stringify(pointed)} is not a URL`);
 		}
-		candidates.push({ url: securedUrl(resolved, "the server's resource_metadata"), expect: null });
+		candidates.push({ url: securedUrl(resolved, "the server's resource_metadata", allowLoopback), expect: null });
 	} else {
 		const path = target.pathname.replace(/\/+$/u, "");
 		if (path !== "") {
@@ -244,12 +347,8 @@ export async function discoverMcpProtectedResource(
 		if (typeof document.resource !== "string") {
 			throw new McpOAuthError(`the protected resource metadata at ${candidate.url} names no resource`);
 		}
-		let named: string;
-		try {
-			named = mcpCanonicalResource(document.resource);
-		} catch {
-			throw new McpOAuthError(`the protected resource metadata at ${candidate.url} names a resource that is not a URL`);
-		}
+		securedUrl(document.resource, `the protected resource metadata at ${candidate.url} resource`, allowLoopback);
+		const named = mcpCanonicalResource(document.resource);
 		if (candidate.expect !== null ? named !== candidate.expect : !mcpResourceCovers(named, endpoint)) {
 			throw new McpOAuthError(
 				`the protected resource metadata at ${candidate.url} is for ${document.resource}, not ${candidate.expect ?? endpoint}; PanCode does not use it`,
@@ -258,6 +357,9 @@ export async function discoverMcpProtectedResource(
 		const servers = stringList(document.authorization_servers)?.filter((server) => server.length > 0) ?? [];
 		if (servers.length === 0) {
 			throw new McpOAuthError(`the protected resource metadata at ${candidate.url} lists no authorization server`);
+		}
+		for (const server of servers) {
+			securedUrl(server, `an authorization server in ${candidate.url}`, allowLoopback);
 		}
 		const scopes = stringList(document.scopes_supported)?.filter((scope) => SCOPE_TOKEN.test(scope));
 		return {
@@ -282,7 +384,8 @@ export async function discoverMcpAuthorizationServer(
 	fetchFn: typeof fetch,
 	signal?: AbortSignal,
 ): Promise<McpAuthorizationServer> {
-	const base = new URL(securedUrl(issuer, "the authorization server issuer"));
+	const base = new URL(securedUrl(issuer, "the authorization server issuer", true));
+	const allowLoopback = isLoopbackUrl(base);
 	if (base.search !== "") throw new McpOAuthError(`the authorization server issuer ${issuer} carries a query`);
 	const path = base.pathname.replace(/\/+$/u, "");
 	const urls =
@@ -311,10 +414,20 @@ export async function discoverMcpAuthorizationServer(
 		const authMethods = stringList(document.token_endpoint_auth_methods_supported);
 		return {
 			issuer,
-			authorizationEndpoint: securedUrl(document.authorization_endpoint, `${issuer}'s authorization_endpoint`),
-			tokenEndpoint: securedUrl(document.token_endpoint, `${issuer}'s token_endpoint`),
-			...(document.registration_endpoint !== undefined
-				? { registrationEndpoint: securedUrl(document.registration_endpoint, `${issuer}'s registration_endpoint`) }
+			authorizationEndpoint: securedUrl(
+				document.authorization_endpoint,
+				`${issuer}'s authorization_endpoint`,
+				allowLoopback,
+			),
+			tokenEndpoint: securedUrl(document.token_endpoint, `${issuer}'s token_endpoint`, allowLoopback),
+			...(document.registration_endpoint !== undefined && document.registration_endpoint !== null
+				? {
+						registrationEndpoint: securedUrl(
+							document.registration_endpoint,
+							`${issuer}'s registration_endpoint`,
+							allowLoopback,
+						),
+					}
 				: {}),
 			...(scopes !== undefined ? { scopesSupported: scopes } : {}),
 			...(authMethods !== undefined ? { tokenEndpointAuthMethods: authMethods } : {}),
@@ -448,10 +561,14 @@ export function mcpAuthorizationUrl(input: {
 	return url.href;
 }
 
+function sanitizeOAuthText(value: string, maxChars: number): string {
+	return escapeTerminalControls(value).replace(/\s+/gu, " ").trim().slice(0, maxChars);
+}
+
 function oauthErrorText(body: Record<string, unknown>): string {
 	const error = typeof body.error === "string" ? body.error : "error";
 	const description = typeof body.error_description === "string" ? `: ${body.error_description}` : "";
-	return `${error}${description}`.slice(0, 300);
+	return sanitizeOAuthText(`${error}${description}`, 300);
 }
 
 /**
@@ -459,19 +576,25 @@ function oauthErrorText(body: Record<string, unknown>): string {
  * request (basic/authorization, Authorization Response Validation): the state
  * must match; a present `iss` must equal the recorded issuer by simple string
  * comparison; an absent one is refused only when the server advertises it.
+ * Duplicate protocol parameters are rejected (RFC 6749 3.1, RFC 9207 2.4).
  * On an `iss` mismatch the response's error fields are never acted on or shown.
  */
 export function mcpAuthorizationCode(
 	params: URLSearchParams,
 	expected: { state: string; issuer: string; issParameterSupported: boolean },
 ): { code: string } | { refused: string } {
+	for (const name of ["state", "iss", "code", "error"] as const) {
+		if (params.getAll(name).length > 1) {
+			return { refused: `the authorization response repeats the ${name} parameter; PanCode discarded it` };
+		}
+	}
 	if (params.get("state") !== expected.state) {
 		return { refused: "the authorization response carries another sign-in's state; PanCode discarded it" };
 	}
 	const iss = params.get("iss");
 	if (iss !== null && iss !== expected.issuer) {
 		return {
-			refused: `the authorization response names issuer ${JSON.stringify(iss)}, not ${expected.issuer}; PanCode discarded it and sent the code nowhere`,
+			refused: `the authorization response names issuer ${JSON.stringify(sanitizeOAuthText(iss, 200))}, not ${expected.issuer}; PanCode discarded it and sent the code nowhere`,
 		};
 	}
 	if (iss === null && expected.issParameterSupported) {
@@ -482,17 +605,21 @@ export function mcpAuthorizationCode(
 	const error = params.get("error");
 	if (error !== null) {
 		const description = params.get("error_description");
+		const detail = sanitizeOAuthText(`${error}${description ? `: ${description}` : ""}`, 300);
 		return {
-			refused:
-				`authorization server ${expected.issuer} refused the sign-in: ${error}${description ? `: ${description}` : ""}`.slice(
-					0,
-					400,
-				),
+			refused: `authorization server ${expected.issuer} refused the sign-in: ${detail}`,
 		};
 	}
 	const code = params.get("code");
 	if (code === null || code.length === 0) return { refused: "the authorization response carries no code" };
 	return { code };
+}
+
+/** RFC 6749 2.3.1 application/x-www-form-urlencoded encoding for Basic credentials. */
+function formUrlEncode(value: string): string {
+	return encodeURIComponent(value)
+		.replace(/[!'()*]/gu, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`)
+		.replace(/%20/gu, "+");
 }
 
 /** A token endpoint request: the grant's own fields, the resource, and the client's authentication. */
@@ -509,8 +636,7 @@ async function tokenRequest(
 		Accept: "application/json",
 	};
 	if (client.authMethod === "client_secret_basic" && client.clientSecret !== undefined) {
-		const encode = (value: string): string => encodeURIComponent(value).replace(/%20/gu, "+");
-		headers.Authorization = `Basic ${Buffer.from(`${encode(client.clientId)}:${encode(client.clientSecret)}`).toString("base64")}`;
+		headers.Authorization = `Basic ${Buffer.from(`${formUrlEncode(client.clientId)}:${formUrlEncode(client.clientSecret)}`).toString("base64")}`;
 	} else {
 		body.set("client_id", client.clientId);
 		if (client.authMethod === "client_secret_post" && client.clientSecret !== undefined) {
@@ -541,17 +667,28 @@ async function tokenRequest(
 	}
 	if (typeof parsed.token_type !== "string" || parsed.token_type.toLowerCase() !== "bearer") {
 		throw new McpOAuthError(
-			`the token endpoint issued a ${String(parsed.token_type)} token; PanCode sends only Bearer tokens`,
+			`the token endpoint issued a ${sanitizeOAuthText(String(parsed.token_type), 64)} token; PanCode sends only Bearer tokens`,
 		);
 	}
-	const expiresIn = typeof parsed.expires_in === "number" && parsed.expires_in > 0 ? parsed.expires_in : undefined;
+	const expiresIn =
+		typeof parsed.expires_in === "number" && Number.isFinite(parsed.expires_in) && parsed.expires_in > 0
+			? parsed.expires_in
+			: undefined;
+	const now = Date.now();
+	const lifetimeMs = expiresIn !== undefined ? Math.floor(expiresIn * 1000) : undefined;
+	const expiresAt = lifetimeMs !== undefined ? now + lifetimeMs : undefined;
+	const refreshAt =
+		expiresAt !== undefined && lifetimeMs !== undefined
+			? expiresAt - Math.min(EXPIRY_MARGIN_MS, Math.floor(lifetimeMs / 4))
+			: undefined;
 	const scope = typeof parsed.scope === "string" ? mcpScopeList(parsed.scope) : undefined;
 	return {
 		access: parsed.access_token,
 		...(typeof parsed.refresh_token === "string" && parsed.refresh_token.length > 0
 			? { refresh: parsed.refresh_token }
 			: {}),
-		...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
+		...(expiresAt !== undefined ? { expiresAt } : {}),
+		...(refreshAt !== undefined ? { refreshAt } : {}),
 		...(scope !== undefined ? { scope } : {}),
 	};
 }

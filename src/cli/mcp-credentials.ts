@@ -220,19 +220,38 @@ export async function mcpLoginOutput(argv: ReadonlyArray<string>): Promise<McpCo
 	};
 }
 
-/** One line typed at the terminal, given up when `signal` aborts. */
+/** One non-empty line typed at the terminal, given up when `signal` aborts. */
 function promptLine(question: string, signal: AbortSignal): Promise<string> {
 	return new Promise<string>((resolve, reject) => {
 		const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+		let done = false;
 		const stop = (): void => {
+			if (done) return;
+			done = true;
+			process.stderr.write("\n");
 			rl.close();
 			reject(new Error("prompt closed"));
 		};
+		if (signal.aborted) {
+			stop();
+			return;
+		}
 		signal.addEventListener("abort", stop, { once: true });
-		rl.question(question, (answer) => {
+		rl.setPrompt(question);
+		rl.prompt();
+		rl.on("line", (line) => {
+			if (done) return;
+			if (line.trim().length === 0) {
+				rl.prompt();
+				return;
+			}
+			done = true;
 			signal.removeEventListener("abort", stop);
 			rl.close();
-			resolve(answer);
+			resolve(line);
+		});
+		rl.on("close", () => {
+			signal.removeEventListener("abort", stop);
 		});
 	});
 }
@@ -283,7 +302,11 @@ async function mcpOAuthLoginOutput(
 			notice: (line) => process.stderr.write(`${escapeTerminalControls(line)}\n`),
 			...(terminal
 				? {
-						pasted: () => promptLine("Or paste the URL the browser landed on, then press Enter: ", paste.signal),
+						pasted: (signal) =>
+							promptLine(
+								"Or paste the URL the browser landed on, then press Enter: ",
+								AbortSignal.any([signal, paste.signal]),
+							),
 					}
 				: {}),
 		});

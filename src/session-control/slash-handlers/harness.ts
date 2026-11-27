@@ -604,7 +604,7 @@ function mcpSlashLogin(id: string, ctx: SlashCommandContext): void {
 		} catch (error) {
 			ctx.notice("error", `mcp login ${id}: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
-			pendingMcpSignIns.delete(id);
+			if (pendingMcpSignIns.get(id) === controller) pendingMcpSignIns.delete(id);
 			ctx.render?.();
 		}
 	})();

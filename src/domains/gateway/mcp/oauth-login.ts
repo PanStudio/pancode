@@ -312,6 +312,7 @@ export async function mcpOAuthLogin(
 			access: tokens.access,
 			...(tokens.refresh !== undefined ? { refresh: tokens.refresh } : {}),
 			...(tokens.expiresAt !== undefined ? { expiresAt: tokens.expiresAt } : {}),
+			...(tokens.refreshAt !== undefined ? { refreshAt: tokens.refreshAt } : {}),
 			requested: scopes,
 			...(tokens.scope !== undefined ? { granted: tokens.scope } : {}),
 			challenged: [],

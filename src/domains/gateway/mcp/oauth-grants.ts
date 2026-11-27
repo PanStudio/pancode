@@ -33,6 +33,8 @@ export interface McpOAuthGrant {
 	refresh?: string;
 	/** Epoch ms. */
 	expiresAt?: number;
+	/** Epoch ms when proactive renewal starts (bounded for short-lived tokens). */
+	refreshAt?: number;
 	/** What the sign-in asked for. */
 	requested: string[];
 	/** What the authorization server said it granted, when it said. */
@@ -225,6 +227,9 @@ function grantClient(grant: McpOAuthGrant, storage: AuthStorage): McpOAuthClient
 }
 
 function mcpOAuthGrantExpired(grant: McpOAuthGrant, now = Date.now()): boolean {
+	if (typeof grant.refreshAt === "number" && Number.isFinite(grant.refreshAt)) {
+		return now >= grant.refreshAt;
+	}
 	return grant.expiresAt !== undefined && now + EXPIRY_MARGIN_MS >= grant.expiresAt;
 }
 
@@ -270,6 +275,8 @@ async function renewMcpOAuthGrant(
 			};
 			if (response.expiresAt !== undefined) next.expiresAt = response.expiresAt;
 			else delete next.expiresAt;
+			if (response.refreshAt !== undefined) next.refreshAt = response.refreshAt;
+			else delete next.refreshAt;
 			renewed = next;
 			return apiKeyEntry(JSON.stringify(next));
 		},

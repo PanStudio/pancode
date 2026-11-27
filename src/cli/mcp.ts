@@ -511,10 +511,13 @@ export function mcpCommandOutput(
 				const block = [
 					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${server.builtin !== undefined && server.builtin.environment.length > 0 ? ` environment=${server.builtin.environment.join(",")}` : ""} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
 				];
-				if (server.status?.reason !== undefined)
-					block.push(
-						`  ${server.status.status}: ${server.status.reason}${server.status.remedy !== undefined ? `; run ${server.status.remedy}` : ""}`,
-					);
+				if (server.status?.reason !== undefined) {
+					const remedy =
+						server.status.remedy !== undefined && !server.status.reason.includes(server.status.remedy)
+							? `; run ${server.status.remedy}`
+							: "";
+					block.push(`  ${server.status.status}: ${server.status.reason}${remedy}`);
+				}
 				for (const tool of server.tools) block.push(`  ${tool.capability} actionClass=${tool.actionClass}`);
 				if (server.trust.status === "trusted" && server.catalog === "missing")
 					block.push("  no recorded tool catalog; use pancode mcp list --refresh");
@@ -662,9 +665,29 @@ function parseMcpTestArgs(argv: ReadonlyArray<string>): { id: string; calls: Mcp
 	return { id, calls };
 }
 
+/** Actionable message when `mcp test --call` hits a non-interactive operator-confirmation refusal. */
+function mcpTestConfirmationRefusal(
+	server: ResolvedMcpServer,
+	tool: string,
+	verdict: Extract<RegistryVerdict, { kind: "blocked" }>,
+): string {
+	const actionClass = verdict.denial?.actionClass ?? verdict.decision.classification.actionClass;
+	if (actionClass !== "read") {
+		const classifyRemedy =
+			server.scope === "user"
+				? `set actionClass: read or toolActionClasses: { ${tool}: read } on ${server.id} in ${server.path} if it is read-only`
+				: server.scope === "project" || server.scope === "plugin"
+					? `run pancode mcp trust ${server.id} --action-class read (or set toolActionClasses: { ${tool}: read } in ${server.path} and re-trust) if it is read-only`
+					: undefined;
+		return `refused: ${tool} has actionClass=${actionClass}, which needs operator confirmation (pancode mcp test runs non-interactively); ${classifyRemedy !== undefined ? `${classifyRemedy}, or ` : ""}run it in an interactive session`;
+	}
+	const why = verdict.decision.policy?.reasons[0] ?? verdict.decision.classification.reasons[0];
+	return `refused: ${tool} needs operator confirmation${why !== undefined ? ` (${why})` : ""}, and pancode mcp test runs non-interactively; run it in an interactive session`;
+}
+
 /** One `mcp test` call as the registry settled it. */
 function mcpTestCallRecord(
-	id: string,
+	server: ResolvedMcpServer,
 	tool: string,
 	capability: string,
 	verdict: RegistryVerdict,
@@ -672,11 +695,15 @@ function mcpTestCallRecord(
 	if (verdict.kind === "not_visible") return { tool, isError: true, refused: true, text: verdict.reason };
 	if (verdict.kind === "blocked") {
 		const denial = verdict.denial;
+		const text =
+			denial?.layer === "operator_approval" && verdict.reason.includes("no permission listener")
+				? mcpTestConfirmationRefusal(server, tool, verdict)
+				: verdict.reason;
 		return {
 			tool,
 			isError: true,
 			refused: true,
-			text: verdict.reason,
+			text,
 			...(denial !== undefined ? { denial } : {}),
 			...(denial?.layer === "mcp_server_policy"
 				? {
@@ -695,7 +722,7 @@ function mcpTestCallRecord(
 		return { tool, isError: true, refused: true, text: result.message };
 	// Only a result the server answered carries its id; an error without it is
 	// a request that never got an answer.
-	if (result.kind === "error" && details.server !== id) return { tool, error: result.message };
+	if (result.kind === "error" && details.server !== server.id) return { tool, error: result.message };
 	const structured = details.structuredContent;
 	return {
 		tool,
@@ -787,7 +814,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 				results.push({ tool: call.tool, error: error instanceof Error ? error.message : String(error) });
 				break;
 			}
-			const record = mcpTestCallRecord(id, call.tool, capability, verdict);
+			const record = mcpTestCallRecord(server, call.tool, capability, verdict);
 			results.push(record);
 			// The request got no answer (timeout, a dead server), so later calls
 			// would only report the same transport failure. A JSON-RPC error answer
