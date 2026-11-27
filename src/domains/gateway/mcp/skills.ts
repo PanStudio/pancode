@@ -20,6 +20,7 @@ import { canonicalJson, canonicalJsonStrict } from "../../../core/canonical-json
 import { sha256Hex } from "../../../core/hash.js";
 import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { isRecord } from "../../../core/type-guards.js";
+import type { McpResourceRead } from "./resources.js";
 
 /**
  * The rail an MCP skill's first activation asks on. Only the operator answers
@@ -335,8 +336,8 @@ export interface McpSkillsTransport {
 	listSkills(cursor: string | undefined, signal?: AbortSignal): Promise<unknown>;
 	/** `skills/get {uri}`; the raw result. */
 	getSkill(uri: string, signal?: AbortSignal): Promise<unknown>;
-	/** `resources/read {uri}`; the raw result. */
-	readResource(uri: string, signal?: AbortSignal): Promise<unknown>;
+	/** The client's `resources/read {uri}`, declaring the skills extension. */
+	readResource(uri: string, signal?: AbortSignal): Promise<McpResourceRead>;
 	/** One `resources/directory/read` page; the raw result. */
 	readDirectory(uri: string, cursor: string | undefined, signal?: AbortSignal): Promise<unknown>;
 }
@@ -418,17 +419,15 @@ export async function getMcpSkill(
 }
 
 /** The raw bytes `resources/read` returned for exactly `uri`: text as UTF-8, a blob as base64. */
-function mcpResourceBytes(result: unknown, uri: string): Buffer | string {
-	if (!isRecord(result) || !Array.isArray(result.contents)) return "resources/read returned no contents";
-	const matching = result.contents.filter((item) => isRecord(item) && item.uri === uri);
-	if (matching.length !== 1) return `resources/read returned ${matching.length} contents for ${uri}`;
-	const content = matching[0] as Record<string, unknown>;
-	if (typeof content.text === "string") return Buffer.from(content.text, "utf8");
-	if (typeof content.blob === "string") {
-		if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(content.blob)) return `resources/read returned a malformed blob for ${uri}`;
-		return Buffer.from(content.blob, "base64");
+function mcpResourceBytes(read: McpResourceRead, uri: string): Buffer | string {
+	const matching = read.contents.filter((item) => item.uri === uri);
+	const content = matching[0];
+	if (matching.length !== 1 || content === undefined) {
+		return `resources/read returned ${matching.length} contents for ${uri}`;
 	}
-	return `resources/read returned neither text nor blob for ${uri}`;
+	if ("text" in content) return Buffer.from(content.text, "utf8");
+	if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(content.blob)) return `resources/read returned a malformed blob for ${uri}`;
+	return Buffer.from(content.blob, "base64");
 }
 
 /** Read one manifest file and verify it. A string is the verification failure, never partial content. */

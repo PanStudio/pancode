@@ -36,6 +36,7 @@ export {
 	type McpHttpServerSpec,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
+	type McpRequestOptions,
 	type McpServerInfo,
 	type McpServerSpec,
 	type McpSubscription,
@@ -48,6 +49,7 @@ export {
 	type McpTransportEvents,
 	mcpRequiredCapabilities,
 	renderMcpContent,
+	resourceLinkLine,
 } from "./client.js";
 export {
 	loadMcpServerConfig,
@@ -98,9 +100,12 @@ export {
 } from "./events.js";
 export {
 	type McpCachedEvent,
+	type McpCachedPrompt,
 	type McpCatalogIdentity,
+	type McpResourceCount,
 	type McpServerCatalog,
 	mcpCatalogStale,
+	mcpPromptsStale,
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "./metadata-cache.js";
@@ -146,6 +151,24 @@ export {
 	openMcpHeaderCredentialStore,
 	resolveMcpHeaders,
 } from "./remote-credentials.js";
+export {
+	isMcpAppResource,
+	isMcpResourceNotFound,
+	MCP_PROMPT_LIST_CAP,
+	MCP_RESOURCE_LIST_CAP,
+	type McpCompletion,
+	type McpCompletionReference,
+	type McpPromptArgument,
+	type McpPromptDescriptor,
+	type McpPromptListing,
+	type McpPromptMessage,
+	type McpPromptResult,
+	type McpResourceContents,
+	type McpResourceDescriptor,
+	type McpResourceListing,
+	type McpResourceRead,
+	type McpResourceTemplateDescriptor,
+} from "./resources.js";
 export {
 	type McpAttestedSkill,
 	type McpRecordedSkill,

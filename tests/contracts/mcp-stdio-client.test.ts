@@ -296,7 +296,7 @@ describe("mcp stdio client", () => {
 		const media = await c.callTool("media", {});
 		deepStrictEqual(
 			media.content.map((block) => block.type),
-			["text", "image", "audio", "resource", "resource", "other"],
+			["text", "image", "audio", "resource", "resource_link", "other"],
 		);
 		strictEqual(
 			media.text,
@@ -305,7 +305,7 @@ describe("mcp stdio client", () => {
 				"[image image/png, 3 bytes]",
 				"[audio audio/wav, 4 bytes]",
 				"[resource file:///a.txt]\nalpha",
-				"[resource file:///b.txt]",
+				'[resource link file:///b.txt ("b")]',
 				"[unsupported content type hologram]",
 			].join("\n"),
 		);
@@ -1106,6 +1106,14 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 									},
 								}),
 							);
+						} else if (m.method === "skills/list") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id: m.id ?? 2,
+									result: { skills: [] },
+								}),
+							);
 						} else if (m.method === "resources/read") {
 							queueMicrotask(() =>
 								deliver({
@@ -1138,16 +1146,21 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 		await c.initialize();
 		const skills = c.skills();
 		ok(skills !== null);
+		await skills.listSkills(undefined);
 		await skills.readResource("skill://a");
 		await c.callTool("go", {});
+		const listCaps = (envelopes.find((e) => e.method === "skills/list")?.meta?.[
+			"io.modelcontextprotocol/clientCapabilities"
+		] ?? {}) as Record<string, unknown>;
 		const readCaps = (envelopes.find((e) => e.method === "resources/read")?.meta?.[
 			"io.modelcontextprotocol/clientCapabilities"
 		] ?? {}) as Record<string, unknown>;
 		const callCaps = (envelopes.find((e) => e.method === "tools/call")?.meta?.[
 			"io.modelcontextprotocol/clientCapabilities"
 		] ?? {}) as Record<string, unknown>;
-		strictEqual(readCaps.elicitation, undefined, "resources/read must not advertise elicitation without MRTR handling");
-		ok(callCaps.elicitation !== undefined, "tools/call advertises elicitation when onElicitation is wired");
+		strictEqual(listCaps.elicitation, undefined, "non-MRTR skills/list must not advertise elicitation");
+		ok(readCaps.elicitation !== undefined, "MRTR resources/read advertises elicitation when wired");
+		ok(callCaps.elicitation !== undefined, "MRTR tools/call advertises elicitation when wired");
 
 		// Encoded URL length > 2048 must be rejected; punycode warning stays bounded <= 512 chars.
 		const wideUrl = parseElicitationRequest(
@@ -1234,5 +1247,124 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 			consented: false,
 		});
 		deepStrictEqual(outcome, { action: "accept", content: { note: "Leave unset" } });
+	});
+
+	it("ignores bare list_changed on modern servers, keeps live clients alive on listResources abort, and omits empty getPrompt arguments", async () => {
+		let events: McpTransportEvents | null = null;
+		let started = false;
+		const sent: Array<Record<string, unknown>> = [];
+		const deliver = (payload: Record<string, unknown>): void => {
+			const frame = parseJsonRpcLine(Buffer.from(JSON.stringify(payload), "utf8"));
+			ok(!(frame instanceof McpError));
+			events?.message(frame);
+		};
+		let holdResources = false;
+		const c = createMcpProtocolClient(
+			"inmem-r4",
+			(e) => {
+				events = e;
+				return {
+					pid: undefined,
+					start: async () => {
+						started = true;
+						return true;
+					},
+					started: () => started,
+					endReported: () => null,
+					send: (message, opts) => {
+						const record = message as unknown as Record<string, unknown>;
+						sent.push(record);
+						opts?.onSent?.();
+						const method = "method" in message ? message.method : undefined;
+						const id = "id" in message ? message.id : undefined;
+						if (method === "server/discover") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										supportedVersions: ["2026-07-28"],
+										capabilities: {
+											tools: { listChanged: true },
+											resources: { listChanged: true },
+											prompts: { listChanged: true },
+										},
+										_meta: { "io.modelcontextprotocol/serverInfo": { name: "modern-r4", version: "1.0" } },
+									},
+								}),
+							);
+						} else if (method === "ping") {
+							queueMicrotask(() => deliver({ jsonrpc: "2.0", id, result: {} }));
+						} else if (method === "resources/list") {
+							if (!holdResources) {
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id,
+										result: { resultType: "complete", resources: [{ uri: "file:///a", name: "a" }] },
+									}),
+								);
+							}
+						} else if (method === "resources/templates/list") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: { resultType: "complete", resourceTemplates: [] },
+								}),
+							);
+						} else if (method === "prompts/get") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										messages: [{ role: "user", content: { type: "text", text: "ok" } }],
+									},
+								}),
+							);
+						}
+						return { kind: "queued" };
+					},
+					withdraw: () => {},
+					close: async () => ({ complete: true }),
+					killOwnedOnExit: () => {},
+					stderrTail: () => "",
+					teardown: () => ({ complete: true }),
+				};
+			},
+			{},
+		);
+		clients.push(c);
+		await c.initialize();
+		const notified: string[] = [];
+		c.onListChanged((kind) => notified.push(kind));
+
+		// Bare (unsubscribed) list_changed notifications on a 2026-07-28 server must be ignored.
+		deliver({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+		deliver({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+		deliver({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
+		strictEqual(c.toolsChanged(), false);
+		strictEqual(c.listChanged("resources"), false);
+		strictEqual(c.listChanged("prompts"), false);
+		deepStrictEqual(notified, []);
+
+		// Aborting a single listResources call cancels only that request and leaves the client ready.
+		holdResources = true;
+		const controller = new AbortController();
+		const pending = c.listResources(controller.signal);
+		setTimeout(() => controller.abort(), 15);
+		await rejectsWithCode(pending, "aborted");
+		strictEqual(c.state().status, "ready");
+		holdResources = false;
+		strictEqual((await c.listResources()).resources[0]?.uri, "file:///a");
+
+		// getPrompt with empty arguments omits the arguments property on the wire.
+		await c.getPrompt("brief", {});
+		const promptReq = sent.find((m) => m.method === "prompts/get");
+		ok(promptReq);
+		strictEqual("arguments" in (promptReq.params as Record<string, unknown>), false);
 	});
 });

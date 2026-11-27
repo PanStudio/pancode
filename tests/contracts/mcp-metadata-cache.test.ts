@@ -11,6 +11,7 @@ import {
 	MCP_METADATA_CACHE_TTL_MS,
 	type McpCatalogIdentity,
 	mcpCatalogPath,
+	mcpPromptsStale,
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "../../src/domains/gateway/mcp/metadata-cache.js";
@@ -230,5 +231,31 @@ describe("MCP metadata cache", () => {
 			false,
 			"a listing past the tool cap is refused rather than silently trimmed",
 		);
+	});
+
+	it("tracks prompt staleness from prompts.observedAt independently of catalog observedAt", () => {
+		const id = identity();
+		const t0 = 1_700_000_000_000;
+		const promptsAt = t0 - 12 * 60 * 60 * 1000;
+		ok(
+			writeMcpServerCatalog(
+				id,
+				{
+					tools: [tool()],
+					truncated: false,
+					prompts: {
+						prompts: [{ name: "review", title: null, description: "", arguments: [] }],
+						truncated: false,
+						observedAt: new Date(promptsAt).toISOString(),
+					},
+				},
+				{ cacheDir, nowMs: t0 },
+			),
+		);
+		const catalog = readMcpServerCatalog(id, { cacheDir, nowMs: t0 + 1_000 });
+		ok(catalog?.prompts);
+		strictEqual(catalog.prompts.observedAt, new Date(promptsAt).toISOString());
+		strictEqual(mcpPromptsStale(catalog, promptsAt + 23 * 60 * 60 * 1000), false);
+		strictEqual(mcpPromptsStale(catalog, promptsAt + 24 * 60 * 60 * 1000), true);
 	});
 });

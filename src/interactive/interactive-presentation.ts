@@ -25,6 +25,7 @@ import type { ProvidersContract } from "../domains/providers/index.js";
 import { resolveModelRuntimeCapabilitiesForProviders, thinkingLevelDisplayWord } from "../domains/providers/index.js";
 import { createQuotaSummaryFeed } from "../domains/quota/summary-feed.js";
 import type { ResourcesContract } from "../domains/resources/index.js";
+import type { McpSubmitReader } from "../domains/resources/submit-expansion.js";
 import { jobIsComplete } from "../domains/scheduling/job-model.js";
 import type { LocalCapacity } from "../domains/scheduling/local-capacity.js";
 import type { SessionContract, TaskBoardSnapshot } from "../domains/session/index.js";
@@ -81,6 +82,7 @@ import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
 import type { PancodeKeybindingManager } from "./keybinding-manager.js";
 import { actionKeyLabel, createKeybindingManager, formatKeyLabel } from "./keybinding-manager.js";
 import { buildLayout, preserveTranscriptScroll } from "./layout.js";
+import { mcpPromptArgumentSource, mcpPromptTemplates, mcpReferenceSource } from "./mcp-completion.js";
 import { PancodeEditor } from "./pancode-editor.js";
 import type { EditorChrome } from "./pancode-editor-model.js";
 import type { QuotaProviders } from "./quota-view.js";
@@ -181,6 +183,8 @@ export interface InteractivePresentationDeps {
 	bootPending?: Component;
 	getSettings?: () => Readonly<PancodeSettings>;
 	resources?: Pick<ResourcesContract, "skillsForDisplay" | "promptsForDisplay">;
+	/** MCP prompts as slash rows, `@<id>:` resource completion and prompt argument values. */
+	mcpSubmit?: McpSubmitReader;
 	agents?: Pick<AgentsContract, "listSpecs">;
 	session?: Pick<SessionContract, "current">;
 	recordTurnTiming?: (fields: { turnId: string; elapsedMs: number; humanWaitMs?: number }) => void;
@@ -1011,8 +1015,18 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 					"workspace:missing",
 				);
 			}
-			return deps.resources?.promptsForDisplay(cwd).items ?? [];
+			const templates = deps.resources?.promptsForDisplay(cwd).items ?? [];
+			return deps.mcpSubmit ? [...templates, ...mcpPromptTemplates(deps.mcpSubmit, templates)] : templates;
 		},
+		...(deps.mcpSubmit
+			? {
+					promptArguments: mcpPromptArgumentSource(deps.mcpSubmit),
+					fileReferenceSource: mcpReferenceSource(
+						deps.mcpSubmit,
+						createFileReferenceCompletionSource({ basePath: process.cwd() }),
+					),
+				}
+			: {}),
 		...(deps.extensionCommands ? { extensionCommands: deps.extensionCommands } : {}),
 		...(deps.commandUnavailable ? { unavailable: deps.commandUnavailable } : {}),
 		...(deps.commandHidden ? { hidden: deps.commandHidden } : {}),

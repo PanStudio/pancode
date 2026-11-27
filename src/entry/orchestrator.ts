@@ -22,7 +22,7 @@ import {
 } from "../core/defaults.js";
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
-import { detectSupportedImageMimeType, expandInlineFileReferencesAsync } from "../core/file-references.js";
+import { detectSupportedImageMimeType } from "../core/file-references.js";
 import { setAutonomousCommitProcess, setCommitDecisionRefsProvider } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
 import { HEADLESS_PERMISSION_DENIED_REASON } from "../core/headless-permission.js";
@@ -190,7 +190,12 @@ import {
 	installSkill,
 	suggestableSkills,
 } from "../domains/resources/index.js";
-import { expandSubmitText, submitDisplay } from "../domains/resources/submit-expansion.js";
+import {
+	expandSubmitReferences,
+	expandSubmitText,
+	mcpPromptSlashRows,
+	submitDisplay,
+} from "../domains/resources/submit-expansion.js";
 import { admissionAutonomy, containedYolo, effectiveYoloConfinement } from "../domains/safety/autonomy.js";
 import { createCitationGroundingRegistration } from "../domains/safety/citation-grounding.js";
 import { createFinishContractRegistration } from "../domains/safety/finish-contract-registration.js";
@@ -359,6 +364,7 @@ import { type AskUserHandler, cancelledAskUserResult } from "../tools/ask-user.j
 import { registerAllTools } from "../tools/bootstrap.js";
 import { createDispatchBackgroundRegistry } from "../tools/dispatch-background.js";
 import { dispatchSchemaCompositionFor } from "../tools/dispatch-schema.js";
+import { mcpSubmitReader } from "../tools/gateway/mcp-submit-reader.js";
 import { createFileMutationObserver, createSkillActivationObserver } from "../tools/observers.js";
 import { createRegistry } from "../tools/registry.js";
 import { acpHostReadOnlySource } from "../tools/registry-verdicts.js";
@@ -2851,6 +2857,12 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// The guardian works during a turn only through endpoint admission and
 	// reads history shallowly while one streams, so it needs the live answer.
 	isChatStreaming = () => chat.isStreaming();
+	// `/<id>:<prompt>` and `@<id>:<uri>` read the same servers on every surface; a read-only turn never starts one trusted above read.
+	const mcpSubmit = toolBootstrap.mcpCapabilities
+		? mcpSubmitReader(toolBootstrap.mcpCapabilities, {
+				readOnly: () => options.headless?.constraints?.readOnly === true || chat.toolLimits?.()?.readOnly === true,
+			})
+		: undefined;
 	jobHost.attachChat(chat);
 	memoryGuardian.wake("ready");
 
@@ -3323,7 +3335,12 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				// are judged by their bytes, never by the client's label, and resized like a
 				// referenced image file before the model sees them.
 				expandPrompt: async (text, attached, signal) => {
-					const expansion = await expandSubmitText(text, resources, process.cwd(), signal ? { signal } : {});
+					const expansion = await expandSubmitText(text, resources, process.cwd(), {
+						...(signal ? { signal } : {}),
+						...(mcpSubmit ? { mcp: mcpSubmit } : {}),
+					});
+					// The literal `/name` line of a refused prompt is never sent to the model.
+					if (expansion.promptRefusal !== undefined) throw new Error(expansion.promptRefusal);
 					const images = [...expansion.images];
 					for (const image of attached) {
 						const mimeType = detectSupportedImageMimeType(Buffer.from(image.data, "base64"));
@@ -3547,6 +3564,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 										}
 									: {}),
 								operatorExtensions: () => acpExtensionHost?.operator,
+								...(mcpSubmit
+									? {
+											mcpPrompts: () => mcpPromptSlashRows(mcpSubmit, resources?.promptsForDisplay(process.cwd()).items ?? []),
+										}
+									: {}),
 								submitTurn: (text, submitOptions) => {
 									void chat
 										.submit(
@@ -3871,14 +3893,30 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			// request; aborting kills poppler, a detached child that would outlive it (#438).
 			const attachmentRead = new AbortController();
 			const stopAttachmentRead = bus.subscribe("shutdown.requested", () => attachmentRead.abort());
-			const fileExpansion = await expandInlineFileReferencesAsync(
-				promptExpansion?.expanded ? promptExpansion.text : parsedSkillRequest.text,
-				{
-					cwd: process.cwd(),
-					includeImages: true,
-					missing: "leave",
-					signal: attachmentRead.signal,
-				},
+			// An MCP prompt's text is the server's: it is sent as the prompt gave it, never read for `@path`.
+			const mcpPrompt =
+				promptExpansion?.expanded || !mcpSubmit
+					? null
+					: await mcpSubmit.expandPrompt(parsedSkillRequest.text, attachmentRead.signal);
+			if (mcpPrompt?.ok === false) {
+				stopAttachmentRead();
+				writeRunDiagnostic(`pancode: ${mcpPrompt.error}\n`);
+				await termination.shutdown(1);
+				return { exitCode: 1, bootTimeMs: timer.snapshot().totalMs };
+			}
+			const fileExpansion = await (mcpPrompt?.ok
+				? Promise.resolve({
+						text: mcpPrompt.text,
+						images: mcpPrompt.images,
+						diagnostics: [],
+						referencedPaths: [],
+						notes: [mcpPrompt.note],
+					})
+				: expandSubmitReferences(
+						promptExpansion?.expanded ? promptExpansion.text : parsedSkillRequest.text,
+						process.cwd(),
+						{ signal: attachmentRead.signal, ...(mcpSubmit ? { mcp: mcpSubmit } : {}) },
+					)
 			)
 				.catch((err: unknown) => {
 					if (!attachmentRead.signal.aborted) throw err;
@@ -3910,6 +3948,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				referencedPaths: fileExpansion.referencedPaths,
 				diagnostics: fileExpansion.diagnostics,
 				cwd: process.cwd(),
+				mcpNotes: fileExpansion.notes,
 			});
 			startRunOutput();
 			// R-11: a main turn that ended on PanCode's own fault earns one stderr line after the run.
@@ -4032,6 +4071,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			mcp: toolBootstrap.mcpCapabilities?.connectedIds({ readyOnly: true }) ?? [],
 			plugins: dashboardPlugins,
 		}),
+		...(mcpSubmit ? { mcpSubmit } : {}),
 		bus,
 		providers,
 		dispatch,
