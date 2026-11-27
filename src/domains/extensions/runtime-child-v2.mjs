@@ -257,6 +257,22 @@ process.on("disconnect", () => {
 	setTimeout(() => process.exit(1), 250);
 	void dispose("parent-disconnected");
 });
+/** Reasons already reported, so a handler that drops the same refusal on every event sends one line. */
+const unhandled = new Set();
+// Node's default exits on a rejection nobody handled, such as a handler's unawaited `ctx.store.set` the host
+// refused; that cost every later command of the package. Once active the runtime reports it and keeps serving.
+process.on("unhandledRejection", (reason) => {
+	const error = (reason instanceof Error ? reason.message : String(reason)).slice(0, 512);
+	if (!active) {
+		if (disposing) return;
+		send({ kind: "fatal", error });
+		void dispose("protocol-or-startup-failure");
+		return;
+	}
+	if (unhandled.has(error) || unhandled.size >= 32) return;
+	unhandled.add(error);
+	send({ kind: "unhandled", error });
+});
 
 async function initialize(message) {
 	if (identity) throw new Error("duplicate initialization");
