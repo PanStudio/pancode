@@ -177,6 +177,7 @@ export {
 	resolveMcpServers,
 	revokeMcpBuiltinNetwork,
 	revokeMcpSkill,
+	revokeMcpUserTrust,
 	trustMcpServer,
 	untrustMcpServer,
 } from "./trust.js";
