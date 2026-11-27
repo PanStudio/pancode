@@ -181,6 +181,7 @@ async function journalAssessment(
 		const text = await writer.storeObject("evidence-findings", assessed.text);
 		if (!telemetryHub().emit("evidence.assessed", { runId: context.runId, ...assessed.data, text }, context))
 			throw new Error("assessment record refused");
+		await writer.flush();
 	} catch {
 		writeDiagnostic("[pancode:telemetry] run assessment could not be journaled; the run seals without one\n");
 	}
@@ -374,13 +375,12 @@ async function openOwnedRunTelemetry(
 				const after = writer.health();
 				if (after.writeErrors > before.writeErrors || after.invalid > before.invalid)
 					throw new Error("run.settled was not persisted");
+				landedSettlement = settlement;
 				// The assessment is best-effort: a run whose assessment fails still seals, without one.
 				await journalAssessment(writer, directory, context, settlement.assessment ?? null);
-				await writer.flush();
-				landedSettlement = settlement;
 			})().catch((error: unknown) => {
 				// A settlement that did not land leaves the scope unsealed; a later settle may try again.
-				settled = false;
+				if (landedSettlement === undefined) settled = false;
 				writeDiagnostic("[pancode:telemetry] run settlement could not be persisted; the run stays unsealed\n");
 				throw error;
 			});

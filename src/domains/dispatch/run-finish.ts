@@ -124,6 +124,7 @@ export function emitSettledDispatchEvent(
 		outcomeCode: settled.outcomeCode,
 		outcomeDetail: settled.outcomeDetail,
 		lineage: publishedLineage(run.lineage, run.hostRun),
+		sessionId: run.req.ownerSessionId ?? null,
 		spend: {
 			usage: settled.usage,
 			totalTokens: settled.totalTokens,
@@ -133,6 +134,8 @@ export function emitSettledDispatchEvent(
 		durationMs,
 		exitCode: settled.exitCode ?? settled.processExitCode ?? 1,
 		toolActivity: settled.toolActivity,
+		...(settled.hostVerification !== null ? { hostVerification: settled.hostVerification.status } : {}),
+		...(settled.flowRestrictions !== null ? { flowRestrictions: settled.flowRestrictions } : {}),
 	};
 	if (settled.outcome === "succeeded") {
 		context.bus.emit("run.completed", payload);

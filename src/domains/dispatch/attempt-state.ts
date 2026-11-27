@@ -102,6 +102,9 @@ export interface NativeAttemptState {
 	identity: ReturnType<typeof detectRunIdentity>;
 	resolveFinal: (receipt: RunResult) => void;
 	rejectFinal: (error: unknown) => void;
+	targetOutcomeRecorded?: boolean;
+	terminalEventEmitted?: boolean;
+	assignmentCompleted?: boolean;
 }
 
 export type OpenedAttempt = NativeAttemptState & ReturnType<typeof openAttemptAdmission>;

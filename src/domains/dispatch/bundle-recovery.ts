@@ -98,6 +98,9 @@ export function createStartupRecovery(rt: DispatchRuntime) {
 						runId,
 						terminal: envelope.status !== "running",
 						succeeded: envelope.outcome === "succeeded",
+						...(envelope.outcome !== null && envelope.outcome !== undefined
+							? { terminalStatus: assignmentStatusForOutcome(envelope.outcome) }
+							: {}),
 					};
 				},
 				settle: (assignmentId, terminalRunId, status, owner) =>

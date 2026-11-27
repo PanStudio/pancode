@@ -190,6 +190,9 @@ export function createRunTable(rt: DispatchRuntime) {
 			runJournal: RunTelemetryJournal | undefined;
 			terminal: ResolvedTerminalReason | undefined;
 			timing: RunPhaseMarks;
+			targetOutcomeRecorded?: boolean;
+			terminalEventEmitted?: boolean;
+			assignmentCompleted?: boolean;
 		},
 		error: unknown,
 	): Promise<void> {
@@ -205,29 +208,38 @@ export function createRunTable(rt: DispatchRuntime) {
 				reportDispatchDiagnostic(`persist settled row for run ${envelope.id}`, ledgerError);
 			}
 			active.delete(envelope.id);
-			settleAssignmentDurablyWithoutReceipt(
-				run.lineage.rootRunId,
-				envelope.id,
-				assignmentStatusForOutcome(landed.outcome),
-			);
 			const exitCode = landed.exitCode ?? landed.processExitCode ?? 1;
-			recordTargetOutcome(
-				envelope.id,
-				run.targetId,
-				run.runtimeId,
-				run.wireModelId,
-				runStatusForOutcome(landed.outcome),
+			journalBridge?.closeFeed(landed.outcome, landed.outcomeDetail, {
+				runId: envelope.id,
+				agentId: run.req.agentId,
 				exitCode,
-				"internal",
-			);
-			emitSettledDispatchEvent({ context }, run, landed);
+			});
+			if (!state.assignmentCompleted) {
+				settleAssignmentDurablyWithoutReceipt(
+					run.lineage.rootRunId,
+					envelope.id,
+					assignmentStatusForOutcome(landed.outcome),
+				);
+			}
+			if (!state.targetOutcomeRecorded) {
+				recordTargetOutcome(
+					envelope.id,
+					run.targetId,
+					run.runtimeId,
+					run.wireModelId,
+					runStatusForOutcome(landed.outcome),
+					exitCode,
+					"internal",
+				);
+			}
+			if (!state.terminalEventEmitted) emitSettledDispatchEvent({ context }, run, landed);
 			return;
 		}
 		// The journal still ends with how the worker loop ended, so no reader waits on this run (#425, #434).
 		const endedAt = new Date().toISOString();
 		state.timing.endedAt = endedAt;
 		const detail = `finalization failure: ${error instanceof Error ? error.message : String(error)}`;
-		state.runJournal
+		await state.runJournal
 			?.settle(
 				settleUnfinishedRun(ledgerRef.get(envelope.id) ?? envelope, {
 					terminal: state.terminal,

@@ -275,9 +275,9 @@ export function createAttemptReceiptDraft(rt: DispatchRuntime, attempt: RunningA
 	};
 
 	// The worker is spawned and its ledger row exists, so from here it can
-	// write and the batch barrier has to wait for it. Registered after the
-	// try/catch at 4939-5068, which aborts the worker and releases the lease on
-	// failure, so a run that never reaches the barrier is never made live.
+	// write and the batch barrier has to wait for it. Registered after
+	// openAttemptRun's try/catch, which aborts the worker and releases the
+	// lease on failure, so a run that never reaches the barrier is never made live.
 	// Paired with the abandon in dispatch(), which fires the moment
 	// finalPromise settles.
 	settlement?.live(envelope.id);

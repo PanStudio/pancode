@@ -52,7 +52,6 @@ function isProcessAlive(pid: number | null): boolean {
 
 const NON_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["queued", "running", "stale", "dead"]);
 
-/** The ledger patch a settled run's record states: the row then reads as the run settled. */
 /** The ledger row patch a run's run.settled states. */
 export function settledRowPatch(
 	settled: Pick<

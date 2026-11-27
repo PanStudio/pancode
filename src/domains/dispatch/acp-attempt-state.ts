@@ -40,6 +40,9 @@ export interface AcpDelegationState {
 	identity: ReturnType<typeof detectRunIdentity>;
 	resolveFinal: (receipt: RunResult) => void;
 	rejectFinal: (error: unknown) => void;
+	targetOutcomeRecorded?: boolean;
+	terminalEventEmitted?: boolean;
+	assignmentCompleted?: boolean;
 }
 
 export type AdmittedDelegation = AcpDelegationState & Awaited<ReturnType<typeof admitAcpDelegation>>;

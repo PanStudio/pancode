@@ -39,7 +39,16 @@ export async function startAttemptSettlement(rt: DispatchRuntime, attempt: Final
 		} catch (error) {
 			await rt.runs.failFinalization(
 				finalizing,
-				{ ledger: ledgerRef, envelope, runJournal: attempt.runJournal, terminal: attempt.resolvedTerminal, timing },
+				{
+					ledger: ledgerRef,
+					envelope,
+					runJournal: attempt.runJournal,
+					terminal: attempt.resolvedTerminal,
+					timing,
+					...(attempt.targetOutcomeRecorded ? { targetOutcomeRecorded: true } : {}),
+					...(attempt.terminalEventEmitted ? { terminalEventEmitted: true } : {}),
+					...(attempt.assignmentCompleted ? { assignmentCompleted: true } : {}),
+				},
 				error,
 			);
 			throw error;

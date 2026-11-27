@@ -363,6 +363,7 @@ export async function sealAttemptReceipt(rt: DispatchRuntime, attempt: Finalizin
 		receipt.exitCode,
 		failureClass,
 	);
+	attempt.targetOutcomeRecorded = true;
 	rt.heartbeat.recordNodeChannelOutcome(activeRun, settling.finalOutcome, failureClass, settling.finalDetail);
 	rt.runs.accumulateFinalizedTotals(receipt);
 	// A terminal event's readers show the sealed record, so the seal lands first with the feed's last rows in it.
@@ -372,6 +373,7 @@ export async function sealAttemptReceipt(rt: DispatchRuntime, attempt: Finalizin
 		exitCode: receipt.exitCode,
 	});
 	await closeRunJournal();
+	attempt.terminalEventEmitted = true;
 	emitTerminalDispatchEvent({ context }, finalizing, receipt, settling.finalOutcome);
 	const continues = rt.retry.completeAssignmentAttempt(
 		activeRun,
@@ -382,6 +384,7 @@ export async function sealAttemptReceipt(rt: DispatchRuntime, attempt: Finalizin
 		contextOverflow,
 		evidence.obligationUnmet,
 	);
+	attempt.assignmentCompleted = true;
 	// The idle tree kept above goes once no retry will run in it.
 	if (
 		!continues &&

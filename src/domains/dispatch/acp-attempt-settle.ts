@@ -460,6 +460,7 @@ export async function settleAcpRun(rt: DispatchRuntime, delegation: RunningDeleg
 			}
 			rt.runs.active.delete(envelope.id);
 			recordTargetOutcome(envelope.id, targetId, runtimeId, wireModelId, status, receipt.exitCode, failureClass);
+			delegation.targetOutcomeRecorded = true;
 			rt.runs.accumulateFinalizedTotals(receipt);
 			// A terminal event's readers show the sealed record, so the seal lands first with the feed's last rows in it.
 			rt.runs.journalBridge?.closeFeed(finalOutcome, receipt.outcomeDetail, {
@@ -468,6 +469,7 @@ export async function settleAcpRun(rt: DispatchRuntime, delegation: RunningDeleg
 				exitCode: receipt.exitCode,
 			});
 			await closeRunJournal();
+			delegation.terminalEventEmitted = true;
 			emitTerminalDispatchEvent({ context }, finalizing, receipt, finalOutcome);
 			rt.retry.completeAssignmentAttempt(
 				activeRun,
@@ -477,11 +479,21 @@ export async function settleAcpRun(rt: DispatchRuntime, delegation: RunningDeleg
 				failureClass,
 				contextOverflow,
 			);
+			delegation.assignmentCompleted = true;
 			return receipt;
 		} catch (error) {
 			await rt.runs.failFinalization(
 				finalizing,
-				{ ledger: ledgerRef, envelope, runJournal, terminal: delegation.resolvedTerminal, timing },
+				{
+					ledger: ledgerRef,
+					envelope,
+					runJournal,
+					terminal: delegation.resolvedTerminal,
+					timing,
+					...(delegation.targetOutcomeRecorded ? { targetOutcomeRecorded: true } : {}),
+					...(delegation.terminalEventEmitted ? { terminalEventEmitted: true } : {}),
+					...(delegation.assignmentCompleted ? { assignmentCompleted: true } : {}),
+				},
 				error,
 			);
 			throw error;
