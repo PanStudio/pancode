@@ -7,9 +7,15 @@
  * server, so the model never reads it as the operator's own words.
  */
 
+import { prepareBoundedImage } from "../../core/file-references.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import { mcpToolName } from "../../core/tool-names.js";
-import { type McpContentBlock, type McpResourceContents, resourceLinkLine } from "../../domains/gateway/mcp/index.js";
+import {
+	isMcpAppResource,
+	type McpContentBlock,
+	type McpResourceContents,
+	resourceLinkLine,
+} from "../../domains/gateway/mcp/index.js";
 import type {
 	McpResourceCandidate,
 	McpSubmitAnswer,
@@ -25,7 +31,12 @@ const RESOURCE_TEXT_BYTES = 64 * 1024;
 const PROMPT_TEXT_BYTES = 256 * 1024;
 /** The `@image` attachment bound. */
 const IMAGE_BASE64_BYTES = 4.5 * 1024 * 1024;
+/** Decoded image ceiling before resizing, bounding allocation on untrusted server blobs. */
+const IMAGE_DECODE_MAX_BYTES = 20 * 1024 * 1024;
+/** Maximum images one MCP prompt or mention may attach to a turn. */
+const MAX_SUBMIT_IMAGES = 8;
 const ATTACHABLE_IMAGE = /^image\/(png|jpe?g|gif|webp)$/iu;
+const VALID_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/u;
 
 const PROMPT_LINE = /^\s*\/([a-z0-9][a-z0-9_-]*):(\S+)(?:\s+([\s\S]*))?$/u;
 
@@ -54,18 +65,24 @@ function blobBytes(base64: string): number {
 	return Math.floor((base64.replace(/=+$/u, "").length * 3) / 4);
 }
 
-function attachImage(data: string, mimeType: string, images: ImageContent[]): boolean {
-	if (!ATTACHABLE_IMAGE.test(mimeType) || Buffer.byteLength(data, "utf8") >= IMAGE_BASE64_BYTES) return false;
-	images.push({ type: "image", data, mimeType });
-	return true;
+async function attachImage(data: string, mimeType: string, images: ImageContent[]): Promise<ImageContent | null> {
+	if (images.length >= MAX_SUBMIT_IMAGES || !ATTACHABLE_IMAGE.test(mimeType)) return null;
+	const compact = data.replace(/\s+/gu, "");
+	if (compact.length === 0 || compact.length % 4 !== 0 || !VALID_BASE64.test(compact)) return null;
+	if (blobBytes(compact) > IMAGE_DECODE_MAX_BYTES) return null;
+	const prepared = await prepareBoundedImage(Buffer.from(compact, "base64"), IMAGE_BASE64_BYTES);
+	if (prepared === null) return null;
+	images.push(prepared);
+	return prepared;
 }
 
 /** One resource's contents inside its origin tag: text bounded, an image attached, other bytes named. */
-function resourceTag(
+async function resourceTag(
 	serverId: string,
 	entry: { uri: string; mimeType: string | null; text?: string; blob?: string },
 	images: ImageContent[],
-): string {
+	canReadResources: boolean,
+): Promise<string> {
 	const read = mcpToolName(serverId, ":read_resource");
 	const open = `<mcp_resource server="${serverId}" uri="${attribute(entry.uri)}"${entry.mimeType !== null ? ` mimeType="${attribute(entry.mimeType)}"` : ""}>`;
 	let body: string;
@@ -73,29 +90,40 @@ function resourceTag(
 		const clipped = clipBytes(entry.text, RESOURCE_TEXT_BYTES);
 		body = serverText(clipped.text);
 		if (clipped.clipped !== null)
-			body += `\n[truncated: the first ${RESOURCE_TEXT_BYTES} of ${clipped.clipped} bytes; read the rest with ${read}]`;
+			body += `\n[truncated: the first ${RESOURCE_TEXT_BYTES} of ${clipped.clipped} bytes${canReadResources && read !== null ? `; read the rest with ${read}` : ""}]`;
 	} else if (entry.blob !== undefined) {
 		const size = blobBytes(entry.blob);
+		const attached = entry.mimeType !== null ? await attachImage(entry.blob, entry.mimeType, images) : null;
 		body =
-			entry.mimeType !== null && attachImage(entry.blob, entry.mimeType, images)
-				? `[image attached, ${size} bytes]`
+			attached !== null
+				? `[image ${attached.mimeType} attached, ${size} bytes]`
 				: `[binary${entry.mimeType !== null ? ` ${attribute(entry.mimeType)}` : ""}, ${size} bytes; not attached]`;
 	} else body = "[the server sent no contents for this resource]";
 	return `${open}\n${body}\n</mcp_resource>`;
 }
 
-function promptBlock(serverId: string, block: McpContentBlock, images: ImageContent[]): string {
+async function promptBlock(
+	serverId: string,
+	block: McpContentBlock,
+	images: ImageContent[],
+	canReadResources: boolean,
+): Promise<string> {
 	switch (block.type) {
 		case "text":
 			return serverText(block.text);
-		case "image":
-			return attachImage(block.data, block.mimeType, images)
-				? `[image ${block.mimeType} attached]`
+		case "image": {
+			const attached = await attachImage(block.data, block.mimeType, images);
+			return attached !== null
+				? `[image ${attached.mimeType} attached]`
 				: `[image ${attribute(block.mimeType)}, ${blobBytes(block.data)} bytes; not attached]`;
+		}
 		case "audio":
 			return `[audio ${attribute(block.mimeType)}, ${blobBytes(block.data)} bytes; not attached]`;
 		case "resource":
-			return resourceTag(
+			if (isMcpAppResource(block.uri, block.mimeType)) {
+				return `[MCP Apps resource ${attribute(block.uri)}; not read]`;
+			}
+			return await resourceTag(
 				serverId,
 				{
 					uri: block.uri,
@@ -104,9 +132,16 @@ function promptBlock(serverId: string, block: McpContentBlock, images: ImageCont
 					...(block.blob !== undefined ? { blob: block.blob } : {}),
 				},
 				images,
+				canReadResources,
 			);
-		case "resource_link":
-			return serverText(resourceLinkLine(block, `read it with ${mcpToolName(serverId, ":read_resource")}`));
+		case "resource_link": {
+			const read = mcpToolName(serverId, ":read_resource");
+			const follower =
+				canReadResources && read !== null
+					? `read it with ${read}`
+					: `mcp server ${serverId} declares no resources, so it cannot be read`;
+			return serverText(resourceLinkLine(block, follower));
+		}
 		default:
 			return "[a content block PanCode does not read]";
 	}
@@ -216,10 +251,12 @@ export function mcpSubmitReader(
 			const answer = await source.getPrompt(serverId, name, args, launch(signal));
 			if (!answer.ok) return answer;
 			const images: ImageContent[] = [];
-			const parts = answer.value.messages.map((message) => {
-				const body = promptBlock(serverId, message.content, images);
-				return message.role === "assistant" ? `[assistant] ${body}` : body;
-			});
+			const canReadResources = source.resourceServerIds().includes(serverId);
+			const parts: string[] = [];
+			for (const message of answer.value.messages) {
+				const body = await promptBlock(serverId, message.content, images, canReadResources);
+				parts.push(message.role === "assistant" ? `[assistant] ${body}` : body);
+			}
 			const clipped = clipBytes(parts.join("\n\n"), PROMPT_TEXT_BYTES);
 			const body = `${clipped.text}${clipped.clipped !== null ? `\n[truncated: the first ${PROMPT_TEXT_BYTES} of ${clipped.clipped} bytes]` : ""}`;
 			const count = answer.value.messages.length;
@@ -238,8 +275,12 @@ export function mcpSubmitReader(
 			const answer = await source.readResource(serverId, uri, launch(signal));
 			if (!answer.ok) return answer;
 			const images: ImageContent[] = [];
-			const tags = answer.value.contents.map((entry: McpResourceContents) => resourceTag(serverId, entry, images));
-			return { ok: true, text: tags.join("\n"), images, note: `read @${serverId}:${uri}` };
+			const tags: string[] = [];
+			for (const entry of answer.value.contents as McpResourceContents[]) {
+				tags.push(await resourceTag(serverId, entry, images, true));
+			}
+			const safeUri = neutralizeFraming(uri.replace(/\s+/gu, " ").trim()).slice(0, 200);
+			return { ok: true, text: tags.join("\n"), images, note: `read @${serverId}:${safeUri}` };
 		},
 	};
 }

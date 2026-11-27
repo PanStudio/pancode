@@ -49,6 +49,7 @@ import {
 } from "../domains/gateway/mcp/metadata-cache.js";
 import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
+import { isMcpPromptCommandName } from "../tools/gateway/mcp-resources.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
 import { printError } from "./shared.js";
 
@@ -386,7 +387,9 @@ export function recordedMcpPromptCommands(cwd: string): Set<string> {
 			digest: server.digest,
 			cwd: server.cwd,
 		});
-		for (const prompt of catalog?.prompts?.prompts ?? []) names.add(`${server.id}:${prompt.name}`);
+		for (const prompt of catalog?.prompts?.prompts ?? []) {
+			if (isMcpPromptCommandName(prompt.name)) names.add(`${server.id}:${prompt.name}`);
+		}
 	}
 	return names;
 }
@@ -781,6 +784,7 @@ async function liveResourcesAndPrompts(
 	const lines: string[] = [];
 	const data: Record<string, unknown> = {};
 	const named = (text: string): string => escapeTerminalControls(text.replace(/\s+/gu, " ")).slice(0, 160);
+	const errorLine = (text: string): string => escapeTerminalControls(text.replace(/\s+/gu, " ")).slice(0, 400);
 	let resources: McpResourceCount | undefined;
 	let listed: Array<{ uri: string; name: string }> = [];
 	if (source.resourceServerIds().includes(id)) {
@@ -805,16 +809,22 @@ async function liveResourcesAndPrompts(
 			data.prompts = { ...promptCount, listed: prompts.slice(0, MCP_TEST_LISTED) };
 		} catch (error) {
 			data.prompts = { error: error instanceof Error ? error.message : String(error) };
-			lines.push(`  prompts: ${named(String((data.prompts as { error: unknown }).error))}`);
+			lines.push(`  prompts: ${errorLine(String((data.prompts as { error: unknown }).error))}`);
 		}
 	}
 	const line = resourcesAndPromptsLine(resources, promptCount);
 	if (line !== null) lines.unshift(line);
 	if (typeof data.resources === "object" && data.resources !== null && "error" in data.resources)
-		lines.push(`  resources: ${named(String((data.resources as { error: unknown }).error))}`);
+		lines.push(`  resources: ${errorLine(String((data.resources as { error: unknown }).error))}`);
 	for (const entry of listed.slice(0, MCP_TEST_LISTED)) lines.push(`  @${id}:${named(entry.uri)}`);
 	if (listed.length > MCP_TEST_LISTED) lines.push(`  ... ${listed.length - MCP_TEST_LISTED} more resources`);
-	for (const prompt of prompts.slice(0, MCP_TEST_LISTED)) lines.push(`  /${id}:${named(prompt)}`);
+	for (const prompt of prompts.slice(0, MCP_TEST_LISTED)) {
+		lines.push(
+			isMcpPromptCommandName(prompt)
+				? `  /${id}:${named(prompt)}`
+				: `  prompt ${named(prompt)} (not callable as /${id}:<name>)`,
+		);
+	}
 	if (prompts.length > MCP_TEST_LISTED) lines.push(`  ... ${prompts.length - MCP_TEST_LISTED} more prompts`);
 	return { lines, data };
 }

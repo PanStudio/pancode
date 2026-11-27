@@ -90,10 +90,12 @@ export interface McpCachedPrompt {
 	arguments: Array<{ name: string; description: string; required: boolean }>;
 }
 
-/** The server's prompt list as of the catalog's listing. */
+/** The server's prompt list as of its listing. */
 export interface McpCachedPrompts {
 	prompts: McpCachedPrompt[];
 	truncated: boolean;
+	/** When this prompt list was observed; defaults to the catalog's `observedAt` when omitted. */
+	observedAt?: string;
 	/** The freshness `prompts/list` gave, modern era only; past it the list is stale, never a miss. */
 	ttlMs?: number;
 }
@@ -207,8 +209,10 @@ function decodePrompt(value: unknown): McpCachedPrompt | null {
 
 function decodePrompts(value: unknown): McpCachedPrompts | null {
 	if (!isRecord(value) || typeof value.truncated !== "boolean") return null;
-	const { ttlMs } = value;
+	const { ttlMs, observedAt } = value;
 	if (ttlMs !== undefined && (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs < 0)) return null;
+	if (observedAt !== undefined && (typeof observedAt !== "string" || !Number.isFinite(Date.parse(observedAt))))
+		return null;
 	if (!Array.isArray(value.prompts) || value.prompts.length > MCP_METADATA_CACHE_CAPS.prompts) return null;
 	const prompts: McpCachedPrompt[] = [];
 	const seen = new Set<string>();
@@ -218,7 +222,12 @@ function decodePrompts(value: unknown): McpCachedPrompts | null {
 		seen.add(prompt.name);
 		prompts.push(prompt);
 	}
-	return { prompts, truncated: value.truncated, ...(ttlMs === undefined ? {} : { ttlMs }) };
+	return {
+		prompts,
+		truncated: value.truncated,
+		...(observedAt === undefined ? {} : { observedAt }),
+		...(ttlMs === undefined ? {} : { ttlMs }),
+	};
 }
 
 /** Decode a whole file or reject it. A single bad tool fails the catalog: half a listing is not a listing. */
@@ -346,10 +355,12 @@ export function mcpCatalogStale(catalog: McpServerCatalog, nowMs: number = Date.
 	return catalog.ttlMs !== undefined && nowMs - Date.parse(catalog.observedAt) >= catalog.ttlMs;
 }
 
-/** The prompt list's own `ttlMs` has passed: still the list the slash menu shows, labelled stale. */
+/** The prompt list's own `ttlMs` (or the cache TTL for carried-over prompts) has passed: still shown, labelled stale. */
 export function mcpPromptsStale(catalog: McpServerCatalog, nowMs: number = Date.now()): boolean {
-	const ttlMs = catalog.prompts?.ttlMs;
-	return ttlMs !== undefined && nowMs - Date.parse(catalog.observedAt) >= ttlMs;
+	if (catalog.prompts === undefined) return false;
+	const observedAt = catalog.prompts.observedAt ?? catalog.observedAt;
+	const ttlMs = catalog.prompts.ttlMs ?? MCP_METADATA_CACHE_TTL_MS;
+	return nowMs - Date.parse(observedAt) >= ttlMs;
 }
 
 function cappedTtl(ttlMs: number | undefined): { ttlMs?: number } {
@@ -368,6 +379,7 @@ interface McpPromptRecord {
 function encodePrompts(listing: {
 	prompts: ReadonlyArray<McpPromptRecord>;
 	truncated: boolean;
+	observedAt?: string;
 	ttlMs?: number;
 }): McpCachedPrompts {
 	const prompts: McpCachedPrompt[] = [];
@@ -390,6 +402,9 @@ function encodePrompts(listing: {
 	return {
 		prompts,
 		truncated: listing.truncated || prompts.length !== listing.prompts.length,
+		...(typeof listing.observedAt === "string" && Number.isFinite(Date.parse(listing.observedAt))
+			? { observedAt: listing.observedAt }
+			: {}),
 		...cappedTtl(listing.ttlMs),
 	};
 }
@@ -409,7 +424,12 @@ export function writeMcpServerCatalog(
 		resources?: boolean;
 		resourceCount?: McpResourceCount | null;
 		completions?: boolean;
-		prompts?: { prompts: ReadonlyArray<McpPromptRecord>; truncated: boolean; ttlMs?: number } | null;
+		prompts?: {
+			prompts: ReadonlyArray<McpPromptRecord>;
+			truncated: boolean;
+			observedAt?: string;
+			ttlMs?: number;
+		} | null;
 	},
 	options: Pick<McpCatalogOptions, "cacheDir" | "nowMs"> = {},
 ): boolean {

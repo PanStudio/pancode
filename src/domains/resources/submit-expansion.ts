@@ -289,7 +289,9 @@ async function expandMcpMentions(
 	if (reader === undefined || mentions.length === 0) return { ...(await expandFiles(text)), notes: [] };
 	const nonce = randomUUID();
 	const placeholder = (index: number): string => `\u0000mcp-mention-${nonce}-${index}\u0000`;
+	const duplicatePlaceholder = (index: number): string => `\u0000mcp-mention-dup-${nonce}-${index}\u0000`;
 	const reads = new Map<string, { index: number; answer: Promise<McpSubmitAnswer> | null }>();
+	const duplicates: Array<{ token: string; raw: string }> = [];
 	let masked = "";
 	let last = 0;
 	for (const mention of mentions) {
@@ -297,7 +299,10 @@ async function expandMcpMentions(
 		masked += text.slice(last, mention.start);
 		last = mention.end;
 		if (reads.has(key)) {
-			masked += text.slice(mention.start, mention.end);
+			// Mask repeated mentions during file expansion so `@id:uri` is never read as `@path`.
+			const token = duplicatePlaceholder(duplicates.length);
+			duplicates.push({ token, raw: text.slice(mention.start, mention.end) });
+			masked += token;
 			continue;
 		}
 		const index = reads.size;
@@ -335,6 +340,9 @@ async function expandMcpMentions(
 			} else notes.push(`could not read ${typed}: ${answer.error}`);
 		}
 		expanded = expanded.split(placeholder(read.index)).join(replacement);
+	}
+	for (const duplicate of duplicates) {
+		expanded = expanded.split(duplicate.token).join(duplicate.raw);
 	}
 	if (skipped > 0) notes.push(`left ${skipped} more MCP mentions unread; a request reads at most ${MCP_MENTION_LIMIT}`);
 	return { ...files, text: expanded, images, notes };

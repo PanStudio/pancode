@@ -376,10 +376,16 @@ export interface ServerState {
 	truncated: boolean;
 	/** The last tool listing, kept so a later prompt listing republishes the catalog whole. */
 	listing?: McpToolListing;
+	/** When `listing` was observed, so later prompt/resource writes never reset tool-catalog staleness. */
+	listingObservedAt?: number;
 	/** The live prompt list; absent until listed, or when the server declares no prompts. */
 	prompts?: McpPromptListing;
+	/** When `prompts` was observed, so tool-catalog refreshes never reset prompt staleness. */
+	promptsObservedAt?: number;
 	/** The prompt listing in flight, shared by everyone who asks. */
 	promptsListing?: Promise<void>;
+	/** The initial resource listing in flight, shared by refresh/list callers. */
+	resourcesListing?: Promise<void>;
 	/** The last resource listing and when it was taken, for completion within its ttlMs. */
 	resourceList?: { listing: McpResourceListing; atMs: number };
 	registered: DynamicToolName[];

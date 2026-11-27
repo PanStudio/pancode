@@ -1061,4 +1061,123 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 			inexact: { $literal: "1.0000000000000001" },
 		});
 	});
+
+	it("ignores bare list_changed on modern servers, keeps live clients alive on listResources abort, and omits empty getPrompt arguments", async () => {
+		let events: McpTransportEvents | null = null;
+		let started = false;
+		const sent: Array<Record<string, unknown>> = [];
+		const deliver = (payload: Record<string, unknown>): void => {
+			const frame = parseJsonRpcLine(Buffer.from(JSON.stringify(payload), "utf8"));
+			ok(!(frame instanceof McpError));
+			events?.message(frame);
+		};
+		let holdResources = false;
+		const c = createMcpProtocolClient(
+			"inmem-r4",
+			(e) => {
+				events = e;
+				return {
+					pid: undefined,
+					start: async () => {
+						started = true;
+						return true;
+					},
+					started: () => started,
+					endReported: () => null,
+					send: (message, opts) => {
+						const record = message as unknown as Record<string, unknown>;
+						sent.push(record);
+						opts?.onSent?.();
+						const method = "method" in message ? message.method : undefined;
+						const id = "id" in message ? message.id : undefined;
+						if (method === "server/discover") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										supportedVersions: ["2026-07-28"],
+										capabilities: {
+											tools: { listChanged: true },
+											resources: { listChanged: true },
+											prompts: { listChanged: true },
+										},
+										_meta: { "io.modelcontextprotocol/serverInfo": { name: "modern-r4", version: "1.0" } },
+									},
+								}),
+							);
+						} else if (method === "ping") {
+							queueMicrotask(() => deliver({ jsonrpc: "2.0", id, result: {} }));
+						} else if (method === "resources/list") {
+							if (!holdResources) {
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id,
+										result: { resultType: "complete", resources: [{ uri: "file:///a", name: "a" }] },
+									}),
+								);
+							}
+						} else if (method === "resources/templates/list") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: { resultType: "complete", resourceTemplates: [] },
+								}),
+							);
+						} else if (method === "prompts/get") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										messages: [{ role: "user", content: { type: "text", text: "ok" } }],
+									},
+								}),
+							);
+						}
+						return { kind: "queued" };
+					},
+					withdraw: () => {},
+					close: async () => ({ complete: true }),
+					killOwnedOnExit: () => {},
+					stderrTail: () => "",
+					teardown: () => ({ complete: true }),
+				};
+			},
+			{},
+		);
+		clients.push(c);
+		await c.initialize();
+		const notified: string[] = [];
+		c.onListChanged((kind) => notified.push(kind));
+
+		// Bare (unsubscribed) list_changed notifications on a 2026-07-28 server must be ignored.
+		deliver({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+		deliver({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+		deliver({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
+		strictEqual(c.toolsChanged(), false);
+		strictEqual(c.listChanged("resources"), false);
+		strictEqual(c.listChanged("prompts"), false);
+		deepStrictEqual(notified, []);
+
+		// Aborting a single listResources call cancels only that request and leaves the client ready.
+		holdResources = true;
+		const controller = new AbortController();
+		const pending = c.listResources(controller.signal);
+		setTimeout(() => controller.abort(), 15);
+		await rejectsWithCode(pending, "aborted");
+		strictEqual(c.state().status, "ready");
+		holdResources = false;
+		strictEqual((await c.listResources()).resources[0]?.uri, "file:///a");
+
+		// getPrompt with empty arguments omits the arguments property on the wire.
+		await c.getPrompt("brief", {});
+		const promptReq = sent.find((m) => m.method === "prompts/get");
+		ok(promptReq);
+		strictEqual("arguments" in (promptReq.params as Record<string, unknown>), false);
+	});
 });

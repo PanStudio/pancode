@@ -425,17 +425,31 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		const listing = state.listing;
 		if (listing === undefined || state.declaration.scope === "client" || options.persistCatalog === false) return;
 		const client = state.client;
-		// Until this connection lists its prompts, the recorded list stands rather than vanishing.
-		const prompts = !declares(client, "prompts") ? null : (state.prompts ?? cachedCatalog(state)?.prompts ?? null);
-		const resourceCount = resourceCountOf(state) ?? cachedCatalog(state)?.resourceCount ?? null;
-		writeMcpServerCatalog(catalogIdentity(state.declaration), {
-			...listing,
-			instructions: client?.serverInfo()?.instructions ?? null,
-			resources: declares(client, "resources"),
-			resourceCount,
-			completions: declares(client, "completions"),
-			prompts,
-		});
+		const prior = cachedCatalog(state);
+		// Until this connection lists its prompts, the recorded list stands with its own observation time.
+		const prompts = !declares(client, "prompts")
+			? null
+			: state.prompts !== undefined
+				? {
+						...state.prompts,
+						...(state.promptsObservedAt !== undefined ? { observedAt: new Date(state.promptsObservedAt).toISOString() } : {}),
+					}
+				: prior?.prompts !== undefined
+					? { ...prior.prompts, observedAt: prior.prompts.observedAt ?? prior.observedAt }
+					: null;
+		const resourceCount = resourceCountOf(state) ?? prior?.resourceCount ?? null;
+		writeMcpServerCatalog(
+			catalogIdentity(state.declaration),
+			{
+				...listing,
+				instructions: client?.serverInfo()?.instructions ?? null,
+				resources: declares(client, "resources"),
+				resourceCount,
+				completions: declares(client, "completions"),
+				prompts,
+			},
+			state.listingObservedAt === undefined ? {} : { nowMs: state.listingObservedAt },
+		);
 		// Drop the memo of whatever the file said before this listing replaced it.
 		state.catalog = undefined;
 	};
@@ -732,6 +746,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		state.tools = listing.tools;
 		state.truncated = listing.truncated;
 		state.listing = listing;
+		state.listingObservedAt = Date.now();
 		state.listed = true;
 		const { declaration } = state;
 		if (declaration.scope !== "client") {
@@ -940,6 +955,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				state.unregistrable = [];
 				state.refused.clear();
 				delete state.prompts;
+				delete state.promptsObservedAt;
+				delete state.listingObservedAt;
 				delete state.resourceList;
 			})();
 			await state.recovery;
@@ -1196,6 +1213,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			for (const result of results) {
 				if (result.status === "rejected") throw result.reason;
 			}
+			// Wait for initial prompt and resource listings so `mcp list --refresh` records them before closing.
+			if (!invokeOptions?.signal?.aborted) {
+				await Promise.allSettled(
+					all.flatMap((state) => [state.promptsListing, state.resourcesListing].filter((p) => p !== undefined)),
+				);
+			}
 			return { servers: all.map(listingFor), diagnostics: [...diagnostics] };
 		},
 		catalog() {
@@ -1309,7 +1332,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const refusal = state.client !== null ? null : readOnlyLaunchRefusal(state.declaration, invokeOptions?.readOnly);
 			if (refusal !== null) return { listing: listingFor(state), reason: refusal };
 			await discover(state, invokeOptions?.signal, true);
-			if (state.skillsListing !== undefined) await state.skillsListing;
+			await Promise.allSettled(
+				[state.skillsListing, state.promptsListing, state.resourcesListing].filter((p) => p !== undefined),
+			);
 			return {
 				listing: listingFor(state),
 				...(state.failure !== null ? { reason: `mcp server ${id} failed: ${state.failure}` } : {}),

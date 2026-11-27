@@ -29,19 +29,27 @@ import {
 	trustMcpServer,
 	untrustMcpServer,
 } from "../../src/domains/gateway/mcp/index.js";
-import { mcpCatalogPath, writeMcpServerCatalog } from "../../src/domains/gateway/mcp/metadata-cache.js";
+import {
+	mcpCatalogPath,
+	readMcpServerCatalog,
+	writeMcpServerCatalog,
+} from "../../src/domains/gateway/mcp/metadata-cache.js";
 import { mcpSkillFrontmatterMismatch, parseMcpSkillEntry } from "../../src/domains/gateway/mcp/skills.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
 import type { MiddlewareHookRegistration } from "../../src/domains/middleware/runtime.js";
 import { buildSkillCatalogView, loadSkills } from "../../src/domains/resources/index.js";
+import { expandSubmitText, type McpSubmitReader } from "../../src/domains/resources/submit-expansion.js";
 import type { ActionClass } from "../../src/domains/safety/action-classifier.js";
 import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
+import { parseCommandArgs } from "../../src/engine/prompt-templates.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { mcpPromptArgumentSource, mcpReferenceSource } from "../../src/interactive/mcp-completion.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { mcpSubmitReader } from "../../src/tools/gateway/mcp-submit-reader.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { RegistryDeps, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { toolResultContextText } from "../../src/tools/result-disposition.js";
@@ -2099,5 +2107,171 @@ describe("builtin MCP servers", () => {
 		} finally {
 			await wired.source.close();
 		}
+	});
+
+	it("persists prompts and resource counts before close, guards prompt media/ui://, masks duplicate mentions, and sanitizes completion", async () => {
+		const scene = scenario();
+		const server = join(scene.project, "rp-server.mjs");
+		// Minimal valid 1x1 PNG bytes for image verification tests.
+		const pngChunk = (type: string, data: Buffer): Buffer => {
+			const head = Buffer.alloc(4);
+			head.writeUInt32BE(data.length, 0);
+			const kind = Buffer.from(type, "ascii");
+			const crc = Buffer.alloc(4);
+			crc.writeUInt32BE(crc32(Buffer.concat([kind, data])) >>> 0, 0);
+			return Buffer.concat([head, kind, data, crc]);
+		};
+		const ihdr = Buffer.alloc(13);
+		ihdr.writeUInt32BE(1, 0);
+		ihdr.writeUInt32BE(1, 4);
+		ihdr[8] = 8;
+		ihdr[9] = 2;
+		const tinyPng = Buffer.concat([
+			Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+			pngChunk("IHDR", ihdr),
+			pngChunk("IDAT", deflateSync(Buffer.from([0, 255, 0, 0]))),
+			pngChunk("IEND", Buffer.alloc(0)),
+		]).toString("base64");
+		writeFileSync(
+			server,
+			`
+			import {createInterface} from 'node:readline';
+			const png = ${JSON.stringify(tinyPng)};
+			createInterface({input: process.stdin}).on('line', line => {
+				const req = JSON.parse(line);
+				const reply = result => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result})+'\\n');
+				if (req.method === 'initialize') {
+					reply({protocolVersion:'2024-11-05',capabilities:{tools:{},prompts:{},resources:{}},serverInfo:{name:'rp',version:'1'}});
+				} else if (req.method === 'tools/list') {
+					reply({tools:[]});
+				} else if (req.method === 'prompts/list') {
+					setTimeout(() => reply({prompts:[{name:'review',description:'Review',arguments:[{name:'focus',required:false}]}]}), 40);
+				} else if (req.method === 'resources/list') {
+					setTimeout(() => reply({resources:[{uri:'file:///ok.txt',name:'ok'},{uri:'file:///bad uri',name:'bad'}]}), 40);
+				} else if (req.method === 'resources/templates/list') {
+					reply({resourceTemplates:[]});
+				} else if (req.method === 'resources/read') {
+					reply({contents:[{uri:req.params.uri,mimeType:'text/plain',text:'hello resource'}]});
+				} else if (req.method === 'prompts/get') {
+					reply({
+						messages: [
+							{role:'user',content:{type:'resource',resource:{uri:'ui://panel',mimeType:'text/html;profile=mcp-app',text:'<script>x</script>'}}},
+							{role:'user',content:{type:'image',mimeType:'image/png',data:Buffer.from('<svg/>').toString('base64')}},
+							{role:'user',content:{type:'image',mimeType:'image/png',data:png}},
+						],
+					});
+				}
+			});
+		`,
+		);
+		writeFileSync(
+			join(scene.project, ".pancode", "mcp.yaml"),
+			`version: 1\nservers:\n  - id: rp\n    command: ${JSON.stringify(process.execPath)}\n    args: [${JSON.stringify(server)}]\n`,
+		);
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "rp", actionClass: "read" }).ok);
+		const { source } = wire(scene);
+		try {
+			// source.list() must wait for prompt/resource discovery so close() does not race catalog persistence.
+			await source.list();
+		} finally {
+			await source.close();
+		}
+		const decl = resolveMcpServers({ cwd: scene.project, configDir: scene.configDir }).servers.find((s) => s.id === "rp");
+		ok(decl);
+		const catalog = readMcpServerCatalog({
+			projectRoot: canonicalProjectRoot(scene.project),
+			scope: decl.scope,
+			declarationPath: decl.path,
+			serverId: decl.id,
+			digest: decl.digest,
+			cwd: decl.cwd,
+		});
+		ok(catalog);
+		deepStrictEqual(catalog.resourceCount, { resources: 2, templates: 0 });
+		deepStrictEqual(
+			catalog.prompts?.prompts.map((p) => p.name),
+			["review"],
+		);
+
+		// Prompt expansion filters ui:// embedded resources and verifies image magic bytes.
+		const live = wire(scene);
+		try {
+			await live.source.list();
+			const reader = mcpSubmitReader(live.source);
+			const expanded = await reader.expandPrompt("/rp:review");
+			ok(expanded?.ok);
+			match(expanded.text, /\[MCP Apps resource ui:\/\/panel; not read\]/);
+			doesNotMatch(expanded.text, /<script>/);
+			strictEqual(expanded.images.length, 1, "spoofed SVG-as-PNG is rejected; valid PNG is attached");
+		} finally {
+			await live.source.close();
+		}
+
+		// Duplicate @<id>:<uri> mentions are masked from expandFiles and read only once (even when a file matches).
+		const dupFile = join(scene.project, "rp:mem:a");
+		writeFileSync(dupFile, "should never be read as a file");
+		let mentionReads = 0;
+		const stubReader: McpSubmitReader = {
+			promptCommands: () => [],
+			expandPrompt: async () => null,
+			mentionServers: () => new Set(["rp"]),
+			readMention: async (_s, uri) => {
+				mentionReads += 1;
+				return { ok: true, text: `<r>${uri}</r>`, images: [], note: `read ${uri}` };
+			},
+			resourceCandidates: async () => [
+				{ uri: "file:///ok.txt", template: false, label: "ok", description: "" },
+				{ uri: "file:///bad uri", template: false, label: "bad", description: "" },
+				{ uri: "file:///ctrl\u001b[31m", template: false, label: "ctrl", description: "" },
+			],
+			completeArgument: async () => ["safe", "has\nnewline", `a"b'c`],
+			completeTemplate: async () => [],
+		};
+		const out = await expandSubmitText("first @rp:mem:a second @rp:mem:a", undefined, scene.project, { mcp: stubReader });
+		strictEqual(mentionReads, 1);
+		strictEqual(
+			out.text,
+			"first <r>mem:a</r> second @rp:mem:a",
+			"duplicate mention stays literal, not read as local file",
+		);
+
+		// Reference completion drops URIs with whitespace or control chars.
+		const refSource = mcpReferenceSource(stubReader, async () => []);
+		const refs = await refSource({ query: "rp:", signal: new AbortController().signal });
+		deepStrictEqual(
+			refs.map((v) => v.value),
+			["@rp:file:///ok.txt"],
+		);
+
+		// Prompt argument completion keeps named-argument prefix matches, filters control chars, and quotes both quote kinds.
+		const argSource = mcpPromptArgumentSource({
+			...stubReader,
+			promptCommands: () => [
+				{
+					serverId: "rp",
+					name: "review",
+					title: null,
+					description: "Review",
+					arguments: [
+						{ name: "focus", description: "", required: false },
+						{ name: "depth", description: "", required: false },
+					],
+				},
+			],
+		});
+		const suggestions = await argSource({
+			command: "rp:review",
+			args: "fo",
+			cursor: 2,
+			signal: new AbortController().signal,
+		});
+		ok(
+			suggestions?.values.some((v) => v.value === "focus="),
+			"named argument prefix match survives completion",
+		);
+		ok(!suggestions?.values.some((v) => v.label.includes("\n")), "control-char completion is dropped");
+		const quoted = suggestions?.values.find((v) => v.label === `a"b'c`);
+		ok(quoted);
+		deepStrictEqual(parseCommandArgs(quoted.value), [`a"b'c`]);
 	});
 });

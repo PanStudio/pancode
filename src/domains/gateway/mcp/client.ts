@@ -532,15 +532,21 @@ export function createMcpProtocolClient(
 	const primitivesChanged = new Set<McpListedPrimitive>();
 	const listChangedHandlers = new Set<(primitive: McpListedPrimitive) => void>();
 
+	const declaresListChanged = (key: "tools" | "prompts" | "resources"): boolean =>
+		info !== null && isRecord(info.capabilities[key]) && info.capabilities[key].listChanged === true;
+
 	const noteListChanged = (method: string): void => {
-		if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+		if (method === "notifications/tools/list_changed") {
+			if (declaresListChanged("tools")) toolsChangedFlag = true;
+			return;
+		}
 		const primitive: McpListedPrimitive | null =
 			method === "notifications/prompts/list_changed"
 				? "prompts"
 				: method === "notifications/resources/list_changed"
 					? "resources"
 					: null;
-		if (primitive === null) return;
+		if (primitive === null || !declaresListChanged(primitive)) return;
 		primitivesChanged.add(primitive);
 		for (const handler of listChangedHandlers) {
 			try {
@@ -719,7 +725,8 @@ export function createMcpProtocolClient(
 			routeSubscription(meta[MCP_META_SUBSCRIPTION_ID], method, params);
 			return;
 		}
-		noteListChanged(method);
+		// Modern list_changed arrives only on an acknowledged subscriptions/listen stream (MCP 2026-07-28).
+		if (era === "legacy") noteListChanged(method);
 		if (method === "notifications/progress") routeProgress(params);
 		for (const handler of notificationHandlers.get(method) ?? []) {
 			try {
@@ -1147,49 +1154,49 @@ export function createMcpProtocolClient(
 			return { tools, truncated: listed.truncated, ...(listed.ttlMs !== undefined ? { ttlMs: listed.ttlMs } : {}) };
 		});
 
-	const listResources = (signal?: AbortSignal): Promise<McpResourceListing> =>
-		withDiscoverySignal(signal, async () => {
-			await ensureReady(signal);
-			const resources = await pagedList<McpResourceDescriptor>(
-				"resources/list",
-				"resources",
-				parseResourceDescriptor,
-				MCP_RESOURCE_LIST_CAP,
-				signal,
-			);
-			const templates = await pagedList<McpResourceTemplateDescriptor>(
-				"resources/templates/list",
-				"resourceTemplates",
-				parseResourceTemplate,
-				MCP_RESOURCE_LIST_CAP - resources.items.length,
-				signal,
-				true,
-			);
-			const ttls = [resources.ttlMs, templates.ttlMs].filter((ttl): ttl is number => ttl !== undefined);
-			return {
-				resources: resources.items,
-				templates: templates.items,
-				truncated: resources.truncated || templates.truncated,
-				...(ttls.length > 0 ? { ttlMs: Math.min(...ttls) } : {}),
-			};
-		});
+	const listResources = async (signal?: AbortSignal): Promise<McpResourceListing> => {
+		if (signal?.aborted) throw new McpError("aborted", "resources/list aborted before it was sent");
+		await ensureReady(signal);
+		const resources = await pagedList<McpResourceDescriptor>(
+			"resources/list",
+			"resources",
+			parseResourceDescriptor,
+			MCP_RESOURCE_LIST_CAP,
+			signal,
+		);
+		const templates = await pagedList<McpResourceTemplateDescriptor>(
+			"resources/templates/list",
+			"resourceTemplates",
+			parseResourceTemplate,
+			MCP_RESOURCE_LIST_CAP - resources.items.length,
+			signal,
+			true,
+		);
+		const ttls = [resources.ttlMs, templates.ttlMs].filter((ttl): ttl is number => ttl !== undefined);
+		return {
+			resources: resources.items,
+			templates: templates.items,
+			truncated: resources.truncated || templates.truncated,
+			...(ttls.length > 0 ? { ttlMs: Math.min(...ttls) } : {}),
+		};
+	};
 
-	const listPrompts = (signal?: AbortSignal): Promise<McpPromptListing> =>
-		withDiscoverySignal(signal, async () => {
-			await ensureReady(signal);
-			const prompts = await pagedList<McpPromptDescriptor>(
-				"prompts/list",
-				"prompts",
-				parsePromptDescriptor,
-				MCP_PROMPT_LIST_CAP,
-				signal,
-			);
-			return {
-				prompts: prompts.items,
-				truncated: prompts.truncated,
-				...(prompts.ttlMs !== undefined ? { ttlMs: prompts.ttlMs } : {}),
-			};
-		});
+	const listPrompts = async (signal?: AbortSignal): Promise<McpPromptListing> => {
+		if (signal?.aborted) throw new McpError("aborted", "prompts/list aborted before it was sent");
+		await ensureReady(signal);
+		const prompts = await pagedList<McpPromptDescriptor>(
+			"prompts/list",
+			"prompts",
+			parsePromptDescriptor,
+			MCP_PROMPT_LIST_CAP,
+			signal,
+		);
+		return {
+			prompts: prompts.items,
+			truncated: prompts.truncated,
+			...(prompts.ttlMs !== undefined ? { ttlMs: prompts.ttlMs } : {}),
+		};
+	};
 
 	/**
 	 * One request that may answer `input_required` (resources/read, prompts/get):
@@ -1242,7 +1249,8 @@ export function createMcpProtocolClient(
 		args: Record<string, string>,
 		options: McpRequestOptions = {},
 	): Promise<McpPromptResult> => {
-		const result = await requestWithRetries("prompts/get", { name, arguments: args }, options);
+		const params = Object.keys(args).length > 0 ? { name, arguments: args } : { name };
+		const result = await requestWithRetries("prompts/get", params, options);
 		const parsed = parsePromptResult(result);
 		if (parsed instanceof McpError) throw parsed;
 		return parsed;

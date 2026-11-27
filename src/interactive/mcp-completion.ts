@@ -36,6 +36,10 @@ function mentionValue(serverId: string, uri: string, label: string, description:
 
 /** A completed variable goes into the mention as typed, so one that would end it is dropped. */
 const MENTION_SAFE_VALUE = /^[^\s\p{Cc}"'\\]{1,200}$/u;
+/** A resource uri in `@<id>:<uri>` cannot carry whitespace or terminal controls. */
+const MENTION_URI_UNSAFE = /[\s\p{Cc}]/u;
+/** A completed prompt argument value cannot carry control characters or flood the composer. */
+const ARGUMENT_SAFE_VALUE = /^[^\p{Cc}]{1,200}$/u;
 
 /** The template variable the typed uri ends inside, with the variables already filled before it. */
 function templateCursor(
@@ -99,7 +103,11 @@ export function mcpReferenceSource(
 				}
 			}
 			const listed = candidates
-				.filter((entry) => entry.uri.toLowerCase().includes(wanted) || entry.label.toLowerCase().includes(wanted))
+				.filter(
+					(entry) =>
+						!MENTION_URI_UNSAFE.test(entry.uri) &&
+						(entry.uri.toLowerCase().includes(wanted) || entry.label.toLowerCase().includes(wanted)),
+				)
 				.map((entry) => mentionValue(serverId, entry.uri, entry.label, entry.description));
 			return [...filled, ...listed].slice(0, MENTION_ROWS);
 		}
@@ -125,7 +133,9 @@ export function mcpReferenceSource(
 /** Quote a completed value the way the argument binder reads it back. */
 function argumentText(value: string): string {
 	if (value.length > 0 && !/[\s"']/u.test(value)) return value;
-	return value.includes('"') ? `'${value}'` : `"${value}"`;
+	if (!value.includes('"')) return `"${value}"`;
+	if (!value.includes("'")) return `'${value}'`;
+	return `'${value.replace(/'/gu, `'"'"'`)}'`;
 }
 
 /**
@@ -185,14 +195,16 @@ export function mcpPromptArgumentSource(reader: McpSubmitReader): PromptArgument
 		const unquoted = value.replace(/^["']/u, "");
 		const values = await reader.completeArgument(row.serverId, row.name, { name, value: unquoted }, context, signal);
 		if (signal.aborted) return null;
-		const completed = values.map((entry) => ({
-			id: `mcp-arg:${name}:${entry}`,
-			value: argumentText(entry),
-			label: entry,
-			description: `${name} for /${command}`,
-			appendSpace: true,
-		}));
-		const rows = completed.length > 0 ? completed : value.length === 0 ? names : [];
+		const completed = values
+			.filter((entry) => ARGUMENT_SAFE_VALUE.test(entry))
+			.map((entry) => ({
+				id: `mcp-arg:${name}:${entry}`,
+				value: argumentText(entry),
+				label: entry,
+				description: `${name} for /${command}`,
+				appendSpace: true,
+			}));
+		const rows = [...completed, ...names];
 		return rows.length > 0 ? { start, values: rows } : null;
 	};
 }

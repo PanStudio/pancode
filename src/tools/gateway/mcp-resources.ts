@@ -55,6 +55,11 @@ const PROMPT_TEXT_CHARS = 200;
 /** A prompt name that reads as one slash token after `/<id>:`. */
 const PROMPT_COMMAND_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$/u;
 
+/** Whether a server-declared prompt name is carried as a `/<id>:<prompt>` slash command. */
+export function isMcpPromptCommandName(name: string): boolean {
+	return PROMPT_COMMAND_NAME.test(name);
+}
+
 /** What the gateway lends this module: its discovery, its surface gate and its teardown. */
 export interface McpResourceHost {
 	admitted: WorkerMcpAttestation | undefined;
@@ -231,7 +236,7 @@ async function failureText(
 
 function notFoundText(state: ServerState, name: string, uri: string): string {
 	const list = resourceCapabilityNames(state.declaration.id)?.list ?? "";
-	return `${name}: mcp server ${state.declaration.id} has no resource ${uri}; list what it serves with ${list}`;
+	return `${name}: mcp server ${state.declaration.id} has no resource ${oneLine(uri, 256)}; list what it serves with ${list}`;
 }
 
 /** A worker uses a resource capability only when its recipe named it, as with any MCP tool. */
@@ -279,12 +284,14 @@ export function resourceCapabilitySpecs(host: McpResourceHost, state: ServerStat
 			const client = await connectedClient(host, state, names.list, invokeOptions);
 			if (typeof client === "string") return { kind: "error", message: client };
 			let listing: McpResourceListing;
+			client.acknowledgeListChanged("resources");
 			try {
 				listing = await client.listResources(invokeOptions?.signal);
 			} catch (error) {
 				return { kind: "error", message: await failureText(host, state, client, names.list, error) };
 			}
 			state.resourceList = { listing, atMs: Date.now() };
+			host.publish(state);
 			const visible = visibleResources(listing);
 			const query = typeof args.query === "string" ? args.query : "";
 			return {
@@ -369,6 +376,26 @@ export function resourceCapabilitySpecs(host: McpResourceHost, state: ServerStat
 	return [listSpec, readSpec];
 }
 
+/** Race a shared discovery wait against an ephemeral signal without aborting the server launch itself. */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+	if (signal === undefined) return promise;
+	if (signal.aborted) return Promise.reject(new Error("MCP resource listing aborted"));
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = (): void => reject(new Error("MCP resource listing aborted"));
+		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(value) => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(value);
+			},
+			(error) => {
+				signal.removeEventListener("abort", onAbort);
+				reject(error);
+			},
+		);
+	});
+}
+
 /** The resource listing completion offers, within the server's ttlMs and dropped on its list_changed. */
 export async function listResourcesFor(
 	host: McpResourceHost,
@@ -376,7 +403,15 @@ export async function listResourcesFor(
 	options: McpLaunchOptions | undefined,
 ): Promise<McpSourceAnswer<McpResourceListing>> {
 	const name = `@${state.declaration.id}:`;
-	const client = await connectedClient(host, state, name, options);
+	if (options?.signal?.aborted) return { ok: false, error: `${name} aborted` };
+	const launchOnly = options?.readOnly ? { readOnly: true } : undefined;
+	let client: McpClient | string;
+	try {
+		// Completion aborts on every keystroke: stop waiting immediately without tearing down a starting server.
+		client = await raceAbort(connectedClient(host, state, name, launchOnly), options?.signal);
+	} catch {
+		return { ok: false, error: `${name} aborted` };
+	}
 	if (typeof client === "string") return { ok: false, error: client };
 	if (!declares(client, "resources"))
 		return { ok: false, error: `${name} mcp server ${state.declaration.id} declares no resources` };
@@ -444,6 +479,7 @@ export function refreshPrompts(host: McpResourceHost, state: ServerState): Promi
 			const prompts = await client.listPrompts();
 			if (state.client !== client) return;
 			state.prompts = prompts;
+			state.promptsObservedAt = Date.now();
 			host.publish(state);
 		} catch {
 			// The slash menu keeps the last list; invoking a prompt reports the server's own failure.
@@ -455,18 +491,23 @@ export function refreshPrompts(host: McpResourceHost, state: ServerState): Promi
 }
 
 /** The first resource listing of a connection, recorded so `/mcp` can count it without a launch. Best effort. */
-export async function refreshResources(host: McpResourceHost, state: ServerState): Promise<void> {
+export function refreshResources(host: McpResourceHost, state: ServerState): Promise<void> {
 	const client = state.client;
-	if (client === null || !declares(client, "resources") || state.resourceList !== undefined) return;
-	client.acknowledgeListChanged("resources");
-	try {
-		const listing = await client.listResources();
-		if (state.client !== client || state.resourceList !== undefined) return;
-		state.resourceList = { listing, atMs: Date.now() };
-		host.publish(state);
-	} catch {
-		// A failed listing is reported when the model or the operator asks for one.
-	}
+	if (client === null || !declares(client, "resources") || state.resourceList !== undefined) return Promise.resolve();
+	state.resourcesListing ??= (async () => {
+		client.acknowledgeListChanged("resources");
+		try {
+			const listing = await client.listResources();
+			if (state.client !== client || state.resourceList !== undefined) return;
+			state.resourceList = { listing, atMs: Date.now() };
+			host.publish(state);
+		} catch {
+			// A failed listing is reported when the model or the operator asks for one.
+		}
+	})().finally(() => {
+		delete state.resourcesListing;
+	});
+	return state.resourcesListing;
 }
 
 function promptCommand(
