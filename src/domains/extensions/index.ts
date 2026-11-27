@@ -14,18 +14,9 @@ export { reviewExtensionEnvelope } from "./envelope-review.js";
 export type { McpToolOwnerLookup } from "./hook-tool-match.js";
 export { extensionHookToolMatcher } from "./hook-tool-match.js";
 export {
-	assertManagedBase,
-	assertUnchangedInstallState,
-	auditInstallRecords,
 	type DroppedInstallRecord,
 	type InstallRecordReport,
-	type InstallStateLayout,
-	installStatePath,
-	readInstallState,
 	reportInvalidInstallRecordsAsRows,
-	retainRecovery,
-	uniqueSibling,
-	writeInstallState,
 } from "./install-store.js";
 export {
 	disableExtension,

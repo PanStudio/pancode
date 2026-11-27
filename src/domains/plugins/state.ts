@@ -32,7 +32,7 @@ import {
 	retainRecovery,
 	uniqueSibling,
 	writeInstallState,
-} from "../extensions/index.js";
+} from "../extensions/install-store.js";
 import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
 import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
 import { HUB_TIERS, isHubKind } from "../resources/hub-types.js";
