@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +9,10 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
 import { recordFleetPreflight } from "../../src/domains/dispatch/fleet-preflight.js";
 import { declaredScopeIntent } from "../../src/domains/dispatch/intent.js";
+import {
+	createFleetPlacementPreviewResolver,
+	createFleetPlacementResolver,
+} from "../../src/domains/dispatch/placement.js";
 import { approvedRouteCandidates } from "../../src/domains/dispatch/route-approval.js";
 import {
 	createRouteObserver,
@@ -129,6 +133,7 @@ async function retryFleet(
 					probeDurationMs: 1,
 				})),
 				resources: null,
+				sandbox: null,
 			},
 		]);
 	}
@@ -527,5 +532,47 @@ describe("context overflow retry", () => {
 		} finally {
 			await fleet.bundle.extension.stop?.();
 		}
+	});
+
+	it("excludes failed reroute nodes in placement preview identically to placement launch", () => {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.fleet.defaultNode = "nodea";
+		settings.fleet.nodes = [{ id: "nodea", host: "nodea.invalid", maxWorkers: 1 }];
+		const fleet = {
+			get: (id: string) =>
+				id === "nodea"
+					? {
+							id: "nodea",
+							host: "nodea.invalid",
+							state: "offline" as const,
+							stateReason: "ssh refused",
+							activeWorkers: 0,
+							maxWorkers: 1,
+						}
+					: undefined,
+		} as never;
+		const deps = {
+			getSettings: () => settings,
+			fleet,
+			preflightVerdict: () => ({ ok: true, reason: null }),
+			nodeSandbox: () => ({ available: false, backend: null, reason: "no bwrap", network: null }),
+		};
+		const resolve = createFleetPlacementResolver(deps);
+		const preview = createFleetPlacementPreviewResolver(deps);
+		const failoverReq: DispatchRequest = {
+			...REQUEST,
+			reroutes: [{ attempt: 1, fromNode: "nodea", toNode: "", reason: "ssh refused" }],
+		};
+		strictEqual(preview(failoverReq).node.id, "local");
+		strictEqual(resolve(failoverReq)?.node.id, "local");
+		const exhaustedReq: DispatchRequest = {
+			...REQUEST,
+			reroutes: [
+				{ attempt: 1, fromNode: "nodea", toNode: "local", reason: "ssh refused" },
+				{ attempt: 2, fromNode: "local", toNode: "", reason: "local failed" },
+			],
+		};
+		throws(() => preview(exhaustedReq), /no eligible fleet node remains/u);
+		throws(() => resolve(exhaustedReq), /no eligible fleet node remains/u);
 	});
 });

@@ -66,7 +66,7 @@ import { asDirectoryPathBoundary } from "../../core/path-boundary.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { runtimeSpeaksResponseSchemaDialect, UnsupportedResponseSchemaError } from "../../core/response-schema.js";
 import { requirePricedRefusal } from "../../core/run-overrides.js";
-import { sandboxAvailability } from "../../core/sandbox/availability.js";
+import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerMcpNoNetworkNotice, workerSandboxReceipt } from "../../core/sandbox/worker-policy.js";
 import { isSkillActivation, type SkillActivation } from "../../core/skill-activation.js";
 import { emitApproval } from "../../core/telemetry/approvals.js";
@@ -379,7 +379,7 @@ import {
 	importFleetChanges,
 	prepareFleetChangeReturn,
 } from "./fleet-change-return.js";
-import { routeFactVerdict } from "./fleet-preflight.js";
+import { type FleetNodeSandbox, routeFactVerdict } from "./fleet-preflight.js";
 import { assertFleetProjectAuthority, verifyFleetProject } from "./fleet-project-verification.js";
 import { gateVerdictFactsOf } from "./gate-decisions.js";
 import { type GradeContract, type GradeFacts, type GradeVerdict, grade, type RunVerdict } from "./grading.js";
@@ -454,7 +454,11 @@ import {
 } from "./path-scope.js";
 import { type PeerInstructions, peerInstructionsStaleMessage, resolvePeerInstructions } from "./peer-instructions.js";
 import { deriveEnvelopePhaseDurations, recordRunTimingBestEffort } from "./phase-timing.js";
-import { createFleetPlacementPreviewResolver, createFleetPlacementResolver } from "./placement.js";
+import {
+	createFleetPlacementPreviewResolver,
+	createFleetPlacementResolver,
+	type FleetPlacementPreview,
+} from "./placement.js";
 import {
 	claimSharedPrefix,
 	claimWorkerCacheLane,
@@ -823,6 +827,8 @@ export interface DispatchNodePlacement {
 	spawn?: (spec: WorkerSpec, opts?: WorkerSpawnOptions) => SpawnedWorker;
 	/** Failover hops that preceded this placement, oldest first. */
 	reroutes?: ReadonlyArray<RunNodeReroute>;
+	/** An SSH node's recorded OS sandbox, null when it has none; absent for local placement. */
+	sandbox?: FleetNodeSandbox | null;
 }
 
 export interface DispatchBundleOptions {
@@ -831,7 +837,7 @@ export interface DispatchBundleOptions {
 	/** Resolve the attested node and transport before capacity admission; absent means local. */
 	resolveNode?: (req: DispatchRequest) => DispatchNodePlacement | null;
 	/** Side-effect-free companion to resolveNode, primarily for alternate fleet backends and deterministic tests. */
-	previewNode?: (req: DispatchRequest) => { node: RunNodeIdentity };
+	previewNode?: (req: DispatchRequest) => FleetPlacementPreview;
 	startAcpDelegationRun?: (input: AcpDelegationRunInput) => AcpDelegationRunHandle;
 	heartbeatSpec?: HeartbeatSpec;
 	heartbeatIntervalMs?: number;
@@ -1149,6 +1155,8 @@ interface DispatchLifecycleStage {
 	projectContext: RunProjectContextProvenance;
 	/** The run's capability envelope, resolved once; everything after admission reads it (M7). */
 	envelope: WorkerEnvelope;
+	/** The OS sandbox availability resolved for the worker's placement. */
+	placedSandbox: SandboxAvailability;
 	/** What to write over a delegated harness's instruction files in the run's task worktree; absent without an overlay. */
 	peerOverlay?: ReadonlyArray<{ file: string; content: string }>;
 	/** The run's prompt with the rules in the message instead, for when the overlay cannot be written at spawn. */
@@ -1232,15 +1240,6 @@ export function createDispatchBundle(
 			getSessionId: options?.getSessionId,
 			fleet: fleetRegistry,
 		});
-	/** The node a store grant's boundaries are judged for; an unplaceable request is left to admission. */
-	const storeGrantNode = (req: DispatchRequest): RunNodeIdentity | null => {
-		try {
-			return previewNode(req).node;
-		} catch {
-			// Placement refuses this request with its own reason later.
-			return null;
-		}
-	};
 	const startAcpRun = options?.startAcpDelegationRun ?? startAcpDelegationRun;
 	const collectReproducibility = options?.collectReproducibility ?? collectReproducibilityMetadata;
 	const heartbeatSpec = options?.heartbeatSpec ?? DEFAULT_HEARTBEAT_SPEC;
@@ -3515,7 +3514,8 @@ export function createDispatchBundle(
 		target: ResolvedTarget,
 		settings: EffectiveSettings,
 		mcp: WorkerMcpAttestation | undefined,
-		withheld: ReadonlyArray<WorkerMcpNetworkWithheld> = [],
+		withheld: ReadonlyArray<WorkerMcpNetworkWithheld>,
+		placedSandbox: SandboxAvailability,
 	): void {
 		const servers = (mcp?.tools ?? []).filter((entry) =>
 			effectiveTools.includes(`mcp_${entry.serverId}__${entry.tool}` as ToolName),
@@ -3531,7 +3531,7 @@ export function createDispatchBundle(
 		}).spec;
 		if (sandbox === undefined) return;
 		const message = workerMcpNoNetworkNotice(
-			{ mode: sandbox.mode, network: sandbox.network, available: sandboxAvailability().available },
+			{ mode: sandbox.mode, network: sandbox.network, available: placedSandbox.available },
 			servers,
 			offeredWithheld,
 		);
@@ -3619,7 +3619,7 @@ export function createDispatchBundle(
 		try {
 			const recipe = agents.get(req.agentId);
 			if (!recipe) return false;
-			const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => storeGrantNode(req));
+			const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => previewNode(req).node);
 			if (pathScope.writeBoundaries.length === 0) return false;
 			const settings = getEffectiveSettings();
 			const targets = readWorkerTargets(settings);
@@ -3640,7 +3640,7 @@ export function createDispatchBundle(
 					pathScope,
 					target,
 					settings,
-					placement: () => previewNode(req).node,
+					placement: previewNode(req),
 				}),
 			);
 		} catch {
@@ -3651,6 +3651,7 @@ export function createDispatchBundle(
 	async function resolveLifecycle(
 		req: DispatchRequest,
 		settings: EffectiveSettings,
+		placement: FleetPlacementPreview,
 		metadataDeadlineAt: number,
 		signal?: AbortSignal,
 	): Promise<DispatchLifecycleStage> {
@@ -3659,7 +3660,7 @@ export function createDispatchBundle(
 			throw new Error(`dispatch: unknown agent recipe: ${req.agentId}`);
 		}
 		const { spec, capabilityMismatch } = assertRecipeAdmissible(req, recipe, settings);
-		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => storeGrantNode(req));
+		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => placement.node);
 		publishDispatchPathScope(req, pathScope);
 		const admission = resolveDispatchAdmissionStage(req, recipe, safety, pathScope);
 		const targets = readWorkerTargets(settings);
@@ -3742,9 +3743,11 @@ export function createDispatchBundle(
 			liveSettings: withLiveAutonomy(settings),
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
-			placement: () => previewNode(req).node,
+			placement,
 		});
 		const { envelope, permit, readOnly, judgeWithheld } = stage;
+		if (envelope.write.mode === "worktree" && req.taskWorktree === undefined)
+			throw new Error("dispatch: the admitted write roots need a task worktree; dispatch again with worktree: true");
 		const effectiveTools = stage.tools;
 		await assertStoreGrantAdmissible(req, readOnly);
 		// A capability the write roots cost this run reaches the parent's dispatch result and the worker's prompt (CLI-H2).
@@ -3753,7 +3756,7 @@ export function createDispatchBundle(
 				code: "write_roots_checks_withheld",
 				level: "warning",
 				message:
-					"[dispatch scope] Narrow write roots have neither an OS sandbox nor a task worktree binding commands to them, so bash and verify are withheld and the worker cannot run checks. Enable safety.sandbox (auto or required) with a usable local bubblewrap backend, or dispatch from a git checkout so the run gets its own worktree.",
+					"[dispatch scope] Narrow write roots have neither an OS sandbox nor a task worktree binding commands to them, so bash and verify are withheld and the worker cannot run checks. Enable safety.sandbox (auto or required) with a usable bubblewrap backend where the worker runs, or dispatch from a git checkout so the run gets its own worktree.",
 			});
 		}
 		assertPostRuntimeToolCompatibility(req.agentId, spec, envelope, target);
@@ -3766,7 +3769,8 @@ export function createDispatchBundle(
 			target,
 			settings,
 			admission.mcp,
-			admission.mcpNetworkWithheld,
+			admission.mcpNetworkWithheld ?? [],
+			stage.placedSandbox,
 		);
 		if (!judgeRoutedPermit(permit, settings)) assertMainGrantRoutable(req, target.runtime, permit);
 		if (judgeWithheld !== null && req.requestOrigin !== "internal" && !judgeWithheldAnnounced) {
@@ -3891,14 +3895,17 @@ export function createDispatchBundle(
 			cwd,
 			projectContextTier: tier,
 			autonomy: "default",
-			...workerSandboxPromptLine({
-				resultContract: dispatchResultContract(req, recipe) ?? null,
-				runtimeKind: target.runtime.kind,
-				req,
-				pathScope,
-				envelope,
-				settings,
-			}),
+			...workerSandboxPromptLine(
+				{
+					resultContract: dispatchResultContract(req, recipe) ?? null,
+					runtimeKind: target.runtime.kind,
+					req,
+					pathScope,
+					envelope,
+					settings,
+				},
+				stage.placedSandbox,
+			),
 			onPermission: workerPermissionMode,
 			permit,
 			...(req.taskWorktree !== undefined ? { taskWorktree: true } : {}),
@@ -4001,6 +4008,7 @@ export function createDispatchBundle(
 			projectContext: projectContextProvenance,
 			// Sealed over the compiled prompt, so the worker can prove the head it sends is the one admitted (DESIGN 4.4).
 			envelope: withStaticHead(envelope, envelopeStaticHeadInput(target, systemPrompt, envelope)),
+			placedSandbox: stage.placedSandbox,
 			...(peerStale !== null ? { peerStale } : {}),
 			...(peer?.overlay !== undefined
 				? {
@@ -5239,7 +5247,8 @@ export function createDispatchBundle(
 			) ?? req;
 		const metadataDeadlineAt =
 			req.assignmentDeadlineAt ?? Date.parse(requestedAt) + (req.routingIntent?.deadlineMs ?? 60_000);
-		const lifecycle = await resolveLifecycle(req, settings, metadataDeadlineAt, preparation?.signal);
+		const admittedPlacement = previewNode(req);
+		const lifecycle = await resolveLifecycle(req, settings, admittedPlacement, metadataDeadlineAt, preparation?.signal);
 		preparation?.signal?.throwIfAborted();
 		assertResponseSchemaEnforceable(
 			lifecycle.target.runtime,
@@ -5269,6 +5278,18 @@ export function createDispatchBundle(
 		await assertBudgetAdmitsRoute(req, lifecycle.target.effectivePricing, settings, lifecycle, preparation?.signal);
 
 		const placement = resolveNode(req) ?? null;
+		const actualNode = placement?.node ?? { id: "local", kind: "local" };
+		assertPlannedNodeIdentity(req, actualNode);
+		if (
+			!isDeepStrictEqual(actualNode, admittedPlacement.node) ||
+			(actualNode.kind === "ssh" &&
+				lifecycle.runtimeKind === "http" &&
+				(settings?.safety.sandbox !== "off" || isHoareResultContract(dispatchResultContract(req, lifecycle.recipe))) &&
+				!isDeepStrictEqual(placement?.sandbox ?? null, admittedPlacement.sandbox ?? null))
+		)
+			throw new Error(
+				`dispatch: node or sandbox changed after admission for '${admittedPlacement.node.id}'; request a fresh dispatch`,
+			);
 		const remoteStoreGrant = remoteStoreGrantRefusal(req, placement?.node ?? null);
 		if (remoteStoreGrant !== null) throw new Error(remoteStoreGrant);
 		const sharedStoreGrant = await sharedStoreGrantFor(req, placement?.node ?? null, lifecycle.readOnly);
@@ -5286,7 +5307,6 @@ export function createDispatchBundle(
 			assertFleetProjectAuthority(project, lifecycle.readOnly, req.taskWorktree !== undefined);
 			if (project.kind === "independent" && req.taskWorktree) remoteReturn = { node, worktree: req.taskWorktree };
 		}
-		assertPlannedNodeIdentity(req, placement?.node ?? { id: "local", kind: "local" });
 		const effectiveRoute = {
 			agentId: req.agentId,
 			target: lifecycle.target.target.id,
@@ -5490,17 +5510,6 @@ export function createDispatchBundle(
 					},
 					config ?? undefined,
 				);
-			// workerSandboxFor cannot see placement, so it expects this host's
-			// backend only with no fleet nodes. A worker placed here with nodes
-			// configured shares this probe's answer too (R1-safety-secrets-13).
-			const placedHere = placement === null || (placement.node.kind === "local" && placement.spawn === undefined);
-			const buildUnplacedSpec = buildSpec;
-			buildSpec = () => {
-				const built = buildUnplacedSpec();
-				if (placedHere && built.sandbox !== undefined && sandboxAvailability().available)
-					built.sandbox = { ...built.sandbox, backendExpected: true };
-				return built;
-			};
 			spec = buildSpec();
 		} catch (error) {
 			leaseSlot.release();
@@ -6975,15 +6984,11 @@ export function createDispatchBundle(
 					...(protectedArtifacts !== undefined ? { protectedArtifacts } : {}),
 					...(trustedFlow !== null ? { flowRestrictions: trustedFlow } : {}),
 					runtimeLimitations: lifecycle.runtimeLimitations,
-					// A remote node probes its own backend; this host's answer would
+					// A remote worker reports its node's recorded sandbox; this host's answer would
 					// be a claim about the wrong machine.
 					...(lifecycle.target.runtime.kind === "http"
 						? {
-								sandbox: workerSandboxReceipt(
-									lifecycle.settings?.safety.sandbox ?? "auto",
-									spec.sandbox,
-									placement !== null && placement.node.kind !== "local" ? null : sandboxAvailability(),
-								),
+								sandbox: workerSandboxReceipt(spec.sandbox, lifecycle.placedSandbox),
 							}
 						: {}),
 				},
@@ -8525,7 +8530,8 @@ export function createDispatchBundle(
 		const recipe = agents.get(req.agentId);
 		if (!recipe) throw new Error(`dispatch: unknown agent recipe: ${req.agentId}`);
 		const { spec: agentSpec } = assertRecipeAdmissible(req, recipe, settings);
-		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => storeGrantNode(req));
+		const placement = previewNode(req);
+		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => placement.node);
 		const admission = resolveDispatchAdmissionStage(req, recipe, safety, pathScope);
 		const targets = readWorkerTargets(settings);
 		const target = resolveDispatchTarget(
@@ -8553,7 +8559,7 @@ export function createDispatchBundle(
 			liveSettings: withLiveAutonomy(settings),
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
-			placement: () => previewNode(req).node,
+			placement,
 		});
 		const effectiveTools = stage.tools;
 		const previewPermit = stage.permit;
@@ -8589,7 +8595,7 @@ export function createDispatchBundle(
 			wireModelId: target.wireModelId,
 			runtimeId: target.runtime.id,
 			...(endpoint !== null ? { endpoint: { key: endpoint.key, label: endpoint.label, limit: endpoint.limit } } : {}),
-			node: previewNode(req).node,
+			node: placement.node,
 			thinkingLevel: target.thinkingLevel,
 			toolSignature: toolSignatureOf(effectiveTools),
 			endpointIdentityHash: endpointIdentityHash(target.target.url),

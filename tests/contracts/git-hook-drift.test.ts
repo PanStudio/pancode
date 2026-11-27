@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createGitHooksFingerprinter, gitHookDirectories } from "../../src/core/sandbox/git-hooks-fingerprint.js";
+import { createGitHooksFingerprinter, withWorkerGitHookPaths } from "../../src/core/sandbox/git-hooks-fingerprint.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import { ToolNames } from "../../src/core/tool-names.js";
@@ -220,14 +220,17 @@ test("the worker sandbox keeps the configured hooks directory inside its writabl
 	const cwd = repository("pancode-hook-drift-worker-");
 	strictEqual(spawnSync("git", ["-C", cwd, "config", "core.hooksPath", ".githooks"]).status, 0);
 	mkdirSync(join(cwd, ".githooks"));
-	const spec = resolveWorkerSandboxSpec({
+	const policy = resolveWorkerSandboxSpec({
 		mode: "auto",
 		readOnly: false,
 		cwd,
 		writeBoundaries: [],
 		network: false,
-		gitHooksDirs: gitHookDirectories(cwd).directories,
 	});
+	const admitted = withWorkerGitHookPaths(policy, cwd);
+	strictEqual(spawnSync("git", ["-C", cwd, "config", "core.hooksPath", ".nodehooks"]).status, 0);
+	const spec = withWorkerGitHookPaths(admitted, cwd);
+	ok(spec?.readOnlyPaths.includes(join(cwd, ".nodehooks")));
 	ok(spec?.readOnlyPaths.includes(join(cwd, ".githooks")), JSON.stringify(spec?.readOnlyPaths));
 	ok(spec?.readOnlyPaths.includes(join(cwd, ".git")));
 });

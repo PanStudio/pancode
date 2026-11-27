@@ -73,7 +73,7 @@ Default chat settings control interactive conversation routing, reasoning effort
 | `fleet.profiles` | `{}` | Map of profile name to `{ target, model, thinkingLevel, node? }`. | next turn |
 | `fleet.rosters` | `{}` | Map of roster name to `members`, two to five entries of `{ label, target, model?, thinkingLevel?, color? }` with unique labels matching `[a-z][a-z0-9_-]{0,31}`. | next turn |
 | `fleet.agentProfiles` | `{}` | Map of native agent id to a `fleet.profiles` name. | next turn |
-| `fleet.nodes` | `[]` | List of SSH nodes: `id` (not `local`), `host`, `user?`, `port?`, `identityFile?`, `pancodeEntry?`, `pancodeVersionCommand?`, `labels?`, `maxWorkers` (default 2), `residency?` (`observe` or `manage`). | next turn |
+| `fleet.nodes` | `[]` | List of SSH nodes: `id` (not `local`), `host`, `user?`, `port?`, `identityFile?`, `pancodeEntry?`, `pancodeVersionCommand?`, `labels?`, `maxWorkers` (default 2), `residency?` (`observe` or `manage`), `allowUnsandboxed?` (`true` admits native workers to a node that reports no OS sandbox, their commands unsandboxed; ignored when `safety.sandbox` is `required`; user settings only, a project layer value is ignored with a layer issue). | next turn |
 | `fleet.adaptiveRouting.roles` | `[]` | Subset of `explorer`, `seat`, `checker`, `reviewer`, `judge`. | next turn |
 | `fleet.adaptiveRouting.postures` | `[]` | Subset of `quality`, `balanced`, `latency`, `economy`. | next turn |
 | `fleet.adaptiveRouting.agentRoles` | `[]` | Exact `{ agentId, executionRole }` pairs, with `executionRole` one of `builder`, `explorer`, `seat`, `checker`, `reviewer`, `judge`. | next turn |

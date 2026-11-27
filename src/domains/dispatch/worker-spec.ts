@@ -12,10 +12,9 @@ import { GUARDRAIL_DEFAULTS } from "../../core/guardrails.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
-import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
-import { gitHookDirectories } from "../../core/sandbox/git-hooks-fingerprint.js";
-import type { WorkerSandboxSpec } from "../../core/sandbox/types.js";
+import { withWorkerGitHookPaths } from "../../core/sandbox/git-hooks-fingerprint.js";
+import type { SandboxAvailability, WorkerSandboxSpec } from "../../core/sandbox/types.js";
 import { resolveWorkerSandboxSpec, workerSandboxLine } from "../../core/sandbox/worker-policy.js";
 import type { SharedStoreGrant } from "../../core/store-shared-grant.js";
 import { workerAgent } from "../../core/telemetry/context.js";
@@ -211,10 +210,10 @@ export function workerSandboxFor(input: {
 	if (input.runtimeKind !== "http") return { applies: false, spec: undefined };
 	const mode = hoare ? "required" : (input.settings?.safety.sandbox ?? "auto");
 	const dependencyRoots =
-		input.req.taskWorktree !== undefined && mode !== "off" && sandboxAvailability().available
+		input.req.taskWorktree !== undefined && mode !== "off" && input.envelope.sandbox.backend !== "none"
 			? shareTaskWorktreeDependencies(input.req.taskWorktree)
 			: [];
-	const spec = resolveWorkerSandboxSpec({
+	const policy = resolveWorkerSandboxSpec({
 		mode,
 		readOnly: hoare || input.envelope.write.mode === "none",
 		cwd: input.req.cwd ?? process.cwd(),
@@ -222,18 +221,20 @@ export function workerSandboxFor(input: {
 		...(input.req.taskWorktree !== undefined
 			? { taskWorktree: { path: input.req.taskWorktree.path, branch: input.req.taskWorktree.branch } }
 			: {}),
-		network: input.envelope.network.shell,
+		// An auto fallback has host egress. If the worker recovers its backend, keep the original network restriction.
+		network:
+			input.envelope.network.shell &&
+			(input.envelope.sandbox.backend !== "none" ||
+				input.settings?.safety.sandboxNetwork === true ||
+				input.envelope.network.tools.length > 0),
 		// The envelope's approved outside read roots ride with the dependency roots: readable, never writable.
 		dependencyRoots: [...dependencyRoots, ...input.envelope.read.outside],
 		...(input.settings !== undefined && !hoare
 			? { env: sandboxEnvPolicy(input.settings), unixSockets: input.settings.safety.sandboxUnixSockets }
 			: {}),
-		// The hooks of the worker's tree stay read-only, as in the main-session sandbox.
-		...(mode !== "off"
-			? { gitHooksDirs: gitHookDirectories(input.req.taskWorktree?.path ?? input.req.cwd ?? process.cwd()).directories }
-			: {}),
 	});
-	// The envelope names a backend only for a worker this host runs; a fleet node probes its own.
+	const spec = withWorkerGitHookPaths(policy, input.req.taskWorktree?.path ?? input.req.cwd ?? process.cwd());
+	// The envelope names a backend only where the placed host, this one or a fleet node, reported one.
 	return {
 		applies: true,
 		spec:
@@ -247,10 +248,13 @@ export function workerSandboxFor(input: {
 	};
 }
 
-/** The sandbox sentence for the worker's safety line, probed on this host. */
-export function workerSandboxPromptLine(input: Parameters<typeof workerSandboxFor>[0]): { sandboxLine?: string } {
+/** The sandbox sentence for the worker's safety line, from the sandbox where the worker runs. */
+export function workerSandboxPromptLine(
+	input: Parameters<typeof workerSandboxFor>[0],
+	placedSandbox: SandboxAvailability,
+): { sandboxLine?: string } {
 	const sandbox = workerSandboxFor(input);
-	return sandbox.applies ? { sandboxLine: workerSandboxLine(sandbox.spec, sandboxAvailability()) } : {};
+	return sandbox.applies ? { sandboxLine: workerSandboxLine(sandbox.spec, placedSandbox) } : {};
 }
 
 /**

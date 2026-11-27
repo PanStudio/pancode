@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { isStrictDescendant } from "../path-containment.js";
 import {
 	type SandboxAvailability,
 	type SandboxBackend,
@@ -22,7 +21,7 @@ export interface WorkerSandboxPolicyInput {
 	/** Canonical dispatch write boundaries; exact files and trailing-slash subtrees. */
 	writeBoundaries: ReadonlyArray<string>;
 	taskWorktree?: { path: string; branch: string };
-	/** The envelope's `network.shell`: whether the worker's commands reach the network (fleet M7). */
+	/** Whether a sandboxed worker command may reach the network. */
 	network: boolean;
 	/** Parent checkouts supplying shared task dependencies; also visible when under /tmp. */
 	dependencyRoots?: ReadonlyArray<string>;
@@ -30,13 +29,6 @@ export interface WorkerSandboxPolicyInput {
 	env?: SandboxEnvPolicy;
 	/** `safety.sandboxUnixSockets`; absent blocks them. */
 	unixSockets?: UnixSocketMode;
-	/**
-	 * Every hooks directory git could run for the worker's tree, core.hooksPath
-	 * included (git-hooks-fingerprint.ts). One inside a writable root stays
-	 * read-only, because a hook planted there runs outside the sandbox on the
-	 * operator's next git command.
-	 */
-	gitHooksDirs?: ReadonlyArray<string>;
 }
 
 /** Paths inside a writable root that stay read-only, as in Codex's workspace-write mode. */
@@ -80,8 +72,6 @@ export function resolveWorkerSandboxSpec(input: WorkerSandboxPolicyInput): Worke
 					: writableRoots
 				).flatMap(protectedInside),
 				...(input.dependencyRoots ?? []),
-				// A hooks directory at or above a root would freeze the root itself, so only one strictly inside counts.
-				...(input.gitHooksDirs ?? []).filter((dir) => writableRoots.some((root) => isStrictDescendant(dir, root))),
 			]),
 		],
 		gitWritablePaths: [],
@@ -99,8 +89,8 @@ export interface WorkerSandboxReceipt {
 	mode: SandboxMode;
 	backend: SandboxBackend | null;
 	/**
-	 * Probed on the orchestrator host for a local worker. Null when the mode is
-	 * off, or when the worker runs on a remote node whose own probe decides.
+	 * Availability of the OS sandbox where the worker runs (this host's probe for a local worker,
+	 * the node's recorded probe for an SSH worker). Null when the mode is off.
 	 */
 	available: boolean | null;
 	reason?: string;
@@ -110,21 +100,20 @@ export interface WorkerSandboxReceipt {
 }
 
 export function workerSandboxReceipt(
-	mode: SandboxMode,
 	spec: WorkerSandboxSpec | undefined,
-	availability: SandboxAvailability | null,
+	availability: SandboxAvailability,
 ): WorkerSandboxReceipt {
 	if (spec === undefined) {
 		return { mode: "off", backend: null, available: null, writableRoots: [], gitWritablePaths: [], network: true };
 	}
 	return {
-		mode,
-		backend: availability?.available === true ? availability.backend : null,
-		available: availability === null ? null : availability.available,
-		...(availability?.reason ? { reason: availability.reason } : {}),
+		mode: spec.mode,
+		backend: availability.available ? availability.backend : null,
+		available: availability.available,
+		...(availability.reason ? { reason: availability.reason } : {}),
 		writableRoots: [...spec.writableRoots],
 		gitWritablePaths: [...spec.gitWritablePaths],
-		network: spec.network,
+		network: spec.network || (spec.mode === "auto" && !availability.available),
 	};
 }
 

@@ -93,6 +93,7 @@ async function sharedProject(root: string, id: string): Promise<string> {
 }
 
 const SSH_NODE: RunNodeIdentity = { id: "gpu", kind: "ssh", host: "gpu.example" };
+const SSH_NODE_SANDBOX = { available: true, backend: "bwrap" as const, reason: null, network: null };
 
 describe("store tag grants", () => {
 	it("a worker scope holding granted tag directories stays a subset of the workspace scope", () =>
@@ -311,7 +312,9 @@ describe("store grants to SSH nodes", () => {
 		withWorkspace(async (root) => {
 			await (await openStoreBackend(root)).getOrCreateTag("results");
 			const shared = await sharedProject(root, "preview-proof");
-			const bundle = makeDispatchBundle(dispatchStubContext(), { previewNode: () => ({ node: SSH_NODE }) });
+			const bundle = makeDispatchBundle(dispatchStubContext(), {
+				previewNode: () => ({ node: SSH_NODE, sandbox: SSH_NODE_SANDBOX }),
+			});
 			await bundle.extension.start();
 			try {
 				const preview = bundle.contract.preview;
@@ -332,8 +335,8 @@ describe("store grants to SSH nodes", () => {
 		withWorkspace(async (root) => {
 			const shared = await sharedProject(root, "run-proof");
 			const bundle = makeDispatchBundle(dispatchStubContext(), {
-				previewNode: () => ({ node: SSH_NODE }),
-				resolveNode: () => ({ node: SSH_NODE }),
+				previewNode: () => ({ node: SSH_NODE, sandbox: SSH_NODE_SANDBOX }),
+				resolveNode: () => ({ node: SSH_NODE, sandbox: SSH_NODE_SANDBOX }),
 				spawnWorker: () => {
 					throw new Error("fixture launch reached");
 				},

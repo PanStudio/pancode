@@ -17,6 +17,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"agentProfiles",
 	"agentRoles",
 	"allow",
+	"allowUnsandboxed",
 	"amount",
 	"apiKeyEnvVar",
 	"apiKeyRef",

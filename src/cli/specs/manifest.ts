@@ -405,7 +405,7 @@ export const TOP_LEVEL_USAGE: Readonly<Record<string, string>> = {
 	uninstall:
 		"uninstall [--keep-binary] [--keep-package] [--keep-config] [--keep-data] [--inactive] [--dry-run] [--yes] [--json]",
 	upgrade: "upgrade [--dry-run] [--channel=<latest|beta>] [--post-install] [--rollback] [--restart] [--json]",
-	version: "version [--worker-specs | --build | --json]",
+	version: "version [--worker-specs | --build | --sandbox | --json]",
 };
 
 /** How a flag carries its value in `help --json`: a switch, free text, a number, a duration (C11) or one of a set. */

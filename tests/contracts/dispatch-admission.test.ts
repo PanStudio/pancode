@@ -909,6 +909,100 @@ describe("dispatch admission boundary", () => {
 		match(refusal.message, /host commits worktree tasks/);
 	});
 
+	it("refuses a network-off native worker on an SSH node whose sandbox lacks network isolation, and admits when network or opt-in allows it", async () => {
+		const netBrokenSandbox = {
+			available: true,
+			backend: "bwrap" as const,
+			reason: null,
+			network: "bubblewrap cannot isolate the network here: Operation not permitted",
+		};
+		const node = { id: "netbox", kind: "ssh" as const, host: "netbox.invalid" };
+		const previewWith = async (
+			mutate: (settings: typeof DEFAULT_SETTINGS) => void,
+			req: Parameters<NonNullable<ReturnType<typeof makeDispatchBundle>["contract"]["preview"]>>[0],
+		) => {
+			const settings = structuredClone(DEFAULT_SETTINGS);
+			settings.fleet.nodes = [{ id: "netbox", host: "netbox.invalid", maxWorkers: 1 }];
+			mutate(settings);
+			const bundle = makeDispatchBundle(dispatchStubContext({ settings }), {
+				previewNode: () => ({ node, sandbox: netBrokenSandbox }),
+			});
+			await bundle.extension.start();
+			try {
+				const preview = bundle.contract.preview;
+				ok(preview);
+				return preview(req);
+			} finally {
+				await bundle.extension.stop?.();
+			}
+		};
+		// Default network-off native worker (verifier has no web_fetch): refused naming the node and network reason.
+		await rejects(
+			() =>
+				previewWith(() => {}, {
+					agentId: "verifier",
+					executionRole: "checker",
+					task: "Verify tests pass.",
+					cwd: tmpdir(),
+				}),
+			/node 'netbox'.*bubblewrap cannot isolate the network here/u,
+		);
+		// Operator opt-in under auto admits it (commands unsandboxed); required still refuses it.
+		const optedIn = await previewWith(
+			(s) => {
+				if (s.fleet.nodes[0]) s.fleet.nodes[0].allowUnsandboxed = true;
+			},
+			{ agentId: "verifier", executionRole: "checker", task: "Verify tests pass.", cwd: tmpdir() },
+		);
+		strictEqual(optedIn.node.id, "netbox");
+		await rejects(
+			() =>
+				previewWith(
+					(s) => {
+						s.safety.sandbox = "required";
+						if (s.fleet.nodes[0]) s.fleet.nodes[0].allowUnsandboxed = true;
+					},
+					{ agentId: "verifier", executionRole: "checker", task: "Verify tests pass.", cwd: tmpdir() },
+				),
+			/node 'netbox'.*safety\.sandbox is required/u,
+		);
+		// With safety.sandboxNetwork enabled, non-Hoare workers do not need --unshare-net, so required admits them.
+		const withNet = await previewWith(
+			(s) => {
+				s.safety.sandbox = "required";
+				s.safety.sandboxNetwork = true;
+			},
+			{ agentId: "verifier", executionRole: "checker", task: "Verify tests pass.", cwd: tmpdir() },
+		);
+		strictEqual(withNet.node.id, "netbox");
+		// A Hoare verifier still forces network off even when safety.sandboxNetwork is true, so it is refused.
+		await rejects(
+			() =>
+				previewWith(
+					(s) => {
+						s.safety.sandboxNetwork = true;
+						if (s.fleet.nodes[0]) s.fleet.nodes[0].allowUnsandboxed = true;
+					},
+					{
+						agentId: "verifier",
+						executionRole: "checker",
+						task: "Verify tests pass.",
+						cwd: tmpdir(),
+						resultContractOverride: { kind: "verifier-report", assurance: "mechanized" },
+					},
+				),
+			/node 'netbox'.*assurance level needs one/u,
+		);
+		// A worker whose tools already include web_fetch runs bwrap with host network, so required admits it.
+		const coderWithWeb = await previewWith(
+			(s) => {
+				s.safety.sandbox = "required";
+			},
+			{ agentId: "coder", executionRole: "builder", task: "Inspect files.", cwd: tmpdir() },
+		);
+		strictEqual(coderWithWeb.node.id, "netbox");
+	});
+
 	it("refuses an architect whose write_roots exclude its plan's contract path before any worker runs", () => {
 		const contract = { kind: "architect-plan", path: ".pancode/artifacts/PLAN.md" };
 		const refusal = architectPlanOutsideWriteRoots("architect", contract, { writeRoots: ["PLAN.md"] });

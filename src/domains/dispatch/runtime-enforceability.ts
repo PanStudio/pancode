@@ -164,7 +164,7 @@ export function assertPostRuntimeToolCompatibility(
 	);
 	const cause =
 		unconfined.length > 0
-			? `; declared write roots ${envelope.write.roots.join(", ")} have no OS sandbox or worktree binding commands to them here, so ${unconfined.map((entry) => entry.capability).join(", ")} ${unconfined.length === 1 ? "is" : "are"} withheld. Enable safety.sandbox (auto or required) with a usable local bubblewrap backend, run in a git checkout, or omit write roots`
+			? `; declared write roots ${envelope.write.roots.join(", ")} have no OS sandbox or worktree binding commands to them here, so ${unconfined.map((entry) => entry.capability).join(", ")} ${unconfined.length === 1 ? "is" : "are"} withheld. Enable safety.sandbox (auto or required) with a usable bubblewrap backend where the worker runs, run in a git checkout, or omit write roots`
 			: "";
 	throw new Error(
 		`dispatch: admission denied: agent '${agentId}' is incompatible with runtime '${target.runtime.id}' after tool narrowing; missing required tools: ${compatibility.missingRequired.join(", ")}${cause}`,

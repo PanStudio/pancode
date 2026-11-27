@@ -501,6 +501,11 @@ export interface FleetNodeSettings {
 	/** Per-node concurrent worker cap. */
 	maxWorkers: number;
 	residency?: FleetNodeResidency;
+	/**
+	 * Admit native workers here when the node reports no OS sandbox; their commands then run unsandboxed.
+	 * Ignored when `safety.sandbox` is `required`.
+	 */
+	allowUnsandboxed?: boolean;
 }
 
 /** One PanStore root: tags live under `<path>/projects/<projectKey>`. */

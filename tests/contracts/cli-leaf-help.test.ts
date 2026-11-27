@@ -55,7 +55,7 @@ const CASES: ReadonlyArray<{ args: string[]; usage: RegExp }> = [
 	{ args: ["session", "terminate", "some-session", "--help"], usage: /pancode session terminate / },
 	{ args: ["interop", "adopt", "claude-code", "--yes", "--help"], usage: /pancode interop <subcommand>/ },
 	{ args: ["verifiers", "inspect", "--help"], usage: /pancode verifiers inspect --json/ },
-	{ args: ["version", "--help"], usage: /pancode version \[--worker-specs \| --build \| --json\]/ },
+	{ args: ["version", "--help"], usage: /pancode version \[--worker-specs \| --build \| --sandbox \| --json\]/ },
 	{ args: ["arena", "run", "--help"], usage: /pancode arena run --contender / },
 	{ args: ["research", "start", "--help"], usage: /pancode research start / },
 	{ args: ["help", "--help"], usage: /pancode help --json / },

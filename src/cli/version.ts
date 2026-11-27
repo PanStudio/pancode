@@ -6,11 +6,14 @@ import { parseCommandFlags } from "./kit/flags.js";
 import { helpRequested } from "./kit/help.js";
 import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
 
-const HELP = `pancode version [--worker-specs | --build | --json]
+const HELP = `pancode version [--worker-specs | --build | --sandbox | --json]
 
 Print the PanCode version; pancode --version and -v are the same. --worker-specs
 prints the worker spec versions this install's worker reads, space separated. --build
-prints the id of this build, or unknown for a source run. --json prints all of it as
+prints the id of this build, or unknown for a source run. --sandbox prints, as one
+JSON line, the OS sandbox a worker on this host would start: available, backend,
+reason, and network (null when it can also isolate the network, else why not).
+--json prints the rest as
 one JSON document: version (the document schema, 1), pancodeVersion, label, commit,
 dirty, build, workerSpecs and herdr.
 `;
@@ -25,6 +28,9 @@ const VERSION_PATH = ["version"] as const;
  * reads, space separated, for fleet preflight. A build older than the flag
  * ignores it and prints its version line, which preflight reads as unreported.
  * Both plain forms are read by older preflights and stay byte-for-byte.
+ * `--sandbox` prints this host's worker sandbox probe as one JSON line, so
+ * fleet preflight can seal a remote worker's envelope from the node's own
+ * answer. A build older than the flag rejects it, which reads as no sandbox.
  */
 export async function runVersionCommand(args: ReadonlyArray<string> = []): Promise<number> {
 	if (helpRequested(args)) {
@@ -35,6 +41,7 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 	const parsed = parseCommandFlags(args, {
 		"worker-specs": { kind: "boolean" },
 		build: { kind: "boolean" },
+		sandbox: { kind: "boolean" },
 		json: { kind: "boolean" },
 	});
 	if (!parsed.ok) {
@@ -47,15 +54,31 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 		return 2;
 	}
 	const { flags } = parsed;
-	const chosen = [flags.json && "--json", flags.build && "--build", flags["worker-specs"] && "--worker-specs"].filter(
-		(name): name is string => typeof name === "string",
-	);
+	const chosen = [
+		flags.json && "--json",
+		flags.build && "--build",
+		flags["worker-specs"] && "--worker-specs",
+		flags.sandbox && "--sandbox",
+	].filter((name): name is string => typeof name === "string");
 	if (chosen.length > 1) {
 		writeCliFailure({ path: VERSION_PATH, slug: "flag_conflict", message: `choose one of ${chosen.join(", ")}`, json });
 		return 2;
 	}
 	if (flags.build) {
 		process.stdout.write(`${runningBuildId ?? "unknown"}\n`);
+		return 0;
+	}
+	if (flags.sandbox) {
+		const { sandboxAvailability, sandboxNetworkIsolation } = await import("../core/sandbox/availability.js");
+		const availability = sandboxAvailability();
+		process.stdout.write(
+			`${JSON.stringify({
+				available: availability.available,
+				backend: availability.backend,
+				reason: availability.reason,
+				network: sandboxNetworkIsolation(availability),
+			})}\n`,
+		);
 		return 0;
 	}
 	if (flags["worker-specs"]) {
