@@ -297,6 +297,7 @@ export function createMcpOAuthAuthorizer(
 		token: () => current.access,
 		stale: () => mcpOAuthGrantExpired(current),
 		covers: (url) => mcpResourceCovers(current.resource, url.href),
+		resource: () => current.resource,
 		renew: async (rejected, signal) => {
 			try {
 				const next = await renewMcpOAuthGrant(ref, rejected, fetchFn, storage, signal);

@@ -72,7 +72,7 @@ export function isStoreReference(value: unknown): value is string {
  * is the text up to the next `:` and the blob is the rest; a records tag is
  * never a reference's tag.
  */
-function parseStoreReference(value: string): { tag: string; blob: string } | string {
+export function parseStoreReference(value: string): { tag: string; blob: string } | string {
 	const rest = value.slice(REFERENCE_PREFIX.length);
 	const colon = rest.indexOf(":");
 	if (colon < 0) return `'${value}' is not a store reference: write store:<tag>:<blob>`;

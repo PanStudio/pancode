@@ -45,6 +45,8 @@ import { clearPluginSnapshots, disablePlugin, installPlugin, PLUGIN_SCHEMA } fro
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createRegistry } from "../../src/tools/registry.js";
+import { applyRegisteredToolClassification } from "../../src/tools/registry-call-prep.js";
+import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { builtinFixtureSource, emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -330,6 +332,31 @@ describe("mcp server configuration", () => {
 });
 
 describe("mcp server trust", () => {
+	it("runs a call that names a file as an outward execute even when its tool is trusted read", () => {
+		const spec = {
+			name: "mcp_docs__summarize",
+			baseActionClass: "read",
+			outboundFiles: (args: Record<string, unknown>) =>
+				typeof args.file === "string"
+					? [
+							{
+								consequence: `sends ./${args.file} (20B) to mcp server docs and storage it names`,
+								source: { tool: "read", args: { path: args.file } },
+							},
+						]
+					: [],
+		} as unknown as ToolSpec;
+		const trusted = { kind: "allow", classification: { actionClass: "read", reasons: ["mcp trust: read"] } } as const;
+		const sending = applyRegisteredToolClassification(trusted, spec, false, { file: "notes.txt" }).classification;
+		strictEqual(sending.actionClass, "execute");
+		strictEqual(sending.exposure, "outward");
+		ok(sending.reasons.includes("sends a file off the host"));
+		deepStrictEqual(applyRegisteredToolClassification(trusted, spec, false, { text: "hi" }).classification, {
+			actionClass: "read",
+			reasons: ["mcp trust: read"],
+		});
+	});
+
 	it("parses declared path arguments into the digest and refuses a write path on a read tool", () => {
 		const { project, configDir, builtin } = scratch();
 		const declared = `${PROJECT_CONFIG}    toolPathArguments: { save: { dest: write }, open: { path: read } }\n`;

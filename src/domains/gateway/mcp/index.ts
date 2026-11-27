@@ -99,6 +99,27 @@ export {
 	mcpEventsOffered,
 } from "./events.js";
 export {
+	MCP_FILE_LIMITS,
+	type McpDownloadTarget,
+	type McpFileArgument,
+	type McpFileConnection,
+	type McpFileInput,
+	type McpFileSchema,
+	type McpFileTransferContext,
+	type McpNamedFile,
+	type McpResolvedTarget,
+	type McpUploadRequest,
+	type McpUploadTarget,
+	mcpFileAccepted,
+	mcpFileInput,
+	mcpFileModelSchema,
+	mcpFileSchema,
+	mcpMultipartBody,
+	mcpNamedFiles,
+	resolveMcpTarget,
+	withMcpFileInputs,
+} from "./files.js";
+export {
 	type McpCachedEvent,
 	type McpCachedPrompt,
 	type McpCatalogIdentity,

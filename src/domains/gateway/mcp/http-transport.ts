@@ -54,6 +54,8 @@ export interface McpHttpAuthorizer {
 	stale(): boolean;
 	/** Whether `url` lies inside the resource the token was issued for. */
 	covers(url: URL): boolean;
+	/** The resource the token was issued for. */
+	resource(): string;
 	/** After a 401 for `rejected`: adopt a newer stored token or refresh once; true when another token is ready. */
 	renew(rejected: string, signal: AbortSignal): Promise<boolean>;
 	/**
@@ -221,6 +223,8 @@ export function createMcpHttpTransport(
 	const retryDelays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
 	const credentialHeaders = Object.entries(spec.headers ?? {});
 	const authorizer = spec.authorizer;
+	/** The MCP address the latest request reached, after the same-origin redirects it followed. */
+	let address = endpoint;
 	/** Each credential, and the token after an auth scheme, as text a server could echo back. */
 	const secrets = credentialHeaders
 		.flatMap(([, value]) => [value.trim(), value.trim().split(/\s+/u).at(-1) ?? ""])
@@ -467,6 +471,7 @@ export function createMcpHttpTransport(
 					return null;
 				}
 				target = next;
+				address = next;
 				continue;
 			}
 			// basic/authorization, Token Refresh: one renewal per request, then the 401 stands.
@@ -812,6 +817,19 @@ export function createMcpHttpTransport(
 		},
 		forgetEra: () => {
 			eraByOrigin.delete(origin);
+		},
+		address: () => new URL(address.href),
+		credentialOrigin: () => (authorizer !== undefined ? new URL(authorizer.resource()).origin : address.origin),
+		authorization: async (signal) => {
+			if (authorizer !== undefined) {
+				if (authorizer.stale()) {
+					await authorizer.renew(authorizer.token(), signal ?? new AbortController().signal).catch(() => false);
+				}
+				const token = bearer();
+				return token === null ? null : `Bearer ${token}`;
+			}
+			const header = credentialHeaders.find(([name]) => name.toLowerCase() === "authorization");
+			return header === undefined ? null : header[1];
 		},
 	};
 

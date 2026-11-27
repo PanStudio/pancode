@@ -8,6 +8,7 @@
  */
 
 import { isRecord } from "../../../core/type-guards.js";
+import type { McpDownloadTarget } from "./files.js";
 import { McpError, structuredContentJson } from "./protocol.js";
 
 export const DEFAULT_RESULT_TEXT_BYTES = 1024 * 1024;
@@ -62,7 +63,8 @@ export interface McpToolCallResult {
 	text: string;
 	textTruncated: boolean;
 	/** What the operator answered to each elicitation the server sent during this call, never the values. */
-	elicitations?: McpElicitationOutcome[];
+	elicitations?: McpElicitationOutcome[] /** The result's files-extension download targets, read only when PanCode declared `download`. */;
+	downloads?: { targets: McpDownloadTarget[]; dropped: string[] };
 }
 
 /** One elicitation a call went through: its mode and the action sent, and why PanCode answered for the operator. */

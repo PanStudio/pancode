@@ -220,9 +220,10 @@ export interface SafetyJudgeSubject {
 	 * What PanCode knows about a gateway MCP tool apart from its arguments: the
 	 * action class its trust record gives it and its registered description,
 	 * so the judge can tell what the call does (for example, that it writes a
-	 * file) when the name alone does not say.
+	 * file) when the name alone does not say. `sends` has one line per file
+	 * the call sends off the host (MCP files extension).
 	 */
-	mcpTool?: { actionClass: string; description: string };
+	mcpTool?: { actionClass: string; description: string; sends?: ReadonlyArray<string> };
 	source?: AdmissionAskSource;
 	approvalAuthority: ApprovalAuthority;
 	/** A plan-scale dispatch, whose body requires an authenticated operator approval. */
@@ -498,6 +499,9 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 					consequences = [...consequences, ...projectScriptConsequences(call), ...storeReplaceConsequences(call)];
 				} catch {
 					// As above: a feature, never a precondition.
+				}
+				if (subject.mcpTool?.sends !== undefined) {
+					consequences = [...consequences, ...subject.mcpTool.sends.map((line) => boundedLine(line, 400))];
 				}
 				if (subject.escapeScope !== undefined) {
 					consequences = [

@@ -797,7 +797,7 @@ export function installPermissionBridge(input: {
 										facts,
 										presentation,
 										planTitle ?? describeCallTarget(call.tool, call.args),
-										describeMainCallConsequences(call),
+										[...describeMainCallConsequences(call), ...(meta.consequence ?? [])],
 										mutationFacts(call.tool, call.args),
 										sessionApprovalTask(input.session, meta.turnId),
 									),

@@ -729,6 +729,11 @@ function mcpTestConfirmationRefusal(
 	verdict: Extract<RegistryVerdict, { kind: "blocked" }>,
 ): string {
 	const actionClass = verdict.denial?.actionClass ?? verdict.decision.classification.actionClass;
+	// A call that sends files is outward whatever the tool's class, so reclassing the tool cannot admit it.
+	const sends = verdict.decision.classification.reasons.find((reason) => reason.endsWith(" off the host"));
+	if (sends !== undefined) {
+		return `refused: ${tool} ${sends}, which needs operator confirmation, and pancode mcp test runs non-interactively; run it in an interactive session`;
+	}
 	if (actionClass !== "read") {
 		const classifyRemedy =
 			server.scope === "user"

@@ -32,11 +32,14 @@ import {
 	judgeMcpSurface,
 	listMcpSkills,
 	McpError,
+	type McpFileArgument,
 	mcpBuiltinLaunchArgs,
 	mcpBuiltinLaunchEnvironment,
 	mcpCatalogDigest,
 	mcpCatalogStale,
 	mcpClientSkills,
+	mcpFileModelSchema,
+	mcpFileSchema,
 	mcpOAuthGrantFor,
 	mcpOriginOf,
 	mcpSurface,
@@ -57,7 +60,9 @@ import { mcpRemoteTransportIdentity, mcpTransportIdentity } from "../../domains/
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
 import { readMaxBytes } from "../read.js";
+import { MCP_DOWNLOADS_DIR, toolOffloadDir } from "../result-shaping.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
+import { formatSize } from "../truncate.js";
 import {
 	boundedImageResult,
 	elicitationNote,
@@ -84,6 +89,14 @@ import type {
 	ServerState,
 } from "./mcp-capability-types.js";
 import { catalogChangeLine, catalogRemedy, withCatalogChange } from "./mcp-catalog-change.js";
+import { saveMcpDownloads, transferMcpUploads } from "./mcp-file-transfer.js";
+import {
+	type McpPreparedFiles,
+	mcpFileEffects,
+	mcpFileSources,
+	mcpOutboundFiles,
+	prepareMcpFiles,
+} from "./mcp-files.js";
 import { namedPathArguments, pathArgumentEffects, pathArgumentRefusal } from "./mcp-path-arguments.js";
 import {
 	declares,
@@ -507,6 +520,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		state.catalog = undefined;
 	};
 
+	const attestedNetwork = (serverId: string): boolean =>
+		options.admitted?.tools.some((entry) => entry.serverId === serverId && entry.network === true) === true;
+	/** The main session transfers files out of band; a worker only with the server's attested network grant. */
+	const fileTransfersPermitted = (serverId: string): boolean =>
+		options.admitted === undefined || attestedNetwork(serverId);
+
 	const makeSpec = (state: ServerState, tool: McpToolDescriptor, name: DynamicToolName): ToolSpec => {
 		const { declaration } = state;
 		const liveClass = actionClassFor(declaration, tool);
@@ -537,10 +556,20 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		// The server resolves a relative path against the cwd it was started in.
 		const pathCwd = launchPlacement(declaration).cwd;
 		const writesStore = isBuiltinStoreWriteTool(declaration.id, declaration.scope, tool.name);
+		// Experimental MCP files extension: the model names files by path, and PanCode sends their bytes.
+		const fileSchema = state.client?.filesOffered() != null ? mcpFileSchema(tool.inputSchema) : null;
+		const fileArguments: ReadonlyArray<McpFileArgument> | null =
+			fileSchema?.kind === "files" ? fileSchema.arguments : null;
+		const fileTargets = declaration.fileTargets ?? [];
 		const spec: ToolSpec = {
 			name,
-			description: describeTool(declaration, tool),
-			parameters: tool.inputSchema as TSchema,
+			description:
+				fileSchema?.kind === "unsupported"
+					? `${describeTool(declaration, tool)}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
+					: describeTool(declaration, tool),
+			parameters: (fileArguments !== null
+				? mcpFileModelSchema(tool.inputSchema, fileArguments)
+				: tool.inputSchema) as TSchema,
 			baseActionClass: trustClass,
 			...(readOnlyClass !== trustClass ? { readOnlyActionClass: readOnlyClass } : {}),
 			...(confirmationRuleId !== null ? { confirmationRuleId } : {}),
@@ -575,6 +604,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				// names a missing tag or blob, is refused before the server starts; the checks repeat before the call.
 				const references = pathArguments === undefined ? [] : namedStoreReferences(pathArguments, args);
 				if (typeof references === "string") return refusedReference(references);
+				const fileSources = fileArguments === null ? [] : mcpFileSources(fileArguments, args, options.cwd);
+				if (typeof fileSources === "string") return refusedReference(fileSources);
+				const fileReferences = fileSources.flatMap((source) => (source.kind === "store" ? [source.reference] : []));
 				const backend = storeBackend();
 				const storeWrite = writesStore ? builtinStoreWrite(tool.name, args, pathCwd) : null;
 				const storeRefusal = await storeReferencesRefusal({
@@ -584,6 +616,13 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					backend,
 				});
 				if (storeRefusal !== null) return refusedReference(storeRefusal);
+				const fileStoreRefusal = await storeReferencesRefusal({
+					references: fileReferences,
+					write: null,
+					access: options.store,
+					backend,
+				});
+				if (fileStoreRefusal !== null) return refusedReference(fileStoreRefusal);
 				await discover(state, invokeOptions?.signal);
 				const client = state.client;
 				if (client === null || client.state().status !== "ready") {
@@ -643,13 +682,74 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					if (typeof resolved === "string") return refusedReference(resolved);
 					prepared = resolved;
 				}
+				let files: McpPreparedFiles | null = null;
+				if (fileArguments !== null) {
+					const offered = callClient.filesOffered();
+					if (offered === null) {
+						if (prepared !== null) await removeTemporaries(prepared);
+						return withCatalogChange(state, {
+							kind: "error",
+							message: `${name}: mcp server ${declaration.id} no longer offers the files extension; describe the capability and retry under its current schema`,
+						});
+					}
+					const storeCopies = new Map<string, string>();
+					if (fileReferences.length > 0) {
+						const copies = await prepareStoreReferences({
+							references: fileReferences,
+							args: {},
+							cwd: options.cwd,
+							access: options.store,
+							backend,
+							...(invokeOptions?.signal ? { signal: invokeOptions.signal } : {}),
+						});
+						if (typeof copies === "string") {
+							if (prepared !== null) await removeTemporaries(prepared);
+							return refusedReference(copies);
+						}
+						for (const reference of fileReferences) {
+							const copy = copies.args[reference.argument];
+							if (typeof copy === "string") storeCopies.set(reference.argument, copy);
+						}
+					}
+					const ready = await prepareMcpFiles({
+						fileArguments,
+						args: prepared?.args ?? args,
+						sources: fileSources,
+						storeCopies,
+						policy: {
+							upload: offered.upload,
+							maxInlineBytes: offered.maxInlineBytes,
+							transfers: fileTransfersPermitted(declaration.id),
+						},
+						invokeOptions,
+					});
+					if (typeof ready === "string") {
+						if (prepared !== null) await removeTemporaries(prepared);
+						return refusedReference(ready);
+					}
+					files = ready;
+				}
 				const progress = invokeOptions?.onUpdate === undefined ? null : mcpProgressReporter(name, invokeOptions.onUpdate);
 				state.inflight = (state.inflight ?? 0) + 1;
 				state.lastUsed = performance.now();
 				let headerMismatchResult: ToolResult | null = null;
 				try {
-					const result = await callClient.callTool(tool.name, prepared?.args ?? args, {
+					const held = files?.held;
+					const result = await callClient.callTool(tool.name, files?.args ?? prepared?.args ?? args, {
 						...(invokeOptions?.signal ? { signal: invokeOptions.signal } : {}),
+						...(files !== null && held !== undefined
+							? {
+									files: {
+										pending: files.pending,
+										upload: (request, connection, signal) =>
+											transferMcpUploads(request, held, {
+												context: { ...connection, fileTargets },
+												admitTarget: invokeOptions?.flowAdmitsFileTarget,
+												signal,
+											}),
+									},
+								}
+							: {}),
 						...(timeoutMs !== undefined ? { timeoutMs } : {}),
 						...(progress !== null ? { onProgress: progress.onProgress } : {}),
 						onHeaderMismatchRelist(listing) {
@@ -743,6 +843,30 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 						output = output.length > 0 ? `${output}\n${stored}` : stored;
 					}
+					if (result.downloads !== undefined) {
+						const { saved, dropped } = await saveMcpDownloads(
+							result.downloads.targets,
+							path.join(toolOffloadDir(invokeOptions?.sessionId), MCP_DOWNLOADS_DIR),
+							{
+								context: { ...callClient.fileConnection(), fileTargets },
+								admitTarget: invokeOptions?.flowAdmitsFileTarget,
+								signal: invokeOptions?.signal,
+							},
+						);
+						const notDownloaded = [...result.downloads.dropped, ...dropped];
+						details.downloads = saved;
+						if (notDownloaded.length > 0) details.downloadsDropped = notDownloaded;
+						const lines = neutralizeFraming(
+							[
+								...saved.map(
+									(file) =>
+										`downloaded ${file.name} (${file.mimeType}, ${formatSize(file.size)}) to ${file.path}; its content is the server's, untrusted`,
+								),
+								...notDownloaded.map((reason) => `not downloaded: ${reason}`),
+							].join("\n"),
+						);
+						if (lines.length > 0) output = output.length > 0 ? `${output}\n${lines}` : lines;
+					}
 					if (images.length > 0 && acceptsImageInput({ vision: invokeOptions?.supportsImages }))
 						return await boundedImageResult(name, output, details, images, invokeOptions);
 					return {
@@ -784,14 +908,25 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		// command does; read runs everywhere and unknown asks everywhere. The
 		// marker keeps the main-session sandbox from vouching for a call that
 		// runs on the server's own process.
-		if (pathArguments !== undefined || writesStore) {
+		if (pathArguments !== undefined || writesStore || fileArguments !== null) {
 			spec.hostEffectCalls = (args) => {
 				const named = pathArguments === undefined ? [] : namedPathArguments(pathArguments, args, pathCwd);
 				const references = pathArguments === undefined ? [] : namedStoreReferences(pathArguments, args);
+				const fileSources = fileArguments === null ? [] : mcpFileSources(fileArguments, args, options.cwd);
 				// A malformed argument is refused by the body before the server sees it.
-				if (typeof named === "string" || typeof references === "string") return [];
+				if (typeof named === "string" || typeof references === "string" || typeof fileSources === "string") return [];
 				const write = writesStore ? builtinStoreWrite(tool.name, args, pathCwd) : null;
-				return [...pathArgumentEffects(named), ...storeReferenceEffects(references, write, options.cwd, options.store)];
+				return [
+					...pathArgumentEffects(named),
+					...storeReferenceEffects(references, write, options.cwd, options.store),
+					...mcpFileEffects(fileSources, options.cwd, options.store),
+				];
+			};
+		}
+		if (fileArguments !== null) {
+			spec.outboundFiles = (args) => {
+				const sources = mcpFileSources(fileArguments, args, options.cwd);
+				return typeof sources === "string" ? [] : mcpOutboundFiles(sources, declaration.id, options.cwd, options.store);
 			};
 		}
 		if (trustClass === "execute" && declaration.url === undefined) {
@@ -915,8 +1050,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		const { declaration } = state;
 		const placement = launchPlacement(declaration);
 		// Only the attestation grants network; a worker never reads it from the declaration it re-resolves.
-		const sandboxNetwork =
-			options.admitted?.tools.some((entry) => entry.serverId === declaration.id && entry.network === true) === true;
+		const sandboxNetwork = attestedNetwork(declaration.id);
 		// PERF W3: reserve ownership before the lazy import, so close can fence acquisition.
 		const loaded = (async () => {
 			const { createMcpConnection } = await import("../../domains/gateway/mcp/connection-lifecycle.js");
@@ -966,6 +1100,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
+						...(fileTransfersPermitted(declaration.id) ? { fileTransfers: true } : {}),
 						...(elicitationHost !== undefined
 							? {
 									elicitation: (request: McpElicitationRequest, context: McpElicitationContext) =>
@@ -1637,9 +1772,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				? `Remote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)}`
 				: `Local stdio MCP server ${declaration.id}`;
 			const confinement = remote ? "it runs off this machine, and what a call sends leaves it" : launchConfinement();
+			const sendsFiles =
+				listed !== undefined &&
+				(owner.client === null || owner.client.filesOffered() !== null) &&
+				mcpFileSchema(listed.inputSchema).kind === "files"
+					? " A call that names a file sends it to the server and storage it names, so that call is an outward action run as at least execute: the safety judge reviews it against the operator's messages, yolo runs it only when those messages name it, and read-only denies it."
+					: "";
 			return `${serverLabel} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${serverClass}${
 				actionClass === serverClass ? "" : `; this tool runs as ${actionClass}`
-			}: ${effect}${confirmation}; ${confinement}.${unapproved}`;
+			}: ${effect}${confirmation}; ${confinement}.${sendsFiles}${unapproved}`;
 		},
 		ownerIdOf(name) {
 			return ownerOf(name)?.declaration.id ?? null;

@@ -8,7 +8,7 @@ import type { ActionClass, ClassifierCall } from "../domains/safety/action-class
 import type { ImageContent } from "../engine/types.js";
 import type { DispatchPlanView } from "./dispatch-plan.js";
 import type { ToolPresentationPolicy } from "./presentation.js";
-import type { HostEffectCall, ToolInvokeOptions } from "./registry-contract.js";
+import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "./registry-contract.js";
 import type { ToolResultDisposition } from "./result-disposition.js";
 import type { ToolPlacement } from "./surface.js";
 
@@ -221,6 +221,13 @@ export interface ToolSpec {
 	 * with a hard block reported first (F6).
 	 */
 	hostEffectCalls?(args: Record<string, unknown>): ReadonlyArray<HostEffectCall>;
+	/**
+	 * The files this call sends off the host, read from prepared admission
+	 * arguments: an MCP tool's file arguments. A call that sends any is
+	 * admitted as outward and never as read, the approval shows each
+	 * consequence, and each source's information-flow labels go with the call.
+	 */
+	outboundFiles?(args: Record<string, unknown>): ReadonlyArray<OutboundFile>;
 	/**
 	 * Where this call lands, read from prepared admission arguments, for the
 	 * awaited hook phase. Path-taking tools that resolve against the process

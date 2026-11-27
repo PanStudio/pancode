@@ -18,6 +18,7 @@ import { performance } from "node:perf_hooks";
 import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
 import { readPancodeVersion } from "../../../core/package-root.js";
 import { neutralizeFraming } from "../../../core/reminder-framing.js";
+import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
 import { clampTimerDelayMs, sleep } from "../../../core/timers.js";
 import { isRecord } from "../../../core/type-guards.js";
 import {
@@ -42,6 +43,18 @@ import {
 	parseEventOccurrence,
 	parseEventPollResult,
 } from "./events.js";
+import {
+	isMcpUploadRequired,
+	MCP_FILES_EXTENSION,
+	type McpFileConnection,
+	type McpFilesSettings,
+	type McpUploadRequest,
+	mcpFilesDeclaration,
+	mcpFilesOffered,
+	mcpTargetSecrets,
+	parseMcpDownloads,
+	parseMcpUploadRequest,
+} from "./files.js";
 import { mcpParamHeaders } from "./http-headers.js";
 import { createMcpHttpTransport, type McpHttpServerSpec } from "./http-transport.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
@@ -199,6 +212,12 @@ export interface McpClientOptions {
 	elicitation?: McpElicitationHandler;
 	/** The fetch a remote server is reached with; tests replace it. */
 	fetch?: typeof fetch;
+	/**
+	 * PanCode may move file bytes out of band for this server's calls, so it
+	 * declares `upload` and `download` of the files extension; otherwise it
+	 * declares the extension inline only.
+	 */
+	fileTransfers?: boolean;
 }
 
 /** The options that belong to the protocol, whatever transport carries it. */
@@ -212,6 +231,7 @@ export type McpProtocolClientOptions = Pick<
 	| "onFailure"
 	| "signal"
 	| "elicitation"
+	| "fileTransfers"
 >;
 
 export type McpClientStatus = "idle" | "starting" | "ready" | "closed" | "failed";
@@ -264,6 +284,23 @@ export interface McpCallToolOptions {
 	 * second call (used by the gateway to preserve surface-approval boundaries).
 	 */
 	onHeaderMismatchRelist?: (listing: McpToolListing) => string | null;
+	/** The files this call sends under the files extension. */
+	files?: McpCallFiles;
+}
+
+/** What a call that sends files gives the client to answer `upload_required`. */
+export interface McpCallFiles {
+	/** The ids of the non-empty files the call sent without `data`. */
+	pending: ReadonlySet<string>;
+	/**
+	 * Send each file to its target. Resolves with null once every target
+	 * answered 2xx, or with why the transfer stopped; it never rejects.
+	 */
+	upload(
+		request: McpUploadRequest,
+		connection: McpFileConnection,
+		signal: AbortSignal | undefined,
+	): Promise<string | null>;
 }
 
 /** What one `subscriptions/listen` stream asks for (MCP 2026-07-28 basic/patterns/subscriptions). */
@@ -389,6 +426,10 @@ export interface McpClient {
 	 * before discovery and when its capabilities do not enable the extension.
 	 */
 	skills(): McpSkillsTransport | null;
+	/** The server's files extension settings, or null when it is legacy or does not advertise the extension. */
+	filesOffered(): McpFilesSettings | null;
+	/** The connection a file target of this server resolves against. */
+	fileConnection(): McpFileConnection;
 }
 
 export type McpListedPrimitive = "prompts" | "resources";
@@ -606,6 +647,25 @@ function serverErrorFrom(method: string, error: unknown, fallback: string): McpE
 	return new McpError("server", `${method}: ${fallback}`);
 }
 
+/**
+ * Why the retry that answers an upload request, or a later retry of its
+ * call, has an unknown outcome (files, Repeated Retries), or null when the
+ * server's own error answer settles it.
+ */
+function unknownOutcome(error: unknown): string | null {
+	if (!(error instanceof McpError)) return "failed before its answer arrived";
+	switch (error.code) {
+		case "server":
+			return isRecord(error.data) && error.data.code === JSON_RPC_INVALID_PARAMS ? "was refused with -32602" : null;
+		case "timeout":
+			return "got no answer in time";
+		case "aborted":
+			return "was cancelled before its answer arrived";
+		default:
+			return "lost its answer";
+	}
+}
+
 /** The client for a declaration: Streamable HTTP when it names a url, stdio otherwise. */
 export function createMcpClient(spec: McpServerSpec, options: McpClientOptions): McpClient {
 	return "url" in spec ? createMcpHttpClient(spec, options) : createMcpStdioClient(spec, options);
@@ -693,6 +753,7 @@ export function createMcpProtocolClient(
 	let toolsChangedFlag = false;
 	let eventsChangedFlag = false;
 	const elicitationHandler = options.elicitation;
+	const fileTransfers = options.fileTransfers === true;
 	/** Aborted when the client closes or fails, which ends every prompt still open for this server. */
 	const lifetime = new AbortController();
 	const activeCalls = new Set<ActiveCall>();
@@ -1025,6 +1086,10 @@ export function createMcpProtocolClient(
 					base.notifications.eventsListChanged === true))
 		) {
 			extensions[MCP_EVENTS_EXTENSION] = {};
+		}
+		// The files extension rides on the listing and on every request of a logical call (files, Capabilities).
+		if (filesOffered() !== null && (method === "tools/list" || drivesTasks)) {
+			extensions[MCP_FILES_EXTENSION] = mcpFilesDeclaration(fileTransfers);
 		}
 		// Elicitation is declared only on requests that actually handle input_required (basic/patterns/mrtr).
 		const asksInput =
@@ -1947,6 +2012,12 @@ export function createMcpProtocolClient(
 	const finishToolResult = async (name: string, value: unknown): Promise<McpToolCallResult> => {
 		const parsed = parseToolCallResult(value, maxResultTextBytes);
 		if (parsed instanceof McpError) throw parsed;
+		if (fileTransfers && filesOffered() !== null && isRecord(value)) {
+			const downloads = parseMcpDownloads(value._meta);
+			for (const target of downloads.targets)
+				for (const secret of mcpTargetSecrets(target)) rememberResolvedSecret(secret);
+			if (downloads.targets.length > 0 || downloads.dropped.length > 0) parsed.downloads = downloads;
+		}
 		const schema = outputSchemas.get(name);
 		if (parsed.isError || schema === undefined || parsed.structuredContent === undefined) return parsed;
 		const mismatch = await outputSchemaMismatch(schema, parsed.structuredContent, parsed.structuredContentJson);
@@ -1976,6 +2047,12 @@ export function createMcpProtocolClient(
 		let params: Record<string, unknown> = { name, arguments: args };
 		let relisted = false;
 		let urlRetried = false;
+		/** Set once the retry that answers an upload request is due; from then on a lost answer is an unknown outcome. */
+		let uploaded = false;
+		const didNotRun = (reason: string): McpToolCallResult => {
+			const text = `mcp server ${id}, tool ${name}: the tool did not run: ${reason}.`;
+			return { content: [{ type: "text", text }], isError: true, text, textTruncated: false };
+		};
 		activeCalls.add(call);
 		try {
 			for (let round = 1; ; round += 1) {
@@ -1993,6 +2070,11 @@ export function createMcpProtocolClient(
 					try {
 						result = await request("tools/call", sent, budget, signal);
 					} catch (error) {
+						const unknown = uploaded ? unknownOutcome(error) : null;
+						if (unknown !== null) {
+							const text = `mcp server ${id}, tool ${name}: the outcome is unknown: the files were uploaded and the retry ${unknown}. The tool may have run, in whole or in part; PanCode does not send it again.`;
+							return finished({ content: [{ type: "text", text }], isError: true, text, textTruncated: false });
+						}
 						// A HeaderMismatch means the listing PanCode mirrored from is stale:
 						// list again and send the call once more (streamable-http, Server Behavior).
 						const answered = error instanceof McpError && error.code === "server" && isRecord(error.data);
@@ -2028,6 +2110,31 @@ export function createMcpProtocolClient(
 							return finished(await awaitTask(name, result, startedAt, timeoutMs, signal, call, promptSignal));
 						if (result.resultType === "input_required") {
 							params = await answerInputRequired("tools/call", params, result, round, promptSignal, call);
+							continue;
+						}
+						if (isMcpUploadRequired(result)) {
+							// files, Transfer: one upload request per logical call, checked whole before any byte moves.
+							if (uploaded)
+								return finished(
+									didNotRun("the server asked for the files a second time, after PanCode uploaded them to the storage it named"),
+								);
+							const files = callOptions.files;
+							if (files === undefined || files.pending.size === 0 || filesOffered()?.upload !== true) {
+								return finished(didNotRun("the server asked for an upload this call cannot answer"));
+							}
+							const parsedRequest = parseMcpUploadRequest(result, files.pending);
+							if (typeof parsedRequest === "string") {
+								return finished(didNotRun(`PanCode rejected the server's upload request: ${serverText(parsedRequest)}`));
+							}
+							rememberResolvedSecret(parsedRequest.requestState);
+							for (const target of parsedRequest.uploads)
+								for (const secret of mcpTargetSecrets(target)) rememberResolvedSecret(secret);
+							const transferStarted = performance.now();
+							const stopped = await files.upload(parsedRequest, fileConnection(), signal);
+							call.pausedMs += performance.now() - transferStarted;
+							if (stopped !== null) return finished(didNotRun(stopped));
+							uploaded = true;
+							params = { name, arguments: params.arguments, requestState: parsedRequest.requestState };
 							continue;
 						}
 						throw new McpError(
@@ -2246,6 +2353,20 @@ export function createMcpProtocolClient(
 				controller.abort();
 			},
 		};
+	};
+
+	const filesOffered = (): McpFilesSettings | null =>
+		era === "modern" && info !== null ? mcpFilesOffered(info.capabilities) : null;
+
+	const fileConnection = (): McpFileConnection => {
+		const http = transport.http;
+		return http === undefined
+			? { address: null, credentialOrigin: null, authorization: async () => null }
+			: {
+					address: http.address(),
+					credentialOrigin: http.credentialOrigin(),
+					authorization: (signal) => http.authorization(signal),
+				};
 	};
 
 	const eventsOffered = (): { listChanged: boolean } | null =>
@@ -2473,6 +2594,8 @@ export function createMcpProtocolClient(
 		subscribe,
 		stderrTail: () => transport.stderrTail(),
 		eventsOffered,
+		filesOffered,
+		fileConnection,
 		listEvents,
 		pollEvents,
 		streamEvents,

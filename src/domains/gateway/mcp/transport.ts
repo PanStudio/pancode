@@ -73,6 +73,12 @@ export interface McpHttpBinding {
 	settleEra(era: "modern" | "legacy", protocolVersion: string): void;
 	/** The cached era proved wrong, so the next connection to the origin probes again. */
 	forgetEra(): void;
+	/** The MCP address after the same-origin redirects the latest request followed. */
+	address(): URL;
+	/** The origin of the canonical server URI: the OAuth grant's resource when signed in, else the MCP address. */
+	credentialOrigin(): string;
+	/** The Authorization value the next MCP request would carry, renewed first when stale; null when it carries none. */
+	authorization(signal: AbortSignal | undefined): Promise<string | null>;
 }
 
 export interface McpTransport {

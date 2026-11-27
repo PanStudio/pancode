@@ -308,6 +308,12 @@ export interface ToolInvokeOptions {
 	 * Present only while the session carries restricted content.
 	 */
 	flowAdmitsUrl?: (url: string) => string | null;
+	/**
+	 * Registry-owned information-flow check for each storage URL an MCP call
+	 * sends its files to, judged with the files' own labels. Returns the block
+	 * reason or null. Present only when the session has an information-flow ledger.
+	 */
+	flowAdmitsFileTarget?: (url: string) => string | null;
 	/** Trusted submitting host identity for nested dispatch; never model arguments. */
 	hostRun?: import("../domains/dispatch/contract.js").DispatchPreparationOptions["hostRun"];
 	/**
@@ -632,6 +638,8 @@ export interface PermissionRequiredMeta {
 	 * A surface shows its label beside the one-call approval; picking it grants the scope before the call re-admits.
 	 */
 	escapeScope?: EscapeScope;
+	/** What the call does beyond its own arguments that the operator should see, such as the files it sends off the host. */
+	consequence?: string[];
 }
 
 /** The dispatched task an external read-root approval serves. */
@@ -646,6 +654,14 @@ export interface HostEffectCall {
 	/** Operator-facing name for the effect, used in the refusal text. */
 	label: string;
 	call: ClassifierCall;
+}
+
+/** One file a call sends off the host. */
+export interface OutboundFile {
+	/** Operator-facing line for the approval, such as `sends ./a.pdf (2.1 MB) to mcp server docs and storage it names`. */
+	consequence: string;
+	/** The read that yields the file's bytes, whose information-flow labels the call carries out. */
+	source: ClassifierCall;
 }
 
 export interface ToolRegistry {

@@ -40,6 +40,7 @@ import {
 	type McpBuiltinPolicy,
 	type McpBuiltinSource,
 } from "./builtin.js";
+import { isLoopbackHost } from "./files.js";
 import { mcpCredentialKeyRefusal, mcpDeclaredHeaderRefusal, mcpRemoteEndpoint } from "./remote.js";
 
 export const MCP_CONFIG_VERSION = 1;
@@ -63,6 +64,7 @@ export const MCP_CONFIG_CAPS = Object.freeze({
 	toolActionClasses: 128,
 	toolPathArguments: 128,
 	pathArgumentsPerTool: 16,
+	fileTargets: 32,
 });
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
@@ -82,6 +84,7 @@ const SERVER_FIELDS = new Set([
 	"toolActionClasses",
 	"toolPathArguments",
 	"network",
+	"fileTargets",
 ]);
 /** The Agent Plugins `mcp.json` file at a plugin root. */
 export const MCP_PLUGIN_CONFIG_FILENAME = "mcp.json";
@@ -98,6 +101,7 @@ const PLUGIN_SERVER_FIELDS = new Set([
 	"toolActionClasses",
 	"toolPathArguments",
 	"network",
+	"fileTargets",
 ]);
 const SHELL_EXECUTABLES = new Set([
 	"bash",
@@ -196,6 +200,13 @@ interface McpServerDeclarationBase {
 	 * Outside the digest: the grant changes the sandbox, not what runs.
 	 */
 	network?: true;
+	/**
+	 * Exact origins this server's file targets (experimental MCP files
+	 * extension) may name although they are private, http on loopback, or on
+	 * another port: an operator allowlist for private storage and testing,
+	 * read only from user config. Outside the digest.
+	 */
+	fileTargets?: string[];
 	/** Set for a plugin-scope declaration: the plugin whose `mcp.json` declares it. */
 	plugin?: McpServerPlugin;
 	/** Set for a project-scope declaration whose command or any file argument is a file in, or linked from, the project; never empty. */
@@ -277,6 +288,38 @@ type DeclaredServerFields = (
 	toolActionClasses: Record<string, "read" | "execute" | "destructive" | "unknown">;
 	toolPathArguments: McpToolPathArguments;
 };
+
+/** A declaration cannot widen where its own server's file targets may point; only the operator's user config can. */
+function fileTargetsIgnoredMessage(location: string): string {
+	return `${location} is ignored: only the operator's user mcp.yaml lists a server's file targets`;
+}
+
+/** Each entry is an exact http(s) origin; http only on loopback. */
+function validateFileTargets(value: unknown, location: string): string[] | Error {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) return new Error(`${location} must be a list of origins`);
+	if (value.length > MCP_CONFIG_CAPS.fileTargets) {
+		return new Error(`${location} exceeds the ${MCP_CONFIG_CAPS.fileTargets}-entry cap`);
+	}
+	const origins: string[] = [];
+	for (const [index, entry] of value.entries()) {
+		const at = `${location}[${index}]`;
+		let url: URL | null = null;
+		try {
+			url = typeof entry === "string" ? new URL(entry) : null;
+		} catch {
+			url = null;
+		}
+		if (url === null || (url.protocol !== "https:" && url.protocol !== "http:") || url.origin !== entry) {
+			return new Error(`${at} must be an exact origin such as https://storage.example.com or http://127.0.0.1:9000`);
+		}
+		if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+			return new Error(`${at} is http, which only a loopback host may use`);
+		}
+		origins.push(url.origin);
+	}
+	return origins;
+}
 
 /** A declaration cannot grant its own server network; only the operator's trust record can. */
 function networkIgnoredMessage(location: string, id: string): string {
@@ -784,7 +827,16 @@ function validateServer(
 	value: unknown,
 	location: string,
 	scope: McpServerScope,
-): { fields: DeclaredServerFields; declaredCwd: string | null; network: boolean; networkIgnored: boolean } | Error {
+):
+	| {
+			fields: DeclaredServerFields;
+			declaredCwd: string | null;
+			network: boolean;
+			networkIgnored: boolean;
+			fileTargets: string[];
+			fileTargetsIgnored: boolean;
+	  }
+	| Error {
 	if (!isRecord(value)) return new Error(`${location} must be an object`);
 	const unknown = unknownFields(value, SERVER_FIELDS);
 	if (unknown.length > 0) return new Error(`${location} has unknown field(s): ${unknown.join(", ")}`);
@@ -865,6 +917,8 @@ function validateServer(
 	if (value.network !== undefined && typeof value.network !== "boolean") {
 		return new Error(`${location}.network must be true or false`);
 	}
+	const fileTargets = validateFileTargets(value.fileTargets, `${location}.fileTargets`);
+	if (fileTargets instanceof Error) return fileTargets;
 	const shared = { id, timeoutMs, actionClass, toolActionClasses, toolPathArguments };
 	return {
 		fields:
@@ -874,6 +928,8 @@ function validateServer(
 		declaredCwd,
 		network: scope === "user" && value.network === true,
 		networkIgnored: scope !== "user" && value.network !== undefined,
+		fileTargets: scope === "user" ? fileTargets : [],
+		fileTargetsIgnored: scope !== "user" && value.fileTargets !== undefined,
 	};
 }
 
@@ -934,6 +990,14 @@ export function parseMcpConfigText(text: string, input: McpConfigTextInput): Mcp
 				severity: "warning",
 			});
 		}
+		if (validated.fileTargetsIgnored) {
+			notes.push({
+				scope: input.scope,
+				path: input.path,
+				message: fileTargetsIgnoredMessage(`${location}.fileTargets`),
+				severity: "warning",
+			});
+		}
 		const duplicateIndex = ids.get(fields.id);
 		if (duplicateIndex !== undefined) {
 			return diagnostic(`${location}.id duplicates '${fields.id}' from servers[${duplicateIndex}].id`);
@@ -953,6 +1017,7 @@ export function parseMcpConfigText(text: string, input: McpConfigTextInput): Mcp
 			toolActionClasses: fields.toolActionClasses,
 			...(Object.keys(fields.toolPathArguments).length > 0 ? { toolPathArguments: fields.toolPathArguments } : {}),
 			...(validated.network ? { network: true as const } : {}),
+			...(validated.fileTargets.length > 0 ? { fileTargets: validated.fileTargets } : {}),
 		};
 		if ("url" in fields) {
 			servers.push({
@@ -1110,6 +1175,9 @@ export function loadPluginMcpFile(plugin: {
 		const { fields, declaredCwd } = validated;
 		if (validated.networkIgnored) {
 			diagnostics.push({ ...diagnostic(networkIgnoredMessage(`${location}.network`, fields.id)), severity: "warning" });
+		}
+		if (validated.fileTargetsIgnored) {
+			diagnostics.push({ ...diagnostic(fileTargetsIgnoredMessage(`${location}.fileTargets`)), severity: "warning" });
 		}
 		const resolved = resolveCwd(declaredCwd, "plugin", plugin.rootPath, `${location}.cwd`);
 		if (resolved instanceof Error) return { servers: [], diagnostics: [diagnostic(resolved.message)] };

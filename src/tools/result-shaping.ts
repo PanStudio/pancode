@@ -163,26 +163,38 @@ export async function sweepExpiredToolOffloads(
 	const tolerate = (error: unknown): void => {
 		if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") skipped += 1;
 	};
+	// One level of nesting: the session directory, and the MCP downloads directory inside it.
+	const sweepDir = async (dir: string, nested: boolean): Promise<boolean> => {
+		for (const entry of await readdir(dir, { withFileTypes: true })) {
+			await unrefTurn();
+			if (stopped()) return false;
+			const path = join(dir, entry.name);
+			if (!nested && entry.isDirectory() && entry.name === MCP_DOWNLOADS_DIR) {
+				if (!(await sweepDir(path, true))) return false;
+				continue;
+			}
+			if (!entry.isFile()) continue;
+			try {
+				if ((await stat(path)).mtimeMs >= cutoff) continue;
+				await rm(path, { force: true });
+				removed += 1;
+			} catch (error) {
+				tolerate(error);
+			}
+		}
+		try {
+			if ((await readdir(dir)).length === 0) await rmdir(dir);
+		} catch (error) {
+			tolerate(error);
+		}
+		return true;
+	};
 	try {
 		for (const session of await readdir(root, { withFileTypes: true })) {
 			if (stopped()) break;
 			if (!session.isDirectory()) continue;
-			const sessionDir = join(root, session.name);
-			for (const entry of await readdir(sessionDir, { withFileTypes: true })) {
-				await unrefTurn();
-				if (stopped()) return { removed, skipped };
-				if (!entry.isFile()) continue;
-				const path = join(sessionDir, entry.name);
-				try {
-					if ((await stat(path)).mtimeMs >= cutoff) continue;
-					await rm(path, { force: true });
-					removed += 1;
-				} catch (error) {
-					tolerate(error);
-				}
-			}
 			try {
-				if ((await readdir(sessionDir)).length === 0) await rmdir(sessionDir);
+				if (!(await sweepDir(join(root, session.name), false))) break;
 			} catch (error) {
 				tolerate(error);
 			}
@@ -215,6 +227,14 @@ export function startToolOffloadSweep(): () => void {
  * same bytes every time, which is what keeps the prompt-cache prefix stable
  * across runs. Pass `digest` when the caller already hashed the text.
  */
+/** The session's scratch directory, where offloads and MCP downloads live under the retention sweep. */
+export function toolOffloadDir(sessionId: string | undefined): string {
+	return join(pancodeStateDir(), "scratch", safePathSegment(sessionId ?? "no-session"));
+}
+
+/** Files an MCP tool result offered for download (experimental files extension), inside {@link toolOffloadDir}. */
+export const MCP_DOWNLOADS_DIR = "mcp-files";
+
 export function writeToolOffload(
 	text: string,
 	context: ToolResultShapeContext | undefined,
@@ -223,8 +243,7 @@ export function writeToolOffload(
 ): string | null {
 	try {
 		const bytes = byteLength(text);
-		const sessionId = safePathSegment(context?.sessionId ?? "no-session");
-		const dir = join(pancodeStateDir(), "scratch", sessionId);
+		const dir = toolOffloadDir(context?.sessionId);
 		const path = join(dir, `${digest}.txt`);
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		writeFileSync(path, offloadBody(text, bytes, maxBytes), { encoding: "utf8", mode: 0o600 });
@@ -257,8 +276,9 @@ export function offloadPointer(offloadPath: string): string {
  * exactly when that pool is exhausted, which is when the stub appears.
  */
 export function isSessionOffloadPath(filePath: string, sessionId: string | undefined): boolean {
-	const dir = join(pancodeStateDir(), "scratch", safePathSegment(sessionId ?? "no-session"));
+	const dir = toolOffloadDir(sessionId);
 	const rel = relative(dir, resolve(filePath));
+	if (!relativePathEscapes(relative(join(dir, MCP_DOWNLOADS_DIR), resolve(filePath)))) return false;
 	return rel.length > 0 && !relativePathEscapes(rel);
 }
 

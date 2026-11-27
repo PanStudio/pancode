@@ -50,6 +50,7 @@ import type { GitHookDriftReport } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
 import {
 	EMPTY_INFORMATION_FLOW_POLICY,
+	flowEndpointIdentity,
 	flowTransferRefusal,
 	isFlowRestrictionSet,
 	mergeFlowRestrictions,
@@ -83,6 +84,7 @@ import {
 	applyRegisteredToolClassification,
 	disposeAdmissionArgs,
 	hookLanding,
+	outboundFilesOf,
 	prepareAdmissionCall,
 	prepareToolArgs,
 	resolveToolResultDisposition,
@@ -399,8 +401,34 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		if (refusal !== null) return refusal;
 		return flowTransferRefusal(
 			deps.safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
-			deps.flow?.carried() ?? null,
+			carriedWithFiles(spec, call),
 			destination,
+		);
+	};
+
+	/** What the context carries, plus the labels of each file the call sends off the host. */
+	const carriedWithFiles = (spec: ToolSpec, call: ClassifierCall): FlowRestrictionSet | null => {
+		const files = outboundFilesOf(spec, call.args);
+		const carried = deps.flow?.carried() ?? null;
+		if (files.length === 0) return carried;
+		return mergeFlowRestrictions(
+			carried,
+			...files.map((file) => deps.safety.policy?.flowRestrictionsFor?.(file.source) ?? null),
+		);
+	};
+
+	/**
+	 * Block reason when a storage URL an MCP call's files go to is not a
+	 * destination the carried labels and the files' own labels admit, or null.
+	 */
+	const fileTargetFlowViolation = (spec: ToolSpec, call: ClassifierCall, url: string): string | null => {
+		const refusal = deps.flow?.refusal() ?? null;
+		if (refusal !== null) return refusal;
+		const endpoint = flowEndpointIdentity(url);
+		return flowTransferRefusal(
+			deps.safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
+			carriedWithFiles(spec, call),
+			{ kind: "tool", tool: spec.name, endpoint, ...(endpoint === null ? { endpointUnresolved: true } : {}) },
 		);
 	};
 
@@ -679,6 +707,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 					writeTargetViolation: _callerWriteCheck,
 					gitContext: _callerGitContext,
 					flowAdmitsUrl: _callerFlowAdmitsUrl,
+					flowAdmitsFileTarget: _callerFlowAdmitsFileTarget,
 					hookLanding: _callerHookLanding,
 					operatorYolo: _callerOperatorYolo,
 					shellSandbox: _callerShellSandbox,
@@ -710,7 +739,10 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 						: {}),
 					...(landing !== undefined && landing !== null ? { hookLanding: landing } : {}),
 					...(deps.flow !== undefined && !trueYolo()
-						? { flowAdmitsUrl: (url: string) => outboundFlowViolation(spec, { tool: spec.name, args: { url } }) }
+						? {
+								flowAdmitsUrl: (url: string) => outboundFlowViolation(spec, { tool: spec.name, args: { url } }),
+								flowAdmitsFileTarget: (url: string) => fileTargetFlowViolation(spec, call, url),
+							}
 						: {}),
 				};
 				// Fail closed: a job command admitted only contained never runs without its sandbox (XR-12).
@@ -1162,6 +1194,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 					decision,
 					spec,
 					deps.readOnly === true || options?.turnConstraints?.readOnly === true,
+					call.args ?? {},
 				),
 			...(deps.git !== undefined ? { git: deps.git } : {}),
 			autonomyExtra: {
@@ -1785,12 +1818,19 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		let pending: SafetyJudgeOutcome | Promise<SafetyJudgeOutcome>;
 		try {
 			const mcpSpec = isMcpToolName(call.tool) ? tools.get(call.tool as ToolName) : undefined;
+			const sends = outboundFilesOf(mcpSpec, call.args).map((file) => file.consequence);
 			pending = judge.review({
 				tool: call.tool,
 				args: call.args,
 				decision: outcome.decision,
 				...(mcpSpec !== undefined
-					? { mcpTool: { actionClass: mcpSpec.baseActionClass, description: mcpSpec.description } }
+					? {
+							mcpTool: {
+								actionClass: mcpSpec.baseActionClass,
+								description: mcpSpec.description,
+								...(sends.length > 0 ? { sends } : {}),
+							},
+						}
 					: {}),
 				...(outcome.source !== undefined ? { source: outcome.source } : {}),
 				approvalAuthority: outcome.approvalAuthority,
@@ -1991,11 +2031,15 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			const loopReason = rejected();
 			return { kind: "blocked", reason: loopReason ?? abortReason, decision: outcome.decision };
 		}
+		const consequence = outboundFilesOf(tools.get(admissionCall.tool as ToolName), admissionCall.args).map(
+			(file) => file.consequence,
+		);
 		return new Promise<RegistryVerdict>((resolve) => {
 			const meta: PermissionRequiredMeta = {
 				requestId: nextApprovalRequestId(),
 				axis: outcome.axis,
 				approvalAuthority: outcome.approvalAuthority,
+				...(consequence.length > 0 ? { consequence } : {}),
 				...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
 				...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
 				...(options?.toolCallId !== undefined && options.toolCallId.length > 0 ? { toolCallId: options.toolCallId } : {}),

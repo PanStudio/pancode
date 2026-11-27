@@ -4,6 +4,7 @@ import { isHarnessExtensionToolName } from "../core/tool-names.js";
 import type { ToolCallLanding } from "../domains/middleware/types.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
+import type { OutboundFile } from "./registry-contract.js";
 import type { ToolResultDisposition } from "./result-disposition.js";
 import { DEFAULT_TOOL_RESULT_MAX_BYTES } from "./result-shaping.js";
 import { pathToolLanding } from "./tool-landing.js";
@@ -85,18 +86,50 @@ export function prepareAdmissionCall(spec: ToolSpec | undefined, call: Classifie
 	}
 }
 
+/** The files a call sends off the host; a spec that cannot read its arguments names none. */
+export function outboundFilesOf(spec: ToolSpec | undefined, args: Record<string, unknown> | undefined): OutboundFile[] {
+	if (spec?.outboundFiles === undefined) return [];
+	try {
+		return [...spec.outboundFiles(args ?? {})];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * The registered class of a call the classifier could not class. A call that
+ * sends files off the host is outward, and never read: a read-trusted tool is
+ * raised to execute for that call, so read-only refuses it and default and yolo
+ * send it to the safety judge as an outward action.
+ */
 export function applyRegisteredToolClassification(
 	decision: SafetyDecision,
 	spec: ToolSpec,
 	readOnly = false,
+	args?: Record<string, unknown>,
 ): SafetyDecision {
-	if (decision.classification.actionClass !== "unknown" && !declaredRuntimeExtensionTool(decision, spec))
-		return decision;
-	const classification = {
-		actionClass: readOnly ? (spec.readOnlyActionClass ?? spec.baseActionClass) : spec.baseActionClass,
-		reasons: [`registered tool: ${spec.name}`],
+	const registered =
+		decision.classification.actionClass !== "unknown" && !declaredRuntimeExtensionTool(decision, spec)
+			? decision
+			: {
+					...decision,
+					classification: {
+						actionClass: readOnly ? (spec.readOnlyActionClass ?? spec.baseActionClass) : spec.baseActionClass,
+						reasons: [`registered tool: ${spec.name}`],
+					},
+				};
+	const sends = args === undefined ? 0 : outboundFilesOf(spec, args).length;
+	if (sends === 0) return registered;
+	const { classification } = registered;
+	return {
+		...registered,
+		classification: {
+			...classification,
+			actionClass: classification.actionClass === "read" ? "execute" : classification.actionClass,
+			reasons: [...classification.reasons, `sends ${sends === 1 ? "a file" : `${sends} files`} off the host`],
+			exposure: "outward",
+		},
 	};
-	return { ...decision, classification };
 }
 
 /**

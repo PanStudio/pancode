@@ -282,7 +282,7 @@ export function mainApprovalRequestView(
 	// Facts only. The mutation text stays in the inspector the overlay opener
 	// gets; this object reaches the transcript row and the approval-state event.
 	const mutation = mutationFacts(call.tool, call.args);
-	const consequence = describeMainCallConsequences(call);
+	const consequence = [...describeMainCallConsequences(call), ...(meta?.consequence ?? [])];
 	return {
 		requestId: meta?.requestId ?? "permission-pending",
 		tool: call.tool,
