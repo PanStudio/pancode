@@ -809,7 +809,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/engine/acp/server.ts#servePancodeAcpAgent", 3788],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3709],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3708],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],

@@ -361,6 +361,7 @@ import { createToolProseRegistration } from "../interactive/tool-prose-registrat
 import { subscribeLoopGuardStop } from "../session-control/loop-guard-interrupt.js";
 import {
 	BUILTIN_SLASH_COMMANDS,
+	BUILTIN_SLASH_NAMES,
 	formatExtensionReloadNotice,
 	parseSlashCommand,
 } from "../session-control/slash-commands.js";
@@ -3059,12 +3060,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			chat,
 			sessionId: () => session?.current()?.id ?? null,
 			targetId: () => options.headless?.target ?? getCurrentSettings().chat.target ?? "",
-			frozenTools: toolRegistry
-				.listAll()
-				.flatMap((tool) => (tool.sourceInfo?.extension ? [tool.sourceInfo.extension] : [])),
+			frozenTools: toolRegistry.listAll().flatMap((tool) => tool.sourceInfo?.extension || []),
 			services: { providers, telemetry, session },
 			sandboxUnixSockets: () => getCurrentSettings().safety.sandboxUnixSockets,
 			readOnly: () => options.headless?.constraints?.readOnly === true || chat.toolLimits?.()?.readOnly === true,
+			builtinCommandNames: () => BUILTIN_SLASH_NAMES,
 			notify: (line) => process.stderr.write(`pancode: ${line}\n`),
 			...(ask ? { ask } : {}),
 		});
