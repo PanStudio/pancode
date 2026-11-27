@@ -137,21 +137,33 @@ export function claudeMcpForm(declaration: unknown): { value: unknown } | { erro
 	if (typeof servers !== "object" || servers === null || Array.isArray(servers))
 		return { error: "mcp.json has no mcpServers mapping" };
 	const out: Record<string, unknown> = {};
-	for (const [id, server] of Object.entries(servers as Record<string, Record<string, unknown>>)) {
-		const { type, command, args, env, ...rest } = server;
+	for (const [id, server] of Object.entries(servers as Record<string, unknown>)) {
+		if (typeof server !== "object" || server === null || Array.isArray(server))
+			return { error: `mcpServers.${id} must be an object` };
+		const { type, command, args, env, ...rest } = server as Record<string, unknown>;
 		const untranslated = Object.keys(rest).filter((field) => !PANCODE_ONLY_SERVER_FIELDS.has(field));
 		if ((type !== undefined && type !== "stdio") || untranslated.length > 0)
 			return {
 				error: `mcpServers.${id} has no Claude Code form: ${type !== undefined && type !== "stdio" ? `type ${String(type)}` : untranslated.join(", ")}`,
 			};
 		if (typeof command !== "string") return { error: `mcpServers.${id}.command must be a string` };
+		if (args !== undefined && (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")))
+			return { error: `mcpServers.${id}.args must be an array of strings` };
+		if (
+			env !== undefined &&
+			(typeof env !== "object" ||
+				env === null ||
+				Array.isArray(env) ||
+				!Object.values(env).every((value) => typeof value === "string"))
+		)
+			return { error: `mcpServers.${id}.env must be an object of strings` };
 		out[id] = {
 			command,
-			...(Array.isArray(args) ? { args: args.map((arg) => rename(String(arg))) } : {}),
-			...(typeof env === "object" && env !== null
+			...(args !== undefined ? { args: args.map((arg) => rename(arg)) } : {}),
+			...(env !== undefined
 				? {
 						env: Object.fromEntries(
-							Object.entries(env as Record<string, unknown>).map(([key, value]) => [key, rename(String(value))]),
+							Object.entries(env as Record<string, string>).map(([key, value]) => [key, rename(value)]),
 						),
 					}
 				: {}),
@@ -177,7 +189,14 @@ export function generateClaudeMcpFiles(options: { root: string; check: boolean }
 		const source = path.join(plugins, entry.name, "mcp.json");
 		if (!entry.isDirectory() || !existsSync(source)) continue;
 		const where = path.relative(options.root, source);
-		const form = claudeMcpForm(readJson<unknown>(source));
+		let parsed: unknown;
+		try {
+			parsed = readJson<unknown>(source);
+		} catch (error) {
+			errors.push(`${where}: ${error instanceof Error ? error.message : String(error)}`);
+			continue;
+		}
+		const form = claudeMcpForm(parsed);
 		if ("error" in form) {
 			errors.push(`${where}: ${form.error}`);
 			continue;

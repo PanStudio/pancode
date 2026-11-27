@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { mcpCommandOutput } from "../../src/cli/mcp.js";
 import { withStateFileLock } from "../../src/core/state-file-lock.js";
 import { mcpToolActionClass } from "../../src/domains/gateway/mcp/action-classes.js";
 import {
@@ -1143,6 +1144,69 @@ describe("plugin mcp.json declarations", () => {
 			entry.message.includes("escapes the plugin data directory"),
 		);
 		ok(winDiag, "Windows-absolute path under PLUGIN_DATA must be refused");
+	});
+
+	it("validates plugin envVars, puts names (never values) in the digest, and shows them on mcp trust", async () => {
+		env = await isolatePancodeEnv("pancode-mcp-plugin-");
+		const project = join(env.dir, "project");
+		mkdirSync(project, { recursive: true });
+		const source = pluginWithServer(env.dir, "env-kit", "envtool");
+		writeFileSync(
+			join(source, "mcp.json"),
+			JSON.stringify({
+				mcpServers: { envtool: { command: "node", args: ["server.mjs"], envVars: ["MODULES_*", "LMOD_CMD"] } },
+			}),
+		);
+		const installed = installPlugin(source, { cwd: project });
+		ok(installed.plugin?.loadable);
+
+		const previous = process.env.LMOD_CMD;
+		try {
+			process.env.LMOD_CMD = "first-value";
+			const first = resolveMcpServers({ cwd: project }).servers.find((s) => s.id === "envtool");
+			process.env.LMOD_CMD = "second-value";
+			const second = resolveMcpServers({ cwd: project }).servers.find((s) => s.id === "envtool");
+			ok(first && second && first.url === undefined && second.url === undefined);
+			deepStrictEqual(first.envVars, ["LMOD_CMD", "MODULES_*"]);
+			strictEqual(first.digest, second.digest, "envVars runtime values must never enter the digest");
+
+			const trusted = mcpCommandOutput(["trust", "envtool", "--action-class", "read"], { cwd: project });
+			strictEqual(trusted.code, 0, trusted.text);
+			match(trusted.text, /environment=LMOD_CMD,MODULES_\*/);
+		} finally {
+			if (previous === undefined) delete process.env.LMOD_CMD;
+			else process.env.LMOD_CMD = previous;
+		}
+
+		for (const denied of [
+			"PANCODE_HOME",
+			"NODE_OPTIONS",
+			"LD_PRELOAD",
+			"LD_AUDIT",
+			"BASH_ENV",
+			"ENV",
+			"API_KEY",
+			"FOO*",
+		]) {
+			const bad = pluginWithServer(env.dir, `bad-${denied.replace(/[^a-z0-9]/gi, "").toLowerCase()}`, "badtool");
+			writeFileSync(
+				join(bad, "mcp.json"),
+				JSON.stringify({ mcpServers: { badtool: { command: "node", envVars: [denied] } } }),
+			);
+			const sub = join(env.dir, `sub-${denied.replace(/[^a-z0-9]/gi, "").toLowerCase()}`);
+			mkdirSync(sub, { recursive: true });
+			ok(installPlugin(bad, { cwd: sub }).plugin?.loadable);
+			const resolved = resolveMcpServers({ cwd: sub });
+			strictEqual(
+				resolved.servers.find((s) => s.id === "badtool"),
+				undefined,
+				`${denied} must fail closed`,
+			);
+			ok(
+				resolved.diagnostics.some((d) => d.message.includes("envVars")),
+				`${denied} must report an envVars diagnostic`,
+			);
+		}
 	});
 });
 

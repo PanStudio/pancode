@@ -675,7 +675,7 @@ export function mcpCommandOutput(
 			return {
 				code: 0,
 				text: [
-					`mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
+					`mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)}${environmentLabel(declared?.url === undefined ? (declared?.envVars ?? []) : [])} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
 					// A trusted declaration decides where a stored credential goes, so trust names each route.
 					...(declared?.url !== undefined
 						? mcpCredentialRoutes(declared.url, declared.headers).map((route) => `  ${route}`)

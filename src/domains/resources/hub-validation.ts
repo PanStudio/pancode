@@ -248,6 +248,32 @@ function validateLauncherServer(
 	];
 }
 
+/** Validate a pack's server or plugin `mcp.json` using the same loader that declares it at runtime. */
+function validatePackServers(
+	root: string,
+	manifest: PluginManifest,
+	packageKind: string,
+): { resources: HubComponentValidationRecord[]; diagnostics: HubValidationDiagnostic[] } {
+	if (packageKind === "server") {
+		const records = validateServerPack(root, manifest);
+		return { resources: records, diagnostics: records.flatMap((record) => record.diagnostics) };
+	}
+	if (!existsSync(path.join(root, "mcp.json"))) return { resources: [], diagnostics: [] };
+	const loaded = loadPluginMcpFile({ id: manifest.name, scope: "user", rootPath: root, contentDigest: "" });
+	return {
+		resources: [],
+		diagnostics: loaded.diagnostics
+			.filter((diagnostic) => diagnostic.severity !== "warning")
+			.map((diagnostic) => ({
+				severity: "error",
+				code: "ERR_SERVER",
+				message: `mcp.json: ${diagnostic.message}`,
+				path: diagnostic.path,
+				kind: "server",
+			})),
+	};
+}
+
 export function validateHubPackage(
 	packageRoot: string,
 	options: HubValidationOptions = {},
@@ -305,11 +331,9 @@ export function validateHubPackage(
 			});
 	}
 
-	if (packageKind === "server")
-		for (const record of validateServerPack(resolved, manifest)) {
-			resources.push(record);
-			contentDiagnostics.push(...record.diagnostics);
-		}
+	const serverCheck = validatePackServers(resolved, manifest, packageKind);
+	resources.push(...serverCheck.resources);
+	contentDiagnostics.push(...serverCheck.diagnostics);
 
 	// ---------------------------------------------------------------------------
 	// 1. Skills

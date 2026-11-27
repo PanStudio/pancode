@@ -30,7 +30,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { after, describe, it } from "node:test";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import { renderHubMarketplace } from "../../scripts/generate-hub-marketplace.js";
+import { claudeMcpForm, generateClaudeMcpFiles, renderHubMarketplace } from "../../scripts/generate-hub-marketplace.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 describe("the portable inclusion rule", () => {
@@ -119,6 +119,33 @@ describe("the portable inclusion rule", () => {
 			result.excluded.map((entry) => entry.name),
 			["agent-only"],
 		);
+	});
+
+	it("translates valid plugin mcp.json without envVars and reports malformed mcp.json without throwing", () => {
+		const translated = claudeMcpForm({
+			mcpServers: {
+				hpc: {
+					type: "stdio",
+					command: "node",
+					args: [`\${PLUGIN_ROOT}/server.mjs`],
+					envVars: ["LMOD_*"],
+					toolActionClasses: { node_cpu: "read" },
+				},
+			},
+		});
+		deepStrictEqual(translated, {
+			value: { mcpServers: { hpc: { command: "node", args: [`\${CLAUDE_PLUGIN_ROOT}/server.mjs`] } } },
+		});
+		ok("error" in claudeMcpForm({ mcpServers: { broken: null } }));
+		ok("error" in claudeMcpForm({ mcpServers: { broken: { command: "node", args: "not-array" } } }));
+		ok("error" in claudeMcpForm({ mcpServers: { broken: { command: "node", env: ["not-object"] } } }));
+
+		const brokenRoot = join(fixtures, "broken-mcp-json");
+		mkdirSync(join(brokenRoot, "hub", "packs", "plugins", "broken"), { recursive: true });
+		writeFileSync(join(brokenRoot, "hub", "packs", "plugins", "broken", "mcp.json"), "not json\n");
+		const generated = generateClaudeMcpFiles({ root: brokenRoot, check: true });
+		equal(generated.errors.length, 1);
+		ok(generated.errors[0]?.includes("hub/packs/plugins/broken/mcp.json"));
 	});
 });
 

@@ -23,6 +23,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { policyManifest, type ToolServer } from "pancode/sdk/tool";
+import { parsePassedVariables } from "../src/domains/gateway/mcp/passed-environment.js";
 
 export const PLUGIN_SERVER_FILE = "server.mjs";
 const ENTRY = path.join("src", "main.ts");
@@ -113,13 +114,18 @@ async function buildOne(root: string, directory: string): Promise<PluginServerBu
 	};
 	if (loaded.server === undefined)
 		throw new Error(`${path.relative(root, directory)}/${SERVER_MODULE} exports no server`);
+	const environment =
+		loaded.environment === undefined
+			? []
+			: parsePassedVariables(loaded.environment, `${path.relative(root, directory)}/${SERVER_MODULE} environment`);
+	if (typeof environment === "string") throw new Error(environment);
 	const mcpFile = path.join(directory, "mcp.json");
 	return {
 		files: [
 			{ path: path.relative(root, output.path), content: output.text },
 			{
 				path: path.relative(root, mcpFile),
-				content: biomeJson(root, mcpFile, pluginMcpDeclaration(loaded.server, loaded.environment ?? [])),
+				content: biomeJson(root, mcpFile, pluginMcpDeclaration(loaded.server, environment)),
 			},
 		],
 	};
