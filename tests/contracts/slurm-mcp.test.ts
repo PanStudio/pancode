@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
-import { createMcpStdioClient } from "../../src/domains/gateway/mcp/index.js";
+import { createMcpClient } from "../../src/domains/gateway/mcp/index.js";
 import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
@@ -72,7 +72,7 @@ describe("Slurm through an MCP server", () => {
 			// A user-scope server: an attended session records its surface on first sight.
 			attended: true,
 			clientFactory: (spec, options) =>
-				createMcpStdioClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 }),
+				createMcpClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 }),
 		});
 		open.push(source);
 		registerCoreTools(registry, { mcpCapabilities: source });

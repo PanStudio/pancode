@@ -39,6 +39,10 @@ export interface JobRunResult {
 	retryAfterMs?: number;
 	/** The loop guard ended this main turn; the turn itself may still read as succeeded (#445). */
 	stoppedBy?: "tool_budget" | "loop_guard";
+	/** An mcp_event run's subscription cursor after the arrivals it drained; persisted with its settlement. */
+	eventCursor?: string | null;
+	/** An mcp_event run's newest delivered eventIds, oldest first. */
+	eventIds?: readonly string[];
 }
 export interface JobRunnerPorts {
 	isCurrent(owner: JobOwner): boolean;
@@ -86,4 +90,11 @@ export interface JobController {
 	close(): Promise<void>;
 	/** Pump without awaiting long-running effects. */
 	tick(): void;
+	/**
+	 * An active mcp_event job this host owns has arrivals: its next start is due now, or one interval after its last
+	 * start, so a burst coalesces into one start. Anything else is ignored.
+	 */
+	wake(id: string): void;
+	/** Persist an active mcp_event job's subscription cursor between starts, so a resubscribe replays nothing older. */
+	recordEventCursor(id: string, cursor: string): void;
 }

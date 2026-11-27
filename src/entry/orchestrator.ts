@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
+import { mcpLiveStatuses } from "../cli/mcp.js";
 import { segmentUsageFromView } from "../cli/modes/json-stream.js";
 import { runHeadlessMainAgent } from "../cli/modes/print.js";
 import type { RunJsonMainSessionFrame } from "../cli/modes/run-json-schema.js";
@@ -2224,6 +2225,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		sessionCodeConsentPending: () => sessionCodeConsent.pending(),
 		untilStoppedDefault: () => getCurrentSettings().chat.loopsUntilStopped,
 		createSession: createRoutedSession,
+		mcpEvents: () => toolBootstrap.mcpCapabilities ?? null,
 		notice: (text) => {
 			if (deferredWatchdogNoticeSink) deferredWatchdogNoticeSink(text);
 			else bootStderr(`${text}\n`);
@@ -4078,6 +4080,9 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			return outcome;
 		},
 		reloadPlugins,
+		...(toolBootstrap.mcpCapabilities
+			? { mcpStatuses: () => mcpLiveStatuses(toolBootstrap.mcpCapabilities?.catalog().servers ?? []) }
+			: {}),
 		reloadClasses,
 		armRestartHandoff: () => armRestartHandoff(pancodeStateDir(), termination),
 		...(interop ? { interop } : {}),

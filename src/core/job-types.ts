@@ -27,7 +27,17 @@ export type JobRunner =
 			/** The job matches only when the spec's until and every one of these hold in the same occurrence. */
 			readonly also?: readonly JobCondition[];
 	  }
-	| { readonly kind: "main"; readonly prompt: string };
+	| { readonly kind: "main"; readonly prompt: string }
+	| {
+			/**
+			 * An MCP Events subscription (`io.modelcontextprotocol/events`): each batch of
+			 * arrivals is one start, and until reads one occurrence's `data`.
+			 */
+			readonly kind: "mcp_event";
+			readonly server: string;
+			readonly event: string;
+			readonly arguments: Readonly<Record<string, unknown>>;
+	  };
 export type JobMatchAction = { readonly kind: "notice" } | { readonly kind: "main_turn"; readonly prompt: string };
 export interface JobCreateInput {
 	readonly intervalMs: number;
@@ -158,6 +168,10 @@ export interface JobRecord {
 	failedPolls?: number;
 	/** The one wake for failing polls was queued (#445). */
 	pollFailureWoken?: true;
+	/** An mcp_event job's last persisted subscription cursor; absent or null resubscribes from now. */
+	eventCursor?: string | null;
+	/** The newest delivered eventIds of an mcp_event job, oldest first, for dedupe across a resubscribe. */
+	eventIds?: string[];
 	/** Null when any executed component has unknown pricing/usage. */
 	costUsd: number | null;
 	persistenceError: string | null;

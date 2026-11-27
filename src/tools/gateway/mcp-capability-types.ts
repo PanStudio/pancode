@@ -6,6 +6,9 @@ import type {
 	McpClient,
 	McpClientOptions,
 	McpElicitationHost,
+	McpEventDescriptor,
+	McpEventListing,
+	McpHeaderCredentialStore,
 	McpServerCatalog,
 	McpServerSpec,
 	McpSkillListing,
@@ -25,14 +28,15 @@ import type { ToolSpec } from "../tool-spec.js";
 import type { McpStoreAccess } from "./mcp-store-references.js";
 
 /** An ACP client's declaration lives only for its hosted session. */
-export interface McpClientServerSpec {
-	name: string;
-	command: string;
-	args: string[];
-	env: Record<string, string>;
-}
+/** A server the ACP client supplies for one session: a launch vector, or an endpoint with its header values. */
+export type McpClientServerSpec =
+	| { name: string; command: string; args: string[]; env: Record<string, string> }
+	| { name: string; url: string; headers: Record<string, string> };
 
-export type GatewayMcpServer = ResolvedMcpServer | (Omit<ResolvedMcpServer, "scope"> & { scope: "client" });
+/** Distributes over the stdio and remote forms, so `url` still tells them apart. */
+type ClientScoped<T> = T extends unknown ? Omit<T, "scope"> & { scope: "client" } : never;
+
+export type GatewayMcpServer = ResolvedMcpServer | ClientScoped<ResolvedMcpServer>;
 
 /**
  * Where a server's tool metadata came from. Deliberately separate from
@@ -46,8 +50,11 @@ type McpCatalogProvenance = "live" | "cached" | "missing";
 export interface McpServerListing {
 	id: string;
 	scope: GatewayMcpServer["scope"];
-	/** connected: launched this session; failed: launched and lost; trusted: not launched yet. */
-	status: "connected" | "trusted" | "failed" | "untrusted" | "stale";
+	/**
+	 * connected: launched this session; failed: launched and lost; needs-auth: a
+	 * remote server refused or lacks its credentials; trusted: not launched yet.
+	 */
+	status: "connected" | "trusted" | "failed" | "needs-auth" | "untrusted" | "stale";
 	actionClass: McpTrustActionClass;
 	/** Why the server is not usable, for every status but connected and trusted. */
 	reason?: string;
@@ -61,6 +68,8 @@ export interface McpServerListing {
 	truncated?: boolean;
 	/** Tool names the server offered that cannot be carried as registry names. */
 	unregistrable?: string[];
+	/** Tools a remote server offered with an x-mcp-header PanCode cannot send, and why; never registered. */
+	dropped?: Array<{ name: string; reason: string }>;
 	/** Provenance of this server's tool metadata, for a trusted server only. */
 	catalog?: McpCatalogProvenance;
 	/** Tools this server's catalog records; the names themselves are in the capability list. */
@@ -78,7 +87,29 @@ export interface McpServerListing {
 	 * for inspection and refuses each call with `reason` and `remedy`.
 	 */
 	surface?: McpServerSurfaceListing;
+	/**
+	 * Event types the server offers through MCP Events, live or recorded, for
+	 * an `mcp_event` job. Server-written; a scoped find carries them.
+	 */
+	events?: McpServerEventListing[];
+	/** The server's event list was cut at the client cap. */
+	eventsTruncated?: true;
+	/** Why the server's event types could not be listed. */
+	eventsFailure?: string;
 }
+
+/** One event type as discovery lists it. */
+export interface McpServerEventListing {
+	name: string;
+	description: string;
+	/** Delivery modes the server offers; PanCode subscribes with push when offered, else poll. */
+	delivery: string[];
+	/** JSON Schema of the subscription arguments, the job's `arguments`. */
+	arguments: Record<string, unknown>;
+}
+
+/** A declared server reachable for an event subscription, or why it is not. */
+export type McpEventServer = { client: McpClient; events: McpEventDescriptor[] } | { refusal: string };
 
 /** A trusted server's surface approval as discovery lists it. */
 export interface McpServerSurfaceListing extends McpSurfaceStatus {
@@ -175,6 +206,8 @@ export interface McpCapabilitySourceOptions {
 	requestTimeoutMs?: number;
 	/** Test seam: the client constructor. */
 	clientFactory?: (spec: McpServerSpec, options: McpClientOptions) => McpClient;
+	/** Test seam: where a remote server's header credentials are read; defaults to PanCode's credential store. */
+	headerCredentials?: () => McpHeaderCredentialStore;
 	/** False for a worker: it may read recorded catalogs but never writes operator-owned state. */
 	persistCatalog?: boolean;
 	/**
@@ -290,6 +323,20 @@ export interface McpCapabilitySource {
 	/** Ids of the servers launched this session and still open. */
 	connectedIds(options?: { readyOnly?: boolean }): string[];
 	/**
+	 * Synchronous policy/authority check for an `mcp_event` job without
+	 * launching or reconnecting the server: declared, not client-scoped,
+	 * trusted, plugin not revoked, read-only launch allowed if unstarted, and
+	 * approved surface if already listed. Null when authorized.
+	 */
+	eventAuthorityRefusal?(id: string, options?: { readOnly?: boolean }): string | null;
+	/**
+	 * A declared, trusted server with an approved surface that offers MCP
+	 * Events, launched when needed, with its current event types; an ACP
+	 * client's server, an untrusted or failed one, or one offering no events is
+	 * refused with the reason and its remedy.
+	 */
+	eventServer(id: string, options?: McpLaunchOptions): Promise<McpEventServer>;
+	/**
 	 * Close every launched client. Idempotent. A process group that survived
 	 * the client's own SIGKILL is reported here and on stderr, with its pgid,
 	 * and is never signalled again by the gateway: the client already did
@@ -350,8 +397,21 @@ export interface ServerState {
 	surface?: { served: McpSurface; status: McpServerSurfaceListing };
 	/** The tags the builtin `store` server was started with --write-tag for; absent for any other server. */
 	launchWriteTags?: ReadonlyArray<string>;
+	/** Tools the last listing dropped for an x-mcp-header PanCode cannot send. */
+	dropped?: Array<{ name: string; reason: string }>;
 	/** Set to close the server and start it again at the next discovery, with its options computed afresh. */
 	relaunch?: boolean;
+	/** Header values an ACP client sent with its remote server; held for the session, never stored. */
+	clientHeaders?: Record<string, string>;
+	/** The failure is a remote server's missing or refused credentials. */
+	needsAuth?: boolean;
+	/** Calls running on the client now, and when the last one started or ended; a remote server closes when idle. */
+	inflight?: number;
+	lastUsed?: number;
+	/** The event types of the last listing, for a server that offers MCP Events. */
+	events?: McpEventListing;
+	/** Why the last events/list failed; the server's tools still serve. */
+	eventsFailure?: string;
 	/** This session's skills listing of a server that serves the skills extension; absent until listed. */
 	skills?: { listing: McpSkillListing; listedAtMs: number } | { failure: string; listedAtMs: number };
 	/** The skills listing in flight, shared by everyone waiting on it. */

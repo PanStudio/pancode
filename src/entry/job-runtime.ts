@@ -38,6 +38,15 @@ export interface JobRuntimeDeps {
 	trustRefusal(): string | null;
 	permissionPending(): boolean;
 	runCommand(context: JobExecutionContext): Promise<JobRunResult>;
+	/** Whether an mcp_event job may subscribe under this scope; null when it may. Absent refuses every event job. */
+	eventRefusal?(
+		runner: Extract<JobRunner, { kind: "mcp_event" }>,
+		constraints: TurnConstraints | undefined,
+		signal: AbortSignal,
+		phase: Exclude<JobAdmissionContext["phase"], "delivery">,
+	): Promise<string | null>;
+	/** Take an mcp_event job's buffered arrivals as one start's result. */
+	drainEvents?(job: JobRecord): JobRunResult;
 	notice(text: string): void;
 }
 
@@ -58,6 +67,8 @@ function jobContinuationPreamble(job: JobRecord, evidence: JobEvidence | null = 
 		return `[PanCode] Job ${job.id} ran out of its ${job.spec.count} starts and its condition never matched.${pending} The follow-up below was written for a match and does not apply yet. The request that created this job still stands. Read the last poll in the observation. If the polls were failing, fix why first. If the last poll shows the wait is still in progress, create another job now. Stop only when the last poll shows the work cannot finish without the operator, and then say exactly what is needed from them.\n\n`;
 	if (job.delivery.continuation === "job_deadline")
 		return `[PanCode] Job ${job.id} reached its for_ms deadline and its condition never matched.${pending} The follow-up below was written for a match and does not apply yet. The request that created this job still stands. Read the last poll in the observation. If the polls were failing, fix why first. If the last poll shows the wait is still in progress and no limit the operator set has passed, create another job now. Otherwise stop and say which condition is still unmet and what is needed from the operator.\n\n`;
+	if (job.delivery.continuation === "polls_failing" && job.spec.runner.kind === "mcp_event")
+		return `[PanCode] Job ${job.id} ended because its MCP event subscription failed: ${job.pendingReason ?? "the server refused it"}. The follow-up below was written for an arrival and does not apply. Read the failure in the observation and fix what it names: the event name, its arguments, or the server's permission. If the wait still matters, create a new job; otherwise stop and say what is needed from the operator.\n\n`;
 	if (job.delivery.continuation === "polls_failing")
 		return `[PanCode] Job ${job.id} has failed ${job.failedPolls ?? 0} polls in a row and is still polling. The follow-up below was written for a match and does not apply yet. Read the last poll in the observation and fix why it fails, because the job's next polls pick up the fix. If this job cannot succeed, end it with action stop and create what replaces it. Do not use action cancel, because that also ends this turn. If nothing needs doing, say so and stop.\n\n`;
 	const count = jobContinuationCount(job);
@@ -152,11 +163,14 @@ export function createJobRuntime(deps: JobRuntimeDeps): JobRunnerPorts {
 	const check = (context: JobAdmissionContext, starting = false): JobAdmission => {
 		const { job, phase, signal } = context;
 		const command = job.spec.runner.kind === "command" && phase !== "delivery";
+		// Draining an event job's arrivals runs no tool and no turn, so it waits on neither.
+		const eventDrain = job.spec.runner.kind === "mcp_event" && phase === "run";
 		if (signal.aborted) return { status: "denied", reason: "This occurrence was cancelled before admission." };
 		if (
 			phase !== "create" &&
 			phase !== "resume" &&
 			!(phase === "delivery" && job.delivery?.kind === "notice") &&
+			!eventDrain &&
 			deps.permissionPending()
 		)
 			return { status: "wait", reason: "An operator permission/interview decision is pending." };
@@ -175,7 +189,7 @@ export function createJobRuntime(deps: JobRuntimeDeps): JobRunnerPorts {
 			};
 		if (phase === "create" || phase === "resume") return { status: "ready" };
 		if (phase === "delivery" && job.delivery?.kind === "notice") return { status: "ready" };
-		if (starting) return { status: "ready" };
+		if (starting || eventDrain) return { status: "ready" };
 		if (command)
 			return commandSlots < 2
 				? { status: "ready" }
@@ -246,9 +260,30 @@ export function createJobRuntime(deps: JobRuntimeDeps): JobRunnerPorts {
 	};
 	return {
 		isCurrent: deps.isCurrent,
-		admit: async (context) => check(context),
+		async admit(context) {
+			const admission = check(context);
+			const runner = context.job.spec.runner;
+			if (admission.status !== "ready" || runner.kind !== "mcp_event" || context.phase === "delivery") return admission;
+			const constraints = jobTurnConstraints(context.job.spec.constraints, deps.constraints());
+			const refusal =
+				deps.eventRefusal === undefined
+					? "This host cannot subscribe to MCP events."
+					: await deps.eventRefusal(runner, constraints, context.signal, context.phase);
+			return refusal === null ? admission : { status: "denied", reason: refusal };
+		},
 		async run(context) {
 			if (context.job.spec.runner.kind === "main") return main(context, context.job.spec.runner.prompt, "run");
+			if (context.job.spec.runner.kind === "mcp_event") {
+				const admission = check({ job: context.job, phase: "run", signal: context.signal });
+				if (admission.status !== "ready")
+					return admission.status === "wait"
+						? { outcome: "deferred", summary: admission.reason }
+						: { outcome: "failed", summary: admission.reason, errorClass: "permission" };
+				if (deps.drainEvents === undefined)
+					return { outcome: "deferred", summary: "This host has no event subscriptions." };
+				if (!context.start()) return { outcome: "deferred", summary: "The event job retired before its start." };
+				return deps.drainEvents(context.job);
+			}
 			const admission = check({ job: context.job, phase: "run", signal: context.signal });
 			if (admission.status !== "ready")
 				return admission.status === "wait"
@@ -300,7 +335,8 @@ export function createJobRuntime(deps: JobRuntimeDeps): JobRunnerPorts {
 				!context.start()
 			)
 				return { outcome: "deferred", summary: "Notice delivery retired before admission." };
-			deps.notice(`job ${context.job.id}: condition matched${evidence ? `\n${evidence.summary}` : ""}`);
+			const matched = context.job.spec.runner.kind === "mcp_event" ? "event arrived" : "condition matched";
+			deps.notice(`job ${context.job.id}: ${matched}${evidence ? `\n${evidence.summary}` : ""}`);
 			return { outcome: "succeeded", summary: "Condition notice delivered.", costUsd: 0 };
 		},
 	};

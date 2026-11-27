@@ -1016,6 +1016,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		...(deps.extensions ? { extensions: deps.extensions } : {}),
 		...(deps.reloadExtensions ? { reloadExtensions: deps.reloadExtensions } : {}),
 		...(deps.reloadPlugins ? { reloadPlugins: deps.reloadPlugins } : {}),
+		...(deps.mcpStatuses ? { mcpStatuses: deps.mcpStatuses } : {}),
 		...(interopSurface ? { interop: interopSurface } : {}),
 		...(deps.agents ? { agents: deps.agents } : {}),
 		...(deps.share ? { share: deps.share } : {}),

@@ -88,6 +88,7 @@ export interface InteractiveDeps {
 	/** Where api 2 hook registrations reach the runtimes this surface owns. */
 	runtimeHooks?: ExtensionRuntimeHookBridge;
 	reloadPlugins?: SlashCommandContext["reloadPlugins"];
+	mcpStatuses?: SlashCommandContext["mcpStatuses"];
 	reloadClasses?: ReloadClassesController;
 	armRestartHandoff?: () => void;
 	interop?: InteropContract;

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pancodeConfigDir } from "../../core/xdg.js";
+import { mcpOriginOf } from "../gateway/mcp/index.js";
 import {
 	installHubPackage,
 	listInstalledPlugins,
@@ -728,10 +729,21 @@ export function renderInteropAdoptionPlan(plan: InteropAdoptionPlan, options: { 
 				: []),
 			...(entry.server
 				? [
-						`  Server ${entry.server.id}: ${[entry.server.command, ...entry.server.args].join(" ")}`,
-						...(Object.keys(entry.server.env).length
-							? [`  Env (values copied, not shown): ${Object.keys(entry.server.env).sort().join(", ")}`]
-							: []),
+						...(entry.server.url !== undefined
+							? [
+									`  Server ${entry.server.id}: ${entry.server.url}`,
+									...(Object.keys(entry.server.headerValues).length
+										? [
+												`  Headers (values moved to the credential store for ${mcpOriginOf(entry.server.url)}, not shown): ${Object.keys(entry.server.headerValues).sort().join(", ")}`,
+											]
+										: []),
+								]
+							: [
+									`  Server ${entry.server.id}: ${[entry.server.command, ...entry.server.args].join(" ")}`,
+									...(Object.keys(entry.server.env).length
+										? [`  Env (values copied, not shown): ${Object.keys(entry.server.env).sort().join(", ")}`]
+										: []),
+								]),
 					]
 				: []),
 			`  ${entry.reason}`,

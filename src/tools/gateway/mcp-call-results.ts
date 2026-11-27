@@ -216,6 +216,8 @@ export function mcpCallFailureText(declaration: GatewayMcpServer, error: unknown
 			return `${error.message}${restart}`;
 		case "aborted":
 			return error.message;
+		case "auth":
+			return `${error.message}; the same call fails until then, so report it rather than retrying`;
 	}
 }
 

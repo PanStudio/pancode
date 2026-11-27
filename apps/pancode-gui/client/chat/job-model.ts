@@ -74,9 +74,11 @@ const DELIVERY_WORDS = {
 
 function costFact(job: AcpJob): string | null {
 	if (job.starts === 0) return null;
-	// A command-only job makes no model call. A main run, or a command job whose match requested a main-turn
-	// analysis, spends model tokens, so its recorded cost is shown and an unrecorded one is unknown, never free.
-	if (job.runner === "command" && job.delivery?.kind !== "main_turn") return "no model cost";
+	// A command or MCP event job without main_turn delivery makes no model call. A main run, or a match that
+	// requested a main-turn analysis, spends model tokens, so its recorded cost is shown and an unrecorded one
+	// is unknown, never free.
+	if ((job.runner === "command" || job.runner === "mcp_event") && job.delivery?.kind !== "main_turn")
+		return "no model cost";
 	return job.costDisplay ?? USAGE_NOT_MEASURED;
 }
 
@@ -138,7 +140,14 @@ export function jobRowView(job: AcpJob, now: number): JobRowView {
 	if (cost !== null) facts.push(cost);
 	return {
 		jobId: job.jobId,
-		title: job.taskPreview === "" ? (job.runner === "command" ? "Command poll" : "Scheduled task") : job.taskPreview,
+		title:
+			job.taskPreview === ""
+				? job.runner === "command"
+					? "Command poll"
+					: job.runner === "mcp_event"
+						? "MCP event"
+						: "Scheduled task"
+				: job.taskPreview,
 		tone,
 		state,
 		working,

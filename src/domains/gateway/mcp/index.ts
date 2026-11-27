@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * Public surface of the MCP module: protocol framing, the protocol client
- * and the stdio transport under it, strict configuration loading, and
- * explicit trust.
+ * and the stdio and Streamable HTTP transports under it, strict configuration
+ * loading, and explicit trust.
  */
 
 export { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "./action-classes.js";
@@ -15,6 +15,8 @@ export {
 	mcpBuiltinLaunchEnvironment,
 } from "./builtin.js";
 export {
+	createMcpClient,
+	createMcpHttpClient,
 	createMcpProtocolClient,
 	createMcpStdioClient,
 	DEFAULT_KILL_GRACE_MS,
@@ -28,6 +30,10 @@ export {
 	type McpContentBlock,
 	type McpElicitationHandler,
 	type McpElicitationOutcome,
+	type McpEventStream,
+	type McpEventStreamHandlers,
+	type McpEventStreamOptions,
+	type McpHttpServerSpec,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
 	type McpServerInfo,
@@ -76,6 +82,22 @@ export {
 	readTypedValue,
 } from "./elicitation.js";
 export {
+	MCP_EVENT_ERRORS,
+	MCP_EVENT_MIN_POLL_MS,
+	type McpEventDelivery,
+	type McpEventDescriptor,
+	type McpEventErrorName,
+	type McpEventListing,
+	type McpEventOccurrence,
+	type McpEventPollResult,
+	type McpEventRequest,
+	mcpEventDeliveryMode,
+	mcpEventErrorName,
+	mcpEventErrorText,
+	mcpEventsOffered,
+} from "./events.js";
+export {
+	type McpCachedEvent,
 	type McpCatalogIdentity,
 	type McpServerCatalog,
 	mcpCatalogStale,
@@ -104,6 +126,26 @@ export {
 	type ProtocolFrame,
 	parseJsonRpcLine,
 } from "./protocol.js";
+export {
+	MCP_CREDENTIAL_KEY_CHARS,
+	MCP_CREDENTIAL_KEY_PATTERN,
+	mcpCredentialKeyRefusal,
+	mcpCredentialRoutes,
+	mcpDeclaredHeaderRefusal,
+	mcpHeaderCredentialRef,
+	mcpOriginOf,
+	mcpRemoteEndpoint,
+	parseMcpHeaderCredentialRef,
+} from "./remote.js";
+export {
+	type McpHeaderBinding,
+	type McpHeaderCredentialStore,
+	mcpCatalogDigest,
+	mcpHeaderBindings,
+	mcpHeaderValueRefusal,
+	openMcpHeaderCredentialStore,
+	resolveMcpHeaders,
+} from "./remote-credentials.js";
 export {
 	type McpAttestedSkill,
 	type McpRecordedSkill,
@@ -148,6 +190,7 @@ export {
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
 } from "./surface.js";
+export { outputSchemaMismatch } from "./tool-results.js";
 export {
 	type ApproveMcpSkillResult,
 	approveMcpSkill,
@@ -172,6 +215,7 @@ export {
 	resolveMcpServers,
 	revokeMcpBuiltinNetwork,
 	revokeMcpSkill,
+	revokeMcpUserTrust,
 	trustMcpServer,
 	untrustMcpServer,
 } from "./trust.js";

@@ -77,7 +77,7 @@ function mutatesSettings(args: ReadonlyArray<string>): boolean {
 			// `config set` and `config unset` save settings.yaml as `configure` does; a `--scope` value may come first.
 			return sub === "trust" || words.slice(1).some((word) => word === "set" || word === "unset");
 		case "mcp":
-			return sub === "trust" || sub === "untrust";
+			return sub !== undefined && ["trust", "untrust", "add", "remove", "login", "logout"].includes(sub);
 		case "systemone":
 			return sub === "use" || sub === "off";
 		case "semantic":
