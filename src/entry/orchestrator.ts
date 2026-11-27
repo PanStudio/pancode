@@ -3115,6 +3115,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			start: () => startSessionExtensionHost("acp", acpExtensionAsk),
 			commit: commitExtensionHooks,
 			idle: chatIdle,
+			bus,
 			report: (line) => process.stderr.write(`[pancode:acp] ${line}\n`),
 		});
 		await acpExtensions.ensure();
@@ -3782,6 +3783,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			start: () => startSessionExtensionHost("headless", options.headless?.answers?.interview),
 			commit: commitExtensionHooks,
 			idle: chatIdle,
+			bus,
 			report: (line) => process.stderr.write(`pancode: ${line}\n`),
 		});
 		// `--max-cost-usd` bounds what this run adds, so a continued session's

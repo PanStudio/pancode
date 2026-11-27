@@ -31,7 +31,7 @@ export type SessionNoticeFact =
 	| "extension.load_failed"
 	| "middleware.hook_failed"
 	| "approval.foreign_changed"
-	| "mcp.servers_reloaded";
+	| "reload.applied";
 
 export interface SessionNoticeOptions {
 	/** A `/reload` report in progress states restart-bound settings itself. */
@@ -250,12 +250,12 @@ export function subscribeSessionNotices(
 				source: "approval",
 			});
 		}),
-		bus.subscribe("mcp.servers_reloaded", (payload) => {
+		bus.subscribe("reload.applied", (payload) => {
 			if (typeof payload?.text !== "string" || payload.text.length === 0) return;
-			raise("mcp.servers_reloaded", {
+			raise("reload.applied", {
 				level: payload.failed ? "warn" : "info",
 				text: payload.text,
-				key: "mcp:reloaded",
+				key: `reload:${payload.target}`,
 				surface: "transcript",
 			});
 		}),

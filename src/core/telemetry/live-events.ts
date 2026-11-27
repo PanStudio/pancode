@@ -831,11 +831,9 @@ export interface ExtensionsLoadIssuePayload {
 	message: string;
 }
 
-/**
- * A `/reload mcp` swap that waited for the session to go idle has run. `text` is the MCP section of the reload
- * report, the same lines an idle reload prints at once.
- */
-export interface McpServersReloadedPayload {
+/** A `/reload` class that waited for the session to go idle has run; `text` is its one-line report. */
+export interface ReloadAppliedPayload {
+	target: "mcp" | "extensions";
 	text: string;
 	failed: boolean;
 }

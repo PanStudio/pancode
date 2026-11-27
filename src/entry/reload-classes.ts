@@ -10,6 +10,7 @@ import { loadFragments } from "../domains/prompts/fragment-loader.js";
 import type { ReloadClassesController, ReloadReport } from "../session-control/reload-report.js";
 import { resetDocsIndex } from "../tools/context/docs-engine.js";
 import type { McpCapabilitySource, McpDeclarationReload } from "../tools/gateway/mcp-capability-types.js";
+import { createIdleDeferral } from "./idle-deferral.js";
 
 type Inventory = Map<string, string>;
 
@@ -104,8 +105,6 @@ function mcpSection(reload: McpDeclarationReload): { lines: string[]; failed: bo
 	};
 }
 
-const MCP_RETRY_MS = 250;
-
 /** Owns just one command's reporting scope; the existing reloads remain the writers. */
 export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesController {
 	let active = false;
@@ -124,46 +123,22 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 		configFailure = message;
 	});
 	// A swap that waited for a turn or a call in flight runs once the session settles, and reports as a notice.
-	let mcpWaiting: (() => void) | null = null;
-	const deferMcpSwap = (source: Pick<McpCapabilitySource, "reloadDeclarations">): void => {
-		mcpWaiting?.();
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let trying = false;
-		const stop = (): void => {
-			clearTimeout(timer);
-			unsubscribe();
-			if (mcpWaiting === stop) mcpWaiting = null;
-		};
-		const attempt = async (): Promise<void> => {
-			if (trying || mcpWaiting !== stop) return;
-			trying = true;
-			try {
-				const swap = deps.mcp?.idle() ? await source.reloadDeclarations() : null;
-				if (swap === null) return;
-				stop();
-				const section = mcpSection(swap);
-				const facts = section.lines.slice(1).map((line) => line.trim());
-				deps.bus.emit("mcp.servers_reloaded", {
-					text: `MCP servers swapped after the turn settled: ${facts.join("; ")}`,
-					failed: section.failed,
-				});
-			} catch {
-				// The source closed with its session; nothing is left to swap.
-				stop();
-			} finally {
-				trying = false;
-				if (mcpWaiting === stop) schedule();
-			}
-		};
-		const schedule = (): void => {
-			clearTimeout(timer);
-			timer = setTimeout(() => void attempt(), MCP_RETRY_MS);
-			timer.unref?.();
-		};
-		const unsubscribe = deps.bus.subscribe("turn.settled", () => void attempt());
-		mcpWaiting = stop;
-		schedule();
-	};
+	const mcpDeferral = createIdleDeferral(deps.bus, () => deps.mcp?.idle() ?? false);
+	const deferMcpSwap = (source: Pick<McpCapabilitySource, "reloadDeclarations">): void =>
+		mcpDeferral.defer(async () => {
+			const swap = await source.reloadDeclarations();
+			if (swap === null) return false;
+			const section = mcpSection(swap);
+			deps.bus.emit("reload.applied", {
+				target: "mcp",
+				text: `MCP servers swapped after the turn settled: ${section.lines
+					.slice(1)
+					.map((line) => line.trim())
+					.join("; ")}`,
+				failed: section.failed,
+			});
+			return true;
+		});
 	return {
 		get active() {
 			return active;
@@ -277,7 +252,8 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 					try {
 						const source = deps.mcp?.source();
 						const swap = source && deps.mcp?.idle() ? await source.reloadDeclarations() : null;
-						if (!source) lines.push("MCP servers", "  this session loaded no MCP source; a new session reads mcp.json");
+						if (!source)
+							lines.push("MCP servers", "  this session loaded no MCP source; a new session reads its MCP declarations");
 						else if (swap === null) {
 							deferMcpSwap(source);
 							lines.push(
@@ -285,7 +261,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 								"  deferred: a turn or an MCP call is running; the swap runs once it settles and reports then",
 							);
 						} else {
-							mcpWaiting?.();
+							mcpDeferral.cancel();
 							const section = mcpSection(swap);
 							lines.push(...section.lines);
 							if (section.failed) failed = true;

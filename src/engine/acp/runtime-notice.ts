@@ -94,15 +94,20 @@ export function subscribeAcpNotices(
 	bus: Pick<TelemetryHub, "subscribe">,
 	relay: AcpRuntimeNoticeRelay,
 	boundSession: () => string | null,
-	/** After a `/reload` from any caller, the bound session hears the commands it may type now. */
+	/** After a `/reload` from any caller, and after an extensions reload that waited, the bound session hears the commands it may type now. */
 	announceCommands?: (sessionId: string) => void,
 ): () => void {
+	const announce = (): void => {
+		const sessionId = boundSession();
+		if (sessionId !== null) announceCommands?.(sessionId);
+	};
 	const unsubscribers = [
 		bus.subscribe("runtime.notice_raised", (payload) => relay.raise(payload, boundSession())),
 		subscribeSessionNotices(bus, (notice) => relay.session(notice, boundSession())),
-		bus.subscribe("session.reloaded", () => {
-			const sessionId = boundSession();
-			if (sessionId !== null) announceCommands?.(sessionId);
+		bus.subscribe("session.reloaded", announce),
+		// A deferred extensions reload can change the extension commands after the report went out.
+		bus.subscribe("reload.applied", (payload) => {
+			if (payload?.target === "extensions") announce();
 		}),
 	];
 	return () => {
