@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
 import path from "node:path";
+import { gitSpawnSync } from "../../core/internal-git-run.js";
 import { canonicalizePath, canonicalizeRawPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../../core/path-containment.js";
 import { discoverSecretMasks, isSecretPath } from "../../core/sandbox/secret-files.js";
@@ -562,16 +563,21 @@ function networkUrl(remote: string): boolean {
 	return scp !== null && !hostRefused(scp[1] ?? "");
 }
 
-/** Git's exit status and output for `args` in `dir`; status null when it timed out or said too much. Reads config, runs nothing. */
+/** Git's exit status and output for `args` in `dir`; status null when it timed out, said too much or was refused. Reads config, runs nothing. */
 function runGit(dir: string, args: ReadonlyArray<string>): { status: number | null; stdout: string } {
-	const result = spawnSync("git", args, {
-		cwd: dir,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-		timeout: 2_000,
-		maxBuffer: 1 << 20,
-		env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-	});
+	let result: SpawnSyncReturns<string>;
+	try {
+		result = gitSpawnSync(args, {
+			cwd: dir,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 2_000,
+			maxBuffer: 1 << 20,
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+		});
+	} catch {
+		return { status: null, stdout: "" };
+	}
 	return {
 		status: result.error === undefined ? result.status : null,
 		stdout: typeof result.stdout === "string" ? result.stdout : "",

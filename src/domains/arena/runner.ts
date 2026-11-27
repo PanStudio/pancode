@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import {
 	closeSync,
 	existsSync,
@@ -14,7 +13,8 @@ import {
 	writeSync,
 } from "node:fs";
 import { join, posix, relative, resolve, sep } from "node:path";
-import { internalGitArgv, withoutRepositoryEnv } from "../../core/internal-git.js";
+import { withoutRepositoryEnv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { ensureProjectIgnore } from "../../core/project-root.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
@@ -84,7 +84,7 @@ const CHECK_TAIL_BYTES = 2000;
 const NO_ENV_POLICY: ArenaEnvPolicy = { targets: [], passEnv: [] };
 
 function git(cwd: string, args: string[]): string {
-	return execFileSync("git", internalGitArgv(["-C", cwd, ...args]), {
+	return gitExecFileSync(["-C", cwd, ...args], {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 		maxBuffer: 64 * 1024 * 1024,

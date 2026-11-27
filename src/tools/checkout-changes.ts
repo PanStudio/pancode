@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readlinkSync, readSync, realpathSync } from "node:fs";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
-import { promisify } from "node:util";
-import { internalGitArgv } from "../core/internal-git.js";
-
-const execFileAsync = promisify(execFile);
+import { gitExecFileAsync, gitExecFileSync } from "../core/internal-git-run.js";
 
 export interface CheckoutSnapshot {
 	root: string;
@@ -66,14 +62,14 @@ export function snapshotCheckout(cwd: string): CheckoutSnapshot | null {
 	let status: Buffer;
 	try {
 		root = realpathSync(
-			execFileSync("git", internalGitArgv(["-C", cwd, ...ROOT_ARGS]), {
+			gitExecFileSync(["-C", cwd, ...ROOT_ARGS], {
 				timeout: 10_000,
 				stdio: ["ignore", "pipe", "pipe"],
 			})
 				.toString("utf8")
 				.trim(),
 		);
-		status = execFileSync("git", internalGitArgv(["-C", root, ...STATUS_ARGS]), {
+		status = gitExecFileSync(["-C", root, ...STATUS_ARGS], {
 			...STATUS_OPTIONS,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -127,14 +123,12 @@ async function observeCheckout(cwd: string, reference: CheckoutSnapshot | null):
 	let root: string;
 	let status: Buffer;
 	try {
-		const top = await execFileAsync("git", internalGitArgv(["-C", cwd, ...ROOT_ARGS]), {
+		const top = await gitExecFileAsync(["-C", cwd, ...ROOT_ARGS], {
 			timeout: 10_000,
 			encoding: "buffer",
 		});
 		root = await realpath(top.stdout.toString("utf8").trim());
-		status = (
-			await execFileAsync("git", internalGitArgv(["-C", root, ...STATUS_ARGS]), { ...STATUS_OPTIONS, encoding: "buffer" })
-		).stdout;
+		status = (await gitExecFileAsync(["-C", root, ...STATUS_ARGS], { ...STATUS_OPTIONS, encoding: "buffer" })).stdout;
 	} catch {
 		return null;
 	}
@@ -256,11 +250,11 @@ export async function changedCheckoutDiff(
 	const paths = changedCheckoutPaths(before, after).filter(include);
 	if (paths.length === 0) return "";
 	try {
-		const diff = await execFileAsync(
-			"git",
-			internalGitArgv(["-C", before.root, "diff", "--no-color", "HEAD", "--", ...paths]),
-			{ timeout: 10_000, maxBuffer: 8 * 1024 * 1024, encoding: "buffer" },
-		);
+		const diff = await gitExecFileAsync(["-C", before.root, "diff", "--no-color", "HEAD", "--", ...paths], {
+			timeout: 10_000,
+			maxBuffer: 8 * 1024 * 1024,
+			encoding: "buffer",
+		});
 		return diff.stdout.toString("utf8");
 	} catch {
 		// A diff that cannot be produced flags nothing; the run's other evidence stands.

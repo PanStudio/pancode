@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 
 /** One node_modules link in a base archive: `target` is linked at `relativePath` under the base root. */
@@ -43,11 +42,12 @@ function nearestNodeModules(start: string, bound: string): string | null {
 /** Directories of the task's tracked workspace packages, relative to the worktree, root excluded. */
 function packageDirs(worktreePath: string): string[] {
 	try {
-		const listed = execFileSync(
-			"git",
-			internalGitArgv(["-C", worktreePath, "ls-files", "-z", "--", ":(glob)**/package.json"]),
-			{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
-		);
+		const listed = gitExecFileSync(["-C", worktreePath, "ls-files", "-z", "--", ":(glob)**/package.json"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 30_000,
+			maxBuffer: 16 * 1024 * 1024,
+		});
 		return [
 			...new Set(
 				listed
