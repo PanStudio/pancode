@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { tierPolicy } from "../../core/presentation-tier.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactSecretString, redactStreamingSecretString, redactToolArgs } from "../../domains/safety/redaction.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString, redactStreamingSecretString, redactToolArgs } from "../../lib/secrets/redaction.js";
 import {
 	chainStepToolCallId,
 	type GatewayChainStep,

@@ -21,9 +21,9 @@
  */
 
 import { ToolNames } from "../../core/tool-names.js";
-import { sanitizeCallTargetText } from "./call-target.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { type ShellCommandStep, sedInPlaceOperands, shellCommandSteps } from "./command-path-walks.js";
-import { redactSecretString } from "./redaction.js";
 
 /** Sentences shown before the rest collapse into `and N more`, unless more of them are severe. */
 export const COMMAND_CONSEQUENCE_MAX_LINES = 3;

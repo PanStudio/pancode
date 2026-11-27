@@ -5,8 +5,8 @@
 import { AssistantProseProjection, sanitizeAssistantProse } from "../core/assistant-prose.js";
 import { formatCount } from "../core/format-time.js";
 import { escapeTerminalControls } from "../core/terminal-controls.js";
-import { redactStreamingSecretString } from "../domains/safety/redaction.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
+import { redactStreamingSecretString } from "../lib/secrets/redaction.js";
 import { dimLine, PROSE_GUTTER_WIDTH, REASON_INK, RESET } from "./chat-ink.js";
 import { previewRows } from "./renderers/preview.js";
 import type { ReasoningUsageView } from "./status/index.js";

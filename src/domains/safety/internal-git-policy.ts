@@ -12,7 +12,7 @@ import {
 	gitHookEntryId,
 	UNLISTED_GIT_CONFIG_KEY,
 } from "../../core/sandbox/git-hooks-fingerprint.js";
-import type { AutonomyLevel } from "./autonomy.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import {
 	createGitHookDriftGuard,
 	describeGitHookChange,

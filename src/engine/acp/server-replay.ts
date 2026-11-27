@@ -8,15 +8,11 @@
 import { outputLimitCutOffToolCallIds } from "../../core/assistant-output.js";
 import { formatCount } from "../../core/format-time.js";
 import { isRecord } from "../../core/type-guards.js";
-import {
-	messageStopCompleted,
-	redactFinalUrlCredentials,
-	redactUrlCredentials,
-} from "../../domains/safety/redaction.js";
 import type { BashExecutionEntry, MessageEntry, SessionEntry } from "../../domains/session/entries.js";
 import { IN_RUN_CONTINUATION_ENTRY } from "../../domains/session/entries.js";
 import { filterEntriesToActivePath } from "../../domains/session/tree/active-path.js";
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
+import { messageStopCompleted, redactFinalUrlCredentials, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import { COMPACTION_LINE_LEAD } from "../../session-control/compaction-lines.js";
 import { budgetBlockReplayFrame } from "./budget-notice.js";
 import { compactUsage, turnUsageMeta } from "./live-telemetry.js";

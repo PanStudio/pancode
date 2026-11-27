@@ -20,7 +20,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { GLYPH, UNICODE_GLYPH } from "../core/glyphs.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../domains/safety/call-target.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../lib/call-target/call-target.js";
 import { mutationFacts, readEdits } from "../session-control/approval-request-facts.js";
 import type { MutationFacts } from "../session-control/approval-request-view.js";
 import {

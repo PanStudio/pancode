@@ -5,16 +5,12 @@ import { describe, it } from "node:test";
 import { STORE_REPLACES_ARG } from "../../src/core/store-paths.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import {
-	createRedactionTally,
-	redactCommandOutputSecrets,
-	redactSecretsText,
-} from "../../src/domains/evidence/redact.js";
-import {
 	describeCallAction,
 	describeCallTarget,
 	WORKER_CALL_TARGET_MAX_CHARS,
-} from "../../src/domains/safety/call-target.js";
-import { redactSecretString } from "../../src/domains/safety/redaction.js";
+} from "../../src/lib/call-target/call-target.js";
+import { createRedactionTally, redactCommandOutputSecrets, redactSecretsText } from "../../src/lib/secrets/redact.js";
+import { redactSecretString } from "../../src/lib/secrets/redaction.js";
 
 /**
  * A tool with no curated field list (MCP and other dynamic tools) shows a

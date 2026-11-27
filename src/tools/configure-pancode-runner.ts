@@ -12,8 +12,8 @@ import { settingsChangeKind } from "../domains/config/classify.js";
 import { guidanceForSettings, renderGuidance } from "../domains/prompts/runtime-guidance.js";
 import { findBuiltinRuntimeBootMetadata } from "../domains/providers/runtimes/boot-manifest.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { isFleetRoutingPath, ROUTING_PIN_HINT } from "../domains/safety/routing-settings.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import {
 	type ConfigurePancodeChange,
 	type ConfigurePancodeDeps,

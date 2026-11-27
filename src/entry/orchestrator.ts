@@ -199,7 +199,6 @@ import {
 	mcpPromptSlashRows,
 	submitDisplay,
 } from "../domains/resources/submit-expansion.js";
-import { admissionAutonomy, containedYolo, effectiveYoloConfinement } from "../domains/safety/autonomy.js";
 import { createCitationGroundingRegistration } from "../domains/safety/citation-grounding.js";
 import { createFinishContractRegistration } from "../domains/safety/finish-contract-registration.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
@@ -300,6 +299,7 @@ import {
 } from "../engine/loop-guard.js";
 import { cwdHash, openSession, readSessionTailTurns, sessionCurrentPath, sessionPaths } from "../engine/session.js";
 import type { RunIo } from "../interactive/index.js";
+import { admissionAutonomy, containedYolo, effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
 	answerExtensionLine,

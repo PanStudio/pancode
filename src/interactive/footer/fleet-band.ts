@@ -23,9 +23,9 @@ import {
 	runCountRow,
 } from "../../core/run-row.js";
 import { reviewFindingsWords, workerFailureHeadline } from "../../domains/dispatch/failure-headline.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import type { Component } from "../../engine/tui.js";
 import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isHelperRun } from "../../session-control/worker-stream.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
 import type { HarnessFactsSource } from "../harness-facts.js";

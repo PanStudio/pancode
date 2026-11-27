@@ -8,11 +8,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Value } from "typebox/value";
 import { type ReportCliDeps, runReport } from "../../src/cli/report.js";
-import { printReportBundle, runReportSelftest } from "../../src/cli/report-bundle.js";
 import { sha256Hex } from "../../src/core/hash.js";
 import type { TelemetryContext } from "../../src/core/telemetry/context.js";
 import type { JournalEventName } from "../../src/core/telemetry/events.js";
 import { journalDefinition } from "../../src/core/telemetry/events.js";
+import { printReportBundle, runReportSelftest } from "../../src/domains/report/bundle-flow.js";
 import {
 	buildBundle,
 	type CanaryHit,

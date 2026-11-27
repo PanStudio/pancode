@@ -30,7 +30,6 @@ import { Type } from "typebox";
 import { isSameOrDescendantResolved } from "../core/path-containment.js";
 import { ToolNames } from "../core/tool-names.js";
 import { isRecord } from "../core/type-guards.js";
-import { createRedactionTally, redactSecretsText } from "../domains/evidence/redact.js";
 import { estimateTokens } from "../domains/system-one/formation.js";
 import {
 	CONSULT_FILTER_MAX_CHARS,
@@ -43,6 +42,7 @@ import {
 import { pick, pointQuestion, rate, yesNo } from "../domains/system-one/questions.js";
 import type { Question, SystemOne } from "../domains/system-one/types.js";
 import { StringEnum } from "../engine/ai.js";
+import { createRedactionTally, redactSecretsText } from "../lib/secrets/redact.js";
 import type { ObservationReservation } from "./observation.js";
 import {
 	commitObservationReservation,

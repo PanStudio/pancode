@@ -3,6 +3,10 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import {
+	isRefusedValidationWrapper,
+	validationWrapperProblem,
+} from "../../lib/validation-wrappers/validation-wrappers.js";
+import {
 	basenameToken,
 	commandTokenIndex,
 	NO_WRAPPERS,
@@ -11,7 +15,6 @@ import {
 } from "./command-token.js";
 import { SHELL_REDIRECTIONS, scanShellLike, splitSegments } from "./shell-scan.js";
 import { checkStepMatch } from "./validation-check-match.js";
-import { isRefusedValidationWrapper, validationWrapperProblem } from "./validation-wrappers.js";
 
 /**
  * `safety.validationWrappers` (FX-44): repository scripts that run a check with the words after them. The safety

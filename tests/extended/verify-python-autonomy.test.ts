@@ -4,9 +4,9 @@ import { ok, strictEqual } from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "node:test";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/domains/safety/workspace-trust.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { loadProjectVerifierCatalog } from "../../src/tools/verify/catalog.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

@@ -6,9 +6,9 @@ import type { TierPolicy } from "../../core/presentation-tier.js";
 import type { SkillLoadRefusal } from "../../core/skill-activation.js";
 import { isRecord } from "../../core/type-guards.js";
 import { actionClassWords } from "../../core/views/approval-words.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactToolArgs } from "../../domains/safety/redaction.js";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactToolArgs } from "../../lib/secrets/redaction.js";
 import { gatewayChainPending, gatewayChainPlan, gatewayChainSteps } from "../../tools/gateway-display.js";
 import {
 	classifyResourceRead,

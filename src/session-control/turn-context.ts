@@ -94,7 +94,6 @@ import {
 	resolveRuntimeTarget,
 	synthesizeTargetModel,
 } from "../domains/providers/index.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import {
 	AutoCompactionTrigger,
 	DEFAULT_COMPACTION_THRESHOLD,
@@ -146,6 +145,7 @@ import type {
 	ResponsesCacheDiagnostic,
 	Usage,
 } from "../engine/types.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolRegistry } from "../tools/registry-contract.js";
 import {
 	backendCacheVerdict,

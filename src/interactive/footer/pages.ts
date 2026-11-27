@@ -7,9 +7,9 @@
  * drawer to `deck-drawer.ts`, while keeping `machineBlock` exported for the `/usage` Health tab.
  */
 
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
 import { visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { factRows, GLYPH, meter, pancodeTheme, sectionRule, type Tone } from "../theme/index.js";
 import type { FooterDashboardRenderState } from "./dashboard.js";
 import { renderDeckDrawer } from "./deck-drawer.js";

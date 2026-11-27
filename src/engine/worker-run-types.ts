@@ -146,7 +146,7 @@ export interface WorkerRunInput {
 	 */
 	skipRepositoryInstructions?: boolean;
 	/** Internal external-connector posture. Native workers ignore it and always use default. */
-	autonomy?: import("../domains/safety/autonomy.js").AutonomyLevel;
+	autonomy?: import("../lib/autonomy/autonomy.js").AutonomyLevel;
 	/**
 	 * Absolute directories write-class tool calls are confined to for this run.
 	 * Enforced at the shared worker safety seam (createWorkerSafety) so both the

@@ -19,10 +19,10 @@ import {
 import { compile, compileWorker } from "../../src/domains/prompts/compiler.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
 import { discoverMarketplaceSkills } from "../../src/domains/resources/index.js";
-import { AUTONOMY_LEVELS, type AutonomyLevel, modelMayActivateSkills } from "../../src/domains/safety/autonomy.js";
 import { createLocalStoreBackend } from "../../src/domains/store/backends/local.js";
 import { workspaceCapabilitySignals, workspaceStoreTags } from "../../src/domains/store/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { AUTONOMY_LEVELS, type AutonomyLevel, modelMayActivateSkills } from "../../src/lib/autonomy/autonomy.js";
 import { mainPromptCacheIdentity } from "../../src/session-control/prompt-cache-identity.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { createContextTool } from "../../src/tools/context/index.js";

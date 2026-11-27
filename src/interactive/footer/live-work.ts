@@ -10,8 +10,8 @@
  */
 
 import { ToolNames } from "../../core/tool-names.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { COUNCIL_SYNTHESIS_LABEL } from "../../session-control/council.js";
 import type { BackgroundCall } from "../background-calls.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";

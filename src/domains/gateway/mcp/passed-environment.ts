@@ -9,7 +9,7 @@
  * name PanCode keeps for itself, one that changes how a program starts, or one
  * that reads as a credential is refused in a declaration and never passed.
  */
-import { isSecretArgKey } from "../../safety/redaction.js";
+import { isSecretArgKey } from "../../../lib/secrets/redaction.js";
 
 const MAX_ENTRIES = 32;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

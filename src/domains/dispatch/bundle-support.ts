@@ -4,10 +4,10 @@
 import { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { routeOutputBound } from "../../core/output-bound.js";
 import { spendSumsOf } from "../../core/telemetry/pricing.js";
+import { containedYolo, effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 import type { ConfigContract } from "../config/contract.js";
 import { calculatePricingCostUsd, type EffectivePricing } from "../providers/catalog.js";
 import type { CapabilityFlags } from "../providers/index.js";
-import { containedYolo, effectiveYoloConfinement } from "../safety/autonomy.js";
 import { ceilChars } from "../session/context-accounting.js";
 import type { DispatchLifecycleStage } from "./bundle-types.js";
 import type { DispatchRequest } from "./contract.js";

@@ -104,7 +104,7 @@ The words you meet first, each in a sentence or two, with the guide that explain
 
 ### 15. Posture (Autonomy Level)
 - **Definition**: The operator-set dial, `default` or `yolo`. `default` contains the main session's shell work in an OS sandbox, runs snapshot-recoverable destructive work after a workspace snapshot, and sends what escapes containment to the safety judge before the operator is asked. `yolo` never waits for the operator. By default it is contained: it admits exactly as `default` does, with the sandbox, snapshots and the safety judge, and refuses back to the model any call that would wait for a person. Unconfined `yolo` (`safety.yoloConfinement: unconfined`, accepted once) asks nothing: only the yolo floor, operator rules in an approved `.pancode/safety.yaml` and the run's ceilings block. Dispatched workers inherit the level through their permit, resolve their own asks through `fleet.permissions.mode`, and a read-only dispatch restricts their tools. See the [safety model](../architecture/safety-model.md#autonomy). Routing postures (`quality`, `balanced`, `latency`, `economy`) under `fleet.adaptiveRouting.postures` are a different axis that ranks candidate routes.
-- **Owning Type**: `AutonomyLevel` and `YoloConfinement` in [autonomy.ts](../../src/domains/safety/autonomy.ts).
+- **Owning Type**: `AutonomyLevel` and `YoloConfinement` in [autonomy.ts](../../src/lib/autonomy/autonomy.ts).
 
 ### 16. Capability Class
 - **Definition**: The maximum permitted mutation boundary declared by an agent recipe (`read-only`, `verification`, `artifact-write`, `workspace-edit`, `orchestration`, `internal`).

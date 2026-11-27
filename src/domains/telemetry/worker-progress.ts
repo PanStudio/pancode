@@ -31,10 +31,7 @@
  */
 
 import { isRecord } from "../../core/type-guards.js";
-import { truncateUtf8 } from "../../tools/truncate-utf8.js";
-import { durableAssistantTextFromEvent, WORKER_OUTPUT_MAX_BYTES } from "../dispatch/event-pump.js";
-import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../dispatch/verification-slot.js";
-import type { CallActionDescriptor } from "../safety/call-target.js";
+import type { CallActionDescriptor } from "../../lib/call-target/call-target.js";
 import {
 	type CutHeadGuard,
 	cutHeadGuard,
@@ -43,7 +40,10 @@ import {
 	holdCutOffText,
 	holdUnresolvedUserinfo,
 	messageStopCompleted,
-} from "../safety/redaction.js";
+} from "../../lib/secrets/redaction.js";
+import { truncateUtf8 } from "../../tools/truncate-utf8.js";
+import { durableAssistantTextFromEvent, WORKER_OUTPUT_MAX_BYTES } from "../dispatch/event-pump.js";
+import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../dispatch/verification-slot.js";
 
 /**
  * Lines of worker prose kept while a run is live. The tail is what a streaming

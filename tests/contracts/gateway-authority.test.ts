@@ -12,12 +12,12 @@ import { telemetryContext, withToolTelemetryContext } from "../../src/core/telem
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
 import { ToolDecidedSchema } from "../../src/core/telemetry/tool-schemas.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
-import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import type { SafetyContract, SafetyDecision } from "../../src/domains/safety/contract.js";
 import type { ToolDecisionInput } from "../../src/domains/safety/decision-events.js";
 import { toolDecidedPayload } from "../../src/domains/safety/decision-events.js";
 import { foldSessionArtifacts } from "../../src/domains/session/session-artifacts.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { createArtifactTool } from "../../src/tools/artifact.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
 import { createRegistry } from "../../src/tools/registry.js";

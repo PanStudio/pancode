@@ -17,10 +17,10 @@ import { presentationTier, tierPolicy, tierRevision } from "../../core/presentat
 import { COST_NOT_MEASURED, renderUsdLimit } from "../../core/telemetry/render.js";
 import { motionEnabled } from "../../core/terminal-preferences.js";
 import { autonomyModeReadout, autonomyWindowReadout } from "../../domains/safety/autonomy-readout.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
 import { taskBoardCounts } from "../../domains/session/task-board.js";
 import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { buildSegmentedContextBar } from "../context-bar.js";
 import { contextPercentRole, renderContextMeterBar } from "../context-meter.js";
 import { ACTIVE_DISPATCH_STATUSES } from "../footer-panel.js";

@@ -5,7 +5,7 @@ import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { JobThinkingLevel } from "../domains/dispatch/validation.js";
-import { type AutonomyLevel, autonomyFromUserInput } from "../domains/safety/autonomy.js";
+import { type AutonomyLevel, autonomyFromUserInput } from "../lib/autonomy/autonomy.js";
 import { globalFlagPositionHint, parseMaxContextTokens } from "./argv.js";
 import { didYouMean } from "./kit/did-you-mean.js";
 import { parseDuration } from "./kit/duration.js";

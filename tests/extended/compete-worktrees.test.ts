@@ -11,9 +11,9 @@ import { withTelemetryContext } from "../../src/core/telemetry/context.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { readGateDecisionArtifacts } from "../../src/domains/dispatch/gate-decisions.js";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import {
 	candidateDiffStat,
 	claimCompeteGroup,

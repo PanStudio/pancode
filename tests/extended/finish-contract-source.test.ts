@@ -4,7 +4,7 @@ import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "node:test";
-import { acceptanceFromTaskFlags } from "../../src/cli/tasks.js";
+import { acceptanceFromTaskFlags } from "../../src/domains/dispatch/task-acceptance.js";
 import { createFinishContractRegistration } from "../../src/domains/safety/finish-contract-registration.js";
 import { createTaskBoardStore, foldTaskBoard } from "../../src/domains/session/task-board.js";
 import { activeUserTaskAcceptance } from "../../src/domains/user-tasks/active-acceptance.js";

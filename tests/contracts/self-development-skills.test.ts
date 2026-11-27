@@ -20,7 +20,7 @@ import {
 import type { SessionPromptInputs } from "../../src/domains/prompts/compiler.js";
 import { createPromptsBundle } from "../../src/domains/prompts/extension.js";
 import { loadSkills, modelVisibleSkills } from "../../src/domains/resources/skills/loader.js";
-import { AUTONOMY_LEVELS, modelMayActivateSkills } from "../../src/domains/safety/autonomy.js";
+import { AUTONOMY_LEVELS, modelMayActivateSkills } from "../../src/lib/autonomy/autonomy.js";
 import { createContextTool } from "../../src/tools/context/index.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

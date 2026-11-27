@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { JobRecord } from "../core/job-types.js";
 import { jobPollFailure } from "../core/job-types.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { Text } from "../engine/tui.js";
 import { truncateToWidth, visibleWidth } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { isHelperRun } from "../session-control/worker-stream.js";
 import type { DispatchBoardRow, DispatchBoardStatus } from "./dispatch-row-model.js";
 import { formatElapsed, GLYPH, pancodeTheme } from "./theme/index.js";

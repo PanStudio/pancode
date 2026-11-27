@@ -43,7 +43,7 @@ import {
 import type { ThinkingLevel } from "../../domains/providers/types/capability-flags.js";
 import type { LocalModelQuirks } from "../../domains/providers/types/local-model-quirks.js";
 import type { LiteLLMTargetSettings, LmStudioTargetSettings } from "../../domains/providers/types/target-descriptor.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { isProviderContentFilter, providerContentFilterMessage } from "../ai.js";
 import { normalizeContext, resolvedRequestContext } from "../context.js";
 import { filterGemmaChannelStream, usesGemmaChannelMarkers } from "../gemma-channel-filter.js";

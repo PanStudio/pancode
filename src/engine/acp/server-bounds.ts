@@ -7,8 +7,8 @@
 
 import { isRecord } from "../../core/type-guards.js";
 import { WIRE_TRUNCATION_SUFFIX as ACP_TRUNCATION_SUFFIX } from "../../core/views/diff-rows.js";
-import { redactCommandOutputSecrets } from "../../domains/evidence/redact.js";
-import { redactSecretString, redactToolArgs, redactUrlCredentials } from "../../domains/safety/redaction.js";
+import { redactCommandOutputSecrets } from "../../lib/secrets/redact.js";
+import { redactSecretString, redactToolArgs, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import { AcpRequestError } from "./errors.js";
 import { ACP_MAX_RAW_DIFF_BYTES, ACP_MAX_RAW_RECORD_BYTES, ACP_MAX_STRING_BYTES } from "./types.js";
 

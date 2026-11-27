@@ -24,7 +24,7 @@ import {
 	scanTelemetrySegment,
 	telemetryChainHead,
 } from "../../core/telemetry/segment.js";
-import { createRedactionTally } from "../evidence/redact.js";
+import { createRedactionTally } from "../../lib/secrets/redact.js";
 import { CONTENT_SUBJECTS, collectRefs, redactTelemetryValue } from "./objects.js";
 import {
 	isTelemetryJournalFile,

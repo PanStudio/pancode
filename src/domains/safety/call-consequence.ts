@@ -7,8 +7,8 @@ import { canonicalizePath, canonicalizeRawPath, createPathWalkMemo } from "../..
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { storeReplacedBlob, storeWriteSet } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
+import type { AutonomyExposure } from "../../lib/autonomy/autonomy.js";
 import type { ClassifierCall } from "./action-classifier.js";
-import type { AutonomyExposure } from "./autonomy.js";
 import { autonomyCallInputs } from "./autonomy-inputs.js";
 import { describeBashCallConsequences, type PathKind } from "./command-consequence.js";
 import { extractCommandPathWalks, type ShellCommandStep, shellCommandSteps } from "./command-path-walks.js";

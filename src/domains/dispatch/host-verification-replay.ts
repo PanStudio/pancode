@@ -15,7 +15,7 @@ import {
 import { dirname, join } from "node:path";
 import { gitExecFileSync, gitVia } from "../../core/internal-git-run.js";
 import { runCommandVector } from "../../core/safe-exec.js";
-import { redactCommandOutputSecrets } from "../evidence/redact.js";
+import { redactCommandOutputSecrets } from "../../lib/secrets/redact.js";
 import { OUTPUT_TAIL_BYTES } from "./host-verification-runner.js";
 import type { RunHostVerificationCheck } from "./types.js";
 

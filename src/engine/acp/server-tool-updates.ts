@@ -15,13 +15,13 @@ import { displayImageMimeType, toolResultImages, toolResultShotPaths } from "../
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
 import { TOOL_TITLE_MAX_BYTES } from "../../core/views/tool-words.js";
-import type { AutonomyLevel } from "../../domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import {
 	messageStopCompleted,
 	redactStreamingUrlCredentials,
 	redactUrlCredentials,
 	UrlCredentialStreamFilter,
-} from "../../domains/safety/redaction.js";
+} from "../../lib/secrets/redaction.js";
 import {
 	classifyTurnEnding,
 	HOST_STATUS_NOTICE_KEY,

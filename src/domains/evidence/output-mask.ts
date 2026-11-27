@@ -11,8 +11,8 @@
  */
 
 import { ENV_SECRET_JOIN, ENV_SECRET_NAME, ENV_SECRET_VALUE_CHARS } from "../../core/secret-shapes.js";
-import { cutHeadGuard, dropShortCutHead, holdCutOffText, secretUrlParamValues } from "../safety/redaction.js";
-import { redactCommandOutputSecrets, redactKnownSecrets } from "./redact.js";
+import { redactCommandOutputSecrets, redactKnownSecrets } from "../../lib/secrets/redact.js";
+import { cutHeadGuard, dropShortCutHead, holdCutOffText, secretUrlParamValues } from "../../lib/secrets/redaction.js";
 
 /**
  * How the end of a text stands. `open` text is a frame of output still growing, `cut-off` text stopped where nothing more

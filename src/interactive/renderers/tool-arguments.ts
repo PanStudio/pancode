@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isRecord } from "../../core/type-guards.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
-import { redactSecretString, redactToolArgs } from "../../domains/safety/redaction.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
+import { redactSecretString, redactToolArgs } from "../../lib/secrets/redaction.js";
 import type { ResolvedToolRow } from "../../tools/presentation.js";
 /** Tool argument rows: the inline argument pairs, the argument body, and the preview's argument facts. */
 import { cardRows } from "../card.js";

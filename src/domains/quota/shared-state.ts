@@ -18,7 +18,7 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { tryWithStateFileLockSync } from "../../core/state-file-lock.js";
 import { isRecord } from "../../core/type-guards.js";
 import { pancodeStatePath, stateRootRemoved } from "../../core/xdg.js";
-import { redactSecretString } from "../safety/redaction.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import type { UsageSnapshot } from "./types.js";
 
 /** No hold outlives a day, whatever a header or a stored file says. */

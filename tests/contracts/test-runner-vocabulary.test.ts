@@ -7,8 +7,6 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { evaluateAdmission } from "../../src/domains/safety/admission.js";
-import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import { callVerdict } from "../../src/domains/safety/check-classifier.js";
 import { PROJECT_SCRIPT_COMMANDS, TEST_RUNNER_COMMANDS } from "../../src/domains/safety/policy-command-tables.js";
 import type { SafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
@@ -23,6 +21,8 @@ import { createSessionCodeConsent } from "../../src/domains/safety/session-code-
 import type { ValidationCommandLabel } from "../../src/domains/safety/validation-check-match.js";
 import { VALIDATION_COMMAND_LABELS } from "../../src/domains/safety/validation-check-match.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";

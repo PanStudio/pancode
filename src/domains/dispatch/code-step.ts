@@ -40,6 +40,7 @@ import { scrubSandboxEnv } from "../../core/sandbox/env-scrub.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "../../core/sandbox/main-session.js";
 import { signalSandboxPayload } from "../../core/sandbox/signal.js";
 import { pancodeStateDir } from "../../core/xdg.js";
+import { redactCommandOutputSecrets } from "../../lib/secrets/redact.js";
 import { type CheckoutSnapshot, changedCheckoutPaths, snapshotCheckout } from "../../tools/checkout-changes.js";
 import {
 	PLAYBOOK_COMMAND_BASE_ENV,
@@ -47,7 +48,6 @@ import {
 	validatePlaybookCommandArgs,
 } from "../agents/playbook-commands.js";
 import type { CodeReportCheck, CodeReportResult } from "../agents/result-contract-code-report.js";
-import { redactCommandOutputSecrets } from "../evidence/redact.js";
 import { writeCodeStepCommands } from "./code-step-commands.js";
 
 /** Bytes of command output retained for the artifact log. */

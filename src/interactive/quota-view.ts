@@ -5,10 +5,10 @@ import type { QuotaStateV1, RunTelemetryV1 } from "../core/telemetry/dto.js";
 import { factKnownValue } from "../core/telemetry/known.js";
 import type { QuotaSeverity } from "../domains/quota/presentation.js";
 import { severityForPct } from "../domains/quota/presentation.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
 import type { EnqueuedRun } from "../domains/telemetry/index.js";
 import { visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 import { USAGE_NO_CALLS, USAGE_NOT_MEASURED } from "./dispatch-board.js";
 import { dispatchBoardItems } from "./dispatch-board-items.js";
 import {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { AutonomyLevel } from "./autonomy.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { SafetyDecision } from "./contract.js";
 
 /**

@@ -4,8 +4,8 @@
 /** The fleet plan card: plan progress, step rows, and the plan body. */
 import type { OutputStyle } from "../core/defaults.js";
 import { tierPolicy } from "../core/presentation-tier.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { truncateToWidth, visibleWidth } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { cardRail, cardRows } from "./card.js";
 import {
 	CARD_KV_KEY_WIDTH,

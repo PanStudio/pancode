@@ -54,7 +54,7 @@ import {
 	summarizeCampaign,
 } from "../../src/domains/research/index.js";
 import { runObjective } from "../../src/domains/research/measure.js";
-import { effectiveYoloConfinement, YOLO_CONFINEMENT_PIN_ENV } from "../../src/domains/safety/autonomy.js";
+import { effectiveYoloConfinement, YOLO_CONFINEMENT_PIN_ENV } from "../../src/lib/autonomy/autonomy.js";
 import type { DeclaredCheck } from "../../src/tools/verify/catalog.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

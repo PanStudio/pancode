@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { FILE_WRITER_COMMANDS } from "../../lib/validation-wrappers/validation-wrappers.js";
 import { pastIdentityPrefix } from "./check-prefix.js";
 import { extractCommandDeleteTargets, extractCommandWriteTargets } from "./command-path-walks.js";
 import { basenameToken } from "./command-token.js";
@@ -22,7 +24,6 @@ import {
 	READ_ONLY_RUNNERS,
 	readOnlyCheckMatch,
 } from "./validation-check-match.js";
-import { FILE_WRITER_COMMANDS } from "./validation-wrappers.js";
 
 /**
  * How a shell command that runs a recognized check stands against the tree it leaves (x1-1). `pure`: every step is

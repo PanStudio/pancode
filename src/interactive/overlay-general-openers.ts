@@ -26,7 +26,6 @@ import {
 	readRecallUseLedger,
 	rejectMemoryRecord,
 } from "../domains/memory/index.js";
-import { holdCutOffText } from "../domains/safety/redaction.js";
 import type { BudgetPreflight } from "../domains/scheduling/contract.js";
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionMeta } from "../domains/session/index.js";
@@ -44,6 +43,7 @@ import { formatUserTaskHandoff } from "../domains/user-tasks/handoff.js";
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
 import { createWorkspaceSnapshots, type WorkspaceSnapshots } from "../domains/workspace-snapshots/index.js";
 import type { TUI } from "../engine/tui.js";
+import { holdCutOffText } from "../lib/secrets/redaction.js";
 import type { DraftOutcome } from "../session-control/chat-loop.js";
 import { type OutOfTurnRoute, outOfTurnRouteLabel } from "../session-control/side-question.js";
 import type {

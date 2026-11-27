@@ -17,7 +17,6 @@ export { pancodeConfigDir, pancodeDataDir, pancodeStateDir, resolvePancodeDirs }
 export { readInstallerRecord } from "../../../../src/domains/lifecycle/install-method.js";
 export { getVersionInfo } from "../../../../src/domains/lifecycle/version.js";
 export { ESCAPE_SCOPE_OPTION_PREFIX } from "../../../../src/domains/safety/escape-scope.js";
-export { WORKSPACE_SECRET_PATHS } from "../../../../src/domains/safety/secret-paths.js";
 export {
 	AcpProcessError,
 	AcpProtocolError,
@@ -34,3 +33,4 @@ export type * from "../../../../src/engine/acp/types-session.js";
 export type * from "../../../../src/engine/acp/types-settings.js";
 export type * from "../../../../src/engine/acp/types-tools.js";
 export type * from "../../../../src/engine/acp/types-views.js";
+export { WORKSPACE_SECRET_PATHS } from "../../../../src/lib/secrets/secret-paths.js";

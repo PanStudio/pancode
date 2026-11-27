@@ -7,8 +7,8 @@ import {
 	SESSION_CODE_CONSENT_TEXT,
 	SESSION_CODE_CONSENT_TIER_LABEL,
 } from "../../core/views/approval-words.js";
+import type { AutonomyExposure } from "../../lib/autonomy/autonomy.js";
 import type { ActionClass } from "./action-classifier.js";
-import type { AutonomyExposure } from "./autonomy.js";
 
 /** Closed consequence categories used only to explain an already-made decision request. */
 const DECISION_TIERS = ["conversation", "workspace", "outward", "safety-net", "system", "worker"] as const;

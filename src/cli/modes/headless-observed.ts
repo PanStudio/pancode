@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { unclassifiedAfterLastCheck } from "../../domains/dispatch/run-findings.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { validationCommandOf } from "../../domains/safety/check-classifier.js";
 import { capabilityEntries } from "../../domains/safety/finish-entries.js";
 import { verifyFoundNoChecks } from "../../domains/safety/finish-limitations.js";
 import { standingDispatchRuns } from "../../domains/safety/observed-checks.js";
 import type { RunEffects } from "../../domains/safety/run-effects.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 
 /**
  * What the harness itself saw a headless main-agent run do, beside the model's own account of it: tool calls,

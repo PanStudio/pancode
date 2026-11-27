@@ -83,7 +83,6 @@ import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities } from "../domains/providers/index.js";
 import type { VisionSidecar } from "../domains/providers/vision-sidecar.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
@@ -104,6 +103,7 @@ import { activePath, findLastEntry } from "../domains/session/tree/active-path.j
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import { createEngineAgent } from "../engine/agent.js";
 import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
 import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";

@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { GLYPH } from "../core/glyphs.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { SessionContract, SessionEntry } from "../domains/session/index.js";
 import { suggestSessionName } from "../domains/session/names.js";
 import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 
 export interface SessionRenameDeps {

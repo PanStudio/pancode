@@ -9,9 +9,14 @@
  */
 
 import { homedir } from "node:os";
-import type { RedactionTally } from "../evidence/redact.js";
-import { createRedactionTally, headForRedaction, redactSecretsDeep, redactSecretsText } from "../evidence/redact.js";
-import { cutHeadGuard, dropCutHead, isSecretArgKey, redactSecretString } from "../safety/redaction.js";
+import type { RedactionTally } from "../../lib/secrets/redact.js";
+import {
+	createRedactionTally,
+	headForRedaction,
+	redactSecretsDeep,
+	redactSecretsText,
+} from "../../lib/secrets/redact.js";
+import { cutHeadGuard, dropCutHead, isSecretArgKey, redactSecretString } from "../../lib/secrets/redaction.js";
 
 const MAX_DEPTH = 12;
 let homePattern: { home: string; re: RegExp | null } | null = null;

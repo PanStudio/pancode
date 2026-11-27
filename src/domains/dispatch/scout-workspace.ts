@@ -7,7 +7,7 @@ import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../../core/path-containment.js";
 import { repositoryIdentity, repositoryRoot } from "../../core/project-root.js";
 import { isRecord } from "../../core/type-guards.js";
-import { HOME_SECRET_RELATIVE_PATHS, workerSecretPaths } from "../safety/secret-paths.js";
+import { HOME_SECRET_RELATIVE_PATHS, workerSecretPaths } from "../../lib/secrets/secret-paths.js";
 
 const SYSTEM_TREES = ["/proc", "/sys", "/dev", "/run", "/etc"];
 /** Names of credential stores a directory tree may hold anywhere (`.ssh`, `.gnupg`, `.aws`, ...). */

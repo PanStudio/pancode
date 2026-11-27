@@ -4,7 +4,7 @@ import { doesNotMatch, match, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
-import { AUTONOMY_LEVELS, mapAutonomy } from "../../src/domains/safety/autonomy.js";
+import { AUTONOMY_LEVELS, mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { networkToolsDisabled } from "../../src/tools/network-policy.js";
 import { webFetchTool } from "../../src/tools/web-fetch.js";
 

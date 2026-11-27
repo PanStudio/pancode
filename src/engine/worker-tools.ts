@@ -23,7 +23,6 @@ import type { MiddlewareHookRegistration, MiddlewareSnapshot } from "../domains/
 import { createMiddlewareHostFromSnapshot } from "../domains/middleware/snapshot.js";
 import { classify as classifyAction } from "../domains/safety/action-classifier.js";
 import type { AdmissionGitContext } from "../domains/safety/admission.js";
-import { DEFAULT_AUTONOMY_LEVEL } from "../domains/safety/autonomy.js";
 import { type SafetyContract, toSafetyDecision } from "../domains/safety/contract.js";
 import type { ToolDecisionInput } from "../domains/safety/decision-events.js";
 import { recordToolDecision as emitToolDecision } from "../domains/safety/decision-events.js";
@@ -42,6 +41,7 @@ import {
 } from "../domains/safety/protected-artifacts.js";
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../domains/safety/scope.js";
 import { probeWorkspace } from "../domains/session/workspace/index.js";
+import { DEFAULT_AUTONOMY_LEVEL } from "../lib/autonomy/autonomy.js";
 import { envelopeSurfaceNames, wireParameterSchema } from "../tools/agent-tools.js";
 import { assertRegisteredBuiltinTools, registerCoreTools } from "../tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../tools/gateway/index.js";

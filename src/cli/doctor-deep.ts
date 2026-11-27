@@ -7,10 +7,10 @@ import { ToolNames } from "../core/tool-names.js";
 import { resolveOnPath } from "../domains/interop/detect.js";
 import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
-import { type AutonomyLevel, mapAutonomy } from "../domains/safety/autonomy.js";
 import { SCRATCH_DISPOSABLE_REASON_CODE, SNAPSHOT_RECOVERABLE_REASON_CODE } from "../domains/safety/containment.js";
 import { createSafetyPolicyEngine } from "../domains/safety/policy-engine.js";
 import { loadValidationContract } from "../domains/safety/validation-contract.js";
+import { type AutonomyLevel, mapAutonomy } from "../lib/autonomy/autonomy.js";
 
 export interface DeepToolProbeOptions {
 	/** Tool-probe generation timeout in ms; the provider default applies when absent. */

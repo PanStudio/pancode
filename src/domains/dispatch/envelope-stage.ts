@@ -13,6 +13,7 @@ import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } f
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { isClaudeSdkTool } from "../../engine/claude/tool-safety.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
+import { type AutonomyLevel, admissionAutonomy, effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 import { networkToolsDisabled } from "../../tools/network-policy.js";
 import { applyToolProfile } from "../../tools/profiles.js";
 import { runtimeAttachesGateway } from "../../tools/surface.js";
@@ -25,7 +26,6 @@ import type { normalizeAgentSpec } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import { enabledHarnessExtensionToolNames } from "../extensions/command-tools.js";
 import { type RuntimeDescriptor, runtimeEnforcement } from "../providers/index.js";
-import { type AutonomyLevel, admissionAutonomy, effectiveYoloConfinement } from "../safety/autonomy.js";
 import {
 	mainGrantsUnavailable,
 	resolveWorkerPermit,

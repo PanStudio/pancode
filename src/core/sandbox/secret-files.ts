@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { HOME_SECRET_RELATIVE_PATHS, WORKSPACE_SECRET_PATHS } from "../../domains/safety/secret-paths.js";
+import { HOME_SECRET_RELATIVE_PATHS, WORKSPACE_SECRET_PATHS } from "../../lib/secrets/secret-paths.js";
 import { gitExecFileSync } from "../internal-git-run.js";
 import { isStrictDescendant } from "../path-containment.js";
 import type { SandboxMaskedPath } from "./types.js";

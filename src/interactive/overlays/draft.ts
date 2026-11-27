@@ -11,7 +11,6 @@ import { skinEpoch } from "../theme/tokens.js";
  * `/btw`, nothing here reaches the session.
  */
 
-import { redactStreamingUrlCredentials, redactUrlCredentials } from "../../domains/safety/redaction.js";
 import {
 	type Component,
 	isKeyRelease,
@@ -22,6 +21,7 @@ import {
 	truncateToWidth,
 	wrapTextWithAnsi,
 } from "../../engine/tui.js";
+import { redactStreamingUrlCredentials, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import { DRAFT_LABELS, type DraftLabel, hasDeadDraftToolCallMarkup } from "../../session-control/drafts.js";
 import { buildResponsiveHint, FocusBox, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { codeInk } from "../renderers/code-ink.js";

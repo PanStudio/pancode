@@ -9,6 +9,8 @@ import { sha256Hex } from "../../core/hash.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { detectPancodeRepo } from "../../core/pancode-repo.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { isAutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import { headForRedaction } from "../../lib/secrets/redact.js";
 import type { AgentsContract } from "../agents/contract.js";
 import { listPlaybooks } from "../agents/playbook.js";
 import { type AgentSpec, isUserVisibleAgent, SHADOW_AGENT_OPERATOR_STAND_IN } from "../agents/spec.js";
@@ -24,7 +26,6 @@ import {
 	selectActiveRules,
 } from "../context/index.js";
 import { detectRunIdentity } from "../dispatch/run-identity.js";
-import { headForRedaction } from "../evidence/redact.js";
 import { loadMcpServerConfig } from "../gateway/mcp/config.js";
 import { interopAgentKind, peerModeCapabilities } from "../interop/index.js";
 import type { InteropAgentRecord } from "../interop/types.js";
@@ -32,7 +33,6 @@ import { redactForMemoryRoute } from "../memory/secret-text.js";
 import { PANE_PEER_IDS } from "../mux/operations.js";
 import type { ResourcesContract } from "../resources/contract.js";
 import { suggestableSkills } from "../resources/skills/loader.js";
-import { isAutonomyLevel } from "../safety/autonomy.js";
 import { parseRigorOverride, rigorResolution } from "../safety/rigor.js";
 import { latestPriorSession } from "../session/history.js";
 import { probeWorkspaceAsync, WORKSPACE_PROBE_REUSE_MS, type WorkspaceSnapshot } from "../session/workspace/index.js";

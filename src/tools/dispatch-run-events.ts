@@ -6,7 +6,7 @@ import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { durableAssistantTextFromEvent } from "../domains/dispatch/event-pump.js";
 import { defaultRunEventJournal, type RunEventJournalSink } from "../domains/dispatch/run-event-journal.js";
 import type { RunResult } from "../domains/dispatch/types.js";
-import { createRedactionTally, redactSecretsText } from "../domains/evidence/redact.js";
+import { createRedactionTally, redactSecretsText } from "../lib/secrets/redact.js";
 import { assistantTextFromEvent } from "./dispatch-event-text.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 

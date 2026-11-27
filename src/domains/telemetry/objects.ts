@@ -15,9 +15,9 @@ import { RunResultObjectSchema } from "../../core/telemetry/run-schemas.js";
 import type { ObjectRef } from "../../core/telemetry/schemas.js";
 import { ObjectRefSchema } from "../../core/telemetry/schemas.js";
 import { matchesTrace, traceValue } from "../../core/value-trace.js";
-import type { RedactionTally } from "../evidence/redact.js";
-import { createRedactionTally, secretRedactingReplacer } from "../evidence/redact.js";
-import { redactSecretString } from "../safety/redaction.js";
+import type { RedactionTally } from "../../lib/secrets/redact.js";
+import { createRedactionTally, secretRedactingReplacer } from "../../lib/secrets/redact.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import type { SessionPromptCompileRecord } from "../session/prompt-manifest.js";
 import { telemetryObjectsDirectory } from "./paths.js";
 

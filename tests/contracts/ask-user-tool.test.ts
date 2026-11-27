@@ -7,7 +7,6 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { skillInstallOfferTag } from "../../src/core/skill-activation.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
-import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import {
 	AWAY_ASK_WINDOW_MS,
 	askUserWindowMs,
@@ -18,6 +17,7 @@ import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { validateEngineToolArguments } from "../../src/engine/ai.js";
 import type { AgentEvent, AgentMessage } from "../../src/engine/types.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { createAskUserToolPolicy } from "../../src/session-control/chat-loop-messages.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";

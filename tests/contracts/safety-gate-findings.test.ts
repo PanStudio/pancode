@@ -10,7 +10,7 @@ import { ToolNames } from "../../src/core/tool-names.js";
 import type { ClassifierCall } from "../../src/domains/safety/action-classifier.js";
 import { createSafetyPolicyEngine, type SafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy.js";
-import { buildToolSecretPaths, workerSecretPaths } from "../../src/domains/safety/secret-paths.js";
+import { buildToolSecretPaths, workerSecretPaths } from "../../src/lib/secrets/secret-paths.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 describe("safety gate findings", () => {

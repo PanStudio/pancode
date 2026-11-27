@@ -9,7 +9,6 @@ import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { parseAcpFlags } from "../../src/cli/acp.js";
 import { launchAutonomyRefusal } from "../../src/core/yolo-host.js";
-import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import { AcpTimeoutError } from "../../src/engine/acp/errors.js";
 import { createAcpInterviewChannel } from "../../src/engine/acp/host-members.js";
 import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
@@ -17,6 +16,7 @@ import { createAcpHandshake } from "../../src/engine/acp/server-handshake.js";
 import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
 import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { writeTool } from "../../src/tools/write.js";
 

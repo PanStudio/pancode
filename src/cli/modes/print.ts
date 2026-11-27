@@ -14,7 +14,6 @@ import { runUsageFromCalls } from "../../domains/dispatch/run-call-usage.js";
 import { newRunId } from "../../domains/dispatch/state.js";
 import type { RunResultOutput, ToolCallStat } from "../../domains/dispatch/types.js";
 import { readToolRounds } from "../../domains/dispatch/types.js";
-import { createRedactionTally, redactSecretsText } from "../../domains/evidence/redact.js";
 import {
 	AUTONOMOUS_CAP_EXIT_CODE,
 	AUTONOMY_JUDGE_STREAK_EXIT_CODE,
@@ -22,11 +21,12 @@ import {
 	headlessHaltNotice,
 } from "../../domains/safety/autonomy-window.js";
 import { standingDispatchRuns } from "../../domains/safety/observed-checks.js";
-import { redactFinalUrlCredentials, redactSecretString, redactUrlCredentials } from "../../domains/safety/redaction.js";
 import { createRunEffectsRecorder, notRunCheckIds } from "../../domains/safety/run-effects.js";
 import { SESSION_COST_CEILING_EXIT_CODE, SESSION_COST_CEILING_REASON } from "../../domains/scheduling/budget.js";
 import { formatStatedWait } from "../../domains/session/retry.js";
 import type { AgentMessage } from "../../engine/types.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
+import { redactFinalUrlCredentials, redactSecretString, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import type { ChatLoop } from "../../session-control/chat-loop.js";
 import {
 	messageCallSpends,

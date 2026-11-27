@@ -8,10 +8,10 @@
  */
 
 import { isAbsolute } from "node:path";
-import { AUTONOMY_LEVELS, YOLO_CONFINEMENTS } from "../domains/safety/autonomy.js";
-import { scratchRootProblem } from "../domains/safety/scratch-roots.js";
-import { validationWrapperProblem } from "../domains/safety/validation-wrappers.js";
 import { TURN_CONTROL_WORKFLOWS } from "../domains/turn-control/settings.js";
+import { AUTONOMY_LEVELS, YOLO_CONFINEMENTS } from "../lib/autonomy/autonomy.js";
+import { scratchRootProblem } from "../lib/scratch-roots/scratch-roots.js";
+import { validationWrapperProblem } from "../lib/validation-wrappers/validation-wrappers.js";
 import type { PancodeSettings } from "./config.js";
 import {
 	ACTIVE_AGENT_AUTOMATION_ROLES,

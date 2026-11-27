@@ -14,8 +14,8 @@ import chalk from "chalk";
 import { colorDisabled } from "../core/terminal-preferences.js";
 import type { SessionToolLimits } from "../core/tool-limit-flags.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { StartupResume } from "../entry/boot-options.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 
 // Chalk reads only FORCE_COLOR, so a terminal asking for no color still got cyan rails and markers from every CLI
 // presenter (first-run configure, select lists). The CLI follows the same rule the TUI theme does.

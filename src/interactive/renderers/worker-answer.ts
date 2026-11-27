@@ -3,8 +3,8 @@
 import { AssistantProseProjection, sanitizeAssistantProse } from "../../core/assistant-prose.js";
 import { isRecord } from "../../core/type-guards.js";
 import { COUNCIL_SEAT_NOT_RUN_WORDS, type CouncilReport, isCouncilSeatNotRun } from "../../domains/agents/index.js";
-import { sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
-import { RedactedStringProjection, redactStreamingSecretString } from "../../domains/safety/redaction.js";
+import { sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
+import { RedactedStringProjection, redactStreamingSecretString } from "../../lib/secrets/redaction.js";
 import { GLYPH } from "../theme/index.js";
 
 /** Sanitize complete source text before splitting, so OSC payloads cannot cross rows. */
