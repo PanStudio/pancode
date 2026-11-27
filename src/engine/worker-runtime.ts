@@ -106,11 +106,10 @@ import {
 	recordToolExecutionEffects,
 	sessionChangesTree,
 } from "../domains/safety/run-effects.js";
-import type { WorkerMcpAttestation } from "../domains/safety/worker-permit.js";
 import { estimateAgentMessageTokens } from "../domains/session/context-accounting.js";
 import { abortReasonCause } from "../domains/telemetry/call-facts.js";
 import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
-import { createMcpCapabilitySource, type McpCapabilitySource } from "../tools/gateway/index.js";
+import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { createWorkerGitContext } from "../tools/git-exec.js";
 import { runObservationPool } from "../tools/observation.js";
 import { CODE_NAV_TASK_STEERING, codeNavTaskSteering } from "../tools/profiles.js";
@@ -582,7 +581,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			...(input.noSkills !== undefined ? { noSkills: input.noSkills } : {}),
 			...(input.skillPaths !== undefined ? { skillPaths: [...input.skillPaths] } : {}),
 			...(input.trustProjectCompatRoots !== undefined ? { trustProjectCompatRoots: input.trustProjectCompatRoots } : {}),
-			...(input.mcp?.skills !== undefined ? { mcpSkills: input.mcp.skills } : {}),
+			...(input.mcp?.attestation.skills !== undefined ? { mcpSkills: input.mcp.attestation.skills } : {}),
 		},
 		// Workers run unattended, so the loop guard carries the hard tool-call
 		// cap in addition to repetition blocking, plus the synthesis lockout:
@@ -620,7 +619,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		workerFlow,
 		input.mcp !== undefined
 			? (registry) => {
-					const admitted = input.mcp as WorkerMcpAttestation;
+					const { attestation: admitted, createSource } = input.mcp as NonNullable<WorkerRunInput["mcp"]>;
 					// Declarations and trust are read from the project root admission
 					// used, never from a task worktree that holds neither, and nothing
 					// this run observes is written back to the operator's catalog. The
@@ -629,7 +628,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					// one gives as cwd. Without a task worktree the cwd is already the
 					// tree root admission resolved, including a compete candidate's own
 					// worktree, whose source checkout lies outside its write roots.
-					workerMcp = createMcpCapabilitySource({
+					workerMcp = createSource({
 						cwd: admitted.projectRoot,
 						launchRoot: input.taskGit?.taskWorktree?.path ?? input.cwd ?? process.cwd(),
 						registry,

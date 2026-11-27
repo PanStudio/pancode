@@ -8,8 +8,7 @@ import { canonicalizePath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { STORE_REPLACES_ARG } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
-import { SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
-import { MCP_SKILL_APPROVAL_RULE_ID } from "../gateway/mcp/skills.js";
+import { MCP_SKILL_APPROVAL_RULE_ID, SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
 import type { ClassifierCall } from "./action-classifier.js";
 import type { AdmissionAskSource, ApprovalAuthority } from "./admission.js";
 import {

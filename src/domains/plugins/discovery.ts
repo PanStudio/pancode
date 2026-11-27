@@ -4,6 +4,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { sha256Hex } from "../../core/hash.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
+import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
 import { evaluatePancodeCompatibility, isSemanticVersion } from "../extensions/compatibility.js";
 import { type HubRequirementRef, isHubKind } from "../resources/hub-types.js";
@@ -35,12 +36,6 @@ const ROOT_KEYS = new Set([
 	"keywords",
 	"extensions",
 ]);
-
-export function isPluginId(value: string): boolean {
-	return (
-		value.length <= 64 && /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u.test(value) && value !== "state.json"
-	);
-}
 
 /** Resolve a declared file or directory against the canonical installed root. */
 export function pluginResourcePath(root: string, value: string, allowRoot = false): string {

@@ -66,7 +66,7 @@ async function validator() {
 	const { parse } = await import(pathToFileURL(require.resolve("yaml")).href);
 	const options = { parentURL: import.meta.url, tsconfig: join(root, "tsconfig.json") };
 	const catalog = await tsImport(join(root, "src", "domains", "plugins", "catalog.ts"), options);
-	const revocations = await tsImport(join(root, "src", "domains", "resources", "hub-revocations.ts"), options);
+	const revocations = await tsImport(join(root, "src", "core", "hub-revocations.ts"), options);
 	return { parse, parseHubIndexRows: catalog.parseHubIndexRows, parseHubRevocations: revocations.parseHubRevocations };
 }
 

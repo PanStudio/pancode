@@ -31,6 +31,7 @@ import type { AuthStorage } from "../../domains/providers/auth/index.js";
 import type { ActionClass } from "../../domains/safety/action-classifier.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
+import type { McpSkillLoading } from "../context/mcp-skills.js";
 import type { ToolRegistry } from "../registry-contract.js";
 import type { ToolSpec } from "../tool-spec.js";
 import type { McpStoreAccess } from "./mcp-store-references.js";
@@ -381,6 +382,11 @@ export interface McpCapabilitySource {
 	skillAccess(id: string, options?: McpSkillAccessOptions): Promise<McpSkillAccess>;
 	/** The skills server `id` listed this session, or null when it has listed none. */
 	servedSkills(id: string): McpSkillListing | null;
+	/**
+	 * The context tool's code for loading the skills this source serves. It travels with the source,
+	 * so a registry that admits no MCP server never loads it.
+	 */
+	readonly skillLoading: McpSkillLoading;
 	/** Ids of the servers launched this session and still open. */
 	connectedIds(options?: { readyOnly?: boolean }): string[];
 	/**

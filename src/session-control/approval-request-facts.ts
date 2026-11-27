@@ -11,8 +11,8 @@
 import { canonicalJson } from "../core/canonical-json.js";
 import { sha256Hex } from "../core/hash.js";
 import { ToolNames } from "../core/tool-names.js";
+import { MCP_SKILL_APPROVAL_RULE_ID } from "../core/views/approval-words.js";
 import { redactCommandOutputSecrets } from "../domains/evidence/redact.js";
-import { MCP_SKILL_APPROVAL_RULE_ID } from "../domains/gateway/mcp/index.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import { askAxis } from "../domains/safety/approval-axis.js";
 import { describeMainCallConsequences, mainCallExposure, mainCallReach } from "../domains/safety/call-consequence.js";

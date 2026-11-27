@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionDiagnostic, PancodeExtensionManifest } from "@pancode/sdk/pack";
@@ -11,8 +12,8 @@ import {
 	resolveExtensionEntrypoint,
 } from "@pancode/sdk/pack";
 import { parse as parseYaml } from "yaml";
+import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
-import { isPluginId } from "../plugins/index.js";
 import { evaluatePancodeCompatibility } from "./compatibility.js";
 import { validateSkin } from "./skin-schema.js";
 import type { ExtensionCandidate } from "./types.js";

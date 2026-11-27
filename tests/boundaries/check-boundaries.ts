@@ -836,7 +836,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
-	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1682],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
 	["src/tools/registry.ts#createRegistry", 2346],
 ]);
 
@@ -1391,8 +1391,9 @@ function staticValueImportClosure(entry: string): Map<string, string | null> {
 
 /**
  * Orchestrator-only modules the worker must not load statically (rule 2b):
- * every domain bundle (`extension.ts`) and the heavy modules only the
- * orchestrator's composition reaches.
+ * every domain bundle (`extension.ts`), the heavy modules only the
+ * orchestrator's composition reaches, and the MCP client, hub and plugin
+ * code a worker loads only when it admits an MCP server.
  */
 function isWorkerDeniedModule(relative: string): boolean {
 	return (
@@ -1400,6 +1401,9 @@ function isWorkerDeniedModule(relative: string): boolean {
 		relative === "src/domains/telemetry/read-model.ts" ||
 		relative === "src/domains/memory/intervention.ts" ||
 		relative.startsWith("src/domains/context/wiki/") ||
+		relative.startsWith("src/domains/gateway/") ||
+		relative.startsWith("src/domains/resources/") ||
+		relative.startsWith("src/domains/plugins/") ||
 		relative === "src/core/settings-controls.ts"
 	);
 }

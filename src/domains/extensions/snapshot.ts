@@ -7,7 +7,8 @@ import type { ExtensionDiagnostic } from "@pancode/sdk/pack";
 import { parse as parseYaml } from "yaml";
 import { canonicalJson } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
-import { type InstalledExtensionRecord, listInstalledExtensionRecords } from "./state.js";
+import type { InstalledExtensionRecord } from "./listing.js";
+import { listInstalledExtensionRecords } from "./state.js";
 import {
 	type ExtensionHookSource,
 	type ExtensionSnapshot,

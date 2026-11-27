@@ -196,7 +196,6 @@ export {
 	findMcpSkill,
 	getMcpSkill,
 	listMcpSkills,
-	MCP_SKILL_APPROVAL_RULE_ID,
 	MCP_SKILL_LIMITS,
 	MCP_SKILLS_EXTENSION,
 	type McpSkillDirectoryEntry,

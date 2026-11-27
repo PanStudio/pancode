@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import {
 	closeSync,
 	cpSync,
@@ -14,8 +15,11 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { recordLifecycleReceipt } from "../../core/hub-receipts.js";
+import { packRevokedMessage, revokedHubDigests } from "../../core/hub-revocations.js";
+import { derivedPublisher, publisherCollision, readPublisher } from "../../core/package-publisher.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
+import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
 import { projectPackageTrust } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
@@ -33,14 +37,12 @@ import {
 	uniqueSibling,
 	writeInstallState,
 } from "../extensions/install-store.js";
-import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
 import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
 import { isHubKind } from "../resources/hub-types.js";
-import { isPluginId, readPluginManifest } from "./discovery.js";
+import { readPluginManifest } from "./discovery.js";
 import { passPluginCandidate } from "./discovery-pass.js";
 import { pluginContentDigest } from "./integrity.js";
 import { pluginBaseDir, pluginDataDir } from "./paths.js";
-import { derivedPublisher, publisherCollision, readPublisher } from "./publisher.js";
 import type {
 	HubPackageInstallInput,
 	InstalledPlugin,
