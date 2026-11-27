@@ -134,7 +134,8 @@ async function mapParallel<T, R>(items: ReadonlyArray<T>, fn: (item: T) => Promi
 			results[index] = await fn(items[index] as T);
 		}
 	};
-	await Promise.all(Array.from({ length: Math.min(PARALLEL_REQUESTS, items.length) }, worker));
+	const done = await Promise.allSettled(Array.from({ length: Math.min(PARALLEL_REQUESTS, items.length) }, worker));
+	for (const result of done) if (result.status === "rejected") throw result.reason;
 	return results;
 }
 
@@ -217,9 +218,9 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 
 	async function del(key: string, what: string, headers?: Record<string, string>): Promise<void> {
 		const response = await client.send("DELETE", key, headers !== undefined ? { headers } : {});
-		await discard(response);
 		if (response.status !== 204 && response.status !== 200 && response.status !== 404)
 			throw await client.refusal(response, what);
+		await discard(response);
 	}
 
 	/** Every object under `prefix`, in key order. */
@@ -551,10 +552,10 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			guarded(async () => {
 				checkTag(tag);
 				await fenceHeldLeases();
-				// The tag file goes first, so a half-deleted tag is not listed.
-				await del(tagKey(tag), `deleting tag ${tag}`);
-				const keys = (await listAll(tagBase(tag))).map((object) => object.key);
+				// Keep the marker until cleanup succeeds so an interrupted rm-tag can be retried.
+				const keys = (await listAll(tagBase(tag))).map((object) => object.key).filter((key) => key !== tagKey(tag));
 				await mapParallel(keys, (key) => del(key, `deleting ${client.location(key)}`));
+				await del(tagKey(tag), `deleting tag ${tag}`);
 			}),
 
 		setTagXattr: (tag, key, value) =>
