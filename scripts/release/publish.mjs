@@ -101,11 +101,12 @@ async function publishNpm(release, directory, registry) {
 		],
 		{ stdio: "inherit" },
 	);
-	for (let attempt = 0; attempt < 30; attempt++) {
+	// npm took 13 minutes to serve 0.9.0 and 16 to serve 0.9.1 after accepting them.
+	for (let attempt = 0; attempt < 180; attempt++) {
 		if (served() === release.integrity) return console.log(`npm: published ${spec} under ${release.channel}`);
 		await sleep(10_000);
 	}
-	throw new Error(`npm accepted ${spec} but does not serve it after 5 minutes; rerun the job to continue`);
+	throw new Error(`npm accepted ${spec} but does not serve it after 30 minutes; rerun the job to continue`);
 }
 
 function publishGitHubRelease(release, directory) {

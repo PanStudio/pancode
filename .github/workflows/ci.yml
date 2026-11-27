@@ -298,7 +298,7 @@ jobs:
     # The owner's approval of this environment is the release decision; nothing above it can publish.
     environment: release
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     concurrency:
       group: publish
       cancel-in-progress: false
