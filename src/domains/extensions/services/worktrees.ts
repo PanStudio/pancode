@@ -7,7 +7,6 @@
  * the internal git argv, so repository configuration never runs a program, and a worktree the request did not keep is
  * removed when the request ends.
  */
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
 	existsSync,
@@ -22,7 +21,8 @@ import {
 } from "node:fs";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import type { ExtensionGitResult, ExtensionWorkPlace, ExtensionWorktree } from "@pancode/sdk/extension";
-import { internalGitArgv, withoutRepositoryEnv } from "../../../core/internal-git.js";
+import { withoutRepositoryEnv } from "../../../core/internal-git.js";
+import { gitExecFile } from "../../../core/internal-git-run.js";
 import { hostCommitIdentity } from "../../../tools/worktree-commit.js";
 import type { ExtensionRequestScope } from "./scope.js";
 
@@ -132,9 +132,8 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 
 	const run = (cwd: string, args: ReadonlyArray<string>): Promise<ExtensionGitResult> =>
 		new Promise((done) => {
-			execFile(
-				"git",
-				internalGitArgv(["-C", cwd, ...args]),
+			gitExecFile(
+				["-C", cwd, ...args],
 				{ timeout, maxBuffer: MAX_GIT_OUTPUT, env: withoutRepositoryEnv(), encoding: "utf8" },
 				(error, stdout, stderr) => {
 					const code = (error as { code?: unknown } | null)?.code;
