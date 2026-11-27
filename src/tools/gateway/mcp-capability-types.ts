@@ -123,6 +123,8 @@ interface McpCapabilityMetadata {
 	provenance: "live" | "cached";
 	/** The catalog this came from recorded only part of the server's tools. */
 	truncated: boolean;
+	/** The recorded catalog outlived the server's own `ttlMs`. */
+	catalogStale?: true;
 }
 
 interface McpMetadataResult {

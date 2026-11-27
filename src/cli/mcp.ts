@@ -635,24 +635,25 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			// is that call's own error and the run goes on.
 			if ("error" in record) break;
 		}
+		const latestInfo = live.serverInfo() ?? info;
 		const listing = refreshed.listing;
 		const surface = surfaceStatusOf(server, source.servedSurface(id));
 		const data = {
 			ok: results.every((result) => result.isError === false),
 			server: described,
-			protocolVersion: info.protocolVersion,
-			serverInfo: info.serverInfo,
-			...(info.instructions !== null ? { instructions: info.instructions } : {}),
+			protocolVersion: latestInfo.protocolVersion,
+			serverInfo: latestInfo.serverInfo,
+			...(latestInfo.instructions !== null ? { instructions: latestInfo.instructions } : {}),
 			tools,
 			truncated: listing?.truncated === true,
 			...(surface !== null ? { surface } : {}),
 			calls: results,
 		};
 		const lines = [
-			mcpTestHeadline(id, info, tools.length, described),
+			mcpTestHeadline(id, latestInfo, tools.length, described),
 			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
-			...(info.instructions !== null ? instructionsLines(info.instructions) : []),
+			...(latestInfo.instructions !== null ? instructionsLines(latestInfo.instructions) : []),
 			...results.map(
 				(result) =>
 					`call ${String(result.tool)}: ${"error" in result ? "failed" : result.refused === true ? "refused" : result.isError === true ? "error" : "ok"} ${boundedCallText(String(result.error ?? result.text))}`,

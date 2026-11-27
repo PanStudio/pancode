@@ -544,18 +544,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						...(progress !== null ? { onProgress: progress.onProgress } : {}),
 					});
 					progress?.stop();
-					const rendered = offloadedBinaryText(result, invokeOptions) ?? {
-						text: result.text,
-						truncated: result.textTruncated,
-					};
-					const details: Record<string, unknown> = {
-						server: declaration.id,
-						tool: tool.name,
-						contentTypes: result.content.map((block) => block.type),
-						textTruncated: rendered.truncated,
-						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
-						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
-					};
+					const contentTypes = result.content.map((block) => block.type);
 					if (result.outputSchemaMismatch !== undefined) {
 						return withCatalogChange(state, {
 							kind: "error",
@@ -563,11 +552,23 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							details: {
 								server: declaration.id,
 								tool: tool.name,
-								contentTypes: details.contentTypes,
+								contentTypes,
 								outputSchemaMismatch: true,
 							},
 						});
 					}
+					const rendered = offloadedBinaryText(result, invokeOptions) ?? {
+						text: result.text,
+						truncated: result.textTruncated,
+					};
+					const details: Record<string, unknown> = {
+						server: declaration.id,
+						tool: tool.name,
+						contentTypes,
+						textTruncated: rendered.truncated,
+						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
+						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
+					};
 					if (result.isError) {
 						const refusal = serverPolicyRefusalResult(state, tool, name, trustClass, result);
 						if (refusal !== null) return refusal;
@@ -1142,6 +1143,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					actionClass: actionClassFor(declaration, tool),
 					provenance: "cached",
 					truncated: catalog.truncated,
+					...(mcpCatalogStale(catalog) ? { catalogStale: true } : {}),
 				},
 			};
 		},
@@ -1157,7 +1159,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					reason: `mcp server ${id} is ${trust.status} (${trust.reason}); it is never launched until trusted: run ${remedy.remedy} (${remedy.interactiveRemedy} in an interactive session)`,
 				};
 			}
-			const refusal = readOnlyLaunchRefusal(state.declaration, invokeOptions?.readOnly);
+			// Re-listing an already running server sends tools/list without launching anything.
+			const refusal = state.client !== null ? null : readOnlyLaunchRefusal(state.declaration, invokeOptions?.readOnly);
 			if (refusal !== null) return { listing: listingFor(state), reason: refusal };
 			await discover(state, invokeOptions?.signal, true);
 			return {

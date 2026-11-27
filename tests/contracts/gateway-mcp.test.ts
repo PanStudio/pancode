@@ -28,7 +28,7 @@ import {
 	trustMcpServer,
 	untrustMcpServer,
 } from "../../src/domains/gateway/mcp/index.js";
-import { mcpCatalogPath } from "../../src/domains/gateway/mcp/metadata-cache.js";
+import { mcpCatalogPath, writeMcpServerCatalog } from "../../src/domains/gateway/mcp/metadata-cache.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
 import type { MiddlewareHookRegistration } from "../../src/domains/middleware/runtime.js";
 import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
@@ -1596,6 +1596,58 @@ describe("gateway MCP capabilities", () => {
 		strictEqual(fake.surface.approvedDigest, served.digest);
 		const declared = resolveMcpServers({ cwd: scene.project, configDir: scene.configDir }).servers;
 		strictEqual(declared.find((server) => server.id === "fake")?.trust.status, "trusted", "launch trust stands");
+	});
+
+	it("labels stale cached catalogs on describe without launching and refreshes already-running servers in read-only turns", async () => {
+		const scene = scenario();
+		ok(trustMcpServer({ cwd: scene.project, configDir: scene.configDir, id: "fake", actionClass: "execute" }).ok);
+		const declaration = resolveMcpServers({ cwd: scene.project, configDir: scene.configDir }).servers.find(
+			(entry) => entry.id === "fake",
+		);
+		ok(declaration);
+		ok(
+			writeMcpServerCatalog(
+				{
+					projectRoot: canonicalProjectRoot(scene.project),
+					scope: declaration.scope,
+					declarationPath: declaration.path,
+					serverId: declaration.id,
+					digest: declaration.digest,
+					cwd: declaration.cwd,
+				},
+				{
+					tools: [
+						{
+							name: "echo",
+							title: null,
+							description: "echo back",
+							inputSchema: { type: "object" },
+							annotations: {},
+						},
+					],
+					truncated: false,
+					ttlMs: 0,
+				},
+			),
+		);
+		const { registry, source, clients } = wire(scene);
+		open.push(source);
+		const described = payloadOf(
+			await registry.invoke({ tool: ToolNames.Gateway, args: { op: "describe", capability: ECHO } }),
+		);
+		strictEqual(clients.length, 0, "describe on a stale cached catalog launches nothing");
+		strictEqual(described.catalog, "cached");
+		strictEqual(described.catalogStale, true);
+		ok(
+			(described.authority as string[]).some((line) => line.includes('gateway(op="find", server="fake", refresh=true)')),
+		);
+
+		// Once an execute-trusted server is already running, a read-only refresh re-lists it without a launch refusal.
+		await source.list();
+		strictEqual(clients.length, 1);
+		const refreshed = await source.refresh("fake", { readOnly: true });
+		strictEqual(refreshed.reason, undefined);
+		strictEqual(refreshed.listing?.status, "connected");
 	});
 });
 

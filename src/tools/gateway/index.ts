@@ -697,6 +697,11 @@ export function createGatewayTool(deps: GatewayToolDeps): ToolSpec {
 				`The catalog this came from is incomplete; list the server again with gateway(op="find", server="${metadata.serverId}", refresh=true).`,
 			);
 		}
+		if (metadata.catalogStale) {
+			authority.push(
+				`The catalog this came from is stale (older than the server's ttlMs); list the server again with gateway(op="find", server="${metadata.serverId}", refresh=true).`,
+			);
+		}
 		const mcpNote = deps.mcp?.authorityNote(metadata.name, metadata.actionClass);
 		if (mcpNote) authority.push(mcpNote);
 		return {
@@ -707,6 +712,7 @@ export function createGatewayTool(deps: GatewayToolDeps): ToolSpec {
 			actionClass: metadata.actionClass,
 			executionMode: "sequential",
 			catalog: metadata.provenance,
+			...(metadata.catalogStale ? { catalogStale: true } : {}),
 			authority,
 			...serverInstructionsOf(metadata.name),
 		};

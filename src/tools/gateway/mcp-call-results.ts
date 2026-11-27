@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { performance } from "node:perf_hooks";
 import { prepareBoundedImage } from "../../core/file-references.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type {
@@ -140,7 +141,7 @@ export function mcpProgressReporter(
 		if (stopped || latest === null) return;
 		const update = latest;
 		latest = null;
-		lastAt = Date.now();
+		lastAt = performance.now();
 		try {
 			onUpdate({ kind: "ok", output: progressLine(name, update) });
 		} catch {
@@ -152,7 +153,7 @@ export function mcpProgressReporter(
 			if (stopped) return;
 			latest = update;
 			if (timer !== null) return;
-			const wait = lastAt + MCP_PROGRESS_INTERVAL_MS - Date.now();
+			const wait = lastAt + MCP_PROGRESS_INTERVAL_MS - performance.now();
 			if (wait <= 0) emit();
 			else timer = setTimeout(emit, wait);
 		},
