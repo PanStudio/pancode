@@ -18,6 +18,8 @@ import {
 } from "../../src/core/sandbox/worker-process.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
+import { workerSandboxFor } from "../../src/domains/dispatch/worker-spec.js";
+import { createTaskWorktree } from "../../src/tools/task-worktree.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 // A scratch PanCode home for the whole file, holding the desktop app's launch token.
@@ -318,4 +320,84 @@ test("under bwrap a running command cannot read PanCode's credential store after
 	assert.match(output, /^# SETTINGS_BEFORE$/mu, "settings.yaml stays readable when it is not masked");
 	assert.doesNotMatch(output, /SETTINGS_AFTER|settings\.yaml\.tmp/u, output);
 	assert.doesNotMatch(output, /STORE_BEFORE|STORE_AFTER|credentials\.yaml\.tmp/u, output);
+});
+
+test("workerSandboxFor shares task worktree dependencies only when the placed envelope has a sandbox backend", (t) => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "pancode-worktree-dep-gate-")));
+	const externalParent = realpathSync(mkdtempSync(join(tmpdir(), "pancode-worktree-dep-parent-")));
+	t.after(() => {
+		rmSync(root, { recursive: true, force: true });
+		rmSync(externalParent, { recursive: true, force: true });
+	});
+	execFileSync("git", ["init", "-q", "-b", "main", root], { stdio: "ignore" });
+	writeFileSync(join(root, "package.json"), '{"name":"dep-gate"}\n');
+	writeFileSync(join(root, ".gitignore"), "node_modules/\n");
+	execFileSync("git", ["-C", root, "add", "package.json", ".gitignore"], { stdio: "ignore" });
+	execFileSync(
+		"git",
+		["-C", root, "-c", "user.name=Test", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"],
+		{ stdio: "ignore" },
+	);
+	mkdirSync(join(root, "node_modules", "dep"), { recursive: true });
+	writeFileSync(join(root, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
+	const unsandboxedWorktree = createTaskWorktree(root, "unsandboxed", undefined, "merge", externalParent);
+	const sandboxedWorktree = createTaskWorktree(root, "sandboxed", undefined, "merge", externalParent);
+	const baseEnvelope = (backend: "none" | "bwrap") =>
+		resolveWorkerEnvelope({
+			role: "builder",
+			capabilityClass: "builder",
+			recipeTools: [ToolNames.Read, ToolNames.Edit, ToolNames.Bash],
+			profiledTools: [ToolNames.Read, ToolNames.Edit, ToolNames.Bash],
+			denied: new Set(),
+			delegates: () => false,
+			ledger: false,
+			write: { mode: "worktree", roots: [] },
+			runtime: { toolsSupported: true, ownLoop: true, offers: () => true },
+			host: { networkStripped: false, shellStripped: false, confinesWrites: backend === "bwrap", harnessTools: new Set() },
+			skills: { names: [], paths: [], disabled: true, contextAttached: () => false },
+			read: { roots: [root], outside: [] },
+			sandbox: { backend, applies: true, networkSetting: false, networkOff: false },
+			approval: { autonomy: "default", asks: "deny" },
+			permitDigest: "test",
+		});
+	const emptyScope = (path: string) => ({
+		source: "inferred" as const,
+		workingContextPaths: [path],
+		writeBoundaries: [] as string[],
+		inferredOnlyPaths: [] as string[],
+		parentTokens: [],
+		provenance: { version: 1 as const, mode: "inferred" as const, workingContextPaths: [], writeBoundaries: [] },
+	});
+	const unsandboxed = workerSandboxFor({
+		runtimeKind: "http",
+		req: {
+			agentId: "coder",
+			executionRole: "builder",
+			task: "edit",
+			cwd: unsandboxedWorktree.path,
+			taskWorktree: unsandboxedWorktree,
+		},
+		pathScope: emptyScope(unsandboxedWorktree.path),
+		envelope: baseEnvelope("none"),
+		settings: undefined,
+	});
+	assert.equal(existsSync(join(unsandboxedWorktree.path, "node_modules")), false);
+	assert.equal(unsandboxed.spec?.backendExpected, undefined);
+
+	const sandboxed = workerSandboxFor({
+		runtimeKind: "http",
+		req: {
+			agentId: "coder",
+			executionRole: "builder",
+			task: "edit",
+			cwd: sandboxedWorktree.path,
+			taskWorktree: sandboxedWorktree,
+		},
+		pathScope: emptyScope(sandboxedWorktree.path),
+		envelope: baseEnvelope("bwrap"),
+		settings: undefined,
+	});
+	assert.equal(existsSync(join(sandboxedWorktree.path, "node_modules", "dep")), true);
+	assert.equal(sandboxed.spec?.backendExpected, true);
+	assert.equal(sandboxed.spec?.readableRoots.includes(root), true);
 });

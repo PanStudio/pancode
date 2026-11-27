@@ -12,7 +12,6 @@ import { GUARDRAIL_DEFAULTS } from "../../core/guardrails.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
-import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { gitHookDirectories } from "../../core/sandbox/git-hooks-fingerprint.js";
 import type { SandboxAvailability, WorkerSandboxSpec } from "../../core/sandbox/types.js";
@@ -211,7 +210,7 @@ export function workerSandboxFor(input: {
 	if (input.runtimeKind !== "http") return { applies: false, spec: undefined };
 	const mode = hoare ? "required" : (input.settings?.safety.sandbox ?? "auto");
 	const dependencyRoots =
-		input.req.taskWorktree !== undefined && mode !== "off" && sandboxAvailability().available
+		input.req.taskWorktree !== undefined && mode !== "off" && input.envelope.sandbox.backend !== "none"
 			? shareTaskWorktreeDependencies(input.req.taskWorktree)
 			: [];
 	const spec = resolveWorkerSandboxSpec({
