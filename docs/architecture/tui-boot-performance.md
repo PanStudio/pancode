@@ -17,7 +17,7 @@ The CLI selects an interactive start when stdin is a TTY and no headless or ACP 
 
 ### Stage 0 import budget
 
-Stage 0 draws before the application loads, so its static module closure is kept small. `tests/contracts/instant-shell-import-graph.test.ts` walks the built chunk that contains `src/interactive/terminal-lease.ts` and fails when that closure exceeds 32 chunks, 1,400,000 total bytes or 350,000 PanCode source bytes. It needs a full build. Rule 6 of `tests/boundaries/check-boundaries.ts` stops a second importer from splitting that chunk. Modules the first frame needs, such as the welcome, the composer and the context rail, therefore stay leaves that do not import the footer dashboard, task, dispatch or worker modules.
+Stage 0 draws before the application loads, so its static module closure is kept small. `tests/contracts/instant-shell-import-graph.test.ts` walks the built chunk that contains `src/interactive/terminal-lease.ts` and fails when that closure exceeds 32 chunks, 1,400,000 total bytes or 400,000 PanCode source bytes. It needs a full build. Rule 6 of `tests/boundaries/check-boundaries.ts` stops a second importer from splitting that chunk. Modules the first frame needs, such as the welcome, the composer and the context rail, therefore stay leaves that do not import the footer dashboard, task, dispatch or worker modules.
 
 ### Stage 1 work in slices
 

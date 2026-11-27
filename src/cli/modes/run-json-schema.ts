@@ -78,8 +78,6 @@ export interface RunJsonPendingMainSessionFrame {
 	cwd: string;
 }
 
-export type RunJsonSessionFrame = RunJsonMainSessionFrame | RunJsonPendingMainSessionFrame | RunJsonAgentSessionFrame;
-
 // ---------------------------------------------------------------------------
 // Projected chat-loop events (main agent)
 // ---------------------------------------------------------------------------
@@ -176,8 +174,6 @@ export interface RunJsonTurnEndFrame {
 	type: "turn_end";
 	message: RunJsonMessage;
 }
-
-export type RunJsonNoticeFrame = LoopEvent<"notice">;
 
 /** Chat-loop events the projection rewrites or drops; every other event crosses unchanged. */
 type ProjectedLoopEventType =

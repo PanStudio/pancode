@@ -68,7 +68,8 @@ function offloadMaxBytesFor(spec: ToolSpec): number {
 
 /**
  * Build the task-memory diagnostic from the same normalized disposition that
- * will shape model context. Legacy tools use the explicit compatibility path.
+ * will shape model context. A tool without a declared disposition gets the
+ * default byte-capped digest.
  */
 export function toolResultDigestFor(
 	spec: ToolSpec,
@@ -79,7 +80,7 @@ export function toolResultDigestFor(
 	const text = resultText(result);
 	const disposition = normalizeToolResultDisposition(spec, maxBytesFor(spec, context), requestedDisposition);
 	if (disposition === null) {
-		const projected = shapeLegacyToolResult(spec, result, context);
+		const projected = shapeByteCappedToolResult(spec, result, context);
 		return textToolResultDigest(resultText(projected), { outcome: result.kind });
 	}
 	const capturedBytes = capturedBytesFor(result, text);
@@ -364,7 +365,7 @@ function shapeTailOverflow(
 	return { ...result, message: displayed, details: mergeDetails(result.details, resultSize) };
 }
 
-function shapeLegacyToolResult(
+function shapeByteCappedToolResult(
 	spec: ToolSpec,
 	result: ToolResult,
 	context?: ToolResultShapeContext,
@@ -473,7 +474,7 @@ function withOffloadMetadata(
 }
 
 /**
- * Apply legacy shaping or one declared canonical disposition. Registry calls
+ * Apply the default byte cap or one declared canonical disposition. Registry calls
  * this once, after middleware annotations have produced the terminal result.
  */
 function shapeTextToolResultBody(
@@ -485,11 +486,11 @@ function shapeTextToolResultBody(
 	if (existingDisposition(result.details) !== null) return result;
 	const hardMaxBytes = maxBytesFor(spec, context);
 	const disposition = normalizeToolResultDisposition(spec, hardMaxBytes, requestedDisposition);
-	if (disposition === null) return shapeLegacyToolResult(spec, result, context);
+	if (disposition === null) return shapeByteCappedToolResult(spec, result, context);
 
 	const capturedText = resultText(result);
 	const capturedBytes = capturedBytesFor(result, capturedText);
-	let displayed = shapeLegacyToolResult(
+	let displayed = shapeByteCappedToolResult(
 		specWithDisplayCap(spec, disposition.presentation.maxBytes),
 		result,
 		context,
@@ -695,7 +696,7 @@ export function shapeToolResult(
 		requestedDisposition,
 	);
 	if (shaped.kind !== "ok") return shaped;
-	// Legacy truncation notices may extend beyond their text allowance; the image
+	// Byte-cap truncation notices may extend beyond their text allowance; the image
 	// envelope has a strict combined cap, so bound the final projections too.
 	return {
 		...shaped,

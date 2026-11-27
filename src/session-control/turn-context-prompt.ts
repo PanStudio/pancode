@@ -189,8 +189,9 @@ export function createTurnContextPrompt(
 			// `resolveContextWindowDetails`, which tests `loadedContextWindow`
 			// first and only then `probedContextWindow`, so `effectiveContextWindow`
 			// already is the loaded window whenever one is known and the source
-			// already reads "loaded"; brief #227's carry-forward is what puts that
-			// figure in reach on a resume. The source rides into the prompt
+			// already reads "loaded". A resumed process takes it from the live
+			// route status, never from an earlier process's snapshot, since that
+			// window may no longer be the one served. The source rides into the prompt
 			// manifest, so a recompile after the loaded window is first observed
 			// is explained by the record.
 			const windowDetails = agentRuntime.runtimeResolution.contextWindowDetails;

@@ -50,7 +50,6 @@ export type { McpCapabilitySource } from "./mcp-capability-types.js";
  */
 
 export const GATEWAY_OPS = ["find", "describe", "call", "chain"] as const;
-export type GatewayOp = (typeof GATEWAY_OPS)[number];
 
 /** Entries a find listing returns before it says `truncated` and asks for a narrower query. */
 export const GATEWAY_FIND_MAX_ENTRIES = 300;

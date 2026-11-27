@@ -622,14 +622,6 @@ export function readReportBundle(stateDir: string, id: string): Buffer | null {
 	return bytes;
 }
 
-/** A kept bundle with what its envelope records: what `report send <id> --share` uploads. */
-export interface SavedBundle {
-	bytes: Buffer;
-	sha256: string;
-	pancode: string;
-	consent: ReportBundleEnvelope["consent"];
-}
-
 /**
  * A bundle the maintainers received (R-20), checked from its own bytes before anything keeps it: both members present,
  * the envelope matches its schema, the telemetry and transcript match the hashes the envelope records, and the inner

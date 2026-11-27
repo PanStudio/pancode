@@ -5,8 +5,3 @@ export interface SiblingContextFile {
 	path: string;
 	content: string;
 }
-
-export interface LoadSiblingContextFilesOptions {
-	homeDir?: string;
-	includeGlobal?: boolean;
-}
