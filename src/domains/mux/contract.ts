@@ -106,9 +106,10 @@ export interface MuxOpenUtilityPaneRequest {
 	 * (clamped, cell-floored). Requires the layout tier (protocol 17); below
 	 * the floor the request degrades to a plain split and `direction` applies.
 	 * `hidden` creates the pane in the session's parking tab instead, so the
-	 * layout does not change until `showDock`.
+	 * layout does not change until `showDock`. `minCells` raises the slot's
+	 * cell floor for this pane, for a program that draws nothing useful below it.
 	 */
-	dock?: { slot: DockSlot; share?: number; hidden?: boolean };
+	dock?: { slot: DockSlot; share?: number; hidden?: boolean; minCells?: number };
 }
 
 export interface MuxNotifyRequest {
@@ -498,6 +499,7 @@ export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 							onRefused: (message) => report({ source: "local", message }),
 							...(request.dock.share === undefined ? {} : { share: request.dock.share }),
 							...(request.dock.hidden ? { hidden: true } : {}),
+							...(request.dock.minCells === undefined ? {} : { minCells: request.dock.minCells }),
 							cwd: request.cwd,
 							...(env ? { env } : {}),
 						});

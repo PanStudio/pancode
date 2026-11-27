@@ -91,6 +91,14 @@ export interface DockState {
 	lastAppliedShare: number;
 	/** True while the pane waits in the parking tab: still running, out of the layout. */
 	hidden: boolean;
+	/** The floor this dock was opened with, when it asked for more than its slot's. */
+	minCells?: number;
+}
+
+/** A slot's spec with the floor one dock asked for; a floor below the slot's never lowers it. */
+function dockSpecWithFloor(slot: DockSlot, minCells: number | undefined): DockSpec {
+	const spec = DOCK_SPECS[slot];
+	return minCells !== undefined && minCells > spec.minCells ? { ...spec, minCells } : spec;
 }
 
 /** Wire ratio for a split where the dock is the `second` child: the anchor keeps the rest. */
@@ -265,6 +273,8 @@ export interface DockController {
 			env?: Readonly<Record<string, string>>;
 			/** Start the pane in the parking tab instead of beside the anchor, so boot never reshapes the layout. */
 			hidden?: boolean;
+			/** A higher floor than the slot's, kept for every later show. */
+			minCells?: number;
 			onRefused?: (reason: string) => void;
 		},
 	): Promise<MuxPaneRef | null>;
@@ -379,7 +389,7 @@ export function createDockController(options: DockControllerOptions): DockContro
 		slot: DockSlot,
 		spec: DockSpec,
 		workspaceId: string,
-		openOptions: { share?: number; cwd?: string; env?: Readonly<Record<string, string>> },
+		openOptions: { share?: number; cwd?: string; env?: Readonly<Record<string, string>>; minCells?: number },
 	): Promise<MuxPaneRef | null> =>
 		withParkingTab(async () => {
 			const spawn = {
@@ -408,6 +418,7 @@ export function createDockController(options: DockControllerOptions): DockContro
 				targetShare: share,
 				lastAppliedShare: share,
 				hidden: true,
+				...(spec.minCells !== DOCK_SPECS[slot].minCells ? { minCells: spec.minCells } : {}),
 			});
 			return { paneId: pane.paneId, tabId: pane.tabId, workspaceId: pane.workspaceId };
 		});
@@ -487,7 +498,7 @@ export function createDockController(options: DockControllerOptions): DockContro
 			if (existing) {
 				return { paneId: existing.paneId, tabId: existing.tabId, workspaceId: "" };
 			}
-			const spec = DOCK_SPECS[slot];
+			const spec = dockSpecWithFloor(slot, openOptions.minCells);
 			const geometry = await client.paneLayout(anchorPaneId);
 			if (openOptions.hidden) return openParked(slot, spec, geometry.workspaceId, openOptions);
 			const anchorRect = geometry.panes.find((pane) => pane.paneId === anchorPaneId)?.rect;
@@ -517,6 +528,7 @@ export function createDockController(options: DockControllerOptions): DockContro
 				targetShare: plan.share,
 				lastAppliedShare: plan.share,
 				hidden: false,
+				...(spec.minCells !== DOCK_SPECS[slot].minCells ? { minCells: spec.minCells } : {}),
 			};
 			bySlot.set(slot, state);
 			await converge(state, spec);
@@ -531,7 +543,7 @@ export function createDockController(options: DockControllerOptions): DockContro
 			const state = bySlot.get(slot);
 			if (!state) return null;
 			if (!state.hidden) return { paneId: state.paneId, tabId: state.tabId, workspaceId: "" };
-			const spec = DOCK_SPECS[slot];
+			const spec = dockSpecWithFloor(slot, state.minCells);
 			const geometry = await client.paneLayout(anchorPaneId);
 			const anchorRect = geometry.panes.find((pane) => pane.paneId === anchorPaneId)?.rect;
 			if (!anchorRect) {
