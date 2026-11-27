@@ -9,23 +9,23 @@
  * which the sandbox refuses. The runtime never gets a path to exec. It asks the
  * host to run a binary it declared, with arguments and only the environment keys
  * it declared, and the host answers with the exit code and bounded output.
+ * Only the vendored copy at the pin runs, never a same-named program on PATH;
+ * binary-runs.ts admits and journals each call.
  */
 import { existsSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { type ExtensionBinaryDeclaration, RESERVED_BINARY_ENV } from "@pancode/sdk/pack";
-import { runCommandVector } from "../../../core/safe-exec.js";
 import {
-	describeResolution,
+	currentToolPlatform,
 	installPinnedTool,
 	type PinnedTool,
 	type PinnedToolDownload,
-	resolveEntryBinary,
+	resolvePinnedEntryBinary,
 	type ToolFetcher,
 	type ToolInstallResult,
 	type ToolPlatform,
 	type ToolResolution,
 	toolchainRoot,
-	toolStatus,
 } from "../../toolchain/index.js";
 import { listInstalledExtensions } from "../state.js";
 
@@ -65,8 +65,9 @@ function packBinaryTool(extensionId: string, binary: ExtensionBinaryDeclaration)
 		license: binary.license,
 		binaries: [binary.name],
 		primaryBinary: binary.name,
-		minimumVersion: binary.minimumVersion,
-		versionArgs: binary.versionArgs,
+		// Nothing probes a pack binary's version: only the pin runs.
+		minimumVersion: binary.version,
+		versionArgs: [],
 		downloads,
 		documents: binary.documents,
 	};
@@ -154,9 +155,15 @@ export function removePackBinaries(extensionId: string, root: string = toolchain
 	}
 }
 
-/** Where a declared binary resolves: a PATH copy at or above the floor, else the vendored pin. */
+/** Where a declared binary resolves: the vendored copy at its pin, never a program on PATH. */
 export function resolvePackBinary(extensionId: string, binary: ExtensionBinaryDeclaration): ToolResolution {
-	return resolveEntryBinary(packBinaryTool(extensionId, binary), binary.name);
+	return resolvePinnedEntryBinary(packBinaryTool(extensionId, binary), binary.name);
+}
+
+/** The pinned copy's expected sha256 for the current platform, or undefined if this platform has no pin. */
+export function packBinarySha256(binary: ExtensionBinaryDeclaration): string | undefined {
+	const platform = currentToolPlatform();
+	return platform === null ? undefined : binary.downloads[platform]?.sha256;
 }
 
 /** The binary's path, or one sentence on why it has none, naming what fixes it. */
@@ -166,13 +173,13 @@ export function packBinaryPath(
 ): { path: string } | { reason: string } {
 	const resolution = resolvePackBinary(extensionId, binary);
 	if (resolution.binaryPath !== null) return { path: resolution.binaryPath };
-	// The toolchain's remedy names `pancode tools install <id>`, which has no row for a pack binary.
-	const found = describeResolution(toolStatus(packBinaryTool(extensionId, binary))).replace(
-		/\s*\((?:install|update) with `[^`]*`\)$/u,
-		"",
-	);
+	const platform = currentToolPlatform();
+	if (platform === null || binary.downloads[platform] === undefined)
+		return {
+			reason: `${binary.name} has no pinned build for ${platform ?? `${process.platform}-${process.arch}`}`,
+		};
 	return {
-		reason: `${binary.name} ${found}; reinstall the extension (pancode hub install extension:${extensionId}) or put ${binary.name} ${binary.minimumVersion} or newer on PATH`,
+		reason: `${binary.name} ${binary.version} is not installed; reinstall the extension (pancode hub install extension:${extensionId})`,
 	};
 }
 
@@ -230,48 +237,4 @@ function parseTimeout(value: unknown): number {
 	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > BINARY_RUN_LIMITS.timeoutMsMax)
 		throw new Error(`binary timeoutMs must be a whole number from 1 to ${BINARY_RUN_LIMITS.timeoutMsMax}`);
 	return value;
-}
-
-export interface PackBinaryRunResult {
-	exitCode: number | null;
-	timedOut: boolean;
-	stdout: string;
-	stderr: string;
-}
-
-function capText(text: string): string {
-	return Buffer.byteLength(text) > BINARY_RUN_LIMITS.outputBytes
-		? Buffer.from(text).subarray(0, BINARY_RUN_LIMITS.outputBytes).toString("utf8")
-		: text;
-}
-
-/**
- * Runs a declared binary once, in the extension's store directory, with the
- * host's safe tool environment plus the declared keys. No shell is involved.
- */
-export async function runPackBinary(
-	extensionId: string,
-	binaries: ReadonlyArray<ExtensionBinaryDeclaration>,
-	request: PackBinaryRunRequest,
-	storeDir: string,
-	signal?: AbortSignal,
-): Promise<PackBinaryRunResult> {
-	const binary = binaries.find((entry) => entry.name === request.name);
-	if (!binary) throw new Error(`binary '${request.name}' is not declared`);
-	const resolved = packBinaryPath(extensionId, binary);
-	if ("reason" in resolved) throw new Error(resolved.reason);
-	const result = await runCommandVector(resolved.path, request.args, {
-		cwd: storeDir,
-		workspaceRoot: storeDir,
-		env: request.env,
-		timeoutMs: request.timeoutMs,
-		maxOutputBytes: BINARY_RUN_LIMITS.outputBytes * 2,
-		...(signal ? { signal } : {}),
-	});
-	return {
-		exitCode: result.exitCode,
-		timedOut: result.timedOut,
-		stdout: capText(result.stdout),
-		stderr: capText(result.stderr),
-	};
 }

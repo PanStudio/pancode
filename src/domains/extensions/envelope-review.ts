@@ -88,7 +88,7 @@ export function envelopeLines(envelope: ExtensionCapabilityEnvelope, extensionId
 		lines.push("Terminal pane: one pane in the dock below PanCode, running a program listed here");
 	for (const binary of envelope.binaries ?? [])
 		lines.push(
-			`Runs outside the sandbox: ${binary.name} ${binary.version} (pinned by sha256; a copy on PATH at ${binary.minimumVersion} or newer is used first${binary.env.length > 0 ? `; it may set ${binary.env.join(", ")}` : ""})`,
+			`Runs outside the sandbox: ${binary.name} ${binary.version} (only the pinned copy, verified by sha256${binary.env.length > 0 ? `; it may set ${binary.env.join(", ")}` : ""})`,
 		);
 	lines.push(
 		`Content it may read: ${list(envelope.access)}`,

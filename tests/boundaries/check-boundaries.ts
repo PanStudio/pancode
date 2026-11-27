@@ -809,7 +809,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
-	["src/interactive/interactive-application.ts#createInteractiveApplication", 2213],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 2208],
 	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1078],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 795],
 	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 741],

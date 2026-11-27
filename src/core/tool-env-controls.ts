@@ -16,6 +16,10 @@ import {
  */
 export const AUTONOMY_CEILING_ENV = "PANCODE_AUTONOMY_CEILING";
 
+/** How many extension-started `pancode run` invocations deep this process sits; `ctx.runs.start` stops at 2. */
+export const EXTENSION_RUN_DEPTH_ENV = "PANCODE_EXTENSION_RUN_DEPTH";
+export const MAX_EXTENSION_RUN_DEPTH = 2;
+
 // Non-interactive bash sources BASH_ENV before the script admission read, and
 // an inherited CDPATH sends a relative cd somewhere the command does not name,
 // while admission resolves cds from the command's text alone. ENV stays: no
@@ -23,7 +27,11 @@ export const AUTONOMY_CEILING_ENV = "PANCODE_AUTONOMY_CEILING";
 const PANCODE_CONTROL_ENV_KEYS = ["PANCODE_INTERACTIVE", "BASH_ENV", "CDPATH"] as const;
 
 /** The keys PanCode writes into a command's environment from its live state; only `process.env` may carry inherited ones. */
-export const GENERATED_TOOL_ENV_KEYS = [AUTONOMY_CEILING_ENV, YOLO_CONFINEMENT_PIN_ENV] as const;
+export const GENERATED_TOOL_ENV_KEYS = [
+	AUTONOMY_CEILING_ENV,
+	YOLO_CONFINEMENT_PIN_ENV,
+	EXTENSION_RUN_DEPTH_ENV,
+] as const;
 
 /**
  * Coordinates of the terminal that hosts this PanCode: its pane host's socket and pane (herdr, tmux, screen, zellij), the
@@ -110,15 +118,36 @@ function stricterCeiling(live: string | undefined, given: string | undefined): s
 	return live;
 }
 
+/** Parses `PANCODE_EXTENSION_RUN_DEPTH`: empty is 0, non-negative decimal integer is its count, anything else is invalid. */
+export function parseExtensionRunDepth(raw: string | undefined): number | "invalid" {
+	if (raw === undefined) return 0;
+	const trimmed = raw.trim();
+	if (trimmed.length === 0) return 0;
+	if (!/^\d+$/u.test(trimmed)) return "invalid";
+	const parsed = Number.parseInt(trimmed, 10);
+	return Number.isSafeInteger(parsed) ? parsed : "invalid";
+}
+
+/** The stricter of two nesting depths: never lower than the process's own, and any malformed value fails closed. */
+function stricterRunDepth(live: string | undefined, given: string | undefined): string | undefined {
+	const liveDepth = parseExtensionRunDepth(live);
+	const givenDepth = parseExtensionRunDepth(given);
+	if (liveDepth === "invalid") return String(MAX_EXTENSION_RUN_DEPTH);
+	if (givenDepth === "invalid") return String(Math.max(liveDepth, MAX_EXTENSION_RUN_DEPTH));
+	const effective = Math.max(liveDepth, givenDepth);
+	return effective > 0 ? String(effective) : undefined;
+}
+
 /**
- * Drops the keys that steer a shell or PanCode itself from a tool command's environment, then sets the autonomy ceiling
- * and contained-yolo pin from the live state. The environment given may only tighten them: its ceiling stays when it
- * is stricter than the live one, and its pin stays (any value reads as contained), as arena sets for its contenders.
- * Bash commands, run_script, verify and every other safe-exec child share it.
+ * Drops the keys that steer a shell or PanCode itself from a tool command's environment, then sets the autonomy ceiling,
+ * contained-yolo pin and extension run depth from the live state. The environment given may only tighten them: its
+ * ceiling stays when it is stricter than the live one, its pin stays (any value reads as contained), and its run depth
+ * stays only when higher than the process's own. Bash commands, run_script, verify and every other safe-exec child share it.
  */
 export function applyToolEnvControls(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const givenCeiling = env[AUTONOMY_CEILING_ENV];
 	const givenPin = yoloConfinementPinned(env);
+	const givenDepth = env[EXTENSION_RUN_DEPTH_ENV];
 	for (const key of PANCODE_CONTROL_ENV_KEYS) Reflect.deleteProperty(env, key);
 	for (const key of GENERATED_TOOL_ENV_KEYS) Reflect.deleteProperty(env, key);
 	dropHostTerminalEnv(env);
@@ -127,5 +156,7 @@ export function applyToolEnvControls(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
 	// A contained-yolo session, one launched pinned, or a caller pinning its child holds every pancode to contained yolo.
 	if (givenPin || toolEnvContainedYolo?.() === true || yoloConfinementPinned())
 		env[YOLO_CONFINEMENT_PIN_ENV] = "contained";
+	const depth = stricterRunDepth(process.env[EXTENSION_RUN_DEPTH_ENV], givenDepth);
+	if (depth !== undefined) env[EXTENSION_RUN_DEPTH_ENV] = depth;
 	return env;
 }

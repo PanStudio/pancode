@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { PackBinaryInstallOptions } from "./services/binaries.js";
+
 export type {
 	ExtensionContentAccess,
 	ExtensionEffect,
@@ -42,7 +44,15 @@ export {
 	type ExtensionRuntimeHookBridge,
 	type ExtensionRuntimeHookExecutor,
 } from "./runtime-hook-bridge.js";
-export { syncPackBinaries } from "./services/binaries.js";
+/** Brings one extension's vendored binaries in line with its installed copies; loaded on demand off the barrel path. */
+export async function syncPackBinaries(
+	extensionId: string,
+	cwd: string,
+	options?: PackBinaryInstallOptions,
+): Promise<string[]> {
+	const { syncPackBinaries: sync } = await import("./services/binaries.js");
+	return sync(extensionId, cwd, options);
+}
 export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
 export {
 	assignExtensionModel,
