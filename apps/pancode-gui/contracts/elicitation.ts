@@ -4,7 +4,7 @@ import { type Static, Type } from "typebox";
 import { Id } from "./common.js";
 import { AcpElicitationCapability as ElicitationCapability } from "./wire.js";
 
-export { elicitationContentErrors, elicitationValueError } from "./elicitation-values.js";
+export { elicitationContentErrors, elicitationValueError } from "../../../src/core/views/elicitation-values.js";
 export {
 	ACP_ELICITATION_CANCEL_METHOD as ELICITATION_CANCEL_METHOD,
 	ACP_ELICITATION_REQUEST_METHOD as ELICITATION_REQUEST_METHOD,

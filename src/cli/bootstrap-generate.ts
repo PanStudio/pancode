@@ -5,9 +5,9 @@ import type { PancodeSettings } from "../core/config.js";
 import { loadDomains } from "../core/domain-loader.js";
 import { isResponseSchemaRejection, UnsupportedResponseSchemaError } from "../core/response-schema.js";
 import { isRecord } from "../core/type-guards.js";
-import { AgentsDomainModule } from "../domains/agents/index.js";
+import { AgentsDomainModule } from "../domains/agents/module.js";
 import type { ConfigContract } from "../domains/config/contract.js";
-import { ConfigDomainModule } from "../domains/config/index.js";
+import { ConfigDomainModule } from "../domains/config/module.js";
 import { BOOTSTRAP_DEPTH_POLICY } from "../domains/context/bootstrap-evidence.js";
 import {
 	BOOTSTRAP_OUTPUT_JSON_SCHEMA,
@@ -25,19 +25,19 @@ import type {
 } from "../domains/context/index.js";
 import { fallbackBootstrapOutput } from "../domains/context/index.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
-import { createDispatchDomainModule } from "../domains/dispatch/index.js";
 import { declaredScopeIntent } from "../domains/dispatch/intent.js";
+import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { newRunId } from "../domains/dispatch/state.js";
 import type { RunResult } from "../domains/dispatch/types.js";
-import { ExtensionsDomainModule } from "../domains/extensions/index.js";
-import { createPromptsDomainModule } from "../domains/prompts/index.js";
+import { ExtensionsDomainModule } from "../domains/extensions/module.js";
+import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
-import { ProvidersDomainModule } from "../domains/providers/index.js";
-import { ResourcesDomainModule } from "../domains/resources/index.js";
-import { SafetyDomainModule } from "../domains/safety/index.js";
-import { SchedulingDomainModule } from "../domains/scheduling/index.js";
-import { SessionDomainModule } from "../domains/session/index.js";
-import { TelemetryDomainModule } from "../domains/telemetry/index.js";
+import { ProvidersDomainModule } from "../domains/providers/module.js";
+import { ResourcesDomainModule } from "../domains/resources/module.js";
+import { SafetyDomainModule } from "../domains/safety/module.js";
+import { SchedulingDomainModule } from "../domains/scheduling/module.js";
+import { SessionDomainModule } from "../domains/session/module.js";
+import { TelemetryDomainModule } from "../domains/telemetry/module.js";
 import { armInternalDispatchDeadline } from "./internal-dispatch.js";
 import { createCliWorkerHooks } from "./worker-extension-hooks.js";
 
