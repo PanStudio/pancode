@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
-import { internalGitArgv } from "../../../core/internal-git.js";
+import { gitExecFileSync } from "../../../core/internal-git-run.js";
 import { readWikiMeta, type WikiMeta } from "./meta.js";
 import { captureWikiSourceContent, wikiSourcesMatch } from "./source-content.js";
 
@@ -20,7 +19,7 @@ function splitNullTerminatedPaths(output: string): string[] {
 
 function currentGitHead(cwd: string): string | null {
 	try {
-		const out = execFileSync("git", internalGitArgv(["rev-parse", "--verify", "HEAD"], cwd), {
+		const out = gitExecFileSync(["rev-parse", "--verify", "HEAD"], {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
@@ -32,19 +31,19 @@ function currentGitHead(cwd: string): string | null {
 }
 
 function collectChangedPaths(cwd: string, gitHead: string): Set<string> {
-	const committed = execFileSync("git", internalGitArgv(["diff", "--name-only", "-z", `${gitHead}..HEAD`], cwd), {
+	const committed = gitExecFileSync(["diff", "--name-only", "-z", `${gitHead}..HEAD`], {
 		cwd,
 		encoding: "utf8",
 		maxBuffer: GIT_PATH_LIST_MAX_BYTES,
 		stdio: ["ignore", "pipe", "ignore"],
 	});
-	const trackedWorking = execFileSync("git", internalGitArgv(["diff", "--name-only", "-z", "HEAD"], cwd), {
+	const trackedWorking = gitExecFileSync(["diff", "--name-only", "-z", "HEAD"], {
 		cwd,
 		encoding: "utf8",
 		maxBuffer: GIT_PATH_LIST_MAX_BYTES,
 		stdio: ["ignore", "pipe", "ignore"],
 	});
-	const untracked = execFileSync("git", internalGitArgv(["ls-files", "--others", "--exclude-standard", "-z"], cwd), {
+	const untracked = gitExecFileSync(["ls-files", "--others", "--exclude-standard", "-z"], {
 		cwd,
 		encoding: "utf8",
 		maxBuffer: GIT_PATH_LIST_MAX_BYTES,

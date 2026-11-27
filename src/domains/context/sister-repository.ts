@@ -19,6 +19,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { sha256Hex } from "../../core/hash.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { repositoryIdentity, repositoryRoot } from "../../core/project-root.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { safeResourceWriteAsync } from "../../core/safe-resource-write.js";
@@ -142,7 +143,7 @@ async function headCommit(root: string, signal: AbortSignal): Promise<string> {
 	const stamp = headStamp(root);
 	const known = heads.get(root);
 	if (known?.stamp === stamp) return known.head;
-	const result = await runCommandVector("git", ["-C", root, "rev-parse", "HEAD"], {
+	const result = await gitVia(runCommandVector, ["-C", root, "rev-parse", "HEAD"], {
 		cwd: root,
 		workspaceRoot: root,
 		timeoutMs: HEAD_TIMEOUT_MS,

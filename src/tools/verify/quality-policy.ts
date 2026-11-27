@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { parseDocument } from "yaml";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { createRootVerifyResolver, type VerifyResolution } from "./resolve.js";
 
 export const QUALITY_POLICY_PATH = ".pancode/quality.yaml";
@@ -178,7 +177,7 @@ function qualityPathMatches(root: string, filename: string, patterns: string[]):
 
 /** Git provides ignored-file semantics and includes untracked inputs, additions and deletions. */
 function qualityFiles(root: string): string[] {
-	const gitRoot = execFileSync("git", internalGitArgv(["rev-parse", "--show-toplevel"], root), {
+	const gitRoot = gitExecFileSync(["rev-parse", "--show-toplevel"], {
 		cwd: root,
 		encoding: "utf8",
 		timeout: 5000,
@@ -187,7 +186,7 @@ function qualityFiles(root: string): string[] {
 	if (realpathSync(gitRoot) !== realpathSync(root))
 		throw new Error("quality snapshots require the workspace to be a Git repository root");
 	const enumerate = (args: string[]): string[] =>
-		execFileSync("git", internalGitArgv(args, root), {
+		gitExecFileSync(args, {
 			cwd: root,
 			encoding: "utf8",
 			timeout: 5000,

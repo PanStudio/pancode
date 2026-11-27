@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { taskWorktreeManifestsChanged } from "../../tools/task-worktree-dependencies.js";
 import type { DispatchRequest } from "./contract.js";
@@ -108,7 +107,7 @@ export function lintScriptFollowUpChecks(check: ResolvedCheck): ResolvedCheck[] 
 /** Absolute paths of the files a task worktree changed against its base, or null when Git cannot say. */
 function taskChangedPaths(worktree: { path: string; base: string }): string[] | null {
 	const git = (args: string[]) =>
-		execFileSync("git", internalGitArgv(["-C", worktree.path, ...args]), {
+		gitExecFileSync(["-C", worktree.path, ...args], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: 30_000,

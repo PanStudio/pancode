@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { PLAYBOOK_COMMAND_BASE_ENV, type PlaybookCommand } from "../agents/playbook-commands.js";
 import { readVerifiedRun } from "../telemetry/run-record.js";
@@ -26,7 +25,7 @@ interface MemoFile {
 }
 
 function repositoryRoot(cwd: string): string {
-	return execFileSync("git", internalGitArgv(["-C", cwd, "rev-parse", "--show-toplevel"]), {
+	return gitExecFileSync(["-C", cwd, "rev-parse", "--show-toplevel"], {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: 30_000,
@@ -36,16 +35,12 @@ function repositoryRoot(cwd: string): string {
 /** Untracked files git does not ignore under `root`; undefined when git cannot list them. */
 function untrackedCount(root: string): number | undefined {
 	try {
-		const listed = execFileSync(
-			"git",
-			internalGitArgv(["-C", root, "ls-files", "--others", "--exclude-standard", "-z"]),
-			{
-				encoding: "utf8",
-				stdio: ["ignore", "pipe", "pipe"],
-				timeout: 30_000,
-				maxBuffer: 64 * 1024 * 1024,
-			},
-		);
+		const listed = gitExecFileSync(["-C", root, "ls-files", "--others", "--exclude-standard", "-z"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 30_000,
+			maxBuffer: 64 * 1024 * 1024,
+		});
 		return listed.split("\0").filter((entry) => entry.length > 0).length;
 	} catch {
 		return undefined;

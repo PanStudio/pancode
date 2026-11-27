@@ -2,18 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Demand-only current evidence. Never folded into the project snapshot or assistant summaries. */
 
-import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileAsync } from "../../core/internal-git-run.js";
 import { createUserTasksStore, USER_TASKS_RELATIVE_PATH } from "../user-tasks/store.js";
 import type { Codewiki } from "./codewiki/schema.js";
 import type { Fingerprint } from "./fingerprint.js";
 import { buildProjectOrientation, orientationInputsMatch, orientationKnownInputsMatch } from "./orientation.js";
 import { readPancodeState } from "./state.js";
-
-const exec = promisify(execFile);
 
 function gitStatusRecords(output: string): string[] {
 	const fields = output.split("\0");
@@ -45,11 +41,9 @@ export async function readProjectStatus(
 	let git: Record<string, unknown> = { state: "unknown" };
 	try {
 		const [head, branch, status] = await Promise.all([
-			exec("git", internalGitArgv(["rev-parse", "--verify", "HEAD"], cwd), { cwd, timeout: 5_000 }),
-			exec("git", internalGitArgv(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd), { cwd, timeout: 5_000 }).catch(
-				() => null,
-			),
-			exec("git", internalGitArgv(["status", "--porcelain=v1", "-z", "--untracked-files=normal"], cwd), {
+			gitExecFileAsync(["rev-parse", "--verify", "HEAD"], { cwd, timeout: 5_000 }),
+			gitExecFileAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd, timeout: 5_000 }).catch(() => null),
+			gitExecFileAsync(["status", "--porcelain=v1", "-z", "--untracked-files=normal"], {
 				cwd,
 				timeout: 5_000,
 				maxBuffer: 64 * 1024,

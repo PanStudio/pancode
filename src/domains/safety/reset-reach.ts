@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 import { type Dirent, existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitSpawnSync } from "../../core/internal-git-run.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 
 /** Variables that point git at another repository or index than the one the protected path sits in. */
@@ -100,20 +100,19 @@ function holdsNestedRepository(location: string): boolean {
 
 /** Git's standard output for `args` run in `dir` as an internal read, or null when it failed. */
 function gitOutput(dir: string, args: ReadonlyArray<string>): string | null {
-	let argv: string[];
+	let result: SpawnSyncReturns<string>;
 	try {
-		argv = internalGitArgv(args, dir);
+		result = gitSpawnSync(args, {
+			cwd: dir,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 2_000,
+			maxBuffer: 1 << 20,
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+		});
 	} catch {
 		return null;
 	}
-	const result = spawnSync("git", argv, {
-		cwd: dir,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-		timeout: 2_000,
-		maxBuffer: 1 << 20,
-		env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-	});
 	if (result.error !== undefined || result.status !== 0 || typeof result.stdout !== "string") return null;
 	return result.stdout;
 }

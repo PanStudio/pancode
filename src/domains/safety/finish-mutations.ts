@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { relative, resolve } from "node:path";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall } from "../../tools/surface.js";
 import {
@@ -133,7 +133,7 @@ function gitIgnoredPaths(paths: ReadonlyArray<string>, workspaceRoot: string): S
 	const asked = paths.filter((path) => path !== "" && path !== ".");
 	if (asked.length === 0) return new Set();
 	try {
-		const out = execFileSync("git", ["check-ignore", "-z", "--stdin"], {
+		const out = gitExecFileSync(["check-ignore", "-z", "--stdin"], {
 			cwd: workspaceRoot,
 			input: asked.join("\0"),
 			encoding: "utf8",

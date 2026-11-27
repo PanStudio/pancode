@@ -10,7 +10,6 @@
  * when it would overwrite a local change.
  */
 
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -18,7 +17,8 @@ import { attributeCommitMessage } from "../core/commit-attribution.js";
 import { autonomousLandAuthorship } from "../core/git-commit-attribution.js";
 import { copyGitIndex } from "../core/git-index-copy.js";
 import { sha256Hex } from "../core/hash.js";
-import { internalGitArgv, withoutRepositoryEnv } from "../core/internal-git.js";
+import { withoutRepositoryEnv } from "../core/internal-git.js";
+import { gitSpawnSync } from "../core/internal-git-run.js";
 import { SAFE_TASK_RUN_ID } from "../core/task-worktree-claim.js";
 import { dropHostTerminalEnv, TOOL_SESSION_SPAWN } from "../core/tool-env-controls.js";
 import {
@@ -91,7 +91,7 @@ interface GitResult {
 
 // merge-tree conflict lines and ff refusals are parsed or shown, so Git speaks one locale.
 function run(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): GitResult {
-	const result = spawnSync("git", internalGitArgv(["-C", cwd, ...args]), {
+	const result = gitSpawnSync(["-C", cwd, ...args], {
 		encoding: "utf8",
 		timeout: 60_000,
 		maxBuffer: 16 * 1024 * 1024,

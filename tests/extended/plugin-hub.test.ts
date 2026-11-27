@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { stringify } from "yaml";
 
+import { INTERNAL_GIT_BASE_OPTIONS } from "../../src/core/internal-git.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
 import {
 	type PluginCatalogEntry,
@@ -275,10 +276,10 @@ describe("plugin PanHub lifecycle", () => {
 		mkdirSync(tools);
 		const argsFile = path.join(root, "git-args.jsonl");
 		const commit = "c".repeat(40);
-		// A stand-in git: ls-remote names the tag's commit, checkout copies the fixture, rev-parse reports the commit.
+		// A stand-in git behind the internal-git hardening: ls-remote names the tag's commit, checkout copies the fixture, rev-parse reports the commit.
 		writeFileSync(
 			path.join(tools, "git"),
-			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(argsFile)},JSON.stringify(args)+"\\n");const at=args[0]==='-C'?args[1]:undefined;if(args.includes('ls-remote'))process.stdout.write('${commit}\\trefs/tags/v1^{}\\n');else if(args.includes('checkout'))fs.cpSync(${JSON.stringify(source)},p.join(at,'plugins','fixture'),{recursive:true});else if(args.includes('rev-parse'))process.stdout.write('${commit}\\n');\n`,
+			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const argv=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(argsFile)},JSON.stringify(argv)+"\\n");const args=argv.slice(${INTERNAL_GIT_BASE_OPTIONS.length});const at=args[0]==='-C'?args[1]:undefined;if(args.includes('ls-remote'))process.stdout.write('${commit}\\trefs/tags/v1^{}\\n');else if(args.includes('checkout'))fs.cpSync(${JSON.stringify(source)},p.join(at,'plugins','fixture'),{recursive:true});else if(args.includes('rev-parse'))process.stdout.write('${commit}\\n');\n`,
 			{ mode: 0o755 },
 		);
 		const previousPath = process.env.PATH;
@@ -292,36 +293,43 @@ describe("plugin PanHub lifecycle", () => {
 				.trim()
 				.split("\n")
 				.map((line) => JSON.parse(line) as string[]);
-			const stage = calls[1]?.[2] ?? "";
-			deepStrictEqual(calls, [
-				["ls-remote", "--exit-code", "--", "https://github.com/example/repo.git", "v1"],
-				["init", "-q", stage],
+			const stage = calls[1]?.[INTERNAL_GIT_BASE_OPTIONS.length + 2] ?? "";
+			deepStrictEqual(
+				calls.map((call) => call.slice(0, INTERNAL_GIT_BASE_OPTIONS.length)),
+				calls.map(() => [...INTERNAL_GIT_BASE_OPTIONS]),
+			);
+			deepStrictEqual(
+				calls.map((call) => call.slice(INTERNAL_GIT_BASE_OPTIONS.length)),
 				[
-					"-C",
-					stage,
-					"-c",
-					"core.hooksPath=/dev/null",
-					"fetch",
-					"--depth",
-					"1",
-					"--no-tags",
-					"--",
-					"https://github.com/example/repo.git",
-					commit,
+					["ls-remote", "--exit-code", "--", "https://github.com/example/repo.git", "v1"],
+					["init", "-q", stage],
+					[
+						"-C",
+						stage,
+						"-c",
+						"core.hooksPath=/dev/null",
+						"fetch",
+						"--depth",
+						"1",
+						"--no-tags",
+						"--",
+						"https://github.com/example/repo.git",
+						commit,
+					],
+					[
+						"-C",
+						stage,
+						"-c",
+						"core.hooksPath=/dev/null",
+						"-c",
+						"advice.detachedHead=false",
+						"checkout",
+						"--detach",
+						"FETCH_HEAD",
+					],
+					["-C", stage, "rev-parse", "HEAD"],
 				],
-				[
-					"-C",
-					stage,
-					"-c",
-					"core.hooksPath=/dev/null",
-					"-c",
-					"advice.detachedHead=false",
-					"checkout",
-					"--detach",
-					"FETCH_HEAD",
-				],
-				["-C", stage, "rev-parse", "HEAD"],
-			]);
+			);
 			installHubPlan(plan);
 			equal(existsSync(staged), false);
 			equal(hubEntryPin(plan.entry)?.sourceUrl, "https://github.com/example/repo/tree/v1/plugins/fixture");

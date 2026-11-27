@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
 
 /** Stable recovery namespace; labels never enter Git's ref grammar unchecked. */
@@ -27,7 +26,7 @@ export function captureWorkspaceCheckpoint(cwd: string, ref: string, message: st
 	});
 	const config = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
 	const git = (args: string[]) =>
-		execFileSync("git", internalGitArgv(["-C", cwd, ...config, ...args]), {
+		gitExecFileSync(["-C", cwd, ...config, ...args], {
 			env,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
