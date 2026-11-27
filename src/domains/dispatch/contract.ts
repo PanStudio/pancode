@@ -4,8 +4,8 @@ import type { FactSum } from "../../core/telemetry/fact.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { PricingSum } from "../../core/telemetry/pricing.js";
 import type { QuotaAccess, QuotaOverage, RunUsageFacts } from "../../core/telemetry/schemas.js";
+import type { DeclaredCheckKind, GrantExecution } from "../../core/telemetry/session-vocabulary.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
-import type { DeclaredCheckKind } from "../../tools/verify/catalog.js";
 import type { NumericTolerance } from "../../tools/verify/numeric.js";
 import type { PerfBudgetSpec } from "../../tools/verify/perf.js";
 import type { DeclaredReproduce } from "../../tools/verify/reproduce.js";
@@ -214,7 +214,7 @@ export interface WorkerGrantView {
 	actionClass: string;
 	approvalAuthority: ApprovalAuthority;
 	state: "pending" | "authorized" | "executing" | "completed" | "denied" | "expired" | "canceled";
-	execution: "not_executed" | "executing" | "executed" | "unknown";
+	execution: GrantExecution;
 	issuer?: "main" | "operator";
 	summary: string;
 	target?: string;

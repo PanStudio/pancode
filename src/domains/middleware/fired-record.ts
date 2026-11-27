@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { telemetryContext, withToolTelemetryContext } from "../../core/telemetry/context.js";
 import { telemetryHub } from "../../core/telemetry/hub.js";
 import { unboundTelemetrySession } from "../../core/telemetry/producer.js";
+import { MIDDLEWARE_REMINDER_SEVERITIES } from "../../core/telemetry/session-vocabulary.js";
 import {
 	type MiddlewareFiredRule,
 	type MiddlewareHookResult,
@@ -11,7 +12,7 @@ import {
 	SETTLING_EFFECT_KINDS,
 } from "./types.js";
 
-const SEVERITY_ORDER: ReadonlyArray<MiddlewareReminderSeverity> = ["info", "advisory", "warn", "hard-block"];
+const SEVERITY_ORDER: ReadonlyArray<MiddlewareReminderSeverity> = MIDDLEWARE_REMINDER_SEVERITIES;
 /** The evidence class shape middleware.fired admits; a class built from an operator's id that misses it is dropped. */
 export const EVIDENCE_CLASS = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9_.-]{1,64}(?:@[a-z][a-z0-9-]{0,31})?$/;
 /** The process's one firing sequence: every owner draws from it, so no owner is ever forgotten and handed an id again. */

@@ -42,6 +42,7 @@
  */
 
 import { performance } from "node:perf_hooks";
+import type { MemoryGuardianState } from "../../core/telemetry/session-vocabulary.js";
 import { MEMORY_HISTORY_REVIEW_SYSTEM_PROMPT } from "../prompts/memory-intervention.js";
 import type { BackgroundSkipReason } from "./background-budget.js";
 import { BACKGROUND_SKIP_REASONS } from "./background-budget.js";
@@ -57,7 +58,6 @@ import type { TaskMemoryEntry } from "./task-bank.js";
 import { TaskMemoryBank } from "./task-bank.js";
 import type { TaskMemoryModelClient, TaskMemoryPolicyResult } from "./task-memory-policy.js";
 import { runTaskMemoryPolicy } from "./task-memory-policy.js";
-import type { TaskMemoryGuardianState } from "./task-memory-status.js";
 
 interface GuardianDepth {
 	/** Idle time after which this depth applies. */
@@ -141,7 +141,7 @@ export interface MemoryGuardianDeps {
 		commandVerified?: ReadonlyArray<string>;
 	}): Promise<HistoryFiling | undefined> | HistoryFiling | undefined;
 	telemetry?: TaskMemoryTelemetrySink;
-	onStateChange(state: TaskMemoryGuardianState): void;
+	onStateChange(state: MemoryGuardianState): void;
 	/** Session and workspace the history source belongs to; a change retires in-flight history work. */
 	scopeKey(): string;
 	/**
@@ -159,7 +159,7 @@ export interface MemoryGuardianDeps {
 }
 
 export interface MemoryGuardian {
-	state(): TaskMemoryGuardianState;
+	state(): MemoryGuardianState;
 	/** A turn started or ended, a step settled, or settings changed. Cheap and synchronous. */
 	wake(reason: "turn-start" | "turn-end" | "step-settled" | "settings" | "ready"): void;
 	/** Retire in-flight work and results for a session, branch or repository change. */
@@ -178,7 +178,7 @@ export function createMemoryGuardian(deps: MemoryGuardianDeps): MemoryGuardian {
 	 * kept here and replayed when it finishes instead of being lost.
 	 */
 	let wakePending = false;
-	let current: TaskMemoryGuardianState = "idle";
+	let current: MemoryGuardianState = "idle";
 	// Monotonic: idle spans live inside one process and must not jump with the wall clock.
 	let idleSinceMs = performance.now();
 	let controller = new AbortController();
@@ -194,7 +194,7 @@ export function createMemoryGuardian(deps: MemoryGuardianDeps): MemoryGuardian {
 	let armed = deps.awaitFirstTurn !== true;
 	const bound = (): boolean => deps.sessionBound?.() !== false;
 
-	const setState = (next: TaskMemoryGuardianState): void => {
+	const setState = (next: MemoryGuardianState): void => {
 		if (next === current) return;
 		current = next;
 		try {

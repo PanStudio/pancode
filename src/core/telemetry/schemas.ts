@@ -27,6 +27,7 @@ import {
 } from "./enums.js";
 import { EstimateMethod, FactSumSchema, factSchema } from "./fact.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId } from "./id-schemas.js";
+import { CACHE_RECOVERY_OUTCOMES, COPILOT_SESSION_ORIGINS, QUOTA_STATUSES } from "./session-vocabulary.js";
 
 export const closed = { additionalProperties: false };
 /** Who bills a seat-billed call; a harness word, which a report bundle carries verbatim. */
@@ -265,7 +266,7 @@ export const CallSettledSchema = Type.Object(
 				/** Present only when the call's own connection counters were attributable to it (#434). */
 				connectionReused: Type.Optional(factSchema(Type.Boolean())),
 				/** The Copilot session a copilot-sdk call went to, from PanCode's own session pool (PV-2). */
-				session: Type.Optional(factSchema(vocabulary(["new", "spare", "continued", "resumed"]))),
+				session: Type.Optional(factSchema(vocabulary(COPILOT_SESSION_ORIGINS))),
 				/** WebSocket failures and SSE fallbacks inside this call, from the same attributable counters (#423). */
 				websocketFailures: Type.Optional(factSchema(count)),
 				sseFallbacks: Type.Optional(factSchema(count)),
@@ -275,7 +276,7 @@ export const CallSettledSchema = Type.Object(
 					Type.Object(
 						{
 							action: vocabulary(["cooldown_reset", "auth_reset"]),
-							outcome: vocabulary(["eligible", "recovered", "failed", "unknown"]),
+							outcome: vocabulary(CACHE_RECOVERY_OUTCOMES),
 						},
 						closed,
 					),
@@ -460,7 +461,7 @@ export const QuotaReadSchema = Type.Object(
 		observedAt: utc,
 		windows: Type.Array(QuotaWindowSchema),
 		displayName: text,
-		status: vocabulary(["ok", "no_credentials", "expired", "error", "loading"]),
+		status: vocabulary(QUOTA_STATUSES),
 		plan: Type.Optional(text),
 		credits: Type.Optional(
 			Type.Object(

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
 	projectChosenTargetUrl,
@@ -10,6 +11,7 @@ import {
 } from "../../../core/project-target-urls.js";
 import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
 import { telemetryHub } from "../../../core/telemetry/hub.js";
+import type { AuthRefreshOutcome } from "../../../core/telemetry/session-vocabulary.js";
 import {
 	getEngineOAuthApiKey,
 	getEngineOAuthProvider,
@@ -757,7 +759,7 @@ export class AuthStorage {
 		const started = performance.now();
 		const held = this.data[providerId];
 		const attempt = { called: false };
-		let outcome: "refreshed" | "adopted" | "failed" | "cancelled" = "failed";
+		let outcome: AuthRefreshOutcome = "failed";
 		let after: string | undefined;
 		try {
 			const result = await this.refreshOAuthCredentialLocked(providerId, signal, rejectedApiKey, attempt);

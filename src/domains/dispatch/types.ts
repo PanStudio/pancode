@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { GrantExecution } from "../../core/telemetry/session-vocabulary.js";
 import type { ToolRoundRecord } from "../../engine/types.js";
 import type { WorkerContextProvenance } from "../context/worker/contract.js";
 import type { FlowRestrictionSet } from "../safety/information-flow.js";
@@ -538,7 +539,7 @@ interface RunGrantAudit {
 	/** True when the main agent asked the operator instead of deciding itself. */
 	forwardedByMain?: true;
 	decision: "approved" | "denied" | "expired" | "canceled";
-	execution: "not_executed" | "executed" | "unknown";
+	execution: Exclude<GrantExecution, "executing">;
 	reason?: string;
 }
 

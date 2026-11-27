@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { Static, TSchema } from "typebox";
 import { Type } from "typebox";
 import {
@@ -58,6 +59,14 @@ import {
 	SessionCloseReason,
 	StepPipelineSettledSchema,
 } from "./session-schemas.js";
+import {
+	AUTH_REFRESH_OUTCOMES,
+	CACHE_RECOVERY_OUTCOMES,
+	CONTEXT_TOTAL_SOURCES,
+	MIDDLEWARE_HOOKS,
+	MIDDLEWARE_REMINDER_SEVERITIES,
+	QUOTA_STATUSES,
+} from "./session-vocabulary.js";
 import { MIDDLEWARE_EFFECTS, SYSTEM_ONE_OUTCOME } from "./surface-schemas.js";
 
 /**
@@ -108,7 +117,7 @@ const transportFacts = {
 	recovery: Type.Object(
 		{
 			action: vocabulary(["cooldown_reset", "auth_reset"]),
-			outcome: vocabulary(["eligible", "recovered", "failed", "unknown"]),
+			outcome: vocabulary(CACHE_RECOVERY_OUTCOMES),
 		},
 		closed,
 	),
@@ -923,11 +932,11 @@ const TimelineEntrySchema = Type.Union([
 		{
 			kind: Type.Literal("middleware"),
 			...at,
-			hook: vocabulary(["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"]),
+			hook: vocabulary(MIDDLEWARE_HOOKS),
 			phase: vocabulary(["sync", "async", "awaited"]),
 			ruleId: ExistingId,
 			effects: Type.Array(MIDDLEWARE_EFFECTS),
-			severity: Type.Union([vocabulary(["info", "advisory", "warn", "hard-block"]), Type.Null()]),
+			severity: Type.Union([vocabulary(MIDDLEWARE_REMINDER_SEVERITIES), Type.Null()]),
 			evidence: Type.Union([text, Type.Null()]),
 			tool: Type.Union([ExistingId, Type.Null()]),
 			turnId: Type.Union([ExistingId, Type.Null()]),
@@ -942,7 +951,7 @@ const TimelineEntrySchema = Type.Union([
 			provider: ExistingId,
 			trigger: vocabulary(["expiry", "rejected"]),
 			attempted: Type.Boolean(),
-			outcome: vocabulary(["refreshed", "adopted", "failed", "cancelled"]),
+			outcome: vocabulary(AUTH_REFRESH_OUTCOMES),
 			/** True when this session's process wrote the credential now in use; false when another process did. */
 			wroteCredential: Type.Boolean(),
 			duration: shown,
@@ -971,7 +980,7 @@ const TimelineEntrySchema = Type.Union([
 			kind: Type.Literal("context"),
 			...at,
 			snapshotId: ExistingId,
-			source: vocabulary(["estimated", "exact", "reconciled", "streaming"]),
+			source: vocabulary(CONTEXT_TOTAL_SOURCES),
 			window: Type.Object(
 				{
 					desired: count,
@@ -1451,7 +1460,7 @@ const QuotaStateSchema = Type.Object(
 					provider: ExistingId,
 					credentials: Type.Array(ExistingId),
 					displayName: text,
-					status: vocabulary(["ok", "no_credentials", "expired", "error", "loading"]),
+					status: vocabulary(QUOTA_STATUSES),
 					plan: Type.Union([text, Type.Null()]),
 					credits: Type.Union([
 						Type.Object(

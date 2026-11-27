@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { PancodeSettings } from "../../core/config.js";
 import type { OutputStyle } from "../../core/defaults.js";
 import { peekHarnessProfile, recordLessonShown } from "../../core/harness-profile.js";
 import type { JobRecord } from "../../core/job-types.js";
 import { presentationTier, tierPolicy, tierRevision } from "../../core/presentation-tier.js";
+import type { ContextActivityStatus } from "../../core/telemetry/session-vocabulary.js";
 import { motionEnabled } from "../../core/terminal-preferences.js";
 import type { LiveBudgetView } from "../../domains/context/budget/live-view.js";
 import type { ContextState } from "../../domains/context/index.js";
@@ -105,7 +107,7 @@ export interface FooterDashboardDeps {
 	getContextActivity?: () => {
 		message: string;
 		detail: string | null;
-		status: "started" | "running" | "completed" | "failed";
+		status: ContextActivityStatus;
 	} | null;
 	getToolCounts?: () => ToolTallySnapshot;
 	getWorkspaceSnapshot?: () => WorkspaceSnapshot | null;

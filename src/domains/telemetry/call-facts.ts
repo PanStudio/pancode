@@ -11,6 +11,7 @@ import type { PricingBasisSource } from "../../core/telemetry/pricing.js";
 import { pricedUsd, pricingBasis } from "../../core/telemetry/pricing.js";
 import { CALL_STOP_REASONS } from "../../core/telemetry/run-vocabulary.js";
 import type { CallSettled, CallStarted, CallUsage } from "../../core/telemetry/schemas.js";
+import { CACHE_RECOVERY_OUTCOMES, COPILOT_SESSION_ORIGINS } from "../../core/telemetry/session-vocabulary.js";
 import { terminationPhase } from "../../core/termination-phase.js";
 import { ceilChars, normalizeTokenUsage } from "../../core/token-split.js";
 import type { EffectivePricing } from "../providers/catalog.js";
@@ -79,9 +80,8 @@ function transportFacts(raw: Record<string, unknown>, sent: boolean): CallSettle
 	const pinReasons = ["auth_rejection", "transport_failure", "post_stream_or_unknown_failure"] as const;
 	const pinReason = pinReasons.find((reason) => reason === codex.reason);
 	const actions = ["cooldown_reset", "auth_reset"] as const;
-	const outcomes = ["eligible", "recovered", "failed", "unknown"] as const;
 	const action = actions.find((value) => value === recovery.action);
-	const outcome = outcomes.find((value) => value === recovery.outcome);
+	const outcome = CACHE_RECOVERY_OUTCOMES.find((value) => value === recovery.outcome);
 	// An Anthropic request that continued its message thread sent only the new messages, so it is a delta too; the
 	// last request of the call is the one the provider answered.
 	const threads = record(raw.anthropicResponse).threadRequests;
@@ -89,9 +89,7 @@ function transportFacts(raw: Record<string, unknown>, sent: boolean): CallSettle
 	// The copilot-sdk stream names the session its request went to and whether it sent only what that session had not
 	// seen (`src/engine/copilot/stream.ts`). The SDK runs its own runtime as PanCode's child process; what that runtime
 	// does on the wire to GitHub (connection reuse, SSE or WebSocket) it does not report.
-	const copilotSession = (["new", "spare", "continued", "resumed"] as const).find(
-		(value) => value === raw.copilotSession,
-	);
+	const copilotSession = COPILOT_SESSION_ORIGINS.find((value) => value === raw.copilotSession);
 	const copilotRequest = raw.copilotContinuation === "delta" || raw.copilotContinuation === "full";
 	const continuation =
 		codex.request === "delta" || codex.request === "full"

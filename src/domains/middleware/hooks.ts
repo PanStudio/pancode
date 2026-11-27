@@ -25,6 +25,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { canonicalJson } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
+import { MIDDLEWARE_HOOKS } from "../../core/telemetry/session-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import {
 	dialectOutputEffects,
@@ -36,11 +37,10 @@ import {
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import {
 	type DeclarableMiddlewareEffect,
+	type DeclarableMiddlewareEffectKind,
 	isMiddlewareHook,
 	isMiddlewareReminderSeverity,
-	MIDDLEWARE_HOOKS,
 	type MiddlewareEffect,
-	type MiddlewareEffectKind,
 	type MiddlewareHook,
 	type MiddlewareHookInput,
 	type MiddlewareReminderSeverity,
@@ -56,7 +56,7 @@ import { validateMiddlewareEffect } from "./validate.js";
  * protected-artifacts guard absorbs protect_path; turn_start and turn_end
  * apply through turn-middleware.ts; on_compaction is observe-only.
  */
-const USER_HOOK_APPLIED_EFFECTS: Readonly<Record<MiddlewareHook, ReadonlyArray<MiddlewareEffectKind>>> = {
+const USER_HOOK_APPLIED_EFFECTS: Readonly<Record<MiddlewareHook, ReadonlyArray<DeclarableMiddlewareEffectKind>>> = {
 	before_tool: ["block_tool", "annotate_tool_result", "require_tool", "lock_tools", "protect_path", "request_approval"],
 	after_tool: ["annotate_tool_result", "require_tool", "lock_tools", "protect_path"],
 	turn_start: ["inject_reminder", "notify_operator", "require_tool", "lock_tools"],
@@ -65,7 +65,7 @@ const USER_HOOK_APPLIED_EFFECTS: Readonly<Record<MiddlewareHook, ReadonlyArray<M
 };
 
 /** The effect a hook's output produces; null for a command whose output is discarded. Exit 2 is per event and always applies. */
-function producedEffectKind(spec: NormalizedUserHookSpec): MiddlewareEffectKind | null {
+function producedEffectKind(spec: NormalizedUserHookSpec): DeclarableMiddlewareEffectKind | null {
 	if (spec.kind === "prompt") return "inject_reminder";
 	if (spec.kind === "effect") return spec.effect.kind;
 	if (spec.as === "none") return null;

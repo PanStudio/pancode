@@ -13,7 +13,6 @@ import type {
 	RunOutcomeCode,
 	ToolActivitySummary,
 } from "../../domains/dispatch/types.js";
-import type { MiddlewareHook } from "../../domains/middleware/types.js";
 import type { TargetStatus } from "../../domains/providers/contract.js";
 import type { PancodeSettings } from "../config.js";
 import type { ContextOperation } from "../context-operation.js";
@@ -24,6 +23,12 @@ import type { EvidenceAssessed } from "./evidence-schemas.js";
 import type { PluginReloadedSchema } from "./host-schemas.js";
 import type { HostVerificationStatus } from "./run-vocabulary.js";
 import type { RunUsageFacts } from "./schemas.js";
+import type {
+	ContextActivityStatus,
+	GrantExecution,
+	MemoryGuardianState,
+	MiddlewareHook,
+} from "./session-vocabulary.js";
 
 /**
  * Payload contracts for the live events declared in EVENTS (src/core/telemetry/events.ts). They describe what
@@ -107,7 +112,7 @@ export interface MemoryStepCompletedPayload {
  */
 export interface MemoryGuardianChangedPayload {
 	sessionId: string | null;
-	state: "off" | "idle" | "reviewing" | "waiting-capacity" | "unavailable";
+	state: MemoryGuardianState;
 }
 
 /** A successful model load or eviction on one residency-managed endpoint. */
@@ -211,7 +216,6 @@ export type ContextActivityPhase =
 	| "compact"
 	| "summarize"
 	| "done";
-export type ContextActivityStatus = "started" | "running" | "completed" | "failed";
 
 /** Structured progress for context operations, rendered above the composer. */
 export interface ContextActivityPayload {
@@ -591,7 +595,7 @@ export interface PermissionGrantFacts {
 	attempt: number;
 	authority: "main" | "operator";
 	issuer?: "main" | "operator" | undefined;
-	execution: "not_executed" | "executing" | "executed" | "unknown";
+	execution: GrantExecution;
 	state: string;
 }
 

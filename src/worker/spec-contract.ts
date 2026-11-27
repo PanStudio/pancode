@@ -9,6 +9,7 @@ import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/san
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
+import { MIDDLEWARE_HOOKS } from "../core/telemetry/session-vocabulary.js";
 import { isMcpToolName, mcpToolName, type ToolName } from "../core/tool-names.js";
 import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
 import { RUN_ROLES, type RunRole } from "../core/views/run-roles.js";
@@ -17,7 +18,7 @@ import type { AgentProduct } from "../domains/agents/spec.js";
 import type { WorkerContextSeed } from "../domains/context/worker/contract.js";
 import type { WorkerEnvelope } from "../domains/dispatch/envelope.js";
 import type { RunLimits } from "../domains/dispatch/run-limits.js";
-import type { MiddlewareEffectKind, MiddlewareHook, MiddlewareSnapshot } from "../domains/middleware/index.js";
+import type { MiddlewareEffectKind, MiddlewareSnapshot } from "../domains/middleware/index.js";
 import type {
 	CapabilityFlags,
 	RuntimeApiFamily,
@@ -379,13 +380,6 @@ const TOOL_PROFILE_NAMES = [
 const WORKER_PRODUCTS = ["orientation"] as const satisfies ReadonlyArray<AgentProduct>;
 const TARGET_LIFECYCLES = ["user-managed", "pancode-managed"] as const;
 const RESIDENCY_ROLES = ["chat", "memory", "worker", "target-default"] as const satisfies ReadonlyArray<ResidencyRole>;
-const MIDDLEWARE_HOOKS = [
-	"before_tool",
-	"after_tool",
-	"turn_start",
-	"turn_end",
-	"on_compaction",
-] as const satisfies ReadonlyArray<MiddlewareHook>;
 // notify_operator is deliberately absent: a worker has no operator surface, and
 // createMiddlewareSnapshot strips rules that declare it before a spec is built.
 const MIDDLEWARE_EFFECT_KINDS = [
