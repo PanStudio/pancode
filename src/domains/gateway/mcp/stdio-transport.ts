@@ -49,6 +49,8 @@ export interface McpStdioServerSpec {
 	args?: ReadonlyArray<string>;
 	cwd?: string;
 	env?: Readonly<Record<string, string>>;
+	/** Put the directory of PanCode's own node before PATH instead of after it, as for an installed plugin's server. */
+	ownNodeFirst?: true;
 }
 
 export interface McpStdioTransportOptions {
@@ -388,9 +390,16 @@ export function createMcpStdioTransport(
 		try {
 			const [file, args] =
 				sandbox.kind === "sandboxed" ? [sandbox.file, sandbox.args] : [spec.command, [...(spec.args ?? [])]];
+			const env = buildSafeToolEnv({ ...(spec.env ?? {}) });
+			// A bundle install may have no node on PATH. A plugin's `node` is the one running PanCode; any other
+			// server keeps the operator's own node and falls back to PanCode's only when PATH has none.
+			const ownNode = path.dirname(process.execPath);
+			env.PATH = (spec.ownNodeFirst === true ? [ownNode, env.PATH] : [env.PATH, ownNode])
+				.filter((entry) => entry)
+				.join(path.delimiter);
 			proc = spawn(file, args, {
 				cwd,
-				env: buildSafeToolEnv({ ...(spec.env ?? {}) }),
+				env,
 				detached: process.platform !== "win32",
 				stdio: ["pipe", "pipe", "pipe"],
 			});

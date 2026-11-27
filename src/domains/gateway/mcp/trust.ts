@@ -449,6 +449,11 @@ function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state
 	}
 	const record = state.records.find((item) => item.projectRoot === projectRoot && item.id === server.id);
 	const origin = server.plugin !== undefined ? ` from plugin ${server.plugin.id}` : "";
+	if (server.plugin?.core === true && record?.digest !== server.digest) {
+		// The files are the ones PanCode ships pinned; per-tool classes come from its mcp.json.
+		const recorded = state.surfaces?.find((item) => item.id === server.id && item.digest === server.digest)?.surface;
+		return { status: "trusted", actionClass: "unknown", ...(recorded !== undefined ? { surface: recorded } : {}) };
+	}
 	if (record === undefined) {
 		return {
 			status: "untrusted",
@@ -595,6 +600,11 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 	const hashes = Object.fromEntries(entries.flatMap((entry) => ("sha256" in entry ? [[entry.path, entry.sha256]] : [])));
 	// A surface approval judges what the process serves, which a re-trust does not change, so it carries over.
 	const previous = trust.state.records.find((entry) => entry.projectRoot === projectRoot && entry.id === server.id);
+	const coreSurface =
+		previous?.surface === undefined && server.plugin?.core === true
+			? trust.state.surfaces?.find((entry) => entry.id === server.id && entry.digest === server.digest)?.surface
+			: undefined;
+	const carriedSurface = previous?.surface ?? coreSurface;
 	const record: McpTrustRecord = {
 		projectRoot,
 		id: server.id,
@@ -603,7 +613,7 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 		trustedAt: (options.now?.() ?? new Date()).toISOString(),
 		...(options.network === true ? { network: true as const } : {}),
 		...(Object.keys(hashes).length > 0 ? { entryScriptHashes: hashes } : {}),
-		...(previous?.surface !== undefined ? { surface: previous.surface } : {}),
+		...(carriedSurface !== undefined ? { surface: carriedSurface } : {}),
 	};
 	const records = trust.state.records.filter((entry) => !(entry.projectRoot === projectRoot && entry.id === server.id));
 	records.push(record);
@@ -735,7 +745,8 @@ export type ApproveMcpSurfaceResult = { ok: true; surface: McpApprovedSurface } 
  * Record the operator's approval of the surface a launch-trusted server serves.
  * A project or plugin server must hold current launch trust; the approval is
  * written onto that record and grants nothing about launch. A user-scope
- * server's surface goes into the separate surface list under its declaration digest.
+ * server's surface, and that of a core plugin trusted without a record, goes
+ * into the separate surface list under its declaration digest.
  */
 export function approveMcpSurface(options: ApproveMcpSurfaceOptions): ApproveMcpSurfaceResult {
 	return withStateFileLockSync(mcpTrustPath(options.configDir), () => approveMcpSurfaceLocked(options));
@@ -771,7 +782,10 @@ function approveMcpSurfaceLocked(options: ApproveMcpSurfaceOptions): ApproveMcpS
 	};
 	let records = trust.state.records;
 	let surfaces = trust.state.surfaces ?? [];
-	if (server.scope === "user") {
+	const onRecord = records.some(
+		(entry) => entry.projectRoot === projectRoot && entry.id === server.id && entry.digest === server.digest,
+	);
+	if (server.scope === "user" || (server.plugin?.core === true && !onRecord)) {
 		surfaces = [
 			...surfaces.filter((entry) => entry.id !== server.id),
 			{ id: server.id, digest: server.digest, surface: approved },

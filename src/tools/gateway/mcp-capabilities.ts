@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
@@ -206,6 +207,38 @@ function mcpTrustRemedy(id: string): { remedy: string; interactiveRemedy: string
 	return { remedy: `pancode mcp trust ${id}`, interactiveRemedy: `/mcp trust ${id}` };
 }
 
+/** Create the `${PLUGIN_DATA}` directory (and any declared subdirectory cwd under it) before launch. */
+function preparePluginDataDir(declaration: GatewayMcpServer): void {
+	if (declaration.plugin === undefined || declaration.command === undefined) return;
+	const { dataDir, id } = declaration.plugin;
+	try {
+		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+		if (declaration.cwdRoot !== dataDir || declaration.cwd === undefined || declaration.cwd === dataDir) return;
+		const relative = path.relative(dataDir, declaration.cwd);
+		if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) return;
+		let cursor = realpathSync(dataDir);
+		for (const segment of relative.split(path.sep)) {
+			if (segment.length === 0 || segment === ".") continue;
+			const next = path.join(cursor, segment);
+			let stat: ReturnType<typeof lstatSync> | undefined;
+			try {
+				stat = lstatSync(next);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+			if (stat === undefined) {
+				mkdirSync(next, { mode: 0o700 });
+			} else if (stat.isSymbolicLink() || !stat.isDirectory()) {
+				// Leave symlink or non-directory refusal to containedCwd at spawn.
+				return;
+			}
+			cursor = next;
+		}
+	} catch (error) {
+		throw new Error(`the data directory of plugin ${id} cannot be created: ${errorMessage(error)}`);
+	}
+}
+
 /** Serialize an argv vector for the shell classifier only. No shell executes this text. */
 function quoted(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
@@ -294,19 +327,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	/**
 	 * Judge a served surface against the approval the trust state holds now. An
 	 * attended session records a user-scope server's surface the first time it
-	 * sees one; a project or plugin server's surface is only ever approved by the
-	 * operator's own command, and a changed surface is never recorded over.
+	 * sees one, and any session records a core plugin's, its files being the
+	 * ones PanCode pins; a project or plugin server's surface is otherwise only
+	 * ever approved by the operator's own command, and a changed surface is never recorded over.
 	 */
 	const judgeServedSurface = (declaration: ResolvedMcpServer, served: McpSurface): McpServerSurfaceListing => {
 		if (options.admitted !== undefined) return judgeAttestedSurface(declaration, served, options.admitted);
 		const status = judgeMcpSurface(declaration, currentMcpSurfaceApproval(declaration, trustOptions), served);
-		if (
-			status.status !== "unapproved" ||
-			declaration.scope !== "user" ||
-			!attended ||
-			options.persistCatalog === false ||
-			options.admitted !== undefined
-		) {
+		const recordsFirst = (declaration.scope === "user" && attended) || declaration.plugin?.core === true;
+		if (status.status !== "unapproved" || !recordsFirst || options.persistCatalog === false) {
 			return surfaceListing(declaration, status);
 		}
 		const recorded = approveMcpSurface({ ...trustOptions, id: declaration.id, surface: served });
@@ -1111,6 +1140,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 					}
 					if (launchRefusal !== null) throw new Error(launchRefusal);
+					preparePluginDataDir(declaration);
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
@@ -1164,6 +1194,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							command: declaration.command,
 							args: launchArgs.length > 0 ? [...declaration.args, ...launchArgs] : declaration.args,
 							cwd: placement.cwd,
+							...(declaration.plugin !== undefined ? { ownNodeFirst: true as const } : {}),
 							// A builtin server gets the variables its manifest names from this process; no other scope gains any.
 							env:
 								declaration.builtin !== undefined

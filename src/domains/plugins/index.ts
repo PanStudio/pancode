@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+export { bundledPluginCatalog } from "./catalog.js";
 export {
 	isPluginId,
 	PLUGIN_EXTENSION_KEY,
@@ -11,6 +12,7 @@ export {
 } from "./discovery.js";
 export { passDerived, withPluginDiscoveryPass } from "./discovery-pass.js";
 export { pluginContentDigest, pluginContentDigestWithCapture } from "./integrity.js";
+export { pluginDataDir } from "./paths.js";
 export { pluginPromptNames } from "./prompt-names.js";
 export {
 	buildPluginSnapshot,
