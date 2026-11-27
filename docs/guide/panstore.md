@@ -177,7 +177,11 @@ pancode store logout    # removes it
 
 `login` lists the bucket with the key before it keeps it in PanCode's credential store, so a wrong key or bucket is refused and nothing is stored. `pancode doctor` shows the bucket and whether a key is stored. The bucket's objects are `<prefix>projects/<key>/` per project, laid out like a local root, so hosts that use one bucket and prefix reach one store under the same project key; set `store.projectId` for checkouts at different paths ([Sharing a store across hosts](#sharing-a-store-across-hosts)). `where` prints the bucket location.
 
-A put uploads the file in one request and a `get` downloads the blob into the store cache. Tag creation and records are conditional writes (`If-None-Match`), so two hosts never overwrite each other's record. Locks are leases: an object under the project's `locks/` that its holder rewrites every 10 seconds. A lease not renewed for 60 seconds, by the object store's clock, is `dead`; a writer waits up to 30 seconds and takes a dead lease over from any host. A writer renews its leases before each change it makes, so one that stalled past 60 seconds and lost its lease has its upload aborted and its write refused instead of overwriting the next holder's change. `locks` lists leases as `live` or `dead`, and `locks break` refuses a live one.
+A put uploads the file in one request and a `get` downloads it into the store cache. A new blob, tag or record requires an absent key (`If-None-Match`). Replacing a blob requires the ETag seen before the upload (`If-Match`).
+
+Each lease is an object under the project's `locks/`. The holder renews it every 10 seconds. A lease not renewed for 60 seconds by the object store's clock is `dead`; a writer waits up to 30 seconds and can take over a dead lease from any host. Release and break conditionally replace the lease with an empty object, which the next holder reuses. `locks` omits released leases and `locks break` refuses a live one.
+
+The lease and the blob are separate objects, not a transaction. Losing a lease cancels an in-flight upload but cannot undo an accepted change. An ETag cannot distinguish rewrites of identical bytes, and some S3-compatible services ignore `If-Match` on a blob delete. Run `verify` on the tag after a stalled writer resumes.
 
 An s3 store refuses, naming the limit:
 

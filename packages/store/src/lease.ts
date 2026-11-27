@@ -3,9 +3,8 @@
 /**
  * Leases: store locks that hosts sharing one store take over from each other. The holder renews its lease every
  * 10 seconds; a lease not renewed for 60 seconds, by the store's own clock, is taken over from any host. A writer
- * confirms the leases it holds before each change it makes under them, and a renewal that finds a lease taken
- * over aborts the writer's signal, so a writer that stalled past its lease refuses instead of overwriting the next
- * holder's change.
+ * confirms the leases it holds before each change it makes under them. A renewal that finds a lease taken
+ * over aborts the writer's signal; it cannot retract an operation already accepted by the store.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { StoreRefusal } from "./backend/types.js";

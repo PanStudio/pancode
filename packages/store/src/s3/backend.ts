@@ -7,7 +7,7 @@
  * change a read and a PUT with `If-Match`, so no two writers lose each other's change. A lock is a lease object
  * its holder renews; a lease not renewed for 60 seconds by the store's own clock is taken over. A writer renews
  * the leases it holds before each change it makes under them, and a renewal that finds a lease taken over aborts
- * its upload, so a writer that stalled past its lease refuses instead of overwriting the next holder's change.
+ * its upload. A blob PUT also requires the destination ETag observed before upload, or an absent destination.
  *
  * Limits: a blob is one PUT of at most 5 GiB, a put copies (no reflink), blobs carry no versions and there is no
  * free-space figure.
@@ -139,6 +139,12 @@ async function mapParallel<T, R>(items: ReadonlyArray<T>, fn: (item: T) => Promi
 	return results;
 }
 
+function requiredEtag(response: Response, what: string): string {
+	const etag = response.headers.get("etag");
+	if (!etag) throw new StoreRefusal("unavailable", `S3 returned no ETag for ${what}; conditional writes require one.`);
+	return etag;
+}
+
 function relativePathEscapes(relative: string): boolean {
 	return (
 		relative === ".." || relative.startsWith("../") || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
@@ -182,7 +188,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			return null;
 		}
 		if (response.status !== 200) throw await client.refusal(response, what);
-		return { text: await response.text(), etag: response.headers.get("etag") ?? "", response };
+		return { text: await response.text(), etag: requiredEtag(response, what), response };
 	}
 
 	/**
@@ -201,7 +207,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			const response = await client.send("PUT", key, { headers, body: data });
 			if (response.status === 200) {
 				await discard(response);
-				return response.headers.get("etag") ?? "";
+				return requiredEtag(response, what);
 			}
 			if (response.status === 412 || (response.status === 404 && "ifMatch" in condition)) {
 				await discard(response);
@@ -351,11 +357,14 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 		};
 	}
 
-	async function readLease(id: string): Promise<{ info: StoreLockInfo; etag: string } | null> {
+	async function readLease(id: string): Promise<{ info: StoreLockInfo | null; etag: string } | null> {
 		const got = await getText(lockKey(id), `store lock ${id}`);
 		if (got === null) return null;
-		return { info: leaseInfo(id, got.text, got.response), etag: got.etag };
+		return { info: got.text === "" ? null : leaseInfo(id, got.text, got.response), etag: got.etag };
 	}
+
+	// Some S3 services ignore If-Match on DELETE. Release by replacing the exact lease with an empty object.
+	const released = new Uint8Array();
 
 	function holderRefusal(key: string, info: StoreLockInfo): StoreRefusal {
 		const command = `pancode store locks break ${info.id}`;
@@ -382,18 +391,18 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			seq: 1,
 		};
 		const body = Buffer.from(JSON.stringify(owner));
-		const deadline = Date.now() + LOCK_WAIT_MS;
+		const deadline = performance.now() + LOCK_WAIT_MS;
 		for (;;) {
 			const made = await putIf(lockKey(id), body, { ifNoneMatch: true }, `taking the store lock for ${key}`);
 			if (made !== null) return { id, owner, etag: made };
 			const held = await readLease(id);
 			if (held === null) continue;
-			if (held.info.state === "dead") {
+			if (held.info === null || held.info.state === "dead") {
 				const taken = await putIf(lockKey(id), body, { ifMatch: held.etag }, `taking over the store lock for ${key}`);
 				if (taken !== null) return { id, owner, etag: taken };
 				continue;
 			}
-			if (Date.now() >= deadline) throw holderRefusal(key, held.info);
+			if (performance.now() >= deadline) throw holderRefusal(key, held.info);
 			await delay(LOCK_POLL_MS);
 		}
 	}
@@ -418,9 +427,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 					return true;
 				},
 				release: async () => {
-					const current = await readLease(lease.id);
-					if (current !== null && current.etag === lease.etag)
-						await del(lockKey(lease.id), `releasing the store lock for ${key}`, { "if-match": lease.etag });
+					await putIf(lockKey(lease.id), released, { ifMatch: lease.etag }, `releasing the store lock for ${key}`);
 				},
 			},
 			fn,
@@ -451,9 +458,9 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				const locks: StoreLockInfo[] = [];
 				for (const object of await listAll(`${base}locks/`)) {
 					const id = LOCK_NAME.exec(object.key.slice(`${base}locks/`.length))?.[1];
-					if (id === undefined) continue;
+					if (id === undefined || object.bytes === 0) continue;
 					const lease = await readLease(id);
-					if (lease !== null) locks.push(lease.info);
+					if (lease?.info) locks.push(lease.info);
 				}
 				return locks;
 			}),
@@ -468,22 +475,14 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			guarded(async () => {
 				checkLockId(id);
 				const lease = await readLease(id);
-				if (lease === null) throw new StoreRefusal("not-found", `No store lock ${id} in this project.`);
+				if (!lease?.info) throw new StoreRefusal("not-found", `No store lock ${id} in this project.`);
 				if (lease.info.state === "live")
 					throw new StoreRefusal(
 						"unavailable",
 						`Store lock ${id} is held by pid ${lease.info.pid} on ${lease.info.host} and renewed within ${STORE_LEASE_EXPIRY_MS / 1000} s; it is not broken while its writer runs.`,
 					);
-				const again = await readLease(id);
-				if (again === null) return lease.info;
-				if (again.etag !== lease.etag || again.info.state === "live")
+				if ((await putIf(lockKey(id), released, { ifMatch: lease.etag }, `breaking store lock ${id}`)) === null)
 					throw new StoreRefusal("unavailable", `Store lock ${id} changed while it was being broken; look again.`);
-				const response = await client.send("DELETE", lockKey(id), { headers: { "if-match": lease.etag } });
-				await discard(response);
-				if (response.status === 412)
-					throw new StoreRefusal("unavailable", `Store lock ${id} changed while it was being broken; look again.`);
-				if (response.status !== 204 && response.status !== 200 && response.status !== 404)
-					throw await client.refusal(response, `breaking store lock ${id}`);
 				return lease.info;
 			}),
 
@@ -617,9 +616,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				}
 				const key = `${blobsBase(tag)}${blob}`;
 				const previous = putOptions?.ifAbsent ? null : await head(key, `${tag}:${blob}`);
-				const etag = previous?.headers.get("etag");
-				if (previous !== null && !etag)
-					throw new StoreRefusal("unavailable", `The bucket returned no ETag for ${tag}:${blob}; refusing to replace it.`);
+				const etag = previous === null ? null : requiredEtag(previous, `${tag}:${blob}`);
 				await fenceHeldLeases();
 				const modifiedMs = Date.now();
 				const fenced = fencedSignal(signal);
@@ -741,9 +738,11 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				checkTag(tag);
 				checkBlob(tag, blob);
 				const key = `${blobsBase(tag)}${blob}`;
-				if ((await head(key, `${tag}:${blob}`)) === null) return false;
+				const current = await head(key, `${tag}:${blob}`);
+				if (current === null) return false;
+				const etag = requiredEtag(current, `${tag}:${blob}`);
 				await fenceHeldLeases();
-				await del(key, `deleting ${tag}:${blob}`);
+				await del(key, `deleting ${tag}:${blob}`, { "if-match": etag });
 				return true;
 			}),
 
