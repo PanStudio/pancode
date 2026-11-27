@@ -14,7 +14,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, mkdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -31,6 +31,7 @@ import {
 	StoreRefusal,
 	type StoreUsage,
 } from "../backend/types.js";
+import { writeCacheCopy } from "../cache-copy.js";
 import { hashStoreFile } from "../hash.js";
 import { fencedSignal, fenceHeldLeases, STORE_LEASE_EXPIRY_MS, withLease } from "../lease.js";
 import { storeLockId } from "../lock.js";
@@ -649,34 +650,27 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 					throw new StoreRefusal("not-found", `Tag ${tag} has no blob named ${blob}.`);
 				}
 				if (response.status !== 200 || response.body === null) throw await client.refusal(response, `${tag}:${blob}`);
-				// The download is the read-only copy `get` hands out, where the local backend puts its copies.
-				const tagCache = path.join(cacheProjectDir, encodeTagSegment(tag));
-				const copy = path.join(tagCache, blob);
+				// S3 keys can have components longer than NAME_MAX. '#' cannot start a tag or blob component.
+				const segments = [encodeTagSegment(tag), ...blob.split("/")].flatMap((name) => {
+					const parts: string[] = [];
+					while (name.length > 255) {
+						parts.push(`#${name.slice(0, 128)}`);
+						name = name.slice(128);
+					}
+					return [...parts, name];
+				});
+				const body = response.body;
 				try {
-					await mkdir(path.dirname(copy), { recursive: true, mode: 0o700 });
-				} catch {
-					// A stale entry blocks the blob's parents; the cache is disposable.
-					await rm(tagCache, { recursive: true, force: true });
-					await mkdir(path.dirname(copy), { recursive: true, mode: 0o700 });
-				}
-				const temp = path.join(
-					path.dirname(copy),
-					`.${path.basename(copy)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
-				);
-				try {
-					await pipeline(
-						Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
-						createWriteStream(temp, { flags: "wx", mode: 0o600 }),
-						...(signal !== undefined ? [{ signal }] : []),
+					return await writeCacheCopy(options.cacheDir, options.projectKey, segments, (temp) =>
+						pipeline(
+							Readable.fromWeb(body as WebReadableStream<Uint8Array>),
+							createWriteStream(temp, { flags: "wx", mode: 0o600 }),
+							...(signal !== undefined ? [{ signal }] : []),
+						),
 					);
-					await chmod(temp, 0o400);
-					await rm(copy, { recursive: true, force: true });
-					await rename(temp, copy);
-				} catch (error) {
-					await rm(temp, { force: true });
-					throw error;
+				} finally {
+					if (!response.bodyUsed) await discard(response);
 				}
-				return { path: copy, copied: true };
 			}),
 
 		putRecordIfAbsent: (tag, blob, data) =>
@@ -750,7 +744,17 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			if (resolved === null) return null;
 			const relative = path.relative(resolved, realPath);
 			if (relative === "" || relativePathEscapes(relative)) return null;
-			const [encodedTag, ...rest] = relative.split(path.sep);
+			const segments: string[] = [];
+			let head = "";
+			for (const part of relative.split(path.sep)) {
+				if (part.startsWith("#")) head += part.slice(1);
+				else {
+					segments.push(head + part);
+					head = "";
+				}
+			}
+			if (head !== "") return null;
+			const [encodedTag, ...rest] = segments;
 			if (encodedTag === undefined || rest.length === 0) return null;
 			try {
 				const ref = { tag: decodeTagSegment(encodedTag), blob: rest.join("/") };

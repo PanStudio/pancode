@@ -4,7 +4,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, type Dirent, constants as fsConstants } from "node:fs";
 import {
 	access,
-	chmod,
 	copyFile,
 	link,
 	lstat,
@@ -34,6 +33,7 @@ import {
 	type StoreTagClass,
 	type StoreUsage,
 } from "./backend/types.js";
+import { writeCacheCopy } from "./cache-copy.js";
 import { fsyncDirectoryAsync, safeResourceWriteAsync } from "./durable-write.js";
 import { hashStoreFile } from "./hash.js";
 import { ensureStoreRootId, readStoreRootId } from "./identity.js";
@@ -182,7 +182,7 @@ const TEMP_SIBLING = /^\..+\.\d+\.[0-9a-f]{12}\.tmp$/u;
 
 function tempSibling(target: string): string {
 	const suffix = `${process.pid}.${randomBytes(6).toString("hex")}`;
-	return path.join(path.dirname(target), `.${path.basename(target)}.${suffix}.tmp`);
+	return path.join(path.dirname(target), `.store.${suffix}.tmp`);
 }
 
 async function fsyncFile(filePath: string): Promise<void> {
@@ -904,26 +904,9 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				if (!info.isFile()) throw new StoreRefusal("not-a-file", `Blob ${blob} in tag ${tag} is not a regular file.`);
 				// The stored file backs the records, so `get` hands out a read-only copy under the store cache
 				// (one of storeReadRoots); a write to it cannot change the blob.
-				const tagCache = path.join(cacheProjectDir, encodeTagSegment(tag));
-				const copy = path.join(tagCache, blob);
-				try {
-					await mkdir(path.dirname(copy), { recursive: true, mode: 0o700 });
-				} catch {
-					// A stale entry blocks the blob's parents ("d" cached as a file, "d/e" wanted); the cache is disposable.
-					await rm(tagCache, { recursive: true, force: true });
-					await mkdir(path.dirname(copy), { recursive: true, mode: 0o700 });
-				}
-				const temp = tempSibling(copy);
-				try {
-					await copyFile(target, temp);
-					await chmod(temp, 0o400);
-					await rm(copy, { recursive: true, force: true });
-					await rename(temp, copy);
-				} catch (error) {
-					await rm(temp, { force: true });
-					throw error;
-				}
-				return { path: copy, copied: true };
+				return writeCacheCopy(options.cacheDir, options.projectKey, [encodeTagSegment(tag), ...blob.split("/")], (temp) =>
+					copyFile(target, temp, fsConstants.COPYFILE_EXCL),
+				);
 			}),
 
 		putRecordIfAbsent: (tag, blob, data) =>
