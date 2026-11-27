@@ -11,8 +11,10 @@
  * `commondir`, and, with more than one root, one `stat` of `placement.json`
  * (re-read only when it changed): the safety layer predicts where a store call
  * writes from its arguments alone, the way it predicts the `artifact` default
- * path (`src/core/artifact-paths.ts`). Roots and placement rules come from
- * settings through `provideStoreSettings`.
+ * path (`src/core/artifact-paths.ts`). The backend kind, roots and placement
+ * rules come from settings through `provideStoreSettings`. An s3 store has no
+ * local roots: a store call writes no path on this host, so every prediction
+ * below is empty and the store's own paths refuse.
  */
 import { readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -41,6 +43,7 @@ import {
 	validateBlobName,
 	validateTagName,
 } from "@pancode/store/paths";
+import type { StoreBackendSetting, StoreS3Setting } from "./defaults.js";
 import { pancodeProjectRoot } from "./project-root.js";
 import { pancodeCachePath, pancodeDataPath } from "./xdg.js";
 
@@ -135,14 +138,27 @@ export function storeRoot(): string {
 	return join(pancodeDataPath(), "store");
 }
 
-/** The roots and placement rules settings give the store, or null for the one root under the data directory. */
+/** The store settings give this host; null for the one local root under the data directory. */
 export interface StoreHostSettings {
+	/** Default local. */
+	backend?: StoreBackendSetting;
+	/** The bucket, when `backend` is s3. */
+	s3?: StoreS3Setting | null;
 	roots: ReadonlyArray<StoreRootSpec>;
 	placement: StorePlacementRules;
 }
 
+interface HostStore {
+	key: string;
+	kind: StoreBackendSetting;
+	s3: StoreS3Setting | null;
+	/** Empty for a store without local roots. */
+	roots: StoreRootSpec[];
+	rules: StorePlacementRules;
+}
+
 let settingsProvider: (() => StoreHostSettings | null) | null = null;
-let hostCache: { key: string; roots: StoreRootSpec[]; rules: StorePlacementRules } | null = null;
+let hostCache: HostStore | null = null;
 
 /**
  * Where store roots come from. Settings register this (this module cannot read settings itself); it is
@@ -153,19 +169,37 @@ export function provideStoreSettings(provider: (() => StoreHostSettings | null) 
 	hostCache = null;
 }
 
-function hostStore(): { roots: StoreRootSpec[]; rules: StorePlacementRules } {
+function hostStore(): HostStore {
 	const key = storeRoot();
 	if (hostCache?.key === key) return hostCache;
 	const configured = settingsProvider?.() ?? null;
+	const kind = configured?.backend ?? "local";
 	const roots =
-		configured !== null && configured.roots.length > 0
-			? configured.roots.map((root) => ({ ...root }))
-			: [{ name: STORE_DEFAULT_ROOT_NAME, path: key, durable: true, purge: null }];
-	hostCache = { key, roots, rules: configured?.placement ?? {} };
+		kind === "s3"
+			? []
+			: configured !== null && configured.roots.length > 0
+				? configured.roots.map((root) => ({ ...root }))
+				: [{ name: STORE_DEFAULT_ROOT_NAME, path: key, durable: true, purge: null }];
+	hostCache = { key, kind, s3: configured?.s3 ?? null, roots, rules: configured?.placement ?? {} };
 	return hostCache;
 }
 
-/** The roots this host's store keeps tags under; the first is the primary. */
+/** The kind of store settings select for this host. */
+export function storeBackendKind(): StoreBackendSetting {
+	return hostStore().kind;
+}
+
+/** The bucket an s3 store lives in; null for any other kind. */
+export function storeS3Settings(): StoreS3Setting | null {
+	return hostStore().s3;
+}
+
+/** Whether the store keeps nothing under a path on this host, so no store call writes one. */
+function withoutLocalRoots(): boolean {
+	return hostStore().roots.length === 0;
+}
+
+/** The roots this host's store keeps tags under; the first is the primary. Empty for an s3 store. */
 export function storeRootSpecs(): StoreRootSpec[] {
 	return hostStore().roots.map((root) => ({ ...root }));
 }
@@ -181,7 +215,10 @@ export function storeProjectDir(cwd: string): string {
 }
 
 function primaryRoot(): StoreRootSpec {
-	return hostStore().roots[0] as StoreRootSpec;
+	const { kind, roots } = hostStore();
+	const primary = roots[0];
+	if (primary === undefined) throw new Error(`The ${kind} store has no local root.`);
+	return primary;
 }
 
 function projectKeyOf(cwd: string): string {
@@ -250,6 +287,7 @@ export function storeBlobPath(cwd: string, tag: string, blob: string): string {
  * could create it on, since the worker names its class only when it creates it.
  */
 export function storeGrantBoundaries(cwd: string, tags: ReadonlyArray<string>): string[] {
+	if (withoutLocalRoots()) return [];
 	const primaryDir = storeProjectDir(cwd);
 	const { roots, rules } = hostStore();
 	const mapping = roots.length === 1 ? emptyStorePlacement() : placementIn(primaryDir);
@@ -324,6 +362,7 @@ export function storeWriteSet(cwd: string, args: Record<string, unknown> | undef
  * shell must not write them); the policy engine admits them with a granted call.
  */
 export function storeBookkeepingPaths(cwd: string, tag: string): string[] {
+	if (withoutLocalRoots()) return [];
 	const primaryDir = storeProjectDir(cwd);
 	const key = projectKeyOf(cwd);
 	const others = hostStore()
@@ -363,7 +402,7 @@ function createClassOf(args: Record<string, unknown> | undefined): StoreTagClass
  * or `create` that will make its tag lands where creation places it.
  */
 export function storeWriteTarget(cwd: string, args: Record<string, unknown> | undefined): string | null {
-	if (args === undefined) return null;
+	if (args === undefined || withoutLocalRoots()) return null;
 	const tag = args.tag;
 	if (typeof tag !== "string" || validateTagName(tag) !== null) return null;
 	const createClass = createClassOf(args);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	decodeTagSegment,
 	isRecordsTag,
+	storeBackendKind,
 	storePlacement,
 	storeProjectDir,
 	storeRoot,
@@ -39,6 +40,35 @@ export function workspaceStoreTags(cwd: string): ReadonlyArray<string> {
 	return workspaceStore(cwd).tags;
 }
 
+/** How long an s3 store's tag list is used before a turn starts listing it again. */
+const S3_LISTING_MS = 30_000;
+const s3Listings = new Map<string, { at: number; store: WorkspaceStore; listing: boolean }>();
+
+/**
+ * An s3 store is listed over the network, so a turn never waits on it: it gets the last listing, none on the
+ * session's first turn, and starts a new one when that is older than 30 s. A listing that fails keeps the old one.
+ */
+function s3WorkspaceStore(cwd: string): WorkspaceStore {
+	const entry = s3Listings.get(cwd) ?? { at: 0, store: NO_STORE, listing: false };
+	s3Listings.set(cwd, entry);
+	if (!entry.listing && Date.now() - entry.at >= S3_LISTING_MS) {
+		entry.listing = true;
+		void import("./backends/s3.js")
+			.then(async ({ createS3StoreBackend }) => {
+				const tags = (await createS3StoreBackend(cwd).listTags()).filter(
+					(tag) => !isRecordsTag(tag) && validateTagName(tag) === null,
+				);
+				entry.store = tags.length > 0 ? { signals: [ToolNames.Store, ToolNames.Data], tags: tags.sort() } : NO_STORE;
+			})
+			.catch(() => undefined)
+			.finally(() => {
+				entry.at = Date.now();
+				entry.listing = false;
+			});
+	}
+	return entry.store;
+}
+
 /**
  * Runs on every turn, so the answer is kept until the project's tag list
  * changes: one stat a turn, and a directory read only then. The primary root's
@@ -46,6 +76,7 @@ export function workspaceStoreTags(cwd: string): ReadonlyArray<string> {
  * makes or removes a tag elsewhere, and `placement.json` names those tags.
  */
 function workspaceStore(cwd: string): WorkspaceStore {
+	if (storeBackendKind() === "s3") return s3WorkspaceStore(cwd);
 	const root = storeRoot();
 	const project = `${root}\0${cwd}`;
 	let tags = tagDirs.get(project);

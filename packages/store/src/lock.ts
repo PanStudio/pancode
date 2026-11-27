@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { link, mkdir, open, readdir, readFile, rm, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
-import { StoreRefusal } from "./backend/types.js";
+import { type StoreLockInfo, type StoreLockState, StoreRefusal } from "./backend/types.js";
 import { storeLocksDir } from "./paths/index.js";
 
 /**
@@ -35,20 +35,6 @@ interface LockOwner {
 	bootId?: string;
 	token: string;
 	at: string;
-}
-
-/** `live`: this host, pid alive, same boot. `dead`: this host, pid gone or another boot. */
-export type StoreLockState = "live" | "dead" | "remote" | "unreadable";
-
-export interface StoreLockInfo {
-	/** The lock file's name without `.lock`. */
-	id: string;
-	file: string;
-	state: StoreLockState;
-	key: string | null;
-	pid: number | null;
-	host: string | null;
-	at: string | null;
 }
 
 function errnoOf(error: unknown): string | undefined {

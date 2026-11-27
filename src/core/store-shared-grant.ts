@@ -40,7 +40,7 @@ function rootOf(roots: ReadonlyArray<StoreRootSpec>, dir: string): StoreRootSpec
 export async function prepareSharedStoreGrant(
 	cwd: string,
 	tags: ReadonlyArray<string>,
-	sharedFsOf: (root: StoreRootSpec) => false | "unverified",
+	sharedFsOf: (root: StoreRootSpec) => boolean | "unverified",
 	nodeId: string,
 ): Promise<SharedStoreGrant> {
 	const projectRoot = storeProjectRoot(cwd);

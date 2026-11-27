@@ -37,7 +37,7 @@ import {
 import { fsyncDirectoryAsync, safeResourceWriteAsync } from "./durable-write.js";
 import { hashStoreFile } from "./hash.js";
 import { ensureStoreRootId, readStoreRootId } from "./identity.js";
-import { withStoreLock } from "./lock.js";
+import { breakStoreLock, listStoreLocks, readStoreLock, withStoreLock } from "./lock.js";
 import {
 	decodeTagSegment,
 	emptyStorePlacement,
@@ -634,6 +634,7 @@ export function createLocalStoreBackend(options: LocalStoreOptions): StoreBacken
 
 	const backend: StoreBackend = {
 		kind: "local",
+		location: projectDir,
 
 		facts: () =>
 			guarded(async (): Promise<StoreBackendFacts> => {
@@ -670,6 +671,12 @@ export function createLocalStoreBackend(options: LocalStoreOptions): StoreBacken
 			}),
 
 		withLock: (key, fn) => withStoreLock(projectDir, key, fn),
+
+		listLocks: () => guarded(() => listStoreLocks(projectDir)),
+
+		readLock: (id) => guarded(() => readStoreLock(projectDir, id)),
+
+		breakLock: (id) => guarded(() => breakStoreLock(projectDir, id)),
 
 		usage: (tag) =>
 			guarded(async (): Promise<StoreUsage> => {

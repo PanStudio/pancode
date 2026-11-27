@@ -9,7 +9,7 @@ import { relative, resolve as resolvePath } from "node:path";
 import { asDirectoryPathBoundary } from "../../core/path-boundary.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
-import { storeGrantBoundaries, storeProjectIdFor, storeProjectRoot } from "../../core/store-paths.js";
+import { storeBackendKind, storeGrantBoundaries, storeProjectIdFor, storeProjectRoot } from "../../core/store-paths.js";
 import { prepareSharedStoreGrant, type SharedStoreGrant } from "../../core/store-shared-grant.js";
 import { isBuiltinToolName, isMcpToolName, type ToolName, ToolNames } from "../../core/tool-names.js";
 import { applyToolProfile, assertToolProfileEnforceable, type ToolProfileName } from "../../tools/profiles.js";
@@ -106,10 +106,13 @@ export async function assertStoreGrantAdmissible(req: DispatchRequest, readOnly:
 /**
  * A worker on an SSH node opens its own home's store. It reaches this project's store only through a root both
  * hosts mount, keyed by the tracked `store.projectId` rather than this checkout's path; without one the grant is
- * refused here. With one, the roots are checked at run and by the node.
+ * refused here. With one, the roots are checked at run and by the node. An s3 store has no root to share, so its
+ * tags are never granted to an SSH run.
  */
 export function remoteStoreGrantRefusal(req: DispatchRequest, node: RunNodeIdentity | null): string | null {
 	if (node?.kind !== "ssh" || req.storeTags === undefined || req.storeTags.length === 0) return null;
+	if (storeBackendKind() === "s3")
+		return `dispatch: admission denied: node '${node.id}' is remote, and an s3 store grants no tags to an SSH run: the worker there would open its own home's store, not this bucket, so it cannot be granted tags ${JSON.stringify(req.storeTags)}; run this task on the local node or drop tags`;
 	if (storeProjectIdFor(storeProjectRoot(req.cwd ?? process.cwd())) !== undefined) return null;
 	return `dispatch: admission denied: node '${node.id}' is remote, and a worker there reaches this project's store only when the project's tracked .pancode/settings.yaml sets store.projectId, so it cannot be granted tags ${JSON.stringify(req.storeTags)}; set store.projectId, run this task on the local node or drop tags`;
 }

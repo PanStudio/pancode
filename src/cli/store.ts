@@ -3,7 +3,8 @@
 /**
  * `pancode store`: the store's command line (`@pancode/store/cli`) hosted by the harness. This file builds the
  * context only the harness knows: the configured roots, PanCode's cache directory, the project a working directory
- * belongs to, the producing run a put's source came from, and the terminal confirmation.
+ * belongs to, the producing run a put's source came from, and the terminal confirmation. `login` and `logout`, which
+ * keep an s3 bucket's secret key in PanCode's credential store, are the harness's own.
  */
 import type { StoreVerifyResult } from "@pancode/store";
 import {
@@ -11,6 +12,7 @@ import {
 	type StoreCliContext,
 	type StoreCliOutput,
 	storeCliAdopt,
+	storeCliHelp,
 	storeCliPut,
 	storeCliRemoveTag,
 	storeCliResult,
@@ -118,6 +120,88 @@ export async function storeCommandResult(argv: ReadonlyArray<string>, cwd: strin
 	return storeCliResult(argv, storeCliContext(cwd));
 }
 
-export function runStoreCommand(argv: ReadonlyArray<string>): Promise<number> {
-	return runStoreCli(argv, storeCliContext(process.cwd()));
+const CREDENTIAL_HELP = `
+Credentials for an s3 store (store.backend: s3):
+  pancode store login     read the secret key of store.s3.accessKeyId from a
+                          prompt or stdin, check it against the bucket, and
+                          keep it in PanCode's credential store
+  pancode store logout    remove the stored secret key
+`;
+
+/** `pancode store login`: check the secret key against the configured bucket, then store it. */
+async function storeLogin(cwd: string): Promise<number> {
+	const [
+		{ default: chalk },
+		{ readApiKey },
+		shared,
+		{ configuredBucket, s3BackendWithKey, STORE_S3_CREDENTIAL_ID },
+		auth,
+	] = await Promise.all([
+		import("chalk"),
+		import("./auth.js"),
+		import("./shared.js"),
+		import("../domains/store/backends/s3.js"),
+		import("../domains/providers/auth/index.js"),
+	]);
+	let bucket: ReturnType<typeof configuredBucket>;
+	try {
+		bucket = configuredBucket();
+	} catch (error) {
+		shared.printError(`pancode store login: ${error instanceof Error ? error.message : String(error)}`);
+		return 1;
+	}
+	const key = await readApiKey(`Secret key for S3 access key ${bucket.accessKeyId} (${bucket.endpoint})`);
+	if (key === null || key.length === 0) {
+		shared.printError(key === null ? "login cancelled" : "empty secret key");
+		return 1;
+	}
+	try {
+		await s3BackendWithKey(cwd, key).listTags();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		shared.printError(`pancode store login: ${message.replace(/\.$/u, "")}; the key was not stored`);
+		return 1;
+	}
+	const storage = auth.openAuthStorage();
+	try {
+		storage.setApiKey(STORE_S3_CREDENTIAL_ID, key);
+	} catch (error) {
+		shared.printError(error instanceof Error ? error.message : String(error));
+		return 1;
+	}
+	if (shared.credentialWriteFailed(storage, "the S3 secret key was not stored")) return 1;
+	shared.printOk(`stored the secret key for ${bucket.accessKeyId}; bucket ${bucket.bucket} answered`);
+	process.stderr.write(
+		`${chalk.yellow("warning:")} the secret key is stored unencrypted at ${auth.authStoragePath()} (${shared.credentialFileProtection()}); it is readable by any process running as you.\n`,
+	);
+	return 0;
+}
+
+async function storeLogout(): Promise<number> {
+	const [shared, { STORE_S3_CREDENTIAL_ID }, auth] = await Promise.all([
+		import("./shared.js"),
+		import("../domains/store/backends/s3.js"),
+		import("../domains/providers/auth/index.js"),
+	]);
+	const storage = auth.openAuthStorage();
+	if (storage.get(STORE_S3_CREDENTIAL_ID) === undefined) {
+		shared.printOk("no S3 secret key is stored");
+		return 0;
+	}
+	storage.remove(STORE_S3_CREDENTIAL_ID);
+	if (shared.credentialWriteFailed(storage, "the S3 secret key was not removed")) return 1;
+	shared.printOk("removed the stored S3 secret key");
+	return 0;
+}
+
+export async function runStoreCommand(argv: ReadonlyArray<string>): Promise<number> {
+	const cwd = process.cwd();
+	if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
+		const stream = argv.length === 0 ? process.stderr : process.stdout;
+		stream.write(`${storeCliHelp("pancode store")}${CREDENTIAL_HELP}`);
+		return argv.length === 0 ? 2 : 0;
+	}
+	if (argv.length === 1 && argv[0] === "login") return storeLogin(cwd);
+	if (argv.length === 1 && argv[0] === "logout") return storeLogout();
+	return runStoreCli(argv, storeCliContext(cwd));
 }

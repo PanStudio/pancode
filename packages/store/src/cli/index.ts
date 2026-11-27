@@ -10,12 +10,17 @@ import { copyFile, readdir, readFile, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { StoreBackend } from "../backend/backend.js";
-import { type StoreBackendFacts, type StoreBlobPut, type StoreBlobStat, StoreRefusal } from "../backend/types.js";
+import {
+	type StoreBackendFacts,
+	type StoreBlobPut,
+	type StoreBlobStat,
+	type StoreLockInfo,
+	StoreRefusal,
+} from "../backend/types.js";
 import { safeResourceWriteAsync } from "../durable-write.js";
 import { readStoreRootId } from "../identity.js";
 import { openStoreIndex, type StoreIndex } from "../index-db/index.js";
 import { createLocalStoreBackend } from "../local.js";
-import { breakStoreLock, listStoreLocks, readStoreLock, type StoreLockInfo } from "../lock.js";
 import {
 	recordsTag,
 	STORE_PUT_TAG_CLASS,
@@ -53,7 +58,7 @@ export interface StoreCliPutInput {
 export interface StoreCliContext {
 	/** Where relative file arguments resolve. */
 	cwd: string;
-	/** Non-empty; the first is the primary. */
+	/** The local roots, the first the primary; empty for a backend that keeps no store on a local path. */
 	roots: ReadonlyArray<StoreRootSpec>;
 	placement?: StorePlacementRules;
 	cacheDir: string;
@@ -132,14 +137,16 @@ rm and rm-tag without --yes delete nothing, print what they would delete and
 exit 0; a missing tag or blob exits 1.
 adopt without a key lists store directories whose project root no longer
 exists and that carry no project id; with a key it moves that store to this
-project, refusing when this project already has one.
+project, refusing when this project already has one. It needs local roots.
 where prints the store's locations, each root's id and the pankit command
 line that serves the store over MCP from any directory. A project id keys the store by that id instead of the
 main checkout's path; where then names a store left under the path key, which
-adopt moves.
+adopt moves. On an s3 store where prints its location and there is no store
+server.
 locks lists the project's store locks with each holder's key, pid, host and
 time, and its state: live (this host, pid alive, same boot), dead (this host,
-pid gone or another boot), remote (another host) or unreadable. A writer takes
+pid gone or another boot), remote (another host) or unreadable. On an s3 store
+a lock is a lease: live while renewed within 60 s, dead after. A writer takes
 over only a dead lock; locks break removes any lock that is not live, and
 without --yes prints what it would remove and exits 0. It never touches a blob
 or a record.
@@ -177,6 +184,16 @@ function primaryRoot(context: StoreCliContext): string {
 	const primary = context.roots[0];
 	if (primary === undefined) throw new StoreCliUsageError("no store root");
 	return primary.path;
+}
+
+/** Refuses `verb` on a backend that keeps no store on a local root, naming the limit. */
+async function needsLocalRoots(context: StoreCliContext, verb: string, instead: string): Promise<void> {
+	if (context.roots.length > 0) return;
+	const { kind } = await open(context);
+	throw new StoreRefusal(
+		"unavailable",
+		`${verb} works on store directories under local roots; the ${kind} backend has none. ${instead}`,
+	);
 }
 
 function bytesLabel(bytes: number): string {
@@ -528,6 +545,7 @@ async function exists(target: string): Promise<boolean> {
  * to this project.
  */
 export async function storeCliAdopt(context: StoreCliContext, key?: string) {
+	await needsLocalRoots(context, "adopt", "Move blobs between stores with get and put.");
 	const root = context.projectRoot;
 	const storeRoot = primaryRoot(context);
 	const currentKey = context.projectKey;
@@ -614,6 +632,19 @@ export async function storeCliWhere(context: StoreCliContext) {
 		...(previousKey !== null ? { previousKey } : {}),
 		roots,
 		storeServer: storeServerInvocation(context),
+	};
+}
+
+/** Where a store without local roots is: its backend's location, and no store server. */
+export async function storeCliLocation(context: StoreCliContext) {
+	const backend = await open(context);
+	return {
+		backend: backend.kind,
+		location: backend.location,
+		projectRoot: context.projectRoot,
+		projectId: context.projectId ?? null,
+		projectKey: context.projectKey,
+		storeServer: null,
 	};
 }
 
@@ -883,9 +914,9 @@ async function execute(
 			return { code: 0, data, text: lines.join("\n") };
 		}
 		case "locks": {
-			const projectDir = storeProjectDir(primaryRoot(context), context.projectKey);
+			const backend = await open(context);
 			if (first === undefined) {
-				const locks = (await listStoreLocks(projectDir)).map(lockView);
+				const locks = (await backend.listLocks()).map(lockView);
 				const text =
 					locks.length === 0
 						? "No store locks in this project."
@@ -897,9 +928,9 @@ async function execute(
 			}
 			if (first !== "break") throw new StoreCliUsageError(`unknown locks command '${first}'`);
 			if (second === undefined) throw new StoreCliUsageError("locks break needs a lock id");
-			const found = await readStoreLock(projectDir, second);
+			const found = await backend.readLock(second);
 			if (found === null) throw new StoreRefusal("not-found", `No store lock ${second} in this project.`);
-			if (found.state === "live") await breakStoreLock(projectDir, second);
+			if (found.state === "live") await backend.breakLock(second);
 			const what = `lock ${found.id} (${found.state}): ${
 				found.state === "unreadable"
 					? "its file cannot be read"
@@ -910,10 +941,22 @@ async function execute(
 				const data = { ...lockView(found), broken: false };
 				return { code: 0, data, text: `Would remove ${what}. Nothing removed; rerun with --yes.` };
 			}
-			const data = { ...lockView(await breakStoreLock(projectDir, second)), broken: true };
+			const data = { ...lockView(await backend.breakLock(second)), broken: true };
 			return { code: 0, data, text: `Removed ${what}.` };
 		}
 		case "where": {
+			if (context.roots.length === 0) {
+				const data = await storeCliLocation(context);
+				const text = [
+					`backend      ${data.backend}`,
+					`location     ${data.location}`,
+					`project root ${data.projectRoot}`,
+					`project id   ${data.projectId ?? "(none)"}`,
+					`project key  ${data.projectKey}`,
+					`store server (none: the PanKit store server serves local roots)`,
+				].join("\n");
+				return { code: 0, data, text };
+			}
 			const data = await storeCliWhere(context);
 			const text = [
 				`store root   ${data.storeRoot}`,

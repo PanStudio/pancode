@@ -6,7 +6,7 @@ import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import { findBuiltinRuntimeBootMetadata } from "../domains/providers/runtimes/boot-manifest.js";
 import type { PancodeSettings } from "./config.js";
 import { semanticUsable } from "./config.js";
-import { DEFAULT_SETTINGS, THINKING_LEVELS } from "./defaults.js";
+import { DEFAULT_SETTINGS, STORE_BACKEND_KINDS, THINKING_LEVELS } from "./defaults.js";
 import { getAtPath, setAtPath } from "./session-routing.js";
 import {
 	SETTINGS_AREA_GROUPS,
@@ -571,6 +571,7 @@ const CHOICES: Record<string, readonly string[]> = {
 	"context.workingSet.policy": ["structural-v1", "structural-v2", "age-horizon"],
 	"context.workingSet.profile": ["default", "data-analysis", "web-design"],
 	"integrations.externalAgents.defaults.toolGovernance": ["pancode-policy", "agent-managed", "deny-all"],
+	"store.backend": [...STORE_BACKEND_KINDS],
 };
 const STRUCTURED = new Set([
 	"funding",
@@ -581,6 +582,7 @@ const STRUCTURED = new Set([
 	"fleet.agentProfiles",
 	"fleet.nodes",
 	"fleet.adaptiveRouting.agentRoles",
+	"store.s3",
 	"store.roots",
 	"store.placement.byTag",
 	"store.placement.byClass",
@@ -895,6 +897,14 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	"store.projectId": [
 		"Store project id",
 		"The name that keys this project's store instead of its checkout path, so hosts sharing a store root reach one store. Set only in the project's tracked .pancode/settings.yaml; 1 to 64 of a-z, 0-9, '.', '_' and '-'.",
+	],
+	"store.backend": [
+		"Store backend",
+		"Where PanStore keeps tags, user settings only: local keeps them in directories on this host (store.roots), s3 in the S3-compatible bucket store.s3 names. Applies on the next start.",
+	],
+	"store.s3": [
+		"S3 store bucket",
+		"The bucket an s3 store lives in, user settings only. Edit the JSON object { endpoint, region, bucket, prefix, accessKeyId, pathStyle }; the secret key is stored by pancode store login.",
 	],
 	"store.roots": [
 		"Store roots",

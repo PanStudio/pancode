@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-/** A backend kind names a registered factory; `local` is the one that ships. */
+/** A backend kind names a registered factory: `local` and `s3` ship. */
 export type StoreBackendKind = string;
 
 export type StoreTagClass = "input" | "output" | "cache" | "archive";
@@ -8,11 +8,14 @@ export type StoreTagClass = "input" | "output" | "cache" | "archive";
 /** One configured root as a backend reports it. */
 export interface StoreRootFacts {
 	name: string;
-	/** The id in the root's `root.json`, or null before anything was made there. */
+	/** The id in the root's `root.json`, or null before anything was made there or on a backend whose roots carry none. */
 	id: string | null;
 	durable: boolean;
-	/** false only for a file system known to be local to this host; never guessed. */
-	sharedFs: false | "unverified";
+	/**
+	 * false only for a file system known to be local to this host; true for a root every host reaches by
+	 * configuration (an object store bucket); never guessed.
+	 */
+	sharedFs: boolean | "unverified";
 	/** The site's purge policy as configured, or null. */
 	purge: string | null;
 	/** File system free space under the root as statfs reports it; not a quota and not a reservation. */
@@ -34,6 +37,25 @@ export interface StoreBackendFacts {
 	roots: ReadonlyArray<StoreRootFacts>;
 	/** What `put --link` does on the primary root: `reflink` where the file system clones files, else `copy`. */
 	links: "reflink" | "copy";
+}
+
+/**
+ * `live`: its holder may still run: on this host with its pid alive and the same boot, or, for a lease, renewed
+ * within its expiry. `dead`: its holder is gone: on this host with its pid gone or another boot, or a lease not
+ * renewed within its expiry. `remote`: a lock file from another host, whose holder cannot be checked.
+ */
+export type StoreLockState = "live" | "dead" | "remote" | "unreadable";
+
+export interface StoreLockInfo {
+	/** The lock's name: `storeLockId` of its key. */
+	id: string;
+	/** Where the lock lives: its file on a local root, its object on an object store. */
+	file: string;
+	state: StoreLockState;
+	key: string | null;
+	pid: number | null;
+	host: string | null;
+	at: string | null;
 }
 
 /** Bytes are the sizes of stored blobs; file system free space is the root's statfs answer, not a quota. */

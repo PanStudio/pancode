@@ -11,7 +11,7 @@ import {
 } from "@pancode/store/paths";
 import { PROFILE_IDS } from "../domains/system-one/profiles.js";
 import type { PancodeSettings } from "./config.js";
-import { THINKING_LEVELS } from "./defaults.js";
+import { STORE_BACKEND_KINDS, type StoreS3Setting, THINKING_LEVELS } from "./defaults.js";
 import { MODEL_TIERS } from "./model-tier.js";
 import {
 	describe,
@@ -428,12 +428,77 @@ export function validateReport(issues: Issues, raw: unknown, settings: PancodeSe
 	}
 }
 
+function validateStoreS3(issues: Issues, raw: unknown): StoreS3Setting | null {
+	if (!isRecord(raw)) {
+		issues.add("store.s3", `expected a map, got ${describe(raw)}`);
+		return null;
+	}
+	issues.unknownKeys("store.s3", raw, ["endpoint", "region", "bucket", "prefix", "accessKeyId", "pathStyle"]);
+	let endpoint = expectString(issues, "store.s3.endpoint", raw.endpoint);
+	if (endpoint !== undefined) {
+		let url: URL | null = null;
+		try {
+			url = new URL(endpoint);
+		} catch {
+			url = null;
+		}
+		if (
+			url === null ||
+			(url.protocol !== "http:" && url.protocol !== "https:") ||
+			url.pathname !== "/" ||
+			url.search !== ""
+		) {
+			issues.add("store.s3.endpoint", "expected http(s)://host[:port] with no path or query");
+			endpoint = undefined;
+		}
+	}
+	const region = "region" in raw ? expectString(issues, "store.s3.region", raw.region) : "us-east-1";
+	const bucket = expectString(issues, "store.s3.bucket", raw.bucket);
+	const accessKeyId = expectString(issues, "store.s3.accessKeyId", raw.accessKeyId);
+	let prefix: string | undefined = "";
+	if ("prefix" in raw) {
+		if (typeof raw.prefix !== "string") {
+			issues.add("store.s3.prefix", `expected a string, got ${describe(raw.prefix)}`);
+			prefix = undefined;
+		} else if (raw.prefix !== "" && (!raw.prefix.endsWith("/") || raw.prefix.startsWith("/"))) {
+			issues.add("store.s3.prefix", "expected an empty prefix or one ending in '/', without a leading '/'");
+			prefix = undefined;
+		} else prefix = raw.prefix;
+	}
+	const pathStyle = "pathStyle" in raw ? expectBoolean(issues, "store.s3.pathStyle", raw.pathStyle) : false;
+	if (
+		endpoint === undefined ||
+		region === undefined ||
+		bucket === undefined ||
+		accessKeyId === undefined ||
+		prefix === undefined ||
+		pathStyle === undefined
+	)
+		return null;
+	return { endpoint: endpoint.replace(/\/$/u, ""), region, bucket, prefix, accessKeyId, pathStyle };
+}
+
 export function validateStore(issues: Issues, raw: unknown, settings: PancodeSettings): void {
 	if (!isRecord(raw)) {
 		issues.add("store", `expected a map, got ${describe(raw)}`);
 		return;
 	}
-	issues.unknownKeys("store", raw, ["projectId", "roots", "placement"]);
+	issues.unknownKeys("store", raw, ["projectId", "backend", "s3", "roots", "placement"]);
+	if ("backend" in raw) {
+		const backend = expectEnum(issues, "store.backend", raw.backend, STORE_BACKEND_KINDS);
+		if (backend !== undefined) settings.store.backend = backend;
+	}
+	if ("s3" in raw && raw.s3 !== null) settings.store.s3 = validateStoreS3(issues, raw.s3);
+	if (settings.store.backend === "s3") {
+		if (settings.store.s3 === null && !("s3" in raw && raw.s3 !== null))
+			issues.add("store.s3", "expected the bucket's endpoint, region, bucket and accessKeyId when store.backend is s3");
+		const placement = raw.placement;
+		const placed =
+			isRecord(placement) && Object.values(placement).some((rules) => isRecord(rules) && Object.keys(rules).length > 0);
+		if (Array.isArray(raw.roots) && raw.roots.length > 0)
+			issues.add("store.roots", "local store roots do not apply when store.backend is s3");
+		if (placed) issues.add("store.placement", "store placement does not apply when store.backend is s3");
+	}
 	if ("projectId" in raw) {
 		const id = expectString(issues, "store.projectId", raw.projectId);
 		if (id !== undefined) {

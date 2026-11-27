@@ -10,9 +10,7 @@ export {
 	breakStoreLock,
 	listStoreLocks,
 	readStoreLock,
-	type StoreLockInfo,
 	type StoreLockOptions,
-	type StoreLockState,
 	storeLockId,
 	withStoreLock,
 } from "./lock.js";
@@ -40,6 +38,7 @@ export {
 	type StoreRecordUse,
 	summarizeRecords,
 } from "./records.js";
+export { createS3StoreBackend, S3_LEASE_EXPIRY_MS, S3_PUT_MAX_BYTES, type S3StoreOptions } from "./s3/backend.js";
 export {
 	allStoreBlobs,
 	recordedStoreBlobNames,

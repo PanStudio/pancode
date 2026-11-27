@@ -5,6 +5,7 @@ import type {
 	StoreBackendKind,
 	StoreBlobPut,
 	StoreBlobStat,
+	StoreLockInfo,
 	StorePutMode,
 	StoreTagClass,
 	StoreUsage,
@@ -16,6 +17,8 @@ import type {
  */
 export interface StoreBackend {
 	readonly kind: StoreBackendKind;
+	/** Where this project's store lives, as an operator names it: a directory, or an object store URL. */
+	readonly location: string;
 	facts(): Promise<StoreBackendFacts>;
 	// Tags.
 	/**
@@ -65,6 +68,12 @@ export interface StoreBackend {
 	 * key. `recordedPut` and `recordedRemove` hold a blob's lock across the change and its record.
 	 */
 	withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+	/** Every lock of the project, in id order. */
+	listLocks(): Promise<StoreLockInfo[]>;
+	/** The lock with this id, or null when there is none; an id that is not 32 hex characters refuses `invalid-name`. */
+	readLock(id: string): Promise<StoreLockInfo | null>;
+	/** Remove one lock an operator named; a live lock refuses `unavailable`. No blob or record is touched. */
+	breakLock(id: string): Promise<StoreLockInfo>;
 	/** The blob whose bytes a resolved local path (a `getBlobAsPath` result) holds, else null; provenance names inputs by it. */
 	blobRefOfPath(realPath: string): Promise<{ tag: string; blob: string } | null>;
 }

@@ -24,6 +24,7 @@ import type { StoreBackend } from "@pancode/store";
 import {
 	isRecordsTag,
 	STORE_REPLACES_ARG,
+	storeBackendKind,
 	storeProjectIdFor,
 	storeProjectRoot,
 	storeRootSpecs,
@@ -233,6 +234,10 @@ async function builtinStoreWriteRefusal(
 	return null;
 }
 
+/** An s3 store has no local path a server could write a blob to, so a write reference is refused by name. */
+const S3_WRITE_REFERENCE_LIMIT =
+	"an s3 store takes no write store references: a server has no local path to write the blob to; put its output with the store tool";
+
 /**
  * Why a call's store references or the builtin server's own write are refused,
  * or null: a malformed write the session may not make, a missing tag, a missing
@@ -248,6 +253,7 @@ export async function storeReferencesRefusal(input: {
 	for (const reference of input.references) {
 		const named = `${reference.access} store reference '${reference.argument}' (store:${reference.tag}:${reference.blob})`;
 		if (reference.access === "write") {
+			if (storeBackendKind() === "s3") return `${named}: ${S3_WRITE_REFERENCE_LIMIT}`;
 			const refused = storeAccessRefusal({ op: "put", tag: reference.tag }, access);
 			if (refused !== null) return `${named}: ${refused}`;
 		}
@@ -330,6 +336,7 @@ export async function prepareStoreReferences(input: {
 	for (const reference of input.references) {
 		const named = `${reference.access} store reference '${reference.argument}' (store:${reference.tag}:${reference.blob})`;
 		if (reference.access === "write") {
+			if (storeBackendKind() === "s3") return `${named}: ${S3_WRITE_REFERENCE_LIMIT}`;
 			const refused = storeAccessRefusal({ op: "put", tag: reference.tag }, access);
 			if (refused !== null) return `${named}: ${refused}`;
 		}
@@ -467,7 +474,7 @@ export async function commitStoreReferences(input: {
  * store lists now, a worker exactly its granted tags, anything else none.
  * Throws when the host store cannot be resolved: invalid store settings or a
  * further root that is not a directory, so the server never starts without
- * the session's roots.
+ * the session's roots. Throws under an s3 store, which the server cannot open.
  */
 export async function storeServerLaunchContext(input: {
 	cwd: string;
@@ -475,6 +482,10 @@ export async function storeServerLaunchContext(input: {
 	access: McpStoreAccess | undefined;
 	backend: () => Promise<StoreBackend>;
 }): Promise<{ context: McpBuiltinLaunchContext; writeTags: string[] }> {
+	if (storeBackendKind() === "s3")
+		throw new Error(
+			"the PanKit store server does not run on an s3 store: it opens local store roots only; use the store tool",
+		);
 	const roots = storeRootSpecs();
 	// The primary is created on its first write, as the store's own backend does; a further root must be there.
 	for (const root of roots.slice(1)) {

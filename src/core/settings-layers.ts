@@ -760,7 +760,7 @@ function stripProjectStore(
 		issues.push({
 			origin,
 			path: "store",
-			message: "store roots and placement are set only in user settings; project value ignored",
+			message: "store backend, roots and placement are set only in user settings; project value ignored",
 		});
 		return cleaned;
 	}
@@ -777,7 +777,7 @@ function stripProjectStore(
 			issues.push({
 				origin,
 				path: `store.${key}`,
-				message: "store roots and placement are set only in user settings; project value ignored",
+				message: "store backend, roots and placement are set only in user settings; project value ignored",
 			});
 		}
 	}

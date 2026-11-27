@@ -2,7 +2,7 @@
 
 PanStore is PanCode's project store: it keeps files as blobs in named tags outside the working tree, with a record of who put each one, from where and with which hash.
 
-The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
+The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), or `createS3StoreBackend` in [s3/backend.ts](../../packages/store/src/s3/backend.ts) for a store in an S3 bucket ([Storing in an S3 bucket](#storing-in-an-s3-bucket)), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
 
 Its code is the private workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
 
@@ -86,7 +86,7 @@ A writer holds one lock per blob, or per tag's metadata, in `locks/` of the proj
 | `remote` | Held on another host. |
 | `unreadable` | The lock file cannot be read, including a lock written by an older PanStore. |
 
-A writer waits up to 30 seconds for a lock and takes it over only when the lock is `dead`. Locks never age out: a `remote` or `unreadable` lock stays until its holder releases it or an operator runs `locks break <id> --yes`, and the refused write names the holder and that command. `locks break` refuses a `live` lock. Check that a `remote` holder has really stopped before breaking its lock.
+A writer waits up to 30 seconds for a lock and takes it over only when the lock is `dead`. An s3 store's locks are leases instead ([Storing in an S3 bucket](#storing-in-an-s3-bucket)). Locks never age out: a `remote` or `unreadable` lock stays until its holder releases it or an operator runs `locks break <id> --yes`, and the refused write names the holder and that command. `locks break` refuses a `live` lock. Check that a `remote` holder has really stopped before breaking its lock.
 
 ## Roots and placement
 
@@ -135,6 +135,43 @@ Each host lists the shared roots in its own `store.roots`; the mount paths may d
 
 A dispatch that grants tags to a worker on an SSH fleet node needs `store.projectId`; without one it is refused at admission, naming the setting. With one, the dispatcher refuses a root that is on a file system local to its host, and sends the worker the project key, the id of each root involved (the primary and the roots holding the granted tags) and each tag's directory relative to its root. Before it runs, the worker checks every name against its own configuration: its checkout must have the same project key, each root id must match exactly one of its roots, and each tag must resolve to the same directory. The first mismatch refuses the grant, so a worker whose store is not the dispatcher's writes nothing.
 
+## Storing in an S3 bucket
+
+The store can live in one bucket of an S3-compatible object store (AWS S3, MinIO and others that accept conditional writes) instead of local roots. Set it in the user `settings.yaml` and restart PanCode:
+
+```yaml
+store:
+  backend: s3
+  s3:
+    endpoint: http://127.0.0.1:9000
+    region: us-east-1
+    bucket: pancode
+    prefix: lab/
+    accessKeyId: pancode
+    pathStyle: true
+```
+
+`store.backend` is `local` (the default) or `s3`; with `s3`, `store.s3` is required and `store.roots` and `store.placement` must be empty. `pathStyle: true` puts the bucket in the URL path, as MinIO and most self-hosted services need. Then store the secret key:
+
+```bash
+pancode store login     # prompts, or reads the key from stdin
+pancode store logout    # removes it
+```
+
+`login` lists the bucket with the key before it keeps it in PanCode's credential store, so a wrong key or bucket is refused and nothing is stored. `pancode doctor` shows the bucket and whether a key is stored. The bucket's objects are `<prefix>projects/<key>/` per project, laid out like a local root, so hosts that use one bucket and prefix reach one store under the same project key; set `store.projectId` for checkouts at different paths ([Sharing a store across hosts](#sharing-a-store-across-hosts)). `where` prints the bucket location.
+
+A put uploads the file in one request and a `get` downloads the blob into the store cache. Tag creation and records are conditional writes (`If-None-Match`), so two hosts never overwrite each other's record. Locks are leases: an object under the project's `locks/` that its holder rewrites every 10 seconds. A lease not renewed for 60 seconds, by the object store's clock, is `dead`; a writer waits up to 30 seconds and takes a dead lease over from any host. A writer renews its leases before each change it makes, so one that stalled past 60 seconds and lost its lease has its upload aborted and its write refused instead of overwriting the next holder's change. `locks` lists leases as `live` or `dead`, and `locks break` refuses a live one.
+
+An s3 store refuses, naming the limit:
+
+- a single put larger than 5 GiB (one request, no multipart upload);
+- `adopt`, which moves a project directory between local roots;
+- tag grants to a worker on an SSH node, which opens its own host's store;
+- write store references from an MCP server, which has no local path to write to;
+- the PanKit `store` server, which opens local roots only.
+
+There is no host-local index and no free-space figure; `put --link` copies.
+
 ## The index
 
 `tags`, `ls` and `history` answer from a host-local index, a `node:sqlite` database at `<cache>/store/index/<key>.db`, when it is current. Before each answer the index checks the directories it answers for by `stat` and rescans any that changed. Nothing that writes, checks a grant or decides whether a tag or blob exists reads it, and every command scans the store directly when the index cannot answer, so the store works with the database deleted.
@@ -169,7 +206,8 @@ The builtin PanKit `store` server is launched by PanCode with this session's roo
 - PanStore is exercised on Linux only until its conformance suite runs on the macOS and Windows runners.
 - A root on a network file system is reported as `sharedFs: unverified`, and the backend still reports `multiNode: false`. Two Linux hosts writing one root have been tested over NFS 4.2 (hard mounts) only; the store does not check which network file system a root is on. A worker on an SSH node gets a tag grant only as described in [Sharing a store across hosts](#sharing-a-store-across-hosts).
 - A `remote` or `unreadable` lock is never broken automatically: a host that crashed while writing blocks that blob or tag until an operator runs `locks break`.
-- PanStore keeps no blob versions, does no deduplication and has no remote backend. A put replaces the blob's bytes; its records remain.
+- PanStore keeps no blob versions and does no deduplication. A put replaces the blob's bytes; its records remain.
+- An s3 store refuses puts over 5 GiB, `adopt`, SSH tag grants, write store references and the PanKit `store` server ([Storing in an S3 bucket](#storing-in-an-s3-bucket)).
 - A tag grant is a permission, not a confinement, outside the parallel-batch case in [Workers and tags](#workers-and-tags).
 - The builtin `store` server's writes are limited to the tags it was started with, but its reads are not confined: it can read every tag of the project, whatever the session's grants.
 - `put --link` copies on file systems without reflinks, such as ext4; the output says which happened.

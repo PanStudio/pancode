@@ -7,6 +7,8 @@ export type {
 	StoreBackendKind,
 	StoreBlobPut,
 	StoreBlobStat,
+	StoreLockInfo,
+	StoreLockState,
 	StorePutMode,
 	StoreRefusalReason,
 	StoreRootFacts,

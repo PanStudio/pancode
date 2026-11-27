@@ -5,11 +5,15 @@ import path from "node:path";
 import {
 	STORE_DEFAULT_ROOT_NAME,
 	type StoreHostSettings,
+	storeBackendKind,
 	storePlacement,
 	storeRoot,
 	storeRootSpecs,
+	storeS3Settings,
 } from "../core/store-paths.js";
 import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import { openAuthStorage } from "../domains/providers/auth/index.js";
+import { STORE_S3_CREDENTIAL_ID } from "../domains/store/backends/s3.js";
 import { formatBytes } from "./lifecycle-presenter.js";
 
 type StoreRoot = StoreHostSettings["roots"][number];
@@ -82,10 +86,28 @@ function orphanedPlacementFinding(cwd: string, roots: ReadonlyArray<StoreRoot>):
 	};
 }
 
-/** The store section: each root and its free space, then tags placed on a root no longer configured. */
+/** An s3 store's bucket and whether its secret key is stored; the bucket itself is not contacted. */
+function s3StoreFinding(): DoctorFinding {
+	const bucket = storeS3Settings();
+	if (bucket === null) return { ok: false, name: "store backend", detail: "s3 with no store.s3 bucket set" };
+	const where = `s3 ${bucket.endpoint} bucket ${bucket.bucket}${bucket.prefix === "" ? "" : ` prefix ${bucket.prefix}`}`;
+	return openAuthStorage().get(STORE_S3_CREDENTIAL_ID)?.type === "api_key"
+		? { ok: true, name: "store backend", detail: `${where}; secret key for ${bucket.accessKeyId} stored` }
+		: {
+				ok: false,
+				name: "store backend",
+				detail: `${where}; no secret key stored for ${bucket.accessKeyId}; run pancode store login`,
+			};
+}
+
+/**
+ * The store section: each root and its free space, then tags placed on a root no longer configured; for an s3
+ * store, its bucket and credential.
+ */
 export function storeFindings(cwd: string = process.cwd()): DoctorFinding[] {
 	let roots: StoreRoot[];
 	try {
+		if (storeBackendKind() === "s3") return [s3StoreFinding()];
 		roots = storeRootSpecs();
 	} catch (error) {
 		return [{ ok: false, name: "store root", detail: error instanceof Error ? error.message : String(error) }];
