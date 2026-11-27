@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFile } from "node:child_process";
 import { open, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { internalGitArgv } from "../core/internal-git.js";
+import { gitExecFile } from "../core/internal-git-run.js";
 import { enumerateWorkspaceFilesAsync, WORKSPACE_EXCLUDED_DIRS } from "../core/workspace-files.js";
 import { formatSize } from "../engine/truncate.js";
 import { fuzzyFilter, stripTerminalSequences } from "../engine/tui.js";
@@ -93,17 +92,14 @@ function safeRelativePath(path: string): string | null {
 
 function gitIndexPath(basePath: string): Promise<string | null> {
 	return new Promise((resolveIndex) => {
-		let argv: string[];
 		try {
-			argv = internalGitArgv(["rev-parse", "--git-path", "index"], basePath);
+			gitExecFile(["rev-parse", "--git-path", "index"], { cwd: basePath, encoding: "utf8" }, (error, stdout) => {
+				const path = stdout.trim();
+				resolveIndex(error || path.length === 0 ? null : resolve(basePath, path));
+			});
 		} catch {
 			resolveIndex(null);
-			return;
 		}
-		execFile("git", argv, { cwd: basePath, encoding: "utf8" }, (error, stdout) => {
-			const path = stdout.trim();
-			resolveIndex(error || path.length === 0 ? null : resolve(basePath, path));
-		});
 	});
 }
 
@@ -118,26 +114,27 @@ async function mtimeOf(path: string | null): Promise<number | null> {
 
 function gitTrackedFiles(basePath: string): Promise<ReadonlySet<string>> {
 	return new Promise((resolveTracked) => {
-		let argv: string[];
 		try {
-			argv = internalGitArgv(["--literal-pathspecs", "ls-files", "-z", "--cached"], basePath);
+			gitExecFile(
+				["--literal-pathspecs", "ls-files", "-z", "--cached"],
+				{ cwd: basePath, encoding: "utf8", maxBuffer: GIT_OUTPUT_LIMIT_BYTES },
+				(error, stdout) => {
+					if (error) {
+						resolveTracked(new Set());
+						return;
+					}
+					const tracked = new Set<string>();
+					for (const raw of stdout.split("\0")) {
+						const normalized = safeRelativePath(raw);
+						if (normalized) tracked.add(normalized);
+					}
+					resolveTracked(tracked);
+				},
+			);
 		} catch {
 			// PanCode refused its own read after config drift; completion goes on without tracked-file hints.
 			resolveTracked(new Set());
-			return;
 		}
-		execFile("git", argv, { cwd: basePath, encoding: "utf8", maxBuffer: GIT_OUTPUT_LIMIT_BYTES }, (error, stdout) => {
-			if (error) {
-				resolveTracked(new Set());
-				return;
-			}
-			const tracked = new Set<string>();
-			for (const raw of stdout.split("\0")) {
-				const normalized = safeRelativePath(raw);
-				if (normalized) tracked.add(normalized);
-			}
-			resolveTracked(tracked);
-		});
 	});
 }
 

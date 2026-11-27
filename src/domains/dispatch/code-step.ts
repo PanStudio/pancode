@@ -15,7 +15,7 @@
  * permission prompt, no shell.
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AI_AGENT_NAME } from "../../core/agent-environment.js";
@@ -27,7 +27,7 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "../../core/git-commit-attribution.js";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import {
 	createProcessGroupCleanup,
@@ -262,7 +262,7 @@ function resolveCommandArgv(command: PlaybookCommand, substitutions: Readonly<Re
 
 /** Whether the checkout has anything a commit could record. */
 function workspaceHasChanges(root: string): boolean {
-	const status = execFileSync("git", internalGitArgv(["-C", root, "status", "--porcelain", "-uall"]), {
+	const status = gitExecFileSync(["-C", root, "status", "--porcelain", "-uall"], {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: 30_000,
@@ -306,9 +306,8 @@ export function commitPointSnapshot(root: string): WorkspaceChangeSnapshot | nul
 	const snapshot = workspaceChangeSnapshot(root);
 	if (snapshot === null) return null;
 	try {
-		const ignored = execFileSync(
-			"git",
-			internalGitArgv(["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]),
+		const ignored = gitExecFileSync(
+			["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
 			{ encoding: "utf8", timeout: 30_000, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
 		);
 		return { ...snapshot, ignored: ignored.split("\0").filter((path) => path.length > 0) };
@@ -372,7 +371,7 @@ function ignoredAt(baseline: WorkspaceChangeSnapshot | null): (path: string) => 
 function ignoredNow(root: string, paths: ReadonlyArray<string>): ReadonlySet<string> {
 	if (paths.length === 0) return new Set();
 	try {
-		const out = execFileSync("git", internalGitArgv(["-C", root, "check-ignore", "-z", "--stdin"]), {
+		const out = gitExecFileSync(["-C", root, "check-ignore", "-z", "--stdin"], {
 			input: `${paths.join("\0")}\0`,
 			encoding: "utf8",
 			timeout: 30_000,
@@ -409,27 +408,19 @@ function stageCommitOutputs(root: string, stage: CommitStage): CommitStageResult
 	// staged deletion as an unmatched pathspec. --replace lets a file take the place of a directory, and the reverse.
 	const paths = [...staged, ...stage.artifacts];
 	if (paths.length > 0) {
-		execFileSync(
-			"git",
-			internalGitArgv(["-C", root, "update-index", "--add", "--remove", "--replace", "-z", "--stdin"]),
-			{
-				input: `${paths.join("\0")}\0`,
-				timeout: 30_000,
-				stdio: ["pipe", "pipe", "pipe"],
-			},
-		);
+		gitExecFileSync(["-C", root, "update-index", "--add", "--remove", "--replace", "-z", "--stdin"], {
+			input: `${paths.join("\0")}\0`,
+			timeout: 30_000,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
 	}
 	// Not --relative: a bare `git commit` records staged paths outside a subdirectory workspace too.
-	const index = execFileSync(
-		"git",
-		internalGitArgv(["-C", root, "diff", "--cached", "--no-renames", "--name-only", "-z"]),
-		{
-			encoding: "utf8",
-			timeout: 30_000,
-			maxBuffer: 16 * 1024 * 1024,
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	)
+	const index = gitExecFileSync(["-C", root, "diff", "--cached", "--no-renames", "--name-only", "-z"], {
+		encoding: "utf8",
+		timeout: 30_000,
+		maxBuffer: 16 * 1024 * 1024,
+		stdio: ["ignore", "pipe", "pipe"],
+	})
 		.split("\0")
 		.filter((path) => path.length > 0);
 	const inside = index.filter((path) => path.startsWith(now.prefix)).map((path) => path.slice(now.prefix.length));

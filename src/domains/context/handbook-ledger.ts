@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
 
 /** Where `context init` records each handbook rule's verdict; `--verify` refreshes it against the tree. */
@@ -43,7 +43,7 @@ export function readHandbookFreshness(cwd: string): HandbookFreshness {
 /** Commits on HEAD since `commit`, or null when Git cannot say. */
 function commitsBehind(cwd: string, commit: string): number | null {
 	try {
-		const out = execFileSync("git", ["rev-list", "--count", `${commit}..HEAD`], {
+		const out = gitExecFileSync(["rev-list", "--count", `${commit}..HEAD`], {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],

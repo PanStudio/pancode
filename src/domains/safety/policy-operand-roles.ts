@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitSpawnSync } from "../../core/internal-git-run.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { isSkippedSecretScanDirectory, SECRET_SCAN_LIMITS } from "../../core/sandbox/secret-files.js";
 import { heredocDataText } from "./heredoc-data.js";
@@ -755,18 +755,17 @@ function protectedEntriesUnder(root: string, policy: CompiledPathPolicy): Protec
  */
 function trackedEntries(entries: ReadonlyArray<ProtectedTreeEntry>, cwd: string): ProtectedTreeEntry[] {
 	if (entries.length === 0) return [];
-	let argv: string[];
+	let result: SpawnSyncReturns<string>;
 	try {
-		argv = internalGitArgv(["ls-files", "-z", "--", ...entries.map((entry) => entry.absolute)], cwd);
+		result = gitSpawnSync(["ls-files", "-z", "--", ...entries.map((entry) => entry.absolute)], {
+			cwd,
+			encoding: "utf8",
+			timeout: 2_000,
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+		});
 	} catch {
 		return [...entries];
 	}
-	const result = spawnSync("git", argv, {
-		cwd,
-		encoding: "utf8",
-		timeout: 2_000,
-		env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-	});
 	if (result.status !== 0 || typeof result.stdout !== "string") return [...entries];
 	const tracked = new Set(
 		result.stdout

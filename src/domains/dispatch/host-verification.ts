@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { PancodeSettings } from "../../core/config.js";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv, withoutRepositoryEnv } from "../../core/internal-git.js";
+import { withoutRepositoryEnv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { PATH_BOUNDARY_MAX_ENTRIES, resolvePathBoundary, writeRootsCover } from "../../core/path-boundary.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { runCommandVector } from "../../core/safe-exec.js";
@@ -444,7 +444,7 @@ function candidateBrokenPath(
 		let entry: string;
 		try {
 			const args = ["-C", candidate.root, "ls-tree", "-z", "--full-tree", candidate.base, "--", rel.split(sep).join("/")];
-			entry = execFileSync("git", internalGitArgv(args), {
+			entry = gitExecFileSync(args, {
 				encoding: "utf8",
 				stdio: ["ignore", "pipe", "ignore"],
 				timeout: 30_000,

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { canonicalProjectRoot, checkoutHead, repositoryRoot } from "../../core/project-root.js";
 import { memoryRoot, sortMemoryRecords, updateMemoryRecord } from "./store.js";
@@ -250,7 +250,7 @@ function reachableRootCommits(key: string): ReadonlySet<string> {
 }
 
 function rootCommits(cwd: string, revisions: ReadonlyArray<string>): string[] {
-	const out = execFileSync("git", ["rev-list", "--max-parents=0", ...revisions], {
+	const out = gitExecFileSync(["rev-list", "--max-parents=0", ...revisions], {
 		cwd,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "ignore"],

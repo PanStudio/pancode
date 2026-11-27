@@ -3,7 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { INTERNAL_GIT_BASE_OPTIONS, internalGitArgv } from "../../core/internal-git.js";
+import { INTERNAL_GIT_BASE_OPTIONS } from "../../core/internal-git.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { shellQuote } from "../../core/shell-quote.js";
@@ -34,21 +35,19 @@ export async function verifyFleetProject(
 	sharedProbe = false,
 	readOnly = false,
 ): Promise<FleetProjectVerification> {
-	const local = await runCommandVector("git", internalGitArgv(["-C", root, "rev-parse", "HEAD"]), { timeoutMs: 5000 });
+	const local = await gitVia(runCommandVector, ["-C", root, "rev-parse", "HEAD"], { timeoutMs: 5000 });
 	const head = local.exitCode === 0 ? local.stdout.trim() : null;
 	const roots = head
-		? await runCommandVector("git", internalGitArgv(["-C", root, "rev-list", "--max-parents=0", "HEAD"]), {
+		? await gitVia(runCommandVector, ["-C", root, "rev-list", "--max-parents=0", "HEAD"], {
 				timeoutMs: 5000,
 			})
 		: null;
 	let status: Awaited<ReturnType<typeof runCommandVector>> | null = null;
 	try {
 		if (head)
-			status = await runCommandVector(
-				"git",
-				internalGitArgv(["-C", root, "status", "--porcelain", "--untracked-files=all"]),
-				{ timeoutMs: 5000 },
-			);
+			status = await gitVia(runCommandVector, ["-C", root, "status", "--porcelain", "--untracked-files=all"], {
+				timeoutMs: 5000,
+			});
 	} catch {
 		// PanCode refused its own status after config drift (InternalGitRefusedError): the tree counts as unverified.
 		status = null;

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { internalGitArgv } from "../core/internal-git.js";
-
-const execFileAsync = promisify(execFile);
+import { gitExecFileAsync } from "../core/internal-git-run.js";
 
 /**
  * Resolve the current git branch name for `cwd` (default: process.cwd()).
@@ -15,7 +11,7 @@ const execFileAsync = promisify(execFile);
  */
 export async function getCurrentBranch(cwd?: string): Promise<string | null> {
 	try {
-		const { stdout } = await execFileAsync("git", internalGitArgv(["rev-parse", "--abbrev-ref", "HEAD"], cwd), {
+		const { stdout } = await gitExecFileAsync(["rev-parse", "--abbrev-ref", "HEAD"], {
 			cwd,
 			timeout: 1000,
 		});

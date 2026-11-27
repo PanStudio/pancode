@@ -16,12 +16,11 @@
  * every task worktree under the project root.
  */
 
-import { execFileSync } from "node:child_process";
 import { lstatSync, mkdirSync, readFileSync, statfsSync } from "node:fs";
 import { userInfo } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "../core/hash.js";
-import { internalGitArgv } from "../core/internal-git.js";
+import { gitExecFileSync } from "../core/internal-git-run.js";
 import { relativePathEscapes } from "../core/path-containment.js";
 import { taskWorktreeClaimParent } from "../core/task-worktree-claim.js";
 
@@ -87,7 +86,7 @@ export const HOST_WORKTREE_ROOT_FACTS: WorktreeRootFacts = {
 	},
 	workingTreeBytes(projectRoot) {
 		try {
-			const listing = execFileSync("git", internalGitArgv(["-C", projectRoot, "ls-tree", "-r", "-l", "-z", "HEAD"]), {
+			const listing = gitExecFileSync(["-C", projectRoot, "ls-tree", "-r", "-l", "-z", "HEAD"], {
 				stdio: ["ignore", "pipe", "ignore"],
 				timeout: 30_000,
 				maxBuffer: 256 * 1024 * 1024,

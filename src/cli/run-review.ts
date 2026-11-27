@@ -8,15 +8,15 @@
  * reviewer could not see, and a task naming one without `--review`, is refused before boot with the remedy.
  */
 
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { internalGitArgv, withoutRepositoryEnv } from "../core/internal-git.js";
+import { withoutRepositoryEnv } from "../core/internal-git.js";
+import { gitSpawnSync } from "../core/internal-git-run.js";
 import { planTaskLand } from "../tools/task-land.js";
 
 export type ReviewSubject = { worktree: string; task: string } | { refusal: string };
 
 function headOf(cwd: string): string {
-	const result = spawnSync("git", internalGitArgv(["-C", cwd, "symbolic-ref", "-q", "HEAD"]), {
+	const result = gitSpawnSync(["-C", cwd, "symbolic-ref", "-q", "HEAD"], {
 		encoding: "utf8",
 		timeout: 60_000,
 		env: { ...withoutRepositoryEnv(), LC_ALL: "C" },
