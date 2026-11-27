@@ -31,6 +31,7 @@ import { setDiffusionFramesEnabled } from "../engine/apis/diffusion-frames.js";
 import { createAgentProgress, TuiAltScreen } from "../engine/tui.js";
 import type { ChatLoopEvent } from "../session-control/chat-loop.js";
 import { reportLoopChanges } from "../session-control/loop-command.js";
+import { BUILTIN_SLASH_NAMES } from "../session-control/slash-commands.js";
 import { readWorkerRunResultFacts } from "../session-control/worker-run-results.js";
 import type { WorkerEntryState } from "../session-control/worker-stream.js";
 import { runParkedInterview } from "../tools/extension-interview.js";
@@ -98,7 +99,7 @@ import {
 	hasExtensionDrawing,
 	opensOwnSurface,
 } from "./surfaces/ambient.js";
-import { createExtensionDockHost } from "./surfaces/extension-dock.js";
+import { createExtensionPaneKeys } from "./surfaces/extension-pane-keys.js";
 import { createWorkspaceSurfaces, WORKSPACE_LEAVE_KEY } from "./surfaces/registry.js";
 import { renderView } from "./surfaces/view-renderer.js";
 import { followTerminalColors } from "./terminal-color-follow.js";
@@ -327,8 +328,16 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			resolve();
 		};
 	});
+	const extensionPane = createExtensionPaneKeys({
+		mux: deps.extensions ? deps.mux : undefined,
+		operator: () => operatorExtensions,
+		keybindings: () => keybindings,
+		notify: (level, text, key) => notify(level, text, key),
+	});
 	const operatorExtensions = deps.extensions
 		? new OperatorExtensions({
+				...(extensionPane.pane ? { pane: extensionPane.pane } : {}),
+				builtinCommandNames: () => BUILTIN_SLASH_NAMES,
 				services: createExtensionHostServices({
 					providers: deps.providers,
 					telemetry: deps.telemetry,
@@ -364,6 +373,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				// A mute fences the runtime at once; the reload that unloads it waits for idle.
 				admits: (extensionId): boolean => devSession?.isMuted(extensionId) !== true,
 				onReload: (result, reason) => {
+					extensionPane.bindings();
 					if (deps.reloadClasses?.active) return;
 					if (result.status === "deferred") return;
 					const failed = result.status === "rejected" || result.degraded === undefined;
@@ -452,16 +462,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 					return leader ? `${formatKeyLabel(leader, "")} ${WORKSPACE_LEAVE_KEY} or /extensions leave` : "/extensions leave";
 				},
 				terminalRows: () => terminal.rows,
-				press: (extensionId, action, source = "leader") => {
-					void operatorExtensions
-						.action(extensionId, { id: action, source })
-						.catch((error) =>
-							notify(
-								"warning",
-								`${extensionOwnerLabel(extensionId)}: ${error instanceof Error ? error.message : String(error)}`,
-							),
-						);
-				},
+				press: (extensionId, action, source = "leader") => extensionPane.press(extensionId, { id: action, source }),
 				leaderLabel: () => {
 					const leader = keybindings.getKeys("pancode.leader")[0];
 					return leader ? formatKeyLabel(leader, "") : null;
@@ -479,7 +480,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		? createAmbientSurfaces({
 				operator: operatorExtensions,
 				tui,
-				dock: createExtensionDockHost({
+				dock: extensionPane.viewDock({
 					mux: deps.mux ?? null,
 					stateDir: deps.stateDir,
 					sessionId: () => deps.session?.current()?.id ?? deps.getSessionId?.() ?? null,
@@ -1750,7 +1751,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			.map((entry) => entry.display?.text ?? entry.text);
 	applicationController = createInteractiveInputRuntime({
 		tui,
-		...(workspaceSurfaces ? { extraLeaderTargets: () => workspaceSurfaces.leaderTargets() } : {}),
+		...extensionPane.inputHooks(() => workspaceSurfaces?.leaderTargets() ?? []),
 		hasQueuedMessages: () => {
 			const queue = deps.chat.queuedMessages();
 			return queue.steer.length + queue.followUp.length > 0;

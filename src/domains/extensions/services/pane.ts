@@ -12,6 +12,7 @@
  * second press inside 400 ms arrives as `double`.
  */
 import path from "node:path";
+import type { ExtensionPaneChangeReason, ExtensionPanePalette, ExtensionPaneState } from "@pancode/sdk/extension";
 import type { ExtensionBinaryDeclaration, ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { terminalBackground } from "../../../core/terminal-background.js";
 import { roleHex } from "../../../core/theme-roles.js";
@@ -27,20 +28,7 @@ const SLOT = "extension" as const;
 export const PANE_ROWS_MAX = 24;
 const TITLE_MAX = 40;
 
-export type ExtensionPaneState = "visible" | "hidden" | "closed";
-export type ExtensionPaneChangeReason = "opened" | "hidden" | "revealed" | "closed" | "exited" | "replaced";
 export type ExtensionPaneKey = "tap" | "double";
-
-/** The six colors a pane program can theme itself with, for the background PanCode detected. */
-export interface ExtensionPanePalette {
-	background: "dark" | "light" | null;
-	accent: string;
-	strong: string;
-	text: string;
-	low: string;
-	mid: string;
-	high: string;
-}
 
 export interface ExtensionPaneOwner {
 	extensionId: string;

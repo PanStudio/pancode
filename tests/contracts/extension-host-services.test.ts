@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, equal, match, ok, rejects, strictEqual, throws } from "node:assert/strict";
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it, test } from "node:test";
@@ -38,10 +38,16 @@ import {
 	removePackBinaries,
 	resolvePackBinary,
 	runPackBinary,
+	syncPackBinaries,
 } from "../../src/domains/extensions/services/binaries.js";
 import { resolveExtensionKeys } from "../../src/domains/extensions/services/keys.js";
 import { createExtensionPaneHost, type ExtensionPaneOwner } from "../../src/domains/extensions/services/pane.js";
-import { installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
+import {
+	installExtension,
+	installedExtensionClaims,
+	listInstalledExtensions,
+	removeExtension,
+} from "../../src/domains/extensions/state.js";
 import type { MuxContract, MuxOpenUtilityPaneRequest } from "../../src/domains/mux/contract.js";
 import { createDockKeyGate } from "../../src/domains/mux/dock-keys.js";
 import type { MuxPaneRecord } from "../../src/domains/mux/types.js";
@@ -363,6 +369,49 @@ test("adding either service, raising the budget or adding a tag is envelope grow
 			"reads store tags: notes",
 			"writes store tags: out",
 		],
+	);
+});
+
+test("a bare alias, a program, a changed pin, a program's new key, a global key and the pane are envelope growth", () => {
+	const program = (name: string, version: string, sha: string, env: string[]) => ({
+		name,
+		version,
+		license: "MIT",
+		homepage: "https://example.invalid",
+		env,
+		downloads: { "linux-x64": { url: "https://example.invalid/p", sha256: sha.repeat(64) } },
+	});
+	const envelope = (extra: Record<string, unknown>) =>
+		capabilityEnvelope(
+			parseExtensionRuntimeV2({
+				api: 2,
+				entrypoint: "extension.mjs",
+				commands: [{ name: "play", description: "play" }],
+				...extra,
+			}),
+		);
+	const base = envelope({ binaries: [program("player", "1.0.0", "a", ["THEME"])] });
+	const grown = envelope({
+		commands: [{ name: "play", description: "play", alias: "tunes" }],
+		binaries: [program("player", "1.0.0", "b", ["THEME", "VOLUME"]), program("helper", "2.0.0", "c", [])],
+		keys: [{ key: "alt+m", action: "play", label: "Play" }],
+		services: { pane: true },
+		events: ["pane_changed"],
+	});
+	deepStrictEqual(envelopeGrowth(base, grown), [
+		"claims bare commands: /tunes",
+		"may open a pane below PanCode",
+		"program player changed: 1.0.0 (approved 1.0.0)",
+		"program player environment: VOLUME",
+		"new program: helper 2.0.0",
+		"new keys: alt+m:play",
+		"new events: pane_changed",
+	]);
+	deepStrictEqual(envelopeGrowth(grown, grown), []);
+	throws(() => envelope({ services: { pane: true } }), /needs a declared binary/u);
+	throws(
+		() => envelope({ binaries: [program("player", "1.0.0", "a", [])], events: ["pane_changed"] }),
+		/declares no runtime.services.pane/u,
 	);
 });
 
@@ -837,6 +886,52 @@ describe("extension binaries service", () => {
 		throws(() => parsePackBinaryRun({ name: NAME, env: { LD_PRELOAD: "x" } }, [loader]), /environment key LD_PRELOAD/u);
 		throws(() => parsePackBinaryRun({ name: NAME, args: Array(65).fill("a") }, [pinned]), /at most 64 strings/u);
 		throws(() => parsePackBinaryRun({ name: NAME, timeoutMs: 60_000 }, [pinned]), /from 1 to 10000/u);
+	});
+
+	it("follows the installed copies: an install downloads the pin and removing the last copy deletes it", async (t) => {
+		const platform = currentToolPlatform();
+		if (!platform) return t.skip("no pinned platform here");
+		const env = await isolatePancodeEnv("pancode-ext-binaries-");
+		t.after(() => env.restore());
+		const source = path.join(env.dir, "player");
+		const cwd = path.join(env.dir, "workspace");
+		mkdirSync(source);
+		mkdirSync(cwd);
+		writeFileSync(
+			path.join(source, "pancode-extension.json"),
+			JSON.stringify({
+				id: "player",
+				version: "1.0.0",
+				description: "Plays",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					commands: [{ name: "play", description: "play", alias: "tunes" }],
+					binaries: [
+						{
+							name: NAME,
+							version: "1.0.0",
+							license: "MIT",
+							homepage: "https://example.invalid",
+							downloads: { [platform]: { url: "https://example.invalid/fixture", sha256: sha256Hex(script) } },
+						},
+					],
+				},
+			}),
+		);
+		writeFileSync(
+			path.join(source, "extension.mjs"),
+			`export default (api) => api.handle("play", () => ({ text: "ok" }));\n`,
+		);
+		ok(installExtension(source, { cwd, scope: "user" }).extension?.loadable);
+		strictEqual(installedExtensionClaims("tunes", cwd), true);
+
+		const store = path.join(env.dir, "tools");
+		deepStrictEqual(await syncPackBinaries("player", cwd, { root: store, fetch: async () => script, mirror: null }), []);
+		strictEqual(existsSync(path.join(store, "ext", "player")), true);
+		ok(removeExtension("player", { cwd, scope: "user" }).removed);
+		deepStrictEqual(await syncPackBinaries("player", cwd, { root: store }), []);
+		strictEqual(existsSync(path.join(store, "ext", "player")), false);
 	});
 });
 

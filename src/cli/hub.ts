@@ -41,6 +41,7 @@ import {
 	type HubLifecyclePlan,
 	type HubOperation,
 	planHubLifecycle,
+	syncHubPackBinaries,
 } from "../domains/resources/hub-actions.js";
 import {
 	type HubComponentSourceClass,
@@ -1148,9 +1149,15 @@ async function executeHubCommand(
 		if (LIFECYCLE.includes(parsed.command as HubOperation)) {
 			const operation = parsed.command as HubOperation;
 			const { plan, apply, ok } = runLifecycleStep(operation, ref, parsed.scope, parsed, options);
+			const binaries = apply.dryRun
+				? []
+				: await syncHubPackBinaries(apply, options.cwd, (message) => {
+						if (!parsed.json) process.stderr.write(`${message}\n`);
+					});
+			for (const failure of binaries) printError(`a pinned program did not download: ${failure}`);
 			if (parsed.json) emit(lifecycleJson(operation, plan, apply, ok));
 			else printRefreshNote(apply);
-			return ok ? 0 : 1;
+			return ok && binaries.length === 0 ? 0 : 1;
 		}
 		const entry = resolveInstalledHubEntry(ref, options);
 		const scoped = { ...options, scope: entry.scope };

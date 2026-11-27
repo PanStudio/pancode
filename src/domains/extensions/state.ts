@@ -445,8 +445,8 @@ export function listInstalledExtensions(
 }
 
 /**
- * Whether an enabled extension declares `/token` as its own command or as a
- * `replaces: prompt` takeover of its plugin's prompt, read from manifests
+ * Whether an enabled extension declares `/token` as its own command, as a
+ * command's bare alias, or as a `replaces: prompt` takeover of its plugin's prompt, read from manifests
  * alone, so `pancode run` can send the line to the extension runtime rather
  * than refuse it or hand it to the model before any runtime starts (WTF-P F04).
  */
@@ -457,6 +457,7 @@ export function installedExtensionClaims(token: string, cwd = process.cwd()): bo
 			entry.runtimeV2?.commands.some(
 				(command) =>
 					token === extensionInvocation(entry.id, command.name) ||
+					command.alias === token ||
 					("replaces" in command &&
 						command.replaces === "prompt" &&
 						entry.plugin !== undefined &&

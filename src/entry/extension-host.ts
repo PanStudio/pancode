@@ -13,6 +13,7 @@ import type { OperatorReloadResult } from "../domains/extensions/operator-runtim
 import { OBSERVATION_BACKLOG } from "../domains/extensions/operator-runtime-v2.js";
 import type { ExtensionRuntimeHookBridge } from "../domains/extensions/runtime-hook-bridge.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
+import { BUILTIN_SLASH_NAMES } from "../session-control/slash-commands.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import { cancelUnansweredInterview, runParkedInterview } from "../tools/extension-interview.js";
 
@@ -74,6 +75,7 @@ export function startExtensionHost(options: ExtensionHostOptions): ExtensionHost
 		context: () => ({ workspace: process.cwd(), sessionId: options.sessionId(), mode: options.mode }),
 		isIdle,
 		list: options.list,
+		builtinCommandNames: () => BUILTIN_SLASH_NAMES,
 		...(options.frozenTools ? { frozenTools: options.frozenTools } : {}),
 		...(options.services ? { services: createExtensionHostServices(options.services) } : {}),
 		...(options.sandboxUnixSockets ? { sandboxUnixSockets: options.sandboxUnixSockets } : {}),

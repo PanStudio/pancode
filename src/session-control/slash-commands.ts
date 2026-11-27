@@ -615,6 +615,9 @@ for (const entry of BUILTIN_SLASH_COMMANDS) {
 	}
 }
 
+/** Every name a typed `/name` reaches a built-in by, so an extension's bare alias never takes one. */
+export const BUILTIN_SLASH_NAMES: ReadonlySet<string> = new Set([...COMMAND_NAMES, ...ALIAS_TARGETS.keys()]);
+
 /** `/clear foo` becomes `/new foo`; anything that is not an alias comes back unchanged. */
 function resolveAlias(trimmed: string): string {
 	const match = /^\/([A-Za-z][A-Za-z0-9-]*)(?=\s|$)/u.exec(trimmed);

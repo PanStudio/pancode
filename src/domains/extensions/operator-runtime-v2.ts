@@ -32,6 +32,7 @@ import {
 	extensionInvocation,
 	type PromptRef,
 	promptRefName,
+	resolveExtensionAliases,
 	resolveExtensionCommands,
 } from "./operator-commands.js";
 import { extensionOwnerLabel } from "./owner-label.js";
@@ -39,6 +40,9 @@ import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcess
 import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
 import { type ExtensionGlobWatch, watchExtensionGlobs } from "./runtime-watch.js";
+import { runPackBinary } from "./services/binaries.js";
+import type { ExtensionKeyClaims } from "./services/keys.js";
+import type { ExtensionPaneHost } from "./services/pane.js";
 import { pruneOrphanedExtensionSessionState } from "./session-state.js";
 import { validateSkin } from "./skin-schema.js";
 import { listInstalledExtensions } from "./state.js";
@@ -100,6 +104,13 @@ export interface OperatorRuntimeV2Options {
 	embed?: (request: ExtensionEmbeddingRequest, signal: AbortSignal, workspace: string) => Promise<EmbeddingResponse>;
 	/** The consent-gated host services; its `embed` wins over the option above. */
 	services?: ExtensionServiceHost;
+	/** The dock pane `ctx.pane` drives, disposed with the runtime; absent outside an interactive session in herdr. */
+	pane?: ExtensionPaneHost;
+	/**
+	 * Every built-in slash name and alias. A package's bare alias is offered
+	 * only in a host that passes these, so it can never shadow a built-in.
+	 */
+	builtinCommandNames?: () => ReadonlySet<string>;
 	/**
 	 * The operator's `safety.sandboxUnixSockets`, read as each runtime starts so
 	 * a change reaches the next one. Absent blocks them.
@@ -451,6 +462,8 @@ export class OperatorExtensionRuntimeV2 {
 		};
 		const complete = entry.runtimeV2.services?.model ? services?.complete : undefined;
 		const blobs = entry.runtimeV2.services?.store ? services?.blobs : undefined;
+		const binaries = entry.runtimeV2.binaries ?? [];
+		const pane = entry.runtimeV2.services?.pane ? this.options.pane : undefined;
 		const unixSockets = this.options.sandboxUnixSockets?.();
 		const sandboxMode = (this.options.sandboxMode ?? layeredSandboxMode)(context.workspace);
 		created.process = new ExtensionRuntimeProcessV2(entry, {
@@ -461,6 +474,15 @@ export class OperatorExtensionRuntimeV2 {
 			...(embed ? { embed: (request, signal) => embed(request, signal, context.workspace) } : {}),
 			...(complete ? { complete: (request, signal) => complete(binding, request, signal) } : {}),
 			...(blobs ? { blobs: (request, signal) => blobs(binding, request, signal) } : {}),
+			...(binaries.length > 0
+				? { binaries: (request, signal) => runPackBinary(entry.id, binaries, request, paths.storeDir, signal) }
+				: {}),
+			...(pane
+				? {
+						pane: (op, payload) =>
+							pane.call({ extensionId: entry.id, declaration: entry.runtimeV2, storeDir: paths.storeDir }, op, payload),
+					}
+				: {}),
 			...(unixSockets !== undefined ? { unixSockets } : {}),
 			sandboxMode,
 			...(this.options.readOnly?.() === true ? { readOnly: true } : {}),
@@ -565,6 +587,7 @@ export class OperatorExtensionRuntimeV2 {
 			this.processes.delete(id);
 			this.failures.set(id, "installation disabled, removed, replaced, or changed; reload after reviewed installation");
 			this.retire(process, "installation-revoked");
+			void this.options.pane?.release(id);
 			if (this.surface.activeWorkspace?.extensionId === id) this.leaveWorkspace();
 			this.changed();
 		}
@@ -622,12 +645,20 @@ export class OperatorExtensionRuntimeV2 {
 			if (reason === "startup" && this.options.onlyId === undefined && this.options.pruneOrphanedSessionState !== false)
 				pruneOrphanedExtensionSessionState((this.options.stateDir ?? pancodeStateDir)(), context.sessionId);
 			if (reason !== "startup") await this.closeSession(reason);
+			const prior = [...this.processes.keys(), ...this.deferred.keys()];
 			// Every instance restarts; state and the picture are host-held, so nothing is lost but in-flight work.
 			this.retireAll(reason);
 			await Promise.all(this.retired);
 			const eligible = list.filter(
 				(entry): entry is ApiV2Extension => isApiV2(entry) && (!this.options.onlyId || entry.id === this.options.onlyId),
 			);
+			// A pane keeps playing across a reload; it closes once its package can no longer drive it.
+			for (const id of prior)
+				if (
+					this.options.pane?.owns(id) &&
+					!eligible.some((entry) => entry.id === id && entry.runtimeV2.services?.pane === true)
+				)
+					await this.options.pane.release(id);
 			let room = this.capacity();
 			for (const entry of eligible) {
 				if (!this.options.onlyId && startsOnDemand(entry)) {
@@ -819,6 +850,7 @@ export class OperatorExtensionRuntimeV2 {
 	}
 
 	commands(promptNames: ReadonlyArray<string | PromptRef> = []): ExtensionCommandRow[] {
+		const builtins = this.options.builtinCommandNames?.();
 		const rows = this.inventory
 			.filter((entry) => entry.effective && entry.runtimeV2)
 			.flatMap((entry) =>
@@ -864,6 +896,10 @@ export class OperatorExtensionRuntimeV2 {
 						alias === undefined
 							? undefined
 							: promptNames.find((ref) => promptRefName(ref).toLowerCase() === alias.toLowerCase());
+					const bare =
+						command.alias !== undefined && builtins
+							? [{ ...row, invocation: command.alias, alias: { command: command.name } }]
+							: [];
 					return alias &&
 						command.replaces === "prompt" &&
 						entry.pluginPrompts?.includes(alias) &&
@@ -871,10 +907,11 @@ export class OperatorExtensionRuntimeV2 {
 						winner.source !== undefined &&
 						winner.source === entry.pluginSource
 						? [row, { ...row, invocation: alias, replaces: "prompt" as const }]
-						: [row];
+						: [row, ...bare];
 				}),
 			);
-		return resolveExtensionCommands(rows, promptNames);
+		const resolved = resolveExtensionCommands(rows, promptNames);
+		return builtins ? resolveExtensionAliases(resolved, builtins, promptNames) : resolved;
 	}
 
 	/** One row per installed package, so a command-tool package reports when its tools need a new session. */
@@ -976,7 +1013,7 @@ export class OperatorExtensionRuntimeV2 {
 			(candidate): candidate is ApiV2Extension => isApiV2(candidate) && candidate.id === row.extensionId,
 		);
 		if (!entry) throw new Error("extension command unavailable");
-		const name = invocation.slice(invocation.lastIndexOf(":") + 1);
+		const name = row.alias?.command ?? invocation.slice(invocation.lastIndexOf(":") + 1);
 		const details = { invocation, plugin: entry.plugin ?? null, takeover: row.replaces === "prompt" };
 		this.activity(entry, "command", "started", details);
 		try {
@@ -1185,6 +1222,18 @@ export class OperatorExtensionRuntimeV2 {
 		}
 		this.deliver(event);
 	}
+	/** The global keys of every package that can answer one now. */
+	keyClaims(): ExtensionKeyClaims[] {
+		return this.inventory.flatMap((entry) =>
+			entry.effective && entry.loadable && entry.runtimeV2?.keys?.length && !this.fenced(entry.id)
+				? [{ extensionId: entry.id, keys: entry.runtimeV2.keys }]
+				: [],
+		);
+	}
+	/** An observation only one runtime may see, such as the change of its own pane. */
+	observeExtension(extensionId: string, event: ExtensionObservationV2): void {
+		if (!this.closed) this.observeOne(extensionId, event);
+	}
 	private deliver(event: ExtensionObservationV2): void {
 		for (const process of this.processes.values()) this.enqueue(process, event);
 	}
@@ -1312,5 +1361,6 @@ export class OperatorExtensionRuntimeV2 {
 		await Promise.all(this.retired);
 		if (this.surface.activeWorkspace) this.recordWorkspaceChange(this.surface.activeWorkspace, null);
 		this.surface.reset(() => false);
+		await this.options.pane?.dispose();
 	}
 }

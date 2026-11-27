@@ -12,7 +12,7 @@
  */
 import { existsSync, rmdirSync, rmSync } from "node:fs";
 import path from "node:path";
-import type { ExtensionBinaryDeclaration } from "@pancode/sdk/pack";
+import { type ExtensionBinaryDeclaration, RESERVED_BINARY_ENV } from "@pancode/sdk/pack";
 import { runCommandVector } from "../../../core/safe-exec.js";
 import {
 	describeResolution,
@@ -27,6 +27,7 @@ import {
 	toolchainRoot,
 	toolStatus,
 } from "../../toolchain/index.js";
+import { listInstalledExtensions } from "../state.js";
 
 /** A call's arguments, environment and output stay small: this is a control channel, not a shell. */
 export const BINARY_RUN_LIMITS = Object.freeze({
@@ -101,6 +102,33 @@ export async function installPackBinaries(
 	return results;
 }
 
+/**
+ * Brings one extension's vendored binaries in line with its installed copies
+ * once an install, update or removal has committed: the enabled copy's pins
+ * are downloaded and verified, a superseded pin is pruned, and everything goes
+ * once no copy declares a binary. Answers one line per failure.
+ */
+export async function syncPackBinaries(
+	extensionId: string,
+	cwd: string,
+	options: PackBinaryInstallOptions = {},
+): Promise<string[]> {
+	const copies = listInstalledExtensions(cwd, { all: true }).filter(
+		(entry) => entry.id === extensionId && (entry.runtimeV2?.binaries?.length ?? 0) > 0,
+	);
+	const binaries = (copies.find((entry) => entry.effective) ?? copies[0])?.runtimeV2?.binaries ?? [];
+	try {
+		if (binaries.length === 0) {
+			removePackBinaries(extensionId, options.root);
+			return [];
+		}
+		const results = await installPackBinaries(extensionId, binaries, options);
+		return results.filter((result) => !result.ok).map((result) => `${extensionId}: ${result.message}`);
+	} catch (error) {
+		return [`${extensionId}: ${error instanceof Error ? error.message : String(error)}`];
+	}
+}
+
 /** Delete every vendored binary of an extension. Nothing installed is success. */
 export function removePackBinaries(extensionId: string, root: string = toolchainRoot()): void {
 	const dir = packBinaryRoot(extensionId, root);
@@ -133,13 +161,6 @@ export function packBinaryPath(
 	return {
 		reason: `${binary.name} ${found}; reinstall the extension (pancode hub install extension:${extensionId}) or put ${binary.name} ${binary.minimumVersion} or newer on PATH`,
 	};
-}
-
-/** Keys a call may never set, whatever the manifest declares: they steer the loader, the shell or PanCode itself. */
-const RESERVED_ENV = /^(?:PANCODE_|LD_|DYLD_|NODE_|npm_)|^(?:PATH|HOME|SHELL|ENV|BASH_ENV|IFS|PS4|TMPDIR)$/u;
-
-function reservedBinaryEnvKey(key: string): boolean {
-	return RESERVED_ENV.test(key);
 }
 
 export interface PackBinaryRunRequest {
@@ -182,7 +203,7 @@ export function parseBinaryEnv(value: unknown, binary: ExtensionBinaryDeclaratio
 		throw new Error("binary environment must be an object");
 	const env: Record<string, string> = {};
 	for (const [key, entry] of Object.entries(value)) {
-		if (!binary.env.includes(key) || reservedBinaryEnvKey(key))
+		if (!binary.env.includes(key) || RESERVED_BINARY_ENV.test(key))
 			throw new Error(`${binary.name} does not declare the environment key ${key}`);
 		if (typeof entry !== "string" || entry.includes("\0") || Buffer.byteLength(entry) > BINARY_RUN_LIMITS.envValueBytes)
 			throw new Error(`environment value ${key} must be text of at most ${BINARY_RUN_LIMITS.envValueBytes} bytes`);
