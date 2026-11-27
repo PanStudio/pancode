@@ -14,7 +14,7 @@ Every checkout and task worktree of one repository reaches the same store: the s
 
 ## Commands
 
-Each command below runs as `pancode store <command>`.
+Each command below runs as `pancode store <command>`. Changing the backend does not move data. Switch back to the original settings to read the original store. To copy a blob between stores, `get` it to a file, switch settings, then `put` the file.
 
 | Command | What it does |
 | --- | --- |
@@ -201,7 +201,7 @@ The model reaches the same store through the `store` tool. Its eight ops (`tags`
 
 A dispatched worker reads the store but does not write it, unless its dispatch grants tags: `dispatch` with `tags: ["results"]` lets the worker `put` and `note` into `results` only. The tag must exist before the dispatch. A worker's `get` result says the path is a read-only store copy outside the workspace that it may read with `read`, `data` or `run_script`, so a worker in a task worktree reads it instead of stopping at the boundary.
 
-A grant is a permission to write those tags through the store. It does not narrow what else the worker may write, with one exception: in a parallel batch that would otherwise be refused because several writers declare no write roots, each writer that holds a grant and declares no write roots is confined to its granted tags' directories. Declare `intent.write_roots` when such a writer must also edit the workspace.
+A grant is a permission to write those tags through the store. It does not narrow what else the worker may write, with one exception: in a parallel batch that would otherwise be refused because several writers declare no write roots, each writer that holds a grant and declares no write roots is confined to its granted tags' directories. An S3 grant has no such directories: declare disjoint `intent.write_roots` for parallel writers or dispatch them separately.
 
 A worker on an SSH fleet node opens its own host's store. It can be granted tags only when the project sets `store.projectId` and both hosts mount the store's roots, or its shared folder; see [Sharing a store across hosts](#sharing-a-store-across-hosts).
 
