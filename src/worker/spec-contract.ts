@@ -1110,10 +1110,13 @@ function assertMcpAttestationShape(value: unknown, ceilingTools: ReadonlySet<str
 	}
 	const source = "WorkerSpec.permit.ceiling.mcp";
 	const mcp = readRecord(value, source);
-	exactKeys(mcp, ["projectRoot", "tools"], source);
+	exactKeys(mcp, ["projectRoot", "tools", "skills"], source);
 	const root = readString(mcp.projectRoot, `${source}.projectRoot`);
 	if (!isAbsolute(root) || root.includes("\0")) throw new Error(`${source}.projectRoot must be an absolute path`);
-	if (!Array.isArray(mcp.tools) || mcp.tools.length === 0) throw new Error(`${source}.tools must be a non-empty array`);
+	if (mcp.skills !== undefined) assertMcpSkillAttestations(mcp.skills, `${source}.skills`);
+	if (!Array.isArray(mcp.tools) || (mcp.tools.length === 0 && mcp.skills === undefined)) {
+		throw new Error(`${source}.tools must be a non-empty array unless the permit attests MCP skills`);
+	}
 	const named = new Set<string>();
 	const granted = new Map<string, boolean>();
 	for (const [index, raw] of mcp.tools.entries()) {
@@ -1146,6 +1149,58 @@ function assertMcpAttestationShape(value: unknown, ceilingTools: ReadonlySet<str
 	}
 	const missing = mcpTools.filter((tool) => !named.has(tool));
 	if (missing.length > 0) throw new Error(`${source} does not attest ${missing.join(", ")}`);
+}
+
+/** Each attested MCP skill version whole, once per name: the worker lists them exactly. */
+function assertMcpSkillAttestations(value: unknown, source: string): void {
+	if (!Array.isArray(value) || value.length === 0) throw new Error(`${source} must be a non-empty array`);
+	const names = new Set<string>();
+	for (const [index, raw] of value.entries()) {
+		const entrySource = `${source}[${index}]`;
+		const entry = readRecord(raw, entrySource);
+		exactKeys(
+			entry,
+			[
+				"serverId",
+				"serverScope",
+				"digest",
+				"displayName",
+				"observedAt",
+				"uri",
+				"name",
+				"description",
+				"skillPath",
+				"frontmatter",
+				"manifestDigest",
+				"files",
+				"bytes",
+			],
+			entrySource,
+		);
+		const serverId = readString(entry.serverId, `${entrySource}.serverId`);
+		readEnum(entry.serverScope, `${entrySource}.serverScope`, ["user", "project", "plugin"] as const);
+		if (!SHA256_HEX.test(readString(entry.digest, `${entrySource}.digest`))) {
+			throw new Error(`${entrySource}.digest must be a sha256 hex digest`);
+		}
+		if (!/^sha256:[0-9a-f]{64}$/.test(readString(entry.manifestDigest, `${entrySource}.manifestDigest`))) {
+			throw new Error(`${entrySource}.manifestDigest must be a sha256: digest`);
+		}
+		const displayName = readString(entry.displayName, `${entrySource}.displayName`);
+		if (!displayName.startsWith(`${serverId}:`) || names.has(displayName)) {
+			throw new Error(`${entrySource}.displayName must name one distinct skill of server '${serverId}'`);
+		}
+		names.add(displayName);
+		for (const key of ["observedAt", "uri", "name", "skillPath"] as const)
+			readString(entry[key], `${entrySource}.${key}`);
+		readString(entry.description, `${entrySource}.description`, { allowEmpty: true });
+		readRecord(entry.frontmatter, `${entrySource}.frontmatter`);
+		for (const key of ["files", "bytes"] as const) {
+			const count = entry[key];
+			if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+				throw new Error(`${entrySource}.${key} must be a non-negative integer`);
+			}
+		}
+	}
 }
 
 const WORKER_SANDBOX_KEYS = new Set([

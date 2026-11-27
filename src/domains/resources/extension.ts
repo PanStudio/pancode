@@ -62,5 +62,7 @@ function skillOptions(
 		trustProjectCompatRoots: runtime.trustProjectCompatRoots ?? trustProjectCompatRoots,
 		...(runtime.disableDiscovery !== undefined ? { disableDiscovery: runtime.disableDiscovery } : {}),
 		...(runtime.explicitSkillPaths !== undefined ? { explicitSkillPaths: runtime.explicitSkillPaths } : {}),
+		// The session's catalog, `/skill` and autocomplete list what trusted MCP servers serve.
+		mcp: runtime.mcp ?? {},
 	};
 }

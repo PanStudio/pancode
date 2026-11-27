@@ -6,13 +6,19 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { isMcpResourceCapability, isMcpToolName } from "../../core/tool-names.js";
 import {
 	canonicalProjectRoot,
+	currentMcpSkillApproval,
+	findMcpSkill,
+	judgeMcpSkillApproval,
+	type McpAttestedSkill,
 	type McpBuiltinSource,
 	mcpServerFileArguments,
+	mcpSkillReferenceServer,
 	mcpSurfaceRemedy,
 	mcpToolActionClass,
 	mcpToolOwner,
 	type ResolvedMcpServer,
 	readMcpServerCatalog,
+	readMcpSkillCatalog,
 	resolveMcpServers,
 } from "../gateway/mcp/index.js";
 import type { WorkerMcpAttestation, WorkerMcpToolAttestation } from "../safety/worker-permit.js";
@@ -23,6 +29,9 @@ import type { WorkerMcpAttestation, WorkerMcpToolAttestation } from "../safety/w
  * without launching anything, through the same owner rule and classifier the
  * session gateway uses. The result is attested into the worker permit, and
  * the worker launches only a declaration whose digest still matches it.
+ * A recipe binds an MCP skill as `<id>:<name>`; admission attests the version
+ * the operator approved, read from the server's recorded skills listing, and
+ * the worker loads it only while the server still serves that manifest.
  */
 
 export interface WorkerMcpAdmissionInput {
@@ -30,6 +39,8 @@ export interface WorkerMcpAdmissionInput {
 	/** The checkout the dispatch belongs to; a task worktree resolves to the checkout it was cut from. */
 	projectCwd: string;
 	tools: ReadonlyArray<string>;
+	/** The skills the recipe binds; only `<id>:<name>` names are MCP skills. */
+	skills?: ReadonlyArray<string>;
 	/** Override for the user config directory; defaults to pancodeConfigDir(). */
 	configDir?: string;
 	/** Override for the builtin server manifest and the CLI that serves it; defaults to the installed package's. */
@@ -38,10 +49,11 @@ export interface WorkerMcpAdmissionInput {
 	readOnly?: boolean;
 }
 
-/** Null when the tool list names no MCP capability. Throws a refusal naming the server and its remedy. */
+/** Null when the run names no MCP capability or MCP skill. Throws a refusal naming the server and its remedy. */
 export function resolveWorkerMcpAdmission(input: WorkerMcpAdmissionInput): WorkerMcpAttestation | null {
 	const names = [...new Set(input.tools.filter((tool) => isMcpToolName(tool)))].sort();
-	if (names.length === 0) return null;
+	const skillNames = [...new Set((input.skills ?? []).filter((name) => mcpSkillReferenceServer(name) !== null))].sort();
+	if (names.length === 0 && skillNames.length === 0) return null;
 	const who = `agent '${input.agentId}'`;
 	const resolved = resolveMcpServers({
 		cwd: input.projectCwd,
@@ -104,7 +116,73 @@ export function resolveWorkerMcpAdmission(input: WorkerMcpAdmissionInput): Worke
 			...(declaration.trust.network === true ? { network: true as const } : {}),
 		});
 	}
-	return { projectRoot, tools };
+	const skills = skillNames.map((reference) => attestMcpSkill(reference, who, resolved.servers, projectRoot, input));
+	return { projectRoot, tools, ...(skills.length > 0 ? { skills } : {}) };
+}
+
+/** The approved version of one recipe-bound MCP skill, or a refusal naming its remedy. */
+function attestMcpSkill(
+	reference: string,
+	who: string,
+	servers: ReadonlyArray<ResolvedMcpServer>,
+	projectRoot: string,
+	input: WorkerMcpAdmissionInput,
+): McpAttestedSkill {
+	const serverId = mcpSkillReferenceServer(reference) as string;
+	const denied = (why: string) =>
+		new Error(`dispatch: admission denied: ${who} binds MCP skill ${reference}, but ${why}`);
+	const declaration = servers.find((server) => server.id === serverId);
+	if (declaration === undefined) {
+		throw denied(`no MCP server '${serverId}' is declared for ${projectRoot}`);
+	}
+	if (declaration.scope === "builtin") throw denied(`builtin server '${serverId}' serves no skills`);
+	if (declaration.trust.status !== "trusted") {
+		throw denied(
+			`MCP server '${serverId}' is ${declaration.trust.status} for ${projectRoot} (${declaration.trust.reason}); review its declaration and run \`pancode mcp trust ${serverId}\``,
+		);
+	}
+	// Admission launches nothing: the version a worker may load is the one the
+	// server's last live listing recorded, and only if the operator approved it.
+	const catalog = readMcpSkillCatalog({
+		projectRoot,
+		scope: declaration.scope,
+		declarationPath: declaration.path,
+		serverId,
+		digest: declaration.digest,
+		cwd: declaration.cwd,
+	});
+	if (catalog === null) {
+		throw denied(
+			`no skills listing of MCP server '${serverId}' is recorded for its current declaration; list them with \`pancode mcp test ${serverId}\``,
+		);
+	}
+	const found = findMcpSkill(serverId, catalog.skills, reference);
+	if (found.entry === null) throw denied(`${found.reason} (last listed ${catalog.observedAt})`);
+	const { entry, displayName } = found;
+	const remedy = `pancode mcp trust ${serverId} --skill ${displayName.slice(serverId.length + 1)}`;
+	const status = judgeMcpSkillApproval(
+		currentMcpSkillApproval(declaration, entry.uri, {
+			cwd: input.projectCwd,
+			...(input.configDir !== undefined ? { configDir: input.configDir } : {}),
+		}),
+		declaration,
+		entry,
+	);
+	if (status.status === "changed") throw denied(status.reason);
+	if (status.status !== "approved") {
+		throw denied(
+			`its version ${entry.manifestDigest} is not approved for ${projectRoot}; a worker never asks, so review it and run \`${remedy}\``,
+		);
+	}
+	// The worker lists it under the name its recipe binds, the one its skill policy admits.
+	return {
+		...entry,
+		serverId,
+		serverScope: declaration.scope,
+		digest: declaration.digest,
+		displayName: reference,
+		observedAt: catalog.observedAt,
+	};
 }
 
 /** A granted server this run starts without network, and why. */
@@ -227,6 +305,7 @@ export function withholdWritableMcpNetwork(
 				const { network: _granted, ...rest } = entry;
 				return rest;
 			}),
+			...(attestation.skills !== undefined ? { skills: attestation.skills } : {}),
 		},
 		withheld: [...withheld].map(([serverId, reason]) => ({ serverId, reason })),
 	};

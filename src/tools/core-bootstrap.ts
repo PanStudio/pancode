@@ -29,6 +29,7 @@ import { builtin, gatewayPromptHint } from "./builtin-tool-catalog.js";
 import { codeNavToolSurface } from "./codewiki/code-nav-surface.js";
 import { createConfigurePancodeTool } from "./configure-pancode.js";
 import { type ConsultDeps, createConsultTool } from "./consult.js";
+import { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation } from "./context/mcp-skills.js";
 import type { ContextSemanticDeps } from "./context/semantic.js";
 import { createContextToolSurface } from "./context/surface.js";
 import { countTool } from "./count.js";
@@ -100,7 +101,7 @@ export interface CoreToolBootstrapDeps {
 	includeLedgerTools?: boolean;
 	getSkillLoaderOptions?: () => Pick<
 		LoadSkillsInput,
-		"trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths"
+		"trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths" | "mcp"
 	>;
 	skillMarketplace?: boolean;
 	/**
@@ -274,6 +275,20 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 			};
 		},
 	};
+	const getCwd = () => deps.session?.current()?.cwd ?? process.cwd();
+	const mcpSkills = deps.mcpCapabilities
+		? {
+				source: deps.mcpCapabilities,
+				// The approval card needs an operator who answers, as ask_user does.
+				interactive: deps.askUser !== undefined,
+				...(deps.getAutonomy ? { getAutonomy: deps.getAutonomy } : {}),
+				...(deps.getSkillLoaderOptions ? { attested: () => deps.getSkillLoaderOptions?.().mcp?.attested } : {}),
+			}
+		: undefined;
+	// The registry reads an approval card synchronously, before the lazy context
+	// runner below has loaded, so the card sits on the registered surface and
+	// shares this activation with that runner.
+	const mcpSkillActivation = mcpSkills !== undefined ? createMcpSkillActivation(mcpSkills, getCwd) : undefined;
 	const skillToolDeps = {
 		semantic,
 		...(deps.getContextBudget ? { getContextBudget: deps.getContextBudget } : {}),
@@ -282,11 +297,12 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 		...(deps.getRouteProvenance ? { getRouteProvenance: deps.getRouteProvenance } : {}),
 		...(deps.workerRecall ? { workerRecall: deps.workerRecall } : {}),
 		...(deps.workerWorkspace ? { workerWorkspace: deps.workerWorkspace } : {}),
-		getCwd: () => deps.session?.current()?.cwd ?? process.cwd(),
+		getCwd,
 		...(deps.getSkillLoaderOptions ? { getSkillLoaderOptions: deps.getSkillLoaderOptions } : {}),
 		...(deps.skillMarketplace !== undefined ? { skillMarketplace: deps.skillMarketplace } : {}),
 		...(deps.rankSkills ? { rankSkills: deps.rankSkills } : {}),
 		...(deps.onSkillLoaded ? { onSkillLoaded: deps.onSkillLoaded } : {}),
+		...(mcpSkills !== undefined && mcpSkillActivation !== undefined ? { mcpSkills, mcpSkillActivation } : {}),
 	};
 	if (deps.askUser) {
 		registry.register({
@@ -341,41 +357,51 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 	const contextSurface = createContextToolSurface(deps.getSettings?.().context.semantic);
 	registry.register({
 		...builtin(
-			lazyTool(contextSurface, async () => {
-				const { createContextTool } = await import("./context/index.js");
-				if (!session) return createContextTool(skillToolDeps, contextSurface);
-				const { probeWorkspace } = await import("../domains/session/workspace/index.js");
-				return createContextTool(
-					{
-						...skillToolDeps,
-						...(readSessionEntries
-							? {
-									session: {
-										hasSession: () => session.current() !== null,
-										readEntries: readSessionEntries,
-										activeLeafTurnId: () => {
-											const meta = session.current();
-											return meta ? (session.leafId(meta.id) ?? undefined) : undefined;
+			lazyTool(
+				mcpSkills !== undefined && mcpSkillActivation !== undefined
+					? {
+							...contextSurface,
+							confirmationFor: mcpSkillConfirmation(mcpSkillActivation, () =>
+								contextSkillLoadInput(getCwd(), deps.getSkillLoaderOptions?.() ?? {}, mcpSkills),
+							),
+						}
+					: contextSurface,
+				async () => {
+					const { createContextTool } = await import("./context/index.js");
+					if (!session) return createContextTool(skillToolDeps, contextSurface);
+					const { probeWorkspace } = await import("../domains/session/workspace/index.js");
+					return createContextTool(
+						{
+							...skillToolDeps,
+							...(readSessionEntries
+								? {
+										session: {
+											hasSession: () => session.current() !== null,
+											readEntries: readSessionEntries,
+											activeLeafTurnId: () => {
+												const meta = session.current();
+												return meta ? (session.leafId(meta.id) ?? undefined) : undefined;
+											},
+											cwd: () => session.current()?.cwd ?? null,
+											appendEntry: (entry) => session.appendEntry(entry),
+											...(deps.onContextRecalled ? { onRecalled: deps.onContextRecalled } : {}),
 										},
-										cwd: () => session.current()?.cwd ?? null,
-										appendEntry: (entry) => session.appendEntry(entry),
-										...(deps.onContextRecalled ? { onRecalled: deps.onContextRecalled } : {}),
-									},
-								}
-							: {}),
-						workspace: {
-							hasSession: () => session.current() !== null,
-							getSnapshot: () => session.current()?.workspace ?? null,
-							probeWorkspace: () => probeWorkspace(session.current()?.cwd ?? process.cwd()),
-							saveSnapshot: (snap) => {
-								const meta = session.current();
-								if (meta) meta.workspace = snap;
+									}
+								: {}),
+							workspace: {
+								hasSession: () => session.current() !== null,
+								getSnapshot: () => session.current()?.workspace ?? null,
+								probeWorkspace: () => probeWorkspace(session.current()?.cwd ?? process.cwd()),
+								saveSnapshot: (snap) => {
+									const meta = session.current();
+									if (meta) meta.workspace = snap;
+								},
 							},
 						},
-					},
-					contextSurface,
-				);
-			}),
+						contextSurface,
+					);
+				},
+			),
 			{ path: "src/tools/context/index.ts", scope: "core" },
 		),
 	});

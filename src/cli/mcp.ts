@@ -6,25 +6,38 @@ import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
 import type { McpClient, McpServerInfo } from "../domains/gateway/mcp/client.js";
 import type {
 	McpServerEntryScript,
+	McpSkillApprovalStatus,
+	McpSkillEntry,
 	McpSurface,
 	McpSurfaceStatus,
 	McpToolPathArguments,
 	ResolvedMcpServer,
 } from "../domains/gateway/mcp/index.js";
 import {
+	approveMcpSkill,
 	approveMcpSurface,
+	boundedMcpSkillText,
+	currentMcpSkillApproval,
 	currentMcpSurfaceApproval,
+	findMcpSkill,
+	getMcpSkill,
 	grantMcpBuiltinNetwork,
+	judgeMcpSkillApproval,
 	judgeMcpSurface,
 	MCP_TRUST_ACTION_CLASSES,
 	type McpTrustActionClass,
 	type McpTrustOptions,
 	mcpBuiltinTrustRefusal,
+	mcpSkillApprovalsFor,
+	mcpSkillDisplayNames,
+	mcpSkillRelativePath,
+	mcpSkillsSettings,
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
 	readMcpTrustState,
 	resolveMcpServers,
 	revokeMcpBuiltinNetwork,
+	revokeMcpSkill,
 	trustMcpServer,
 	untrustMcpServer,
 } from "../domains/gateway/mcp/index.js";
@@ -46,7 +59,9 @@ Commands:
   pancode mcp test <id> [--call <tool> [--args <json>]]... [--json]
   pancode mcp trust <id> [--action-class <class>] [--network] [--json]
   pancode mcp trust <id> --surface [--hash <sha256>] [--json]
+  pancode mcp trust <id> --skill <name|uri> [--hash <manifest digest>] [--json]
   pancode mcp untrust <id> [--json]
+  pancode mcp untrust <id> --skill <name|uri> [--json]
 
 Action classes: ${MCP_TRUST_ACTION_CLASSES.join(", ")}
 
@@ -99,6 +114,12 @@ JSON responses (--json):
     the calls; a JSON-RPC error answer is that call's error.
     An untrusted or stale declaration is never launched. Test never records a
     surface approval, so its calls are refused until the surface is approved.
+    A server that declares the io.modelcontextprotocol/skills extension also
+    carries skills: {directoryRead, ttlMs, truncated, skills: [{name, uri,
+    manifestDigest, files, bytes, approval}], refused: [{uri, name, kind,
+    reason}]} or {reason} when none could be listed. approval is approved,
+    unapproved or changed for this project. Listing reads no skill file and
+    records the listing that dispatch admission reads.
     The supported seam for external integration checks; nothing outside
     PanCode needs to import its source.
   trust: {ok: true, record: {projectRoot, id, digest, actionClass, trustedAt, network?,
@@ -146,7 +167,24 @@ JSON responses (--json):
     grant: {id, network, grantedAt}}. The grant is keyed by the server id, not
     by a project or a digest, so it holds in every project and survives an
     upgrade; the classes, path arguments and surface stay the shipped policy.
+  trust --skill: {ok, recorded, skill: {name, uri, manifestDigest, bytes,
+    files: [{path, uri, size, digest}], frontmatter}, approval: {status,
+    approvedDigest, reason?}, record?}
+    Approves one skill a trusted server serves: launches it, lists its skills,
+    fetches the named one with skills/get, prints its manifest, files and
+    frontmatter, and records that version for this project (any project for
+    a user-scope server). The approval binds the manifest digest and the
+    server's declaration digest; a changed file, frontmatter or declaration
+    reads as changed and loads nothing until approved again. --skill takes
+    the listed name (<id>:<name> or <name>) or the skill's uri. At a terminal
+    without --json it records the version it shows; --hash records only when
+    the served manifest digest equals the one given; otherwise it prints the
+    command that would record it and exits 0. The listing it reads is
+    recorded as test records it.
   untrust: {ok: true, removed: boolean}
+  untrust --skill: {ok: true, removed: boolean, uri}
+    Removes this project's approval of one skill, matched by uri or name
+    among the recorded approvals. Nothing is launched.
   errors: {ok: false, message: string}
 Exit codes: 0 success; 1 operational failure; 2 invalid usage. A test also
  exits 1 when its server fails or one of its calls returns an error.
@@ -691,6 +729,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			if ("error" in record) break;
 		}
 		const latestInfo = live.serverInfo() ?? info;
+		const skills = await mcpTestSkills(source, server, latestInfo);
 		const listing = refreshed.listing;
 		const offers = await liveResourcesAndPrompts(source, live, id);
 		const surface = surfaceStatusOf(server, source.servedSurface(id));
@@ -704,6 +743,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			truncated: listing?.truncated === true,
 			...offers.data,
 			...(surface !== null ? { surface } : {}),
+			...(skills !== null ? { skills: skills.data } : {}),
 			calls: results,
 		};
 		const lines = [
@@ -712,6 +752,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			...offers.lines,
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
 			...(latestInfo.instructions !== null ? instructionsLines(latestInfo.instructions) : []),
+			...(skills?.lines ?? []),
 			...results.map(
 				(result) =>
 					`call ${String(result.tool)}: ${"error" in result ? "failed" : result.refused === true ? "refused" : result.isError === true ? "error" : "ok"} ${boundedCallText(String(result.error ?? result.text))}`,
@@ -776,6 +817,68 @@ async function liveResourcesAndPrompts(
 	for (const prompt of prompts.slice(0, MCP_TEST_LISTED)) lines.push(`  /${id}:${named(prompt)}`);
 	if (prompts.length > MCP_TEST_LISTED) lines.push(`  ... ${prompts.length - MCP_TEST_LISTED} more prompts`);
 	return { lines, data };
+}
+
+/**
+ * The skills a server that declares the skills extension lists, each with its
+ * manifest digest and whether that version is approved here, and the entries
+ * PanCode refuses with their reasons; null for a server that declares none.
+ * Listing reads no skill file.
+ */
+async function mcpTestSkills(
+	source: McpCapabilitySource,
+	server: ResolvedMcpServer,
+	info: McpServerInfo,
+): Promise<{ data: Record<string, unknown>; lines: string[] } | null> {
+	const declared = mcpSkillsSettings(info.capabilities);
+	if (declared.settings === null && declared.reason === null) return null;
+	const access = await source.skillAccess(server.id);
+	if (access.transport === null) {
+		const reason = boundedMcpSkillText(access.reason, 4096);
+		return { data: { reason }, lines: [`  skills: none loaded: ${reason}`] };
+	}
+	const { listing } = access;
+	const displays = mcpSkillDisplayNames(server.id, listing.skills);
+	const skills = listing.skills.map((entry) => {
+		const status = judgeMcpSkillApproval(
+			currentMcpSkillApproval(server, entry.uri, { cwd: process.cwd() }),
+			server,
+			entry,
+		);
+		return {
+			name: displays.get(entry.uri) ?? `${server.id}:${entry.name}`,
+			uri: entry.uri,
+			manifestDigest: entry.manifestDigest,
+			files: entry.resources.length,
+			bytes: entry.totalBytes,
+			approval: status.status,
+		};
+	});
+	const refused = listing.refused.map((item) => ({
+		uri: item.uri === null ? null : boundedMcpSkillText(item.uri, 512),
+		name: item.name === null ? null : boundedMcpSkillText(item.name, 256),
+		kind: item.kind,
+		reason: boundedMcpSkillText(item.reason),
+	}));
+	const lines = [
+		...skills.map(
+			(skill) =>
+				`  skill ${skill.name} ${skill.manifestDigest} files=${skill.files} bytes=${skill.bytes} ${skill.approval}`,
+		),
+		...refused.map((item) => `  skill refused ${item.uri ?? item.name ?? "(unnamed)"} (${item.kind}: ${item.reason})`),
+		...(listing.truncated ? [`  skills: the listing stopped at PanCode's cap; ${server.id} serves more`] : []),
+		...(skills.length === 0 && refused.length === 0 ? ["  skills: none listed"] : []),
+	];
+	return {
+		data: {
+			directoryRead: access.transport.settings?.directoryRead === true,
+			ttlMs: listing.ttlMs,
+			truncated: listing.truncated,
+			skills,
+			refused,
+		},
+		lines,
+	};
 }
 
 interface McpSurfaceApprovalOptions extends McpTrustOptions {
@@ -858,6 +961,198 @@ async function mcpSurfaceOutput(options: McpSurfaceApprovalOptions): Promise<Mcp
 	};
 }
 
+export interface McpSkillApprovalOptions extends McpTrustOptions {
+	id: string;
+	/** The skill as the operator named it: its uri, the name PanCode shows, or its bare name. */
+	skill: string;
+	/** The reviewed manifest digest; the served version is recorded only when it matches. */
+	hash?: string;
+	/** Record the served version without a digest, as an operator at a terminal does. */
+	record?: boolean;
+}
+
+/**
+ * `trust <id> --skill <name>`: launch one trusted server, list its skills
+ * live, fetch the named one with skills/get and show its manifest (every file
+ * with size and digest, and the frontmatter), then record that exact version
+ * as approved when asked to. No skill file is read. A version that changed
+ * between the listing and skills/get, or differs from a reviewed --hash,
+ * records nothing.
+ */
+export async function mcpSkillApprovalOutput(options: McpSkillApprovalOptions): Promise<McpCommandOutput> {
+	const { id } = options;
+	const fail = (message: string, data: Record<string, unknown> = {}): McpCommandOutput => ({
+		code: 1,
+		text: `mcp trust ${id} --skill: ${message}`,
+		data: { ok: false, message, ...data },
+	});
+	const trustOptions = {
+		cwd: options.cwd,
+		...(options.configDir ? { configDir: options.configDir } : {}),
+		...(options.builtin !== undefined ? { builtin: options.builtin } : {}),
+	};
+	const server = resolveMcpServers(trustOptions).servers.find((entry) => entry.id === id);
+	if (server === undefined) return fail(`no declared MCP server with id '${id}'`);
+	if (server.trust.status !== "trusted")
+		return fail(`server '${id}' is ${server.trust.status}; approve its launch first: pancode mcp trust ${id}`);
+	const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }] = await Promise.all([
+		import("../tools/gateway/mcp-capabilities.js"),
+		import("../tools/registry.js"),
+		import("../engine/worker-tools.js"),
+	]);
+	const registry = createRegistry({ safety: createWorkerSafety({ cwd: options.cwd }) });
+	const source = createMcpCapabilitySource({ ...trustOptions, registry, attended: false });
+	let entry: McpSkillEntry;
+	let displayName: string;
+	try {
+		const access = await source.skillAccess(id, { relist: true });
+		if (access.transport === null) return fail(boundedMcpSkillText(access.reason, 4096));
+		const refused = access.listing.refused.find((item) => item.uri === options.skill || item.name === options.skill);
+		const found = findMcpSkill(id, access.listing.skills, options.skill);
+		if (found.entry === null) {
+			return fail(
+				refused !== undefined
+					? `${boundedMcpSkillText(refused.uri ?? refused.name ?? options.skill, 256)} is not loadable (${refused.kind}: ${boundedMcpSkillText(refused.reason)}); nothing was recorded`
+					: found.reason,
+			);
+		}
+		displayName = found.displayName;
+		const got = await getMcpSkill(access.transport, found.entry.uri);
+		if (!got.ok) return fail(`skills/get refused ${displayName}: ${got.kind}: ${boundedMcpSkillText(got.reason)}`);
+		if (got.entry.manifestDigest !== found.entry.manifestDigest)
+			return fail(
+				`${displayName} changed between skills/list (${found.entry.manifestDigest}) and skills/get (${got.entry.manifestDigest}); nothing was recorded`,
+			);
+		entry = got.entry;
+	} catch (error) {
+		return fail(boundedMcpSkillText(error instanceof Error ? error.message : String(error), 4096));
+	} finally {
+		await source.close();
+	}
+	const files = entry.resources.map((file) => ({
+		path: mcpSkillRelativePath(entry, file.uri),
+		uri: file.uri,
+		size: file.size,
+		digest: file.digest,
+	}));
+	const skill = {
+		name: displayName,
+		uri: entry.uri,
+		manifestDigest: entry.manifestDigest,
+		bytes: entry.totalBytes,
+		files,
+		frontmatter: entry.frontmatter,
+	};
+	const lines = [
+		`mcp: ${id} skill ${displayName} ${boundedMcpSkillText(entry.uri, 512)}`,
+		`  manifest ${entry.manifestDigest} (${files.length} files, ${entry.totalBytes} bytes)`,
+		...files.map((file) => `  ${boundedMcpSkillText(file.path, 512)} ${file.size} ${file.digest}`),
+		...Object.entries(entry.frontmatter).map(
+			([field, value]) =>
+				`  frontmatter ${boundedMcpSkillText(field, 64)}: ${boundedMcpSkillText(typeof value === "string" ? value : JSON.stringify(value))}`,
+		),
+	];
+	const served = { uri: entry.uri, name: entry.name, manifestDigest: entry.manifestDigest };
+	const before = judgeMcpSkillApproval(currentMcpSkillApproval(server, entry.uri, trustOptions), server, served);
+	const argument = displayName.slice(id.length + 1);
+	const report = (status: McpSkillApprovalStatus) => ({
+		status: status.status,
+		approvedDigest: status.status === "unapproved" ? null : status.approval.manifestDigest,
+		...(status.status === "changed" ? { reason: status.reason } : {}),
+	});
+	if (options.hash !== undefined && options.hash !== entry.manifestDigest)
+		return fail(
+			`served manifest ${entry.manifestDigest} differs from the reviewed ${options.hash}; nothing was recorded`,
+			{
+				recorded: false,
+				skill,
+				approval: report(before),
+			},
+		);
+	if (before.status === "approved" || (options.hash === undefined && options.record !== true)) {
+		const hint =
+			before.status === "approved"
+				? "skill already approved"
+				: `not recorded; to approve this version: pancode mcp trust ${id} --skill ${argument} --hash ${entry.manifestDigest}`;
+		return {
+			code: 0,
+			text: [...lines, hint].join("\n"),
+			data: { ok: true, recorded: false, skill, approval: report(before) },
+		};
+	}
+	const approved = approveMcpSkill({
+		...trustOptions,
+		id,
+		skill: { ...served, files: files.length, bytes: entry.totalBytes },
+	});
+	if (!approved.ok) return fail(approved.message, { recorded: false, skill, approval: report(before) });
+	return {
+		code: 0,
+		text: [...lines, `approved skill ${displayName} of ${id}`].join("\n"),
+		data: {
+			ok: true,
+			recorded: true,
+			skill,
+			approval: report(judgeMcpSkillApproval(approved.approval, server, served)),
+			record: approved.approval,
+		},
+	};
+}
+
+/**
+ * `untrust <id> --skill <name>`: withdraw the approval of one skill, named by
+ * its uri or by the name it was approved under. Nothing is launched.
+ */
+export function mcpSkillRevokeOutput(options: McpTrustOptions & { id: string; skill: string }): McpCommandOutput {
+	const { id } = options;
+	const fail = (message: string): McpCommandOutput => ({
+		code: 1,
+		text: `mcp untrust ${id} --skill: ${message}`,
+		data: { ok: false, message },
+	});
+	const server = resolveMcpServers(options).servers.find((entry) => entry.id === id);
+	const approvals = server !== undefined ? mcpSkillApprovalsFor(server, options) : [];
+	const local = options.skill.startsWith(`${id}:`) ? options.skill.slice(id.length + 1) : options.skill;
+	const named = approvals.filter((approval) => approval.uri === options.skill || approval.name === local);
+	if (named.length > 1)
+		return fail(
+			`${named.length} approved skills of ${id} are named ${boundedMcpSkillText(local, 256)}; name one by its uri: ${named.map((approval) => boundedMcpSkillText(approval.uri, 512)).join(", ")}`,
+		);
+	const uri = named[0]?.uri ?? options.skill;
+	const result = revokeMcpSkill({ ...options, id, uri });
+	if (!result.ok) return fail(result.message);
+	return {
+		code: 0,
+		text: `mcp: skill ${boundedMcpSkillText(uri, 512)} of ${id} ${result.removed ? "no longer approved" : "had no approval in this project"}`,
+		data: { ok: true, removed: result.removed, uri },
+	};
+}
+
+/** `trust <id> --skill <name> [--hash <digest>]` or `untrust <id> --skill <name>`, or the usage error that refuses it. */
+function parseSkillArgs(argv: ReadonlyArray<string>): { id: string; skill: string; hash?: string } | string {
+	const [command, id, ...rest] = argv;
+	const usage =
+		command === "untrust"
+			? "usage: pancode mcp untrust <id> --skill <name|uri>"
+			: "usage: pancode mcp trust <id> --skill <name|uri> [--hash <manifest digest>]";
+	if (id === undefined || id.startsWith("-")) return usage;
+	let skill: string | undefined;
+	let hash: string | undefined;
+	for (let index = 0; index < rest.length; index += 2) {
+		const flag = rest[index];
+		const value = rest[index + 1];
+		if (value === undefined || value.startsWith("--")) return usage;
+		if (flag === "--skill" && skill === undefined) skill = value;
+		else if (flag === "--hash" && hash === undefined && command === "trust") {
+			const digest = value.startsWith("sha256:") ? value : `sha256:${value}`;
+			if (!/^sha256:[a-f0-9]{64}$/u.test(digest)) return "--hash takes the manifest digest, sha256:<64 lowercase hex>";
+			hash = digest;
+		} else return `${usage}; --skill takes no launch flags`;
+	}
+	if (skill === undefined) return usage;
+	return { id, skill, ...(hash !== undefined ? { hash } : {}) };
+}
+
 /** `trust <id> --surface [--hash <sha256>]`, or the usage error that refuses it. */
 function parseSurfaceArgs(argv: ReadonlyArray<string>): { id: string; hash?: string } | string {
 	const usage = "usage: pancode mcp trust <id> --surface [--hash <sha256>]";
@@ -902,6 +1197,19 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 		return result.code;
 	}
 	const interactive = !json && process.stdin.isTTY === true && process.stdout.isTTY === true;
+	if ((argv[0] === "trust" || argv[0] === "untrust") && argv.includes("--skill")) {
+		const parsed = parseSkillArgs(argv.filter((arg) => arg !== "--json"));
+		const result =
+			typeof parsed === "string"
+				? { code: 2, text: parsed, data: { ok: false, message: parsed } }
+				: argv[0] === "untrust"
+					? mcpSkillRevokeOutput({ cwd: process.cwd(), id: parsed.id, skill: parsed.skill })
+					: await mcpSkillApprovalOutput({ cwd: process.cwd(), ...parsed, record: interactive });
+		if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+		else if (result.code !== 0) printError(result.text);
+		else process.stdout.write(`${result.text}\n`);
+		return result.code;
+	}
 	if (argv[0] === "trust" && (argv.includes("--surface") || argv.includes("--hash"))) {
 		const parsed = parseSurfaceArgs(argv.filter((arg) => arg !== "--json"));
 		const result =

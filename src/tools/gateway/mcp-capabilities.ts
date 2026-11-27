@@ -26,10 +26,12 @@ import {
 	createMcpStdioClient,
 	currentMcpSurfaceApproval,
 	judgeMcpSurface,
+	listMcpSkills,
 	McpError,
 	mcpBuiltinLaunchArgs,
 	mcpBuiltinLaunchEnvironment,
 	mcpCatalogStale,
+	mcpClientSkills,
 	mcpSurface,
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
@@ -37,6 +39,7 @@ import {
 	readMcpServerCatalog,
 	resolveMcpServers,
 	writeMcpServerCatalog,
+	writeMcpSkillCatalog,
 } from "../../domains/gateway/mcp/index.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
@@ -316,7 +319,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	const admittedDeclaration = (declaration: ResolvedMcpServer): ResolvedMcpServer => {
 		const admitted = options.admitted;
 		if (admitted === undefined || declaration.trust.status !== "trusted") return declaration;
-		const attested = admitted.tools.find((entry) => entry.serverId === declaration.id);
+		// A server the run binds only skills of launches too; its tools stay uncallable, no surface being attested.
+		const attested =
+			admitted.tools.find((entry) => entry.serverId === declaration.id) ??
+			admitted.skills?.find((entry) => entry.serverId === declaration.id);
 		if (attested === undefined) {
 			return {
 				...declaration,
@@ -755,6 +761,34 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		void refreshResources(resourceHost, state);
 	};
 
+	/**
+	 * List the skills of a connected server that serves the extension and
+	 * record them. Listing reads entries only, never a skill file. A failed
+	 * listing leaves the tools alone and is reported when a skill is asked for.
+	 */
+	const listSkills = (state: ServerState, signal?: AbortSignal): Promise<void> => {
+		const client = state.client;
+		if (client === null) return Promise.resolve();
+		const offered = mcpClientSkills(client, client.serverInfo()?.capabilities);
+		if (offered.transport === null) return Promise.resolve();
+		const { transport } = offered;
+		state.skillsListing ??= (async () => {
+			try {
+				const listing = await listMcpSkills(transport, signal);
+				if (closed || state.client !== client) return;
+				state.skills = { listing, listedAtMs: Date.now() };
+				if (state.declaration.scope !== "client" && options.persistCatalog !== false) {
+					writeMcpSkillCatalog(catalogIdentity(state.declaration), listing);
+				}
+			} catch (error) {
+				if (state.client === client) state.skills = { failure: errorMessage(error), listedAtMs: Date.now() };
+			}
+		})().finally(() => {
+			delete state.skillsListing;
+		});
+		return state.skillsListing;
+	};
+
 	const startConnection = (state: ServerState): OwnedConnection => {
 		const controller = new AbortController();
 		const { declaration } = state;
@@ -872,6 +906,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const { client, listing } = await connection.ready;
 				if (closed || controller.signal.aborted || state.client !== client || state.failure !== null) return;
 				installListing(state, listing);
+				// Listed beside the tools, not before them: a slow skills/list never holds a tool call back.
+				void listSkills(state);
 			} catch (error) {
 				state.failure ??= errorMessage(error);
 				await close();
@@ -898,6 +934,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				state.client = null;
 				state.listed = false;
 				state.failure = null;
+				delete state.skills;
 				for (const name of state.registered) registry.unregister?.(name);
 				state.registered = [];
 				state.unregistrable = [];
@@ -938,6 +975,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						const listing = await client.listTools(signal);
 						if (closed || signal?.aborted || state.client !== client || state.failure !== null) return;
 						installListing(state, listing);
+						if (refreshLive) await listSkills(state, signal);
 					} catch (error) {
 						state.failure ??= errorMessage(error);
 						await closeClient(state);
@@ -1271,6 +1309,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const refusal = state.client !== null ? null : readOnlyLaunchRefusal(state.declaration, invokeOptions?.readOnly);
 			if (refusal !== null) return { listing: listingFor(state), reason: refusal };
 			await discover(state, invokeOptions?.signal, true);
+			if (state.skillsListing !== undefined) await state.skillsListing;
 			return {
 				listing: listingFor(state),
 				...(state.failure !== null ? { reason: `mcp server ${id} failed: ${state.failure}` } : {}),
@@ -1435,6 +1474,55 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				// Completion is a hint; a server that cannot give one leaves the operator typing.
 				return null;
 			}
+		},
+		async skillAccess(id, invokeOptions) {
+			if (invokeOptions?.signal?.aborted) throw new McpError("aborted", "MCP discovery aborted");
+			const state = resolveStates().get(id);
+			if (state === undefined) return { transport: null, reason: `no MCP server named '${id}' is declared` };
+			const prior = state.skills;
+			const { declaration } = state;
+			if (declaration.scope === "client") {
+				return { transport: null, reason: `skills of ACP client server ${id} are not loaded` };
+			}
+			if (declaration.trust.status !== "trusted") {
+				const remedy = mcpTrustRemedy(id);
+				return {
+					transport: null,
+					reason: `mcp server ${id} is ${declaration.trust.status} (${declaration.trust.reason}); it is never launched until trusted: run ${remedy.remedy} (${remedy.interactiveRemedy} in an interactive session)`,
+				};
+			}
+			const refusal = readOnlyLaunchRefusal(declaration, invokeOptions?.readOnly);
+			if (refusal !== null) return { transport: null, reason: refusal };
+			await discover(state, invokeOptions?.signal);
+			const client = state.client;
+			if (state.failure !== null || client === null) {
+				return { transport: null, reason: `mcp server ${id} failed: ${state.failure ?? "it is not connected"}` };
+			}
+			const offered = mcpClientSkills(client, client.serverInfo()?.capabilities);
+			if (offered.transport === null) {
+				return { transport: null, reason: `mcp server ${id} serves no skills: ${offered.reason}` };
+			}
+			if (state.skillsListing !== undefined) await state.skillsListing;
+			const held = state.skills;
+			// Listed again lazily, at the first access after the server's ttlMs passed, never on a timer.
+			// A listing produced during this access (cold connect or in-flight listSkills) satisfies it without a second RPC.
+			if (
+				held === undefined ||
+				"failure" in held ||
+				(held === prior && (invokeOptions?.relist === true || Date.now() - held.listedAtMs >= held.listing.ttlMs))
+			) {
+				await listSkills(state, invokeOptions?.signal);
+			}
+			const listed = state.skills;
+			if (listed === undefined) return { transport: null, reason: `mcp server ${id} has not listed its skills` };
+			if ("failure" in listed) {
+				return { transport: null, reason: `mcp server ${id} could not list its skills: ${listed.failure}` };
+			}
+			return { transport: offered.transport, listing: listed.listing, declaration };
+		},
+		servedSkills(id) {
+			const held = resolveStates().get(id)?.skills;
+			return held !== undefined && "listing" in held ? held.listing : null;
 		},
 		connectedIds(options) {
 			return [...(states?.values() ?? [])]

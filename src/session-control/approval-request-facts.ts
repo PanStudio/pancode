@@ -12,6 +12,7 @@ import { canonicalJson } from "../core/canonical-json.js";
 import { sha256Hex } from "../core/hash.js";
 import { ToolNames } from "../core/tool-names.js";
 import { redactCommandOutputSecrets } from "../domains/evidence/redact.js";
+import { MCP_SKILL_APPROVAL_RULE_ID } from "../domains/gateway/mcp/index.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import { askAxis } from "../domains/safety/approval-axis.js";
 import { describeMainCallConsequences, mainCallExposure, mainCallReach } from "../domains/safety/call-consequence.js";
@@ -296,7 +297,9 @@ export function mainApprovalRequestView(
 			? { artifact: { kind: "dispatch-plan" as const, text: decision.rejection.detail } }
 			: call.tool === ToolNames.ConfigurePancode && decision.kind === "ask"
 				? { artifact: { kind: "settings-change" as const, text: decision.rejection.detail } }
-				: {}),
+				: decision.kind === "ask" && decision.confirmationRuleId === MCP_SKILL_APPROVAL_RULE_ID
+					? { artifact: { kind: "mcp-skill" as const, text: decision.rejection.detail } }
+					: {}),
 		exposure: call.tool === ToolNames.AskUser ? askUserExposure(call.args) : mainCallExposure(call, decision),
 		reach: mainCallReach(call, decision),
 		...(target.length > 0 ? { target } : {}),

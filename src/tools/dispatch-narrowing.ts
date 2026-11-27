@@ -273,13 +273,19 @@ type McpAttestation = DispatchDerivedGrants["mcp"];
 function mcpNarrows(original: McpAttestation | undefined, rewritten: McpAttestation | undefined): boolean {
 	if (rewritten === null || rewritten === undefined) return true;
 	if (original === null || original === undefined || original.projectRoot !== rewritten.projectRoot) return false;
-	return rewritten.tools.every((entry) => {
-		const { network, ...rest } = entry;
-		return original.tools.some((approved) => {
-			const { network: approvedNetwork, ...approvedRest } = approved;
-			return isDeepStrictEqual(rest, approvedRest) && (network !== true || approvedNetwork === true);
-		});
-	});
+	const skillsNarrow = (rewritten.skills ?? []).every((entry) =>
+		(original.skills ?? []).some((approved) => isDeepStrictEqual(entry, approved)),
+	);
+	return (
+		skillsNarrow &&
+		rewritten.tools.every((entry) => {
+			const { network, ...rest } = entry;
+			return original.tools.some((approved) => {
+				const { network: approvedNetwork, ...approvedRest } = approved;
+				return isDeepStrictEqual(rest, approvedRest) && (network !== true || approvedNetwork === true);
+			});
+		})
+	);
 }
 
 /**

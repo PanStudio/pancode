@@ -158,6 +158,7 @@ export {
 	defaultSkillRoots,
 	type LoadSkillsInput,
 	loadSkills,
+	mcpSkillToolSurface,
 	modelVisibleSkills,
 	parsePendingSkillRequests,
 	parseSkillCommand,
@@ -166,10 +167,12 @@ export {
 	type SkillCatalogInvalidReason,
 	type SkillCatalogValidity,
 	type SkillList,
+	type SkillMcpOrigin,
 	type SkillProvenance,
 	type SkillRoot,
 	type SkillSource,
 	skillCatalogValidity,
+	suggestableSkills,
 } from "./skills/loader.js";
 export {
 	type DiscoverMarketplaceOptions,

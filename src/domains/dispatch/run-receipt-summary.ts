@@ -33,6 +33,16 @@ export function receiptPermitSummary(
 						mcp: {
 							projectRoot: permit.ceiling.mcp.projectRoot,
 							tools: permit.ceiling.mcp.tools.map((entry) => ({ ...entry })),
+							...(permit.ceiling.mcp.skills !== undefined
+								? {
+										skills: permit.ceiling.mcp.skills.map(({ serverId, displayName, uri, manifestDigest }) => ({
+											serverId,
+											name: displayName,
+											uri,
+											manifestDigest,
+										})),
+									}
+								: {}),
 							// The dispatch result names a withheld grant from the sealed receipt, not as missing.
 							...(mcpNetworkWithheld.length > 0 ? { networkWithheld: mcpNetworkWithheld.map((entry) => ({ ...entry })) } : {}),
 						},
