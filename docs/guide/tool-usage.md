@@ -1516,6 +1516,28 @@ A job created without `count` or `for_ms` stops after five starts. `/loop <every
 
 To wait on several conditions, such as CI and a cluster job, give one command job `also`: up to 7 further `{argv, until}` conditions next to its own `argv` and `until`. Each condition's executable is pinned and admitted like the job's own command. Every poll, PanCode runs each command and checks each predicate itself, and the job matches only when every condition holds in the same poll, so one command saying it is done never ends the wait for the others. `timeout_ms` bounds the whole poll, and a failing condition command fails the poll. The job tool result says how many conditions the job waits on, `/loop status` lists each one, and a deadline or out-of-starts wake names the conditions the last poll saw unmet. The job tool and yolo guidance tell the agent to wire every condition this way and never leave one only in the conversation, and to use `until_stopped` for open-ended waits. `/loop --until` takes one condition. PanCode does not check that every condition you named in the conversation is wired into a job.
 
+### Wait on an MCP event
+
+A `job` with `runner: "mcp_event"` subscribes to one event of an MCP server that offers the MCP Events extension (`io.modelcontextprotocol/events`) and starts nothing on a clock. Give it `server`, `event` and the `arguments` the event's `inputSchema` asks for; `gateway(op="find", kind="server", query=<server>)` lists the events a server offers and their delivery modes, and `pancode mcp test <server>` prints one `event` line for each. Creating or resuming the job checks that the server is trusted, that the creating turn may reach that server, that the event is listed with poll or push delivery, and that the arguments validate, and refuses otherwise. `prompt`, `argv`, `cwd`, `also` and `allow` do not apply.
+
+Each batch of arrivals is one start. `until` is checked against one occurrence's `data`, and the job matches on the first arrival whose data meets it, or on any arrival when the job has no `until`. `on_match: "main_turn"` with a `follow_up` then wakes the main turn once, with the server, event name, event id, timestamp and data (at most 8 KiB, neutralized as server text) in the turn's preamble; `on_match: "notice"` posts a transcript notice. `every_ms`, 1000 by default, is only the least spacing between starts, so a burst of arrivals wakes the turn once. `count`, `for_ms`, `until_stopped` and `timeout_ms` bound the job as they bound a command job, and an event job holds no run slot while it waits.
+
+PanCode uses push delivery (`events/stream`) when the event offers it and polls (`events/poll`) otherwise, at the server's `nextPollMs`, never faster than once a second, and again at once when the server says more are waiting. Event ids already seen are dropped, so a repeated delivery wakes nothing. A payload that does not match the event's `payloadSchema` is dropped and counted. When the server says events were lost (`truncated`), or PanCode's own buffer of 64 waiting arrivals overflows, the job posts one notice and the next wake says a gap occurred. The subscription cursor is saved with the job, at most every ten seconds, and a resumed job or a server that exits and is restarted resumes from it; a stdio stream is never ended for being quiet. A server error `NotFound`, `InvalidParams`, or `Unsupported` after the event list is read again ends the job, and `Forbidden` ends it as a permission failure; at `yolo`, an event job with a `main_turn` follow-up that ends this way wakes the turn once to say so, and `/loop status` shows the error. `ResourceExhausted` backs off and retries without failing the job. A subscription that was working and ends, because the server exited or closed the stream, subscribes again from the cursor about a second later. A connection that cannot be made backs off from one second up to five minutes, and each failed attempt is one failed run that spends a start, so below `yolo` three in a row pause the job unless it runs `until_stopped`; the first run after the subscription works again says so. Stopping or cancelling the job ends its subscription (`notifications/cancelled` for a stream). Event jobs run in the TUI and ACP sessions that own jobs; `pancode run` does not own jobs.
+
+```json
+{
+  "action": "create",
+  "runner": "mcp_event",
+  "server": "ci",
+  "event": "build_finished",
+  "arguments": { "branch": "main" },
+  "until": { "path": ["status"], "op": "eq", "value": "failed" },
+  "on_match": "main_turn",
+  "follow_up": "Read the failed build's log and propose a fix.",
+  "until_stopped": true
+}
+```
+
 A `job` with `runner: "main"` repeats its prompt on the main conversation lane. Prompt wording does not restrict capabilities. Set `allow` to an explicit list of capability names to enforce a tool boundary on every occurrence, including in YOLO:
 
 ```json

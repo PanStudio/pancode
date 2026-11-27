@@ -647,12 +647,21 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			tools,
 			truncated: listing?.truncated === true,
 			...(surface !== null ? { surface } : {}),
+			...(listing?.events !== undefined ? { events: listing.events } : {}),
+			...(listing?.eventsTruncated === true ? { eventsTruncated: true } : {}),
+			...(listing?.eventsFailure !== undefined ? { eventsFailure: listing.eventsFailure } : {}),
 			calls: results,
 		};
 		const lines = [
 			mcpTestHeadline(id, latestInfo, tools.length, described),
 			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
+			...(listing?.events ?? []).map(
+				(event) =>
+					`  event ${event.name} delivery=${event.delivery.join(",")} arguments=${boundedCallText(JSON.stringify(event.arguments))}${event.description.length > 0 ? ` ${boundedCallText(event.description.replace(/\s+/g, " "))}` : ""}`,
+			),
+			...(listing?.eventsTruncated === true ? ["  events truncated at the client cap"] : []),
+			...(listing?.eventsFailure !== undefined ? [`  events unavailable: ${listing.eventsFailure}`] : []),
 			...(latestInfo.instructions !== null ? instructionsLines(latestInfo.instructions) : []),
 			...results.map(
 				(result) =>
