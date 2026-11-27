@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { INTERNAL_GIT_BASE_OPTIONS } from "../../src/core/internal-git.js";
 import { discoverAgentRecipes } from "../../src/domains/agents/registry.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import {
@@ -910,8 +911,8 @@ describe("hub import of foreign plugin packages", () => {
 		mkdirSync(tools);
 		writeFileSync(
 			path.join(tools, "git"),
-			// The fetch resolves the tag with ls-remote, then inits, fetches, checks out and reads HEAD.
-			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const a=process.argv.slice(2);const c='1'.repeat(40);if(a[0]==='ls-remote'){process.stdout.write(c+'\\trefs/tags/v1\\n');process.exit(0)}if(a[0]==='init'){fs.mkdirSync(a.at(-1),{recursive:true});process.exit(0)}if(a.includes('fetch'))fs.cpSync(${JSON.stringify(source)},p.join(a[1],'plugins','remote-pack'),{recursive:true});if(a.includes('rev-parse'))process.stdout.write(c+'\\n');\n`,
+			// A stand-in git behind the internal-git hardening: the fetch resolves the tag with ls-remote, then inits, fetches, checks out and reads HEAD.
+			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const a=process.argv.slice(${2 + INTERNAL_GIT_BASE_OPTIONS.length});const c='1'.repeat(40);if(a[0]==='ls-remote'){process.stdout.write(c+'\\trefs/tags/v1\\n');process.exit(0)}if(a[0]==='init'){fs.mkdirSync(a.at(-1),{recursive:true});process.exit(0)}if(a.includes('fetch'))fs.cpSync(${JSON.stringify(source)},p.join(a[1],'plugins','remote-pack'),{recursive:true});if(a.includes('rev-parse'))process.stdout.write(c+'\\n');\n`,
 			{ mode: 0o755 },
 		);
 		const previousPath = process.env.PATH;

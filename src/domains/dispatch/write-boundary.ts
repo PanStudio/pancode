@@ -32,7 +32,6 @@
  * reported as an unattributed concurrent change and left exactly as it is.
  */
 
-import { execFileSync } from "node:child_process";
 import {
 	type BigIntStats,
 	existsSync,
@@ -47,7 +46,8 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv, withoutRepositoryEnv } from "../../core/internal-git.js";
+import { withoutRepositoryEnv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import {
 	asDirectoryPathBoundary,
 	describePathBoundary,
@@ -71,7 +71,7 @@ const ABSENT = "absent";
 const GIT_TIMEOUT_MS = 30_000;
 
 function git(root: string, args: ReadonlyArray<string>, input?: string): string {
-	return execFileSync("git", internalGitArgv(["-C", root, ...args]), {
+	return gitExecFileSync(["-C", root, ...args], {
 		encoding: "utf8",
 		stdio: ["pipe", "pipe", "pipe"],
 		timeout: GIT_TIMEOUT_MS,
@@ -82,7 +82,7 @@ function git(root: string, args: ReadonlyArray<string>, input?: string): string 
 }
 
 function gitBytes(root: string, args: ReadonlyArray<string>): Buffer {
-	return execFileSync("git", internalGitArgv(["-C", root, ...args]), {
+	return gitExecFileSync(["-C", root, ...args], {
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: GIT_TIMEOUT_MS,
 		maxBuffer: 256 * 1024 * 1024,

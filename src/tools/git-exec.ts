@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { internalGitArgv } from "../core/internal-git.js";
+import { gitExecFileSync } from "../core/internal-git-run.js";
 import { isSameOrDescendant } from "../core/path-containment.js";
 import { buildSafeToolEnv } from "../core/safe-exec.js";
 import { readTaskWorktreeGitLayout, taskWorktreeGitWritablePaths } from "../core/sandbox/worktree-git.js";
@@ -62,7 +61,7 @@ export function typedGitInspectEnv(): Record<string, string> {
 
 function gitRead(cwd: string, args: ReadonlyArray<string>): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(args, cwd), {
+		return gitExecFileSync(args, {
 			cwd,
 			env: buildSafeToolEnv({ ...TYPED_GIT_ENV, GIT_OPTIONAL_LOCKS: "0" }),
 			encoding: "utf8",

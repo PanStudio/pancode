@@ -5,7 +5,7 @@ import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { readSettings, updateSettings } from "../../core/config.js";
 import { type LifecycleContext, recordLifecycleReceipt } from "../../core/hub-receipts.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
@@ -870,21 +870,21 @@ export async function syncHub(direction: "sync" | "push", runner: HubCommandRunn
 		);
 	const remote = confirmedRemote();
 	const cwd = path.dirname(catalogPath());
-	const remoteResult = await runner("git", internalGitArgv(["remote", "get-url", "hub"], cwd), {
+	const remoteResult = await gitVia(runner, ["remote", "get-url", "hub"], {
 		cwd,
 		workspaceRoot: cwd,
 	});
 	if (remoteResult.exitCode !== 0 || remoteResult.stdout.trim() !== remote) throw new Error(UNCONFIRMED_REMOTE);
 	if (direction === "sync") {
-		const fetched = await runner("git", internalGitArgv(["fetch", "hub"], cwd), { cwd, workspaceRoot: cwd });
+		const fetched = await gitVia(runner, ["fetch", "hub"], { cwd, workspaceRoot: cwd });
 		if (fetched.exitCode !== 0) throw new Error(fetched.stderr.trim() || "hub sync failed");
-		const advanced = await runner("git", internalGitArgv(["merge", "--ff-only", "FETCH_HEAD"], cwd), {
+		const advanced = await gitVia(runner, ["merge", "--ff-only", "FETCH_HEAD"], {
 			cwd,
 			workspaceRoot: cwd,
 		});
 		if (advanced.exitCode !== 0) throw new Error(advanced.stderr.trim() || "hub sync failed");
 		return;
 	}
-	const result = await runner("git", internalGitArgv(["push", "hub"], cwd), { cwd, workspaceRoot: cwd });
+	const result = await gitVia(runner, ["push", "hub"], { cwd, workspaceRoot: cwd });
 	if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `hub ${direction} failed`);
 }

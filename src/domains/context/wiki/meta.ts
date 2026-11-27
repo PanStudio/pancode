@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { internalGitArgv } from "../../../core/internal-git.js";
+import { gitExecFileSync } from "../../../core/internal-git-run.js";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { type WikiPage, wikiDir, wikiMarkdownFilesInDir } from "./layout.js";
@@ -102,7 +101,7 @@ export function wikiMetaPath(cwd: string): string {
 
 export function currentWikiGitHead(cwd: string): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(["rev-parse", "--verify", "HEAD"], cwd), {
+		return gitExecFileSync(["rev-parse", "--verify", "HEAD"], {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
