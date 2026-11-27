@@ -678,7 +678,6 @@ export type EventPayload<N extends EventName> =
 export type JournalEventName = {
 	[N in EventName]: Definition<N> extends { durability: "journal" } ? N : never;
 }[EventName];
-export type LiveEventName = Exclude<EventName, JournalEventName>;
 /** The data a journal record of this kind carries, after any projection. */
 export type JournalPayload<N extends JournalEventName> = Static<Definition<N>["schema"]>;
 

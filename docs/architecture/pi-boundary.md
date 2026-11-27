@@ -231,7 +231,7 @@ that holds `src/interactive/terminal-lease.ts` (`STAGE_0_OWNER`), which is what 
 `pancode` start pays before it can draw anything.
 [instant-shell-import-graph.test.ts](https://github.com/PanStudio/pancode/blob/main/tests/contracts/instant-shell-import-graph.test.ts)
 walks the built chunks and holds that closure to 32 chunks, 1,400,000 total bytes,
-and 350,000 PanCode source bytes. It fails only after a full build, so rule 6 guards
+and 400,000 PanCode source bytes. It fails only after a full build, so rule 6 guards
 the cause statically: a second, disjoint reacher of a module inside the closure
 makes esbuild split the chunk the closure sits on. Any value importer outside the
 closure and the protected `src/interactive/**`, `src/session-control/**` and `src/engine/**` trees reaches

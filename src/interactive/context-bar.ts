@@ -12,7 +12,6 @@ import type { PancodeTheme } from "./theme/index.js";
 import { formatContextPercent } from "./theme/index.js";
 
 const CONTEXT_PERCENT_FIELD_WIDTH = 6;
-export const CONTEXT_BAR_LABEL_WIDTH = 2 + CONTEXT_PERCENT_FIELD_WIDTH;
 
 type SegmentBreakdownInput = {
 	systemPromptTokens: number;

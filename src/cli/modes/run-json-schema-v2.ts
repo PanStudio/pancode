@@ -339,13 +339,6 @@ export interface MainRunSettlementV2 {
 	dispatch: { live: RunJsonDispatchedRunOutcome[]; undelivered: RunJsonDispatchedRunOutcome[] };
 }
 
-/** What a `run --agent` hands the v2 writer: the sealed receipt, or the failure that left none. */
-export interface AgentRunSettlementV2 {
-	receipt?: RunResult;
-	answer?: string;
-	facts: RunExitFact[];
-}
-
 /**
  * A run's spend, each part folded from the session telemetry the way the run ledger folds it: `main` is the run's own
  * turn and compaction calls, `side` the side agents' calls such as the safety judge's, `children` the dispatched

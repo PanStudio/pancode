@@ -19,6 +19,7 @@ Rule ids are checked by `tests/boundaries/check-boundaries.ts`, which `pnpm run 
 11. Tests and dev runs never touch the operator's real home or the host's `/tmp`: run tests only through the root pnpm test scripts with `TMPDIR` exported to a scratch directory, and make scratch files and temporary PanCode homes with `mktemp -d` under that `TMPDIR`, never at a literal `/tmp/...` path. A bare `node --test` writes the real home.
 12. Never commit a path `.gitignore` excludes (lint's tracked-ignored check fails it), never add tracked paths that differ only by case, and never join a gitignored literal onto the checkout root in `scripts/` or `src/`.
 13. Published tags and artifacts are immutable, `npm publish` is never run directly, and nothing is pushed, tagged or released without the maintainer's instruction.
+14. No function under `src/` spans more than 500 lines. The ones over it are listed in `FUNCTION_LINE_EXEMPTIONS` at their sizes and may only shrink: move new logic out of an exempt function, and lower or remove its entry when it shrinks (rule23).
 
 ## Map
 

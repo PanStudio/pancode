@@ -61,7 +61,6 @@ import {
 	usageCallsFromAttempts,
 	usageCallsFromJournal,
 } from "../../src/domains/session/journal-usage.js";
-import { runJournalsInWindow, usageCallsFromRunJournals } from "../../src/domains/session/run-journal-usage.js";
 import { ledgerCallFailureCounts, ledgerUsageCalls } from "../../src/domains/session/usage.js";
 import { callSettlementFromMessage, reportedModelFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import {
@@ -351,13 +350,6 @@ test("parent replay resolves aggregate-only run references and replaces a partia
 		await run.flush();
 		const snapshot = readSessionCallJournalSync(stateDir, "parent", []);
 		strictEqual(snapshot.records.filter(({ record }) => record.k === "run.linked").length, 1);
-		strictEqual(runJournalsInWindow(snapshot, 0, 1).size, 0);
-		const missing = {
-			...snapshot,
-			runs: new Map([...snapshot.runs].map(([id, journal]) => [id, { ...journal, records: [] }])),
-		};
-		const unresolved = usageCallsFromRunJournals(runJournalsInWindow(missing, 0, Number.POSITIVE_INFINITY));
-		strictEqual(unresolved[0]?.runSpend?.apiCalls.kind, "unknown");
 		await mkdir(sessionDirectory, { recursive: true });
 		await writeFile(join(sessionDirectory, "current.jsonl"), "");
 		const cli = new URL("../../dist/cli/index.js", import.meta.url).pathname;

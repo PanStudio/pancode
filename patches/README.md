@@ -56,11 +56,11 @@ auth boundary is PanCode application code and adds no dependency patch.
 ## What was removed
 
 The patch carried 26 hunks before the Pi 1.0 adoption series and carries
-thirty now: thirteen kept from then, and the OSC 133 prefix check, the three
+thirty-six now: thirteen kept from then, and the OSC 133 prefix check, the three
 kept-rows hunks, the two selection-text hunks, the selection entry-point hunk,
 the overlay press hunk, the word-joiner hunk, the selection scrollbar hunk, the
-auto-scroll edge hunk, the two flash-renewal hunks, the four layout hunks and
-the four scroll-region hunks added since.
+auto-scroll edge hunk, the two flash-renewal hunks, the four layout hunks, the
+four scroll-region hunks and the two emoji-width hunks added since.
 The thirteen removed hunks fall into five groups.
 
 | Removed | Replaced by | Cost and evidence |
