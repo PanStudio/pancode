@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { ContextOperationFact } from "../../core/context-operation.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { sumFacts } from "../../core/telemetry/pricing.js";
@@ -1103,7 +1103,7 @@ async function runBootstrapWork(
 	};
 	out(input.io, formatBootstrapSummary(summary));
 	if (action === "wrote" || action === "refreshed") {
-		const ignored = await runCommandVector("git", internalGitArgv(["check-ignore", "--quiet", "--", "PANCODE.md"]), {
+		const ignored = await gitVia(runCommandVector, ["check-ignore", "--quiet", "--", "PANCODE.md"], {
 			cwd,
 			workspaceRoot: cwd,
 			timeoutMs: 5_000,

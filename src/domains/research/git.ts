@@ -4,15 +4,15 @@
  * The git a campaign needs: the research branch created at the base and moved only by compare-and-swap, a detached
  * worktree per side, and the commit of an agent's change with the host identity a task worktree uses.
  */
-import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
-import { internalGitArgv, withoutRepositoryEnv } from "../../core/internal-git.js";
+import { withoutRepositoryEnv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { hostCommitIdentity } from "../../tools/worktree-commit.js";
 import { RESEARCH_COMMIT_IDENTITY } from "./types.js";
 
 export function git(cwd: string, args: ReadonlyArray<string>): string {
-	return execFileSync("git", internalGitArgv(["-C", cwd, ...args]), {
+	return gitExecFileSync(["-C", cwd, ...args], {
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: 60_000,
 		maxBuffer: 64 * 1024 * 1024,

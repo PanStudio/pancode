@@ -30,7 +30,7 @@ import { createKeybindingManager } from "../../src/interactive/keybinding-manage
 import { DEFAULT_SELECT_THEME, FocusBox, showPancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
 import type { OverlayState } from "../../src/interactive/overlay-key-routing.js";
 import { openAskUserOverlay } from "../../src/interactive/overlays/ask-user.js";
-import { openExtensionPanel } from "../../src/interactive/overlays/extension-panel.js";
+import { openExtensionViewPanel } from "../../src/interactive/overlays/extension-view-panel.js";
 import { openFleetRunApprovalOverlay } from "../../src/interactive/overlays/fleet-run-approval.js";
 import { openHelpOverlay } from "../../src/interactive/overlays/help-reference.js";
 import { openHubReviewOverlay } from "../../src/interactive/overlays/hub-review.js";
@@ -1055,7 +1055,11 @@ it("x asks once before it cancels a fleet run; another key keeps the run", () =>
 it("closes a real extension panel and cycles Interop kinds with encoded c only in browse", () => {
 	const f = fixture();
 	f.mount("extensions", () =>
-		openExtensionPanel(f.tui, "fixture", { title: "Fixture", sections: [] }, () => true, f.close),
+		openExtensionViewPanel(f.tui, "fixture", {
+			panel: () => ({ title: "Fixture", view: { t: "text", text: "" } }),
+			press: async () => {},
+			close: f.close,
+		}),
 	);
 	f.terminal.input("\x1b[27u");
 	assert.equal(f.state(), "closed");

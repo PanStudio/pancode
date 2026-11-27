@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ExtensionStatus } from "../extension/public-api.js";
 import type {
 	ExtensionCompletion,
 	ExtensionCompletionRequest,
@@ -9,6 +8,7 @@ import type {
 	ExtensionHookPoint,
 	ExtensionHookResult,
 	ExtensionOutputV2,
+	ExtensionStatus,
 	ExtensionToolResult,
 	Interview,
 	InterviewNext,

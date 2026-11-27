@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { enumerateWorkspaceFiles } from "../../core/workspace-files.js";
 import { pancodeCacheDir } from "../../core/xdg.js";
@@ -50,7 +49,7 @@ function extensionOf(name: string): string {
 
 function currentGitHead(cwd: string): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(["rev-parse", "--verify", "HEAD"], cwd), {
+		return gitExecFileSync(["rev-parse", "--verify", "HEAD"], {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],

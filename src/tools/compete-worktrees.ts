@@ -19,7 +19,6 @@
  * be abandoned.
  */
 
-import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
 	existsSync,
@@ -36,7 +35,8 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { internalGitArgv, withoutRepositoryEnv } from "../core/internal-git.js";
+import { withoutRepositoryEnv } from "../core/internal-git.js";
+import { gitExecFileSync } from "../core/internal-git-run.js";
 import { relativePathEscapes } from "../core/path-containment.js";
 import { dropHostTerminalEnv, TOOL_SESSION_SPAWN } from "../core/tool-env-controls.js";
 import type { DispatchRequest, ResolvedVerificationCheck } from "../domains/dispatch/contract.js";
@@ -146,7 +146,7 @@ const PROCESS_EXIT_GRACE_MS = 750;
 const PROCESS_POLL_MS = 25;
 
 function git(root: string, args: string[]): string {
-	return execFileSync("git", internalGitArgv(["-C", root, ...args]), {
+	return gitExecFileSync(["-C", root, ...args], {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: 30_000,
@@ -607,7 +607,7 @@ export function candidateDiff(root: string, branch: string): MeasuredDiff | null
 function ignoredInCheckout(root: string, paths: ReadonlyArray<string>): Set<string> {
 	if (paths.length === 0) return new Set();
 	try {
-		const out = execFileSync("git", internalGitArgv(["-C", root, "check-ignore", "-z", "--stdin"]), {
+		const out = gitExecFileSync(["-C", root, "check-ignore", "-z", "--stdin"], {
 			encoding: "utf8",
 			input: `${paths.join("\0")}\0`,
 			stdio: ["pipe", "pipe", "pipe"],

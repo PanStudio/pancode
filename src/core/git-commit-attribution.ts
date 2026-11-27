@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import {
 	accessSync,
 	chmodSync,
@@ -25,7 +24,8 @@ import {
 } from "./commit-attribution.js";
 import type { GitCommitAuthorSetting } from "./defaults.js";
 import { writeDiagnostic } from "./diagnostics.js";
-import { GIT_GLOBAL_VALUE_OPTIONS, internalGitArgv } from "./internal-git.js";
+import { GIT_GLOBAL_VALUE_OPTIONS } from "./internal-git.js";
+import { gitExecFileSync } from "./internal-git-run.js";
 import { installWindowsLauncher, windowsLaunchFile } from "./windows-launcher.js";
 import { pancodeStateDir } from "./xdg.js";
 
@@ -243,7 +243,7 @@ function withoutManagedGitConfig(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function gitOutput(cwd: string, env: NodeJS.ProcessEnv, args: ReadonlyArray<string>): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(args, cwd), {
+		return gitExecFileSync(args, {
 			cwd,
 			env,
 			encoding: "utf8",

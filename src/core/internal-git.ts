@@ -8,10 +8,11 @@ import path from "node:path";
  * diffs behind receipts, the working set and views. These run in PanCode's own
  * process, outside any sandbox, so whatever the repository's configuration
  * names as a program runs with the operator's privileges. Every internal git
- * argv goes through {@link internalGitArgv}, so a new call site inherits the
- * same protections.
+ * process starts through `src/core/internal-git-run.ts`, which builds its argv
+ * with {@link internalGitArgv}, so a new call site inherits the same
+ * protections.
  *
- * Every call carries global options that keep a read from
+ * Every call but `git config` carries global options that keep a read from
  * running a program: no core.fsmonitor command (status, diff and ls-files
  * would run it to refresh the index), no signature check through
  * log.showSignature, and no optional index write, which would fire the
@@ -35,7 +36,7 @@ import path from "node:path";
  * off and neutralize the changed configuration.
  */
 
-/** Global options every internal git call carries. */
+/** Global options every internal git call but `git config` carries. */
 export const INTERNAL_GIT_BASE_OPTIONS: ReadonlyArray<string> = Object.freeze([
 	"--no-optional-locks",
 	"-c",
@@ -60,6 +61,12 @@ const PATCH_FLAGS: ReadonlyArray<string> = ["--no-ext-diff", "--no-textconv", "-
  */
 const SUBMODULE_SCANNING_READS: ReadonlySet<string> = new Set(["diff", "diff-files", "diff-index", "status"]);
 const SUBMODULE_FLAG = "--ignore-submodules=dirty";
+
+/**
+ * `git config` runs neither fsmonitor nor a signature check, and lists command-line `-c` pairs among the values it
+ * reads: with them, a read of core.fsmonitor would see `false` in place of the program the repository names.
+ */
+const CONFIG_BASE_OPTIONS: ReadonlyArray<string> = Object.freeze(["--no-optional-locks"]);
 
 /**
  * Global options Git reads with a separate value word before the subcommand.
@@ -279,7 +286,7 @@ function policyOverrides(operation: InternalGitOperation): ReadonlyArray<string>
 /**
  * The argv for an internal git call: `args` as the call site wrote it (global
  * options such as `-C`, then the subcommand and its words), with
- * {@link INTERNAL_GIT_BASE_OPTIONS} in front, the patch flags after a `diff`,
+ * {@link INTERNAL_GIT_BASE_OPTIONS} in front (only `--no-optional-locks` before `config`), the patch flags after a `diff`,
  * `log` or `show`, the submodule flag after a status or diff, and the installed policy's overrides before a
  * hook-running subcommand, or its read overrides before any other. `cwd` is
  * where the process starts (the call's own `cwd` option), for resolving which
@@ -301,7 +308,7 @@ export function internalGitArgv(args: ReadonlyArray<string>, cwd?: string): stri
 				? readOverrides(read ? operation : { ...operation, writes: true })
 				: [];
 	return [
-		...INTERNAL_GIT_BASE_OPTIONS,
+		...(subcommand === "config" ? CONFIG_BASE_OPTIONS : INTERNAL_GIT_BASE_OPTIONS),
 		...globals,
 		...overrides,
 		subcommand,

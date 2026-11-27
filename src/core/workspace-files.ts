@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFile, execFileSync } from "node:child_process";
 import fs, { type Dir } from "node:fs";
 import { join, sep } from "node:path";
 import { performance } from "node:perf_hooks";
-import { internalGitArgv, withoutRepositoryEnv } from "./internal-git.js";
+import { withoutRepositoryEnv } from "./internal-git.js";
+import { gitExecFile, gitExecFileSync } from "./internal-git-run.js";
 
 /**
  * Cooperative-yield surface for the async enumeration forms. Structurally
@@ -251,7 +251,7 @@ function splitGitPathOutput(output: string): GitListing {
 function gitVisibleFiles(cwd: string, candidates?: ReadonlyArray<string>): GitListing | null {
 	let output: Buffer;
 	try {
-		output = execFileSync("git", internalGitArgv(gitVisibleFilesArgs(candidates), cwd), {
+		output = gitExecFileSync(gitVisibleFilesArgs(candidates), {
 			cwd,
 			env: withoutRepositoryEnv(),
 			maxBuffer: GIT_OUTPUT_LIMIT_BYTES,
@@ -275,28 +275,24 @@ function gitVisibleFilesAsync(
 	options: WorkspaceGitListingOptions = {},
 ): Promise<GitListing | null> {
 	return new Promise((resolve) => {
-		let argv: string[];
 		try {
-			argv = internalGitArgv(gitVisibleFilesArgs(candidates), cwd);
+			gitExecFile(
+				gitVisibleFilesArgs(candidates),
+				{
+					cwd,
+					env: withoutRepositoryEnv(),
+					maxBuffer: GIT_OUTPUT_LIMIT_BYTES,
+					...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs, killSignal: "SIGKILL" as const } : {}),
+					...(options.signal ? { signal: options.signal } : {}),
+				},
+				(error, stdout) => {
+					resolve(error ? null : splitGitPathOutput(stdout));
+				},
+			);
 		} catch {
 			// PanCode refused its own read after config drift; the caller falls back as it does for any git failure.
 			resolve(null);
-			return;
 		}
-		execFile(
-			"git",
-			argv,
-			{
-				cwd,
-				env: withoutRepositoryEnv(),
-				maxBuffer: GIT_OUTPUT_LIMIT_BYTES,
-				...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs, killSignal: "SIGKILL" as const } : {}),
-				...(options.signal ? { signal: options.signal } : {}),
-			},
-			(error, stdout) => {
-				resolve(error ? null : splitGitPathOutput(stdout));
-			},
-		);
 	});
 }
 

@@ -77,7 +77,7 @@ const envelope = capabilityEnvelope(runtime);
 console.log(envelope.commands, envelopeDigest(envelope)); // [ 'hello' ] and a 64-character hex digest
 ```
 
-`parseExtensionRuntimeV2({ api: 1 })` throws `runtime.api must be 2`. The entry point also exports the limits (`RUNTIME_V2_LIMITS`, `VIEW_LIMITS`, `SURFACE_LIMITS` and others) and the parsers for what a runtime returns, such as `parseExtensionOutputV2` and `parseExtensionToolResult`. `pancode extensions validate` reports the same envelope and digest; see [Capability envelope](harness-extensions.md#capability-envelope).
+`parseExtensionRuntimeV2({ api: 1 })` throws `runtime.api must be 2`: api 2 is the only runtime contract, and the api 1 types and parsers (`ExtensionApi`, `ExtensionOutput`, `parseExtensionRuntime`, `parseExtensionOutput`) are gone from `pancode/sdk`. The entry point also exports the limits (`RUNTIME_V2_LIMITS`, `VIEW_LIMITS`, `SURFACE_LIMITS` and others) and the parsers for what a runtime returns, such as `parseExtensionOutputV2` and `parseExtensionToolResult`. `pancode extensions validate` reports the same envelope and digest; see [Capability envelope](harness-extensions.md#capability-envelope).
 
 ## Tool servers
 

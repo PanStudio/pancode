@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	closeSync,
@@ -18,7 +17,8 @@ import {
 import { join, relative } from "node:path";
 import { stripAuthoredTrailers } from "../core/commit-message.js";
 import { sha256Hex } from "../core/hash.js";
-import { internalGitArgv, withoutRepositoryEnv } from "../core/internal-git.js";
+import { withoutRepositoryEnv } from "../core/internal-git.js";
+import { gitExecFileSync } from "../core/internal-git-run.js";
 import { relativePathEscapes } from "../core/path-containment.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import { TASK_WORKTREE_KIND } from "../core/task-worktree-claim.js";
@@ -354,7 +354,7 @@ const BASE_DIFF_MAX_BYTES = 8 * 1024 * 1024;
  */
 export function taskWorktreeBaseDiff(worktree: TaskWorktree): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(["-C", worktree.path, "diff", "--no-color", "-U0", worktree.base]), {
+		return gitExecFileSync(["-C", worktree.path, "diff", "--no-color", "-U0", worktree.base], {
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: 30_000,
 			maxBuffer: BASE_DIFF_MAX_BYTES,

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ObservedProof } from "../../core/hoare.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { shellJoin } from "../../core/shell-quote.js";
 import { ToolNames } from "../../core/tool-names.js";
@@ -273,7 +273,7 @@ const GIT_CONFIG_BOOLEAN = /^(?:true|false|yes|no|on|off|1|0|)$/iu;
 export function gitRunsConfiguredHelpers(cwd: string, env: NodeJS.ProcessEnv = process.env): boolean {
 	let listing: string;
 	try {
-		listing = execFileSync("git", ["config", "--get-regexp", GIT_HELPER_KEYS], {
+		listing = gitExecFileSync(["config", "--get-regexp", GIT_HELPER_KEYS], {
 			cwd,
 			env,
 			encoding: "utf8",
@@ -321,7 +321,7 @@ export function checkOutputReader(
 		let known = gitAnswers.get(key);
 		if (known === undefined) {
 			try {
-				execFileSync("git", [...args, "--", target], { cwd, env, stdio: "ignore", timeout: 5000 });
+				gitExecFileSync([...args, "--", target], { cwd, env, stdio: "ignore", timeout: 5000 });
 				known = answer(0);
 			} catch (error) {
 				const status = (error as { status?: unknown }).status;

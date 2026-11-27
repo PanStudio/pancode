@@ -159,7 +159,7 @@ export interface AcpInstalledExtension {
 	compatible: boolean;
 	loadable: boolean;
 	overriddenBy?: string;
-	runtime?: unknown;
+	runtimeV2?: unknown;
 	diagnostics: ReadonlyArray<{ message: string }>;
 }
 

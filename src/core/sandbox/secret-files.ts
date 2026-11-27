@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { HOME_SECRET_RELATIVE_PATHS, WORKSPACE_SECRET_PATHS } from "../../domains/safety/secret-paths.js";
-import { internalGitArgv } from "../internal-git.js";
+import { gitExecFileSync } from "../internal-git-run.js";
 import { isStrictDescendant } from "../path-containment.js";
 import type { SandboxMaskedPath } from "./types.js";
 
@@ -238,7 +237,7 @@ function gitProbeEnv(): NodeJS.ProcessEnv {
 
 function git(root: string, args: ReadonlyArray<string>): string[] | null {
 	try {
-		const output = execFileSync("git", internalGitArgv(["--literal-pathspecs", ...args], root), {
+		const output = gitExecFileSync(["--literal-pathspecs", ...args], {
 			cwd: root,
 			env: gitProbeEnv(),
 			stdio: ["ignore", "pipe", "ignore"],

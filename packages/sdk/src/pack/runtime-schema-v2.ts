@@ -25,7 +25,7 @@ import { RUNTIME_LIMITS } from "./runtime-schema.js";
 import { SURFACE_LIMITS } from "./view-limits.js";
 
 export const RUNTIME_V2_LIMITS = {
-	/** Live runtimes across both managers. api 1 keeps its own cap of 4 and claims first. */
+	/** Live runtimes in one host. */
 	processes: 8,
 	commands: 32,
 	hooks: 16,
@@ -47,7 +47,7 @@ export const RUNTIME_V2_LIMITS = {
 	fsEntries: 16,
 	configFields: 24,
 	configOptions: 16,
-	/** Regions, islands and a panel can each carry a full view, so an output outgrows the api 1 cap. */
+	/** Regions, islands and a panel can each carry a full view. */
 	outputBytes: 256 * 1024,
 	messageBytes: 320 * 1024,
 	messagesPerSecond: 256,

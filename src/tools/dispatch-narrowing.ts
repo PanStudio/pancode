@@ -72,8 +72,8 @@ function taskViewNarrows(original: DispatchPlanTaskView, rewritten: DispatchPlan
 /**
  * The roots enforcement confines the worker to. With an intent that is
  * intent.writeRoots (path-scope.ts), while request.writeRoots can hold a
- * legacy `writeRoots: []` argument that would read a confined task as
- * unrestricted (WX4). Only a legacy request with no intent uses request.writeRoots.
+ * top-level `writeRoots: []` argument that would read a confined task as
+ * unrestricted (WX4). Only a request with no intent uses request.writeRoots.
  */
 const effectiveWriteRoots = (request: DispatchRequest): ReadonlyArray<string> =>
 	request.intent !== undefined ? request.intent.writeRoots : (request.writeRoots ?? []);
