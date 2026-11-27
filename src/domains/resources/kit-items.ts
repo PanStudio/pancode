@@ -89,9 +89,9 @@ function runStep(operation: HubOperation, name: string, cwd: string, force: bool
 	});
 	const apply = applyHubLifecycle(plan, { dryRun: false });
 	const step = plan.steps.find((item) => item.identity.ref === refOf(name));
-	if (apply.failed === 0 && plan.applicable && step) return { ok: true as const, step };
-	const failed = apply.outcomes.find((outcome) => outcome.status === "failed");
-	const message = step?.refusal ?? failed?.error?.message ?? plan.diagnostics[0] ?? `${refOf(name)} was not changed`;
+	const outcome = apply.outcomes.find((item) => item.identity.ref === refOf(name));
+	if (step && outcome?.status === "committed" && !outcome.error) return { ok: true as const, step };
+	const message = step?.refusal ?? outcome?.error?.message ?? plan.diagnostics[0] ?? `${refOf(name)} was not changed`;
 	return { ok: false as const, message };
 }
 
@@ -110,26 +110,28 @@ export function addKitServer(name: string, cwd: string): KitChangeResult<KitAddF
 		if (!result.ok) return result;
 		const { step } = result;
 		const installed = userServerCopy(name, cwd);
+		if (!step.source?.publisher || !installed?.valid || installed.observedContentDigest !== step.source.sha256)
+			return { ok: false, message: `${refOf(name)} does not match its verified install` };
 		const loaded = loadPluginMcpFile({
 			id: name,
 			scope: "user",
 			rootPath: step.destination,
-			contentDigest: step.source?.sha256 ?? "",
+			contentDigest: step.source.sha256,
 		});
 		const server = loaded.servers[0];
 		if (!server) return { ok: false, message: loaded.diagnostics[0]?.message ?? `${refOf(name)} declares no server` };
-		const license = step.source?.license ?? installed?.manifest?.license;
+		const license = step.source.license ?? installed.manifest?.license;
 		return {
 			ok: true,
 			value: {
 				name,
-				version: installed?.version ?? step.versions?.to ?? "unknown",
-				publisher: step.source?.publisher ?? "local",
-				...(step.source?.tier ? { tier: step.source.tier } : {}),
+				version: installed.version,
+				publisher: step.source.publisher,
+				...(step.source.tier ? { tier: step.source.tier } : {}),
 				...(license ? { license } : {}),
-				sha256: step.source?.sha256 ?? "",
-				source: step.source?.sourceUrl ?? "",
-				...(step.source?.commit ? { commit: step.source.commit } : {}),
+				sha256: step.source.sha256,
+				source: step.source.sourceUrl,
+				...(step.source.commit ? { commit: step.source.commit } : {}),
 				launch: { command: server.command, args: [...server.args] },
 				destination: step.destination,
 			},
