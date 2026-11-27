@@ -142,6 +142,7 @@ function envelopeMcp(
 		tools: mcp.tools.map(({ network: _network, ...entry }) =>
 			granted.has(entry.serverId) ? { ...entry, network: true as const } : entry,
 		),
+		...(mcp.skills !== undefined ? { skills: mcp.skills } : {}),
 	};
 }
 

@@ -53,6 +53,7 @@ import {
 	MCP_UNSUPPORTED_PROTOCOL_VERSION,
 	McpError,
 } from "./protocol.js";
+import { MCP_SKILLS_EXTENSION, type McpSkillsTransport, mcpSkillsSettings } from "./skills.js";
 import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "./stdio-transport.js";
 import {
 	cutUtf8,
@@ -296,6 +297,11 @@ export interface McpClient {
 	/** Set by `notifications/events/list_changed` on the listen stream; cleared by acknowledgeEventsChanged. */
 	eventsChanged(): boolean;
 	acknowledgeEventsChanged(): void;
+	/**
+	 * The `io.modelcontextprotocol/skills` requests toward this server, or null
+	 * before discovery and when its capabilities do not enable the extension.
+	 */
+	skills(): McpSkillsTransport | null;
 }
 
 interface PendingRequest {
@@ -804,20 +810,27 @@ export function createMcpProtocolClient(
 	 * The modern per-request envelope. The tasks extension is declared only on
 	 * requests whose task this client drives to a terminal state (`tools/call`
 	 * and the `tasks/*` methods), so a server never hands a task to a request
-	 * that cannot follow it. Nothing is added on the legacy path.
+	 * that cannot follow it. The skills extension is declared on `skills/*` and
+	 * `resources/*` requests to a server whose capabilities enable it. Nothing
+	 * is added on the legacy path, where initialize declared the skills
+	 * extension once.
 	 */
 	const withEnvelope = (method: string, params: unknown): unknown => {
 		if (era !== "modern" && method !== "server/discover") return params;
 		const base = isRecord(params) ? params : {};
 		const meta = isRecord(base._meta) ? base._meta : {};
-		const drivesTasks = method === "tools/call" || method.startsWith("tasks/");
+		const extensions: Record<string, Record<string, never>> = {};
+		if (method === "tools/call" || method.startsWith("tasks/")) extensions[MCP_TASKS_EXTENSION] = {};
+		if ((method.startsWith("skills/") || method.startsWith("resources/")) && skillsSettings() !== null) {
+			extensions[MCP_SKILLS_EXTENSION] = {};
+		}
 		// MCP Events is declared on events/* and on the listen stream that opts into its list changes.
-		const speaksEvents =
+		if (
 			method.startsWith("events/") ||
-			(method === "subscriptions/listen" && isRecord(base.notifications) && base.notifications.eventsListChanged === true);
-		const extensions: Record<string, unknown> = {};
-		if (drivesTasks) extensions[MCP_TASKS_EXTENSION] = {};
-		if (speaksEvents) extensions[MCP_EVENTS_EXTENSION] = {};
+			(method === "subscriptions/listen" && isRecord(base.notifications) && base.notifications.eventsListChanged === true)
+		) {
+			extensions[MCP_EVENTS_EXTENSION] = {};
+		}
 		return {
 			...base,
 			_meta: {
@@ -1042,7 +1055,7 @@ export function createMcpProtocolClient(
 					"initialize",
 					{
 						protocolVersion: MCP_PROTOCOL_VERSION,
-						capabilities: {},
+						capabilities: { extensions: { [MCP_SKILLS_EXTENSION]: {} } },
 						clientInfo: { name: MCP_CLIENT_NAME, version: clientVersion },
 					},
 					initializeTimeoutMs,
@@ -1123,6 +1136,40 @@ export function createMcpProtocolClient(
 	const ensureReady = async (signal?: AbortSignal): Promise<void> => {
 		if (status === "ready") return;
 		await initialize(signal);
+	};
+
+	const skillsSettings = () => (info === null ? null : mcpSkillsSettings(info.capabilities).settings);
+
+	/** One skills-extension request; a modern answer must be complete, since nothing here follows a task or input round. */
+	const skillsRequest = async (
+		method: string,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	): Promise<unknown> => {
+		await ensureReady(signal);
+		const result = await request(method, params, requestTimeoutMs, signal);
+		if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
+			throw new McpError(
+				"protocol",
+				`${method} returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
+			);
+		}
+		return result;
+	};
+
+	const skills = (): McpSkillsTransport | null => {
+		const settings = skillsSettings();
+		if (settings === null) return null;
+		return {
+			settings,
+			listSkills: (cursor, signal) => skillsRequest("skills/list", cursor === undefined ? {} : { cursor }, signal),
+			getSkill: (uri, signal) => skillsRequest("skills/get", { uri }, signal),
+			readResource: (uri, signal) => skillsRequest("resources/read", { uri }, signal),
+			readDirectory: (uri, cursor, signal) =>
+				settings.directoryRead
+					? skillsRequest("resources/directory/read", cursor === undefined ? { uri } : { uri, cursor }, signal)
+					: Promise.reject(new McpError("protocol", `mcp server ${id} did not declare directoryRead`)),
+		};
 	};
 
 	const listTools = (signal?: AbortSignal): Promise<McpToolListing> =>
@@ -1647,5 +1694,6 @@ export function createMcpProtocolClient(
 		acknowledgeEventsChanged: () => {
 			eventsChangedFlag = false;
 		},
+		skills,
 	};
 }

@@ -5,6 +5,7 @@ import path from "node:path";
 import { canonicalJson } from "../core/canonical-json.js";
 import type { WorkerRecall } from "../domains/context/worker/recall.js";
 import type { BudgetEconomicsPort } from "../domains/dispatch/contract.js";
+import type { McpAttestedSkill } from "../domains/resources/skills/mcp-source.js";
 
 /**
  * Worker-subprocess tool construction.
@@ -185,7 +186,13 @@ export function createWorkerSafety(options: WorkerSafetyOptions = {}): SafetyCon
 export function createWorkerToolRegistry(
 	middlewareSnapshot?: MiddlewareSnapshot,
 	safety: SafetyContract = createWorkerSafety(),
-	skillLoaderOptions?: { noSkills?: boolean; skillPaths?: string[]; trustProjectCompatRoots?: boolean },
+	skillLoaderOptions?: {
+		noSkills?: boolean;
+		skillPaths?: string[];
+		trustProjectCompatRoots?: boolean;
+		/** The MCP skill manifests the run's admission attested; a worker lists no other MCP skill. */
+		mcpSkills?: ReadonlyArray<McpAttestedSkill>;
+	},
 	hookRegistrations?: ReadonlyArray<MiddlewareHookRegistration>,
 	readOnly?: boolean,
 	onMiddlewareEffects?: RegistryDeps["onMiddlewareEffects"],
@@ -253,6 +260,7 @@ export function createWorkerToolRegistry(
 			...(skillLoaderOptions?.skillPaths && skillLoaderOptions.skillPaths.length > 0
 				? { explicitSkillPaths: skillLoaderOptions.skillPaths }
 				: {}),
+			mcp: { attested: skillLoaderOptions?.mcpSkills ?? [] },
 		}),
 	});
 	assertRegisteredBuiltinTools(registry, registration, false);

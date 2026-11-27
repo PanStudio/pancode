@@ -9,6 +9,7 @@ import { MUTATION_PREVIEW_VISIBLE_ROWS, type MutationInspector, type MutationPre
 import { fitRow, pageStep, type RowBudgetedBody, windowRows } from "./overlay-frame.js";
 import type { PermissionCardParts } from "./permission-card-rows.js";
 import {
+	ARTIFACT_TITLES,
 	CARD_FACT_ROWS,
 	cardTargetRows,
 	identityRow,
@@ -278,7 +279,7 @@ class PermissionOverlayBody implements PermissionOverlayBodyHandle {
 			const artifact = this.view.artifact;
 			if (artifact !== undefined) {
 				rows.unshift(
-					sectionRule(theme, content, artifact.kind === "settings-change" ? "Settings change" : "Resolved dispatch plan"),
+					sectionRule(theme, content, ARTIFACT_TITLES[artifact.kind]),
 					...planTextRows(artifact.kind === "dispatch-plan" ? planDetailText(artifact.text) : artifact.text, content),
 					sectionRule(theme, content, "Exact invocation"),
 				);

@@ -9,6 +9,7 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { STORE_REPLACES_ARG } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
+import { MCP_SKILL_APPROVAL_RULE_ID } from "../gateway/mcp/skills.js";
 import type { ClassifierCall } from "./action-classifier.js";
 import type { AdmissionAskSource, ApprovalAuthority } from "./admission.js";
 import {
@@ -87,7 +88,8 @@ const REASON_MAX_CHARS = 300;
  * Asks the judge never sees. Each is a decision only the operator can make:
  * the session's consent to run repository code, project settings and
  * persistent fleet routing, PanCode's own PanHub packs and state, and a git command
- * that would run hook files changed since the operator's baseline. Dispatch plan
+ * that would run hook files changed since the operator's baseline, and the
+ * approval of a skill an MCP server serves. Dispatch plan
  * approvals, worker escalations, ask_user and configure_pancode are excluded by
  * kind in {@link operatorOnlyAsk}.
  */
@@ -99,6 +101,7 @@ const SAFETY_JUDGE_OPERATOR_ONLY_RULES: ReadonlySet<string> = new Set([
 	"hub-confirm",
 	"pancode-owned-state",
 	GIT_HOOKS_CHANGED_RULE_ID,
+	MCP_SKILL_APPROVAL_RULE_ID,
 ]);
 
 /** The operator channel itself, PanCode's own settings tool and a restart of the running session. */

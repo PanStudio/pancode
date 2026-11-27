@@ -59,6 +59,15 @@ import { runSemanticScope, semanticUnavailable } from "./semantic.js";
 export type { ContextSemanticRequest } from "./semantic.js";
 
 import type { ContextRecalledPayload } from "../../core/telemetry/live-events.js";
+import {
+	type ContextMcpSkillDeps,
+	contextSkillLoadInput,
+	createMcpSkillActivation,
+	isMcpSkill,
+	type McpSkill,
+	type McpSkillActivation,
+	mcpSkillConfirmation,
+} from "./mcp-skills.js";
 import { createContextToolSurface } from "./surface.js";
 
 /**
@@ -108,8 +117,16 @@ export interface ContextToolDeps {
 	getCwd?: () => string;
 	getSkillLoaderOptions?: () => Pick<
 		LoadSkillsInput,
-		"trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths"
+		"trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths" | "mcp"
 	>;
+	/** Skills trusted MCP servers serve; absent, the catalog lists none. */
+	mcpSkills?: ContextMcpSkillDeps;
+	/**
+	 * The activation for mcpSkills, given by a host that registers the approval
+	 * card on a lazy context surface so card and load share one record of what
+	 * was asked. Absent, the tool builds its own.
+	 */
+	mcpSkillActivation?: McpSkillActivation;
 	/** Absent in worker registries without a session; scope=workspace then falls back to workerWorkspace. */
 	workspace?: ContextWorkspaceDeps;
 	/** Run-scoped workspace probe of the worker's own cwd; never reads or saves into the parent session. */
@@ -131,6 +148,11 @@ export interface ContextToolDeps {
 
 function cwdFromDeps(deps?: ContextToolDeps): string {
 	return deps?.getCwd?.() ?? process.cwd();
+}
+
+/** The catalog read every skills call shares, with MCP skills only where this registry can load them. */
+function skillLoadInput(deps: ContextToolDeps): LoadSkillsInput {
+	return contextSkillLoadInput(cwdFromDeps(deps), deps.getSkillLoaderOptions?.() ?? {}, deps.mcpSkills);
 }
 
 function buildResourceTree(baseDir: string, maxEntries: number): string[] {
@@ -172,9 +194,13 @@ function skillSourceOrigin(skill: Skill): string {
  * root and the substitution rule before the skill's own prose begins.
  */
 function skillExecutionFrame(skill: Skill, workspaceRoot: string): string[] {
+	const files =
+		skill.mcp === undefined
+			? `${skill.baseDir} holds only this skill's own resource files; it is never the working directory.`
+			: `MCP server ${skill.mcp.serverId} serves this skill's own files; none of them is on disk or in the workspace.`;
 	return [
 		"How to read this skill:",
-		`- Workspace root: ${workspaceRoot}. Run every command and resolve every repository path there. ${skill.baseDir} holds only this skill's own resource files; it is never the working directory.`,
+		`- Workspace root: ${workspaceRoot}. Run every command and resolve every repository path there. ${files}`,
 		"- This skill may name tools, subagents, or commands from another harness. Use PanCode's equivalent from your own tool list; if there is no equivalent, say so and continue without that step. Never invent one, and never substitute repeated calls to a different agent for an agent the skill named.",
 		"- If gateway is attached, discover any equivalent without an attached schema before calling it through gateway. A tool name in this document does not attach that tool. Discover worker recipes before delegating.",
 		"- The skill describes a workflow. Your safety policy, permissions, and tool surface still bind it.",
@@ -209,6 +235,14 @@ function renderSkillBody(skill: Skill, tree: string[] | null): string {
 	}
 	lines.push("", skill.content, "</skill>");
 	return lines.join("\n");
+}
+
+/** A resolved load of an MCP skill, which runs after the synchronous discovery pass. */
+class McpSkillLoadRequest {
+	constructor(
+		readonly skill: McpSkill,
+		readonly pendingRequest: ReturnType<typeof pendingSkillRequestFor>,
+	) {}
 }
 
 function policyIsRecipeBound(policy: { requests: ReadonlyArray<{ source: string }> }): boolean {
@@ -435,7 +469,7 @@ function withSkillsPointer(deps: ContextToolDeps, snap: WorkspaceSnapshot): Reco
 	let installed = 0;
 	let installable = 0;
 	try {
-		const list = loadSkills({ cwd: cwdFromDeps(deps), ...(deps.getSkillLoaderOptions?.() ?? {}) });
+		const list = loadSkills(skillLoadInput(deps));
 		const visible = modelVisibleSkills(list.items);
 		installed = visible.length;
 		installable = marketplaceRowsFor(deps, visible, undefined).length;
@@ -508,14 +542,25 @@ async function runRankedSkillsScope(
 	args: Record<string, unknown>,
 	reservation: ObservationReservation,
 	options: ToolInvokeOptions | undefined,
+	mcp: McpSkillActivation | null,
 ): Promise<ToolResult> {
-	const listing = (typeof args.name === "string" ? args.name.trim() : "").length === 0;
+	const requested = typeof args.name === "string" ? args.name.trim() : "";
+	const file = typeof args.file === "string" ? args.file.trim() : "";
+	if (args.file !== undefined) {
+		if (requested.length === 0 || file.length === 0)
+			return { kind: "error", message: "context: file reads one file of a loaded MCP skill; pass name and file." };
+		if (mcp === null || !mcp.holds(requested, options?.sessionId))
+			return {
+				kind: "error",
+				message: `context: file reads the files of an MCP skill loaded in this session, and ${requested} is not one. A local skill's files are read with read under its base_dir.`,
+			};
+		return mcp.readFile({ name: requested, file, reservation, options });
+	}
+	const listing = requested.length === 0;
 	let relevance: PrecomputedRanking | undefined;
 	if (listing && deps.rankSkills !== undefined) {
 		try {
-			const skills = withPluginDiscoveryPass(() =>
-				modelVisibleSkills(loadSkills({ cwd: cwdFromDeps(deps), ...(deps.getSkillLoaderOptions?.() ?? {}) }).items),
-			);
+			const skills = withPluginDiscoveryPass(() => modelVisibleSkills(loadSkills(skillLoadInput(deps)).items));
 			const ranked = deps.rankSkills({
 				need: typeof args.query === "string" ? args.query.trim() : "",
 				candidates: skills.map((skill) => ({ id: skill.name, summary: skill.description })),
@@ -527,7 +572,25 @@ async function runRankedSkillsScope(
 			relevance = undefined;
 		}
 	}
-	return withPluginDiscoveryPass(() => runSkillsScope(deps, args, reservation, options, relevance));
+	const result = withPluginDiscoveryPass(() => runSkillsScope(deps, args, reservation, options, relevance));
+	if (!(result instanceof McpSkillLoadRequest)) return result;
+	if (mcp === null)
+		return skillRefusal(`context: unknown skill "${result.skill.name}".`, { name: result.skill.name, kind: "unknown" });
+	const pendingTask = result.pendingRequest?.args.trim() ?? "";
+	return mcp.load({
+		skill: result.skill,
+		includeTree: args.include_tree === true,
+		preamble: [
+			...renderPendingSkillTask(result.skill.name, options),
+			...skillExecutionFrame(result.skill, cwdFromDeps(deps)),
+		],
+		activation:
+			result.pendingRequest === null ? "model" : result.pendingRequest.source === "recipe" ? "recipe" : "operator",
+		pendingTask,
+		reservation,
+		options,
+		onLoaded: (name) => deps.onSkillLoaded?.(name),
+	});
 }
 
 function runSkillsScope(
@@ -536,10 +599,10 @@ function runSkillsScope(
 	reservation: ObservationReservation,
 	options: ToolInvokeOptions | undefined,
 	relevance: PrecomputedRanking | undefined,
-): ToolResult {
+): ToolResult | McpSkillLoadRequest {
 	const name = typeof args.name === "string" ? args.name.trim() : "";
 	if (name.length === 0) {
-		const list = loadSkills({ cwd: cwdFromDeps(deps), ...(deps.getSkillLoaderOptions?.() ?? {}) });
+		const list = loadSkills(skillLoadInput(deps));
 		const visible = modelVisibleSkills(list.items);
 		const marketplace = marketplaceRowsFor(deps, list.items, options);
 		const packages =
@@ -629,7 +692,7 @@ function runSkillsScope(
 	}
 	const policyError = pendingSkillPolicyError(name, options);
 	if (policyError) return skillRefusal(policyError.message, { name, kind: policyError.kind });
-	const list = loadSkills({ cwd: cwdFromDeps(deps), ...(deps.getSkillLoaderOptions?.() ?? {}) });
+	const list = loadSkills(skillLoadInput(deps));
 	const visible = modelVisibleSkills(list.items);
 	const pendingRequest = pendingSkillRequestFor(name, options);
 	const skill =
@@ -683,6 +746,7 @@ function runSkillsScope(
 			kind: "unknown",
 		});
 	}
+	if (isMcpSkill(skill)) return new McpSkillLoadRequest(skill, pendingRequest);
 	const includeTree = args.include_tree === true;
 	const tree = includeTree ? buildResourceTree(skill.baseDir, DEFAULT_TREE_ENTRIES) : null;
 	const pendingTask = pendingRequest?.args.trim() ?? "";
@@ -1021,8 +1085,13 @@ export function createContextTool(
 	deps: ContextToolDeps = {},
 	surface = createContextToolSurface(deps.getSettings?.().context.semantic),
 ): ToolSpec {
+	const mcp =
+		deps.mcpSkills === undefined
+			? null
+			: (deps.mcpSkillActivation ?? createMcpSkillActivation(deps.mcpSkills, () => cwdFromDeps(deps)));
 	return {
 		...surface,
+		...(mcp !== null ? { confirmationFor: mcpSkillConfirmation(mcp, () => skillLoadInput(deps)) } : {}),
 		async run(args, options): Promise<ToolResult> {
 			const scope = typeof args.scope === "string" ? args.scope : "";
 			if (
@@ -1111,7 +1180,7 @@ export function createContextTool(
 			// times; one discovery pass verifies each plugin tree once for all of it.
 			if (scope === "workspace") return withPluginDiscoveryPass(() => runWorkspaceScope(deps, reservation, options));
 			if (scope === "recall") return runRecallScope(deps, args, reservation, options);
-			return runRankedSkillsScope(deps, args, reservation, options);
+			return runRankedSkillsScope(deps, args, reservation, options, mcp);
 		},
 	};
 }

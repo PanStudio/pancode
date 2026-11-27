@@ -187,7 +187,7 @@ import {
 	discoverMarketplaceSkills,
 	installedSkillNames,
 	installSkill,
-	modelVisibleSkills,
+	suggestableSkills,
 } from "../domains/resources/index.js";
 import { expandSubmitText, submitDisplay } from "../domains/resources/submit-expansion.js";
 import { admissionAutonomy, containedYolo, effectiveYoloConfinement } from "../domains/safety/autonomy.js";
@@ -1519,7 +1519,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// it runs contained yolo, so a pancode it starts cannot take more autonomy or less confinement than it has.
 	setToolEnvAutonomy(resolveEffectiveAutonomy, unattendedYolo);
 	const skillDiscoveryEnabled = options.noSkills !== true && options.headless?.noSkills !== true;
-	let readySkillSnapshot: { key: string; count: number; skills: ReturnType<typeof modelVisibleSkills> } | undefined;
+	let readySkillSnapshot: { key: string; count: number; skills: ReturnType<typeof suggestableSkills> } | undefined;
 	const getReadySkillCount = (): number => {
 		if (!resources) return 0;
 		const cwd = process.cwd();
@@ -1529,7 +1529,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// Descriptions from here reach models through the [Skills] reminder and the
 		// relevance ranker, so this reads verified trees, never the display listing.
 		if (!prompts) {
-			const skills = modelVisibleSkills(resources.skills(cwd).items);
+			const skills = suggestableSkills(resources.skills(cwd).items);
 			readySkillSnapshot = { key: cwd, count: skills.length, skills };
 			return skills.length;
 		}
@@ -1541,7 +1541,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			options.skillPaths ?? options.headless?.skillPaths ?? [],
 		]);
 		if (readySkillSnapshot?.key === key) return readySkillSnapshot.count;
-		const skills = modelVisibleSkills(resources.skills(cwd).items);
+		const skills = suggestableSkills(resources.skills(cwd).items);
 		const count = skills.length;
 		readySkillSnapshot = { key, count, skills };
 		return count;
