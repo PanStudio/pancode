@@ -16,6 +16,7 @@ import { discoverSecretMasks } from "../core/sandbox/secret-files.js";
 import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
 import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
 import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
+import { reportInvalidInstallRecordsAsRows } from "../domains/extensions/index.js";
 import { resolveOnPath } from "../domains/interop/detect.js";
 import {
 	type DoctorFinding,
@@ -30,7 +31,6 @@ import {
 	withDoctorCommand,
 } from "../domains/lifecycle/doctor.js";
 import { describeMissing } from "../domains/lifecycle/setup-status.js";
-import { reportInvalidInstallRecordsAsRows } from "../domains/plugins/index.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { copilotContextTierLabel } from "../domains/providers/types/target-descriptor.js";
 import { withFrontmatterCacheReadOnly } from "../domains/resources/skills/frontmatter-cache.js";

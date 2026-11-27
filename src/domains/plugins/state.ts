@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { randomBytes } from "node:crypto";
 import {
 	closeSync,
 	cpSync,
@@ -9,7 +8,6 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
-	readFileSync,
 	realpathSync,
 	renameSync,
 	rmSync,
@@ -18,24 +16,28 @@ import path from "node:path";
 import { recordLifecycleReceipt } from "../../core/hub-receipts.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
-import { pancodeProjectRoot } from "../../core/project-root.js";
-import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { isRecord } from "../../core/type-guards.js";
 import { projectPackageTrust } from "../../core/workspace-trust.js";
-import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
+import { pancodeConfigDir } from "../../core/xdg.js";
 import { evaluatePancodeCompatibility } from "../extensions/compatibility.js";
+import {
+	assertManagedBase,
+	assertUnchangedInstallState,
+	auditInstallRecords,
+	type DroppedInstallRecord,
+	type InstallRecordReport,
+	type InstallStateLayout,
+	installStatePath,
+	readInstallState,
+	retainRecovery,
+	uniqueSibling,
+	writeInstallState,
+} from "../extensions/index.js";
 import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
 import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
 import { HUB_TIERS, isHubKind } from "../resources/hub-types.js";
 import { isPluginId, readPluginManifest } from "./discovery.js";
 import { passPluginCandidate } from "./discovery-pass.js";
-import {
-	type DroppedInstallRecord,
-	type InstallRecordReport,
-	type InvalidInstallRecord,
-	warnInvalidInstallRecords,
-	withKeptInvalidRecords,
-} from "./install-records.js";
 import { pluginContentDigest } from "./integrity.js";
 import { pluginBaseDir } from "./paths.js";
 import { derivedPublisher, publisherCollision, readPublisher } from "./publisher.js";
@@ -51,7 +53,6 @@ import type {
 	PluginMutationOptions,
 	PluginMutationResult,
 	PluginScope,
-	PluginState,
 } from "./types.js";
 import { isForeignPluginOrigin } from "./types.js";
 import { verifiedPluginCandidate } from "./verified-tree.js";
@@ -64,27 +65,17 @@ export function installHubPackage(input: HubPackageInstallInput): PluginMutation
 
 export { pluginBaseDir } from "./paths.js";
 
+const PLUGIN_STATE: InstallStateLayout<PluginInstallRecord> = {
+	noun: "plugin",
+	dir: "plugins",
+	baseDir: pluginBaseDir,
+	readRecord: readInstallRecord,
+	packRef: (id, raw) => `${isRecord(raw) && isHubKind(raw.kind) ? raw.kind : "plugin"}:${id}`,
+	isId: isPluginId,
+};
+
 export function pluginStatePath(scope: PluginScope, cwd = process.cwd()): string {
-	return path.join(pluginBaseDir(scope, cwd), "state.json");
-}
-
-function plainFile(file: string): void {
-	const stat = lstatSync(file);
-	if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
-		throw new Error(`plugin state must be a regular unlinked file: ${file}`);
-}
-
-function stateBytes(file: string): string | undefined {
-	if (!existsSync(file)) return undefined;
-	plainFile(file);
-	return readFileSync(file, "utf8");
-}
-
-interface StateRead {
-	state: PluginState;
-	bytes?: string;
-	/** Records left out of `state`; see install-records.ts. */
-	invalid: InvalidInstallRecord[];
+	return installStatePath(PLUGIN_STATE, scope, cwd);
 }
 
 /** Throws the reason one stored record is refused. */
@@ -107,31 +98,10 @@ function readInstallRecord(id: string, entry: unknown): PluginInstallRecord {
 }
 
 /** Throws only when the file itself cannot be read; an invalid record is left out and named in `invalid`. */
-function readState(scope: PluginScope, cwd: string): StateRead {
-	const file = pluginStatePath(scope, cwd);
-	const bytes = stateBytes(file);
-	if (bytes === undefined) return { state: { version: 1, disabled: [], installed: {} }, invalid: [] };
-	const raw: unknown = JSON.parse(bytes);
-	if (
-		!isRecord(raw) ||
-		raw.version !== 1 ||
-		!Array.isArray(raw.disabled) ||
-		!raw.disabled.every((id) => typeof id === "string" && isPluginId(id)) ||
-		!isRecord(raw.installed)
-	)
-		throw new Error("plugin install state is malformed");
-	const installed: PluginState["installed"] = {};
-	const invalid: InvalidInstallRecord[] = [];
-	for (const [id, entry] of Object.entries(raw.installed)) {
-		try {
-			installed[id] = readInstallRecord(id, entry);
-		} catch (error) {
-			const pack = `${isRecord(entry) && isHubKind(entry.kind) ? entry.kind : "plugin"}:${id}`;
-			invalid.push({ id, pack, reason: error instanceof Error ? error.message : String(error), raw: entry });
-		}
-	}
-	warnInvalidInstallRecords(file, invalid);
-	return { state: { version: 1, disabled: raw.disabled as string[], installed }, bytes, invalid };
+function readState(scope: PluginScope, cwd: string) {
+	const read = readInstallState(PLUGIN_STATE, scope, cwd);
+	if (read.status === "corrupt") throw new Error(read.message);
+	return read;
 }
 
 const FOREIGN_FORMATS = new Set(["portable", "claude-code", "codex", "agent-skill"]);
@@ -167,45 +137,6 @@ function validOrigin(origin: unknown): boolean {
 	}
 }
 
-function assertUnchangedState(file: string, expected: string | undefined): void {
-	if (stateBytes(file) !== expected)
-		throw new Error("plugin install state changed during the operation; retry after reviewing concurrent edits");
-}
-
-function writeState(
-	scope: PluginScope,
-	cwd: string,
-	state: PluginState,
-	expected: string | undefined,
-	invalid: ReadonlyArray<InvalidInstallRecord>,
-): void {
-	const file = pluginStatePath(scope, cwd);
-	assertUnchangedState(file, expected);
-	const written = { ...state, installed: withKeptInvalidRecords(state.installed, invalid) };
-	safeResourceWrite(file, `${JSON.stringify(written, null, 2)}\n`, {
-		mode: 0o600,
-		beforeRename: () => assertUnchangedState(file, expected),
-	});
-}
-
-/** Reject redirects beneath the operator-selected config or project root. */
-function assertManagedBase(scope: PluginScope, cwd: string): void {
-	const boundary =
-		scope === "user" ? path.resolve(pancodeConfigPath()) : pancodeProjectRoot(cwd, path.join("plugins", "state.json"));
-	const base = pluginBaseDir(scope, cwd);
-	let cursor = boundary;
-	for (const part of path.relative(boundary, base).split(path.sep)) {
-		cursor = path.join(cursor, part);
-		try {
-			const stat = lstatSync(cursor);
-			if (stat.isSymbolicLink() || !stat.isDirectory())
-				throw new Error(`plugin managed path must be a directory without symbolic links: ${cursor}`);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-	}
-}
-
 /** A writer refusal with a machine-readable reason; the message is what operators see. */
 export class PluginWriterRefusal extends Error {
 	constructor(
@@ -225,7 +156,7 @@ export class PluginWriterRefusal extends Error {
 }
 
 function acquireScopeLock(scope: PluginScope, cwd: string): () => void {
-	assertManagedBase(scope, cwd);
+	assertManagedBase(PLUGIN_STATE, scope, cwd);
 	if (scope === "user") pancodeConfigDir();
 	mkdirSync(pluginBaseDir(scope, cwd), { recursive: true });
 	const lock = path.join(pluginBaseDir(scope, cwd), ".mutation.lock");
@@ -443,7 +374,7 @@ function scopeEntries(scope: PluginScope, cwd: string, onlyId?: string): Install
 	if (!existsSync(base)) return [];
 	let names: string[];
 	try {
-		assertManagedBase(scope, cwd);
+		assertManagedBase(PLUGIN_STATE, scope, cwd);
 		names = readdirSync(base)
 			.sort()
 			.filter((name) => isPluginId(name) && (onlyId === undefined || name === onlyId));
@@ -473,15 +404,10 @@ function scopeEntries(scope: PluginScope, cwd: string, onlyId?: string): Install
 			},
 		];
 	}
-	let state: PluginState = { version: 1, disabled: [], installed: {} };
-	let invalid: InvalidInstallRecord[] = [];
-	let stateError: string | undefined;
-	try {
-		assertManagedBase(scope, cwd);
-		({ state, invalid } = readState(scope, cwd));
-	} catch (error) {
-		stateError = error instanceof Error ? error.message : String(error);
-	}
+	const read = readInstallState(PLUGIN_STATE, scope, cwd);
+	const { state } = read;
+	const invalid = read.status === "corrupt" ? [] : read.invalid;
+	const stateError = read.status === "corrupt" ? read.message : undefined;
 	const entries: InstalledPlugin[] = [];
 	const revoked = revokedHubDigests();
 	for (const id of names) {
@@ -636,13 +562,6 @@ function selectedScope(id: string, options: PluginListOptions): PluginScope {
 	return existsSync(path.join(pluginBaseDir("project", options.cwd), id)) ? "project" : "user";
 }
 
-function uniqueSibling(target: string, purpose: string): string {
-	return path.join(
-		path.dirname(target),
-		`.${path.basename(target)}.${purpose}-${process.pid}-${randomBytes(8).toString("hex")}`,
-	);
-}
-
 /** How many preserved copies of one package a scope keeps. */
 const RECOVERY_COPIES_KEPT = 3;
 
@@ -664,18 +583,6 @@ function sweepRecoveryCopies(target: string): void {
 		for (const copy of copies.slice(RECOVERY_COPIES_KEPT)) rmSync(copy.file, { recursive: true, force: true });
 	} catch {
 		// The operation this follows has already committed; a copy left behind only costs disk.
-	}
-}
-
-/** Recheck held bytes after publication so edits made during staging survive. */
-function retainRecovery(backup: string, expectedDigest: string | undefined): boolean {
-	try {
-		if (!expectedDigest || pluginContentDigest(backup) !== expectedDigest) return true;
-		rmSync(backup, { recursive: true, force: true });
-		return false;
-	} catch {
-		// Cleanup failure does not undo a committed lifecycle operation.
-		return true;
 	}
 }
 
@@ -765,7 +672,7 @@ export function installPlugin(sourcePath: string, options: PluginInstallOptions 
 			if (!staged.valid || staged.manifest?.name !== manifest.name || staged.contentDigest !== digest)
 				throw new Error("staged plugin differs from the verified source tree");
 			if (pluginContentDigest(source) !== digest) throw new Error("plugin source changed while staging");
-			assertUnchangedState(pluginStatePath(scope, cwd), bytes);
+			assertUnchangedInstallState(PLUGIN_STATE, scope, cwd, bytes);
 			if (existsSync(target)) {
 				renameSync(target, backup);
 				moved = true;
@@ -793,7 +700,7 @@ export function installPlugin(sourcePath: string, options: PluginInstallOptions 
 				publisher,
 			};
 			if (!previouslyInstalled) state.disabled = state.disabled.filter((id) => id !== manifest.name);
-			writeState(scope, cwd, state, bytes, invalid);
+			writeInstallState(PLUGIN_STATE, scope, cwd, state, bytes, invalid);
 		} catch (error) {
 			rmSync(staging, { recursive: true, force: true });
 			if (published && existsSync(target)) {
@@ -889,7 +796,7 @@ function setEnabled(id: string, enabled: boolean, options: PluginMutationOptions
 		if (!enabled && plugin.enabled) refuseBrokenDependents(cwd, { scope, id, operation: "disable" });
 		state.disabled = state.disabled.filter((value) => value !== id);
 		if (!enabled) state.disabled.push(id);
-		writeState(scope, cwd, state, bytes, invalid);
+		writeInstallState(PLUGIN_STATE, scope, cwd, state, bytes, invalid);
 		const updated = listInstalledPlugins(cwd, { scope, all: true }).find((entry) => entry.id === id);
 		recordLifecycleReceipt(
 			{
@@ -952,7 +859,7 @@ export function removePlugin(id: string, options: PluginMutationOptions = {}): P
 		try {
 			delete state.installed[id];
 			state.disabled = state.disabled.filter((value) => value !== id);
-			writeState(scope, cwd, state, bytes, kept);
+			writeInstallState(PLUGIN_STATE, scope, cwd, state, bytes, kept);
 		} catch (error) {
 			if (moved) renameSync(backup, target);
 			throw error;
@@ -978,15 +885,7 @@ export function removePlugin(id: string, options: PluginMutationOptions = {}): P
 
 /** Doctor's read of one scope's install records, or null when that scope has no state file. Throws when the file is unreadable. */
 export function auditPluginInstallRecords(scope: PluginScope, cwd = process.cwd()): InstallRecordReport | null {
-	const file = pluginStatePath(scope, cwd);
-	if (!existsSync(file)) return null;
-	assertManagedBase(scope, cwd);
-	const { state, invalid } = readState(scope, cwd);
-	return {
-		path: file,
-		valid: Object.keys(state.installed).length,
-		invalid: invalid.map(({ id, pack, reason }) => ({ id, pack, reason })),
-	};
+	return auditInstallRecords(PLUGIN_STATE, scope, cwd);
 }
 
 /**
@@ -1021,7 +920,7 @@ export function repairPluginInstallRecords(scope: PluginScope, cwd = process.cwd
 				for (const move of moves) renameSync(move.from, move.to);
 				const gone = new Set(dropped.flatMap((entry) => (entry.kept ? [] : [entry.id])));
 				state.disabled = state.disabled.filter((id) => !gone.has(id));
-				writeState(scope, cwd, state, bytes, []);
+				writeInstallState(PLUGIN_STATE, scope, cwd, state, bytes, []);
 			} catch (error) {
 				for (const move of moves) if (existsSync(move.to)) renameSync(move.to, move.from);
 				throw error;
