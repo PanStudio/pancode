@@ -31,7 +31,7 @@ export interface ResourceLoaderOptions {
 	cwd?: string;
 	/** Slash-command names prompt templates may not claim. */
 	reservedPromptNames?: ReadonlySet<string>;
-	skills?: () => Pick<LoadSkillsInput, "trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths">;
+	skills?: () => Pick<LoadSkillsInput, "trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths" | "mcp">;
 	/** The tier of the model a submitted turn runs on, for template variants; absent reads as `standard`. */
 	modelTier?: () => ModelTier | undefined;
 }
@@ -81,7 +81,7 @@ export function createResourcesLoader(options: ResourceLoaderOptions = {}): Reso
 	const defaultCwd = options.cwd ?? process.cwd();
 	const skillOptions = (): Pick<
 		LoadSkillsInput,
-		"trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths"
+		"trustProjectCompatRoots" | "disableDiscovery" | "explicitSkillPaths" | "mcp"
 	> => options.skills?.() ?? {};
 	// Prompts share the skills opt-in: a project compatibility root is the same
 	// trust decision whichever kind is read out of it.

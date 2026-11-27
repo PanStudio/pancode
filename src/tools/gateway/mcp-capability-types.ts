@@ -8,6 +8,8 @@ import type {
 	McpElicitationHost,
 	McpServerCatalog,
 	McpServerSpec,
+	McpSkillListing,
+	McpSkillsTransport,
 	McpSurface,
 	McpSurfaceStatus,
 	McpTeardownOutcome,
@@ -150,6 +152,11 @@ export interface McpLaunchOptions {
 	readOnly?: boolean;
 }
 
+export interface McpSkillAccessOptions extends McpLaunchOptions {
+	/** List the skills again now, as after a served file failed verification. */
+	relist?: boolean;
+}
+
 interface McpEnsureResult {
 	spec: ToolSpec | null;
 	/** Why the capability is unavailable when `spec` is null. */
@@ -271,6 +278,15 @@ export interface McpCapabilitySource {
 	transportOf(name: string): string | null;
 	/** The surface server `id` served at its last listing this session, or null when it has not been listed. */
 	servedSurface(id: string): McpSurface | null;
+	/**
+	 * Skills over MCP on declared server `id`: launch it when trusted, under the
+	 * same read-only rule `ensure` applies, list its skills again once the last
+	 * listing's `ttlMs` has passed, and return the transport its skill requests
+	 * go through. Never reads a skill file.
+	 */
+	skillAccess(id: string, options?: McpSkillAccessOptions): Promise<McpSkillAccess>;
+	/** The skills server `id` listed this session, or null when it has listed none. */
+	servedSkills(id: string): McpSkillListing | null;
 	/** Ids of the servers launched this session and still open. */
 	connectedIds(options?: { readyOnly?: boolean }): string[];
 	/**
@@ -336,4 +352,13 @@ export interface ServerState {
 	launchWriteTags?: ReadonlyArray<string>;
 	/** Set to close the server and start it again at the next discovery, with its options computed afresh. */
 	relaunch?: boolean;
+	/** This session's skills listing of a server that serves the skills extension; absent until listed. */
+	skills?: { listing: McpSkillListing; listedAtMs: number } | { failure: string; listedAtMs: number };
+	/** The skills listing in flight, shared by everyone waiting on it. */
+	skillsListing?: Promise<void>;
 }
+
+/** A declared server's skills transport, launched and listed, or why it has none. */
+export type McpSkillAccess =
+	| { transport: McpSkillsTransport; listing: McpSkillListing; declaration: ResolvedMcpServer }
+	| { transport: null; reason: string };

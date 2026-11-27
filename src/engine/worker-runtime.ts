@@ -581,6 +581,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			...(input.noSkills !== undefined ? { noSkills: input.noSkills } : {}),
 			...(input.skillPaths !== undefined ? { skillPaths: [...input.skillPaths] } : {}),
 			...(input.trustProjectCompatRoots !== undefined ? { trustProjectCompatRoots: input.trustProjectCompatRoots } : {}),
+			...(input.mcp?.skills !== undefined ? { mcpSkills: input.mcp.skills } : {}),
 		},
 		// Workers run unattended, so the loop guard carries the hard tool-call
 		// cap in addition to repetition blocking, plus the synthesis lockout:

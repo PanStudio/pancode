@@ -62,6 +62,9 @@ export function createContextToolSurface(semantic?: PancodeSettings["context"]["
 				Type.Number({ description: "settings, recall or skills: 0-based offset; follow nextOffset." }),
 			),
 			include_tree: Type.Optional(Type.Boolean({ description: "skills: list the skill's files." })),
+			file: Type.Optional(
+				Type.String({ description: "skills: one file of a loaded MCP skill, by its path in the skill." }),
+			),
 		}),
 		baseActionClass: "read",
 		executionMode: "parallel",

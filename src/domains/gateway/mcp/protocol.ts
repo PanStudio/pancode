@@ -31,7 +31,12 @@ export const MCP_META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapab
 export const MCP_META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
 /** Tags every notification of one `subscriptions/listen` stream with the id of the listen request. */
 export const MCP_META_SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
-export const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
+/**
+ * One stdio message line's bound. It holds a `resources/read` of the largest
+ * file a skill may have (16 MiB, io.modelcontextprotocol/skills) as base64
+ * inside its JSON-RPC envelope.
+ */
+export const DEFAULT_MAX_LINE_BYTES = 24 * 1024 * 1024;
 export const JSON_RPC_METHOD_NOT_FOUND = -32601;
 export const JSON_RPC_INVALID_PARAMS = -32602;
 /** Legacy resource-not-found; the modern revision answers -32602 instead. */
