@@ -764,6 +764,181 @@ export function checkCompositionRoot(file: string, source: string): string[] {
 	return violations;
 }
 
+/**
+ * rule23: the most lines one function may span, from the line of its first token to the line of its last. Every
+ * function form counts (declarations, expressions, arrows, methods, constructors, accessors), and a nested function
+ * counts on its own as well as inside its parent.
+ */
+const FUNCTION_LINE_CEILING = 500;
+
+/**
+ * The functions over FUNCTION_LINE_CEILING when rule23 landed, each at the size it may not grow past. An entry only
+ * shrinks: lower its number when its function shrinks, and remove it once the function is at or under the ceiling.
+ * The key is `file#name`, the name qualified by its enclosing classes and functions. An anonymous function is named
+ * by where it sits: `<iife>`, `<withLock callback>` for an argument to `withLock(...)`, else `<anonymous>`; a name
+ * repeated in one file takes `[2]`, `[3]` in source order.
+ */
+const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
+	["src/cli/modes/print.ts#runHeadlessMainAgent", 865],
+	["src/cli/uninstall.ts#runUninstallCommand", 555],
+	["src/cli/upgrade.ts#runUpgradeCommand", 569],
+	["src/core/settings-validate.ts#validateSettings", 1332],
+	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
+	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
+	["src/domains/dispatch/extension.ts#createDispatchBundle", 8606],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt", 2964],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt.<iife>[2]", 1054],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.dispatchAcpDelegation", 1006],
+	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1055],
+	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 741],
+	["src/domains/gateway/mcp/client.ts#createMcpProtocolClient", 1889],
+	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
+	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],
+	["src/domains/mux/contract.ts#createMuxRuntime", 734],
+	["src/domains/mux/socket-client.ts#createMuxClient", 553],
+	["src/domains/providers/extension.ts#createProvidersBundle", 625],
+	["src/domains/resources/hub-validation.ts#validateHubPackage", 579],
+	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1713],
+	["src/domains/scheduling/job-controller.ts#createJobController", 979],
+	["src/domains/session/compaction/compact.ts#compactWithCalls", 738],
+	["src/domains/session/extension.ts#createSessionBundle", 505],
+	["src/domains/telemetry/call-journal.ts#openCallJournal", 554],
+	["src/domains/telemetry/call-journal.ts#openCallJournal.<withStateFileLock callback>", 513],
+	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
+	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
+	["src/engine/acp/adapter.ts#startAcpDelegationRun", 721],
+	["src/engine/acp/server.ts#servePancodeAcpAgent", 3788],
+	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
+	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3709],
+	["src/interactive/chat-panel.ts#createChatPanel", 2064],
+	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
+	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 2237],
+	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1078],
+	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 795],
+	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 741],
+	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 608],
+	["src/interactive/overlay-permission-lifecycle.ts#createOverlayPermissionLifecycle", 671],
+	["src/interactive/overlays/hub.ts#openHubOverlay", 606],
+	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
+	["src/interactive/panes-runtime.ts#createPanesRuntime", 587],
+	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
+	["src/session-control/chat-loop-state-machine.ts#createChatLoopStateMachine", 645],
+	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
+	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
+	["src/session-control/chat-loop.ts#createChatLoop", 1576],
+	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
+	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
+	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
+	["src/session-control/turn-context.ts#createTurnContext", 2789],
+	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
+	["src/session-control/turn-recovery.ts#createTurnRecovery", 681],
+	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
+	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
+	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
+	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 880],
+	["src/tools/dispatch-compete.ts#runCompete", 543],
+	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
+	["src/tools/gateway/index.ts#createGatewayTool", 875],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1769],
+	["src/tools/registry.ts#createRegistry", 2346],
+]);
+
+function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {
+	return ts.isIdentifier(name) ||
+		ts.isPrivateIdentifier(name) ||
+		ts.isStringLiteral(name) ||
+		ts.isNumericLiteral(name) ||
+		ts.isNoSubstitutionTemplateLiteral(name)
+		? name.text
+		: name.getText(tree);
+}
+
+function functionNameSegment(node: ts.FunctionLikeDeclaration | ts.ClassLikeDeclaration, tree: ts.SourceFile): string {
+	if (node.name) return memberNameText(node.name, tree);
+	if (ts.isConstructorDeclaration(node)) return "constructor";
+	const parent = node.parent;
+	if (
+		(ts.isVariableDeclaration(parent) || ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent)) &&
+		parent.initializer === node
+	)
+		return memberNameText(parent.name, tree);
+	if (ts.isClassLike(node)) return "<class>";
+	if (ts.isParenthesizedExpression(parent) && ts.isCallExpression(parent.parent) && parent.parent.expression === parent)
+		return "<iife>";
+	if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.arguments?.includes(node as ts.Expression)) {
+		const callee = parent.expression;
+		const calleeName = ts.isIdentifier(callee)
+			? callee.text
+			: ts.isPropertyAccessExpression(callee)
+				? callee.name.text
+				: undefined;
+		return calleeName ? `<${calleeName} callback>` : "<callback>";
+	}
+	return "<anonymous>";
+}
+
+/**
+ * rule23 for one file: a function over FUNCTION_LINE_CEILING needs a FUNCTION_LINE_EXEMPTIONS entry, may not grow
+ * past it, and an entry its function has shrunk below is stale. `seen` collects the exempt keys found, so the caller
+ * can report entries whose function is gone.
+ */
+function checkFunctionLengths(file: string, source: string, seen: Set<string>): string[] {
+	if (/\.d\.[cm]?ts$/.test(file)) return [];
+	const violations: string[] = [];
+	const tree = parseTree(file, source);
+	const lineOf = (position: number): number => tree.getLineAndCharacterOfPosition(position).line + 1;
+	const occurrences = new Map<string, number>();
+	const visit = (node: ts.Node, scope: string): void => {
+		let inner = scope;
+		const isFunction =
+			(ts.isFunctionDeclaration(node) ||
+				ts.isFunctionExpression(node) ||
+				ts.isArrowFunction(node) ||
+				ts.isMethodDeclaration(node) ||
+				ts.isConstructorDeclaration(node) ||
+				ts.isGetAccessorDeclaration(node) ||
+				ts.isSetAccessorDeclaration(node)) &&
+			node.body !== undefined;
+		if (isFunction || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+			let name = `${scope}${scope ? "." : ""}${functionNameSegment(node, tree)}`;
+			const occurrence = (occurrences.get(name) ?? 0) + 1;
+			occurrences.set(name, occurrence);
+			if (occurrence > 1) name = `${name}[${occurrence}]`;
+			inner = name;
+		}
+		if (isFunction) {
+			const start = lineOf(node.getStart(tree));
+			const lines = lineOf(node.end) - start + 1;
+			const key = `${file}#${inner}`;
+			const allowed = FUNCTION_LINE_EXEMPTIONS.get(key);
+			if (allowed !== undefined) seen.add(key);
+			if (allowed === undefined) {
+				if (lines > FUNCTION_LINE_CEILING)
+					violations.push(
+						`rule23: ${file}:${start} ${inner} is ${lines} lines, over the ${FUNCTION_LINE_CEILING}-line function ceiling; split it into functions that each do one job. If an exempt function only moved or was renamed, rekey its old FUNCTION_LINE_EXEMPTIONS entry (tests/boundaries/check-boundaries.ts) to ${key} at the same number`,
+					);
+			} else if (lines <= FUNCTION_LINE_CEILING) {
+				violations.push(
+					`rule23: FUNCTION_LINE_EXEMPTIONS lists ${key}, which is now ${lines} lines, within the ${FUNCTION_LINE_CEILING}-line ceiling; remove the entry`,
+				);
+			} else if (lines > allowed) {
+				violations.push(
+					`rule23: ${file}:${start} ${inner} grew to ${lines} lines, past the ${allowed} its FUNCTION_LINE_EXEMPTIONS entry allows; an exempt function may only shrink, so move the new logic out of it`,
+				);
+			} else if (lines < allowed) {
+				violations.push(
+					`rule23: FUNCTION_LINE_EXEMPTIONS allows ${key} ${allowed} lines and it is now ${lines}; lower the entry to ${lines}`,
+				);
+			}
+		}
+		ts.forEachChild(node, (child) => visit(child, inner));
+	};
+	visit(tree, "");
+	return violations;
+}
+
 const jsSuffixRegex = /\.m?jsx?$/;
 const piPackagePrefix = "@earendil-works/pi-";
 // Since the 0.83.0 engine-boundary rework, no file outside src/engine/** may
@@ -895,7 +1070,7 @@ function isChatLoopTurnModule(filePath: string): boolean {
 /**
  * The instant shell's Stage 0 owner. `tests/contracts/instant-shell-import-graph.test.ts`
  * walks the built chunk that contains this module and holds its static closure
- * to 32 chunks, 1,400,000 total bytes and 350,000 PanCode source bytes, because that closure is what a cold
+ * to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes, because that closure is what a cold
  * `pancode` start pays before it can draw anything.
  */
 const STAGE_0_OWNER = path.join("src", "interactive", "terminal-lease.ts");
@@ -1509,6 +1684,8 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
  *      share, and the client imports it directly. It value-imports only within
  *      itself, takes types only from src/**, and imports no Node builtin, no
  *      package and no pi-* module, type-only included.
+ *  23. No function under src/ spans more than FUNCTION_LINE_CEILING lines,
+ *      except those FUNCTION_LINE_EXEMPTIONS lists, each held at its size.
  */
 export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const srcRoot = path.join(projectRoot, "src");
@@ -1530,6 +1707,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const valueReachedSeams = new Map<string, Set<string>>();
 	const usedSurfaceExemptions = new Set<string>();
 	const usedCapabilityHolders = new Set<string>();
+	const seenFunctionExemptions = new Set<string>();
 
 	for (const filePath of walk(srcRoot)) {
 		const source = readFileSync(filePath, "utf8");
@@ -1539,6 +1717,13 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		violations.push(...checkLedgerUsageKeys(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkTurnStateOwnership(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkRecipeIdBranches(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
+		violations.push(
+			...checkFunctionLengths(
+				path.relative(projectRoot, filePath).split(path.sep).join("/"),
+				source,
+				seenFunctionExemptions,
+			),
+		);
 		violations.push(
 			...checkSurfaceTotals(path.relative(projectRoot, filePath).split(path.sep).join("/"), source, usedSurfaceExemptions),
 		);
@@ -1646,7 +1831,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 				if (seam === undefined) {
 					const qualifier = typeOnly ? " (type-only)" : "";
 					violations.push(
-						`rule6: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves to ${seamPath}; runtime importers outside the computed Stage 0 closure and its src/interactive/** and src/engine/** trees may enter those protected trees only through a seam declared in STAGE0_SEAMS (tests/boundaries/check-boundaries.ts). A new disjoint reacher makes esbuild split the merged chunk the instant shell's Stage 0 closure sits on. That closure is held to 32 chunks, 1,400,000 total bytes and 350,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the needed value into a leaf seam, route through an existing seam, or declare a legitimate edge with its reason.`,
+						`rule6: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves to ${seamPath}; runtime importers outside the computed Stage 0 closure and its src/interactive/** and src/engine/** trees may enter those protected trees only through a seam declared in STAGE0_SEAMS (tests/boundaries/check-boundaries.ts). A new disjoint reacher makes esbuild split the merged chunk the instant shell's Stage 0 closure sits on. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the needed value into a leaf seam, route through an existing seam, or declare a legitimate edge with its reason.`,
 					);
 				} else if (!typeOnly) {
 					const importers = valueReachedSeams.get(resolved) ?? new Set<string>();
@@ -1715,7 +1900,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 			.sort();
 		if (importers.length === 0) continue;
 		violations.push(
-			`rule6: seam ${seamPath}, reached by ${importers.join(", ")}, value-imports its way into the Stage 0 closure (${reached.join(", ")}); an external seam must stay off the modules ${STAGE_0_OWNER} already reaches, or its importer becomes a second reacher and esbuild splits their merged chunk. That closure is held to 32 chunks, 1,400,000 total bytes and 350,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the value the seam needs into a leaf module instead of importing the render module that happens to hold it.`,
+			`rule6: seam ${seamPath}, reached by ${importers.join(", ")}, value-imports its way into the Stage 0 closure (${reached.join(", ")}); an external seam must stay off the modules ${STAGE_0_OWNER} already reaches, or its importer becomes a second reacher and esbuild splits their merged chunk. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the value the seam needs into a leaf module instead of importing the render module that happens to hold it.`,
 		);
 	}
 
@@ -1725,6 +1910,12 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 				violations.push(
 					`rule14: SURFACE_TOTAL_EXEMPTIONS exempts ${exemption.file}#${fn}, which no longer sums a token or cost field; remove the exemption`,
 				);
+
+	for (const key of FUNCTION_LINE_EXEMPTIONS.keys())
+		if (!seenFunctionExemptions.has(key))
+			violations.push(
+				`rule23: FUNCTION_LINE_EXEMPTIONS lists ${key}, which names no function; remove the entry, or rekey it to the function's new file or name`,
+			);
 
 	for (const holder of OWNER_CAPABILITY_HOLDERS.keys())
 		if (!usedCapabilityHolders.has(holder))

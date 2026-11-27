@@ -286,23 +286,6 @@ export interface OperatorResumeAuthorityEvidence {
 }
 
 /**
- * What the caller's evidence resolver must already have proven, stated here
- * because the fold cannot re-derive it from an opaque id.
- *
- * For `OperatorResumeAuthorityEvidence`: the record is a genuine typed operator
- * control request (§3.1's `CustomEntry` carrier), reached through an operator
- * surface rather than an agent tool, on this session's selected path and within
- * the historical cutoff. For `ContinuityOutcomeEvidence`: the named record is
- * really a summary or eviction of the stated kind, produced by that commit. For
- * `TerminalResponseEvidence`: the named record is a real assistant response for
- * that continuation turn and `status: "success"` means terminal and nonempty.
- *
- * Test-constructed evidence proves the fold's handling of it, never that 02B/03
- * adapters discharge these obligations.
- */
-export type ContinuityEvidenceObligations = never;
-
-/**
  * A summary or eviction record bound to the commit that produced it.
  *
  * A record merely existing under the id a commit names is not matching
@@ -318,6 +301,21 @@ export interface ContinuityOutcomeEvidence {
 	position: number;
 }
 
+/**
+ * What the caller's evidence resolver must already have proven, stated here
+ * because the fold cannot re-derive it from an opaque id.
+ *
+ * For `OperatorResumeAuthorityEvidence`: the record is a genuine typed operator
+ * control request (§3.1's `CustomEntry` carrier), reached through an operator
+ * surface rather than an agent tool, on this session's selected path and within
+ * the historical cutoff. For `ContinuityOutcomeEvidence`: the named record is
+ * really a summary or eviction of the stated kind, produced by that commit. For
+ * `TerminalResponseEvidence`: the named record is a real assistant response for
+ * that continuation turn and `status: "success"` means terminal and nonempty.
+ *
+ * Test-constructed evidence proves the fold's handling of it, never that 02B/03
+ * adapters discharge these obligations.
+ */
 export interface ContinuityFoldEvidence {
 	/** Prevalidated resume authority, bound per transaction. */
 	resumeAuthorities: ReadonlyArray<OperatorResumeAuthorityEvidence>;

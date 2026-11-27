@@ -288,8 +288,6 @@ export function createOfferTriggers(version: string) {
 	};
 }
 
-export type OfferTriggers = ReturnType<typeof createOfferTriggers>;
-
 /** The one stderr line a headless run prints after a turn ended on PanCode's own fault. */
 export const HEADLESS_OFFER_LINE =
 	"pancode: this looks like a PanCode fault; `pancode report --last` shows what a report would send";

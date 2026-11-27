@@ -16,8 +16,6 @@ export const PI_MONO_PACKAGES = {
 	tui: "@earendil-works/pi-tui",
 } as const;
 
-export type PiMonoPackageName = (typeof PI_MONO_PACKAGES)[keyof typeof PI_MONO_PACKAGES];
-
 let cachedPiMonoVersion: string | null = null;
 
 /** Engine dependency metadata is outside the instant terminal's package/version path. */

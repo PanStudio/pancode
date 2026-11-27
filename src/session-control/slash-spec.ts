@@ -562,8 +562,6 @@ export function completeArgs(
 	return completions.length > 0 ? { completions, ...range, ...(submenu ? { submenu } : {}) } : null;
 }
 
-export type CompletionAcceptance = "accept" | "accept-remainder" | "submit" | "close" | "none" | "disabled";
-
 export function matchFromSpec(
 	entry: {
 		name: string;

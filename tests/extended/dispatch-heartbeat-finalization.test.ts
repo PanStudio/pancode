@@ -12,9 +12,9 @@ import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
 import { declaredScopeIntent } from "../../src/domains/dispatch/intent.js";
 import type { SpawnedWorker, SpawnedWorkerResult, WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
+import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readSettledRun, readVerifiedRun } from "../../src/domains/telemetry/index.js";
-import { verifyRunRecordReport } from "../../src/interactive/view/artifacts.js";
 import {
 	isolateDispatchState,
 	makeDispatchBundle,

@@ -420,12 +420,12 @@ export default defineConfig({
 		retainAndPrune(buildId, files);
 	},
 	// tsup already externalizes every package.json `dependencies` entry, so the
-	// runtime deps need no listing here. `optionalDependencies` is not part of
-	// that default, so the Claude Agent SDK needs the explicit entry: without it
-	// esbuild would bundle the optional package into dist/ and reintroduce the
-	// hard requirement that #258 removed. External keeps the lazy
-	// `await import()` in src/engine/claude/sdk-module.ts a real runtime import. The Copilot SDK is a
-	// devDependency on the same terms: src/engine/copilot/sdk-module.ts reaches it only through `await import()`.
+	// runtime deps need no listing here. The Claude Agent SDK and the Copilot SDK
+	// are devDependencies, which tsup bundles by default, so both need the
+	// explicit entry: without it esbuild would bundle them into dist/ and
+	// reintroduce the hard requirement that #258 removed. External keeps the lazy
+	// `await import()` in src/engine/claude/sdk-module.ts and
+	// src/engine/copilot/sdk-module.ts real runtime imports.
 	// The builtin entry is for removeNodeProtocol above.
 	external: ["node:sqlite", "@anthropic-ai/claude-agent-sdk", "@github/copilot-sdk"],
 });
