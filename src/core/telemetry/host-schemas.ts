@@ -85,6 +85,35 @@ export const HookRanSchema = Type.Object(
 	},
 	closed,
 );
+/**
+ * One run of an extension's pinned program outside the sandbox, or its refusal: which pin ran, for which kind of
+ * request, and how it ended. Arguments stay in the session's activity ledger, clipped and redacted (#434).
+ */
+export const ExtensionBinaryRanSchema = Type.Object(
+	{
+		extension: Type.Object(
+			{
+				id: ExistingId,
+				version: ExistingId,
+				scope: ExistingId,
+				contentDigest: Type.Optional(ExistingId),
+			},
+			closed,
+		),
+		binary: ExistingId,
+		version: ExistingId,
+		/** The pinned download for this platform; absent when the declaration pins none here. */
+		sha256: Type.Optional(sha256Hex),
+		via: vocabulary(["run", "pane"]),
+		parent: vocabulary(["command", "action", "tool", "observe", "hook", "interview", "unknown"]),
+		outcome: vocabulary(["ok", "failed", "timeout", "refused"]),
+		reasonCode: Type.Optional(vocabulary(["background-request", "read-only", "not-installed"])),
+		exitCode: Type.Optional(Type.Integer()),
+		argCount: count,
+		durationMs: Type.Optional(duration),
+	},
+	closed,
+);
 /** One PanHub lifecycle operation on a pack: what changed, at which digests, and who confirmed it (#434). */
 export const HubLifecycleSchema = Type.Object(
 	{

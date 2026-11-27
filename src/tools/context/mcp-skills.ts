@@ -14,11 +14,11 @@
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type { SkillLoadRefusal } from "../../core/skill-activation.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { MCP_SKILL_APPROVAL_RULE_ID } from "../../core/views/approval-words.js";
 import type { McpAttestedSkill } from "../../domains/gateway/mcp/skill-catalog.js";
 import {
 	boundedMcpSkillText,
 	getMcpSkill,
-	MCP_SKILL_APPROVAL_RULE_ID,
 	type McpSkillEntry,
 	type McpSkillsTransport,
 	mcpSkillBody,
@@ -99,6 +99,13 @@ export interface McpSkillActivation {
 	/** Whether `name` is an MCP skill this session loaded. */
 	holds(name: string, sessionId: string | undefined): boolean;
 	readFile(input: McpSkillFileInput): Promise<ToolResult>;
+}
+
+/** What a registry needs to load MCP skills; an MCP capability source carries it (`McpCapabilitySource.skillLoading`). */
+export interface McpSkillLoading {
+	contextSkillLoadInput: typeof contextSkillLoadInput;
+	createMcpSkillActivation: typeof createMcpSkillActivation;
+	mcpSkillConfirmation: typeof mcpSkillConfirmation;
 }
 
 const ASKED_LIMIT = 256;

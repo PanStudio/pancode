@@ -9,6 +9,8 @@ import type { InstalledPlugin, PluginSnapshot } from "../domains/plugins/types.j
 import { loadFragments } from "../domains/prompts/fragment-loader.js";
 import type { ReloadClassesController, ReloadReport } from "../session-control/reload-report.js";
 import { resetDocsIndex } from "../tools/context/docs-engine.js";
+import type { McpCapabilitySource, McpDeclarationReload } from "../tools/gateway/mcp-capability-types.js";
+import { createIdleDeferral } from "./idle-deferral.js";
 
 type Inventory = Map<string, string>;
 
@@ -69,6 +71,12 @@ export interface ReloadClassesDeps {
 	hub(): PluginSnapshot | undefined;
 	reloadHub(): PluginSnapshot;
 	extensions(): ReadonlyArray<InstalledExtension>;
+	mcp?: {
+		/** The session's MCP source; absent when this session loaded none. */
+		source(): Pick<McpCapabilitySource, "reloadDeclarations"> | null | undefined;
+		/** No turn is streaming or preparing; a swap waits for it. */
+		idle(): boolean;
+	};
 	/** Fragment root to read; tests point it at a temporary tree. Defaults to the running package's. */
 	fragmentsRoot?: string;
 }
@@ -76,6 +84,25 @@ export interface ReloadClassesDeps {
 function fragmentInventory(rootDir: string | undefined): Inventory {
 	const table = loadFragments(rootDir === undefined ? undefined : { rootDir });
 	return new Map([...table.byId].map(([id, fragment]) => [id, fragment.contentHash]));
+}
+
+function mcpSection(reload: McpDeclarationReload): { lines: string[]; failed: boolean } {
+	const count = (kind: string, ids: string[]) =>
+		`  ${kind}: ${ids.length}${ids.length === 0 ? "" : ` (${ids.join(", ")})`}`;
+	return {
+		lines: [
+			"MCP servers",
+			count("added", reload.added),
+			count("removed", reload.removed),
+			count("changed", reload.changed),
+			`  unchanged: ${reload.unchanged.length}`,
+			`  needs trust: ${reload.needsTrust.length === 0 ? "none" : `${reload.needsTrust.join(", ")}; trust each with pancode mcp trust <id>, then /reload mcp`}`,
+			"  added and changed servers launch on their next use; removed ones are closed",
+			...reload.diagnostics.map((issue) => `  issue: ${issue}`),
+			...(reload.diagnostics.length === 0 ? ["  failed: none"] : []),
+		],
+		failed: reload.diagnostics.length > 0,
+	};
 }
 
 /** Owns just one command's reporting scope; the existing reloads remain the writers. */
@@ -95,6 +122,43 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 	deps.bus.subscribe("config.reload_failed", ({ message }) => {
 		configFailure = message;
 	});
+	// A swap that waited for a turn or a call in flight runs once the session settles, and reports as a notice.
+	const mcpDeferral = createIdleDeferral(deps.bus, () => deps.mcp?.idle() ?? false);
+	let mcpDeferralGen = 0;
+	const cancelMcpDeferral = (): void => {
+		mcpDeferralGen += 1;
+		mcpDeferral.cancel();
+	};
+	const deferMcpSwap = (source: Pick<McpCapabilitySource, "reloadDeclarations">): void => {
+		const gen = ++mcpDeferralGen;
+		mcpDeferral.defer(async () => {
+			try {
+				const swap = await source.reloadDeclarations();
+				if (gen !== mcpDeferralGen) return true;
+				if (swap === null) return false;
+				const section = mcpSection(swap);
+				deps.bus.emit("reload.applied", {
+					target: "mcp",
+					text: `MCP servers swapped after the turn settled: ${section.lines
+						.slice(1)
+						.map((line) => line.trim())
+						.join("; ")}`,
+					failed: section.failed,
+				});
+				return true;
+			} catch (error) {
+				if (gen !== mcpDeferralGen) return true;
+				const message = error instanceof Error ? error.message : String(error);
+				if (message === "MCP capability source is closed") return true;
+				deps.bus.emit("reload.applied", {
+					target: "mcp",
+					text: `MCP servers swap failed after the turn settled: ${message}`,
+					failed: true,
+				});
+				return true;
+			}
+		});
+	};
 	return {
 		get active() {
 			return active;
@@ -131,6 +195,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 						// The watcher intentionally swallows invalid files. Validate before invoking it,
 						// and retain its namespace rejection for the report as well.
 						readStrictLayeredSettings(deps.cwd());
+						configFailure = null;
 						config.reload();
 						if (configFailure) throw new Error(configFailure);
 						const after = config.get();
@@ -204,9 +269,33 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 						failure("Prompt fragments (previous table kept)", error);
 					}
 				}
+				if (target === "all" || target === "mcp") {
+					try {
+						const source = deps.mcp?.source();
+						const idle = deps.mcp?.idle() === true;
+						if (source && idle) cancelMcpDeferral();
+						const swap = source && idle ? await source.reloadDeclarations() : null;
+						if (!source)
+							lines.push("MCP servers", "  this session loaded no MCP source; a new session reads its MCP declarations");
+						else if (swap === null) {
+							deferMcpSwap(source);
+							lines.push(
+								"MCP servers",
+								"  deferred: a turn or an MCP call is running; the swap runs once it settles and reports then",
+							);
+						} else {
+							const section = mcpSection(swap);
+							lines.push(...section.lines);
+							if (section.failed) failed = true;
+						}
+					} catch (error) {
+						failure("MCP servers", error);
+					}
+				}
 				lines.push(
 					"Restart-bound classes: compiled source (everything under src/**/*.ts), core tool schemas, provider runtimes, runtime plugins, safety rule packs, config/session schemas and pane host are not reloaded by these commands.",
 				);
+				deps.bus.emit("session.reloaded", { target, failed });
 				return { text: lines.join("\n"), failed };
 			} finally {
 				active = false;

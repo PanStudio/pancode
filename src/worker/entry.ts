@@ -344,7 +344,15 @@ async function main(): Promise<number> {
 		...(spec.trustProjectCompatRoots !== undefined ? { trustProjectCompatRoots: spec.trustProjectCompatRoots } : {}),
 		onPermission: envelopePermissionMode(spec.envelope.approval),
 		permitAllowance: { git: spec.permit.allowance.git, ...envelopeAllowance(spec.envelope.approval) },
-		...(spec.permit.ceiling.mcp !== undefined ? { mcp: envelopeMcp(spec.permit.ceiling.mcp, spec.envelope) } : {}),
+		// The MCP client, hub and plugin code loads only for a run whose permit attests an MCP capability.
+		...(spec.permit.ceiling.mcp !== undefined
+			? {
+					mcp: {
+						attestation: envelopeMcp(spec.permit.ceiling.mcp, spec.envelope),
+						createSource: (await import("../tools/gateway/mcp-capabilities.js")).createMcpCapabilitySource,
+					},
+				}
+			: {}),
 		taskGit: {
 			allowance: spec.permit.allowance.git,
 			// A run that already runs arbitrary code gains nothing from a repository hook (Q5).

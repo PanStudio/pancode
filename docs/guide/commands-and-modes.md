@@ -360,7 +360,7 @@ Known confusions, as found on recorded sessions:
 | `--tool-profile <name>` | Restrict dispatched-agent tools: `minimal-local`, `science-local`, or `full-agent`. |
 | `--require <capability>` | Require a target capability for dispatch. Repeatable. |
 | `--worktree` | Run the `--agent` worker in a task worktree PanCode creates, kept on its branch for review. |
-| `--steer-channel <path>` | Read live steering lines from a FIFO or an appended regular file to steer the active run. Under `--output-format stream-json`, each line is acknowledged with a `steer` frame: `queued`, then `accepted`, or `refused` with a reason. |
+| `--steer-channel <path>` | Read live steering lines from a FIFO or an appended regular file to steer the active run. Under `--output-format stream-json`, each line is acknowledged with a `steer` frame: `queued`, then `accepted`, or `refused` with a reason. A `/reload [class]` line runs that reload instead of steering, and its report goes to stderr. |
 
 ### Limit cost for one headless run
 
@@ -580,7 +580,7 @@ Aliases resolve to their command: `/clear` is `/new`, `/exit` is `/quit`, `/cost
 | Command | Usage | Purpose |
 | --- | --- | --- |
 | `/quit` | `/quit` | Exit PanCode. Alias: `/exit`. |
-| `/reload` | `/reload [settings\|hub\|extensions\|prompts\|all]` | Re-read resources and report what applied and what needs a restart. Defaults to `all`. `prompts` re-reads prompt fragments, agent recipes, the project handbook and project rules and names the fragments that changed, and drops the cached `pancode_docs` index; the safety rule pack still needs a restart. `hub` reports what it reloaded. |
+| `/reload` | `/reload [settings\|hub\|extensions\|prompts\|mcp\|all]` | Re-read resources and report what applied and what needs a restart. Defaults to `all`. The same report answers over ACP and in a `pancode run --steer-channel` line. `mcp` re-reads the MCP declarations and swaps the changed ones while no turn or MCP call runs, else after it settles; a server whose declaration still needs trust stays refused. `extensions` asked for during a turn waits for it to settle on every surface. A step that waited reports as a session notice. `prompts` re-reads prompt fragments, agent recipes, the project handbook and project rules and names the fragments that changed, and drops the cached `pancode_docs` index; the safety rule pack still needs a restart. `hub` reports what it reloaded. |
 | `/restart` | `/restart [text]` | Save and restart into this session and workspace. It first checks that the build on disk can start and refuses, keeping the session, when it cannot. Text after the command becomes the restarted session's first turn. In PanCode's own source tree, running from that tree's build, the model can ask for the same restart with `restart_session`: at `default` autonomy an approval card shows the text it would continue with, and the restart runs after the turn settles; at `yolo` or without a terminal the request is refused, and three model-requested restarts in a row without an operator `/restart` are refused. |
 | `/trust` | `/trust` | Open the project trust card for this repository's untrusted or changed configuration: review each surface, or trust all of it and restart into the session to apply it. Says so when nothing is waiting. |
 | `/help` | `/help [query]` | Open the interactive help center showing commands and keys. Loaded prompts are listed under Prompts; `/help <plugin>` lists that plugin's prompts, each with Usage, Does and From |

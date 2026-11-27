@@ -153,6 +153,14 @@ function livePrompts(resources: InteractiveDeps["resources"]): PromptRef[] {
 	return promptRefs(resources?.promptsForDisplay(process.cwd()).items ?? []);
 }
 
+function isChatReadOnly(chat: InteractiveDeps["chat"]): boolean {
+	return chat.toolLimits?.()?.readOnly === true || chat.currentTurnConstraints?.()?.readOnly === true;
+}
+
+function frozenExtensionTools(registry: NonNullable<InteractiveDeps["toolRegistry"]>) {
+	return registry.listAll().flatMap((tool) => (tool.sourceInfo?.extension ? [tool.sourceInfo.extension] : []));
+}
+
 export async function createInteractiveApplication(host: InteractiveDeps): Promise<number> {
 	const deps = presentContextCommands(host);
 	const initialInterface = deps.getSettings?.().interface;
@@ -350,6 +358,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 					ask: (questions) => overlayLifecycle.openTransientAskUserOverlayState(questions),
 				}),
 				sandboxUnixSockets: () => deps.getSettings?.().safety.sandboxUnixSockets ?? "block",
+				readOnly: () => isChatReadOnly(deps.chat),
 				context: () => ({
 					workspace: process.cwd(),
 					sessionId: deps.session?.current()?.id ?? deps.getSessionId?.() ?? null,
@@ -365,13 +374,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				list: (cwd) => deps.extensions?.list(cwd, { all: true }) ?? [],
 				...(deps.reloadExtensions ? { commitHooks: deps.reloadExtensions } : {}),
 				onChange: () => refreshOperatorUi(),
-				...(deps.toolRegistry
-					? {
-							frozenTools: deps.toolRegistry
-								.listAll()
-								.flatMap((tool) => (tool.sourceInfo?.extension ? [tool.sourceInfo.extension] : [])),
-						}
-					: {}),
+				...(deps.toolRegistry ? { frozenTools: frozenExtensionTools(deps.toolRegistry) } : {}),
 				onDiagnostic: (message) => {
 					if (!deps.reloadClasses?.captureIssue(message)) notify("warning", message, "operator-extensions:observation");
 				},

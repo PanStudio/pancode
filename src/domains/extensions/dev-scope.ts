@@ -13,7 +13,7 @@ import { extensionIdentity } from "./activity.js";
 import { evaluatePancodeCompatibility } from "./compatibility.js";
 import { findExtensionManifestPath, loadManifestFromRoot } from "./discovery.js";
 import { extensionContentDigestWithCapture } from "./integrity.js";
-import type { ExtensionSessionOverlay, InstalledExtensionRecord } from "./state.js";
+import type { ExtensionSessionOverlay, InstalledExtensionRecord } from "./listing.js";
 import { listInstalledExtensions } from "./state.js";
 import type { InstalledExtension } from "./types.js";
 

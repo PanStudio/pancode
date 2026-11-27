@@ -631,6 +631,12 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 		tool: "tool",
 		extension: { id: "name", version: "token", scope: "token", contentDigest: "id", generation: "keep" },
 	},
+	"extension.binary_ran": {
+		...keep("sha256", "via", "parent", "outcome", "reasonCode", "exitCode", "argCount", "durationMs"),
+		extension: { id: "name", version: "token", scope: "token", contentDigest: "id" },
+		binary: "name",
+		version: "token",
+	},
 	"hub.installed": HUB,
 	"hub.updated": HUB,
 	"hub.enabled": HUB,

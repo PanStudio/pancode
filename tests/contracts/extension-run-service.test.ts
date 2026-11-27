@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import { capabilityEnvelope, envelopeGrowth, parseExtensionRuntimeV2 } from "@pancode/sdk/pack";
 import { runPackVerb } from "../../src/cli/extensions.js";
 import type { RunCommandVectorOptions, SafeCommandResult } from "../../src/core/safe-exec.js";
+import { applyToolEnvControls, EXTENSION_RUN_DEPTH_ENV } from "../../src/core/tool-env-controls.js";
 import { extensionInvocation } from "../../src/domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import {
@@ -44,13 +45,18 @@ function result(partial: Partial<SafeCommandResult>): SafeCommandResult {
 	};
 }
 
-function harness(ceilings: Partial<ExtensionRunCeilings> = {}, yolo: string | null = null, readOnly = false) {
+function harness(
+	ceilings: Partial<ExtensionRunCeilings> = {},
+	yolo: string | null = null,
+	readOnly = false,
+	env: Record<string, string> = {},
+) {
 	const tempRoot = mkdtempSync(join(tmpdir(), "run-service-"));
 	const calls: Call[] = [];
 	const service = createExtensionRunService({
 		ceilings: { maxConcurrent: 2, autonomy: ["default"], maxCostUsd: 2, maxTimeoutSeconds: 600, ...ceilings },
 		launch: { file: "node", args: ["/pancode.js"], env: { PANCODE_SELF: "1" } },
-		sourceEnv: { PATH: "/bin", SECRET_TOKEN: "x" },
+		sourceEnv: { PATH: "/bin", SECRET_TOKEN: "x", ...env },
 		envPolicy: { targets: [], passEnv: [] },
 		yoloRefusal: () => yolo,
 		...(readOnly ? { readOnly: () => true } : {}),
@@ -140,6 +146,52 @@ describe("extension run service", () => {
 		assert.ok(call.args.includes("yolo"));
 		assert.equal(call.options.env?.PANCODE_YOLO_CONFINEMENT, "contained");
 		h.cleanup();
+	});
+
+	it("refuses a run nested two extension runs deep and counts the depth into each run it starts", async () => {
+		const nested = harness({}, null, false, { PANCODE_EXTENSION_RUN_DEPTH: "1" });
+		await nested.service.wait((await nested.service.start(base)).id);
+		assert.equal(nested.calls[0]?.options.env?.PANCODE_EXTENSION_RUN_DEPTH, "2");
+		nested.cleanup();
+		const deep = harness({}, null, false, { PANCODE_EXTENSION_RUN_DEPTH: "2" });
+		await assert.rejects(
+			deep.service.start(base),
+			(error: ExtensionRunError) => error.code === "refused" && /2 extension runs deep/u.test(error.message),
+		);
+		assert.equal(deep.calls.length, 0);
+		deep.cleanup();
+		for (const bad of ["-5", "abc"]) {
+			const malformed = harness({}, null, false, { PANCODE_EXTENSION_RUN_DEPTH: bad });
+			await assert.rejects(
+				malformed.service.start(base),
+				(error: ExtensionRunError) =>
+					error.code === "refused" && /invalid PANCODE_EXTENSION_RUN_DEPTH/u.test(error.message),
+			);
+			assert.equal(malformed.calls.length, 0);
+			malformed.cleanup();
+		}
+	});
+
+	it("preserves PANCODE_EXTENSION_RUN_DEPTH across tool-env-controls without allowing downgrades", () => {
+		const previous = process.env[EXTENSION_RUN_DEPTH_ENV];
+		try {
+			delete process.env[EXTENSION_RUN_DEPTH_ENV];
+			assert.equal(applyToolEnvControls({})[EXTENSION_RUN_DEPTH_ENV], undefined);
+			assert.equal(applyToolEnvControls({ [EXTENSION_RUN_DEPTH_ENV]: "1" })[EXTENSION_RUN_DEPTH_ENV], "1");
+
+			process.env[EXTENSION_RUN_DEPTH_ENV] = "1";
+			assert.equal(applyToolEnvControls({})[EXTENSION_RUN_DEPTH_ENV], "1");
+			assert.equal(applyToolEnvControls({ [EXTENSION_RUN_DEPTH_ENV]: "0" })[EXTENSION_RUN_DEPTH_ENV], "1");
+			assert.equal(applyToolEnvControls({ [EXTENSION_RUN_DEPTH_ENV]: "2" })[EXTENSION_RUN_DEPTH_ENV], "2");
+			assert.equal(applyToolEnvControls({ [EXTENSION_RUN_DEPTH_ENV]: "-5" })[EXTENSION_RUN_DEPTH_ENV], "2");
+
+			process.env[EXTENSION_RUN_DEPTH_ENV] = "2";
+			assert.equal(applyToolEnvControls({})[EXTENSION_RUN_DEPTH_ENV], "2");
+			assert.equal(applyToolEnvControls({ [EXTENSION_RUN_DEPTH_ENV]: "1" })[EXTENSION_RUN_DEPTH_ENV], "2");
+		} finally {
+			if (previous === undefined) delete process.env[EXTENSION_RUN_DEPTH_ENV];
+			else process.env[EXTENSION_RUN_DEPTH_ENV] = previous;
+		}
 	});
 
 	it("ends a run when the starting request ends", async () => {

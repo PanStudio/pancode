@@ -180,7 +180,7 @@ export function steerChannelRefusal(filePath: string): string | undefined {
 }
 
 /** What a steer intake needs from the chat it steers. */
-interface SteerTarget {
+export interface SteerTarget {
 	steer(text: string): boolean;
 	onEvent(handler: (event: { type: string }) => void): () => void;
 }

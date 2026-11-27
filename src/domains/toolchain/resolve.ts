@@ -111,6 +111,22 @@ export function resolveVendoredBinary(id: string): { binaryPath: string; version
 	return path !== null ? { binaryPath: path, version: entry.version } : null;
 }
 
+/**
+ * One binary of a row at its pin and nothing else: no PATH lookup, no version probe. A program an extension
+ * declares resolves only here, so a same-named program on PATH never runs in place of the bytes the operator approved.
+ */
+export function resolvePinnedEntryBinary(entry: PinnedTool, binary: string): ToolResolution {
+	const vendoredPath = findVendoredBinary(entry.id, entry.version, binary);
+	return {
+		source: vendoredPath === null ? "none" : "vendored",
+		binaryPath: vendoredPath,
+		version: vendoredPath === null ? null : entry.version,
+		entry,
+		pathCandidate: null,
+		vendoredPath,
+	};
+}
+
 /** Whether this platform has a pinned build of `id` that this home has not installed, the gap its install command closes. */
 export function pinnedToolMissing(id: string): boolean {
 	const entry = findPinnedTool(id);

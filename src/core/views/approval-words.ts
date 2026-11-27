@@ -8,6 +8,12 @@
 /** The rail id the session test-runner consent ask carries, so the card, the audit row and the approval note name it. */
 export const SESSION_CODE_CONSENT_RULE_ID = "session-code-consent";
 
+/**
+ * The rail an MCP skill's first activation asks on. Only the operator answers
+ * it: an approval is a standing grant recorded in mcp-trust.json.
+ */
+export const MCP_SKILL_APPROVAL_RULE_ID = "mcp-skill-approval";
+
 /** The rail as the card, the parked row and the grant row name it. */
 export const SESSION_CODE_CONSENT_TEXT = "session test-runner consent";
 

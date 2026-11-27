@@ -779,7 +779,7 @@ const FUNCTION_LINE_CEILING = 500;
  * repeated in one file takes `[2]`, `[3]` in source order.
  */
 const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
-	["src/cli/modes/print.ts#runHeadlessMainAgent", 865],
+	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 569],
 	["src/core/settings-validate.ts#validateSettings", 1332],
@@ -802,14 +802,14 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
 	["src/engine/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/engine/acp/server.ts#servePancodeAcpAgent", 3786],
+	["src/engine/acp/server.ts#servePancodeAcpAgent", 3780],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3708],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3698],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
-	["src/interactive/interactive-application.ts#createInteractiveApplication", 2213],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 2208],
 	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1078],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 795],
 	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 741],
@@ -822,7 +822,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/chat-loop-state-machine.ts#createChatLoopStateMachine", 645],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
-	["src/session-control/chat-loop.ts#createChatLoop", 1576],
+	["src/session-control/chat-loop.ts#createChatLoop", 1572],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
 	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
@@ -836,7 +836,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
-	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1705],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
 	["src/tools/registry.ts#createRegistry", 2346],
 ]);
 
@@ -1128,6 +1128,16 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 			"one slash parser and one registry-membership source for both surfaces. The headless refusal in src/cli/run.ts and the TUI editor must agree on which tokens name a command, and a second copy of the parser would drift. The registry's own imports are what the closure guard below watches.",
 	},
 	{
+		module: "src/session-control/reload-report.ts",
+		reason:
+			"the reload target and report types the headless steer channel hands to the reload service. A type-only leaf: no importer reaches a value through it.",
+	},
+	{
+		module: "src/session-control/session-notices.ts",
+		reason:
+			"one projection of the session facts every surface reports. The headless stderr sink in src/cli/headless-notices.ts reads the same facts the terminal and ACP render; its value closure is formatter text over core shapes.",
+	},
+	{
 		module: "src/session-control/chat-loop.ts",
 		reason: "the Stage 1 composition root creates the chat loop; CLI event-shape imports are type-only and erase.",
 		allowStage0OverlapFrom: [ORCHESTRATOR],
@@ -1381,8 +1391,9 @@ function staticValueImportClosure(entry: string): Map<string, string | null> {
 
 /**
  * Orchestrator-only modules the worker must not load statically (rule 2b):
- * every domain bundle (`extension.ts`) and the heavy modules only the
- * orchestrator's composition reaches.
+ * every domain bundle (`extension.ts`), the heavy modules only the
+ * orchestrator's composition reaches, and the MCP client, hub and plugin
+ * code a worker loads only when it admits an MCP server.
  */
 function isWorkerDeniedModule(relative: string): boolean {
 	return (
@@ -1390,6 +1401,9 @@ function isWorkerDeniedModule(relative: string): boolean {
 		relative === "src/domains/telemetry/read-model.ts" ||
 		relative === "src/domains/memory/intervention.ts" ||
 		relative.startsWith("src/domains/context/wiki/") ||
+		relative.startsWith("src/domains/gateway/") ||
+		relative.startsWith("src/domains/resources/") ||
+		relative.startsWith("src/domains/plugins/") ||
 		relative === "src/core/settings-controls.ts"
 	);
 }

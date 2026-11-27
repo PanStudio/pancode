@@ -187,3 +187,30 @@ export class OperatorExtensions {
 		return this.v2.dispose();
 	}
 }
+
+/** The extension section of a reload report: how the operator runtimes took the committed hook generation. */
+export interface OperatorReloadSummary {
+	status: string;
+	message: string;
+	failures: string[];
+	nextSession: string[];
+}
+
+/** Every surface words an operator runtime reload the same way: failed runtimes, a degraded commit, next-session reasons. */
+export function operatorReloadSummary(
+	result: OperatorReloadResult,
+	operator: Pick<OperatorExtensions, "entries">,
+): OperatorReloadSummary {
+	const entries = operator.entries();
+	const failures = entries
+		.filter((entry) => entry.state === "failed")
+		.map((entry) => `${entry.id}: ${entry.reason ?? "runtime failed"}`);
+	if ((result.degraded === undefined && result.status === "committed") || (result.degraded ?? 0) > 0)
+		failures.push(result.message);
+	return {
+		status: result.status,
+		message: result.message,
+		failures,
+		nextSession: entries.flatMap((entry) => entry.newSessionReasons.map((reason) => `${entry.id}: ${reason}`)),
+	};
+}

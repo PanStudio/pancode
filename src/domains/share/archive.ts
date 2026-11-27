@@ -35,7 +35,8 @@ import { assertAgentSpecPolicy, normalizeAgentSpec, parseAgentRecipeSchema, pars
 import { loadManifestFromRoot } from "../extensions/discovery.js";
 import { envelopeReviewLines, reviewExtensionEnvelope } from "../extensions/envelope-review.js";
 import { extensionContentDigest } from "../extensions/integrity.js";
-import { extensionBaseDir, installExtension, listInstalledExtensions } from "../extensions/state.js";
+import { extensionBaseDir } from "../extensions/listing.js";
+import { installExtension, listInstalledExtensions } from "../extensions/state.js";
 import type { ExtensionScope } from "../extensions/types.js";
 
 export type ShareScope = "project" | "user";
