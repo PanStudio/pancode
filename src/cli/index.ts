@@ -105,6 +105,7 @@ Project and PanHub:
   pancode tools|interop|panes  pinned programs, external coding agents, the pane host
   pancode arena|campaign|research|semantic  model trials, metric climbs, search
   pancode report|usage         reports to the maintainers, cross-session usage facts
+  pancode <verb> [--json]      a verb an installed extension declares; built-in names always win
 
 Interactive options:
   --resume, -r [id]  --continue, -c  --fork  --session-file <path>  --demo|--no-demo  --with-panes
@@ -595,6 +596,12 @@ async function dispatch(subcommand: string, subArgs: string[], bootOptions: CliB
 	}
 	// Task text where a command belongs (`pancode "fix the bug"`) is the common bare-text mistake.
 	const bareText = /\s/.test(subcommand.trim());
+	// Built-in names always win; an installed extension's verb answers only a name nothing else claims.
+	if (!bareText && /^[a-z][a-z0-9-]*$/u.test(subcommand)) {
+		installHumanStdoutHandler(subcommand, subArgs);
+		const code = await (await import("./extensions.js")).runPackVerb(subcommand, subArgs);
+		if (code !== null) return code;
+	}
 	printError(
 		bareText
 			? `unknown subcommand: ${subcommand}; for one headless task use pancode run "<task>"`
