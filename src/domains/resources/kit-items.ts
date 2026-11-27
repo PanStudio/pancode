@@ -9,7 +9,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { readSettings } from "../../core/config.js";
-import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { resolveSafeCwd } from "../../core/safe-exec.js";
 import { loadPluginMcpFile } from "../gateway/mcp/config.js";
 import { isPluginId, listInstalledPlugins, readPluginInstallRecord } from "../plugins/index.js";
 import { discoverHub } from "./hub.js";
@@ -169,7 +169,8 @@ export interface KitServeLaunch {
 	command: string;
 	args: string[];
 	cwd: string;
-	env: NodeJS.ProcessEnv;
+	workspaceRoot: string;
+	env: Record<string, string>;
 }
 
 function trustsForeignPacks(): boolean {
@@ -226,6 +227,12 @@ export function kitServeLaunch(name: string, cwd: string): KitChangeResult<KitSe
 	}
 	return {
 		ok: true,
-		value: { command: server.command, args: [...server.args], cwd: launchCwd, env: buildSafeToolEnv({ ...server.env }) },
+		value: {
+			command: server.command,
+			args: [...server.args],
+			cwd: launchCwd,
+			workspaceRoot: server.cwdRoot,
+			env: server.env,
+		},
 	};
 }
