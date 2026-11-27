@@ -51,7 +51,11 @@ import {
 	resolvePackBinary,
 	syncPackBinaries,
 } from "../../src/domains/extensions/services/binaries.js";
-import { type PackBinaryCaller, runPackBinary } from "../../src/domains/extensions/services/binary-runs.js";
+import {
+	type PackBinaryCaller,
+	runPackBinary,
+	servePackPane,
+} from "../../src/domains/extensions/services/binary-runs.js";
 import { resolveExtensionKeys } from "../../src/domains/extensions/services/keys.js";
 import { createExtensionPaneHost, type ExtensionPaneOwner } from "../../src/domains/extensions/services/pane.js";
 import {
@@ -910,6 +914,27 @@ describe("extension binaries service", () => {
 			/ctx.binaries runs only from a command, an action or a tool call, not from an event or timer handler/u,
 		);
 		await rejects(runPackBinary("fixture", [pinned], request, store, caller("tool", true)), /read-only turn/u);
+		let served = 0;
+		const serve = async () => {
+			served += 1;
+			return "visible";
+		};
+		const open = { binary: NAME, args: ["status"] };
+		await rejects(servePackPane("fixture", [pinned], "open", open, caller("observe"), serve), /ctx.pane runs only/u);
+		await rejects(servePackPane("fixture", [pinned], "open", open, caller("action", true), serve), /read-only turn/u);
+		await rejects(servePackPane("fixture", [pinned], "state", {}, caller("command", true), serve), /read-only turn/u);
+		strictEqual(await servePackPane("fixture", [pinned], "open", open, caller("action"), serve), "visible");
+		strictEqual(served, 1);
+		deepStrictEqual(
+			recentPackageActivity("fixture")
+				.filter((entry) => entry.kind === "binary:pane")
+				.map((entry) => [entry.outcome, entry.details?.parent]),
+			[
+				["refused", "observe"],
+				["refused", "action"],
+				["ok", "action"],
+			],
+		);
 		const runs = recentPackageActivity("fixture").filter((entry) => entry.kind === "binary:run");
 		deepStrictEqual(
 			runs.slice(-3).map((entry) => [entry.outcome, entry.details?.parent, entry.details?.args]),
