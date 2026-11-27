@@ -110,15 +110,20 @@ export function settleOrphanedRunJournal(directory: string, settlement: RunSettl
 }
 
 /**
- * Seal a terminal run whose journal holds run.settled but no seal after it: its host died between the settlement and
- * the seal. A journal without run.settled is left alone, and so is one whose writer another live process holds,
- * since that owner seals it itself (#434).
+ * Seal a terminal run whose journal is not sealed. A journal holding run.settled keeps it: its host died between the
+ * settlement and the seal. One without run.settled gets `settlement`, the correcting record the run's terminal row
+ * states, so the journal no longer reads as a run that never ended; with none it is left alone. A journal whose writer
+ * another live process holds is left to that owner, which seals it itself (#434).
  */
-export function sealSettledRunJournal(directory: string): Promise<void> {
-	return completeRunJournal(directory, null);
+export function sealTerminalRunJournal(directory: string, settlement: RunSettlement | null): Promise<void> {
+	return completeRunJournal(directory, settlement, true);
 }
 
-async function completeRunJournal(directory: string, settlement: RunSettlement | null): Promise<void> {
+async function completeRunJournal(
+	directory: string,
+	settlement: RunSettlement | null,
+	ownerMayLive = false,
+): Promise<void> {
 	const { openCallJournal, readCallJournal } = await import("../telemetry/call-journal.js");
 	const { telemetryBundlePath } = await import("../telemetry/paths.js");
 	const { existsSync } = await import("node:fs");
@@ -133,19 +138,20 @@ async function completeRunJournal(directory: string, settlement: RunSettlement |
 	try {
 		writer = await openCallJournal({ directory, context, writer: await pancodeWriterVersions() });
 	} catch (error) {
-		if (settlement === null && error instanceof StateFileLockTimeoutError) return;
+		if (ownerMayLive && error instanceof StateFileLockTimeoutError) return;
 		throw error;
 	}
 	if (!settled && settlement) {
 		try {
 			const result = await writer.storeObject("run-result", settlement.result);
-			writer.enqueue({
-				kind: "run.settled",
-				data: runSettledRecord(settlement, result),
-				ctx: context,
-				wallMs: Date.now(),
-				mono: performance.now(),
-			});
+			const data = runSettledRecord(settlement, result);
+			const before = writer.health();
+			writer.enqueue({ kind: "run.settled", data, ctx: context, wallMs: Date.now(), mono: performance.now() });
+			await writer.flush();
+			const after = writer.health();
+			if (after.writeErrors > before.writeErrors || after.invalid > before.invalid)
+				throw new Error("run.settled was not persisted");
+			telemetryHub().publish("run.settled", data, context);
 		} catch (error) {
 			// No result object, no settlement: the scope stays unsealed rather than citing content that is not on disk.
 			await writer.close();
@@ -367,15 +373,16 @@ async function openOwnedRunTelemetry(
 			// land rejects: a stored result object, the enqueue, and the write itself (#434).
 			const durable = (async () => {
 				const result = await writer.storeObject("run-result", settlement.result);
-				if (
-					!writer.enqueue({ kind: "run.settled", data: runSettledRecord(settlement, result), ctx: context, wallMs, mono })
-				)
+				const data = runSettledRecord(settlement, result);
+				if (!writer.enqueue({ kind: "run.settled", data, ctx: context, wallMs, mono }))
 					throw new Error("run.settled could not be enqueued");
 				await writer.flush();
 				const after = writer.health();
 				if (after.writeErrors > before.writeErrors || after.invalid > before.invalid)
 					throw new Error("run.settled was not persisted");
 				landedSettlement = settlement;
+				// In-process listeners hear the run end from the record on disk, before its live terminal event (#434).
+				telemetryHub().publish("run.settled", data, context);
 				// The assessment is best-effort: a run whose assessment fails still seals, without one.
 				await journalAssessment(writer, directory, context, settlement.assessment ?? null);
 			})().catch((error: unknown) => {

@@ -218,6 +218,28 @@ it("forwards bounded failure codes and reasons for withheld and idle workers", a
 	strictEqual(await served, 0);
 });
 
+it("puts no progress or start frame on the wire for a run that already ended", async () => {
+	const { bus, peer, served } = await openSession(["run.progressed", "run.failed"]);
+	const identity = {
+		runId: "ended",
+		agentId: "coder",
+		targetId: "fixture",
+		wireModelId: "fixture",
+		runtimeId: "fixture",
+		runtimeKind: "http",
+		requestOrigin: "agent",
+	} as const;
+	bus.emit("run.progressed", { ...identity, event: {} } as never);
+	bus.emit("run.failed", { ...identity, outcome: "failed", reason: "failed", outcomeCode: null, outcomeDetail: null });
+	bus.emit("run.progressed", { ...identity, event: {} } as never);
+	deepStrictEqual(
+		eventsOf(peer).map((event) => event.kind),
+		["run.progressed", "run.failed"],
+	);
+	peer.transport.close();
+	strictEqual(await served, 0);
+});
+
 it("forwards a finished run's token facts with their wording, never an unknown run as counted (#434 §11.3)", async () => {
 	const { bus, peer, served } = await openSession(["run.completed"]);
 	const measured = (value: number) => ({ kind: "measured" as const, value, source: "provider" as const });

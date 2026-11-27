@@ -1944,13 +1944,13 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	bus.subscribe("run.started", (payload) => {
 		if (typeof payload?.runId === "string") taskBoard.attachRun(payload.runId);
 	});
-	// The receipt's flow label is absorbed the moment a run settles, attached or
-	// detached, so any later injection of its output (a collect, a continuation,
-	// a resume) already finds the session ledger carrying it.
+	// The receipt's flow label is absorbed the moment a run settles (its landed record, then its live end), so any
+	// later injection of its output (a collect, a continuation, a resume) already finds the session ledger carrying it.
 	const absorbDispatchFlow = (payload: { runId?: unknown; flowRestrictions?: unknown } | undefined): void => {
 		if (typeof payload?.runId !== "string" || !isFlowRestrictionSet(payload.flowRestrictions)) return;
 		flowLedger.absorb(payload.flowRestrictions, { tool: "dispatch", toolCallId: payload.runId });
 	};
+	bus.subscribe("run.settled", (data, ctx) => absorbDispatchFlow({ ...data, runId: ctx?.runId }));
 	bus.subscribe("run.completed", (payload) => {
 		if (typeof payload?.runId !== "string") return;
 		taskBoard.detachRun(payload.runId);

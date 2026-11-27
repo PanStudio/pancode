@@ -16,6 +16,13 @@
 // Every value shown is a reported fact. Nothing is derived, and nothing is shown for a run that was
 // never reported. `taskPreview` is PanCode's own sanitized 160-byte prefix, never the exact task.
 
+import {
+	type RunLifecycle,
+	reduceRunLifecycle,
+	runLifecycleEvent,
+	runLifecycleLive,
+	runOutcomeView,
+} from "../../../../src/core/views/run-lifecycle.js";
 import type { FleetItem } from "../../contracts/fleet-events.js";
 import type { SessionWorkerRun } from "../../contracts/session-overview.js";
 import { formatDuration } from "../api/clock.js";
@@ -159,15 +166,9 @@ function terminalOutcome(payload: Readonly<Record<string, unknown>>): string | n
 	return codedDetail(code, text(payload.outcomeDetail));
 }
 
-const TERMINAL_STATES: ReadonlySet<FleetRunState> = new Set<FleetRunState>(["done", "failed", "stopped"]);
-
-/**
- * The engine settles a stopped run through `run.failed` with the outcome `canceled` (`resolveRunOutcome`); a stop is
- * not a failure, so it neither reads as one nor offers a report.
- */
+/** Whether a failure frame is the engine's stop, read the way the run lifecycle reads it. */
 function isStop(payload: Readonly<Record<string, unknown>>): boolean {
-	const outcome = text(payload.outcome);
-	return outcome === "canceled" || outcome === "cancelled";
+	return runOutcomeView(text(payload.outcome) ?? "failed") === "stopped";
 }
 
 /** A stop's reason and detail, without the cancel code that the state word already says. */
@@ -175,20 +176,28 @@ function stopOutcome(payload: Readonly<Record<string, unknown>>): string | null 
 	return codedDetail(text(payload.outcomeCode), text(payload.outcomeDetail));
 }
 
-function apply(run: FleetRun, type: string, payload: Readonly<Record<string, unknown>>, at: string): FleetRun {
-	// A late progress or start frame must not bring a settled run back to life.
-	if (
-		TERMINAL_STATES.has(run.state) &&
-		(type === "fleet.progress" || type === "fleet.started" || type === "fleet.enqueued")
-	)
-		return run;
+/**
+ * Fold one frame into its run's row. The shared run lifecycle says whether the run is queued, live or over: a late
+ * progress or start frame never brings an ended run back to life, and the engine's stop (`run.failed` with the outcome
+ * `canceled`) reads as stopped, not failed, and offers no report.
+ */
+function apply(
+	run: FleetRun,
+	type: string,
+	payload: Readonly<Record<string, unknown>>,
+	at: string,
+	before: RunLifecycle | undefined,
+	lifecycle: RunLifecycle,
+): FleetRun {
+	if (!runLifecycleLive(before) && type !== "fleet.completed" && type !== "fleet.failed") return run;
 	const base = { ...run, agentId: text(payload.agentId) ?? run.agentId, updatedAt: at };
+	const stopped = lifecycle.view === "stopped";
 	switch (type) {
 		case "fleet.enqueued":
 		case "fleet.started":
 			return {
 				...base,
-				state: type === "fleet.enqueued" ? "queued" : "running",
+				state: lifecycle.view === "queued" ? "queued" : "running",
 				taskPreview: text(payload.taskPreview) ?? base.taskPreview,
 				node: text(payload.node) ?? base.node,
 				attempt: integer(payload.attempt) ?? base.attempt,
@@ -203,7 +212,7 @@ function apply(run: FleetRun, type: string, payload: Readonly<Record<string, unk
 		case "fleet.completed":
 			return {
 				...base,
-				state: "done",
+				state: lifecycle.view === "done" ? "done" : stopped ? "stopped" : "failed",
 				outcome: terminalOutcome(payload) ?? base.outcome,
 				durationMs: integer(payload.durationMs) ?? base.durationMs,
 				tokens: text(payload.tokenDisplay) ?? base.tokens,
@@ -212,8 +221,8 @@ function apply(run: FleetRun, type: string, payload: Readonly<Record<string, unk
 		case "fleet.failed":
 			return {
 				...base,
-				state: isStop(payload) ? "stopped" : "failed",
-				outcome: (isStop(payload) ? stopOutcome(payload) : terminalOutcome(payload)) ?? base.outcome,
+				state: lifecycle.view === "done" ? "done" : stopped ? "stopped" : "failed",
+				outcome: (stopped ? stopOutcome(payload) : terminalOutcome(payload)) ?? base.outcome,
 				durationMs: integer(payload.durationMs) ?? base.durationMs,
 				tokens: text(payload.tokenDisplay) ?? base.tokens,
 				modelCalls: measuredCount(payload.apiCalls) ?? base.modelCalls,
@@ -230,13 +239,18 @@ function apply(run: FleetRun, type: string, payload: Readonly<Record<string, unk
  */
 export function foldFleetRuns(items: readonly FleetItemLike[]): readonly FleetRun[] {
 	const runs = new Map<string, FleetRun>();
+	const lifecycles = new Map<string, RunLifecycle>();
 	const ordered = [...items].sort((left, right) => left.sourceSequence - right.sourceSequence);
 	for (const item of ordered) {
 		if (!isRunFact(item.fact.type)) continue;
 		const payload = record(item.fact.payload),
-			runId = text(payload.runId);
-		if (runId === null) continue;
-		const run = apply(runs.get(runId) ?? blank(runId, item.at), item.fact.type, payload, item.at);
+			event = runLifecycleEvent(item.fact.type, payload);
+		if (event === null) continue;
+		const { runId } = event;
+		const before = lifecycles.get(runId);
+		const lifecycle = reduceRunLifecycle(before, event);
+		lifecycles.set(runId, lifecycle);
+		const run = apply(runs.get(runId) ?? blank(runId, item.at), item.fact.type, payload, item.at, before, lifecycle);
 		runs.set(runId, item.record ? { ...run, record: item.record } : run);
 	}
 	if (runs.size <= FLEET_RUN_CAP) return [...runs.values()];

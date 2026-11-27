@@ -7,11 +7,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 
 import { recoverAbandonedRuns } from "../../src/domains/dispatch/orphan-recovery.js";
-import { openRunTelemetry, settleOrphanedRunJournal } from "../../src/domains/dispatch/run-telemetry.js";
+import {
+	openRunTelemetry,
+	sealTerminalRunJournal,
+	settleOrphanedRunJournal,
+} from "../../src/domains/dispatch/run-telemetry.js";
 import { openLedger } from "../../src/domains/dispatch/state.js";
 import {
 	appendTurn,
@@ -26,7 +31,11 @@ import {
 } from "../../src/domains/session/protected-artifact-journal.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryRunsDirectory } from "../../src/domains/telemetry/paths.js";
+import {
+	telemetryBundlePath,
+	telemetryJournalPath,
+	telemetryRunsDirectory,
+} from "../../src/domains/telemetry/paths.js";
 import { createSession, readSessionFileEntries, resumeSession, sessionPaths } from "../../src/engine/session.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -257,6 +266,52 @@ describe("session durability boundary", () => {
 		const settled = (await readCallJournal(directory)).records.filter(({ record }) => record.k === "run.settled");
 		strictEqual(settled.length, 1);
 		strictEqual((settled[0]?.record.data as { terminalReason?: string }).terminalReason, "stalled");
+	});
+
+	it("gives a terminal run whose run.settled never landed the correcting record its row states, heard once on disk", async () => {
+		const ledger = openLedger({ maxRuns: 10 });
+		const run = ledger.create({
+			agentId: "coder",
+			executionRole: "builder",
+			task: "finalization failed",
+			targetId: "local",
+			wireModelId: "model",
+			runtimeId: "openai",
+			runtimeKind: "http",
+			sessionId: null,
+			cwd: scratch.dir,
+		});
+		ledger.update(run.id, { status: "failed", outcome: "failed", endedAt: new Date().toISOString() });
+		await ledger.persist();
+		const directory = join(telemetryRunsDirectory(pancodeStateDir()), run.id);
+		const journal = await openRunTelemetry(
+			{ sessionId: null, runId: run.id, agent: { role: "worker", id: run.id } },
+			directory,
+		);
+		journal.feed({ kind: "open", runId: run.id, agentId: "coder" }, 1_000_000);
+		await journal.close();
+
+		const recovered = recoverAbandonedRuns(openLedger({ maxRuns: 10 }), { journalUnsealed: () => true });
+		const [unsealed] = recovered.unsealed;
+		strictEqual(unsealed?.runId, run.id);
+		ok(unsealed?.settlement);
+		const heard: Array<{ runId: unknown; outcome: unknown; onDisk: boolean }> = [];
+		const unsubscribe = telemetryHub().subscribe("run.settled", (data, ctx) => {
+			heard.push({
+				runId: ctx?.runId,
+				outcome: data.outcome,
+				onDisk: readFileSync(telemetryJournalPath(directory), "utf8").includes('"run.settled"'),
+			});
+		});
+		try {
+			await sealTerminalRunJournal(directory, unsealed.settlement);
+		} finally {
+			unsubscribe();
+		}
+		deepStrictEqual(heard, [{ runId: run.id, outcome: "failed", onDisk: true }]);
+		const settled = (await readCallJournal(directory)).records.filter(({ record }) => record.k === "run.settled");
+		strictEqual((settled[0]?.record.data as { outcome?: string }).outcome, "failed");
+		ok(existsSync(telemetryBundlePath(directory)), "the corrected journal is sealed");
 	});
 
 	it("closes an abandoned run at its journal's call fold, a call it never settled unknown (FL-24)", async () => {

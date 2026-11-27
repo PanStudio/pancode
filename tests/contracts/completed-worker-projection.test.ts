@@ -26,7 +26,7 @@ import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 import { settledRunTrust } from "../harness/settled-run.js";
 
-test("only integrity-admitted receipt contract facts reach the board and lifecycle reset clears them", () => {
+test("only integrity-admitted receipt contract facts reach the board and a late start keeps them", () => {
 	const envelope = fixtureEnvelope("aa-run");
 	const receipt = finishRunResult(fixtureReceiptDraft(envelope), envelope, {
 		terminal: { terminalReason: "completed" },
@@ -71,10 +71,10 @@ test("only integrity-admitted receipt contract facts reach the board and lifecyc
 		store.reconcile();
 		assert.deepEqual(store.rows()[0]?.resultContract, { kind: "debugger-report", conformance: "pass" });
 		assert.deepEqual(store.rows()[0]?.commitPlacement, { branch: "pancode/task-aa" });
-		const prior = projection.snapshot();
+		// A late start frame for the ended run neither revives it nor clears what its end reported.
 		bus.emit("run.started", { ...event, pid: null, assignmentId: "aa-run", attempt: 1 });
-		assert.equal(projection.snapshot().runs[0]?.resultContract, undefined);
-		assert.deepEqual(prior.runs[0]?.resultContract, { kind: "debugger-report", conformance: "pass" });
+		assert.equal(projection.snapshot().runs[0]?.status, "completed");
+		assert.deepEqual(projection.snapshot().runs[0]?.resultContract, { kind: "debugger-report", conformance: "pass" });
 		facts = { text: "tampered answer", trust: rejected, contract: "pass", contractKind: "debugger-report" };
 		bus.emit("run.completed", event);
 		assert.equal(projection.snapshot().runs[0]?.resultContract, undefined);

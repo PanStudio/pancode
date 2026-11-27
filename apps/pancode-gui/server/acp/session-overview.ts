@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import {
+	type RunLifecycle,
+	reduceRunLifecycle,
+	runLifecycleEvent,
+	runLifecycleLive,
+} from "../../contracts/fleet-events.js";
 import type { SessionOverviewItem, SessionWorkerRun } from "../../contracts/session-overview.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 
@@ -8,28 +14,37 @@ const NO_WORKERS: WorkerSummary = { active: 0, queued: 0, complete: true, nodes:
 /** The overview names this many live runs; the counts above still cover every one. */
 const LISTED_RUNS = 64;
 
+/** Ended runs remembered so a straggling frame cannot bring one back as live. */
+const ENDED_RUNS = 1024;
+
 /** Live ownership outlives the bounded event feed; a quiet worker must not disappear when that feed rolls over. */
 export class SessionWorkers {
-	private readonly runs = new Map<string, { agentId: string | null; state: "active" | "queued"; node: string | null }>();
+	private readonly runs = new Map<string, { agentId: string | null; lifecycle: RunLifecycle; node: string | null }>();
+	private readonly ended = new Map<string, RunLifecycle>();
 	private complete = true;
 	observe(fact: { type: string; payload: unknown }) {
-		if (!fact.payload || typeof fact.payload !== "object") return;
+		const event = runLifecycleEvent(fact.type, fact.payload);
+		if (event === null || event.kind === "aborted" || event.kind === "settled") return;
 		const payload = fact.payload as Record<string, unknown>;
-		if (typeof payload.runId !== "string") return;
-		if (fact.type === "fleet.completed" || fact.type === "fleet.failed") {
-			this.runs.delete(payload.runId);
+		const previous = this.runs.get(event.runId);
+		const lifecycle = reduceRunLifecycle(previous?.lifecycle ?? this.ended.get(event.runId), event);
+		if (!runLifecycleLive(lifecycle)) {
+			// An ended run leaves the live set and is remembered, so a straggling start or progress frame cannot list it again.
+			this.runs.delete(event.runId);
+			this.ended.delete(event.runId);
+			this.ended.set(event.runId, lifecycle);
+			const oldest = this.ended.keys().next();
+			if (this.ended.size > ENDED_RUNS && !oldest.done) this.ended.delete(oldest.value);
 			return;
 		}
-		if (fact.type !== "fleet.enqueued" && fact.type !== "fleet.started" && fact.type !== "fleet.progress") return;
-		const previous = this.runs.get(payload.runId);
 		if (!previous && this.runs.size >= 4096) {
 			// Preserve every known live run and report a lower bound instead of evicting a quiet owner.
 			this.complete = false;
 			return;
 		}
-		this.runs.set(payload.runId, {
+		this.runs.set(event.runId, {
 			agentId: typeof payload.agentId === "string" ? payload.agentId.slice(0, 128) : (previous?.agentId ?? null),
-			state: fact.type === "fleet.enqueued" ? "queued" : "active",
+			lifecycle,
 			node: typeof payload.node === "string" && payload.node ? payload.node.slice(0, 256) : (previous?.node ?? null),
 		});
 	}
@@ -43,11 +58,12 @@ export class SessionWorkers {
 		const listed: SessionWorkerRun[] = [];
 		const waiting: SessionWorkerRun[] = [];
 		for (const [runId, run] of this.runs) {
-			if (run.state === "active") active++;
+			const state = run.lifecycle.phase === "queued" ? "queued" : "active";
+			if (state === "active") active++;
 			else queued++;
 			if (run.node && nodes.size < 128) nodes.add(run.node);
-			const rows = run.state === "active" ? listed : waiting;
-			if (rows.length < LISTED_RUNS) rows.push({ runId, agentId: run.agentId, state: run.state, node: run.node });
+			const rows = state === "active" ? listed : waiting;
+			if (rows.length < LISTED_RUNS) rows.push({ runId, agentId: run.agentId, state, node: run.node });
 		}
 		const runs = [...listed, ...waiting].slice(0, LISTED_RUNS);
 		return { active, queued, complete: this.complete, nodes: [...nodes], runs };
