@@ -19,6 +19,7 @@ import type { AutonomyHalt, AutonomyReport } from "../../domains/safety/autonomy
 import type { RunEffectsRecorder } from "../../domains/safety/run-effects.js";
 import type { AgentMessage, ImageContent, ToolRoundRecord } from "../../engine/types.js";
 import type { HeadlessRunDeadline } from "../../entry/boot-options.js";
+import type { ReloadReport, ReloadTarget } from "../../session-control/reload-report.js";
 import type { ScriptedAnswers } from "../run-answers.js";
 import type { TurnAnswerEntry } from "./answer-segments.js";
 
@@ -67,6 +68,8 @@ export interface HeadlessMainAgentOptions {
 	/** A route borrowed for this run only, written as the first notice frame in JSON mode. */
 	routeNotice?: string;
 	steerChannel?: string;
+	/** A `/reload [target]` line on the steer channel runs this instead of steering. */
+	reload?: (target: ReloadTarget) => Promise<ReloadReport>;
 	getSessionHeader?: () => RunJsonMainSessionFrame | null;
 	shutdown?: HeadlessShutdownHooks;
 	/**

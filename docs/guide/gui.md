@@ -470,7 +470,7 @@ A line whose first word is not a catalog command or a prompt template is checked
 | `/rename <name>` | Rename the task. Without a name it says how. |
 | `/rewind`, `/undo` | Open Restore workspace files. |
 | `/btw <question>`, `/draft <request>` | Answer the side question or draft the request in a panel, when the task announced the matching capability. A bare `/btw` or `/draft` is the Session row of the slash palette. |
-| `/reload` | Reload the task's extension runtimes, when the task announced extensions. |
+| `/reload` | Run the task's `/reload [settings\|hub\|extensions\|prompts\|mcp\|all]` and show its report, when the task advertises the command; otherwise reload the task's extension runtimes, when the task announced extensions. |
 | `/view` | Open the task's artifacts beside the conversation. |
 | `/files` | Start an `@` file mention in the message box. |
 | `/quit`, `/exit` | Say where that is done instead; nothing else happens. |

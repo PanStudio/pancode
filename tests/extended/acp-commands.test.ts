@@ -45,16 +45,17 @@ function refusalReason(call: () => unknown): string {
 	throw new Error("expected a refusal");
 }
 
-test("the catalog projects all seventeen allowlisted commands", async () => {
+test("the catalog projects all eighteen allowlisted commands", async () => {
 	const catalog = acpCommandCatalog();
 	assert.equal(catalog.version, 1);
-	assert.equal(ACP_COMMAND_RULES.length, 17);
-	assert.equal(catalog.commands.length, 17);
-	assert.equal(ACP_COMMANDS_CAPABILITY.count, 17);
+	assert.equal(ACP_COMMAND_RULES.length, 18);
+	assert.equal(catalog.commands.length, 18);
+	assert.equal(ACP_COMMANDS_CAPABILITY.count, 18);
 	assert.deepEqual(
 		catalog.commands.map((command) => command.name),
 		[
 			"eggs",
+			"reload",
 			"skill",
 			"mcp",
 			"doctor",
@@ -331,7 +332,7 @@ test("the announced capability names the two methods a client calls", async () =
 			version: 1,
 			list: "_pancode/commands/list",
 			invoke: "_pancode/commands/invoke",
-			count: 17,
+			count: 18,
 		},
 	);
 });

@@ -51,23 +51,32 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{
 		name: "reload",
 		rank: 3,
-		acp: false,
-		description: "Reload settings, PanHub packs and extension runtimes with one report",
+		acp: { readOnlyRefuses: true },
+		description: "Reload settings, PanHub packs, extension runtimes, prompts and MCP servers with one report",
 		group: "PanCode",
 		kinds: ["reload"],
 		args: {
-			positionals: [{ name: "target", required: false, values: ["settings", "hub", "extensions", "prompts", "all"] }],
+			positionals: [
+				{ name: "target", required: false, values: ["settings", "hub", "extensions", "prompts", "mcp", "all"] },
+			],
 		},
 		fromArgs(parsed) {
 			if (parsed.error) return { kind: "usage-error", command: "reload", reason: parsed.error };
 			const target = parsed.positionals[0] ?? "all";
-			if (target !== "settings" && target !== "hub" && target !== "extensions" && target !== "prompts" && target !== "all")
-				return { kind: "usage-error", command: "reload", reason: "Choose settings, hub, extensions, prompts or all" };
+			if (
+				target !== "settings" &&
+				target !== "hub" &&
+				target !== "extensions" &&
+				target !== "prompts" &&
+				target !== "mcp" &&
+				target !== "all"
+			)
+				return { kind: "usage-error", command: "reload", reason: "Choose settings, hub, extensions, prompts, mcp or all" };
 			return { kind: "reload", target };
 		},
 		handle(command, ctx) {
 			if (!ctx.reloadClasses) {
-				ctx.notice("warn", "/reload is available only in an interactive terminal.");
+				ctx.notice("warn", "/reload is not available in this session.");
 				return;
 			}
 			if (command.kind === "reload") ctx.reloadClasses(command.target);

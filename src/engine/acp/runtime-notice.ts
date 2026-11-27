@@ -94,11 +94,18 @@ export function subscribeAcpNotices(
 	bus: Pick<TelemetryHub, "subscribe">,
 	relay: AcpRuntimeNoticeRelay,
 	boundSession: () => string | null,
+	/** After a `/reload` from any caller, the bound session hears the commands it may type now. */
+	announceCommands?: (sessionId: string) => void,
 ): () => void {
-	const unsubscribeRuntime = bus.subscribe("runtime.notice_raised", (payload) => relay.raise(payload, boundSession()));
-	const unsubscribeSession = subscribeSessionNotices(bus, (notice) => relay.session(notice, boundSession()));
+	const unsubscribers = [
+		bus.subscribe("runtime.notice_raised", (payload) => relay.raise(payload, boundSession())),
+		subscribeSessionNotices(bus, (notice) => relay.session(notice, boundSession())),
+		bus.subscribe("session.reloaded", () => {
+			const sessionId = boundSession();
+			if (sessionId !== null) announceCommands?.(sessionId);
+		}),
+	];
 	return () => {
-		unsubscribeRuntime();
-		unsubscribeSession();
+		for (const unsubscribe of unsubscribers) unsubscribe();
 	};
 }

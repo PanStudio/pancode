@@ -50,6 +50,7 @@ import {
 } from "../../session-control/extension-line.js";
 import { parseLoopArgv } from "../../session-control/loop-command.js";
 import type { NoticeLevel } from "../../session-control/notice-source.js";
+import type { ReloadTarget } from "../../session-control/reload-report.js";
 import type { SlashCommand, SlashCommandContext, SlashCommandKind } from "../../session-control/slash-command-types.js";
 import { BUILTIN_SLASH_COMMANDS, parseSlashCommand } from "../../session-control/slash-commands.js";
 import { dispatchSlashCommand } from "../../session-control/slash-dispatch.js";
@@ -134,7 +135,7 @@ export interface AcpCommandRule {
 }
 
 /**
- * The 13 commands whose whole result is text, plus the verbs of the three
+ * The 14 commands whose whole result is text, plus the verbs of the three
  * hub commands. Everything absent from this list is either TUI-bound (it
  * reaches `keyboardActions`, an overlay, or the editor) or already reachable
  * over ACP by other means, and is refused by name.
@@ -160,6 +161,7 @@ const COMMAND_REQUIREMENTS: Record<string, ReadonlyArray<keyof AcpCommandHost>> 
 	export: ["exportTranscript"],
 	loop: ["jobs"],
 	report: ["reportHost"],
+	reload: ["reloadClasses"],
 };
 const CONTEXT_REQUIREMENTS: Record<string, keyof AcpCommandHost> = {
 	compact: "runCompact",
@@ -370,6 +372,8 @@ export type AcpCommandHost = Pick<SlashCommandContext, "dispatch" | "bus" | "pro
 		/** Resume a paused handoff; the reply waits for the turn it continues. */
 		runHandoffRecovery?: AcpHostOperation<[handoffId: string, action: "reduce" | "deliver"]>;
 		runInit?: AcpHostOperation<Parameters<SlashCommandContext["runInit"]>>;
+		/** `/reload`: the reply is the reload report. */
+		reloadClasses?: AcpHostOperation<[target: ReloadTarget]>;
 		cwd?: string;
 		/**
 		 * Submit a user turn. `pendingSkillRequests` arrives already expanded, so
@@ -736,6 +740,7 @@ function sessionCommandContext(
 	};
 	const runContextRecall = host.runContextRecall;
 	const runContextRefresh = host.runContextRefresh;
+	const reloadClasses = host.reloadClasses;
 	return {
 		io: { stdout: push, stderr: push },
 		notice,
@@ -833,6 +838,7 @@ function sessionCommandContext(
 			}
 			awaited("context compact", () => runCompact(instructions), true);
 		},
+		...(reloadClasses ? { reloadClasses: (target: ReloadTarget) => awaited("reload", () => reloadClasses(target)) } : {}),
 		exportTranscript: (path) => {
 			const exportTranscript = host.exportTranscript;
 			if (!exportTranscript) {

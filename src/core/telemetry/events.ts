@@ -81,6 +81,7 @@ import type {
 	SessionEndPayload,
 	SessionOpenedPayload,
 	SessionParkedPayload,
+	SessionReloadedPayload,
 	SessionResumedPayload,
 	SessionResumingPayload,
 	SessionStartPayload,
@@ -623,6 +624,7 @@ export const EVENTS = {
 		project: (_issue: ExtensionsLoadIssuePayload) => ({}),
 	}),
 	"mcp.servers_reloaded": live<McpServersReloadedPayload>(),
+	"session.reloaded": live<SessionReloadedPayload>(),
 	"context.activity_changed": live<ContextActivityPayload>(),
 	"context.sources_changed": live<ContextSourcesChangedPayload>(),
 	/** `/reload prompts`: re-read fragments, recipes and session prompt sources now. */

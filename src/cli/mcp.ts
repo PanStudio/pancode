@@ -186,7 +186,7 @@ JSON responses (--json):
     through env such as NODE_OPTIONS or PATH are not bound; a symlink whose
     target is outside the project is bound by path only. entryScriptHashes
     maps each bound file to its SHA-256. Bindings are checked when a session or worker takes its MCP
-    snapshot, so an edit is caught from the next session or dispatch.
+    snapshot, so an edit is caught from the next session, dispatch or /reload mcp.
     --network lets the server's own sandboxed process reach the network in
     fleet workers; worker shells keep their policy. On Linux that is the host
     network namespace (internet, localhost services and abstract unix

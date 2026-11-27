@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import { type OperatorExtensions, operatorReloadSummary } from "../domains/extensions/operator-extensions.js";
 import { stripTerminalSequences, wrapTextWithAnsi } from "../engine/tui.js";
 import type { ReloadClassesController, ReloadReport, ReloadTarget } from "../session-control/reload-report.js";
 import type { CommandOutputSink } from "./command-output.js";
@@ -34,17 +34,7 @@ export function createInteractiveReload(
 					return { status: "rejected", message: "extension host is not loaded", failures: [], nextSession: [] };
 				const result = await operator.reload();
 				committed = result.status === "committed";
-				const entries = operator.entries();
-				const failures = entries
-					.filter((entry) => entry.state === "failed")
-					.map((entry) => `${entry.id}: ${entry.reason ?? "runtime failed"}`);
-				if ((result.degraded === undefined && result.status === "committed") || (result.degraded ?? 0) > 0)
-					failures.push(result.message);
-				return {
-					...result,
-					failures,
-					nextSession: entries.flatMap((entry) => entry.newSessionReasons.map((reason) => `${entry.id}: ${reason}`)),
-				};
+				return operatorReloadSummary(result, operator);
 			})
 			.then((report) => {
 				print(report);

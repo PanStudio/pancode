@@ -38,6 +38,7 @@ import {
 	validateStructuredAnswer,
 } from "../../session-control/chat-loop-messages.js";
 import { sealCompletion } from "../../tools/finish.js";
+import { openSteerChannel } from "../headless-steer.js";
 import { EXPLORATION_STALLED_EXIT_CODE } from "../kit/exit-codes.js";
 import { flushRawStdout, writeRawStdout } from "../output-guard.js";
 import { UNSCRIPTED_EXIT_CODE, unscriptedRunMessage } from "../run-answers.js";
@@ -46,7 +47,6 @@ import {
 	noteDispatchSupersededV2,
 	noteMainRunV2,
 	noteRunCompletion,
-	noteSteerV2,
 	noteStructuredV2,
 	noteTextAnswer,
 	runResultV2Active,
@@ -54,7 +54,6 @@ import {
 	writeRunRefusal,
 } from "../run-failure.js";
 import { sealedFactsNotVerified } from "../run-output.js";
-import { createSteerIntake, setupSteerChannel } from "../steer-channel.js";
 import {
 	type DispatchedRunsSettlement,
 	describeRuns,
@@ -534,16 +533,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 		unscriptedStop = { text: unscriptedRunMessage(scripted, question), told: false };
 		chat.cancel({ reason: unscriptedStop.text, atToolBoundary: true });
 	});
-	let cleanupSteer: (() => void) | undefined;
-	if (options.steerChannel) {
-		// A line written before the first turn streams waits for that turn instead of being refused.
-		const intake = createSteerIntake(chat, noteSteerV2);
-		const closeChannel = setupSteerChannel(options.steerChannel, intake.take);
-		cleanupSteer = () => {
-			closeChannel();
-			intake.close();
-		};
-	}
+	const cleanupSteer = options.steerChannel ? openSteerChannel(options.steerChannel, chat, options.reload) : undefined;
 	// `--output-schema`: null until judged, and when the turn ended in a way that already has its own cause.
 	// Assigned inside the submit callback, so the declared type is kept rather than narrowed to its initial null.
 	let structuredVerdict = null as StructuredVerdict | null;

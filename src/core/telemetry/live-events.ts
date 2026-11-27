@@ -840,6 +840,12 @@ export interface McpServersReloadedPayload {
 	failed: boolean;
 }
 
+/** A `/reload` report finished on any surface; an ACP client re-reads the commands it may type. */
+export interface SessionReloadedPayload {
+	target: string;
+	failed: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------

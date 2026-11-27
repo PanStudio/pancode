@@ -779,7 +779,7 @@ const FUNCTION_LINE_CEILING = 500;
  * repeated in one file takes `[2]`, `[3]` in source order.
  */
 const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
-	["src/cli/modes/print.ts#runHeadlessMainAgent", 865],
+	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 555],
 	["src/cli/upgrade.ts#runUpgradeCommand", 569],
 	["src/core/settings-validate.ts#validateSettings", 1332],
@@ -806,10 +806,10 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
 	["src/engine/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/engine/acp/server.ts#servePancodeAcpAgent", 3786],
+	["src/engine/acp/server.ts#servePancodeAcpAgent", 3782],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3699],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3696],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
@@ -1130,6 +1130,11 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 		module: "src/session-control/slash-commands.ts",
 		reason:
 			"one slash parser and one registry-membership source for both surfaces. The headless refusal in src/cli/run.ts and the TUI editor must agree on which tokens name a command, and a second copy of the parser would drift. The registry's own imports are what the closure guard below watches.",
+	},
+	{
+		module: "src/session-control/reload-report.ts",
+		reason:
+			"the reload target and report types the headless steer channel hands to the reload service. A type-only leaf: no importer reaches a value through it.",
 	},
 	{
 		module: "src/session-control/session-notices.ts",
