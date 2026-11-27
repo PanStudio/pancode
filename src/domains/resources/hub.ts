@@ -571,6 +571,7 @@ export function commitHubInstallPlan(plan: HubInstallPlan): PluginMutationResult
 		...(expect ? { expect } : {}),
 		origin: hubPlanOrigin(plan),
 		publisher: hubEntryPublisher(plan.entry),
+		...(plan.entry.kind === "server" && plan.entry.tier ? { tier: plan.entry.tier } : {}),
 		// The tier is honoured only on rows from PanCode's own indexes; other rows keep the writer's default.
 		...(plan.entry.tier ? { trust: plan.entry.tier === "listed" ? ("foreign" as const) : ("trusted" as const) } : {}),
 	});

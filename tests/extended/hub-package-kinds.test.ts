@@ -276,3 +276,34 @@ test("addKitServer requires an index row and ignores a local server:<name> direc
 		env.restore();
 	}
 });
+
+test("an added server keeps its install tier and remains repairable when its tree changes", async () => {
+	const env = await isolatePancodeEnv("kit-copy-");
+	try {
+		const source = join(env.dir, "source");
+		fixture(source, "server");
+		registerHubPackage(source, { cwd: env.dir, scope: "user" });
+		const installed = installHubPackage({
+			kind: "server",
+			sourcePath: source,
+			scope: "user",
+			cwd: env.dir,
+			origin: { kind: "catalog", source },
+			tier: "listed",
+			trust: "foreign",
+		}).plugin;
+		ok(installed?.valid);
+		const row = addedKitServers(env.dir)[0];
+		equal(row?.tier, "listed");
+		equal(row.loadable, false);
+		match(row.reason ?? "", /trustProjectImports/);
+		write(installed.rootPath, "server.json", "{}");
+		const launch = kitServeLaunch("example", env.dir);
+		ok(launch && !launch.ok);
+		match(launch.message, /pankit add example/);
+		ok(addKitServer("example", env.dir).ok);
+		equal(existsSync(join(installed.rootPath, "server.json")), false);
+	} finally {
+		env.restore();
+	}
+});

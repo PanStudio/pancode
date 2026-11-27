@@ -7,6 +7,7 @@
  * PanHub loads by dynamic import only for those, so the other commands load
  * what PanKit alone loads.
  */
+import { existsSync } from "node:fs";
 import { constants } from "node:os";
 import type { PankitHost, PankitOutcome } from "@pancode/kit";
 import { runPankit } from "@pancode/kit";
@@ -53,6 +54,8 @@ const host: PankitHost = {
 		return child.exitCode ?? (child.signal ? 128 + constants.signals[child.signal] : 1);
 	},
 	async added() {
+		const { pluginBaseDir } = await import("../domains/plugins/paths.js");
+		if (!existsSync(pluginBaseDir("user"))) return [];
 		const { addedKitServers } = await import("../domains/resources/kit-items.js");
 		return addedKitServers(process.cwd());
 	},

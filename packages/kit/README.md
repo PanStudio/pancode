@@ -56,7 +56,10 @@ Every tool's action class and path arguments are in `pankit manifest`, and the g
 ```bash
 pankit serve <server> [options...]  # serve one server over MCP stdio; stdout carries protocol frames only
 pankit serve <server> --help        # the options one server takes
-pankit list [--json]      # the servers, their titles and tool counts
+pankit add <name>         # install a PanHub server pack for this user
+pankit serve <added>      # run the added server as its pack declares, with no options
+pankit remove <name>      # remove the user copy shared with PanCode
+pankit list [--json]      # the builtins, then the added servers with publisher and install tier
 pankit doctor [--json]    # whether each server can run on this host, and why not
 pankit manifest           # the policy manifest: every tool's class, path arguments and listed surface
 pankit catalog --example  # a valid catalog file for the catalog server

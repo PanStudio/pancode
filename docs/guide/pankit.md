@@ -100,7 +100,7 @@ pankit serve <server> [options...]  # serve one server over MCP stdio; stdout ca
 pankit serve <server> --help        # the options one server takes
 pankit serve <added>                # run a server pankit add installed, as its pack declares
 pankit add <name>                   # install the PanHub server pack <name> in user scope
-pankit remove <name>                # remove a server pack pankit add installed
+pankit remove <name>                # remove the user copy shared with PanCode
 pankit list [--json]                # the servers, their titles and tool counts, then the added ones
 pankit doctor [--json]              # whether each server can run on this host, and why not
 pankit manifest                     # the policy manifest: every tool's class, path arguments and listed surface
@@ -117,14 +117,14 @@ Exit codes are 0 for success, 1 for an operational failure and 2 for a usage err
 | `pankit serve <added>` | the server's own exit code; 2 for any option; 1 without starting it when the copy is disabled, changed since it was added, revoked, does not load, or is a foreign pack while `integrations.projectResources.trustProjectImports` is off |
 | `pankit serve <server> --help`, or `--help` after `serve` with no server | 0, with the usage on stdout |
 | `pankit add <name>` | 0 when the copy is written, and for a server PanKit carries, which it names as built in; 1 when no PanHub row is named `server:<name>`, the row is revoked, or the install fails; 2 without exactly one name |
-| `pankit remove <name>` | 0 when the copy is removed; 1 for a server PanKit carries or a name `pankit add` did not add; 2 without exactly one name |
-| `pankit list` | 0; 1 when a server cannot load |
+| `pankit remove <name>` | 0 when the user copy is removed, whether installed with `pankit add` or `pancode hub install`; 1 for a builtin or absent copy, or when removal fails; 2 without exactly one name |
+| `pankit list` | 0 even if an added copy cannot load; 1 if the inventory cannot be read or a builtin cannot load |
 | `pankit doctor` | 0 whether or not each server is available; 1 when a server's probe fails |
 | `pankit manifest` | 0; 1 when the manifest cannot be built |
 
 `pankit doctor` prints one line per server, `<id>: available` or `<id>: unavailable: <reason>`, followed by the sources it looked for and whether each was found. `pankit doctor --json` adds each source's detail, such as the path a missing `scidata` reader would be copied to. The probe starts no server.
 
-`pankit add <name>` installs the PanHub row `server:<name>` in user scope with the same plan and writer as `pancode hub install server:<name> --user`, so `pancode hub list --user` shows the copy. It prints the publisher, tier, licence, version, tree digest, source and commit, the command the pack's `mcp.json` launches, and the host entry to paste into another agent host. Adding a name again replaces the copy. `pankit list` names each added server after the seven with its version, publisher and tier, and says why a copy does not load; `pankit list --json` gives them as `added`.
+`pankit add <name>` installs the PanHub row `server:<name>` in user scope with the same plan and writer as `pancode hub install server:<name> --user`, so `pancode hub list --user` shows the copy. It prints the publisher, tier, licence, version, tree digest, source and commit, the command the pack's `mcp.json` launches, and the host entry to paste into another agent host. Adding a name again replaces the copy. `pankit list` names each added server after the seven with its version, publisher and catalog tier at install (if any). A disabled, damaged, revoked or trust-blocked copy stays listed with its reason; `pankit list --json` gives these rows as `added`.
 
 `pankit serve <added>` checks the copy against its install record, then runs the command and arguments the pack's `mcp.json` declares, without a shell, in the declared working directory and with the environment PanCode gives a plugin server. The server inherits stdin, stdout and stderr. On POSIX, PanKit forwards SIGINT, SIGTERM and SIGHUP to the server's process group and cleans up remaining group members when the launcher exits. It returns the server's code and reports a cleanup failure. It does not read the `pancode mcp trust` records, which govern PanCode's own sessions.
 

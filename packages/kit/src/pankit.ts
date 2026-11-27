@@ -50,7 +50,7 @@ Usage:
   pankit serve <added>      run a server pankit add installed, as its pack
                             declares; it takes no options
   pankit add <name>         install a server pack from PanHub to serve here
-  pankit remove <name>      remove a server pack pankit add installed
+  pankit remove <name>      remove the user-scope copy, including from PanCode
   pankit list [--json]      the servers, their titles and tool counts, then
                             the added ones
   pankit doctor [--json]    whether each server can run on this host, and why not
@@ -125,7 +125,7 @@ async function list(json: boolean, host: PankitHost | undefined): Promise<Outcom
 		...added.map(
 			(row) =>
 				`${row.name.padEnd(width)}  added ${row.version} from ${[row.publisher, row.tier].filter(Boolean).join(" ")}${
-					row.loadable ? "" : `; does not load: ${row.reason ?? "unknown"}`
+					row.loadable ? "" : `; ${row.reason ?? "does not load"}`
 				}`,
 		),
 	];

@@ -6,16 +6,15 @@
  * as `pancode hub install server:<name> --user`, so PanCode lists, updates and
  * offers it like any other copy.
  */
-import { existsSync, realpathSync, statSync } from "node:fs";
-import path from "node:path";
+import { realpathSync, statSync } from "node:fs";
 import { readSettings } from "../../core/config.js";
 import { resolveSafeCwd } from "../../core/safe-exec.js";
 import { loadPluginMcpFile } from "../gateway/mcp/config.js";
 import { isPluginId, listInstalledPlugins, readPluginInstallRecord } from "../plugins/index.js";
+import type { InstalledPlugin, PluginInstallRecord } from "../plugins/types.js";
 import { discoverHub } from "./hub.js";
-import { applyHubLifecycle, type HubOperation, planHubLifecycle } from "./hub-actions.js";
-import { hubCopyState } from "./hub-inventory.js";
-import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
+import type { HubOperation } from "./hub-actions.js";
+import { applyHubLifecycle, planHubLifecycle } from "./hub-actions.js";
 import type { HubTier } from "./hub-types.js";
 
 export interface KitAddedServer {
@@ -45,48 +44,34 @@ export type KitChangeResult<T> = { ok: true; value: T } | { ok: false; message: 
 
 const refOf = (name: string): string => `server:${name}`;
 
-/** A builtin server pack carries server.json and is never managed as an added launcher server. */
-const isAddedServerCopy = (plugin: { kind?: string; rootPath: string }): boolean =>
-	plugin.kind === "server" && !existsSync(path.join(plugin.rootPath, "server.json"));
-
 function safeInstallRecord(name: string, cwd: string) {
 	try {
 		return readPluginInstallRecord(name, { cwd, scope: "user" });
 	} catch {
+		// The plugin listing already carries the state read error on the unloadable copy.
 		return undefined;
 	}
 }
 
 function userServerCopy(name: string, cwd: string) {
 	return listInstalledPlugins(cwd, { scope: "user", all: true, id: name }).find(
-		(plugin) => plugin.id === name && isAddedServerCopy(plugin),
+		(plugin) => plugin.id === name && plugin.kind === "server",
 	);
 }
 
-/** The tier each PanHub server row states now; a copy whose row is gone has none. */
-function serverTiers(cwd: string): Map<string, HubTier> {
-	const tiers = new Map<string, HubTier>();
-	for (const entry of discoverHub({ cwd }).entries)
-		if (entry.kind === "server" && entry.tier) tiers.set(entry.name, entry.tier);
-	return tiers;
-}
-
 export function addedKitServers(cwd: string): KitAddedServer[] {
-	const copies = listInstalledPlugins(cwd, { scope: "user", all: true }).filter(isAddedServerCopy);
-	if (copies.length === 0) return [];
-	const tiers = serverTiers(cwd);
+	const copies = listInstalledPlugins(cwd, { scope: "user", all: true }).filter((copy) => copy.kind === "server");
 	return copies
 		.map((copy) => {
-			const tier = tiers.get(copy.id);
-			const state = hubCopyState(copy);
-			const detail = copy.diagnostics.find((item) => item.type === "error")?.message;
+			const record = safeInstallRecord(copy.id, cwd);
+			const reason = serverRefusal(copy, record);
 			return {
 				name: copy.id,
 				version: copy.version,
-				publisher: safeInstallRecord(copy.id, cwd)?.publisher ?? "local",
-				...(tier ? { tier } : {}),
-				loadable: copy.loadable,
-				...(copy.loadable ? {} : { reason: detail ? `${state}: ${detail}` : state }),
+				publisher: record?.publisher ?? "unknown",
+				...(record?.kind === "server" && record.tier ? { tier: record.tier } : {}),
+				loadable: reason === undefined,
+				...(reason ? { reason } : {}),
 			};
 		})
 		.sort((a, b) => a.name.localeCompare(b.name));
@@ -177,8 +162,23 @@ function trustsForeignPacks(): boolean {
 	try {
 		return readSettings().integrations.projectResources.trustProjectImports;
 	} catch {
+		// Unreadable settings give a listed pack no consent to run.
 		return false;
 	}
+}
+
+function serverRefusal(copy: InstalledPlugin, record: PluginInstallRecord | undefined): string | undefined {
+	const name = copy.id;
+	if (!copy.enabled) return `${name} is disabled; enable it with \`pancode hub enable server:${name} --user\``;
+	if (record && copy.observedContentDigest !== record.contentDigest)
+		return `${name} changed since it was added (recorded ${record.contentDigest}, now ${copy.observedContentDigest ?? "unreadable"}); run \`pankit add ${name}\` again`;
+	if (!copy.loadable || record?.kind !== "server") {
+		const detail = copy.diagnostics.find((item) => item.type === "error")?.message ?? "no valid server install record";
+		return `${name} does not load: ${detail}`;
+	}
+	if ((copy.trust === "foreign" || record.tier === "listed") && !trustsForeignPacks())
+		return `${name} is a foreign pack and runs only while integrations.projectResources.trustProjectImports is on`;
+	return undefined;
 }
 
 /**
@@ -191,22 +191,9 @@ export function kitServeLaunch(name: string, cwd: string): KitChangeResult<KitSe
 	const copy = userServerCopy(name, cwd);
 	if (copy === undefined) return undefined;
 	const refuse = (message: string) => ({ ok: false as const, message });
-	if (!copy.enabled) return refuse(`${name} is disabled; enable it with \`pancode hub enable server:${name} --user\``);
-	const record = safeInstallRecord(name, cwd);
-	if (record && copy.observedContentDigest !== record.contentDigest)
-		return refuse(
-			`${name} changed since it was added (recorded ${record.contentDigest}, now ${copy.observedContentDigest ?? "unreadable"}); run \`pankit add ${name}\` again`,
-		);
-	const revocation = revokedHubDigests().get(record?.contentDigest ?? copy.observedContentDigest ?? "");
-	if (revocation) return refuse(packRevokedMessage(name, revocation));
-	if (!copy.loadable || copy.provenance === undefined) {
-		const detail = copy.diagnostics.find((item) => item.type === "error")?.message ?? hubCopyState(copy);
-		return refuse(`${name} does not load: ${detail}`);
-	}
-	if (copy.trust === "foreign" && !trustsForeignPacks())
-		return refuse(
-			`${name} is a foreign pack and runs only while integrations.projectResources.trustProjectImports is on`,
-		);
+	const reason = serverRefusal(copy, safeInstallRecord(name, cwd));
+	if (reason !== undefined) return refuse(reason);
+	if (!copy.provenance) return refuse(`${name} has no verified provenance`);
 	const loaded = loadPluginMcpFile({
 		id: name,
 		scope: "user",

@@ -25,7 +25,8 @@ import { projectPackageTrust } from "../../core/workspace-trust.js";
 import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { evaluatePancodeCompatibility } from "../extensions/compatibility.js";
 import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
-import { type HubEntryKind, type HubRequirementRef, isHubKind } from "../resources/hub-types.js";
+import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
+import { HUB_TIERS, isHubKind } from "../resources/hub-types.js";
 import { isPluginId, readPluginManifest } from "./discovery.js";
 import { passPluginCandidate } from "./discovery-pass.js";
 import {
@@ -36,6 +37,7 @@ import {
 	withKeptInvalidRecords,
 } from "./install-records.js";
 import { pluginContentDigest } from "./integrity.js";
+import { pluginBaseDir } from "./paths.js";
 import { derivedPublisher, publisherCollision, readPublisher } from "./publisher.js";
 import type {
 	HubPackageInstallInput,
@@ -60,12 +62,7 @@ export function installHubPackage(input: HubPackageInstallInput): PluginMutation
 	return installPlugin(sourcePath, { ...options, expectedKind: kind });
 }
 
-/** Resolves without creating the config root: read-only `doctor` must leave a fresh home empty. */
-export function pluginBaseDir(scope: PluginScope, cwd = process.cwd()): string {
-	return scope === "user"
-		? path.join(pancodeConfigPath(), "plugins")
-		: path.join(pancodeProjectRoot(cwd, path.join("plugins", "state.json")), ".pancode", "plugins");
-}
+export { pluginBaseDir } from "./paths.js";
 
 export function pluginStatePath(scope: PluginScope, cwd = process.cwd()): string {
 	return path.join(pluginBaseDir(scope, cwd), "state.json");
@@ -101,6 +98,8 @@ function readInstallRecord(id: string, entry: unknown): PluginInstallRecord {
 	if (entry.origin !== undefined && typeof entry.origin !== "string" && !validOrigin(entry.origin))
 		throw new Error("origin is not a valid origin");
 	if (entry.kind !== undefined && !isHubKind(entry.kind)) throw new Error("kind is not a pack kind");
+	if (entry.kind === "server" && entry.tier !== null && !HUB_TIERS.some((tier) => tier === entry.tier))
+		throw new Error("a server record requires its catalog tier, or null for an untiered source");
 	if (entry.trust !== undefined && entry.trust !== "trusted" && entry.trust !== "foreign")
 		throw new Error("trust must be trusted or foreign");
 	readPublisher(entry.publisher);
@@ -783,8 +782,9 @@ export function installPlugin(sourcePath: string, options: PluginInstallOptions 
 					: isForeignPluginOrigin(origin)
 						? "foreign"
 						: (options.trust ?? state.installed[manifest.name]?.trust ?? "trusted");
+			const kind = manifest.pancode.kind ?? "plugin";
 			state.installed[manifest.name] = {
-				kind: manifest.pancode.kind ?? "plugin",
+				...(kind === "server" ? { kind, tier: options.tier ?? null } : { kind }),
 				installedAt: new Date().toISOString(),
 				source: typeof origin === "string" ? origin : origin.source,
 				origin,
