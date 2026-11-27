@@ -287,6 +287,12 @@ export interface McpCapabilitySource {
 	attachClientServers(servers: ReadonlyArray<McpClientServerSpec>, options?: { start?: boolean }): Promise<void>;
 	/** Tear down only the servers supplied by the ACP client for this session. */
 	detachClientServers(): Promise<void>;
+	/**
+	 * Read the declarations again and swap what changed. A removed or changed server closes and its tools
+	 * unregister, an added or changed one enters with the trust its declaration holds now, and an unchanged one
+	 * keeps its connection. Null, with nothing swapped, while a removed or changed server has a call in flight.
+	 */
+	reloadDeclarations(): Promise<McpDeclarationReload | null>;
 	/** Launch every trusted server not yet launched, register its tools, and describe every declared server. */
 	list(options?: { signal?: AbortSignal }): Promise<McpListing>;
 	/**
@@ -405,6 +411,17 @@ export interface McpCapabilitySource {
 	close(): Promise<McpCloseReport>;
 	/** Every teardown outcome recorded so far, for evidence. */
 	teardownReports(): ReadonlyArray<McpTeardownReport>;
+}
+
+/** What a declaration reload changed, by server id; ACP client servers are not declarations and never appear. */
+export interface McpDeclarationReload {
+	added: string[];
+	removed: string[];
+	changed: string[];
+	unchanged: string[];
+	/** Added or changed servers whose declaration is not trusted as it stands now. */
+	needsTrust: string[];
+	diagnostics: string[];
 }
 
 export interface McpTeardownReport {
