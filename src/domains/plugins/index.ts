@@ -10,11 +10,6 @@ export {
 	readPluginManifest,
 } from "./discovery.js";
 export { passDerived, withPluginDiscoveryPass } from "./discovery-pass.js";
-export {
-	type DroppedInstallRecord,
-	type InstallRecordReport,
-	reportInvalidInstallRecordsAsRows,
-} from "./install-records.js";
 export { pluginContentDigest, pluginContentDigestWithCapture } from "./integrity.js";
 export { pluginPromptNames } from "./prompt-names.js";
 export {
