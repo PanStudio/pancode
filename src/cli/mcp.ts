@@ -28,6 +28,8 @@ import {
 	type McpTrustActionClass,
 	type McpTrustOptions,
 	mcpBuiltinTrustRefusal,
+	mcpCatalogDigest,
+	mcpCredentialRoutes,
 	mcpSkillApprovalsFor,
 	mcpSkillDisplayNames,
 	mcpSkillRelativePath,
@@ -51,12 +53,18 @@ import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import { isMcpPromptCommandName } from "../tools/gateway/mcp-resources.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
+import { mcpEditOutput, mcpLoginOutput, mcpLogoutOutput } from "./mcp-credentials.js";
 import { printError } from "./shared.js";
 
 const HELP = `pancode mcp <command>
 
 Commands:
   pancode mcp list [--refresh] [--json]
+  pancode mcp add <id> [--scope user|project] --url <url> [--header <Name>=<key>]... [--json]
+  pancode mcp add <id> [--scope user|project] -- <command> [args...]
+  pancode mcp remove <id> [--scope user|project] [--json]
+  pancode mcp login <id> [--json]
+  pancode mcp logout <id> [--json]
   pancode mcp test <id> [--call <tool> [--args <json>]]... [--json]
   pancode mcp trust <id> [--action-class <class>] [--network] [--json]
   pancode mcp trust <id> --surface [--hash <sha256>] [--json]
@@ -65,6 +73,21 @@ Commands:
   pancode mcp untrust <id> --skill <name|uri> [--json]
 
 Action classes: ${MCP_TRUST_ACTION_CLASSES.join(", ")}
+
+Remote servers:
+  A declaration with url instead of command is reached over Streamable HTTP:
+  https, or http on localhost. headers maps a header name to the key of a
+  credential, never to its value. login stores each header's full value
+  (for example "Bearer <token>") in PanCode's credential store, bound to the
+  url's origin; a value is never sent to any other origin, even by a trusted
+  declaration that names the same key, and a redirect to another origin is
+  never followed. Typing is hidden at a terminal; otherwise login reads one
+  line per header from stdin, in header-name order. trust prints each route
+  as "sends credential <key> as <Header> to <origin>". A fleet worker reaches
+  a remote server only with the network grant (trust --network, or
+  network: true on a user declaration). logout removes the server's stored
+  values for its origin. add writes the user mcp.yaml by default, or the
+  project's with --scope project, and refuses a file that would not load.
 
 Path arguments:
   A declaration may add toolPathArguments: per tool, a map from a top-level
@@ -87,7 +110,9 @@ JSON responses (--json):
     described under trust; networkSource says whether the trust file (project,
     plugin and builtin servers) or the user declaration granted it. --refresh lists
     trusted servers live and updates their catalogs; untrusted declarations
-    are never launched. A diagnostic with severity "warning" is advisory.
+    are never launched. Each server it reached carries status {status, reason?,
+    remedy?}: connected, failed, or needs-auth (a remote server that refused
+    its credentials or lacks one) with the pancode mcp login command. A diagnostic with severity "warning" is advisory.
     A server with scope builtin ships with PanCode: it is trusted by
     authorship, its tools and their classes come from the policy this PanCode
     ships (catalog "shipped", builtin {version, title, environment}), and its
@@ -103,7 +128,7 @@ JSON responses (--json):
     null and status says only whether an approval is recorded; with it a
     changed surface reads as changed.
   test: {ok, server: {id, scope, trust, network, networkSource?}, protocolVersion, serverInfo,
-    instructions?, tools: [{name, capability, actionClass, serverHint?}], truncated, surface,
+    instructions?, tools: [{name, capability, actionClass, serverHint?}], dropped?, truncated, surface,
     calls: [{tool, isError, text, structuredContent?, refused?, denial?,
       serverPolicyRefusal?} | {tool, error}]}
     Launches one trusted server through the same client the gateway uses,
@@ -115,6 +140,8 @@ JSON responses (--json):
     the calls; a JSON-RPC error answer is that call's error.
     An untrusted or stale declaration is never launched. Test never records a
     surface approval, so its calls are refused until the surface is approved.
+    dropped lists [{name, reason}] for each tool a remote server offered with
+    an x-mcp-header PanCode cannot send; such a tool is never registered.
     A server that declares the io.modelcontextprotocol/skills extension also
     carries skills: {directoryRead, ttlMs, truncated, skills: [{name, uri,
     manifestDigest, files, bytes, approval}], refused: [{uri, name, kind,
@@ -187,6 +214,9 @@ JSON responses (--json):
     command that would record it and exits 0. The listing it reads is
     recorded as test records it.
   untrust: {ok: true, removed: boolean}
+  add: {ok: true, path, id}; remove: {ok: true, path}
+  login: {ok: true, stored: [{header, key, origin}]}
+  logout: {ok: true, removed: [key], origin}
   untrust --skill: {ok: true, removed: boolean, uri}
     Removes this project's approval of one skill, matched by uri or name
     among the recorded approvals. Nothing is launched.
@@ -284,6 +314,23 @@ function pathArgumentsLabel(declared: McpToolPathArguments | undefined): string 
 	return pairs.length === 0 ? "" : ` toolPathArguments=${pairs.join(",")}`;
 }
 
+/** Where a server runs: its launch vector, or its endpoint and the header credentials it sends by key, never by value. */
+function launchLabel(server: {
+	url?: string;
+	headers?: Readonly<Record<string, string>>;
+	command?: string;
+	args?: ReadonlyArray<string>;
+	cwd: string;
+}): string {
+	if (server.url === undefined)
+		return `command=${JSON.stringify([server.command, ...(server.args ?? [])])} cwd=${JSON.stringify(server.cwd)}`;
+	const headers = server.headers ?? {};
+	const named = Object.keys(headers)
+		.sort()
+		.map((header) => `${header}:${headers[header]}`);
+	return `url=${JSON.stringify(server.url)}${named.length > 0 ? ` headers=${named.join(",")}` : ""}`;
+}
+
 function networkLabel(grant: ReturnType<typeof networkGrant>): string {
 	return grant.network
 		? `network=true (${grant.networkSource === "trust" ? "trust record" : "user declaration"})`
@@ -341,7 +388,7 @@ function offlineTools(
 					scope: server.scope,
 					declarationPath: server.path,
 					serverId: server.id,
-					digest: server.digest,
+					digest: mcpCatalogDigest(server),
 					cwd: server.cwd,
 				});
 	if (catalog === null) return { tools: [], catalog: "missing" };
@@ -410,10 +457,34 @@ export interface McpCommandOutput {
 }
 
 /** Shared operator outcomes for the CLI and slash command. */
+/** A server's state in a live gateway: connected, failed or needs-auth once reached, else trusted, untrusted or stale. */
+export interface McpLiveStatus {
+	status: string;
+	reason?: string;
+	remedy?: string;
+}
+
+/** The live states a gateway listing reports for servers it reached. */
+export function mcpLiveStatuses(
+	servers: ReadonlyArray<{ id: string; status: string; reason?: string; remedy?: string }>,
+): Map<string, McpLiveStatus> {
+	const live = new Map<string, McpLiveStatus>();
+	for (const server of servers) {
+		if (server.status !== "connected" && server.status !== "failed" && server.status !== "needs-auth") continue;
+		live.set(server.id, {
+			status: server.status,
+			...(server.reason !== undefined ? { reason: server.reason } : {}),
+			...(server.remedy !== undefined ? { remedy: server.remedy } : {}),
+		});
+	}
+	return live;
+}
+
 export function mcpCommandOutput(
 	argv: ReadonlyArray<string>,
 	options: McpTrustOptions = { cwd: process.cwd() },
 	served: ReadonlyMap<string, McpSurface> = new Map(),
+	live: ReadonlyMap<string, McpLiveStatus> = new Map(),
 ): McpCommandOutput {
 	const fail = (code: number, message: string): McpCommandOutput => {
 		const text = message.replace(/[\r\n]+/gu, " ");
@@ -421,6 +492,13 @@ export function mcpCommandOutput(
 	};
 	try {
 		const [command, id, ...rest] = argv;
+		if (command === "add" || command === "remove") return mcpEditOutput(argv, options, fail);
+		if (command === "logout") return mcpLogoutOutput(id, rest, options, fail);
+		if (command === "login")
+			return fail(
+				1,
+				`mcp login reads credentials at a terminal or from stdin: run pancode mcp login ${id ?? "<id>"} in a shell`,
+			);
 		if (command === "list" && id === undefined) {
 			const resolved = resolveMcpServers(options);
 			const result = {
@@ -429,12 +507,16 @@ export function mcpCommandOutput(
 					const offline = offlineTools(server, options.cwd);
 					const entry = boundEntry(server);
 					const surface = surfaceStatusOf(server, served.get(server.id) ?? null);
+					const state = live.get(server.id);
 					// The shipped schemas are policy, not a listing; list shows the version, title and the variable names it is given.
 					const { builtin, ...declaration } = server;
 					return {
 						...declaration,
+						...(state !== undefined ? { status: state } : {}),
 						// An env value is often a token: list names the keys and never prints a value.
-						env: Object.fromEntries(Object.keys(server.env).map((key) => [key, "[redacted]"])),
+						...(server.env !== undefined
+							? { env: Object.fromEntries(Object.keys(server.env).map((key) => [key, "[redacted]"])) }
+							: {}),
 						...(builtin !== undefined
 							? { builtin: { version: builtin.version, title: builtin.title, environment: builtin.environment } }
 							: {}),
@@ -458,8 +540,12 @@ export function mcpCommandOutput(
 			// Each server's tools and surface sit under its own header line (CLI audit 7).
 			const lines = result.servers.flatMap((server) => {
 				const block = [
-					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} command=${JSON.stringify([server.command, ...server.args])} cwd=${JSON.stringify(server.cwd)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${server.builtin !== undefined && server.builtin.environment.length > 0 ? ` environment=${server.builtin.environment.join(",")}` : ""} ${networkLabel(server)}`,
+					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${server.builtin !== undefined && server.builtin.environment.length > 0 ? ` environment=${server.builtin.environment.join(",")}` : ""} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
 				];
+				if (server.status?.reason !== undefined)
+					block.push(
+						`  ${server.status.status}: ${server.status.reason}${server.status.remedy !== undefined ? `; run ${server.status.remedy}` : ""}`,
+					);
 				for (const tool of server.tools) block.push(`  ${tool.capability} actionClass=${tool.actionClass}`);
 				if (server.trust.status === "trusted" && server.catalog === "missing")
 					block.push("  no recorded tool catalog; use pancode mcp list --refresh");
@@ -487,7 +573,7 @@ export function mcpCommandOutput(
 		if ((command !== "trust" && command !== "untrust") || !id)
 			return fail(
 				2,
-				"usage: pancode mcp list | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
+				"usage: pancode mcp list | add <id> [--scope user|project] (--url <url> [--header <Name>=<key>]... | -- <command> [args...]) | remove <id> [--scope user|project] | login <id> | logout <id> | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
 			);
 		// A flag where the id belongs is named as a flag, never looked up as a server id (C5); exit 1 stays (NIGHT-DECISIONS 2).
 		if (id.startsWith("-")) return fail(1, `unknown flag: ${id}`);
@@ -548,7 +634,13 @@ export function mcpCommandOutput(
 			// The record itself is --json's; text names what it grants in a sentence.
 			return {
 				code: 0,
-				text: `mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
+				text: [
+					`mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
+					// A trusted declaration decides where a stored credential goes, so trust names each route.
+					...(declared?.url !== undefined
+						? mcpCredentialRoutes(declared.url, declared.headers).map((route) => `  ${route}`)
+						: []),
+				].join("\n"),
 				data,
 			};
 		}
@@ -669,7 +761,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 		return fail(`server '${id}' is ${trust.status}; it is never launched until trusted: pancode mcp trust ${id}`, {
 			server: described,
 		});
-	const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }, { createMcpStdioClient }] =
+	const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }, { createMcpClient }] =
 		await Promise.all([
 			import("../tools/gateway/mcp-capabilities.js"),
 			import("../tools/registry.js"),
@@ -684,7 +776,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 		// An operator command, as `pancode store put` is: it may write every tag.
 		store: { writable: true },
 		clientFactory: (spec, options) => {
-			const created = createMcpStdioClient(spec, options);
+			const created = createMcpClient(spec, options);
 			if (spec.id === id) client = created;
 			return created;
 		},
@@ -740,6 +832,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 		const listing = refreshed.listing;
 		const offers = await liveResourcesAndPrompts(source, live, id);
 		const surface = surfaceStatusOf(server, source.servedSurface(id));
+		const dropped = listing?.dropped ?? [];
 		const data = {
 			ok: results.every((result) => result.isError === false),
 			server: described,
@@ -747,6 +840,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			serverInfo: latestInfo.serverInfo,
 			...(latestInfo.instructions !== null ? { instructions: latestInfo.instructions } : {}),
 			tools,
+			...(dropped.length > 0 ? { dropped } : {}),
 			truncated: listing?.truncated === true,
 			...offers.data,
 			...(surface !== null ? { surface } : {}),
@@ -759,6 +853,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 		const lines = [
 			mcpTestHeadline(id, latestInfo, tools.filter((tool) => !isMcpResourceCapability(tool.name)).length, described),
 			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
+			...dropped.map((tool) => `  dropped ${tool.name}: ${escapeTerminalControls(tool.reason)}`),
 			...offers.lines,
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
 			...(listing?.events ?? []).map(
@@ -1205,11 +1300,14 @@ function parseSurfaceArgs(argv: ReadonlyArray<string>): { id: string; hash?: str
 }
 
 export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number> {
-	if (argv.includes("--help") || argv.includes("-h")) {
+	const separator = argv.indexOf("--");
+	const head = separator === -1 ? argv : argv.slice(0, separator);
+	const tail = separator === -1 ? [] : argv.slice(separator);
+	if (head.includes("--help") || head.includes("-h")) {
 		process.stdout.write(HELP);
 		return 0;
 	}
-	const json = argv.includes("--json");
+	const json = head.includes("--json");
 	if (argv[0] === "test") {
 		const parsed = parseMcpTestArgs(argv.filter((arg) => arg !== "--json"));
 		const result =
@@ -1218,6 +1316,13 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 				: await mcpTestOutput(parsed.id, parsed.calls);
 		if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
 		else if (result.code !== 0 && !("protocolVersion" in (result.data as object))) printError(result.text);
+		else process.stdout.write(`${result.text}\n`);
+		return result.code;
+	}
+	if (argv[0] === "login") {
+		const result = await mcpLoginOutput(argv.filter((arg) => arg !== "--json"));
+		if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+		else if (result.code !== 0) printError(result.text);
 		else process.stdout.write(`${result.text}\n`);
 		return result.code;
 	}
@@ -1248,6 +1353,7 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 	}
 	let refreshFailure: string | null = null;
 	const served = new Map<string, McpSurface>();
+	let live = new Map<string, McpLiveStatus>();
 	const refresh =
 		argv[0] === "list" &&
 		argv.includes("--refresh") &&
@@ -1266,9 +1372,10 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 				const surface = source.servedSurface(server.id);
 				if (surface !== null) served.set(server.id, surface);
 			}
+			live = mcpLiveStatuses(listing.servers);
 			refreshFailure =
 				listing.servers
-					.filter((server) => server.status === "failed")
+					.filter((server) => server.status === "failed" || server.status === "needs-auth")
 					.map((server) => `${server.id}: ${server.reason}`)
 					.join("; ") || null;
 		} finally {
@@ -1276,9 +1383,10 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 		}
 	}
 	const result = mcpCommandOutput(
-		argv.filter((arg) => arg !== "--json" && (!refresh || arg !== "--refresh")),
+		[...head.filter((arg) => arg !== "--json" && (!refresh || arg !== "--refresh")), ...tail],
 		{ cwd: process.cwd() },
 		served,
+		live,
 	);
 	// Launch trust approves a process; the tool surface it serves is a second
 	// approval. At a terminal the operator sees it now and it is recorded.
@@ -1296,7 +1404,6 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 	}
 	if (refreshFailure !== null) {
 		result.code = 1;
-		result.text += `\n${refreshFailure}`;
 		(result.data as { trustDiagnostics: string[] }).trustDiagnostics.push(refreshFailure);
 	}
 	if (json) process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);

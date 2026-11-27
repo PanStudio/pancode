@@ -32,7 +32,7 @@ import {
 	approveMcpSkill,
 	approveMcpSurface,
 	canonicalProjectRoot,
-	createMcpStdioClient,
+	createMcpClient,
 	grantMcpBuiltinNetwork,
 	type McpBuiltinSource,
 	type McpClient,
@@ -95,7 +95,7 @@ describe("native worker MCP capabilities", () => {
 	let fixtureSurface: McpSurface;
 
 	before(async () => {
-		const probe = createMcpStdioClient(
+		const probe = createMcpClient(
 			{ id: "probe", command: process.execPath, args: [FIXTURE] },
 			{ workspaceRoot: process.cwd(), initializeTimeoutMs: 5_000, killGraceMs: 200 },
 		);
@@ -184,7 +184,7 @@ describe("native worker MCP capabilities", () => {
 					...(builtin !== undefined ? { builtin } : {}),
 					clientFactory: (spec, options) => {
 						launches?.push(options);
-						const client = createMcpStdioClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
+						const client = createMcpClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
 						clients.push(client);
 						return client;
 					},
@@ -1029,7 +1029,7 @@ describe("native worker MCP capabilities", () => {
 		match(scoped([project]).withheld[0]?.reason ?? "", /overlaps its launch cwd /u);
 		// Its entry file is the kit CLI this PanCode runs, inside the checkout here and the install elsewhere.
 		const node = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "node");
-		const entry = node?.args.find((arg) => existsSync(arg) && statSync(arg).isFile());
+		const entry = node?.args?.find((arg) => existsSync(arg) && statSync(arg).isFile());
 		ok(entry !== undefined, JSON.stringify(node?.args));
 		const inEntry = scoped([dirname(entry)]);
 		strictEqual(inEntry.attestation.tools[0]?.network, undefined);
@@ -1158,7 +1158,7 @@ describe("native worker MCP capabilities", () => {
 			readableRoots: [tree],
 			network: false,
 		});
-		const client = createMcpStdioClient(
+		const client = createMcpClient(
 			{
 				id: "shell",
 				command: "/bin/sh",
@@ -1205,7 +1205,7 @@ describe("native worker MCP capabilities", () => {
 			readableRoots: [tree],
 			network: false,
 		});
-		const client = createMcpStdioClient(
+		const client = createMcpClient(
 			{ id: "graceful", command: process.execPath, args: [server] },
 			{ workspaceRoot: tree, initializeTimeoutMs: 5_000, killGraceMs: 2_000 },
 		);
@@ -1358,5 +1358,82 @@ describe("native worker MCP capabilities", () => {
 		} finally {
 			await closeServer(server);
 		}
+	});
+
+	it("requires the operator network grant before admitting a recipe-bound skill from a remote MCP server", () => {
+		const url = "https://mcp.example.invalid/mcp";
+		const configDir = pancodeConfigDir();
+		mkdirSync(configDir, { recursive: true });
+		writeFileSync(join(configDir, "mcp.yaml"), `version: 1\nservers:\n  - id: rem\n    url: ${url}\n`);
+		const [server] = resolveMcpServers({ cwd: project }).servers.filter((entry) => entry.id === "rem");
+		ok(server);
+		const body = "---\nname: guide\ndescription: Remote guide.\n---\nFollow these steps.\n";
+		const parsed = parseMcpSkillEntry({
+			uri: "skill://rem/guide/SKILL.md",
+			frontmatter: { name: "guide", description: "Remote guide." },
+			resources: [
+				{
+					uri: "skill://rem/guide/SKILL.md",
+					digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+					size: Buffer.byteLength(body),
+				},
+			],
+		});
+		ok(parsed.ok);
+		const skill = parsed.entry;
+		const approval = {
+			uri: skill.uri,
+			name: skill.name,
+			manifestDigest: skill.manifestDigest,
+			files: skill.resources.length,
+			bytes: skill.totalBytes,
+		};
+		writeMcpSkillCatalog(
+			{
+				projectRoot: canonicalProjectRoot(project),
+				scope: "user",
+				declarationPath: server.path,
+				serverId: "rem",
+				digest: server.digest,
+				cwd: server.cwd,
+			},
+			{ skills: [skill], refused: [], truncated: false, ttlMs: 0 },
+		);
+		ok(approveMcpSkill({ cwd: project, id: "rem", skill: approval }).ok);
+
+		throws(
+			() =>
+				resolveWorkerMcpAdmission({
+					agentId: "scout",
+					projectCwd: project,
+					tools: [ToolNames.Read, ToolNames.Context],
+					skills: ["rem:guide"],
+				}),
+			/remote and the operator has not granted it network in fleet workers/u,
+		);
+
+		// Once network: true is set on the user declaration (and the skill catalog + approval match the new digest), admission succeeds.
+		writeFileSync(join(configDir, "mcp.yaml"), `version: 1\nservers:\n  - id: rem\n    url: ${url}\n    network: true\n`);
+		const [granted] = resolveMcpServers({ cwd: project }).servers.filter((entry) => entry.id === "rem");
+		ok(granted);
+		writeMcpSkillCatalog(
+			{
+				projectRoot: canonicalProjectRoot(project),
+				scope: "user",
+				declarationPath: granted.path,
+				serverId: "rem",
+				digest: granted.digest,
+				cwd: granted.cwd,
+			},
+			{ skills: [skill], refused: [], truncated: false, ttlMs: 0 },
+		);
+		ok(approveMcpSkill({ cwd: project, id: "rem", skill: approval }).ok);
+		const attested = resolveWorkerMcpAdmission({
+			agentId: "scout",
+			projectCwd: project,
+			tools: [ToolNames.Read, ToolNames.Context],
+			skills: ["rem:guide"],
+		});
+		strictEqual(attested?.skills?.[0]?.displayName, "rem:guide");
 	});
 });

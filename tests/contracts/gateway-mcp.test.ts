@@ -15,7 +15,7 @@ import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import {
 	approveMcpSurface,
 	canonicalProjectRoot,
-	createMcpStdioClient,
+	createMcpClient,
 	DEFAULT_KILL_GRACE_MS,
 	DEFAULT_TEARDOWN_BOUND_MS,
 	defaultMcpBuiltinSource,
@@ -144,7 +144,7 @@ function wire(
 		registry,
 		requestTimeoutMs: 5_000,
 		clientFactory: (spec, options) => {
-			const client = createMcpStdioClient(spec, {
+			const client = createMcpClient(spec, {
 				...options,
 				initializeTimeoutMs: 5_000,
 				killGraceMs: 200,
@@ -307,6 +307,13 @@ describe("gateway MCP capabilities", () => {
 		);
 		strictEqual(mcpToolConfirmationRule(trusted, "submit_slurm_job"), "slurm-allocation");
 		strictEqual(mcpToolActionClass({ ...trusted, scope: "client" }, { name: "tail", annotations: null }), "unknown");
+		// A remote server's own hints never class its tools; the operator does.
+		const local = { ...operator, id: "docs", toolActionClasses: {} };
+		strictEqual(mcpToolActionClass(local, { name: "search", ...hinted }), "read");
+		strictEqual(
+			mcpToolActionClass({ ...local, url: "https://example.invalid/mcp" }, { name: "search", ...hinted }),
+			"unknown",
+		);
 		const owner = mcpToolOwner([{ id: "a" }, { id: "a__b" }], "mcp_a__b__tool");
 		deepStrictEqual(owner, { declaration: { id: "a__b" }, tool: "tool" });
 		strictEqual(mcpToolOwner([{ id: "a" }], "mcp_b__tool"), null);
@@ -518,7 +525,7 @@ describe("gateway MCP capabilities", () => {
 					// User-scope servers: an attended session records each surface on first sight.
 					attended: true,
 					clientFactory: (spec, options) => {
-						const client = createMcpStdioClient(spec, { ...options, killGraceMs: 50 });
+						const client = createMcpClient(spec, { ...options, killGraceMs: 50 });
 						if (spec.id === "a") {
 							const listTools = client.listTools.bind(client);
 							client.listTools = async () => {
@@ -701,10 +708,10 @@ describe("gateway MCP capabilities", () => {
 			import { createRegistry } from ${moduleUrl("src/tools/registry.ts")};
 			import { registerAllTools } from ${moduleUrl("src/tools/bootstrap.ts")};
 			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/index.ts")};
-			import { createMcpStdioClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
+			import { createMcpClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
 			const registry = createRegistry({ safety: createWorkerSafety({cwd: ${JSON.stringify(scene.project)}}), autonomy: () => "yolo" });
 			let client;
-			const source = createMcpCapabilitySource({cwd: ${JSON.stringify(scene.project)}, configDir: ${JSON.stringify(scene.configDir)}, registry, clientFactory: (spec, opts) => client = createMcpStdioClient(spec, opts)});
+			const source = createMcpCapabilitySource({cwd: ${JSON.stringify(scene.project)}, configDir: ${JSON.stringify(scene.configDir)}, registry, clientFactory: (spec, opts) => client = createMcpClient(spec, opts)});
 			const termination = getTerminationCoordinator();
 			registerAllTools(registry, {mcpCapabilities: source, bus: telemetryHub(), termination});
 			await source.list();
@@ -1907,7 +1914,7 @@ describe("builtin MCP servers", () => {
 			requestTimeoutMs: 10_000,
 			clientFactory: (spec, options) => {
 				launches.push(spec.id);
-				return createMcpStdioClient(spec, { ...options, initializeTimeoutMs: 10_000, killGraceMs: 200 });
+				return createMcpClient(spec, { ...options, initializeTimeoutMs: 10_000, killGraceMs: 200 });
 			},
 		});
 		registerCoreTools(registry, { mcpCapabilities: source });
@@ -2273,5 +2280,138 @@ describe("builtin MCP servers", () => {
 		const quoted = suggestions?.values.find((v) => v.label === `a"b'c`);
 		ok(quoted);
 		deepStrictEqual(parseCommandArgs(quoted.value), [`a"b'c`]);
+	});
+});
+
+describe("remote Streamable HTTP MCP safeguards", () => {
+	it("encodes non-ASCII and sentinel Mcp-Name values, reports remote authorityNote, and blocks unapproved HeaderMismatch retries", async () => {
+		const env = await isolatePancodeEnv("pancode-mcp-http-safeguards-");
+		try {
+			const project = join(env.dir, "project");
+			const configDir = join(env.dir, "config");
+			mkdirSync(project, { recursive: true });
+			mkdirSync(configDir, { recursive: true });
+			const url = "http://127.0.0.1:49999/mcp";
+			writeFileSync(
+				join(configDir, "mcp.yaml"),
+				`version: 1\nservers:\n  - id: remote\n    url: ${JSON.stringify(url)}\n    actionClass: read\n`,
+			);
+
+			const seenNames: string[] = [];
+			let mutated = false;
+			let callCount = 0;
+			const fakeFetch: typeof fetch = async (_input, init) => {
+				const headers = new Headers(init?.headers);
+				const body = JSON.parse(String(init?.body)) as {
+					id?: number | string;
+					method: string;
+					params?: Record<string, unknown>;
+				};
+				const mcpName = headers.get("Mcp-Name");
+				if (mcpName !== null) seenNames.push(mcpName);
+				const json = (payload: unknown) =>
+					new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+				if (body.method === "server/discover") {
+					return json({
+						jsonrpc: "2.0",
+						id: body.id,
+						result: {
+							supportedVersions: ["2026-07-28"],
+							capabilities: { tools: {} },
+						},
+					});
+				}
+				if (body.method === "tools/list") {
+					const schema = mutated
+						? {
+								type: "object",
+								properties: {
+									region: { type: "string", "x-mcp-header": "region" },
+									extra: { type: "string" },
+								},
+							}
+						: {
+								type: "object",
+								properties: { region: { type: "string", "x-mcp-header": "region" } },
+							};
+					return json({
+						jsonrpc: "2.0",
+						id: body.id,
+						result: {
+							tools: [
+								{ name: "café", description: "non-ASCII name", inputSchema: { type: "object" } },
+								{ name: "=?base64?YWJj?=", description: "sentinel name", inputSchema: { type: "object" } },
+								{ name: "echo", description: "mirrored tool", inputSchema: schema },
+							],
+						},
+					});
+				}
+				if (body.method === "tools/call") {
+					callCount += 1;
+					const name = String(body.params?.name ?? "");
+					if (name === "echo" && callCount === 1) {
+						mutated = true;
+						return json({
+							jsonrpc: "2.0",
+							id: body.id,
+							error: { code: -32020, message: "HeaderMismatch" },
+						});
+					}
+					return json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: `ok:${name}` }] } });
+				}
+				return json({ jsonrpc: "2.0", id: body.id, result: {} });
+			};
+
+			// 1. Direct client encodes non-ASCII and sentinel-shaped Mcp-Name values with Base64 sentinel.
+			const direct = createMcpClient(
+				{ id: "remote", url },
+				{ workspaceRoot: project, fetch: fakeFetch, initializeTimeoutMs: 5_000 },
+			);
+			try {
+				await direct.initialize();
+				await direct.listTools();
+				const nonAscii = await direct.callTool("café", {});
+				strictEqual(nonAscii.text, "ok:café");
+				const sentinel = await direct.callTool("=?base64?YWJj?=", {});
+				strictEqual(sentinel.text, "ok:=?base64?YWJj?=");
+				deepStrictEqual(seenNames.slice(0, 2), [
+					`=?base64?${Buffer.from("café", "utf8").toString("base64")}?=`,
+					`=?base64?${Buffer.from("=?base64?YWJj?=", "utf8").toString("base64")}?=`,
+				]);
+			} finally {
+				await direct.close();
+			}
+
+			// 2. Gateway reports remote authorityNote and blocks HeaderMismatch retry when schema/surface changed.
+			callCount = 0;
+			mutated = false;
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" });
+			const source = createMcpCapabilitySource({
+				cwd: project,
+				configDir,
+				registry,
+				attended: true,
+				builtin: emptyBuiltinSource(env.dir),
+				clientFactory: (spec, opts) => createMcpClient(spec, { ...opts, fetch: fakeFetch }),
+			});
+			try {
+				const ensured = await source.ensure("mcp_remote__echo");
+				ok(ensured.spec);
+				const note = source.authorityNote("mcp_remote__echo");
+				match(note ?? "", /^Remote MCP server remote at http:\/\/127\.0\.0\.1:49999/u);
+				match(note ?? "", /runs off this machine, and what a call sends leaves it/u);
+				doesNotMatch(note ?? "", /Local stdio MCP server/u);
+
+				const verdict = await registry.invoke({ tool: "mcp_remote__echo", args: { region: "us" } });
+				strictEqual(verdict.kind, "ok");
+				strictEqual(verdict.result.kind, "error");
+				match(verdict.result.message, /tool surface of 'remote' changed/u);
+				strictEqual(callCount, 1, "must not resend tools/call after schema/surface drifted on -32020");
+			} finally {
+				await source.close();
+			}
+		} finally {
+			env.restore();
+		}
 	});
 });

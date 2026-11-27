@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { ACP_CONTEXT_STATUS_METHOD } from "../../core/context-operation.js";
 import { isRecord } from "../../core/type-guards.js";
+import { mcpDeclaredHeaderRefusal, mcpHeaderValueRefusal, mcpRemoteEndpoint } from "../../domains/gateway/mcp/index.js";
 import { OPERATOR_SHELL_TIMEOUT_MS } from "../../domains/session/operator-shell.js";
 import type { McpClientServerSpec } from "../../tools/gateway/mcp-capability-types.js";
 import {
@@ -111,17 +112,57 @@ import { ACP_READOUTS_CAPABILITY, ACP_READOUTS_META_KEY } from "./types-readouts
 /** A client may name at most this many kinds; an over-long list refuses the whole opt-in. */
 const ACP_MAX_REQUESTED_EVENT_KINDS = 16;
 
-/** ACP stdio declarations are client authority for one session, never saved settings. */
+/** An ACP client's Streamable HTTP server: https (http on localhost), with at most 16 header values. */
+function parseClientHttpServer(raw: Record<string, unknown>): McpClientServerSpec {
+	const endpoint = typeof raw.url === "string" && Buffer.byteLength(raw.url) <= 2048 ? mcpRemoteEndpoint(raw.url) : null;
+	if (
+		typeof raw.name !== "string" ||
+		raw.name.trim().length === 0 ||
+		Buffer.byteLength(raw.name) > 128 ||
+		!(endpoint instanceof URL) ||
+		!Array.isArray(raw.headers) ||
+		raw.headers.length > 16
+	) {
+		throw new AcpRequestError(
+			-32602,
+			`invalid http MCP server declaration${typeof endpoint === "string" ? `: its url ${endpoint}` : ""}`,
+			{ code: "invalid_params" },
+		);
+	}
+	const headers: Record<string, string> = {};
+	for (const entry of raw.headers) {
+		if (
+			!isRecord(entry) ||
+			typeof entry.name !== "string" ||
+			mcpDeclaredHeaderRefusal(entry.name) !== null ||
+			Object.keys(headers).some((name) => name.toLowerCase() === (entry.name as string).toLowerCase()) ||
+			typeof entry.value !== "string" ||
+			mcpHeaderValueRefusal(entry.value) !== null
+		) {
+			throw new AcpRequestError(-32602, "invalid http MCP server header", { code: "invalid_params" });
+		}
+		headers[entry.name] = entry.value;
+	}
+	return { name: raw.name, url: endpoint.href, headers };
+}
+
+/** ACP stdio and http declarations are client authority for one session, never saved settings. */
 export function parseClientMcpServers(value: unknown, required: boolean): McpClientServerSpec[] {
 	if (value === undefined && !required) return [];
 	if (value === undefined)
 		throw new AcpRequestError(-32602, "mcpServers is required; send [] for none", { code: "invalid_params" });
 	if (!Array.isArray(value) || value.length > 32) {
-		throw new AcpRequestError(-32602, "mcpServers must be an array of at most 32 stdio servers", {
+		throw new AcpRequestError(-32602, "mcpServers must be an array of at most 32 stdio or http servers", {
 			code: "invalid_params",
 		});
 	}
 	return value.map((raw: unknown) => {
+		if (isRecord(raw) && raw.type === "http") return parseClientHttpServer(raw);
+		if (isRecord(raw) && raw.type === "sse") {
+			throw new AcpRequestError(-32602, "the 2024 HTTP+SSE MCP transport is not supported; use type http", {
+				code: "invalid_params",
+			});
+		}
 		if (
 			!isRecord(raw) ||
 			(raw.type !== undefined && raw.type !== "stdio") ||
@@ -337,7 +378,7 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 				agentCapabilities: {
 					loadSession: canLoadSession,
 					promptCapabilities: { audio: false, embeddedContext: true, image: features.images === true },
-					mcpCapabilities: { http: false, sse: false },
+					mcpCapabilities: { http: true, sse: false },
 					sessionCapabilities: {
 						close: {},
 						...(features.session ? { list: {}, delete: {} } : {}),

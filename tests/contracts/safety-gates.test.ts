@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { ToolNames } from "../../src/core/tool-names.js";
+import { recordProjectSurfaceTrust, safetySurfaceTrustHash } from "../../src/core/workspace-trust.js";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
 import { evaluateAdmission } from "../../src/domains/safety/admission.js";
@@ -27,6 +28,7 @@ import {
 	extractCommandWriteTargets,
 } from "../../src/domains/safety/command-path-walks.js";
 import type { SafetyContract, SafetyDecision } from "../../src/domains/safety/contract.js";
+import { recallApprovedFlowPolicy, rememberApprovedFlowPolicy } from "../../src/domains/safety/flow-policy-snapshot.js";
 import { EMPTY_INFORMATION_FLOW_INPUT } from "../../src/domains/safety/information-flow.js";
 import { createSafetyPolicyEngine, type SafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy.js";
@@ -1848,5 +1850,33 @@ describe("safety gate boundary", () => {
 				`write-path-outside-cwd: ${target}`,
 			]);
 		}
+	});
+
+	it("recalls an approved information-flow snapshot that pins a remote MCP server by url", () => {
+		writeFileSync(
+			join(scratch, ".pancode", "safety.yaml"),
+			[
+				"version: 1",
+				"informationFlow:",
+				"  mcp:",
+				"    docs:",
+				"      url: https://mcp.example.invalid/mcp",
+				"  sources:",
+				"    - id: secrets",
+				"      paths: [secrets/**]",
+				"      recipients: [mcp:docs]",
+			].join("\n"),
+		);
+		const loaded = loadProjectSafetyPolicy(scratch);
+		strictEqual(loaded.valid, true, JSON.stringify(loaded.errors));
+		strictEqual(loaded.path !== null && loaded.hash !== null, true);
+		recordProjectSurfaceTrust(scratch, "safety", safetySurfaceTrustHash(loaded.path as string, loaded.hash as string));
+		strictEqual(
+			rememberApprovedFlowPolicy(scratch, loaded.path as string, loaded.hash as string, loaded.informationFlow),
+			null,
+		);
+		const recalled = recallApprovedFlowPolicy(scratch);
+		strictEqual(recalled.kind, "approved");
+		deepStrictEqual(recalled.approved.informationFlow.mcp.docs, { url: "https://mcp.example.invalid/mcp" });
 	});
 });

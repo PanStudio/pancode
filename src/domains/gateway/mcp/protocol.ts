@@ -43,17 +43,21 @@ export const JSON_RPC_METHOD_NOT_FOUND = -32601;
 export const JSON_RPC_INVALID_PARAMS = -32602;
 /** Legacy resource-not-found; the modern revision answers -32602 instead. */
 export const MCP_RESOURCE_NOT_FOUND = -32002;
+/** Modern-era HTTP error: the request's mirrored headers are missing or do not match its body. */
+export const MCP_HEADER_MISMATCH = -32020;
 /** Modern-era error: the request needs a client capability it did not declare, named in `data.requiredCapabilities`. */
 export const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
 /** Modern-era error: the server does not serve the requested revision, and names the ones it does. */
 export const MCP_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
-export type McpErrorCode = "timeout" | "closed" | "protocol" | "server" | "spawn" | "aborted" | "overload";
+export type McpErrorCode = "timeout" | "closed" | "protocol" | "server" | "spawn" | "aborted" | "overload" | "auth";
 
 /**
  * Every failure the client reports carries one of the codes above. `overload`
  * names an outbound line the client refused to queue: on its own because it
  * exceeds the cap, or fatally because the server stopped reading its stdin.
+ * `auth` names a remote server that refused PanCode's credentials, or one
+ * whose credentials are not stored for its origin.
  */
 export class McpError extends Error {
 	override readonly name = "McpError";

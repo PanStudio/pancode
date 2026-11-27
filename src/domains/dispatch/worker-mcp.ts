@@ -11,6 +11,7 @@ import {
 	judgeMcpSkillApproval,
 	type McpAttestedSkill,
 	type McpBuiltinSource,
+	mcpCatalogDigest,
 	mcpServerFileArguments,
 	mcpSkillReferenceServer,
 	mcpSurfaceRemedy,
@@ -79,6 +80,12 @@ export function resolveWorkerMcpAdmission(input: WorkerMcpAdmissionInput): Worke
 				`dispatch: admission denied: ${who} names MCP capability ${name}, but MCP server '${declaration.id}' is ${declaration.trust.status} for ${projectRoot} (${declaration.trust.reason}); review its declaration and run \`pancode mcp trust ${declaration.id}\``,
 			);
 		}
+		// A remote server is reached over the network by the worker itself, so it needs the operator's grant.
+		if (declaration.url !== undefined && declaration.trust.network !== true) {
+			throw new Error(
+				`dispatch: admission denied: ${who} names MCP capability ${name}, but MCP server '${declaration.id}' is remote and the operator has not granted it network in fleet workers; ${declaration.scope === "user" ? "set network: true on it in the user mcp.yaml" : `run \`pancode mcp trust ${declaration.id} --network\``}`,
+			);
+		}
 		// A worker has no operator to review a surface, so only an approved one is
 		// attested; the worker checks the surface it is served against this digest.
 		const surface = declaration.trust.surface;
@@ -94,7 +101,7 @@ export function resolveWorkerMcpAdmission(input: WorkerMcpAdmissionInput): Worke
 			scope: declaration.scope,
 			declarationPath: declaration.path,
 			serverId: declaration.id,
-			digest: declaration.digest,
+			digest: mcpCatalogDigest(declaration),
 			cwd: declaration.cwd,
 		});
 		if (isMcpResourceCapability(owner.tool) && catalog !== null && catalog.resources !== true) {
@@ -141,6 +148,11 @@ function attestMcpSkill(
 			`MCP server '${serverId}' is ${declaration.trust.status} for ${projectRoot} (${declaration.trust.reason}); review its declaration and run \`pancode mcp trust ${serverId}\``,
 		);
 	}
+	if (declaration.url !== undefined && declaration.trust.network !== true) {
+		throw denied(
+			`MCP server '${declaration.id}' is remote and the operator has not granted it network in fleet workers; ${declaration.scope === "user" ? "set network: true on it in the user mcp.yaml" : `run \`pancode mcp trust ${declaration.id} --network\``}`,
+		);
+	}
 	// Admission launches nothing: the version a worker may load is the one the
 	// server's last live listing recorded, and only if the operator approved it.
 	const catalog = readMcpSkillCatalog({
@@ -148,7 +160,7 @@ function attestMcpSkill(
 		scope: declaration.scope,
 		declarationPath: declaration.path,
 		serverId,
-		digest: declaration.digest,
+		digest: mcpCatalogDigest(declaration),
 		cwd: declaration.cwd,
 	});
 	if (catalog === null) {
@@ -222,6 +234,7 @@ function realPathOf(target: string): string {
 
 /** Every file the launch names, as spelled and as resolved, the way config.ts scans a project entry. */
 function liveEntryFiles(server: ResolvedMcpServer): string[] {
+	if (server.url !== undefined) return [];
 	return mcpServerFileArguments(server.command, server.args, server.cwd).flatMap((target) => {
 		try {
 			return statSync(target).isFile() ? [target, realpathSync(target)] : [];
@@ -251,6 +264,8 @@ function overlaps(root: string, target: string): boolean {
  * project root.
  */
 function networkWithheldReason(server: ResolvedMcpServer, scope: WorkerMcpWriteScope): string | null {
+	// A remote server runs nothing from this machine, so no write root reaches its code.
+	if (server.url !== undefined) return null;
 	const project = server.scope === "project";
 	// The launch root is the dispatch cwd as given, which may be a symlink to the tree the write roots name.
 	const launchRoot = realPathOf(scope.launchRoot);

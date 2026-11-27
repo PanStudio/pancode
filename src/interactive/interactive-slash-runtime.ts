@@ -144,6 +144,7 @@ export interface InteractiveSlashRuntimeDeps {
 	extensions?: SlashExtensions;
 	reloadExtensions?: SlashCommandContext["reloadExtensions"];
 	reloadPlugins?: SlashCommandContext["reloadPlugins"];
+	mcpStatuses?: SlashCommandContext["mcpStatuses"];
 	reloadClasses?: SlashCommandContext["reloadClasses"];
 	restart?: SlashCommandContext["restart"];
 	openProjectTrust?: SlashCommandContext["openProjectTrust"];
@@ -869,6 +870,7 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 		openExtensions: deps.openExtensions,
 		...(deps.reloadExtensions ? { reloadExtensions: deps.reloadExtensions } : {}),
 		...(deps.reloadPlugins ? { reloadPlugins: deps.reloadPlugins } : {}),
+		...(deps.mcpStatuses ? { mcpStatuses: deps.mcpStatuses } : {}),
 		...(deps.reloadClasses ? { reloadClasses: deps.reloadClasses } : {}),
 		...(deps.restart ? { restart: deps.restart } : {}),
 		...(deps.openProjectTrust ? { openProjectTrust: deps.openProjectTrust } : {}),

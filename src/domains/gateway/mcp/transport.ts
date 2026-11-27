@@ -5,7 +5,7 @@
  * JSON-RPC messages. The protocol client owns ids, timeouts, the version
  * envelope and every MCP method; a transport owns the bytes, the peer's
  * lifetime and its teardown. The stdio transport runs a local server process;
- * a remote transport implements the same contract.
+ * the Streamable HTTP transport (http-transport.ts) reaches a remote one.
  */
 
 import type { encodeJsonRpcMessage, JsonRpcMessage, McpError } from "./protocol.js";
@@ -29,9 +29,19 @@ export type McpSendOutcome =
 	/** The peer stopped reading; the transport has already reported the fatal overload. */
 	| { kind: "overloaded" };
 
+/** One tool parameter a Streamable HTTP request mirrors into an `Mcp-Param-{name}` header (`x-mcp-header`). */
+export interface McpParamHeader {
+	/** The `{name}` part of the header, as the tool's inputSchema spells it. */
+	name: string;
+	/** The chain of `properties` keys from the arguments root to the parameter. */
+	path: ReadonlyArray<string>;
+}
+
 export interface McpSendOptions {
 	/** The request this message carries, so a request that settles unsent can be withdrawn. */
 	requestId?: number;
+	/** A `tools/call` request's mirrored parameters; only an HTTP transport reads them. */
+	paramHeaders?: ReadonlyArray<McpParamHeader>;
 	/** The message left this process for the peer. */
 	onSent?: () => void;
 	onError?: (error: Error) => void;
@@ -49,8 +59,26 @@ export interface McpTransportEvents {
 	fatal(error: McpError, ended: boolean): void;
 }
 
+/**
+ * What the protocol client settles with a transport that carries HTTP. Its
+ * presence changes three things: the era is probed by waiting for the modern
+ * request's answer rather than racing the handshake beside it, tools with an
+ * invalid `x-mcp-header` are dropped from the listing, and a HeaderMismatch
+ * answer is retried once after listing again.
+ */
+export interface McpHttpBinding {
+	/** The era this server's origin answered in earlier in this process, or null when it must be probed. */
+	cachedEra(): "modern" | "legacy" | null;
+	/** The era the client settled on; the legacy era also names the revision the handshake negotiated. */
+	settleEra(era: "modern" | "legacy", protocolVersion: string): void;
+	/** The cached era proved wrong, so the next connection to the origin probes again. */
+	forgetEra(): void;
+}
+
 export interface McpTransport {
 	readonly pid: number | undefined;
+	/** Set by a transport that carries HTTP; absent on stdio. */
+	readonly http?: McpHttpBinding;
 	/** Open the channel. False means it could not, and `fatal` has already said why. */
 	start(): Promise<boolean>;
 	/** True once start() has been called and got as far as creating the channel. */

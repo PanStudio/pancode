@@ -13,10 +13,10 @@ Put `informationFlow` in the project's `.pancode/safety.yaml`. Each source has a
 | `target:<id>` | A model target pinned in `informationFlow.targets` by runtime and endpoint. The live target must match both. Use endpoint `none` for a runtime without a URL. |
 | `endpoint:<url>` | A mediated outbound tool's exact HTTP(S) URL, including path and query. |
 | `origin:<scheme://host[:port]>` | A mediated outbound tool's URLs on that origin. |
-| `mcp:<server>` | An MCP server pinned in `informationFlow.mcp` by command, arguments, working directory and declared environment. |
+| `mcp:<server>` | An MCP server pinned in `informationFlow.mcp` by command, arguments, working directory and declared environment, or a remote server pinned by its url. |
 | `group:<name>` | The recipient references listed under `informationFlow.recipients.<name>`. |
 
-Endpoint identity normalizes scheme, host and default port, drops credentials and fragments, and retains path and query. Endpoint and origin recipients apply to outbound tools; approve model requests with a pinned target. Changing the URL behind a target id does not preserve its approval. MCP bindings use `command`, `args`, optional `cwd` relative to the policy root, and optional `env`; omitted `cwd` means the policy root and omitted `env` means no declared entries. The live launch declaration must match the pin.
+Endpoint identity normalizes scheme, host and default port, drops credentials and fragments, and retains path and query. Endpoint and origin recipients apply to outbound tools; approve model requests with a pinned target. Changing the URL behind a target id does not preserve its approval. MCP bindings use `command`, `args`, optional `cwd` relative to the policy root, and optional `env`; omitted `cwd` means the policy root and omitted `env` means no declared entries. A remote server's binding is `url` alone, under the same endpoint identity. The live declaration must match the pin. A remote MCP server's tools are also an endpoint, so `endpoint:` and `origin:` recipients admit them.
 
 For example, this complete policy keeps content under `secrets/` on one local model target:
 

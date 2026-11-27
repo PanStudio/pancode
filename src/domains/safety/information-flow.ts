@@ -24,7 +24,9 @@ export { isFlowRestrictionSet } from "../../core/flow-restrictions.js";
  * - `origin:<scheme://host[:port]>`: every URL on that origin.
  * - `mcp:<server>`: a declared MCP server, pinned by the policy's
  *   `informationFlow.mcp.<server>` binding to the exact command and
- *   arguments it is launched with. The live declaration must still match.
+ *   arguments it is launched with, or for a remote server to its URL. The
+ *   live declaration must still match. A remote server's tools are also
+ *   admitted by an `endpoint:` or `origin:` recipient that names its URL.
  * - `group:<name>`: a group from `informationFlow.recipients`.
  *
  * An empty recipient list forbids every transfer. A restriction carried on
@@ -110,12 +112,17 @@ export interface FlowTargetBinding {
  * directory can change where a server connects, so both are part of the
  * identity.
  */
-export interface FlowMcpBinding {
-	readonly command: string;
-	readonly args: ReadonlyArray<string>;
-	readonly cwd?: string;
-	readonly env?: Readonly<Record<string, string>>;
-}
+export type FlowMcpBinding =
+	| {
+			readonly command: string;
+			readonly args: ReadonlyArray<string>;
+			readonly cwd?: string;
+			readonly env?: Readonly<Record<string, string>>;
+	  }
+	| {
+			/** A remote server's endpoint URL. */
+			readonly url: string;
+	  };
 
 export interface InformationFlowPolicyInput {
 	readonly groups: Readonly<Record<string, ReadonlyArray<string>>>;
@@ -291,6 +298,26 @@ export function mcpTransportIdentity(
 	return `mcp:${JSON.stringify([server, command, [...args], cwd, sortedEnv])}`;
 }
 
+/** The identity of a remote MCP server: its endpoint URL, or null when the URL is not one. */
+export function mcpRemoteTransportIdentity(server: string, url: string): string | null {
+	const endpoint = flowEndpointIdentity(url);
+	return endpoint === null ? null : `mcp:${JSON.stringify([server, { url: endpoint }])}`;
+}
+
+/** The endpoint a remote MCP identity names, or null for a launched server. */
+function mcpRemoteEndpoint(identity: string | null): string | null {
+	if (identity === null || !identity.startsWith("mcp:[")) return null;
+	try {
+		const tuple = JSON.parse(identity.slice("mcp:".length)) as unknown[];
+		const target = tuple[1] as { url?: unknown } | null;
+		return tuple.length === 2 && typeof target === "object" && target !== null && typeof target.url === "string"
+			? target.url
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 /** Union of restriction sets, deduplicated by rule, policy, and evidence. Null when nothing is restricted. */
 export function mergeFlowRestrictions(
 	...sets: ReadonlyArray<FlowRestrictionSet | null | undefined>
@@ -366,7 +393,11 @@ function expandRecipients(
 			const server = ref.slice("mcp:".length);
 			const binding = own(input.mcp, server);
 			if (binding === undefined) dangling.push(ref);
-			else {
+			else if ("url" in binding) {
+				const identity = mcpRemoteTransportIdentity(server, binding.url);
+				if (identity === null) dangling.push(ref);
+				else recipients.push(identity);
+			} else {
 				const cwd =
 					canonicalizePath(path.resolve(policyRoot, binding.cwd ?? "."), memo) ??
 					path.resolve(policyRoot, binding.cwd ?? ".");
@@ -745,7 +776,8 @@ export function resolveModelDestination(input: {
 
 /**
  * Identity of a mediated outbound tool call: a fetch names the URL it was
- * asked for, an MCP tool names itself. Only the requested URL is known here;
+ * asked for, an MCP tool names itself, and a remote MCP tool also names the
+ * URL of its server. Only the requested URL is known here;
  * a redirect hop is a new destination and is judged by the fetch loop with
  * the same evaluator. Null for a tool that sends nothing outward.
  */
@@ -760,7 +792,10 @@ export function resolveToolDestination(
 		const endpoint = flowEndpointIdentity(url);
 		return { kind: "tool", tool, endpoint, ...(endpoint === null ? { endpointUnresolved: true } : {}) };
 	}
-	if (isMcpToolName(tool)) return { kind: "tool", tool, endpoint: null, mcp: mcpTransport?.(tool) ?? null };
+	if (isMcpToolName(tool)) {
+		const mcp = mcpTransport?.(tool) ?? null;
+		return { kind: "tool", tool, endpoint: mcpRemoteEndpoint(mcp), mcp };
+	}
 	return null;
 }
 

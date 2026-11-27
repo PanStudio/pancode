@@ -157,9 +157,9 @@ export type McpTrustStatus =
 	| { status: "untrusted"; actionClass: "unknown"; reason: string }
 	| { status: "stale"; actionClass: "unknown"; reason: string };
 
-export interface ResolvedMcpServer extends McpServerDeclaration {
+export type ResolvedMcpServer = McpServerDeclaration & {
 	trust: McpTrustStatus;
-}
+};
 
 export interface McpTrustOptions {
 	cwd: string;
@@ -482,7 +482,7 @@ function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state
 		return {
 			status: "stale",
 			actionClass: "unknown",
-			reason: `declaration of '${server.id}'${origin} changed (command, args, env, cwd, timeout, ${server.plugin !== undefined ? "tool action classes, or the plugin's content" : entries.length > 0 ? "tool action classes, or entry scripts" : "or tool action classes"}) since it was trusted; review it and run pancode mcp trust ${server.id} again`,
+			reason: `declaration of '${server.id}'${origin} changed (${server.url !== undefined ? "url, headers" : "command, args, env, cwd"}, timeout, ${server.plugin !== undefined ? "tool action classes, or the plugin's content" : entries.length > 0 ? "tool action classes, or entry scripts" : "or tool action classes"}) since it was trusted; review it and run pancode mcp trust ${server.id} again`,
 		};
 	}
 	return {
@@ -642,6 +642,29 @@ function untrustMcpServerLocked(options: McpTrustOptions & { id: string }): Untr
 		if (refused !== null) return { ok: false, message: refused };
 	}
 	return { ok: true, removed };
+}
+
+/** Remove the recorded surface and skill approvals of one user-scope server, whether or not it is still declared. */
+export function revokeMcpUserTrust(options: McpTrustOptions & { id: string }): UntrustMcpServerResult {
+	return withStateFileLockSync(mcpTrustPath(options.configDir), () => {
+		const trust = readMcpTrustState(options.configDir);
+		if (trust.diagnostics.length > 0) {
+			return {
+				ok: false,
+				message: `trust state is unusable; repair or remove it first: ${trust.diagnostics.join("; ")}`,
+			};
+		}
+		const beforeSurfaces = trust.state.surfaces ?? [];
+		const surfaces = beforeSurfaces.filter((entry) => entry.id !== options.id);
+		const beforeSkills = trust.state.skills ?? [];
+		const skills = beforeSkills.filter((entry) => !(entry.projectRoot === undefined && entry.id === options.id));
+		const removed = surfaces.length !== beforeSurfaces.length || skills.length !== beforeSkills.length;
+		if (removed) {
+			const refused = writeTrustState({ ...trust.state, surfaces, skills }, options.configDir);
+			if (refused !== null) return { ok: false, message: refused };
+		}
+		return { ok: true, removed };
+	});
 }
 
 export type GrantMcpBuiltinNetworkResult = { ok: true; grant: McpBuiltinGrant } | { ok: false; message: string };

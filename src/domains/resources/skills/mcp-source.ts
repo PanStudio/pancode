@@ -9,6 +9,7 @@
  * tool's, which launches the server, fetches the skill and verifies it.
  */
 import type { McpServerScope } from "../../gateway/mcp/config.js";
+import { mcpCatalogDigest } from "../../gateway/mcp/remote-credentials.js";
 import { type McpAttestedSkill, type McpRecordedSkill, readMcpSkillCatalog } from "../../gateway/mcp/skill-catalog.js";
 import { mcpSkillDisplayNames } from "../../gateway/mcp/skills.js";
 import {
@@ -71,7 +72,7 @@ export function servedMcpSkills(
 			scope: server.scope,
 			declarationPath: server.path,
 			serverId: server.id,
-			digest: server.digest,
+			digest: mcpCatalogDigest(server),
 			cwd: server.cwd,
 		});
 		if (catalog === null) continue;

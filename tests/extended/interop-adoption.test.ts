@@ -7,7 +7,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
 import { renderPromptContext } from "../../src/domains/context/prompt-context.js";
-import { loadMcpServerConfig } from "../../src/domains/gateway/mcp/index.js";
+import {
+	loadMcpServerConfig,
+	mcpHeaderCredentialRef,
+	openMcpHeaderCredentialStore,
+} from "../../src/domains/gateway/mcp/index.js";
 import {
 	applyInteropAdoption,
 	planInteropAdoption,
@@ -289,13 +293,14 @@ describe("interop discovery and adoption", () => {
 		strictEqual(plan.entries.length, 2);
 		ok(plan.entries.every((entry) => entry.action === "skip"));
 	});
-	it("maps stdio MCP servers and user instructions into PanCode config and names what it does not migrate", () => {
+	it("maps MCP servers and user instructions into PanCode config and names what it does not migrate", () => {
 		file(
 			".claude.json",
 			JSON.stringify({
 				mcpServers: {
 					Files: { type: "stdio", command: "node", args: ["srv.js"], env: { TOKEN: "never-show-this" } },
-					remote: { type: "http", url: "https://example.invalid/mcp" },
+					remote: { type: "http", url: "https://example.invalid/mcp", headers: { Authorization: "Bearer never-show" } },
+					legacy: { type: "sse", url: "https://example.invalid/sse" },
 					expand: { command: "node", env: { KEY: ["$", "{HOME}"].join("") } },
 				},
 			}),
@@ -319,7 +324,8 @@ describe("interop discovery and adoption", () => {
 			plan.entries.find((item) => item.item.kind === kind && item.item.name === name);
 		strictEqual(entry("mcp", "Files")?.action, "install");
 		strictEqual(entry("mcp", "Files")?.id, "files");
-		ok(entry("mcp", "remote")?.reason.includes("stdio servers only"));
+		strictEqual(entry("mcp", "remote")?.action, "install");
+		ok(entry("mcp", "legacy")?.reason.includes("2024 HTTP+SSE transport"));
 		ok(entry("mcp", "expand")?.reason.includes("expands environment variables"));
 		const pre = entry("hook", "PreToolUse");
 		strictEqual(pre?.action, "install", pre?.reason);
@@ -327,11 +333,16 @@ describe("interop discovery and adoption", () => {
 		ok(entry("hook", "Notification")?.reason.includes("no hook point for Notification"));
 		strictEqual(entry("instructions", "CLAUDE.md")?.action, "install");
 		ok(renderInteropAdoptionPlan(plan).includes("  | Prefer small diffs."));
-		ok(!renderInteropAdoptionPlan(plan).includes("never-show-this"));
+		ok(!renderInteropAdoptionPlan(plan).includes("Bearer"));
 		deepStrictEqual(applyInteropAdoption(plan, true), {
-			installed: ["mcp:files", "instructions:CLAUDE.md", "hook:PreToolUse"],
+			installed: ["mcp:files", "mcp:remote", "instructions:CLAUDE.md", "hook:PreToolUse"],
 			diagnostics: [],
 		});
+		ok(!readFileSync(path.join(pancodeConfigDir(), "mcp.yaml"), "utf8").includes("Bearer"));
+		strictEqual(
+			openMcpHeaderCredentialStore().get(mcpHeaderCredentialRef("remote-authorization", "https://example.invalid")),
+			"Bearer never-show",
+		);
 		const context = renderPromptContext(cwd).text;
 		ok(
 			context.includes("<user-context") && context.includes("Prefer small diffs."),
@@ -345,9 +356,14 @@ describe("interop discovery and adoption", () => {
 		deepStrictEqual(
 			loaded.servers
 				.filter((server) => server.scope !== "builtin")
-				.map((server) => [server.id, server.command, server.args, server.env]),
+				.map((server) =>
+					server.url === undefined
+						? [server.id, server.command, server.args, server.env]
+						: [server.id, server.url, { ...server.headers }],
+				),
 			[
 				["files", "node", ["srv.js"], { TOKEN: "never-show-this" }],
+				["remote", "https://example.invalid/mcp", { Authorization: "remote-authorization" }],
 				["docs", "uvx", ["docs-mcp"], {}],
 			],
 		);

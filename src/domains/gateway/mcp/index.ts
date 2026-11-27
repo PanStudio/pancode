@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * Public surface of the MCP module: protocol framing, the protocol client
- * and the stdio transport under it, strict configuration loading, and
- * explicit trust.
+ * and the stdio and Streamable HTTP transports under it, strict configuration
+ * loading, and explicit trust.
  */
 
 export { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "./action-classes.js";
@@ -15,6 +15,8 @@ export {
 	mcpBuiltinLaunchEnvironment,
 } from "./builtin.js";
 export {
+	createMcpClient,
+	createMcpHttpClient,
 	createMcpProtocolClient,
 	createMcpStdioClient,
 	DEFAULT_KILL_GRACE_MS,
@@ -29,6 +31,7 @@ export {
 	type McpEventStream,
 	type McpEventStreamHandlers,
 	type McpEventStreamOptions,
+	type McpHttpServerSpec,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
 	type McpRequestOptions,
@@ -110,6 +113,26 @@ export {
 	type ProtocolFrame,
 	parseJsonRpcLine,
 } from "./protocol.js";
+export {
+	MCP_CREDENTIAL_KEY_CHARS,
+	MCP_CREDENTIAL_KEY_PATTERN,
+	mcpCredentialKeyRefusal,
+	mcpCredentialRoutes,
+	mcpDeclaredHeaderRefusal,
+	mcpHeaderCredentialRef,
+	mcpOriginOf,
+	mcpRemoteEndpoint,
+	parseMcpHeaderCredentialRef,
+} from "./remote.js";
+export {
+	type McpHeaderBinding,
+	type McpHeaderCredentialStore,
+	mcpCatalogDigest,
+	mcpHeaderBindings,
+	mcpHeaderValueRefusal,
+	openMcpHeaderCredentialStore,
+	resolveMcpHeaders,
+} from "./remote-credentials.js";
 export {
 	isMcpAppResource,
 	isMcpResourceNotFound,
@@ -197,6 +220,7 @@ export {
 	resolveMcpServers,
 	revokeMcpBuiltinNetwork,
 	revokeMcpSkill,
+	revokeMcpUserTrust,
 	trustMcpServer,
 	untrustMcpServer,
 } from "./trust.js";

@@ -173,7 +173,16 @@ describe("mcp server configuration", () => {
 			["version: 1\nservers:\n  - id: Bad\n    command: x\n", /servers\[0\]\.id must match/],
 			[`version: 1\nservers:\n  - id: ${"a".repeat(33)}\n    command: x\n`, /exceeds the 32-character cap/],
 			["version: 1\nservers:\n  - command: x\n", /servers\[0\]\.id is required/],
-			["version: 1\nservers:\n  - id: a\n", /servers\[0\]\.command is required/],
+			["version: 1\nservers:\n  - id: a\n", /servers\[0\] needs a command or a url/],
+			["version: 1\nservers:\n  - id: a\n    url: http://example.com/mcp\n", /servers\[0\]\.url /],
+			[
+				"version: 1\nservers:\n  - id: a\n    url: https://example.com/mcp\n    command: x\n",
+				/names a url, so command cannot apply/,
+			],
+			[
+				"version: 1\nservers:\n  - id: a\n    url: https://example.com/mcp\n    headers:\n      Authorization: Bearer abc\n",
+				/servers\[0\]\.headers\.Authorization names a credential key.*never written here/,
+			],
 			["version: 1\nservers:\n  - id: a\n    command: node server.mjs\n", /one executable token/],
 			["version: 1\nservers:\n  - id: a\n    command: bash\n", /may not invoke shell executable 'bash'/],
 			["version: 1\nservers:\n  - id: a\n    command: /bin/bash\n", /may not invoke shell executable '\/bin\/bash'/],
@@ -766,11 +775,9 @@ describe("plugin mcp.json declarations", () => {
 			actionClass: "unknown",
 			reason: "plugin-scope server 'zulipchat' from plugin zulip-kit requires explicit trust: pancode mcp trust zulipchat",
 		});
-		ok(declared.diagnostics.some((entry) => entry.message.includes("PanCode runs stdio servers only")));
-		strictEqual(
-			declared.servers.some((entry) => entry.id === "remote"),
-			false,
-		);
+		const remote = declared.servers.find((entry) => entry.id === "remote");
+		strictEqual(remote?.url, "https://example.invalid/mcp");
+		strictEqual(remote?.trust.status, "untrusted");
 		ok(trustMcpServer({ cwd: project, id: "zulipchat", actionClass: "read" }).ok);
 		strictEqual(resolveMcpServers({ cwd: project, builtin }).servers[0]?.trust.status, "trusted");
 
