@@ -83,6 +83,8 @@ export interface RuntimeProcessV2Options {
 	/** One `ctx.pane` call; the pane host checks the payload against the declaration. */
 	pane?: (op: string, payload: unknown) => Promise<unknown>;
 	onState?: () => void;
+	/** A rejection the runtime's code left unhandled once it was active, once per distinct reason; the runtime keeps serving. */
+	onUnhandled?: (error: string) => void;
 	/** The operator's `safety.sandboxUnixSockets` when this runtime starts; absent blocks them. */
 	unixSockets?: UnixSocketMode;
 	/** The operator's `safety.sandbox` when this runtime starts; `required` refuses an unconfined launch. */
@@ -215,6 +217,7 @@ const REPLY_FIELDS: Record<string, readonly string[]> = {
 	fatal: ["error"],
 	call: ["id", "op", "key", "value", "ifVersion", "request", "parentRequestId"],
 	progress: ["id", "text"],
+	unhandled: ["error"],
 };
 
 function sameNames(value: unknown, expected: readonly string[]): boolean {
@@ -274,6 +277,7 @@ export class ExtensionRuntimeProcessV2 {
 	private createdRoots: string[] = [];
 	private messageWindow = Date.now();
 	private messages = 0;
+	private unhandled = new Set<string>();
 
 	constructor(
 		readonly extension: LoadableExtension,
@@ -694,6 +698,18 @@ export class ExtensionRuntimeProcessV2 {
 			if (this.state !== "ready") throw new Error("unexpected runtime IPC message");
 			if (m.kind === "call") {
 				void this.serveCall(m);
+				return;
+			}
+			if (m.kind === "unhandled") {
+				if (typeof m.error !== "string") throw new Error("invalid runtime unhandled report");
+				const error = extensionPlainText(m.error).replace(/\s+/gu, " ").trim().slice(0, 512) || "unknown error";
+				if (this.unhandled.has(error) || this.unhandled.size >= 32) return;
+				this.unhandled.add(error);
+				try {
+					this.options.onUnhandled?.(error);
+				} catch {
+					/* A diagnostic sink has no runtime authority. */
+				}
 				return;
 			}
 			if (m.kind === "progress") {

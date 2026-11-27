@@ -445,6 +445,7 @@ async function runHeadlessCommand(id: string, command: string, args: string[], j
 		context: () => ({ workspace: process.cwd(), sessionId: null, mode: "headless" }),
 		isIdle: () => true,
 		onlyId: id,
+		onDiagnostic: (line) => process.stderr.write(`pancode: ${line}\n`),
 	});
 	const controller = new AbortController();
 	const cancel = (): void => {

@@ -29,11 +29,19 @@ import path from "node:path";
  * config names is turned off for every read, drift or not, but not for an
  * operation that pins hooks off and writes files, which smudges through it.
  *
- * An operation that runs hooks or other configured commands (worktree add,
- * checkout, merge, commit, ref updates, fetch, push) also asks the installed
- * {@link InternalGitPolicy}, which the orchestrator wires to the git hook
- * drift guard: after unapproved drift it returns overrides that turn hooks
- * off and neutralize the changed configuration.
+ * An operation that would run hooks or other configured commands (worktree
+ * add, checkout, merge, commit, ref updates, fetch, push) runs no repository
+ * hook at all: it carries `-c core.hooksPath=/dev/null` last before the
+ * subcommand, at every autonomy and with or without a policy. The command line
+ * is git's last config scope, so the pin beats a core.hooksPath from any config
+ * file, include or includeIf and from GIT_CONFIG_COUNT, and with core.hooksPath
+ * set git never looks in `.git/hooks`. Commit trailers PanCode writes on such
+ * commits go into the message in process, never through a hook. The operation
+ * also asks the installed {@link InternalGitPolicy}, which the orchestrator
+ * wires to the git hook drift guard: after unapproved drift it returns
+ * overrides that neutralize the changed executable configuration. Commit
+ * signing, smudge filters and merge drivers present at the baseline run as
+ * configured.
  */
 
 /** Global options every internal git call but `git config` carries. */
@@ -198,7 +206,9 @@ function operationLabel(subcommand: string, rest: ReadonlyArray<string>): string
 /**
  * Whether the call itself already turns hooks off the way PanCode's plumbing
  * does (`-c core.hooksPath=/dev/null`): snapshots, checkpoints and fleet
- * change return. Such an operation is not the policy's to harden or report.
+ * change return. Such an operation is not the policy's to harden or report:
+ * it writes files, so only config drift is overridden and the repository's
+ * filters still smudge.
  */
 function pinsHooksOff(globals: ReadonlyArray<string>): boolean {
 	for (let at = 0; at + 1 < globals.length; at += 1) {
@@ -223,7 +233,7 @@ export interface InternalGitOperation {
 /**
  * Decides how a hook-running internal git operation runs. Returns `-c`
  * words placed before the subcommand; empty runs the operation as the
- * repository configures it. Implementations do not throw.
+ * repository configures it, hooks apart, which never run. Implementations do not throw.
  */
 export interface InternalGitPolicy {
 	harden(operation: InternalGitOperation): ReadonlyArray<string>;
@@ -248,17 +258,15 @@ let installedPolicy: InternalGitPolicy | null = null;
 /**
  * Install the session's policy for hook-running internal git, or remove it
  * with null. One process runs one session's policy; a process with none
- * (a worker, a CLI subcommand) runs such operations as configured.
+ * (a worker, a CLI subcommand) runs such operations as configured, without hooks.
  */
 export function installInternalGitPolicy(policy: InternalGitPolicy | null): void {
 	installedPolicy = policy;
 }
 
-/**
- * Hooks disabled without a policy's directory: git looks for each hook under
- * a path that cannot hold one. Used only when the installed policy fails.
- */
+/** Hooks disabled: git looks for each hook under a path that cannot hold one. */
 const UNREACHABLE_HOOKS_PATH = "core.hooksPath=/dev/null";
+const HOOKS_OFF: ReadonlyArray<string> = Object.freeze(["-c", UNREACHABLE_HOOKS_PATH]);
 
 function readOverrides(operation: InternalGitOperation): ReadonlyArray<string> {
 	if (installedPolicy?.read === undefined) return [];
@@ -278,8 +286,8 @@ function policyOverrides(operation: InternalGitOperation): ReadonlyArray<string>
 	try {
 		return installedPolicy.harden(operation);
 	} catch {
-		// A policy that cannot decide fails closed: the operation runs, without hooks.
-		return ["-c", UNREACHABLE_HOOKS_PATH];
+		// A policy that cannot decide adds nothing: the operation still runs without hooks.
+		return [];
 	}
 }
 
@@ -287,8 +295,9 @@ function policyOverrides(operation: InternalGitOperation): ReadonlyArray<string>
  * The argv for an internal git call: `args` as the call site wrote it (global
  * options such as `-C`, then the subcommand and its words), with
  * {@link INTERNAL_GIT_BASE_OPTIONS} in front (only `--no-optional-locks` before `config`), the patch flags after a `diff`,
- * `log` or `show`, the submodule flag after a status or diff, and the installed policy's overrides before a
- * hook-running subcommand, or its read overrides before any other. `cwd` is
+ * `log` or `show`, the submodule flag after a status or diff, and the installed policy's overrides followed by
+ * `-c core.hooksPath=/dev/null` before a hook-running subcommand (the pin left out where the call's own global
+ * options already carry it), or the policy's read overrides before any other. `cwd` is
  * where the process starts (the call's own `cwd` option), for resolving which
  * repository git runs in. Throws {@link InternalGitRefusedError} when the
  * policy refuses a read or throws deciding one.
@@ -301,9 +310,10 @@ export function internalGitArgv(args: ReadonlyArray<string>, cwd?: string): stri
 	const rest = args.slice(at + 1);
 	const operation = { repository: runDirectory(globals, cwd), operation: operationLabel(subcommand, rest) };
 	const read = READ_SUBCOMMANDS.has(subcommand) || readForm(subcommand, rest);
+	const pinned = pinsHooksOff(globals);
 	const overrides =
-		!read && !pinsHooksOff(globals)
-			? policyOverrides(operation)
+		!read && !pinned
+			? [...policyOverrides(operation), ...HOOKS_OFF]
 			: CONFIG_RUNNING_READS.has(subcommand) || !read
 				? readOverrides(read ? operation : { ...operation, writes: true })
 				: [];
