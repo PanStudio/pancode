@@ -58,7 +58,7 @@ export function createAcpRuntimeNoticeRelay(
 	send: (sessionId: string, notice: AcpRuntimeNotice) => void,
 ): AcpRuntimeNoticeRelay {
 	const shown = new Set<string>();
-	const held = new Map<string, AcpRuntimeNotice>();
+	const held = new Map<string, { notice: AcpRuntimeNotice; dedupe: boolean }>();
 	const deliver = (sessionId: string, notice: AcpRuntimeNotice): void => {
 		const id = `${sessionId}\u0000${notice.key}`;
 		if (shown.has(id)) return;
@@ -70,7 +70,7 @@ export function createAcpRuntimeNoticeRelay(
 			const notice = readRuntimeNotice(payload);
 			if (notice === null) return;
 			if (sessionId !== null) deliver(sessionId, notice);
-			else if (!held.has(notice.key) && held.size < MAX_HELD_NOTICES) held.set(notice.key, notice);
+			else if (!held.has(notice.key) && held.size < MAX_HELD_NOTICES) held.set(notice.key, { notice, dedupe: true });
 		},
 		session(notice, sessionId) {
 			const relayed: AcpRuntimeNotice = {
@@ -79,12 +79,16 @@ export function createAcpRuntimeNoticeRelay(
 				key: notice.key,
 			};
 			if (sessionId !== null) send(sessionId, relayed);
-			else if (held.has(relayed.key) || held.size < MAX_HELD_NOTICES) held.set(relayed.key, relayed);
+			else if (held.has(relayed.key) || held.size < MAX_HELD_NOTICES)
+				held.set(relayed.key, { notice: relayed, dedupe: false });
 		},
 		flush(sessionId) {
 			const pending = [...held.values()];
 			held.clear();
-			for (const notice of pending) deliver(sessionId, notice);
+			for (const entry of pending) {
+				if (entry.dedupe) deliver(sessionId, entry.notice);
+				else send(sessionId, entry.notice);
+			}
 		},
 	};
 }
@@ -94,7 +98,7 @@ export function subscribeAcpNotices(
 	bus: Pick<TelemetryHub, "subscribe">,
 	relay: AcpRuntimeNoticeRelay,
 	boundSession: () => string | null,
-	/** After a `/reload` from any caller, and after an extensions reload that waited, the bound session hears the commands it may type now. */
+	/** After a `/reload` from any caller, and after a deferred reload applies, the bound session hears the commands it may type now. */
 	announceCommands?: (sessionId: string) => void,
 ): () => void {
 	const announce = (): void => {
@@ -105,10 +109,8 @@ export function subscribeAcpNotices(
 		bus.subscribe("runtime.notice_raised", (payload) => relay.raise(payload, boundSession())),
 		subscribeSessionNotices(bus, (notice) => relay.session(notice, boundSession())),
 		bus.subscribe("session.reloaded", announce),
-		// A deferred extensions reload can change the extension commands after the report went out.
-		bus.subscribe("reload.applied", (payload) => {
-			if (payload?.target === "extensions") announce();
-		}),
+		// A deferred extensions or MCP reload can change extension commands or MCP prompts after the report went out.
+		bus.subscribe("reload.applied", announce),
 	];
 	return () => {
 		for (const unsubscribe of unsubscribers) unsubscribe();

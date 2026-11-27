@@ -237,7 +237,11 @@ export function subscribeSessionNotices(
 			);
 		}),
 		bus.subscribe("approval.foreign_changed", (change) => {
-			if (change.kind !== "requested" || typeof change.request.tool !== "string") return;
+			if (change.kind !== "requested") {
+				if (change.resolved.requestId !== undefined) seenForeignAsks.delete(change.resolved.requestId);
+				return;
+			}
+			if (typeof change.request.tool !== "string") return;
 			const requestId = change.request.requestId;
 			// One notice per ask; a refused answer is news again.
 			if (requestId !== undefined && seenForeignAsks.has(requestId) && change.refusal === undefined) return;
