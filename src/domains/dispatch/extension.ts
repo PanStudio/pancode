@@ -241,7 +241,6 @@ import {
 } from "./active-route-planner.js";
 import {
 	createCapacityAdmissionController,
-	createLeaseSlotGuard,
 	describeProviderQuotaDenial,
 	PROVIDER_QUOTA_DENIED_REASON,
 } from "./admission.js";
@@ -279,7 +278,6 @@ import { reconcileOrphanAssignments } from "./assignment-reconcile.js";
 import {
 	assignmentProcessOwnerAlive,
 	cancelStoredAssignment,
-	failQueuedAssignment,
 	getStoredAssignment,
 	listStoredAssignments,
 	recordAssignmentAttempt,
@@ -287,7 +285,6 @@ import {
 	renameStoredAssignment,
 	settleStoredAssignment,
 	subscribeStoredAssignments,
-	timeoutStoredAssignment,
 } from "./assignment-store.js";
 import {
 	getDetachedBatch,
@@ -409,6 +406,7 @@ import {
 	type JointRouteResolverInput,
 	resolveJointRoute,
 } from "./joint-route-resolver.js";
+import { acquireLaunch, type LaunchAcquisition, settleUnstartedAssignment } from "./launch-acquisition.js";
 import {
 	askLandCard,
 	askMergeCard,
@@ -2352,16 +2350,37 @@ export function createDispatchBundle(
 			timing.admittedAt = new Date(admitted.admittedAt).toISOString();
 			return admitted.lease;
 		} catch (error) {
-			if (req.lineage === undefined) {
-				// Typed errors, not message text: no admission message ever contained
-				// "timed_out", so a timed-out wait used to be stored as failed.
-				if (error instanceof AdmissionTimedOutError) await timeoutStoredAssignment(assignmentId);
-				else if (error instanceof AdmissionCanceledError || signal?.aborted === true)
-					await cancelStoredAssignment(assignmentId);
-				else await failQueuedAssignment(assignmentId);
-			}
+			if (req.lineage === undefined) await settleUnstartedAssignment(assignmentId, error, signal);
 			throw error;
 		}
+	}
+
+	/** Native and ACP launches both queue, admit and resolve the ledger here; `fail` settles any later launch failure. */
+	function acquireDispatchLaunch(
+		req: DispatchRequest,
+		queuedIdentity: (DispatchRunIdentity & { requestOrigin: DispatchRequestOrigin }) | null,
+		node: RunNodeIdentity | null,
+		timing: RunPhaseMarks,
+		endpoint: EndpointCapacity | null,
+		signal: AbortSignal | undefined,
+	): Promise<LaunchAcquisition> {
+		return acquireLaunch({
+			admit: async () => {
+				if (queuedIdentity !== null) publishCapacityQueued(queuedIdentity, timing, node);
+				try {
+					return await admitAssignmentCapacity(req, node?.id ?? "local", timing, endpoint, signal);
+				} catch (error) {
+					if (queuedIdentity !== null) publishCapacityAdmissionFailure(queuedIdentity, error);
+					throw error;
+				} finally {
+					if (queuedIdentity !== null) pendingCapacity.delete(queuedIdentity.runId);
+				}
+			},
+			controller: capacityAdmission,
+			requireLedger,
+			ownsAssignment: req.lineage === undefined,
+			signal,
+		});
 	}
 
 	async function rebindReservationSlot(
@@ -4164,32 +4183,12 @@ export function createDispatchBundle(
 						runtimeKind: "acp-delegation" as const,
 					}
 				: null;
-		if (queuedIdentity !== null) publishCapacityQueued(queuedIdentity, timing, null);
-		let capacityLease: Awaited<ReturnType<typeof admitAssignmentCapacity>>;
-		try {
-			// The tool's abort signal reaches the queue, so a delegation waiting for
-			// a slot can be canceled like a native one.
-			capacityLease = await admitAssignmentCapacity(req, "local", timing, null, signal);
-		} catch (error) {
-			if (queuedIdentity !== null) publishCapacityAdmissionFailure(queuedIdentity, error);
-			throw error;
-		} finally {
-			if (queuedIdentity !== null) pendingCapacity.delete(queuedIdentity.runId);
-		}
-		const leaseSlot = createLeaseSlotGuard(capacityAdmission, capacityLease.leaseId, req.lineage !== undefined);
-
-		// Resolve the ledger before starting the ACP process: an external agent
-		// must never outlive a failure to create its tracking row.
-		const ledgerRef = (() => {
-			try {
-				return requireLedger();
-			} catch (error) {
-				leaseSlot.release();
-				if (req.lineage === undefined)
-					persistAssignment(failQueuedAssignment(capacityLease.assignmentId), `${capacityLease.assignmentId}:admission`);
-				throw error;
-			}
-		})();
+		// The tool's abort signal reaches the queue, so a delegation waiting for
+		// a slot can be canceled like a native one. The ledger resolves before
+		// the ACP process starts: an external agent must never outlive a failure
+		// to create its tracking row.
+		const launch = await acquireDispatchLaunch(req, queuedIdentity, null, timing, null, signal);
+		const ledgerRef = launch.ledger;
 		const telemetryContext = req.runIdHint
 			? {
 					sessionId: req.ownerSessionId ?? null,
@@ -4327,8 +4326,7 @@ export function createDispatchBundle(
 			});
 		} catch (error) {
 			await closeRunJournal();
-			leaseSlot.release();
-			if (req.lineage === undefined) await failQueuedAssignment(capacityLease.assignmentId);
+			await launch.fail(error);
 			throw error;
 		}
 		timing.workerSpawnedAt = new Date(now()).toISOString();
@@ -4511,11 +4509,11 @@ export function createDispatchBundle(
 			runIdForPermissionAudit = envelope.id;
 			lineage = lineageFor(req, envelope.id);
 			if (req.lineage === undefined) {
-				if (capacityLease.assignmentId !== lineage.rootRunId) {
-					capacityAdmission.rename(capacityLease.leaseId, lineage.rootRunId);
-					await renameStoredAssignment(capacityLease.assignmentId, lineage.rootRunId);
+				if (launch.lease.assignmentId !== lineage.rootRunId) {
+					capacityAdmission.rename(launch.lease.leaseId, lineage.rootRunId);
+					await renameStoredAssignment(launch.lease.assignmentId, lineage.rootRunId);
 				}
-				leaseSlot.transferToAssignment();
+				launch.adopt(lineage.rootRunId);
 			}
 			identity = detectRunIdentity();
 			ledgerRef.update(envelope.id, {
@@ -4595,7 +4593,7 @@ export function createDispatchBundle(
 				reportDispatchDiagnostic("kill orphaned ACP agent after ledger failure", killError);
 			}
 			await closeRunJournal();
-			leaseSlot.release();
+			await launch.fail(error);
 			throw error;
 		}
 
@@ -5085,12 +5083,12 @@ export function createDispatchBundle(
 				try {
 					await closeRunJournal();
 				} finally {
-					leaseSlot.release();
+					launch.release();
 				}
 			}
 		})().then(resolveFinal, rejectFinal);
 		active.set(envelope.id, activeRun);
-		stopIfCapacityLost(envelope.id, capacityLease.leaseId);
+		stopIfCapacityLost(envelope.id, launch.lease.leaseId);
 		watchAssignmentDeadline(activeRun);
 		// The handle goes out once the running row is durable, as it did with the
 		// sync writer: a sibling session's steer reads ownership from runs.json,
@@ -5369,23 +5367,15 @@ export function createDispatchBundle(
 							: {}),
 					}
 				: null;
-		if (queuedIdentity !== null) publishCapacityQueued(queuedIdentity, timing, placement?.node ?? null);
-		let capacityLease: Awaited<ReturnType<typeof admitAssignmentCapacity>>;
-		try {
-			capacityLease = await admitAssignmentCapacity(
-				req,
-				placement?.node.id ?? "local",
-				timing,
-				endpoint,
-				preparation?.signal,
-			);
-		} catch (error) {
-			if (queuedIdentity !== null) publishCapacityAdmissionFailure(queuedIdentity, error);
-			throw error;
-		} finally {
-			if (queuedIdentity !== null) pendingCapacity.delete(queuedIdentity.runId);
-		}
-		const leaseSlot = createLeaseSlotGuard(capacityAdmission, capacityLease.leaseId, req.lineage !== undefined);
+		const launch = await acquireDispatchLaunch(
+			req,
+			queuedIdentity,
+			placement?.node ?? null,
+			timing,
+			endpoint,
+			preparation?.signal,
+		);
+		const ledgerRef = launch.ledger;
 		// The permit was resolved before capacity admission and launch
 		// preparation, both of which may wait. A dispatcher that left yolo
 		// meanwhile launches its worker without the yolo grant, and every record
@@ -5395,23 +5385,13 @@ export function createDispatchBundle(
 		let specAutonomySettings = withLiveAutonomy(lifecycle.settings);
 		const narrowPermitToLiveLevel = (): boolean => {
 			if (lifecycle.permit.allowance.executeAutonomy !== "yolo") return false;
-			const launch = withLiveAutonomy(getEffectiveSettings() ?? lifecycle.settings);
-			if (operatorAdmissionAutonomy(launch) === "yolo") return false;
+			const live = withLiveAutonomy(getEffectiveSettings() ?? lifecycle.settings);
+			if (operatorAdmissionAutonomy(live) === "yolo") return false;
 			lifecycle.permit = withoutExecuteAutonomy(lifecycle.permit);
-			specAutonomySettings = launch;
+			specAutonomySettings = live;
 			return true;
 		};
 		narrowPermitToLiveLevel();
-
-		const ledgerRef = (() => {
-			try {
-				preparation?.signal?.throwIfAborted();
-				return requireLedger();
-			} catch (error) {
-				leaseSlot.release();
-				throw error;
-			}
-		})();
 		const tokenMeter: RunTokenMeter = {};
 		const safetyDecisionCounts = { allowed: 0, blocked: 0, guardBlocked: 0, permissionRequested: 0 };
 		const escalationCounts = { requested: 0, approved: 0, denied: 0, timedOut: 0 };
@@ -5512,8 +5492,7 @@ export function createDispatchBundle(
 				);
 			spec = buildSpec();
 		} catch (error) {
-			leaseSlot.release();
-			if (req.lineage === undefined) await failQueuedAssignment(capacityLease.assignmentId);
+			await launch.fail(error);
 			throw error;
 		}
 		// The agent ledger is orchestrator-owned. The worker sends a body and
@@ -5788,7 +5767,7 @@ export function createDispatchBundle(
 				const lane =
 					lifecycle.runtimeKind === "http" && lifecycle.systemPrompt.length > 0
 						? claimWorkerCacheLane(
-								capacityLease.leaseId,
+								launch.lease.leaseId,
 								sha256Hex(
 									JSON.stringify([
 										lifecycle.target.target.id,
@@ -5824,7 +5803,7 @@ export function createDispatchBundle(
 					},
 					() => {
 						if (
-							canceledControlRoots.has(controlRootsByAttempt.get(req.runIdHint ?? "") ?? capacityLease.assignmentId) ||
+							canceledControlRoots.has(controlRootsByAttempt.get(req.runIdHint ?? "") ?? launch.lease.assignmentId) ||
 							preparation?.signal?.aborted === true
 						)
 							return null;
@@ -5846,8 +5825,7 @@ export function createDispatchBundle(
 			restorePeerOverlay();
 			prefixLeader?.release();
 			await closeRunJournal();
-			leaseSlot.release();
-			if (req.lineage === undefined) await failQueuedAssignment(capacityLease.assignmentId);
+			await launch.fail(error);
 			throw error;
 		}
 		if (!heldFollower) timing.workerSpawnedAt = new Date(now()).toISOString();
@@ -6523,11 +6501,11 @@ export function createDispatchBundle(
 			if (grantAttempt !== undefined) grantRunFallbacks.set(envelope.id, spec.escalation?.fallback ?? "deny");
 			lineage = lineageFor(req, envelope.id);
 			if (req.lineage === undefined) {
-				if (capacityLease.assignmentId !== lineage.rootRunId) {
-					capacityAdmission.rename(capacityLease.leaseId, lineage.rootRunId);
-					await renameStoredAssignment(capacityLease.assignmentId, lineage.rootRunId);
+				if (launch.lease.assignmentId !== lineage.rootRunId) {
+					capacityAdmission.rename(launch.lease.leaseId, lineage.rootRunId);
+					await renameStoredAssignment(launch.lease.assignmentId, lineage.rootRunId);
 				}
-				leaseSlot.transferToAssignment();
+				launch.adopt(lineage.rootRunId);
 			}
 			if (agentLedgerId !== null) {
 				const attribution: AgentLedgerAttribution = {
@@ -6703,7 +6681,7 @@ export function createDispatchBundle(
 				reportDispatchDiagnostic("abort orphaned worker after ledger failure", abortError);
 			}
 			await closeRunJournal();
-			leaseSlot.release();
+			await launch.fail(error);
 			throw error;
 		}
 
@@ -8069,13 +8047,13 @@ export function createDispatchBundle(
 					await closeRunJournal();
 				} finally {
 					unsubscribeAgentLedger?.();
-					leaseSlot.release();
+					launch.release();
 				}
 			}
 		})().then(resolveFinal, rejectFinal);
 
 		active.set(envelope.id, activeRun);
-		stopIfCapacityLost(envelope.id, capacityLease.leaseId);
+		stopIfCapacityLost(envelope.id, launch.lease.leaseId);
 		watchAssignmentDeadline(activeRun);
 		// Same as the ACP path: return the handle once the running row is durable (#428).
 		await runningRowPersisted;

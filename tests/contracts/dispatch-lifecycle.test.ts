@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, rejects, strictEqual } from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { AssignmentRegistry } from "../../src/domains/dispatch/assignment.js";
 import { reconcileOrphanAssignments } from "../../src/domains/dispatch/assignment-reconcile.js";
@@ -12,6 +12,8 @@ import {
 	registerAssignment,
 	settleStoredAssignment,
 } from "../../src/domains/dispatch/assignment-store.js";
+import type { CapacityLease } from "../../src/domains/dispatch/capacity-lease.js";
+import { acquireLaunch } from "../../src/domains/dispatch/launch-acquisition.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
 
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
@@ -91,6 +93,36 @@ describe("dispatch assignment lifecycle", () => {
 		await registerAssignment("assignment-fail");
 		strictEqual((await failQueuedAssignment("assignment-fail")).status, "failed");
 		strictEqual((await cancelStoredAssignment("assignment-fail")).status, "failed");
+	});
+
+	it("settles the stored assignment when a launch fails between admission and the ledger", async () => {
+		scratch = await newScratchPancodeHome("pancode-dispatch-lifecycle-");
+		const released: string[] = [];
+		const launchFor = async (assignmentId: string, signal?: AbortSignal) => {
+			await registerAssignment(assignmentId);
+			return acquireLaunch({
+				admit: async () => ({ leaseId: `lease-${assignmentId}`, assignmentId }) as CapacityLease,
+				controller: {
+					release: (leaseId) => {
+						released.push(leaseId);
+						return true;
+					},
+					releaseAssignment: () => false,
+				},
+				requireLedger: () => {
+					throw new Error("ledger unavailable");
+				},
+				ownsAssignment: true,
+				signal,
+			});
+		};
+		await rejects(launchFor("no-ledger"), /ledger unavailable/);
+		strictEqual(getStoredAssignment("no-ledger")?.status, "failed");
+		const aborted = new AbortController();
+		aborted.abort();
+		await rejects(launchFor("aborted", aborted.signal));
+		strictEqual(getStoredAssignment("aborted")?.status, "canceled");
+		deepStrictEqual(released, ["lease-no-ledger", "lease-aborted"]);
 	});
 
 	it("recovers an orphan from durable attempts and fails one without evidence", async () => {
