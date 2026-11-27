@@ -16,7 +16,7 @@
  */
 
 export { createMusicSession } from "../domains/mux/cliamp/session.js";
-export { createMuxDomainModule } from "../domains/mux/index.js";
+export { createMuxDomainModule } from "../domains/mux/module.js";
 // The peer inbox rides the bridge's seam rather than opening one of its own.
 export { createMuxBridge, createPeerInbox } from "../interactive/mux-bridge.js";
 export { createPanesRuntime } from "../interactive/panes-runtime.js";

@@ -299,8 +299,8 @@ async function deepFindings(
 		if (targetCount > 0) {
 			const [{ loadDomains }, { ConfigDomainModule }, { ProvidersDomainModule }] = await Promise.all([
 				import("../core/domain-loader.js"),
-				import("../domains/config/index.js"),
-				import("../domains/providers/index.js"),
+				import("../domains/config/module.js"),
+				import("../domains/providers/module.js"),
 			]);
 			const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
 			try {
