@@ -14,6 +14,11 @@ export { reviewExtensionEnvelope } from "./envelope-review.js";
 export type { McpToolOwnerLookup } from "./hook-tool-match.js";
 export { extensionHookToolMatcher } from "./hook-tool-match.js";
 export {
+	type DroppedInstallRecord,
+	type InstallRecordReport,
+	reportInvalidInstallRecordsAsRows,
+} from "./install-store.js";
+export {
 	disableExtension,
 	discoverExtensionPackages,
 	type ExtensionDiagnostic,
