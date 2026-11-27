@@ -65,7 +65,7 @@ export function createSessionExtensionHosting(deps: SessionExtensionHostingDeps)
 			});
 		return starting;
 	};
-	const apply = async (): Promise<OperatorReloadSummary> => {
+	const applyNow = async (): Promise<OperatorReloadSummary> => {
 		const outcome = deps.commit();
 		if (outcome.status !== "committed") return refused(`hook generation rejected: ${outcome.reason}`);
 		const running = current;
@@ -73,6 +73,13 @@ export function createSessionExtensionHosting(deps: SessionExtensionHostingDeps)
 		if (!host)
 			return { status: "committed", message: "no installed extension has a runtime", failures: [], nextSession: [] };
 		return operatorReloadSummary(running ? await host.restart() : await host.ready, host.operator);
+	};
+	// A deferred reload still restarting the runtimes finishes before an immediate one commits.
+	let applying: Promise<unknown> = Promise.resolve();
+	const apply = (): Promise<OperatorReloadSummary> => {
+		const next = applying.then(applyNow, applyNow);
+		applying = next.catch(() => undefined);
+		return next;
 	};
 	return {
 		get current() {
