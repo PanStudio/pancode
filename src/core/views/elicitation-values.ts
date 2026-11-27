@@ -41,7 +41,7 @@ export type McpFormField =
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
-const DATE_TIME = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/u;
+const DATE_TIME = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/u;
 
 // Read field by field: `Date.UTC` maps years 0-99 to 1900-1999, so a round trip refuses `0099-01-01`.
 function validDate(text: string): boolean {
@@ -52,6 +52,18 @@ function validDate(text: string): boolean {
 	const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 	const days = month === 2 ? (leap ? 29 : 28) : month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
 	return day <= days;
+}
+
+// Check time and offset fields directly too: `Date.parse` accepts `24:00:00Z` and `+25:00` in V8 and is
+// implementation-defined for space-separated RFC 3339 timestamps across browsers.
+function validDateTime(text: string): boolean {
+	const match = DATE_TIME.exec(text);
+	if (match === null) return false;
+	const [, date, hour, minute, second, offsetHour, offsetMinute] = match;
+	if (date === undefined || !validDate(date)) return false;
+	if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
+	if (offsetHour !== undefined && (Number(offsetHour) > 23 || Number(offsetMinute) > 59)) return false;
+	return true;
 }
 
 function formatError(format: McpStringFormat, text: string): string | null {
@@ -65,9 +77,7 @@ function formatError(format: McpStringFormat, text: string): string | null {
 		case "date":
 			return validDate(text) ? null : "must be a date like 2026-07-28";
 		case "date-time":
-			return DATE_TIME.test(text) && validDate(text.slice(0, 10)) && !Number.isNaN(Date.parse(text))
-				? null
-				: "must be a date and time like 2026-07-28T09:30:00Z";
+			return validDateTime(text) ? null : "must be a date and time like 2026-07-28T09:30:00Z";
 	}
 }
 

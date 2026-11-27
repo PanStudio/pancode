@@ -260,6 +260,334 @@ export interface McpSessionHooks {
 	serverElicitation(requestId: JsonRpcId, params: unknown): void;
 }
 
+/** A modern result's `_meta` names the server again; the latest name is the one shown. */
+function refreshServerInfo(session: McpSessionState, result: unknown): void {
+	if (session.era !== "modern" || session.info === null || !isRecord(result) || !isRecord(result._meta)) return;
+	const reported = serverIdentity(result._meta[MCP_META_SERVER_INFO]);
+	if (reported !== null) session.info = { ...session.info, serverInfo: reported };
+}
+
+/**
+ * -32022 on a request other than the probe means the server stopped
+ * serving the revision this client settled on. Nothing it answers can be
+ * trusted until the era is settled again, which a restart does.
+ */
+function unsupportedVersionError(
+	id: string,
+	session: McpSessionState,
+	method: string,
+	error: JsonRpcErrorObject,
+): McpError {
+	const data = isRecord(error.data) ? error.data : {};
+	const supported = Array.isArray(data.supported) ? serverText(data.supported.map(String).join(", ")) : "none listed";
+	const requested =
+		typeof data.requested === "string" ? serverText(data.requested) : (session.info?.protocolVersion ?? "?");
+	return new McpError(
+		"closed",
+		`mcp server ${id} answered ${method} with UnsupportedProtocolVersion (code ${error.code}): it supports ${supported}, and PanCode sent ${requested}; PanCode closed it, and its next start negotiates the revision again`,
+		error,
+	);
+}
+
+function routeProgress(progressRoutes: Map<string, ProgressRoute>, params: unknown): void {
+	if (!isRecord(params)) return;
+	const token = params.progressToken;
+	if (typeof token !== "string" && typeof token !== "number") return;
+	const route = progressRoutes.get(String(token));
+	const progress = params.progress;
+	if (route === undefined || typeof progress !== "number" || !Number.isFinite(progress) || progress <= route.last) {
+		return;
+	}
+	route.last = progress;
+	const update: McpProgressUpdate = { progress };
+	if (typeof params.total === "number" && Number.isFinite(params.total)) update.total = params.total;
+	if (typeof params.message === "string") {
+		const line = neutralizeFraming(
+			boundedExternalDiagnostic(params.message.replace(/\s+/g, " "), PROGRESS_MESSAGE_BYTES),
+		).trim();
+		if (line.length > 0) update.message = line;
+	}
+	try {
+		route.onProgress(update);
+	} catch {
+		// A caller's display failure never reaches the protocol.
+	}
+}
+
+function routeSubscription(
+	subscriptions: Map<number, ActiveSubscription>,
+	subscriptionId: unknown,
+	method: string,
+	params: unknown,
+): void {
+	if (typeof subscriptionId !== "number") return;
+	const subscription = subscriptions.get(subscriptionId);
+	if (subscription === undefined) return;
+	if (method === "notifications/subscriptions/acknowledged") {
+		if (subscription.acknowledged) return;
+		subscription.acknowledged = true;
+		subscription.acknowledge(isRecord(params) && isRecord(params.notifications) ? params.notifications : {});
+		return;
+	}
+	// The acknowledgement comes first; anything before it belongs to no stream the client has seen open.
+	if (!subscription.acknowledged) return;
+	try {
+		subscription.handler(method, params);
+	} catch {
+		// A subscriber's failure never reaches the protocol.
+	}
+}
+
+/** One notification of an `events/stream` subscription (MCP Events, push delivery). */
+function routeEventStream(
+	eventStreams: Map<number, ActiveEventStream>,
+	streamId: number,
+	method: string,
+	params: unknown,
+): void {
+	const stream = eventStreams.get(streamId);
+	if (stream === undefined) return;
+	stream.touch();
+	const body = isRecord(params) ? params : {};
+	try {
+		switch (method) {
+			case "notifications/events/active": {
+				const cursor = parseEventCursor(body.cursor, "notifications/events/active");
+				if (cursor instanceof McpError) {
+					stream.end(cursor, true);
+					return;
+				}
+				stream.handlers.onActive(cursor, body.truncated === true);
+				return;
+			}
+			case "notifications/events/event": {
+				const occurrence = parseEventOccurrence(body, "notifications/events/event");
+				if (occurrence instanceof McpError) {
+					stream.end(occurrence, true);
+					return;
+				}
+				stream.handlers.onEvent(occurrence);
+				return;
+			}
+			case "notifications/events/heartbeat": {
+				const cursor = parseEventCursor(body.cursor, "notifications/events/heartbeat");
+				if (cursor instanceof McpError) {
+					stream.end(cursor, true);
+					return;
+				}
+				stream.handlers.onHeartbeat(cursor);
+				return;
+			}
+			case "notifications/events/error": {
+				const error = mcpEventErrorObject(body.error);
+				if (error !== null) stream.handlers.onError(error);
+				return;
+			}
+			case "notifications/events/terminated": {
+				const error = mcpEventErrorObject(body.error);
+				const answer: JsonRpcErrorObject = error ?? { code: 0, message: "terminated without an error object" };
+				const cause = serverAnswerError("events/stream", answer);
+				stream.end(new McpError("server", `terminated: ${cause.message}`, answer), false);
+				return;
+			}
+		}
+	} catch {
+		// A subscriber's failure never reaches the protocol.
+	}
+}
+
+interface DispatchContext {
+	id: string;
+	asksElicitation: boolean;
+	hooks: McpSessionHooks;
+	fail(error: McpError): void;
+	close(): Promise<McpTeardownOutcome>;
+	reply(message: McpOutboundMessage): void;
+	noteListChanged(method: string): void;
+}
+
+function dispatchFrame(session: McpSessionState, context: DispatchContext, frame: JsonRpcMessage): void {
+	const {
+		pending,
+		subscriptions,
+		eventStreams,
+		progressRoutes,
+		notificationHandlers,
+		serverElicitations,
+		urlCompletions,
+	} = session;
+	if (frame.kind === "response") {
+		const responseId = frame.message.id;
+		if (typeof responseId !== "number") return;
+		const entry = pending.get(responseId);
+		if (entry === undefined) return;
+		const error = frame.message.error;
+		if (error !== undefined) {
+			if (
+				error.code === MCP_UNSUPPORTED_PROTOCOL_VERSION &&
+				entry.method !== "server/discover" &&
+				entry.method !== "initialize"
+			) {
+				context.fail(unsupportedVersionError(context.id, session, entry.method, error));
+				void context.close();
+				return;
+			}
+			entry.reject(serverAnswerError(entry.method, error));
+			return;
+		}
+		refreshServerInfo(session, frame.message.result);
+		entry.resolve(frame.message.result);
+		return;
+	}
+	if (frame.kind === "request") {
+		const request = frame.message;
+		// A legacy server asks for input with a request of its own (2025-11-25 client/elicitation);
+		// a modern one asks through input_required, so its requests stay unknown.
+		if (request.method === "elicitation/create" && context.asksElicitation && session.era === "legacy") {
+			context.hooks.serverElicitation(request.id as JsonRpcId, request.params);
+			return;
+		}
+		context.reply({
+			jsonrpc: "2.0",
+			id: request.id as JsonRpcId,
+			error: { code: JSON_RPC_METHOD_NOT_FOUND, message: `method not found: ${request.method}` },
+		});
+		return;
+	}
+	session.notifications += 1;
+	const { method, params } = frame.message;
+	const meta = isRecord(params) && isRecord(params._meta) ? params._meta : null;
+	if (method === "notifications/cancelled" && isRecord(params)) {
+		const withdrawn = serverElicitations.get(params.requestId as JsonRpcId);
+		if (withdrawn !== undefined) {
+			withdrawn.abort();
+			return;
+		}
+	}
+	if (method === "notifications/elicitation/complete") {
+		// An unknown or already finished id is ignored (2025-11-25 client/elicitation, Completion Notifications).
+		if (isRecord(params) && typeof params.elicitationId === "string") urlCompletions.get(params.elicitationId)?.abort();
+		return;
+	}
+	// On stdio, a server terminates a subscriptions/listen stream with
+	// notifications/cancelled referencing the listen request's id (2026-07-28 basic/patterns/cancellation).
+	if (method === "notifications/cancelled") {
+		const targetId =
+			isRecord(params) && typeof params.requestId === "number"
+				? params.requestId
+				: meta !== null && typeof meta[MCP_META_SUBSCRIPTION_ID] === "number"
+					? meta[MCP_META_SUBSCRIPTION_ID]
+					: null;
+		if (targetId !== null && eventStreams.has(targetId)) {
+			const reason =
+				isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
+					? `: ${serverText(params.reason)}`
+					: "";
+			eventStreams
+				.get(targetId)
+				?.end(new McpError("server", `mcp server ${context.id} cancelled event stream ${targetId}${reason}`), false);
+			return;
+		}
+		if (targetId !== null && subscriptions.has(targetId)) {
+			const reason =
+				isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
+					? `: ${serverText(params.reason)}`
+					: "";
+			subscriptions.delete(targetId);
+			pending
+				.get(targetId)
+				?.reject(new McpError("server", `mcp server ${context.id} cancelled subscription ${targetId}${reason}`));
+			return;
+		}
+	}
+	if (meta !== null && Object.hasOwn(meta, MCP_META_SUBSCRIPTION_ID)) {
+		const tagged = meta[MCP_META_SUBSCRIPTION_ID];
+		if (typeof tagged === "number" && eventStreams.has(tagged)) {
+			routeEventStream(eventStreams, tagged, method, params);
+			return;
+		}
+		routeSubscription(subscriptions, tagged, method, params);
+		return;
+	}
+	// Modern list_changed arrives only on an acknowledged subscriptions/listen stream (MCP 2026-07-28).
+	if (session.era === "legacy") context.noteListChanged(method);
+	if (method === "notifications/progress") routeProgress(progressRoutes, params);
+	for (const handler of notificationHandlers.get(method) ?? []) {
+		try {
+			handler(params);
+		} catch {
+			// A listener's failure never reaches the protocol.
+		}
+	}
+}
+
+function sessionFilesOffered(session: McpSessionState): McpFilesSettings | null {
+	return session.era === "modern" && session.info !== null ? mcpFilesOffered(session.info.capabilities) : null;
+}
+
+function sessionEventsOffered(session: McpSessionState): { listChanged: boolean } | null {
+	return session.era === "modern" && session.info !== null ? mcpEventsOffered(session.info.capabilities) : null;
+}
+
+/**
+ * The modern per-request envelope. The tasks extension is declared only on
+ * requests whose task this client drives to a terminal state (`tools/call`
+ * and the `tasks/*` methods), so a server never hands a task to a request
+ * that cannot follow it. Other extensions come from the one request that
+ * declares them, such as the skills extension on a skill's `skills/*` and
+ * resource reads, never on a generic read. Nothing is added on the legacy
+ * path, where initialize declared the skills extension once.
+ */
+function tasksRevisionUnknown(session: McpSessionState): boolean {
+	const extensions = isRecord(session.info?.capabilities?.extensions) ? session.info.capabilities.extensions : null;
+	if (extensions === null || !Object.hasOwn(extensions, MCP_TASKS_EXTENSION)) return false;
+	const declared = extensions[MCP_TASKS_EXTENSION];
+	return !isRecord(declared) || declared.revision !== undefined;
+}
+
+function withModernEnvelope(
+	session: McpSessionState,
+	config: { clientVersion: string; fileTransfers: boolean; asksElicitation: boolean },
+	method: string,
+	params: unknown,
+	declared?: Record<string, unknown>,
+): unknown {
+	if (session.era !== "modern" && method !== "server/discover") return params;
+	const base = isRecord(params) ? params : {};
+	const meta = isRecord(base._meta) ? base._meta : {};
+	const extensions: Record<string, unknown> = { ...declared };
+	const drivesTasks = method === "tools/call" || method.startsWith("tasks/");
+	if (drivesTasks && !tasksRevisionUnknown(session)) {
+		extensions[MCP_TASKS_EXTENSION] = {};
+	}
+	// MCP Events is declared on events/* and on the listen stream that opts into its list changes.
+	if (
+		sessionEventsOffered(session) !== null &&
+		(method.startsWith("events/") ||
+			(method === "subscriptions/listen" && isRecord(base.notifications) && base.notifications.eventsListChanged === true))
+	) {
+		extensions[MCP_EVENTS_EXTENSION] = {};
+	}
+	// The files extension rides on the listing and on every request of a logical call (files, Capabilities).
+	if (sessionFilesOffered(session) !== null && (method === "tools/list" || drivesTasks)) {
+		extensions[MCP_FILES_EXTENSION] = mcpFilesDeclaration(config.fileTransfers);
+	}
+	// Elicitation is declared only on requests that actually handle input_required (basic/patterns/mrtr).
+	const asksInput = config.asksElicitation && (drivesTasks || method === "resources/read" || method === "prompts/get");
+	return {
+		...base,
+		_meta: {
+			...meta,
+			[MCP_META_PROTOCOL_VERSION]: MCP_MODERN_PROTOCOL_VERSION,
+			[MCP_META_CLIENT_INFO]: { name: MCP_CLIENT_NAME, version: config.clientVersion },
+			[MCP_META_CLIENT_CAPABILITIES]: {
+				...(Object.keys(extensions).length > 0 ? { extensions } : {}),
+				...(asksInput ? { elicitation: ELICITATION_CAPABILITY } : {}),
+			},
+		},
+	};
+}
+
 /**
  * Open the session. `openTransport` is called once, here, with the events the
  * transport reports; nothing is sent until the first initialize starts it.
@@ -308,8 +636,6 @@ export function createMcpSession(
 		progressRoutes,
 		notificationHandlers,
 		lifetime,
-		serverElicitations,
-		urlCompletions,
 		primitivesChanged,
 		listChangedHandlers,
 	} = session;
@@ -367,7 +693,11 @@ export function createMcpSession(
 	const transport = openTransport({
 		message: (frame) => {
 			if (session.status === "closed" || session.status === "failed") return;
-			dispatch(frame);
+			dispatchFrame(
+				session,
+				{ id, asksElicitation: elicitationHandler !== undefined, hooks, fail, close, reply, noteListChanged },
+				frame,
+			);
 		},
 		fatal: (error, ended) => {
 			fail(error);
@@ -377,289 +707,6 @@ export function createMcpSession(
 
 	const send = (message: McpOutboundMessage, sendOptions?: McpSendOptions): McpSendOutcome =>
 		transport.send(message, sendOptions);
-
-	/** A modern result's `_meta` names the server again; the latest name is the one shown. */
-	const refreshServerInfo = (result: unknown): void => {
-		if (session.era !== "modern" || session.info === null || !isRecord(result) || !isRecord(result._meta)) return;
-		const reported = serverIdentity(result._meta[MCP_META_SERVER_INFO]);
-		if (reported !== null) session.info = { ...session.info, serverInfo: reported };
-	};
-
-	/**
-	 * -32022 on a request other than the probe means the server stopped
-	 * serving the revision this client settled on. Nothing it answers can be
-	 * trusted until the era is settled again, which a restart does.
-	 */
-	const unsupportedVersionError = (method: string, error: JsonRpcErrorObject): McpError => {
-		const data = isRecord(error.data) ? error.data : {};
-		const supported = Array.isArray(data.supported) ? serverText(data.supported.map(String).join(", ")) : "none listed";
-		const requested =
-			typeof data.requested === "string" ? serverText(data.requested) : (session.info?.protocolVersion ?? "?");
-		return new McpError(
-			"closed",
-			`mcp server ${id} answered ${method} with UnsupportedProtocolVersion (code ${error.code}): it supports ${supported}, and PanCode sent ${requested}; PanCode closed it, and its next start negotiates the revision again`,
-			error,
-		);
-	};
-
-	const routeProgress = (params: unknown): void => {
-		if (!isRecord(params)) return;
-		const token = params.progressToken;
-		if (typeof token !== "string" && typeof token !== "number") return;
-		const route = progressRoutes.get(String(token));
-		const progress = params.progress;
-		if (route === undefined || typeof progress !== "number" || !Number.isFinite(progress) || progress <= route.last) {
-			return;
-		}
-		route.last = progress;
-		const update: McpProgressUpdate = { progress };
-		if (typeof params.total === "number" && Number.isFinite(params.total)) update.total = params.total;
-		if (typeof params.message === "string") {
-			const line = neutralizeFraming(
-				boundedExternalDiagnostic(params.message.replace(/\s+/g, " "), PROGRESS_MESSAGE_BYTES),
-			).trim();
-			if (line.length > 0) update.message = line;
-		}
-		try {
-			route.onProgress(update);
-		} catch {
-			// A caller's display failure never reaches the protocol.
-		}
-	};
-
-	const routeSubscription = (subscriptionId: unknown, method: string, params: unknown): void => {
-		if (typeof subscriptionId !== "number") return;
-		const subscription = subscriptions.get(subscriptionId);
-		if (subscription === undefined) return;
-		if (method === "notifications/subscriptions/acknowledged") {
-			if (subscription.acknowledged) return;
-			subscription.acknowledged = true;
-			subscription.acknowledge(isRecord(params) && isRecord(params.notifications) ? params.notifications : {});
-			return;
-		}
-		// The acknowledgement comes first; anything before it belongs to no stream the client has seen open.
-		if (!subscription.acknowledged) return;
-		try {
-			subscription.handler(method, params);
-		} catch {
-			// A subscriber's failure never reaches the protocol.
-		}
-	};
-
-	/** One notification of an `events/stream` subscription (MCP Events, push delivery). */
-	const routeEventStream = (streamId: number, method: string, params: unknown): void => {
-		const stream = eventStreams.get(streamId);
-		if (stream === undefined) return;
-		stream.touch();
-		const body = isRecord(params) ? params : {};
-		try {
-			switch (method) {
-				case "notifications/events/active": {
-					const cursor = parseEventCursor(body.cursor, "notifications/events/active");
-					if (cursor instanceof McpError) {
-						stream.end(cursor, true);
-						return;
-					}
-					stream.handlers.onActive(cursor, body.truncated === true);
-					return;
-				}
-				case "notifications/events/event": {
-					const occurrence = parseEventOccurrence(body, "notifications/events/event");
-					if (occurrence instanceof McpError) {
-						stream.end(occurrence, true);
-						return;
-					}
-					stream.handlers.onEvent(occurrence);
-					return;
-				}
-				case "notifications/events/heartbeat": {
-					const cursor = parseEventCursor(body.cursor, "notifications/events/heartbeat");
-					if (cursor instanceof McpError) {
-						stream.end(cursor, true);
-						return;
-					}
-					stream.handlers.onHeartbeat(cursor);
-					return;
-				}
-				case "notifications/events/error": {
-					const error = mcpEventErrorObject(body.error);
-					if (error !== null) stream.handlers.onError(error);
-					return;
-				}
-				case "notifications/events/terminated": {
-					const error = mcpEventErrorObject(body.error);
-					const answer: JsonRpcErrorObject = error ?? { code: 0, message: "terminated without an error object" };
-					const cause = serverAnswerError("events/stream", answer);
-					stream.end(new McpError("server", `terminated: ${cause.message}`, answer), false);
-					return;
-				}
-			}
-		} catch {
-			// A subscriber's failure never reaches the protocol.
-		}
-	};
-
-	const dispatch = (frame: JsonRpcMessage): void => {
-		if (frame.kind === "response") {
-			const responseId = frame.message.id;
-			if (typeof responseId !== "number") return;
-			const entry = pending.get(responseId);
-			if (entry === undefined) return;
-			const error = frame.message.error;
-			if (error !== undefined) {
-				if (
-					error.code === MCP_UNSUPPORTED_PROTOCOL_VERSION &&
-					entry.method !== "server/discover" &&
-					entry.method !== "initialize"
-				) {
-					fail(unsupportedVersionError(entry.method, error));
-					void close();
-					return;
-				}
-				entry.reject(serverAnswerError(entry.method, error));
-				return;
-			}
-			refreshServerInfo(frame.message.result);
-			entry.resolve(frame.message.result);
-			return;
-		}
-		if (frame.kind === "request") {
-			const request = frame.message;
-			// A legacy server asks for input with a request of its own (2025-11-25 client/elicitation);
-			// a modern one asks through input_required, so its requests stay unknown.
-			if (request.method === "elicitation/create" && elicitationHandler !== undefined && session.era === "legacy") {
-				hooks.serverElicitation(request.id as JsonRpcId, request.params);
-				return;
-			}
-			reply({
-				jsonrpc: "2.0",
-				id: request.id as JsonRpcId,
-				error: { code: JSON_RPC_METHOD_NOT_FOUND, message: `method not found: ${request.method}` },
-			});
-			return;
-		}
-		session.notifications += 1;
-		const { method, params } = frame.message;
-		const meta = isRecord(params) && isRecord(params._meta) ? params._meta : null;
-		if (method === "notifications/cancelled" && isRecord(params)) {
-			const withdrawn = serverElicitations.get(params.requestId as JsonRpcId);
-			if (withdrawn !== undefined) {
-				withdrawn.abort();
-				return;
-			}
-		}
-		if (method === "notifications/elicitation/complete") {
-			// An unknown or already finished id is ignored (2025-11-25 client/elicitation, Completion Notifications).
-			if (isRecord(params) && typeof params.elicitationId === "string") urlCompletions.get(params.elicitationId)?.abort();
-			return;
-		}
-		// On stdio, a server terminates a subscriptions/listen stream with
-		// notifications/cancelled referencing the listen request's id (2026-07-28 basic/patterns/cancellation).
-		if (method === "notifications/cancelled") {
-			const targetId =
-				isRecord(params) && typeof params.requestId === "number"
-					? params.requestId
-					: meta !== null && typeof meta[MCP_META_SUBSCRIPTION_ID] === "number"
-						? meta[MCP_META_SUBSCRIPTION_ID]
-						: null;
-			if (targetId !== null && eventStreams.has(targetId)) {
-				const reason =
-					isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
-						? `: ${serverText(params.reason)}`
-						: "";
-				eventStreams
-					.get(targetId)
-					?.end(new McpError("server", `mcp server ${id} cancelled event stream ${targetId}${reason}`), false);
-				return;
-			}
-			if (targetId !== null && subscriptions.has(targetId)) {
-				const reason =
-					isRecord(params) && typeof params.reason === "string" && params.reason.trim().length > 0
-						? `: ${serverText(params.reason)}`
-						: "";
-				subscriptions.delete(targetId);
-				pending
-					.get(targetId)
-					?.reject(new McpError("server", `mcp server ${id} cancelled subscription ${targetId}${reason}`));
-				return;
-			}
-		}
-		if (meta !== null && Object.hasOwn(meta, MCP_META_SUBSCRIPTION_ID)) {
-			const tagged = meta[MCP_META_SUBSCRIPTION_ID];
-			if (typeof tagged === "number" && eventStreams.has(tagged)) {
-				routeEventStream(tagged, method, params);
-				return;
-			}
-			routeSubscription(tagged, method, params);
-			return;
-		}
-		// Modern list_changed arrives only on an acknowledged subscriptions/listen stream (MCP 2026-07-28).
-		if (session.era === "legacy") noteListChanged(method);
-		if (method === "notifications/progress") routeProgress(params);
-		for (const handler of notificationHandlers.get(method) ?? []) {
-			try {
-				handler(params);
-			} catch {
-				// A listener's failure never reaches the protocol.
-			}
-		}
-	};
-
-	/**
-	 * The modern per-request envelope. The tasks extension is declared only on
-	 * requests whose task this client drives to a terminal state (`tools/call`
-	 * and the `tasks/*` methods), so a server never hands a task to a request
-	 * that cannot follow it. Other extensions come from the one request that
-	 * declares them, such as the skills extension on a skill's `skills/*` and
-	 * resource reads, never on a generic read. Nothing is added on the legacy
-	 * path, where initialize declared the skills extension once.
-	 */
-	const tasksRevisionUnknown = (): boolean => {
-		const extensions = isRecord(session.info?.capabilities?.extensions) ? session.info.capabilities.extensions : null;
-		if (extensions === null || !Object.hasOwn(extensions, MCP_TASKS_EXTENSION)) return false;
-		const declared = extensions[MCP_TASKS_EXTENSION];
-		return !isRecord(declared) || declared.revision !== undefined;
-	};
-
-	const withEnvelope = (method: string, params: unknown, declared?: Record<string, unknown>): unknown => {
-		if (session.era !== "modern" && method !== "server/discover") return params;
-		const base = isRecord(params) ? params : {};
-		const meta = isRecord(base._meta) ? base._meta : {};
-		const extensions: Record<string, unknown> = { ...declared };
-		const drivesTasks = method === "tools/call" || method.startsWith("tasks/");
-		if (drivesTasks && !tasksRevisionUnknown()) {
-			extensions[MCP_TASKS_EXTENSION] = {};
-		}
-		// MCP Events is declared on events/* and on the listen stream that opts into its list changes.
-		if (
-			eventsOffered() !== null &&
-			(method.startsWith("events/") ||
-				(method === "subscriptions/listen" &&
-					isRecord(base.notifications) &&
-					base.notifications.eventsListChanged === true))
-		) {
-			extensions[MCP_EVENTS_EXTENSION] = {};
-		}
-		// The files extension rides on the listing and on every request of a logical call (files, Capabilities).
-		if (filesOffered() !== null && (method === "tools/list" || drivesTasks)) {
-			extensions[MCP_FILES_EXTENSION] = mcpFilesDeclaration(fileTransfers);
-		}
-		// Elicitation is declared only on requests that actually handle input_required (basic/patterns/mrtr).
-		const asksInput =
-			elicitationHandler !== undefined && (drivesTasks || method === "resources/read" || method === "prompts/get");
-		return {
-			...base,
-			_meta: {
-				...meta,
-				[MCP_META_PROTOCOL_VERSION]: MCP_MODERN_PROTOCOL_VERSION,
-				[MCP_META_CLIENT_INFO]: { name: MCP_CLIENT_NAME, version: clientVersion },
-				[MCP_META_CLIENT_CAPABILITIES]: {
-					...(Object.keys(extensions).length > 0 ? { extensions } : {}),
-					...(asksInput ? { elicitation: ELICITATION_CAPABILITY } : {}),
-				},
-			},
-		};
-	};
 
 	/** Answer a server's request, failing the client when the answer cannot be queued. */
 	const reply = (message: McpOutboundMessage): void => {
@@ -675,6 +722,8 @@ export function createMcpSession(
 		}
 	};
 
+	const envelopeConfig = { clientVersion, fileTransfers, asksElicitation: elicitationHandler !== undefined };
+
 	const request = (
 		method: string,
 		rawParams: unknown,
@@ -684,7 +733,7 @@ export function createMcpSession(
 		extensions?: Record<string, unknown>,
 	): Promise<unknown> =>
 		new Promise<unknown>((resolve, reject) => {
-			const params = withEnvelope(method, rawParams, extensions);
+			const params = withModernEnvelope(session, envelopeConfig, method, rawParams, extensions);
 			if (signal?.aborted) {
 				reject(new McpError("aborted", `${method} aborted before it was sent`));
 				return;
@@ -838,8 +887,7 @@ export function createMcpSession(
 		};
 	};
 
-	const filesOffered = (): McpFilesSettings | null =>
-		session.era === "modern" && session.info !== null ? mcpFilesOffered(session.info.capabilities) : null;
+	const filesOffered = (): McpFilesSettings | null => sessionFilesOffered(session);
 
 	const fileConnection = (): McpFileConnection => {
 		const http = transport.http;
@@ -852,8 +900,7 @@ export function createMcpSession(
 				};
 	};
 
-	const eventsOffered = (): { listChanged: boolean } | null =>
-		session.era === "modern" && session.info !== null ? mcpEventsOffered(session.info.capabilities) : null;
+	const eventsOffered = (): { listChanged: boolean } | null => sessionEventsOffered(session);
 
 	/**
 	 * End the server: every open listen stream is cancelled, every pending
