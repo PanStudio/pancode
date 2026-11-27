@@ -160,5 +160,6 @@ Then: pancode extensions test /work/.pancode/dev/extensions/lab-hello
 - A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/testing` without `node_modules`. A test that imports another entry point, such as `pancode/sdk/pack`, fails with `ERR_MODULE_NOT_FOUND` unless the `pancode` package is installed where Node can find it.
 - The scaffold's tsconfig names the installed PanCode by its absolute path, so moving or reinstalling PanCode to another place leaves it pointing at the old one.
 - The test host reads only `pancode-extension.json` by itself; a YAML manifest needs `pancode extensions test` or `services.loadManifest`.
+- The test host does not provide the work services (`ctx.runs`, `ctx.worktrees`, `ctx.verify`, `ctx.claims`) or `ctx.progress`. Test a command that uses them by installing the package and running it with `pancode extensions run`.
 - `pancode/sdk/mcp-server` serves tools only: no resources, prompts or sampling, over stdio only. It refuses an inbound line over 4 MiB, and it does not truncate large results.
 - A server's declared classes are a hint to any host; PanCode applies the classes its operator declares or the policy it ships.

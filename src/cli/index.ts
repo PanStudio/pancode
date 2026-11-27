@@ -105,6 +105,7 @@ Project and PanHub:
   pancode tools|interop|panes  pinned programs, external coding agents, the pane host
   pancode arena|campaign|research|semantic  model trials, metric climbs, search
   pancode report|usage         reports to the maintainers, cross-session usage facts
+  pancode <verb> [--json]      a verb an installed extension declares; built-in names always win
 
 Interactive options:
   --resume, -r [id]  --continue, -c  --fork  --session-file <path>  --demo|--no-demo  --with-panes
@@ -230,9 +231,7 @@ interface CliBootOptions {
 const BOOT_OPTION_COMMANDS: ReadonlySet<string> = new Set(["run", "acp"]);
 const PANES_FLAGS: ReadonlySet<string> = new Set(["--with-panes"]);
 
-/** The refusal for the first boot flag `command` cannot honor, or null when it honors them all. */
-function unhonoredBootFlag(command: string | undefined, bootFlags: ReadonlyArray<string>): string | null {
-	if (command === undefined || !COMMAND_HANDLERS.has(command) || command === "dev") return null;
+function formatUnhonoredBootFlag(command: string, bootFlags: ReadonlyArray<string>): string | null {
 	for (const flag of bootFlags) {
 		if (PANES_FLAGS.has(flag)) {
 			return `${flag} applies only to the interactive session; pancode ${command} does not honor it.`;
@@ -242,6 +241,12 @@ function unhonoredBootFlag(command: string | undefined, bootFlags: ReadonlyArray
 		}
 	}
 	return null;
+}
+
+/** The refusal for the first boot flag `command` cannot honor, or null when it honors them all. */
+function unhonoredBootFlag(command: string | undefined, bootFlags: ReadonlyArray<string>): string | null {
+	if (command === undefined || !COMMAND_HANDLERS.has(command) || command === "dev") return null;
+	return formatUnhonoredBootFlag(command, bootFlags);
 }
 
 type CommandHandler = (subArgs: string[], bootOptions: CliBootOptions) => Promise<number>;
@@ -404,7 +409,7 @@ async function main(argv: string[]): Promise<number> {
 		});
 	}
 
-	return dispatch(subcommand, subArgs, bootOptions);
+	return dispatch(subcommand, subArgs, bootOptions, bootFlags);
 }
 
 /**
@@ -580,7 +585,12 @@ function isCommandToken(token: string): boolean {
  * Route a subcommand to its registered handler, importing only that command's
  * module. Unknown names fail before loading any command graph.
  */
-async function dispatch(subcommand: string, subArgs: string[], bootOptions: CliBootOptions): Promise<number> {
+async function dispatch(
+	subcommand: string,
+	subArgs: string[],
+	bootOptions: CliBootOptions,
+	bootFlags: ReadonlyArray<string>,
+): Promise<number> {
 	const handler = COMMAND_HANDLERS.get(subcommand);
 	if (handler) {
 		installHumanStdoutHandler(subcommand, subArgs);
@@ -595,6 +605,16 @@ async function dispatch(subcommand: string, subArgs: string[], bootOptions: CliB
 	}
 	// Task text where a command belongs (`pancode "fix the bug"`) is the common bare-text mistake.
 	const bareText = /\s/.test(subcommand.trim());
+	// Built-in names always win; an installed extension's verb answers only a name nothing else claims.
+	if (!bareText && /^[a-z][a-z0-9-]*$/u.test(subcommand)) {
+		installHumanStdoutHandler(subcommand, subArgs);
+		const code = await (await import("./extensions.js")).runPackVerb(
+			subcommand,
+			subArgs,
+			formatUnhonoredBootFlag(subcommand, bootFlags),
+		);
+		if (code !== null) return code;
+	}
 	printError(
 		bareText
 			? `unknown subcommand: ${subcommand}; for one headless task use pancode run "<task>"`

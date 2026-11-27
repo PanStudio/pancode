@@ -3,7 +3,6 @@
 import { resolve } from "node:path";
 import { readLayeredSettings } from "../core/settings-layers.js";
 import { pancodeConfigDir } from "../core/xdg.js";
-import { selfPancodeLaunch } from "../domains/arena/index.js";
 import {
 	type CampaignEntryResult,
 	CampaignInputError,
@@ -13,10 +12,11 @@ import {
 	runCampaign,
 	validateCampaignInput,
 } from "../domains/campaign/index.js";
+import { selfPancodeLaunch } from "../domains/extensions/services/run-env.js";
 import { operatorComponentsDir } from "../domains/lifecycle/components.js";
+import { containedYoloRefusal } from "../domains/safety/contained-yolo.js";
 import { operatorToolchainRoot } from "../domains/toolchain/paths.js";
 import { formatColumns, printError } from "./argv.js";
-import { containedYoloRefusal } from "./contained-yolo-gate.js";
 import { loadScriptedAnswers } from "./run-answers.js";
 import { installStopSignals } from "./stop-signals.js";
 

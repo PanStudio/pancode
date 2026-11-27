@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionCapabilityEnvelope } from "@pancode/sdk/pack";
-import { capabilityEnvelope, envelopeDigest, envelopeGrowth, hookPowers } from "@pancode/sdk/pack";
+import { capabilityEnvelope, envelopeDigest, envelopeGrowth, hookPowers, runsCeilingText } from "@pancode/sdk/pack";
 import { loadManifestFromRoot } from "./discovery.js";
 import { extensionInvocation } from "./operator-commands.js";
 
@@ -49,6 +49,20 @@ export function envelopeLines(envelope: ExtensionCapabilityEnvelope, extensionId
 			? [
 					`Store tags: reads ${list([...envelope.services.store.read, ...envelope.services.store.write])}; writes ${list(envelope.services.store.write)}; never in fleet worker hooks`,
 				]
+			: []),
+		...(envelope.services?.runs
+			? [`Headless runs from its commands: ${runsCeilingText(envelope.services.runs)}; ended with the command`]
+			: []),
+		...(envelope.services?.worktrees
+			? ["Git worktrees: may create worktrees and branches under refs/heads/pancode/ in this repository"]
+			: []),
+		...(envelope.services?.verify ? ["Verification: may run this project's configured checks"] : []),
+		...(envelope.services?.claims
+			? ["Claims: may record hypotheses and verified claims in the project's claims ledger"]
+			: []),
+		...(envelope.long?.length ? [`Long-running commands (up to 24 hours): ${list(envelope.long)}`] : []),
+		...(envelope.cli?.length
+			? [`Top-level verbs: ${list(envelope.cli.map((verb) => `pancode ${verb.verb} (${verb.command})`))}`]
 			: []),
 		`Events: ${list([...envelope.events, ...(envelope.tickMs !== undefined ? [`tick ${envelope.tickMs / 1000}s`] : [])])}`,
 		`Hooks: ${list(hooks)}`,

@@ -13,12 +13,14 @@ import type {
 	ExtensionBinaryDownload,
 	ExtensionBinaryPlatform,
 	ExtensionCapabilityEnvelope,
+	ExtensionCliVerbDeclaration,
 	ExtensionCommandDeclarationV2,
 	ExtensionConfigField,
 	ExtensionHookDeclaration,
 	ExtensionKeyDeclaration,
 	ExtensionModelServiceDeclaration,
 	ExtensionPermissionsDeclaration,
+	ExtensionRunsServiceDeclaration,
 	ExtensionRuntimeDeclarationV2,
 	ExtensionRuntimeToolDeclaration,
 	ExtensionSlot,
@@ -79,6 +81,12 @@ export const RUNTIME_V2_LIMITS = {
 	blobGetBytes: 192 * 1024,
 	blobListLimit: 500,
 	blobNoteChars: 1000,
+	/** A `long` command's deadline: it drives headless runs that may take a working day. */
+	longCommandMsMax: 86_400_000,
+	runsConcurrentMax: 8,
+	runTimeoutSecondsMax: 86_400,
+	runCostUsdMax: 1000,
+	cliVerbs: 4,
 	/** Pinned programs one package may run outside the sandbox. */
 	binaries: 2,
 	binaryEnvKeys: 8,
@@ -212,16 +220,24 @@ function parseCommands(value: unknown, policy: ManifestKeyPolicy): ExtensionComm
 	const aliases = new Set<string>();
 	return list(value, "runtime.commands", RUNTIME_V2_LIMITS.commands).map((item, index) => {
 		const path = `runtime.commands[${index}]`;
-		const raw = record(item, path, ["name", "description", "timeoutMs", "replaces", "alias"], policy);
+		const raw = record(item, path, ["name", "description", "timeoutMs", "replaces", "long", "alias"], policy);
 		const name = named(raw.name, `${path}.name`, COMMAND_NAME, 40);
 		if (names.has(name)) fail(`${path}.name`, `repeats '${name}'`);
 		names.add(name);
+		const long = flag(raw.long, `${path}.long`, false);
 		const command: ExtensionCommandDeclarationV2 = {
 			name,
 			description: text(raw.description, `${path}.description`, 240),
-			timeoutMs: milliseconds(raw.timeoutMs, `${path}.timeoutMs`, RUNTIME_LIMITS.commandMs, 100, 300000),
+			timeoutMs: milliseconds(
+				raw.timeoutMs,
+				`${path}.timeoutMs`,
+				RUNTIME_LIMITS.commandMs,
+				100,
+				long ? RUNTIME_V2_LIMITS.longCommandMsMax : 300000,
+			),
 		};
 		if (raw.replaces !== undefined) command.replaces = choice(raw.replaces, `${path}.replaces`, ["prompt"]);
+		if (long) command.long = true;
 		if (raw.alias !== undefined) {
 			if (command.replaces !== undefined) fail(`${path}.alias`, "cannot be set on a command that takes over a prompt");
 			const alias = named(raw.alias, `${path}.alias`, COMMAND_NAME, 40);
@@ -592,6 +608,46 @@ function parseStoreService(value: unknown, policy: ManifestKeyPolicy): Extension
 	return { read, write };
 }
 
+function parseRunsService(value: unknown, policy: ManifestKeyPolicy): ExtensionRunsServiceDeclaration | undefined {
+	if (value === undefined) return undefined;
+	const path = "runtime.services.runs";
+	const raw = record(value, path, ["maxConcurrent", "autonomy", "maxCostUsd", "maxTimeoutSeconds"], policy);
+	const autonomy = choices(raw.autonomy ?? ["default"], `${path}.autonomy`, ["default", "yolo"] as const);
+	if (!autonomy.includes("default")) autonomy.unshift("default");
+	let maxCostUsd: number | null = null;
+	if (raw.maxCostUsd !== undefined && raw.maxCostUsd !== null) {
+		const cost = raw.maxCostUsd;
+		if (typeof cost !== "number" || !Number.isFinite(cost) || cost <= 0 || cost > RUNTIME_V2_LIMITS.runCostUsdMax)
+			fail(`${path}.maxCostUsd`, `must be a number above 0 and at most ${RUNTIME_V2_LIMITS.runCostUsdMax}`);
+		maxCostUsd = cost;
+	}
+	return {
+		maxConcurrent: tokens(raw.maxConcurrent ?? 1, `${path}.maxConcurrent`, RUNTIME_V2_LIMITS.runsConcurrentMax),
+		autonomy,
+		maxCostUsd,
+		maxTimeoutSeconds: tokens(raw.maxTimeoutSeconds, `${path}.maxTimeoutSeconds`, RUNTIME_V2_LIMITS.runTimeoutSecondsMax),
+	};
+}
+
+function parseCliVerbs(
+	value: unknown,
+	commands: readonly ExtensionCommandDeclarationV2[],
+	policy: ManifestKeyPolicy,
+): ExtensionCliVerbDeclaration[] {
+	const verbs = new Set<string>();
+	return list(value, "runtime.cli", RUNTIME_V2_LIMITS.cliVerbs).map((item, index) => {
+		const path = `runtime.cli[${index}]`;
+		const raw = record(item, path, ["verb", "command", "summary"], policy);
+		const verb = named(raw.verb, `${path}.verb`, /^[a-z][a-z0-9-]*$/, 32);
+		if (verbs.has(verb)) fail(`${path}.verb`, `repeats '${verb}'`);
+		verbs.add(verb);
+		const command = named(raw.command, `${path}.command`, /^[a-z][a-z0-9_-]*$/, 40);
+		if (!commands.some((entry) => entry.name === command && entry.replaces === undefined))
+			fail(`${path}.command`, `names no command '${command}' of this package`);
+		return { verb, command, summary: text(raw.summary, `${path}.summary`, 120) };
+	});
+}
+
 export function parseExtensionRuntimeV2(
 	value: unknown,
 	policy: ManifestKeyPolicy = new ManifestKeyPolicy(),
@@ -615,6 +671,7 @@ export function parseExtensionRuntimeV2(
 			"state",
 			"services",
 			"config",
+			"cli",
 			"binaries",
 			"keys",
 		],
@@ -629,9 +686,20 @@ export function parseExtensionRuntimeV2(
 	);
 	if (new Set(watch).size !== watch.length) fail("runtime.watch", "lists a glob twice");
 	const state = record(raw.state ?? {}, "runtime.state", ["session", "store"], policy);
-	const services = record(raw.services ?? {}, "runtime.services", ["embedding", "pane", "model", "store"], policy);
+	const services = record(
+		raw.services ?? {},
+		"runtime.services",
+		["embedding", "pane", "model", "store", "runs", "worktrees", "verify", "claims"],
+		policy,
+	);
 	const model = parseModelService(services.model, policy);
 	const store = parseStoreService(services.store, policy);
+	const runs = parseRunsService(services.runs, policy);
+	const worktrees = flag(services.worktrees, "runtime.services.worktrees", false);
+	const verify = flag(services.verify, "runtime.services.verify", false);
+	const claims = flag(services.claims, "runtime.services.claims", false);
+	const commands = parseCommands(raw.commands, policy);
+	const cli = parseCliVerbs(raw.cli, commands, policy);
 	const tools = parseTools(raw.tools, policy);
 	const promote = parsePromote(raw.promote, tools);
 	const binaries = parseBinaries(raw.binaries, policy);
@@ -640,7 +708,7 @@ export function parseExtensionRuntimeV2(
 	const declaration: ExtensionRuntimeDeclarationV2 = {
 		api: 2,
 		entrypoint,
-		commands: parseCommands(raw.commands, policy),
+		commands,
 		...parseEvents(raw.events, policy),
 		watch,
 		hooks: parseHooks(raw.hooks, policy),
@@ -659,8 +727,13 @@ export function parseExtensionRuntimeV2(
 			...(pane ? { pane } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(store !== undefined ? { store } : {}),
+			...(runs !== undefined ? { runs } : {}),
+			...(worktrees ? { worktrees } : {}),
+			...(verify ? { verify } : {}),
+			...(claims ? { claims } : {}),
 		},
 		config: parseConfig(raw.config, policy),
+		...(cli.length > 0 ? { cli } : {}),
 		...(binaries.length > 0 ? { binaries } : {}),
 		...(keys.length > 0 ? { keys } : {}),
 	};
@@ -673,6 +746,10 @@ export function parseExtensionRuntimeV2(
 	);
 	if (usesWorkspaceEvents && declaration.workspaces.length === 0)
 		fail("runtime.events", "names a workspace event but the package declares no workspace");
+	for (const [index, command] of commands.entries())
+		if (command.long && runs === undefined)
+			fail(`runtime.commands[${index}].long`, "needs runtime.services.runs: a long command drives headless runs");
+	if (claims && !verify) fail("runtime.services.claims", "needs runtime.services.verify: a claim comes from a check");
 	if (pane && binaries.length === 0) fail("runtime.services.pane", "needs a declared binary to run");
 	if (declaration.events.includes("pane_changed") && !pane)
 		fail("runtime.events", "names pane_changed but the package declares no runtime.services.pane");
@@ -714,12 +791,7 @@ export function capabilityEnvelope(
 		commands: declaration.commands.map((command) => command.name),
 		...(takesOver.length > 0 ? { takesOver } : {}),
 		...(declaration.state.session || declaration.state.store ? { state: declaration.state } : {}),
-		...(declaration.services?.embedding ||
-		declaration.services?.model ||
-		declaration.services?.store ||
-		declaration.services?.pane
-			? { services: declaration.services }
-			: {}),
+		...(hasService(declaration.services) ? { services: declaration.services } : {}),
 		events: declaration.events,
 		...(declaration.tickMs !== undefined ? { tickMs: declaration.tickMs } : {}),
 		watch: declaration.watch,
@@ -735,6 +807,10 @@ export function capabilityEnvelope(
 		})),
 		access: declaration.access,
 		permissions: declaration.permissions,
+		...(declaration.commands.some((command) => command.long)
+			? { long: declaration.commands.filter((command) => command.long).map((command) => command.name) }
+			: {}),
+		...(declaration.cli !== undefined ? { cli: declaration.cli.map(({ verb, command }) => ({ verb, command })) } : {}),
 		...(aliases.length > 0 ? { aliases } : {}),
 		...(binaries.length > 0
 			? {
@@ -761,6 +837,30 @@ export function capabilityEnvelope(
 			: {}),
 		...(declaration.keys?.length ? { keys: declaration.keys } : {}),
 	};
+}
+
+function hasService(services: ExtensionRuntimeDeclarationV2["services"]): boolean {
+	return (
+		services !== undefined &&
+		(services.embedding ||
+			services.pane === true ||
+			services.model !== undefined ||
+			services.store !== undefined ||
+			services.runs !== undefined ||
+			services.worktrees === true ||
+			services.verify === true ||
+			services.claims === true)
+	);
+}
+
+/** What the run service lets a package do, for the consent card. */
+export function runsCeilingText(runs: ExtensionRunsServiceDeclaration): string {
+	return [
+		`${runs.maxConcurrent} at a time`,
+		`up to ${runs.maxTimeoutSeconds}s each`,
+		runs.maxCostUsd === null ? "no spend ceiling" : `at most $${runs.maxCostUsd} each`,
+		...(runs.autonomy.includes("yolo") ? ["yolo autonomy when contained"] : []),
+	].join(", ");
 }
 
 /** Order-insensitive form: reordering a manifest list never changes the digest. */
@@ -899,6 +999,30 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 		push("reads store tags", added(readable, store.read));
 		push("writes store tags", added(approvedStore?.write ?? [], store.write));
 	}
+	const runs = next.services?.runs;
+	const approvedRuns = approved.services?.runs;
+	if (runs && !approvedRuns) growth.push(`may start headless PanCode runs (${runsCeilingText(runs)})`);
+	else if (runs && approvedRuns) {
+		const wider =
+			runs.maxConcurrent > approvedRuns.maxConcurrent ||
+			runs.maxTimeoutSeconds > approvedRuns.maxTimeoutSeconds ||
+			(approvedRuns.maxCostUsd !== null && (runs.maxCostUsd === null || runs.maxCostUsd > approvedRuns.maxCostUsd)) ||
+			added(approvedRuns.autonomy, runs.autonomy).length > 0;
+		if (wider) growth.push(`wider headless runs (${runsCeilingText(runs)}; approved ${runsCeilingText(approvedRuns)})`);
+	}
+	if (next.services?.worktrees && !approved.services?.worktrees)
+		growth.push("may create git worktrees and branches under refs/heads/pancode/ of the workspace's repository");
+	if (next.services?.verify && !approved.services?.verify) growth.push("may run the project's declared checks");
+	if (next.services?.claims && !approved.services?.claims)
+		growth.push("may record hypotheses and claims for the project");
+	push("long-running commands", added(approved.long ?? [], next.long ?? []));
+	push(
+		"top-level verbs",
+		added(
+			(approved.cli ?? []).map((entry) => `${entry.verb} -> ${entry.command}`),
+			(next.cli ?? []).map((entry) => `${entry.verb} -> ${entry.command}`),
+		),
+	);
 	if (next.services?.pane && !approved.services?.pane) growth.push("may open a pane below PanCode");
 	for (const binary of next.binaries ?? []) {
 		const prior = approved.binaries?.find((entry) => entry.name === binary.name);

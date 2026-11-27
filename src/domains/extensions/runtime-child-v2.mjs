@@ -137,6 +137,86 @@ function blobs(parentRequestId) {
 	});
 }
 
+/** The run, worktree, verify and claims services: the host validates every argument, so these only shape the call. */
+function service(kind, parentRequestId) {
+	return (op, payload = {}) => call(kind, { request: { ...payload, op }, parentRequestId });
+}
+function runs(parentRequestId) {
+	const run = service("runs", parentRequestId);
+	return Object.freeze({
+		start: (request) => run("start", { run: request }),
+		frames: (id, opts = {}) => run("frames", { id, ...opts }),
+		wait: (id) => run("wait", { id }),
+		cancel: (id) => run("cancel", { id }),
+	});
+}
+function worktrees(parentRequestId) {
+	const run = service("worktrees", parentRequestId);
+	return Object.freeze({
+		create: (opts = {}) => run("create", opts),
+		list: () => run("list"),
+		remove: (id) => run("remove", { id }),
+		git: (place, args) => run("git", { place, args }),
+		checkout: (id, commit) => run("checkout", { id, commit }),
+		clean: (id, opts = {}) => run("clean", { id, ...opts }),
+		copy: (id, paths) => run("copy", { id, paths }),
+		commit: (id, message, opts = {}) => run("commit", { id, message, ...opts }),
+		refs: Object.freeze({
+			get: (name) => run("refs.get", { name }),
+			create: (name, commit) => run("refs.create", { name, commit }),
+			swap: (name, to, from, message) => run("refs.swap", { name, to, from, message }),
+		}),
+	});
+}
+function verify(parentRequestId) {
+	const run = service("verify", parentRequestId);
+	return Object.freeze({
+		list: (place) => run("list", place === undefined ? {} : { place }),
+		check: (id, place) => run("check", { id, ...(place === undefined ? {} : { place }) }),
+		measure: (id, metric, place) => run("measure", { id, metric, ...(place === undefined ? {} : { place }) }),
+	});
+}
+function claims(parentRequestId) {
+	const run = service("claims", parentRequestId);
+	return Object.freeze({
+		hypotheses: (name, slate) => run("hypotheses", { name, slate }),
+		begin: (id, checks) => run("begin", { run: id, checks }),
+		finish: (id, outcomes, opts = {}) => run("finish", { run: id, outcomes, ...opts }),
+		read: (opts = {}) => run("read", opts),
+	});
+}
+/** One line at a time, at most four a second: the latest line wins, so a busy loop never floods the IPC. */
+function progress(requestId) {
+	let last = 0;
+	let pending;
+	let timer;
+	const flush = () => {
+		timer = undefined;
+		last = Date.now();
+		if (requests.has(requestId)) send({ kind: "progress", id: requestId, text: pending });
+	};
+	return (text) => {
+		pending = String(text).replace(/\s+/gu, " ").slice(0, 200);
+		if (timer !== undefined) return;
+		const wait = 250 - (Date.now() - last);
+		if (wait <= 0) flush();
+		else timer = setTimeout(flush, wait);
+	};
+}
+function operatorServices(message) {
+	if (message.kind !== "command" && message.kind !== "action") return {};
+	const services = declaration.services ?? {};
+	const long =
+		message.kind === "command" && declaration.commands.some((entry) => entry.name === message.name && entry.long);
+	return {
+		...(services.runs ? { runs: runs(message.id) } : {}),
+		...(services.worktrees ? { worktrees: worktrees(message.id) } : {}),
+		...(services.verify ? { verify: verify(message.id) } : {}),
+		...(services.claims ? { claims: claims(message.id) } : {}),
+		...(long ? { progress: progress(message.id) } : {}),
+	};
+}
+
 function binaries(parentRequestId) {
 	return Object.freeze({
 		run: (name, args = [], opts = {}) =>
@@ -162,7 +242,6 @@ function pane(parentRequestId) {
 		palette: () => run("palette"),
 	});
 }
-
 async function dispose(reason) {
 	if (disposing) return;
 	disposing = true;
@@ -257,6 +336,7 @@ async function serve(message) {
 		...(storeDir !== undefined ? { storeDir } : {}),
 		...(declaration.binaries?.length ? { binaries: binaries(message.id) } : {}),
 		...(declaration.services?.pane ? { pane: pane(message.id) } : {}),
+		...operatorServices(message),
 	});
 	const input =
 		message.kind === "command" ? message.args : message.kind === "tool" ? message.input : Object.freeze(message.event);

@@ -9,6 +9,7 @@
  * handler can be tested by calling it.
  */
 
+import type { ExtensionClaims, ExtensionRuns, ExtensionVerify, ExtensionWorktrees } from "./services-v2.js";
 import type { View, ViewTone } from "./view.js";
 import type { EmbeddingInput, EmbeddingResponse, EmbeddingTask, FactSum, ModelRunInfo, TurnOrigin } from "./wire.js";
 
@@ -434,6 +435,8 @@ export interface ExtensionOutputV2 {
 	workspace?: { enter: string } | { leave: true };
 	interview?: Interview;
 	prompt?: { fill: string } | { submit: string };
+	/** A command's exit status, 0-125, used as the process exit code when the command runs as a `pancode <verb>`. */
+	exitCode?: number;
 }
 
 export interface ExtensionHookResult {
@@ -624,6 +627,19 @@ export interface ExtensionContextV2 {
 	readonly binaries?: ExtensionBinaries;
 	/** Present when runtime.services.pane is declared, in a host with a pane dock: an interactive session inside herdr. */
 	readonly pane?: ExtensionPane;
+	/** Present in a command or an action when runtime.services.runs is declared and approved. */
+	readonly runs?: ExtensionRuns;
+	/** Present in a command or an action when runtime.services.worktrees is declared and approved. */
+	readonly worktrees?: ExtensionWorktrees;
+	/** Present in a command or an action when runtime.services.verify is declared and approved. */
+	readonly verify?: ExtensionVerify;
+	/** Present in a command or an action when runtime.services.claims is declared and approved. */
+	readonly claims?: ExtensionClaims;
+	/**
+	 * Present in a `long` command: one line of what it is doing, shown in place of the previous line (on stderr under
+	 * `pancode <verb>`). At most 200 characters; lines closer together than a quarter second are coalesced.
+	 */
+	readonly progress?: (text: string) => void;
 }
 
 type MaybePromise<T> = T | Promise<T>;

@@ -354,6 +354,89 @@ async function runOperatorCommand(parsed: Parsed): Promise<number> {
 		printError(`extension ${id} has no eligible operator command '${command}'`);
 		return 1;
 	}
+	return runHeadlessCommand(id, command, args, parsed.json);
+}
+
+/** A top-level verb an installed extension declares, resolved only after every built-in command name missed. */
+interface PackVerb {
+	verb: string;
+	extensionId: string;
+	command: string;
+	summary: string;
+}
+
+/** The verbs installed, loadable extensions declare; a verb two extensions both claim is left out of both. */
+function installedPackVerbs(workspace: string): { verbs: PackVerb[]; contested: Map<string, string[]> } {
+	const claimed = new Map<string, PackVerb[]>();
+	for (const entry of listInstalledExtensions(workspace, { all: true })) {
+		if (!entry.loadable || !entry.runtimeV2?.cli) continue;
+		for (const verb of entry.runtimeV2.cli) {
+			const list = claimed.get(verb.verb) ?? [];
+			list.push({ verb: verb.verb, extensionId: entry.id, command: verb.command, summary: verb.summary });
+			claimed.set(verb.verb, list);
+		}
+	}
+	const verbs: PackVerb[] = [];
+	const contested = new Map<string, string[]>();
+	for (const [verb, list] of claimed) {
+		if (list.length === 1 && list[0]) verbs.push(list[0]);
+		else
+			contested.set(
+				verb,
+				list.map((entry) => entry.extensionId),
+			);
+	}
+	return { verbs: verbs.sort((a, b) => a.verb.localeCompare(b.verb)), contested };
+}
+
+/**
+ * `pancode <verb> [--json] [arguments]` for a verb an installed extension declares. Returns null when no
+ * extension declares the verb, so the caller reports an unknown subcommand.
+ */
+export async function runPackVerb(
+	verb: string,
+	argv: ReadonlyArray<string>,
+	unhonoredBootFlagMessage?: string | null,
+): Promise<number | null> {
+	const { verbs, contested } = installedPackVerbs(process.cwd());
+	const owners = contested.get(verb);
+	if (owners) {
+		printError(
+			`extensions ${owners.join(", ")} all declare the verb '${verb}'`,
+			`pancode extensions run <id> <command> runs one of them.`,
+		);
+		return 2;
+	}
+	const found = verbs.find((entry) => entry.verb === verb);
+	if (!found) return null;
+	if (unhonoredBootFlagMessage) {
+		printError(unhonoredBootFlagMessage);
+		return 2;
+	}
+	let json = false;
+	const args: string[] = [];
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i] as string;
+		if (arg === "--") {
+			args.push(...argv.slice(i + 1));
+			break;
+		}
+		if (arg === "--json") json = true;
+		else if (args.length === 0 && (arg === "--help" || arg === "-h")) {
+			process.stdout.write(
+				`pancode ${verb} [--json] [arguments]\n\n${found.summary}\nRuns the ${found.command} command of extension ${found.extensionId}.\n`,
+			);
+			return 0;
+		} else args.push(arg);
+	}
+	return runHeadlessCommand(found.extensionId, found.command, args, json);
+}
+
+/**
+ * Run one extension operator command with no session. Progress from a long command goes to stderr, one line
+ * each; the output's exit code, when it sets one, becomes the process exit status.
+ */
+async function runHeadlessCommand(id: string, command: string, args: string[], json: boolean): Promise<number> {
 	const services = cliServiceDomains();
 	const runtime = new OperatorExtensions({
 		services: createExtensionHostServices({ providers: services.providers }),
@@ -374,13 +457,14 @@ async function runOperatorCommand(parsed: Parsed): Promise<number> {
 		const reload = await runtime.reload("startup");
 		if (reload.status !== "committed") throw new Error(reload.message);
 		const provenance = runtime.entries().find((entry) => entry.id === id && entry.state === "ready")?.provenance;
-		const output = await runtime.invoke(extensionInvocation(id, command), args.join(" "), [], controller.signal);
+		const output = await runtime.invoke(extensionInvocation(id, command), args.join(" "), [], controller.signal, (text) =>
+			process.stderr.write(`${text}\n`),
+		);
 		if (!provenance) throw new Error("extension result has no activated provenance");
 		const generation = runtime.entries().find((entry) => entry.id === id)?.generation ?? reload.generation;
-		if (parsed.json)
-			process.stdout.write(`${JSON.stringify({ extensionId: id, command, generation, provenance, output })}\n`);
+		if (json) process.stdout.write(`${JSON.stringify({ extensionId: id, command, generation, provenance, output })}\n`);
 		else process.stdout.write(`${output.text}\n`);
-		return 0;
+		return output.exitCode ?? 0;
 	} catch (error) {
 		printError(error instanceof Error ? error.message : String(error));
 		return 1;

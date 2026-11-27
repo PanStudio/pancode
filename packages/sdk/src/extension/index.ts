@@ -3,5 +3,6 @@
 /** The types an extension runtime is written against. Type-only: PanCode injects the API at run time. */
 export type * from "../pack/manifest-v2.js";
 export type * from "./public-api-v2.js";
+export type * from "./services-v2.js";
 export type * from "./view.js";
 export type * from "./wire.js";

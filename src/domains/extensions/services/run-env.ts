@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The environment an arena contender inherits, by allowlist.
+ * The environment a headless PanCode run inherits, by allowlist.
  *
- * A contender is the operator's own `pancode run`, so it needs the homes
- * and the credentials its target reads, but nothing else the operator's shell
- * holds: another target's key, a cloud login, an agent socket or a terminal
+ * A headless child (`pancode run` or `verifiers dry-run`) needs the homes and
+ * credentials its target reads, but nothing else the operator's shell holds:
+ * another target's key, a cloud login, an agent socket or a terminal
  * multiplexer's pane identity would otherwise reach a model run in yolo or in
  * a worktree it may write freely. Passed on top of the safe-exec allowlist
  * (PATH, HOME, USER, LANG, TMPDIR, the XDG base dirs and the Windows system
  * variables): PanCode's own `PANCODE_*`, locale, terminal, proxy and CA
- * variables, the operator's `safety.sandboxPassEnv`, and for the contender's
- * target only its declared key variable, its runtime's default, the engine's
- * known key names for its provider and the runtime's pass list below.
+ * variables, the operator's `safety.sandboxPassEnv`, and for the run's target
+ * only its declared key variable, its runtime's default, the engine's known
+ * key names for its provider and the runtime's pass list below.
  */
 
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { CLAUDE_AUTH_ENV } from "../../core/claude-environment.js";
-import { findEngineEnvKeys } from "../../engine/env-api-keys.js";
-import { findBuiltinRuntimeBootMetadata } from "../providers/runtimes/boot-manifest.js";
-import { referencedOpenCodeCredentials } from "../providers/runtimes/external-cli-policy.js";
+import { CLAUDE_AUTH_ENV } from "../../../core/claude-environment.js";
+import { findEngineEnvKeys } from "../../../engine/env-api-keys.js";
+import { findBuiltinRuntimeBootMetadata } from "../../providers/runtimes/boot-manifest.js";
+import { referencedOpenCodeCredentials } from "../../providers/runtimes/external-cli-policy.js";
 
-export interface ArenaEnvPolicy {
+export interface RunEnvPolicy {
 	targets: ReadonlyArray<{
 		id: string;
 		runtime: string;
@@ -91,7 +91,7 @@ const RUNTIME_PASS_ENV: Readonly<Record<string, RuntimePass>> = {
 const NEVER_PREFIXES = ["HERDR_"];
 
 function targetNames(
-	policy: ArenaEnvPolicy,
+	policy: RunEnvPolicy,
 	targetId: string,
 	source: Readonly<Record<string, string>>,
 ): { names: string[]; prefixes: string[] } {
@@ -145,9 +145,9 @@ function nearestTsconfig(entry: string): string | undefined {
  * The variables of `source` one contender is given; the safe-exec allowlist is added when it starts. Reads only the
  * runtime's own configuration. `targetId` null is the arena's own `verifiers dry-run`, which needs no credentials.
  */
-export function arenaContenderEnv(
+export function runEnv(
 	source: Readonly<Record<string, string>>,
-	policy: ArenaEnvPolicy,
+	policy: RunEnvPolicy,
 	targetId: string | null,
 ): Record<string, string> {
 	const scoped = targetId === null ? { names: [], prefixes: [] } : targetNames(policy, targetId, source);

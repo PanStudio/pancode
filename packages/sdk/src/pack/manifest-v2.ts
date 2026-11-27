@@ -21,6 +21,11 @@ export interface ExtensionCommandDeclarationV2 {
 	/** Bundle only: this command owns `/<plugin>:<name>` in place of the package's prompt of that name. */
 	replaces?: "prompt";
 	/**
+	 * A command that drives headless runs: its `timeoutMs` may reach 24 hours, it may report `ctx.progress`, and the
+	 * operator's next command does not wait for it. Only in a package that declares `runtime.services.runs`.
+	 */
+	long?: true;
+	/**
 	 * A bare `/<alias>` the operator may type for this command. The host refuses it while a built-in
 	 * command, a loaded prompt or another extension holds the name.
 	 */
@@ -156,10 +161,19 @@ export interface ExtensionRuntimeDeclarationV2 {
 	/** Host services reachable over the extension IPC only after operator consent. */
 	services?: ExtensionServicesDeclaration;
 	config: ExtensionConfigField[];
+	/** Top-level `pancode <verb>` names for commands; absent when none, which keeps existing declarations stable. */
+	cli?: ExtensionCliVerbDeclaration[];
 	/** Pinned external programs; absent when none, which keeps existing declarations stable. */
 	binaries?: ExtensionBinaryDeclaration[];
 	/** Global keys; absent when none. */
 	keys?: ExtensionKeyDeclaration[];
+}
+
+/** `pancode <verb> [args]` runs `command` headlessly with the raw arguments. A built-in verb always wins. */
+export interface ExtensionCliVerbDeclaration {
+	verb: string;
+	command: string;
+	summary: string;
 }
 
 /**
@@ -179,12 +193,32 @@ export interface ExtensionStoreServiceDeclaration {
 	write: string[];
 }
 
+/** The most the package's headless PanCode runs may take, each checked again on every start. */
+export interface ExtensionRunsServiceDeclaration {
+	/** Runs in flight at once, 1-8. */
+	maxConcurrent: number;
+	/** Autonomy a run may ask for; `default` is always allowed, `yolo` runs only inside contained confinement. */
+	autonomy: Array<"default" | "yolo">;
+	/** The spend ceiling of one run, also its default; null when runs carry none. */
+	maxCostUsd: number | null;
+	/** The longest timeout one run may ask for, at most 86400. */
+	maxTimeoutSeconds: number;
+}
+
 export interface ExtensionServicesDeclaration {
 	embedding: boolean;
 	/** One terminal pane in the host's dock, running a declared binary. */
 	pane?: boolean;
 	model?: ExtensionModelServiceDeclaration;
 	store?: ExtensionStoreServiceDeclaration;
+	/** Headless `pancode run` processes, reached from commands and actions only. */
+	runs?: ExtensionRunsServiceDeclaration;
+	/** Git worktrees of the workspace's repository, held under `.pancode/worktrees/ext-<id>/`. */
+	worktrees?: boolean;
+	/** The project's declared checks, run under the host verification sandbox. */
+	verify?: boolean;
+	/** The project's claims ledger: hypotheses and the claims PanCode judged from `verify` results. */
+	claims?: boolean;
 }
 
 /**
@@ -210,6 +244,10 @@ export type ExtensionCapabilityEnvelope = Pick<
 	/** Tools attached to every request; absent when none, which keeps existing digests stable. */
 	promote?: string[];
 	workspaces: Array<Pick<ExtensionWorkspaceDeclaration, "id" | "regions" | "board" | "keys">>;
+	/** Commands that may run for up to 24 hours; absent when none. */
+	long?: string[];
+	/** Top-level verbs the package claims; absent when none. */
+	cli?: Array<Pick<ExtensionCliVerbDeclaration, "verb" | "command">>;
 	/** Bare command names the package claims; absent when none. */
 	aliases?: string[];
 	/** Pinned programs by name, version, probe args and per-platform hash/member; absent when none. */

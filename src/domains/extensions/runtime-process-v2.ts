@@ -51,6 +51,8 @@ import {
 	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
 import { type PackBinaryRunRequest, type PackBinaryRunResult, parsePackBinaryRun } from "./services/binaries.js";
+import type { ExtensionWorkHost, ExtensionWorkKind } from "./services/host.js";
+import { createExtensionRequestScope, type OwnedExtensionRequestScope } from "./services/scope.js";
 import type { LoadableExtension } from "./types.js";
 
 export interface RuntimeProcessV2Options {
@@ -69,6 +71,13 @@ export interface RuntimeProcessV2Options {
 	 * this runtime may read. A get answers `{ base64 }` or null.
 	 */
 	blobs?: (request: ExtensionBlobRequest, signal: AbortSignal) => Promise<unknown>;
+	/**
+	 * The run, worktree, verify and claims services the operator approved, reached from a command or an action only.
+	 * Each call ends with the request that made it.
+	 */
+	work?: ExtensionWorkHost;
+	/** Ends remaining work-service runs and removes transient worktrees when this process exits or disposes. */
+	disposeWork?: () => Promise<void>;
 	/** Runs a declared binary; the request is already checked against the declaration. */
 	binaries?: (request: PackBinaryRunRequest, signal: AbortSignal) => Promise<PackBinaryRunResult>;
 	/** One `ctx.pane` call; the pane host checks the payload against the declaration. */
@@ -169,18 +178,30 @@ const SERVICE_CALLS = {
 	blobs: 4,
 	binaries: 2,
 	pane: 2,
+	runs: 8,
+	worktrees: 4,
+	verify: 4,
+	claims: 4,
 } as const;
+type ServiceKind = keyof typeof SERVICE_CALLS;
 const SERVICE_LABELS: Record<ServiceKind, string> = {
 	embed: "embedding",
 	complete: "model",
 	blobs: "store",
 	binaries: "binary",
 	pane: "pane",
+	runs: "runs",
+	worktrees: "worktrees",
+	verify: "verify",
+	claims: "claims",
 };
-type ServiceKind = keyof typeof SERVICE_CALLS;
+/** Services whose work outlives one call, so only something the operator did may reach them. */
+const WORK_KINDS: ReadonlySet<string> = new Set<ExtensionWorkKind>(["runs", "worktrees", "verify", "claims"]);
 
 interface Pending {
 	kind: string;
+	/** A `long` command's progress lines. */
+	progress?: (text: string) => void;
 	resolve(value: unknown): void;
 	reject(error: Error): void;
 	cleanup(): void;
@@ -193,10 +214,25 @@ const REPLY_FIELDS: Record<string, readonly string[]> = {
 	error: ["id", "error"],
 	fatal: ["error"],
 	call: ["id", "op", "key", "value", "ifVersion", "request", "parentRequestId"],
+	progress: ["id", "text"],
 };
 
 function sameNames(value: unknown, expected: readonly string[]): boolean {
 	return Array.isArray(value) && JSON.stringify([...value].sort()) === JSON.stringify([...expected].sort());
+}
+
+/** A service call that has not answered when its request ends still frees the child's call slot. */
+function abortable<T>(work: Promise<T>, signal: AbortSignal, label: string): Promise<T> {
+	const ended = (): Error => new Error(`${label} request cancelled or timed out`);
+	if (signal.aborted) {
+		work.catch(() => undefined);
+		return Promise.reject(ended());
+	}
+	return new Promise<T>((resolve, reject) => {
+		const abort = (): void => reject(ended());
+		signal.addEventListener("abort", abort, { once: true });
+		work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+	});
 }
 
 /** One api 2 runtime: a process, a private package copy and the requests in flight. No live host object crosses. */
@@ -219,6 +255,11 @@ export class ExtensionRuntimeProcessV2 {
 	private child: ChildProcess;
 	private pending = new Map<string, Pending>();
 	private serviceCalls = new Map<string, { controller: AbortController; parentRequestId: string; kind: ServiceKind }>();
+	/** What each command or action owns in the work services: runs and transient worktrees end with it. */
+	private scopes = new Map<string, OwnedExtensionRequestScope>();
+	/** In-flight scope cleanups so `dispose()` waits for runs and transient worktrees to settle. */
+	private endingScopes = new Set<Promise<void>>();
+	private workDisposed: Promise<void> | undefined;
 	/** Where a store put may take its source from: the roots this runtime may read. */
 	private sourceRoots: string[] = [];
 	private sourceBase = "";
@@ -331,12 +372,14 @@ export class ExtensionRuntimeProcessV2 {
 				this.kill("SIGKILL"); // Also settle non-detached descendants after a cooperative parent exits.
 				if (this.state !== "disposed") this.fail("runtime process exited");
 				this.cleanCopy();
+				void this.disposeWork();
 				resolve();
 			});
 			this.child.once("error", (error) => {
 				this.fail(`runtime process error: ${error.message}`);
 				if (!this.child.pid) {
 					this.cleanCopy();
+					void this.disposeWork();
 					resolve();
 				}
 			});
@@ -369,6 +412,10 @@ export class ExtensionRuntimeProcessV2 {
 	}
 	get pid(): number | undefined {
 		return this.child.pid;
+	}
+	/** Settles once the process has exited and its private copy is gone. */
+	get ended(): Promise<void> {
+		return this.exited;
 	}
 	get busy(): boolean {
 		return this.pending.size > 0;
@@ -419,8 +466,20 @@ export class ExtensionRuntimeProcessV2 {
 		this.notifyState();
 		this.kill("SIGKILL");
 	}
+	private endScope(scope: OwnedExtensionRequestScope): Promise<void> {
+		const task = scope.end().catch(() => undefined);
+		this.endingScopes.add(task);
+		void task.finally(() => this.endingScopes.delete(task));
+		return task;
+	}
+	private disposeWork(): Promise<void> {
+		this.workDisposed ??= (this.options.disposeWork?.() ?? Promise.resolve()).catch(() => undefined);
+		return this.workDisposed;
+	}
 	private rejectAll(error: Error): void {
 		for (const call of this.serviceCalls.values()) call.controller.abort();
+		for (const scope of this.scopes.values()) void this.endScope(scope);
+		this.scopes.clear();
 		const pending = [...this.pending.values()];
 		this.pending.clear();
 		for (const entry of pending) {
@@ -428,7 +487,7 @@ export class ExtensionRuntimeProcessV2 {
 			entry.reject(error);
 		}
 	}
-	private settle(id: unknown): Pending | undefined {
+	private settle(id: unknown): { pending: Pending; cleanup?: Promise<void> } | undefined {
 		if (typeof id !== "string") return undefined;
 		const pending = this.pending.get(id);
 		if (!pending) return undefined;
@@ -436,7 +495,12 @@ export class ExtensionRuntimeProcessV2 {
 		pending.cleanup();
 		// A service call outliving its request must still answer, or the child's call slot never frees.
 		for (const call of this.serviceCalls.values()) if (call.parentRequestId === id) call.controller.abort();
-		return pending;
+		const scope = this.scopes.get(id);
+		if (scope) {
+			this.scopes.delete(id);
+			return { pending, cleanup: this.endScope(scope) };
+		}
+		return { pending };
 	}
 	/**
 	 * One call to a consent-gated host service. It needs a live parent request and ends with it, and the
@@ -455,8 +519,27 @@ export class ExtensionRuntimeProcessV2 {
 			throw new Error(`${label} service is busy`);
 		const services = this.declaration.services;
 		let run: (signal: AbortSignal) => Promise<unknown>;
-		let timeoutMs = 30_000;
-		if (kind === "embed") {
+		let timeoutMs: number | null = 30_000;
+		if (WORK_KINDS.has(kind)) {
+			const parentRequestId = m.parentRequestId;
+			const parent = this.pending.get(parentRequestId);
+			if (parent?.kind !== "command" && parent?.kind !== "action")
+				throw new Error(`${label} is reachable only from a command or an action`);
+			const serve = this.options.work?.[kind as ExtensionWorkKind];
+			if (services?.[kind as ExtensionWorkKind] === undefined || !serve)
+				throw new Error(`${label} service is not declared or available`);
+			const request = m.request;
+			if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error(`invalid ${label} request`);
+			let scope = this.scopes.get(parentRequestId);
+			if (!scope) {
+				scope = createExtensionRequestScope();
+				this.scopes.set(parentRequestId, scope);
+			}
+			const owned = scope;
+			// A wait or a check takes as long as it takes; the command's own deadline bounds it.
+			timeoutMs = null;
+			run = () => serve(request as Record<string, unknown>, owned);
+		} else if (kind === "embed") {
 			const embed = this.options.embed;
 			if (!services?.embedding || !embed) throw new Error("embedding service is not declared or available");
 			const request = m.request;
@@ -508,9 +591,10 @@ export class ExtensionRuntimeProcessV2 {
 		}
 		const controller = new AbortController();
 		this.serviceCalls.set(m.id, { controller, parentRequestId: m.parentRequestId, kind });
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const timer = timeoutMs === null ? undefined : setTimeout(() => controller.abort(), timeoutMs);
 		try {
-			const value = await run(controller.signal);
+			const work = run(controller.signal);
+			const value = await (WORK_KINDS.has(kind) ? abortable(work, controller.signal, label) : work);
 			if (controller.signal.aborted) throw new Error(`${label} request cancelled or timed out`);
 			reply({ value });
 		} finally {
@@ -612,15 +696,26 @@ export class ExtensionRuntimeProcessV2 {
 				void this.serveCall(m);
 				return;
 			}
+			if (m.kind === "progress") {
+				if (typeof m.text !== "string" || m.text.length > 200) throw new Error("invalid runtime progress line");
+				// A line for a request that already ended, or one that reports none, is dropped like a late reply.
+				if (typeof m.id === "string") this.pending.get(m.id)?.progress?.(extensionPlainText(m.text));
+				return;
+			}
 			if (m.kind !== "result" && m.kind !== "error") throw new Error("unexpected runtime IPC message");
 			// A reply without its outstanding request has no authority: it was cancelled or timed out.
-			const pending = this.settle(m.id);
-			if (!pending) return;
-			if (m.kind === "error")
-				pending.reject(
-					new Error(extensionPlainText(typeof m.error === "string" ? m.error : "handler failed").slice(0, 512)),
-				);
-			else pending.resolve(m.output);
+			const settled = this.settle(m.id);
+			if (!settled) return;
+			const finish = (): void => {
+				if (m.kind === "error")
+					settled.pending.reject(
+						new Error(extensionPlainText(typeof m.error === "string" ? m.error : "handler failed").slice(0, 512)),
+					);
+				else settled.pending.resolve(m.output);
+			};
+			// Wait for the request's transient worktrees and runs to end before handing the result to the caller.
+			if (settled.cleanup) void settled.cleanup.then(finish);
+			else finish();
 		} catch (error) {
 			this.fail(error instanceof Error ? error.message : String(error));
 		}
@@ -644,6 +739,7 @@ export class ExtensionRuntimeProcessV2 {
 		timeoutMs: number,
 		parse: (output: unknown) => T,
 		signal?: AbortSignal,
+		progress?: (text: string) => void,
 	): Promise<T> {
 		if (this.state !== "ready") return Promise.reject(new Error(this.failure ?? "runtime not ready"));
 		if (this.pending.size >= RUNTIME_V2_LIMITS.concurrentRequests) return Promise.reject(new Error("runtime is busy"));
@@ -651,14 +747,17 @@ export class ExtensionRuntimeProcessV2 {
 		return new Promise<T>((resolve, reject) => {
 			const id = randomUUID();
 			const abandon = (error: Error): void => {
-				if (!this.settle(id)) return;
+				const settled = this.settle(id);
+				if (!settled) return;
 				this.send({ kind: "cancel", id });
-				reject(error);
+				if (settled.cleanup) void settled.cleanup.then(() => reject(error));
+				else reject(error);
 			};
 			const cancel = (): void => abandon(new Error(`extension ${message.kind} cancelled`));
 			const timer = setTimeout(() => abandon(new ExtensionRequestTimeout(message.kind)), timeoutMs);
 			this.pending.set(id, {
 				kind: message.kind,
+				...(progress !== undefined ? { progress } : {}),
 				resolve: (output) => {
 					// A handler that answers outside its contract fails that answer, not the runtime.
 					// The parse error echoes keys and kinds the extension chose, so it is cleaned like the child's own errors.
@@ -681,10 +780,22 @@ export class ExtensionRuntimeProcessV2 {
 	private output(origin: OutputOrigin): (value: unknown) => ExtensionOutputV2 {
 		return (value) => parseExtensionOutputV2(value, this.declaration, origin);
 	}
-	command(name: string, args: string, signal?: AbortSignal): Promise<ExtensionOutputV2> {
+	/** `progress` hears a `long` command's `ctx.progress` lines; any other command reports none. */
+	command(
+		name: string,
+		args: string,
+		signal?: AbortSignal,
+		progress?: (text: string) => void,
+	): Promise<ExtensionOutputV2> {
 		const declared = this.declaration.commands.find((command) => command.name === name);
 		if (!declared) return Promise.reject(new Error(`runtime declares no command '${name}'`));
-		return this.request({ kind: "command", name, args }, declared.timeoutMs, this.output("command"), signal);
+		return this.request(
+			{ kind: "command", name, args },
+			declared.timeoutMs,
+			this.output("command"),
+			signal,
+			declared.long ? progress : undefined,
+		);
 	}
 	observe(event: ExtensionObservationV2): Promise<ExtensionOutputV2 | undefined> {
 		return this.request({ kind: "observe", event }, RUNTIME_V2_LIMITS.observationMs, (value) =>
@@ -745,6 +856,8 @@ export class ExtensionRuntimeProcessV2 {
 			const timer = setTimeout(() => this.kill("SIGKILL"), RUNTIME_LIMITS.disposeMs);
 			await this.exited;
 			clearTimeout(timer);
+			await Promise.allSettled([...this.endingScopes]);
+			await this.disposeWork();
 		})();
 		return this.stopPromise;
 	}

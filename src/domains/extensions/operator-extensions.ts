@@ -40,6 +40,7 @@ export type OperatorExtensionsOptions = Pick<
 	| "stateDir"
 	| "surface"
 	| "pruneOrphanedSessionState"
+	| "work"
 	| "pane"
 	| "builtinCommandNames"
 > & {
@@ -135,8 +136,9 @@ export class OperatorExtensions {
 		args: string,
 		promptNames: ReadonlyArray<string | PromptRef> = [],
 		signal?: AbortSignal,
+		progress?: (text: string) => void,
 	): Promise<ExtensionOutputV2> {
-		return this.v2.invoke(invocation, args, promptNames, signal);
+		return this.v2.invoke(invocation, args, promptNames, signal, progress);
 	}
 	observeV2(observation: ExtensionObservationV2): void {
 		this.v2.observe(observation);
