@@ -614,10 +614,10 @@ export function installHubPlan(plan: HubInstallPlan): HubInstallResult {
 /** Existing paths beat catalog IDs, including a directory named like a curated plugin. */
 export function resolveHubPackage(
 	source: string,
-	options: { cwd?: string; catalog?: string } = {},
+	options: { cwd?: string; catalog?: string; catalogOnly?: boolean } = {},
 ): PluginCatalogEntry {
 	const local = pluginLocalPath(source, options.cwd);
-	if (existsSync(local)) {
+	if (!options.catalogOnly && existsSync(local)) {
 		if (isBareSkillDirectory(local)) throw new Error(bareSkillRemedy(local));
 		const candidate = validateHubPackage(local);
 		if (!candidate.valid || !candidate.manifest) throw new Error(`invalid plugin: ${validationReasons(candidate)}`);
@@ -634,8 +634,10 @@ export function resolveHubPackage(
 			origin: "installed",
 		};
 	}
-	const matches = discoverHub(options).entries.filter((item) =>
-		source.includes(":") ? hubEntryRef(item) === source : item.name === source,
+	const matches = discoverHub(options).entries.filter(
+		(item) =>
+			(!options.catalogOnly || item.origin !== "installed") &&
+			(source.includes(":") ? hubEntryRef(item) === source : item.name === source),
 	);
 	if (matches.length > 1) {
 		const refs = [...new Set(matches.map(hubEntryRef))].sort();

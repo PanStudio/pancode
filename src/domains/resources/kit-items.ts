@@ -81,7 +81,14 @@ export function addedKitServers(cwd: string): KitAddedServer[] {
 
 /** One lifecycle step on `server:<name>` in user scope; the error is the step's refusal or failure, one line. */
 function runStep(operation: HubOperation, name: string, cwd: string, force: boolean) {
-	const plan = planHubLifecycle({ operation, ref: refOf(name), scope: "user", cwd, force });
+	const plan = planHubLifecycle({
+		operation,
+		ref: refOf(name),
+		scope: "user",
+		cwd,
+		force,
+		...(operation === "install" ? { catalogOnly: true } : {}),
+	});
 	const apply = applyHubLifecycle(plan, { dryRun: false });
 	const step = plan.steps.find((item) => item.identity.ref === refOf(name));
 	if (apply.failed === 0 && plan.applicable && step) return { ok: true as const, step };
@@ -95,7 +102,7 @@ export function addKitServer(name: string, cwd: string): KitChangeResult<KitAddF
 	if (!isPluginId(name)) return { ok: false, message: missing };
 	try {
 		const hub = discoverHub({ cwd });
-		if (!hub.entries.some((entry) => entry.kind === "server" && entry.name === name)) {
+		if (!hub.entries.some((entry) => entry.kind === "server" && entry.name === name && entry.origin !== "installed")) {
 			// A revoked row is dropped from discovery with the revocation as its diagnostic.
 			const revoked = hub.diagnostics.find((item) => item.startsWith(`pack_revoked: ${name} `));
 			return { ok: false, message: revoked ?? missing };

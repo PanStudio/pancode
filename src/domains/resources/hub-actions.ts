@@ -95,6 +95,8 @@ export interface HubLifecycleRequest {
 	force?: boolean;
 	withRequirements?: boolean;
 	catalog?: string;
+	/** Refuse local-path shadowing and installed-only fallbacks; resolve from PanHub indexes only. */
+	catalogOnly?: boolean;
 	cwd?: string;
 }
 
@@ -471,7 +473,10 @@ export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan
 	try {
 		if (request.operation === "install") {
 			const scope = request.scope ?? "user";
-			const entry = resolveHubPackage(request.ref, discoveryOptions);
+			const entry = resolveHubPackage(request.ref, {
+				...discoveryOptions,
+				...(request.catalogOnly ? { catalogOnly: true } : {}),
+			});
 			let status: ReturnType<typeof classifyHubRequirements> = { ordered: [], satisfied: [], unsatisfied: [] };
 			let refusal: string | undefined;
 			try {

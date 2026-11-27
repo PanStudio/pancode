@@ -18,7 +18,9 @@ import {
 	updatePlugin,
 } from "../../src/domains/plugins/index.js";
 
+import { registerHubPackage } from "../../src/domains/resources/hub.js";
 import { HUB_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
+import { addKitServer } from "../../src/domains/resources/kit-items.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
@@ -224,6 +226,42 @@ test("package versions share strict prerelease validation and single kinds canno
 		fixture(root, "prompt");
 		write(root, "prompts/undeclared.md", "Unexpected public prompt");
 		equal(readPluginManifest(root).valid, false);
+	} finally {
+		env.restore();
+	}
+});
+
+test("addKitServer requires an index row and ignores a local server:<name> directory in cwd", async () => {
+	const env = await isolatePancodeEnv("kit-add-catalog-only-");
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		const registered = join(env.dir, "registered");
+		fixture(registered, "server", "1.0.0");
+		const shadow = join(cwd, "server:example");
+		fixture(shadow, "server", "9.9.9");
+
+		// A project-only install with no PanHub row is refused even though discoverHub lists it as origin: installed.
+		ok(
+			installHubPackage({
+				kind: "server",
+				sourcePath: registered,
+				scope: "project",
+				cwd,
+				origin: { kind: "local", source: registered },
+				trust: "trusted",
+			}).plugin?.valid,
+		);
+		const missing = addKitServer("example", cwd);
+		equal(missing.ok, false);
+		match(missing.message, /no PanHub server pack is named example/);
+
+		// Once registered in PanHub, cwd/server:example must not shadow the indexed row.
+		registerHubPackage(registered, { scope: "user", cwd });
+		const added = addKitServer("example", cwd);
+		ok(added.ok, added.ok ? "" : added.message);
+		equal(added.value.version, "1.0.0");
+		equal(added.value.sha256, pluginContentDigest(registered));
 	} finally {
 		env.restore();
 	}
