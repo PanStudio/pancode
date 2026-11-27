@@ -1002,7 +1002,13 @@ describe("extension binaries service", () => {
 		);
 		const parsed = parseExtensionRuntimeV2(base);
 		throws(
-			() => readOnlyRuntimeDeclaration(parsed, { available: true, backend: "bwrap" }),
+			() =>
+				readOnlyRuntimeDeclaration(parsed, {
+					available: true,
+					backend: "bwrap",
+					executable: "/usr/bin/bwrap",
+					reason: null,
+				}),
 			/external programs that run outside the sandbox/u,
 		);
 		const envA = capabilityEnvelope(parsed);
