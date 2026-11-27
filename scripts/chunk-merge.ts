@@ -104,7 +104,10 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * src/domains/telemetry/run-journal-read.ts, the rows' run-journal reader, too:
  * after the dispatch and worker files split into smaller modules, guards alone
  * let src/domains/store/index.ts share the file of the safety domain's shell
- * scanners that reader's merged closure loads.
+ * scanners that reader's merged closure loads. And it roots
+ * src/domains/dispatch/assignment-store.ts, which the rows load for a run's
+ * assignment: guards alone let it share a file with src/core/session-routing.ts
+ * and src/domains/agents/index.ts once the extension services grew.
  */
 const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<string>]> = [
 	// The workspace launcher: the launch stage plus what starts the pane host and the session inside it.
@@ -152,6 +155,7 @@ const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<st
 			"src/cli/fleet-project-scope.ts",
 			"src/domains/dispatch/capacity-lease.ts",
 			"src/domains/telemetry/run-journal-read.ts",
+			"src/domains/dispatch/assignment-store.ts",
 		],
 	],
 ];
