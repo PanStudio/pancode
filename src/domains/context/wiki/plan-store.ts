@@ -319,16 +319,6 @@ export function unclaimedCandidates(plan: WikiPlan, codewiki: Codewiki, depth: R
 	return newCoverageCandidates(codewiki, depth, (path) => Object.hasOwn(baseline, path));
 }
 
-export interface ScopeUpdateInput {
-	plan: WikiPlan;
-	/** Repository-relative paths that changed since the wiki was last written. */
-	changedPaths: ReadonlySet<string>;
-	/** Wiki-relative page paths that exist on disk right now. */
-	existingPages: ReadonlySet<string>;
-	/** Per-page source paths drawn from each page's front matter. */
-	pageSources: ReadonlyMap<string, ReadonlyArray<string>>;
-}
-
 /** An explicit operator retry includes exhausted pages without erasing their attempt history. */
 export function pendingPages(plan: WikiPlan, retryExhausted = false): WikiPlanPage[] {
 	return plan.pages.filter((page) => page.status !== "written" && (retryExhausted || page.attempts < MAX_PAGE_ATTEMPTS));

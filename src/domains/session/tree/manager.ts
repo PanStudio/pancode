@@ -64,11 +64,8 @@ export function readTreeBundle(sessionId: string): SessionTreeFileBundle {
  * Empty-string label acts as a tombstone: it is stored with its timestamp
  * so that subsequent older-timestamp label sets do not resurrect the label.
  * Consumers treat `label === ""` as "no label".
- *
- * Exported for unit tests via the manager module path. Intentionally kept
- * off the domain index barrel.
  */
-export function resolveLabelMap(entries: ReadonlyArray<SessionEntry>): Map<string, ResolvedLabel> {
+function resolveLabelMap(entries: ReadonlyArray<SessionEntry>): Map<string, ResolvedLabel> {
 	const out = new Map<string, ResolvedLabel>();
 	for (const entry of entries) {
 		const info = labelFields(entry);

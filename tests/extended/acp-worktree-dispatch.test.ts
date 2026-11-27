@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
-import { verifyRunRecordReport } from "../../src/interactive/view/artifacts.js";
+import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { mergeWorktreeBranch } from "../../src/tools/worktree-merge.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";

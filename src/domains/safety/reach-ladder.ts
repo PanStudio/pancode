@@ -33,5 +33,3 @@ export const TOOL_CALL_RUNGS = [
 			"Deletes or overwrites data outside the workspace for good, or changes state on another machine or a published service: pushes, publishes, deploys, uploads, or remote writes and deletes.",
 	},
 ] as const;
-
-export type ToolCallRung = (typeof TOOL_CALL_RUNGS)[number]["label"];

@@ -17,6 +17,7 @@ import type { ChildProcess } from "node:child_process";
 import type { CopilotClient, ModelInfo } from "@github/copilot-sdk";
 import { COPILOT_HEADLESS_LOGIN_FIX, copilotKeychainAllowed } from "../../core/copilot-keychain.js";
 import type { ThinkingLevel } from "../../core/defaults.js";
+import type { COPILOT_SDK_VERSION } from "../../domains/lifecycle/copilot-sdk-install.js";
 import { type CopilotSdkModule, loadCopilotSdk } from "./sdk-module.js";
 import { copilotSessionFsConfig } from "./session-fs.js";
 
@@ -107,6 +108,12 @@ function runtimeEnvironment(): Record<string, string | undefined> {
 let shared: { client: CopilotClient; started: Promise<void>; keychain: boolean } | null = null;
 let holds = 0;
 
+/**
+ * The `@github/copilot-sdk` release whose private fields and runtime environment this module reads. A bump of
+ * `COPILOT_SDK_VERSION` fails typecheck here until those reads are verified against the new release.
+ */
+const VERIFIED_COPILOT_SDK = "1.0.26" satisfies typeof COPILOT_SDK_VERSION;
+
 /** The private fields of pinned SDK 1.0.26 this module relies on; nothing public exposes them. */
 interface PinnedClientInternals {
 	cliProcess?: ChildProcess | null;
@@ -124,7 +131,7 @@ function warnLayout(missingFields: readonly string[]): void {
 	if (layoutWarned || missingFields.length === 0) return;
 	layoutWarned = true;
 	process.emitWarning(
-		`@github/copilot-sdk no longer exposes ${missingFields.join(", ")} where PanCode expects them (pinned 1.0.26); one-shot commands may not exit and a lost Copilot runtime may not be detected.`,
+		`@github/copilot-sdk no longer exposes ${missingFields.join(", ")} where PanCode expects them (pinned ${VERIFIED_COPILOT_SDK}); one-shot commands may not exit and a lost Copilot runtime may not be detected.`,
 		{ code: "PANCODE_COPILOT_SDK_LAYOUT" },
 	);
 }
@@ -225,13 +232,13 @@ function openRuntimeKeychain(client: CopilotClient): void {
 	const build = internals.buildRuntimeEnv;
 	if (typeof build !== "function")
 		throw new Error(
-			"@github/copilot-sdk no longer has buildRuntimeEnv (pinned 1.0.26); PanCode cannot open the Copilot runtime's keychain. Re-verify the keychain override in src/engine/copilot/client.ts.",
+			`@github/copilot-sdk no longer has buildRuntimeEnv (pinned ${VERIFIED_COPILOT_SDK}); PanCode cannot open the Copilot runtime's keychain. Re-verify the keychain override in src/engine/copilot/client.ts.`,
 		);
 	internals.buildRuntimeEnv = function (this: unknown): RuntimeEnv {
 		const env = build.call(this);
 		if (env.COPILOT_DISABLE_KEYTAR !== "1")
 			throw new Error(
-				"@github/copilot-sdk no longer sets COPILOT_DISABLE_KEYTAR where PanCode expects it (pinned 1.0.26); PanCode cannot open the Copilot runtime's keychain. Re-verify the keychain override in src/engine/copilot/client.ts.",
+				`@github/copilot-sdk no longer sets COPILOT_DISABLE_KEYTAR where PanCode expects it (pinned ${VERIFIED_COPILOT_SDK}); PanCode cannot open the Copilot runtime's keychain. Re-verify the keychain override in src/engine/copilot/client.ts.`,
 			);
 		delete env.COPILOT_DISABLE_KEYTAR;
 		return env;

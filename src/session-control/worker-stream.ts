@@ -30,11 +30,7 @@ import type {
 	RunAbortedPayload,
 } from "../core/telemetry/live-events.js";
 import type { AgentTrait } from "../domains/agents/spec.js";
-import type {
-	RunPresentedResultContract,
-	RunResultContract,
-	RunResultSummary,
-} from "../domains/dispatch/run-result-facts.js";
+import type { RunResultSummary } from "../domains/dispatch/run-result-facts.js";
 import type { RunKind } from "../domains/dispatch/types.js";
 import type { WorkerRunOrigin, WorkerRunRuntime, WorkerRunRuntimeKind } from "../domains/session/index.js";
 import {
@@ -58,9 +54,6 @@ export interface WorkerAttempt {
 	moveReason?: string;
 	outcome?: string;
 }
-
-export type WorkerResultContract = RunResultContract;
-export type WorkerPresentedResultContract = RunPresentedResultContract;
 
 /**
  * Terminal facts a worker block reports, read from the sealed run scope when
