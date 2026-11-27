@@ -11,6 +11,7 @@ import { recipeIdFromPath } from "../agents/recipe.js";
 import { parseAgentRecipeSchema } from "../agents/recipe-schema.js";
 import { assertAgentSpecPolicy, normalizeAgentSpec } from "../agents/spec.js";
 import { loadManifestFromRoot } from "../extensions/index.js";
+import { loadPluginMcpFile } from "../gateway/mcp/config.js";
 import { pluginResourcePath } from "../plugins/discovery.js";
 import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
 import { readHubManifest } from "./hub-packages.js";
@@ -163,23 +164,29 @@ export function shippedServerPolicy(root: string, id: string): ShippedServerPoli
 }
 
 /**
- * A builtin server pack holds `server.json`, one server's entry of the PanKit
- * policy manifest. Only the servers PanCode ships have that form, so the file
- * must equal the shipped entry of the same id.
+ * A server pack holds one server in one of two forms. The builtin form is
+ * `server.json`, one server's entry of the PanKit policy manifest; only the
+ * servers PanCode ships have it, so the file must equal the shipped entry of
+ * the same id. The launcher form is `mcp.json` declaring exactly one stdio
+ * server named like the pack, which installs as a plugin-scope declaration.
  */
 function validateServerPack(root: string, manifest: PluginManifest): HubComponentValidationRecord[] {
-	const file = path.join(root, "server.json");
+	const hasPolicy = existsSync(path.join(root, "server.json"));
+	const hasLauncher = existsSync(path.join(root, "mcp.json"));
+	const form = hasLauncher && !hasPolicy ? "mcp.json" : "server.json";
 	const fail = (message: string): HubComponentValidationRecord[] => [
 		{
 			kind: "server",
 			name: manifest.name,
-			path: "server.json",
+			path: form,
 			valid: false,
-			diagnostics: [{ severity: "error", code: "ERR_SERVER", message, path: file, kind: "server" }],
+			diagnostics: [{ severity: "error", code: "ERR_SERVER", message, path: path.join(root, form), kind: "server" }],
 		},
 	];
-	if (!existsSync(file)) return fail("a server pack holds its server in server.json");
-	if (existsSync(path.join(root, "mcp.json"))) return fail("a server pack holds server.json and no mcp.json");
+	if (hasPolicy && hasLauncher) return fail("a server pack holds server.json or mcp.json, not both");
+	if (!hasPolicy && !hasLauncher) return fail("a server pack holds its server in server.json or mcp.json");
+	if (hasLauncher) return validateLauncherServer(root, manifest, fail);
+	const file = path.join(root, "server.json");
 	let entry: unknown;
 	try {
 		entry = JSON.parse(readFileSync(file, "utf8"));
@@ -199,6 +206,54 @@ function validateServerPack(root: string, manifest: PluginManifest): HubComponen
 		return fail(`server.json differs from the ${entry.id} entry of packages/kit/servers.json; run pnpm kit:manifest`);
 	return [
 		{ kind: "server", name: entry.id, path: "server.json", description: entry.title, valid: true, diagnostics: [] },
+	];
+}
+
+/**
+ * The launcher form: `mcp.json` declares exactly one stdio server whose id is the pack name, in the shape a plugin's
+ * `mcp.json` has and checked by the loader that later declares it, so a pack that validates also loads.
+ */
+function validateLauncherServer(
+	root: string,
+	manifest: PluginManifest,
+	fail: (message: string) => HubComponentValidationRecord[],
+): HubComponentValidationRecord[] {
+	const servers = shippedKitServers();
+	if (typeof servers === "string") return fail(servers);
+	if (servers.some((server) => server.id === manifest.name))
+		return fail(`${manifest.name} is a server PanCode carries; a server pack cannot take its name`);
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(path.join(root, "mcp.json"), "utf8"));
+	} catch (err) {
+		return fail(`mcp.json is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) return fail("mcp.json has no mcpServers mapping");
+	const declared = Object.entries(parsed.mcpServers);
+	if (declared.length !== 1)
+		return fail(`mcp.json declares ${declared.length} servers; a server pack declares exactly one`);
+	const [id, value] = declared[0] as [string, unknown];
+	if (id !== manifest.name) return fail(`mcp.json declares server ${id}, not the pack name ${manifest.name}`);
+	if (isRecord(value) && value.type !== undefined && value.type !== "stdio")
+		return fail(`mcpServers.${id} uses transport ${JSON.stringify(value.type)}; a server pack runs a stdio server`);
+	const loaded = loadPluginMcpFile({ id: manifest.name, scope: "user", rootPath: root, contentDigest: "" });
+	const refused = loaded.diagnostics.find((diagnostic) => diagnostic.severity !== "warning");
+	if (refused !== undefined) return fail(`mcp.json: ${refused.message}`);
+	return [
+		{
+			kind: "server",
+			name: id,
+			path: "mcp.json",
+			...(manifest.description !== undefined ? { description: manifest.description } : {}),
+			valid: true,
+			diagnostics: loaded.diagnostics.map((diagnostic) => ({
+				severity: "warning",
+				code: "WARN_SERVER",
+				message: `mcp.json: ${diagnostic.message}`,
+				path: diagnostic.path,
+				kind: "server",
+			})),
+		},
 	];
 }
 

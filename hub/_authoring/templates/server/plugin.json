@@ -1,0 +1,13 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "text-stats",
+	"version": "1.0.0",
+	"description": "Counts the lines, words and characters of a text.",
+	"license": "Apache-2.0",
+	"extensions": {
+		"dev.pancode": {
+			"manifestVersion": 1,
+			"kind": "server"
+		}
+	}
+}

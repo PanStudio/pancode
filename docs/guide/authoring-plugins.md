@@ -71,7 +71,7 @@ A skill in the package can confine itself to those server tools: its `allowed-to
 | Field | Rule |
 | --- | --- |
 | `manifestVersion` | Must be `1` whenever the object is present. |
-| `kind` | `plugin` (default), `skill`, `agent`, `prompt` or `playbook`. |
+| `kind` | `plugin` (default), `skill`, `agent`, `prompt`, `playbook` or `server`. |
 | `requires` | Package dependencies as `kind:name` references (see [Package dependencies](#package-dependencies)). |
 | `compatibility.pancode` | Optional SemVer range. Install and load refuse a package whose range excludes the running PanCode. |
 | `resources` | Map from `skills`, `prompts`, `agents` or `playbooks` to a relative directory inside the package. |
@@ -137,6 +137,8 @@ A `plugin` may carry many public components. Every other content kind is a singl
 - A standalone agent package declares `skills: []`, because an agent cannot bind a skill outside its own package.
 - `README.md` stays at the package root, outside any resource directory, so the loader does not discover it as a second public component.
 
+A `server` pack holds one MCP server and nothing else: no resource roots and no components. Its root `mcp.json` declares exactly one stdio server whose id is the pack name and which is not the id of a server PanCode ships. `hub validate` loads that file the way the gateway does, so a pack that validates also declares. Installed with `pancode hub install server:<name>`, it becomes a plugin-scope declaration that launches only after `pancode mcp trust <name>`; another agent host runs it with `pankit serve <name>` after `pankit add <name>`.
+
 ### Components and references
 
 Component kinds are `skill`, `prompt`, `agent`, `playbook`, `script`, `resource`, and `tool`. A component has a stable `kind:id` identity (id: lowercase letters, digits, dots, underscores and hyphens, at most 80 characters), one contained file path, and optional `requires` references to other components in the same plugin. A skill points to its `SKILL.md`. Dependencies must exist and form an acyclic graph. Native discoverable components (`skill`, `prompt`, `agent`, `playbook`) must live beneath their declared resource root, and agent and playbook files must sit directly in that root because nested ones cannot be discovered. Component metadata records relationships; it does not execute scripts or register tool implementations.
@@ -185,13 +187,14 @@ Extensions are a separate package kind with their own manifest, installation sta
 
 ## Authoring templates and contributor journey
 
-PanCode provides working, valid authoring templates for the five content kinds in `hub/_authoring/templates/`:
+PanCode provides working, valid authoring templates for the five content kinds and a server pack in `hub/_authoring/templates/`:
 
 - `hub/_authoring/templates/skill/`: Standalone skill with house conventions and triggers.
 - `hub/_authoring/templates/agent/`: Standalone agent using strict v1 fields, `skills: []`, and `audience: custom`.
 - `hub/_authoring/templates/prompt/`: Parameterized prompt with path-derived invocation (`/<name>`) and `$ARGUMENTS` expansion.
 - `hub/_authoring/templates/playbook/`: Multi-agent coordination playbook with a valid DAG and documented prerequisites.
 - `hub/_authoring/templates/plugin/`: Plugin showing an agent binding a contained skill, prompts, and supporting assets.
+- `hub/_authoring/templates/server/`: Server pack whose `mcp.json` launches a dependency-free Node MCP server with one read tool.
 
 Templates are reference models: `pnpm run hub:pin` validates them and leaves them out of `hub/index.yaml`. Follow this unified contributor journey:
 

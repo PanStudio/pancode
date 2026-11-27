@@ -30,8 +30,10 @@ function write(root: string, file: string, body: string): void {
 }
 function fixture(root: string, kind: HubEntryKind, version = "1.0.0"): void {
 	const file = kind === "skill" ? "skills/example/SKILL.md" : `${kind}s/example.md`;
-	if (kind !== "plugin")
-		write(root, file, `---\nname: example\ndescription: Fixture content\n---\nContent ${version}\n`);
+	const bare = kind === "plugin" || kind === "server";
+	if (!bare) write(root, file, `---\nname: example\ndescription: Fixture content\n---\nContent ${version}\n`);
+	if (kind === "server")
+		write(root, "mcp.json", JSON.stringify({ mcpServers: { example: { command: "node", args: ["server.mjs"] } } }));
 	write(root, "assets/proof.txt", version);
 	write(
 		root,
@@ -44,8 +46,8 @@ function fixture(root: string, kind: HubEntryKind, version = "1.0.0"): void {
 				"dev.pancode": {
 					manifestVersion: 1,
 					kind,
-					resources: kind === "plugin" ? {} : { [`${kind}s`]: `${kind}s` },
-					components: kind === "plugin" ? [] : [{ kind, id: "example", path: file }],
+					resources: bare ? {} : { [`${kind}s`]: `${kind}s` },
+					components: bare ? [] : [{ kind, id: "example", path: file }],
 				},
 			},
 		}),

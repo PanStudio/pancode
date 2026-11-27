@@ -1,0 +1,12 @@
+{
+	"mcpServers": {
+		"text-stats": {
+			"type": "stdio",
+			"command": "node",
+			"args": ["server.mjs"],
+			"toolActionClasses": {
+				"count_text": "read"
+			}
+		}
+	}
+}
