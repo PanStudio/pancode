@@ -86,6 +86,12 @@ interface LeaseOwner {
 	host: string;
 	token: string;
 	at: string;
+	seq: number;
+}
+
+function checkLockId(id: string): void {
+	if (!/^[0-9a-f]{32}$/u.test(id))
+		throw new StoreRefusal("invalid-name", `'${id}' is not a lock id: it is 32 hex characters.`);
 }
 
 function checkTag(tag: string): void {
@@ -295,8 +301,8 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 
 	function statOf(response: Response): StoreBlobStat {
 		const stamp = Number(response.headers.get(MTIME_HEADER));
-		const modifiedMs =
-			Number.isFinite(stamp) && stamp > 0 ? stamp : Date.parse(response.headers.get("last-modified") ?? "");
+		const fallback = Date.parse(response.headers.get("last-modified") ?? "");
+		const modifiedMs = Number.isFinite(stamp) && stamp > 0 ? stamp : Number.isFinite(fallback) ? fallback : 0;
 		return { bytes: Number(response.headers.get("content-length") ?? "0"), modifiedMs, version: null };
 	}
 
@@ -364,7 +370,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 		);
 	}
 
-	async function acquire(key: string): Promise<{ id: string; body: Uint8Array; etag: string }> {
+	async function acquire(key: string): Promise<{ id: string; owner: LeaseOwner; etag: string }> {
 		const id = storeLockId(key);
 		const owner: LeaseOwner = {
 			v: 1,
@@ -373,17 +379,18 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			host: hostname(),
 			token: randomBytes(8).toString("hex"),
 			at: new Date().toISOString(),
+			seq: 1,
 		};
 		const body = Buffer.from(JSON.stringify(owner));
 		const deadline = Date.now() + LOCK_WAIT_MS;
 		for (;;) {
 			const made = await putIf(lockKey(id), body, { ifNoneMatch: true }, `taking the store lock for ${key}`);
-			if (made !== null) return { id, body, etag: made };
+			if (made !== null) return { id, owner, etag: made };
 			const held = await readLease(id);
 			if (held === null) continue;
 			if (held.info.state === "dead") {
 				const taken = await putIf(lockKey(id), body, { ifMatch: held.etag }, `taking over the store lock for ${key}`);
-				if (taken !== null) return { id, body, etag: taken };
+				if (taken !== null) return { id, owner, etag: taken };
 				continue;
 			}
 			if (Date.now() >= deadline) throw holderRefusal(key, held.info);
@@ -397,14 +404,16 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			key,
 			{
 				renew: async () => {
-					// The same bytes under If-Match: the object is ours as long as the PUT is accepted.
+					// Advance seq so each renewal produces a new ETag; a stale takeover against the prior ETag then gets 412.
+					const nextSeq = lease.owner.seq + 1;
 					const renewed = await putIf(
 						lockKey(lease.id),
-						lease.body,
+						Buffer.from(JSON.stringify({ ...lease.owner, seq: nextSeq })),
 						{ ifMatch: lease.etag },
 						`renewing the store lock for ${key}`,
 					);
 					if (renewed === null) return false;
+					lease.owner.seq = nextSeq;
 					lease.etag = renewed;
 					return true;
 				},
@@ -451,13 +460,13 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 
 		readLock: (id) =>
 			guarded(async () => {
-				if (!/^[0-9a-f]{32}$/u.test(id))
-					throw new StoreRefusal("invalid-name", `'${id}' is not a lock id: it is 32 hex characters.`);
+				checkLockId(id);
 				return (await readLease(id))?.info ?? null;
 			}),
 
 		breakLock: (id) =>
 			guarded(async () => {
+				checkLockId(id);
 				const lease = await readLease(id);
 				if (lease === null) throw new StoreRefusal("not-found", `No store lock ${id} in this project.`);
 				if (lease.info.state === "live")
@@ -469,7 +478,12 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				if (again === null) return lease.info;
 				if (again.etag !== lease.etag || again.info.state === "live")
 					throw new StoreRefusal("unavailable", `Store lock ${id} changed while it was being broken; look again.`);
-				await del(lockKey(id), `breaking store lock ${id}`, { "if-match": lease.etag });
+				const response = await client.send("DELETE", lockKey(id), { headers: { "if-match": lease.etag } });
+				await discard(response);
+				if (response.status === 412)
+					throw new StoreRefusal("unavailable", `Store lock ${id} changed while it was being broken; look again.`);
+				if (response.status !== 204 && response.status !== 200 && response.status !== 404)
+					throw await client.refusal(response, `breaking store lock ${id}`);
 				return lease.info;
 			}),
 
