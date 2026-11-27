@@ -568,6 +568,20 @@ entries:
         description: Builds an interactive map of a codebase from verified repository
           structure, symbols and imports, as one standalone HTML file with a
           readable overview and expandable source evidence.
+  - kind: extension
+    publisher: pancode
+    name: music
+    description: Focus radio in a dock pane below PanCode, played by cliamp.
+    version: 0.1.0
+    sourceUrl: packs/extensions/music
+    sha256: 73c886df597c1d1e6d463103aa31120ead8ef3142be03893a9c2d182baa0db90
+    license: LicenseRef-PanCode-1.0
+    tier: core
+    envelopeDigest: 702a742056b471cfe660da7ecb98e6813ec5ca54e7f429f9a40bcac51c4797d3
+    provides:
+      - kind: extension
+        name: music
+        description: Focus radio in a dock pane below PanCode, played by cliamp.
   - kind: skill
     publisher: pancode
     name: pancode-dev
