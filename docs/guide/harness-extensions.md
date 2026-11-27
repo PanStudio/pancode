@@ -220,7 +220,7 @@ Four host services let a command or an action drive work that outlives one call.
 | Service | Declaration | Context member |
 | --- | --- | --- |
 | Headless runs | `runs: { maxTimeoutSeconds, maxConcurrent?, autonomy?, maxCostUsd? }` | `ctx.runs`: `start`, `frames`, `wait`, `cancel` |
-| Git worktrees | `worktrees: true`, with `fs.write: ["store"]` | `ctx.worktrees`: `create`, `list`, `remove`, `git`, `checkout`, `clean`, `copy`, `commit`, `refs` |
+| Git worktrees | `worktrees: true` | `ctx.worktrees`: `create`, `list`, `remove`, `git`, `checkout`, `clean`, `copy`, `commit`, `refs` |
 | Checks | `verify: true` | `ctx.verify`: `list`, `check`, `measure` |
 | Claims ledger | `claims: true`, with `verify` | `ctx.claims`: `hypotheses`, `begin`, `finish`, `read` |
 

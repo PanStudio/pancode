@@ -612,8 +612,6 @@ export function parseExtensionRuntimeV2(
 	for (const [index, command] of commands.entries())
 		if (command.long && runs === undefined)
 			fail(`runtime.commands[${index}].long`, "needs runtime.services.runs: a long command drives headless runs");
-	if (worktrees && !declaration.permissions.fs.write.includes("store"))
-		fail("runtime.services.worktrees", "needs fs.write store: worktrees live in the package's store directory");
 	if (claims && !verify) fail("runtime.services.claims", "needs runtime.services.verify: a claim comes from a check");
 	const writesBeyondStore = declaration.permissions.fs.write.some((root) => root !== "store");
 	for (const [index, tool] of declaration.tools.entries()) {

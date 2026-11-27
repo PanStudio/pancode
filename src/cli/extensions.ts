@@ -379,7 +379,11 @@ function installedPackVerbs(workspace: string): { verbs: PackVerb[]; contested: 
  * `pancode <verb> [--json] [arguments]` for a verb an installed extension declares. Returns null when no
  * extension declares the verb, so the caller reports an unknown subcommand.
  */
-export async function runPackVerb(verb: string, argv: ReadonlyArray<string>): Promise<number | null> {
+export async function runPackVerb(
+	verb: string,
+	argv: ReadonlyArray<string>,
+	unhonoredBootFlagMessage?: string | null,
+): Promise<number | null> {
 	const { verbs, contested } = installedPackVerbs(process.cwd());
 	const owners = contested.get(verb);
 	if (owners) {
@@ -391,6 +395,10 @@ export async function runPackVerb(verb: string, argv: ReadonlyArray<string>): Pr
 	}
 	const found = verbs.find((entry) => entry.verb === verb);
 	if (!found) return null;
+	if (unhonoredBootFlagMessage) {
+		printError(unhonoredBootFlagMessage);
+		return 2;
+	}
 	let json = false;
 	const args: string[] = [];
 	for (let i = 0; i < argv.length; i++) {
@@ -400,7 +408,7 @@ export async function runPackVerb(verb: string, argv: ReadonlyArray<string>): Pr
 			break;
 		}
 		if (arg === "--json") json = true;
-		else if (arg === "--help" || arg === "-h") {
+		else if (args.length === 0 && (arg === "--help" || arg === "-h")) {
 			process.stdout.write(
 				`pancode ${verb} [--json] [arguments]\n\n${found.summary}\nRuns the ${found.command} command of extension ${found.extensionId}.\n`,
 			);

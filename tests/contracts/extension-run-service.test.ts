@@ -197,7 +197,7 @@ describe("runs, long commands and verbs in a manifest", () => {
 			() => runtime({ commands: [{ name: "drive", description: "drive", timeoutMs: 3_600_000 }] }),
 			/timeoutMs/u,
 		);
-		assert.throws(() => runtime({ services: { worktrees: true } }), /worktrees.*fs\.write store/u);
+		assert.equal(runtime({ services: { worktrees: true } }).services?.worktrees, true);
 		assert.throws(() => runtime({ services: { claims: true } }), /claims.*services\.verify/u);
 		assert.throws(() => runtime({ cli: [{ verb: "go", command: "missing", summary: "go" }] }), /runtime\.cli/u);
 		assert.throws(() => runtime({ cli: [{ verb: "Go", command: "drive", summary: "go" }] }), /runtime\.cli\[0\]\.verb/u);
@@ -210,7 +210,6 @@ describe("runs, long commands and verbs in a manifest", () => {
 			runtime({
 				commands: [{ name: "drive", description: "drive", long: true }],
 				services: { ...runs, worktrees: true },
-				permissions: { fs: { write: ["store"] } },
 				cli: [{ verb: "drive-it", command: "drive", summary: "drive" }],
 			}),
 		);
@@ -231,7 +230,10 @@ const driverSource = `export default (api) => {
 		const end = await ctx.runs.wait(id);
 		return { text: end.outcome + " " + typeof ctx.storeDir, exitCode: end.outcome === "succeeded" ? 0 : 3 };
 	});
-	api.handle("plain", (_args, ctx) => ({ text: [typeof ctx.progress, typeof ctx.runs].join(" "), exitCode: 4 }));
+	api.handle("plain", (args, ctx) => ({
+		text: [typeof ctx.progress, typeof ctx.runs, args].filter(Boolean).join(" "),
+		exitCode: 4,
+	}));
 };
 `;
 
@@ -315,14 +317,19 @@ describe("an installed extension's work services", () => {
 		}) as typeof process.stdout.write;
 		try {
 			assert.equal(await runPackVerb("drive-plain", ["--json"]), 4);
+			assert.equal(await runPackVerb("drive-plain", ["--help"]), 0);
+			assert.equal(await runPackVerb("drive-plain", ["sub", "--help", "--json"]), 4);
+			assert.equal(await runPackVerb("drive-plain", [], "--no-skills is not honored"), 2);
 			assert.equal(await runPackVerb("not-a-verb", []), null);
 		} finally {
 			process.stdout.write = write;
 		}
-		// The test reporter shares stdout; the verb's answer is the one line that is its JSON.
-		const printed = JSON.parse(written.find((chunk) => chunk.startsWith('{"extensionId"')) ?? "null");
-		assert.equal(printed.extensionId, "driver");
-		assert.deepEqual(printed.output, { text: "undefined object", exitCode: 4 });
+		// The test reporter shares stdout; the verb's answers are the JSON lines and the --help banner.
+		const jsonLines = written.filter((chunk) => chunk.startsWith('{"extensionId"')).map((chunk) => JSON.parse(chunk));
+		assert.equal(jsonLines[0]?.extensionId, "driver");
+		assert.deepEqual(jsonLines[0]?.output, { text: "undefined object", exitCode: 4 });
+		assert.equal(jsonLines[1]?.output?.text, "undefined object sub --help");
+		assert.ok(written.some((chunk) => chunk.includes("pancode drive-plain [--json] [arguments]")));
 	});
 
 	it("transient worktrees created by a command are removed before invoke resolves", async (t) => {
@@ -366,7 +373,6 @@ describe("an installed extension's work services", () => {
 					api: 2,
 					entrypoint: "extension.mjs",
 					commands: [{ name: "make", description: "make" }],
-					permissions: { fs: { write: ["store"] } },
 					services: { worktrees: true },
 				},
 			}),

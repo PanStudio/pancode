@@ -162,7 +162,7 @@ export interface ExtensionServicesDeclaration {
 	store?: ExtensionStoreServiceDeclaration;
 	/** Headless `pancode run` processes, reached from commands and actions only. */
 	runs?: ExtensionRunsServiceDeclaration;
-	/** Git worktrees of the workspace's repository, held in the package's store directory. */
+	/** Git worktrees of the workspace's repository, held under `.pancode/worktrees/ext-<id>/`. */
 	worktrees?: boolean;
 	/** The project's declared checks, run under the host verification sandbox. */
 	verify?: boolean;
