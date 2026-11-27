@@ -293,7 +293,7 @@ describe("plugin PanHub lifecycle", () => {
 				.trim()
 				.split("\n")
 				.map((line) => JSON.parse(line) as string[]);
-			const stage = calls[1]?.[INTERNAL_GIT_BASE_OPTIONS.length + 2] ?? "";
+			const stage = calls[1]?.[INTERNAL_GIT_BASE_OPTIONS.length + 4] ?? "";
 			deepStrictEqual(
 				calls.map((call) => call.slice(0, INTERNAL_GIT_BASE_OPTIONS.length)),
 				calls.map(() => [...INTERNAL_GIT_BASE_OPTIONS]),
@@ -301,8 +301,8 @@ describe("plugin PanHub lifecycle", () => {
 			deepStrictEqual(
 				calls.map((call) => call.slice(INTERNAL_GIT_BASE_OPTIONS.length)),
 				[
-					["ls-remote", "--exit-code", "--", "https://github.com/example/repo.git", "v1"],
-					["init", "-q", stage],
+					["-c", "core.hooksPath=/dev/null", "ls-remote", "--exit-code", "--", "https://github.com/example/repo.git", "v1"],
+					["-c", "core.hooksPath=/dev/null", "init", "-q", stage],
 					[
 						"-C",
 						stage,

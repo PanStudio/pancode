@@ -17,7 +17,7 @@ export function gitBytes(root: string, args: string[], options: GitOptions = {})
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: 30_000,
 		...options,
-		// `worktree add` runs the repository's hooks: away from the TUI's terminal and its pane host (M-12).
+		// A checkout or commit still runs the repository's filters and signing program: away from the TUI's terminal and its pane host (M-12).
 		...TOOL_SESSION_SPAWN,
 		env: dropHostTerminalEnv(withoutRepositoryEnv(options.env)),
 	});

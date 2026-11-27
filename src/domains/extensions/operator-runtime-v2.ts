@@ -501,6 +501,10 @@ export class OperatorExtensionRuntimeV2 {
 			...(unixSockets !== undefined ? { unixSockets } : {}),
 			sandboxMode,
 			...(this.options.readOnly?.() === true ? { readOnly: true } : {}),
+			onUnhandled: (error) => {
+				if (created.process && this.current(created.process))
+					this.report(`${extensionOwnerLabel(entry.id)} left a rejected promise unhandled: ${error}`);
+			},
 			onState: () => {
 				const runtime = created.process;
 				if (runtime && runtime.state !== reportedState) {
