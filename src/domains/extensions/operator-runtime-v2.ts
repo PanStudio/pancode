@@ -474,7 +474,7 @@ export class OperatorExtensionRuntimeV2 {
 			...(embed ? { embed: (request, signal) => embed(request, signal, context.workspace) } : {}),
 			...(complete ? { complete: (request, signal) => complete(binding, request, signal) } : {}),
 			...(blobs ? { blobs: (request, signal) => blobs(binding, request, signal) } : {}),
-			...(work ? { work: work.host } : {}),
+			...(work ? { work: work.host, disposeWork: () => work.dispose() } : {}),
 			...(unixSockets !== undefined ? { unixSockets } : {}),
 			sandboxMode,
 			...(this.options.readOnly?.() === true ? { readOnly: true } : {}),
@@ -488,8 +488,6 @@ export class OperatorExtensionRuntimeV2 {
 				if (created.process && this.processes.get(entry.id) === created.process) this.changed();
 			},
 		});
-		// Runs and transient worktrees belong to this process: when it is gone, so are they.
-		if (work) void created.process.ended.then(() => work.dispose());
 		return created.process;
 	}
 	private current(process: ExtensionRuntimeProcessV2): boolean {

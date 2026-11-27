@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -322,5 +323,74 @@ describe("an installed extension's work services", () => {
 		const printed = JSON.parse(written.find((chunk) => chunk.startsWith('{"extensionId"')) ?? "null");
 		assert.equal(printed.extensionId, "driver");
 		assert.deepEqual(printed.output, { text: "undefined object", exitCode: 4 });
+	});
+
+	it("transient worktrees created by a command are removed before invoke resolves", async (t) => {
+		const env = await isolatePancodeEnv("ext-scope-cleanup-");
+		const priorCwd = process.cwd();
+		const cleanup: Array<() => Promise<void> | void> = [];
+		t.after(async () => {
+			for (const fn of cleanup.reverse()) await fn();
+			process.chdir(priorCwd);
+			env.restore();
+		});
+		const root = join(env.dir, "pack");
+		const repo = join(env.dir, "repo");
+		process.env.HOME = env.dir;
+		mkdirSync(root);
+		mkdirSync(repo);
+		const git = (args: string[]): void => {
+			execFileSync("git", args, {
+				cwd: repo,
+				env: {
+					...process.env,
+					GIT_AUTHOR_NAME: "Test",
+					GIT_AUTHOR_EMAIL: "test@example.com",
+					GIT_COMMITTER_NAME: "Test",
+					GIT_COMMITTER_EMAIL: "test@example.com",
+				},
+				stdio: "ignore",
+			});
+		};
+		git(["init", "-q"]);
+		writeFileSync(join(repo, "f.txt"), "hello\n");
+		git(["add", "f.txt"]);
+		git(["commit", "-q", "-m", "init"]);
+		writeFileSync(
+			join(root, "pancode-extension.json"),
+			JSON.stringify({
+				id: "wt-scope",
+				version: "1.0.0",
+				description: "Creates a transient worktree and returns its path",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					commands: [{ name: "make", description: "make" }],
+					permissions: { fs: { write: ["store"] } },
+					services: { worktrees: true },
+				},
+			}),
+		);
+		writeFileSync(
+			join(root, "extension.mjs"),
+			`export default (api) => {
+				api.handle("make", async (_args, ctx) => {
+					const wt = await ctx.worktrees.create({ base: "HEAD" });
+					return { text: wt.path };
+				});
+			};`,
+		);
+		assert.ok(installExtension(root, { cwd: repo, scope: "user" }).extension?.loadable);
+		process.chdir(repo);
+		const operator = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "attended", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "wt-scope",
+		});
+		cleanup.push(() => operator.dispose());
+		assert.equal((await operator.reload("startup")).status, "committed");
+		const output = await operator.invoke(extensionInvocation("wt-scope", "make"), "", [], new AbortController().signal);
+		assert.ok(output.text);
+		assert.equal(existsSync(output.text), false);
 	});
 });

@@ -75,6 +75,8 @@ export interface RuntimeProcessV2Options {
 	 * Each call ends with the request that made it.
 	 */
 	work?: ExtensionWorkHost;
+	/** Ends remaining work-service runs and removes transient worktrees when this process exits or disposes. */
+	disposeWork?: () => Promise<void>;
 	onState?: () => void;
 	/** The operator's `safety.sandboxUnixSockets` when this runtime starts; absent blocks them. */
 	unixSockets?: UnixSocketMode;
@@ -246,6 +248,9 @@ export class ExtensionRuntimeProcessV2 {
 	private serviceCalls = new Map<string, { controller: AbortController; parentRequestId: string; kind: ServiceKind }>();
 	/** What each command or action owns in the work services: runs and transient worktrees end with it. */
 	private scopes = new Map<string, OwnedExtensionRequestScope>();
+	/** In-flight scope cleanups so `dispose()` waits for runs and transient worktrees to settle. */
+	private endingScopes = new Set<Promise<void>>();
+	private workDisposed: Promise<void> | undefined;
 	/** Where a store put may take its source from: the roots this runtime may read. */
 	private sourceRoots: string[] = [];
 	private sourceBase = "";
@@ -358,12 +363,14 @@ export class ExtensionRuntimeProcessV2 {
 				this.kill("SIGKILL"); // Also settle non-detached descendants after a cooperative parent exits.
 				if (this.state !== "disposed") this.fail("runtime process exited");
 				this.cleanCopy();
+				void this.disposeWork();
 				resolve();
 			});
 			this.child.once("error", (error) => {
 				this.fail(`runtime process error: ${error.message}`);
 				if (!this.child.pid) {
 					this.cleanCopy();
+					void this.disposeWork();
 					resolve();
 				}
 			});
@@ -450,9 +457,19 @@ export class ExtensionRuntimeProcessV2 {
 		this.notifyState();
 		this.kill("SIGKILL");
 	}
+	private endScope(scope: OwnedExtensionRequestScope): Promise<void> {
+		const task = scope.end().catch(() => undefined);
+		this.endingScopes.add(task);
+		void task.finally(() => this.endingScopes.delete(task));
+		return task;
+	}
+	private disposeWork(): Promise<void> {
+		this.workDisposed ??= (this.options.disposeWork?.() ?? Promise.resolve()).catch(() => undefined);
+		return this.workDisposed;
+	}
 	private rejectAll(error: Error): void {
 		for (const call of this.serviceCalls.values()) call.controller.abort();
-		for (const scope of this.scopes.values()) void scope.end();
+		for (const scope of this.scopes.values()) void this.endScope(scope);
 		this.scopes.clear();
 		const pending = [...this.pending.values()];
 		this.pending.clear();
@@ -461,7 +478,7 @@ export class ExtensionRuntimeProcessV2 {
 			entry.reject(error);
 		}
 	}
-	private settle(id: unknown): Pending | undefined {
+	private settle(id: unknown): { pending: Pending; cleanup?: Promise<void> } | undefined {
 		if (typeof id !== "string") return undefined;
 		const pending = this.pending.get(id);
 		if (!pending) return undefined;
@@ -472,9 +489,9 @@ export class ExtensionRuntimeProcessV2 {
 		const scope = this.scopes.get(id);
 		if (scope) {
 			this.scopes.delete(id);
-			void scope.end();
+			return { pending, cleanup: this.endScope(scope) };
 		}
-		return pending;
+		return { pending };
 	}
 	/**
 	 * One call to a consent-gated host service. It needs a live parent request and ends with it, and the
@@ -663,13 +680,18 @@ export class ExtensionRuntimeProcessV2 {
 			}
 			if (m.kind !== "result" && m.kind !== "error") throw new Error("unexpected runtime IPC message");
 			// A reply without its outstanding request has no authority: it was cancelled or timed out.
-			const pending = this.settle(m.id);
-			if (!pending) return;
-			if (m.kind === "error")
-				pending.reject(
-					new Error(extensionPlainText(typeof m.error === "string" ? m.error : "handler failed").slice(0, 512)),
-				);
-			else pending.resolve(m.output);
+			const settled = this.settle(m.id);
+			if (!settled) return;
+			const finish = (): void => {
+				if (m.kind === "error")
+					settled.pending.reject(
+						new Error(extensionPlainText(typeof m.error === "string" ? m.error : "handler failed").slice(0, 512)),
+					);
+				else settled.pending.resolve(m.output);
+			};
+			// Wait for the request's transient worktrees and runs to end before handing the result to the caller.
+			if (settled.cleanup) void settled.cleanup.then(finish);
+			else finish();
 		} catch (error) {
 			this.fail(error instanceof Error ? error.message : String(error));
 		}
@@ -701,9 +723,11 @@ export class ExtensionRuntimeProcessV2 {
 		return new Promise<T>((resolve, reject) => {
 			const id = randomUUID();
 			const abandon = (error: Error): void => {
-				if (!this.settle(id)) return;
+				const settled = this.settle(id);
+				if (!settled) return;
 				this.send({ kind: "cancel", id });
-				reject(error);
+				if (settled.cleanup) void settled.cleanup.then(() => reject(error));
+				else reject(error);
 			};
 			const cancel = (): void => abandon(new Error(`extension ${message.kind} cancelled`));
 			const timer = setTimeout(() => abandon(new ExtensionRequestTimeout(message.kind)), timeoutMs);
@@ -808,6 +832,8 @@ export class ExtensionRuntimeProcessV2 {
 			const timer = setTimeout(() => this.kill("SIGKILL"), RUNTIME_LIMITS.disposeMs);
 			await this.exited;
 			clearTimeout(timer);
+			await Promise.allSettled([...this.endingScopes]);
+			await this.disposeWork();
 		})();
 		return this.stopPromise;
 	}
