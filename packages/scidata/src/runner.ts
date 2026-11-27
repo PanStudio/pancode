@@ -7,7 +7,7 @@ import {
 	ReaderUnavailableError,
 	SCIENTIFIC_READERS,
 } from "./assets.js";
-import type { ScientificReply, ScientificRequest, ScientificResult } from "./scientific-shared.js";
+import type { ScientificProgress, ScientificReply, ScientificRequest, ScientificResult } from "./scientific-shared.js";
 import { type DataRefusal, refusal } from "./shared.js";
 
 /**
@@ -34,6 +34,7 @@ export async function runScientific(
 	request: ScientificRequest,
 	options: RunnerOptions,
 	signal?: AbortSignal | undefined,
+	onProgress?: ((values: number) => void) | undefined,
 ): Promise<ScientificResult | DataRefusal> {
 	const path = request.path;
 	let entry: string | undefined;
@@ -49,7 +50,11 @@ export async function runScientific(
 	// Piped stdout and stderr: the HDF5 library prints diagnostics, and a worker
 	// process's stdout is its NDJSON protocol lane, which one stray line corrupts.
 	const worker = new Worker(options.workerUrl ?? new URL("./worker/index.js", import.meta.url), {
-		workerData: { request, ...(entry !== undefined ? { entry } : {}) },
+		workerData: {
+			request,
+			...(entry !== undefined ? { entry } : {}),
+			...(onProgress !== undefined ? { progress: true } : {}),
+		},
 		execArgv: [],
 		stdout: true,
 		stderr: true,
@@ -81,7 +86,19 @@ export async function runScientific(
 				WORKER_TIMEOUT_MS,
 			);
 			timer.unref();
-			worker.once("message", (reply: ScientificReply) => finish(reply.ok ? reply.result : reply.refusal));
+			worker.on("message", (message: ScientificReply | ScientificProgress) => {
+				if ("progress" in message) {
+					if (!settled && onProgress !== undefined) {
+						try {
+							onProgress(message.progress);
+						} catch {
+							// A progress sink cannot abort or crash the read.
+						}
+					}
+					return;
+				}
+				finish(message.ok ? message.result : message.refusal);
+			});
 			worker.once("error", (error) =>
 				finish(
 					refusal(

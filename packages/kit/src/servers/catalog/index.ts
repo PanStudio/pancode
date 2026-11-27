@@ -25,8 +25,10 @@ export function catalogFilePath(): string {
 
 export const server = defineServer({
 	id: "catalog",
-	version: "0.1.0",
+	version: "0.2.0",
 	title: "Dataset catalogs",
+	instructions:
+		"The datasets are the sources listed in one catalog file the operator writes; without that file every tool fails and names the path it looked for. A local source lists files on this host; a ckan source is a public CKAN portal reached over https, and downloads go only to its own host or the hosts its resourceHosts entry lists.",
 	tools: catalogTools({ catalogFile: catalogFilePath, requestTimeoutMs: 20_000, stallTimeoutMs: 60_000 }),
 });
 

@@ -272,6 +272,7 @@ const READERS_TEXT =
 
 const scidataInspect = defineTool({
 	name: "scidata_inspect",
+	title: "Inspect a data file",
 	description: `Returns the structure of one data file or store (${FORMATS_TEXT}): its format, groups, variables or columns with types, shapes and attributes, and a bounded sample (sample_rows, at most 1000), with a view that says whether the scan was exact or sampled. Prefer it over opening the file with h5dump, ncdump, head or a script: it streams without loading the file, reports large integers and sentinels instead of rounding or converting them, and refuses what it cannot read with a reason. ${READERS_TEXT} ${RESULT_CAP_TEXT}`,
 	input: inputSchema(INSPECT_ARGUMENTS),
 	actionClass: "read",
@@ -287,6 +288,7 @@ const scidataInspect = defineTool({
 
 const scidataSelect = defineTool({
 	name: "scidata_select",
+	title: "Select data values",
 	description: `Returns rows of a CSV, TSV, JSON Lines or Parquet file (offset and limit, at most 1000 rows; columns projects), a value of a JSON document (pointer), or a hyperslab of one HDF5, NetCDF or Zarr variable (start, count, stride; without count the first 200 elements, an explicit count over 2000 elements is refused), values raw as stored. Prefer it over printing the file in a shell: the window is bounded by its arguments, the result says whether there is more, and nothing is converted or guessed. ${READERS_TEXT} ${RESULT_CAP_TEXT}`,
 	input: inputSchema(SELECT_ARGUMENTS),
 	actionClass: "read",
@@ -302,6 +304,7 @@ const scidataSelect = defineTool({
 
 const scidataStats = defineTool({
 	name: "scidata_stats",
+	title: "Data statistics",
 	description: `Returns count, minimum, maximum, their indices, mean, population standard deviation and NaN, infinity, fill-value and missing-value counts for one HDF5, NetCDF or Zarr variable (over start, count, stride) or one Parquet column (variable, over offset and limit), with whether the pass was exact or stopped early at max_bytes or 60 seconds. Prefer it over a script that loads the variable: it streams in slabs under a byte cap and reports fill and missing values from the variable's own attributes. ${READERS_TEXT}`,
 	input: inputSchema(STATS_ARGUMENTS),
 	actionClass: "read",
@@ -310,7 +313,10 @@ const scidataStats = defineTool({
 	async run(args: Args, context) {
 		const problem = checkArguments("scidata_stats", STATS_ARGUMENTS, args);
 		if (problem !== null) return { error: problem };
-		const result = await scidata().statsData(path.resolve(args.path as string), libraryOptions(args, context.signal));
+		const result = await scidata().statsData(path.resolve(args.path as string), {
+			...libraryOptions(args, context.signal),
+			onProgress: (values) => context.progress(values, undefined, `${values} values read`),
+		});
 		return returned("scidata_stats", "stats", result, args);
 	},
 });

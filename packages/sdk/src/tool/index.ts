@@ -49,6 +49,14 @@ export interface ToolContext {
 	readonly signal: AbortSignal;
 	/** Writes one diagnostic line to the server's stderr. Never use stdout, which carries only protocol frames. */
 	log(message: string): void;
+	/**
+	 * Reports how far the call has got, as `notifications/progress` against the
+	 * request's `progressToken`. Does nothing when the client sent no token, for
+	 * a value not above the last one reported, or once the call has answered or
+	 * been cancelled. `total` is the value `progress` reaches when the work is
+	 * done, when known.
+	 */
+	progress(progress: number, total?: number, message?: string): void;
 }
 
 /** What `run` returns: text, a JSON value, or a failure message the client sees as a tool error. */
@@ -57,13 +65,23 @@ export type ToolResult = { readonly text: string } | { readonly json: unknown } 
 export interface ToolSpec<TArgs = Record<string, unknown>> {
 	/** Matches /^[a-z][a-z0-9_]*$/, at most 64 characters. */
 	readonly name: string;
+	/** The name a host shows a person, listed as the tool's `title` and `annotations.title`. */
+	readonly title?: string;
 	readonly description: string;
 	readonly input: ToolInputSchema;
+	/**
+	 * The JSON Schema of the `json` value `run` returns, listed as `outputSchema`.
+	 * A tool that declares one must return `{ json }` whose top-level type the
+	 * schema allows; any other result reaches the client as a tool error.
+	 */
+	readonly output?: JsonSchema;
 	readonly actionClass: ToolActionClass;
 	/** Defaults to `actionClass === "read"`; may be true only for a `read` tool. */
 	readonly readOnly?: boolean;
 	/** Whether calling twice with the same arguments has no further effect. Defaults to false. */
 	readonly idempotent?: boolean;
+	/** Whether the tool reaches anything beyond the host it runs on, such as a web service. Defaults to false. */
+	readonly openWorld?: boolean;
 	/** Arguments that name file paths, each a string property of `input`, with how the tool uses the path. */
 	readonly pathArguments?: Readonly<Record<string, ToolPathAccess>>;
 	run(args: TArgs, context: ToolContext): ToolResult | Promise<ToolResult>;
@@ -73,6 +91,7 @@ export interface ToolSpec<TArgs = Record<string, unknown>> {
 export interface Tool<TArgs = Record<string, unknown>> extends ToolSpec<TArgs> {
 	readonly readOnly: boolean;
 	readonly idempotent: boolean;
+	readonly openWorld: boolean;
 	readonly pathArguments: Readonly<Record<string, ToolPathAccess>>;
 }
 
@@ -84,6 +103,12 @@ export interface ServerSpec {
 	readonly id: string;
 	readonly version: string;
 	readonly title?: string;
+	/**
+	 * Facts about the server a model needs and no single tool description
+	 * carries, served in `initialize` and `server/discover`. State facts, not
+	 * orders to the model.
+	 */
+	readonly instructions?: string;
 	readonly tools: ReadonlyArray<AnyTool | ToolSpec<never>>;
 }
 
@@ -92,6 +117,7 @@ export interface ToolServer {
 	readonly id: string;
 	readonly version: string;
 	readonly title?: string;
+	readonly instructions?: string;
 	readonly tools: ReadonlyArray<AnyTool>;
 }
 
@@ -100,6 +126,7 @@ export interface PolicyManifestTool {
 	actionClass: ToolActionClass;
 	readOnly: boolean;
 	idempotent: boolean;
+	openWorld: boolean;
 	pathArguments: Record<string, ToolPathAccess>;
 }
 
@@ -175,10 +202,15 @@ export function defineTool<TArgs = Record<string, unknown>>(spec: ToolSpec<TArgs
 		throw new Error(`${where}: name must match /^[a-z][a-z0-9_]*$/`);
 	}
 	if (spec.name.length > TOOL_NAME_MAX) throw new Error(`${where}: name exceeds ${TOOL_NAME_MAX} characters`);
+	if (spec.title !== undefined && (typeof spec.title !== "string" || spec.title.trim().length === 0)) {
+		throw new Error(`${where}: title must be a non-empty string`);
+	}
 	if (typeof spec.description !== "string" || spec.description.trim().length === 0) {
 		throw new Error(`${where}: description must be a non-empty string`);
 	}
 	const input = checkInput(where, spec.input);
+	if (spec.output !== undefined && !isRecord(spec.output))
+		throw new Error(`${where}: output must be a JSON Schema object`);
 	const actionClass: unknown = spec.actionClass;
 	if (actionClass === "write") {
 		throw new Error(
@@ -197,16 +229,22 @@ export function defineTool<TArgs = Record<string, unknown>>(spec: ToolSpec<TArgs
 	if (spec.idempotent !== undefined && typeof spec.idempotent !== "boolean") {
 		throw new Error(`${where}: idempotent must be a boolean`);
 	}
+	if (spec.openWorld !== undefined && typeof spec.openWorld !== "boolean") {
+		throw new Error(`${where}: openWorld must be a boolean`);
+	}
 	const pathArguments = checkPathArguments(where, spec.pathArguments, input);
 	if (typeof spec.run !== "function") throw new Error(`${where}: run must be a function`);
 	const run = spec.run;
 	return Object.freeze({
 		name: spec.name,
+		...(spec.title !== undefined ? { title: spec.title } : {}),
 		description: spec.description,
 		input,
+		...(spec.output !== undefined ? { output: spec.output } : {}),
 		actionClass,
 		readOnly: spec.readOnly ?? actionClass === "read",
 		idempotent: spec.idempotent ?? false,
+		openWorld: spec.openWorld ?? false,
 		pathArguments,
 		run(args: TArgs, context: ToolContext) {
 			return run.call(spec, args, context);
@@ -226,6 +264,12 @@ export function defineServer(spec: ServerSpec): ToolServer {
 		throw new Error(`${where}: version must be a non-empty string`);
 	}
 	if (spec.title !== undefined && typeof spec.title !== "string") throw new Error(`${where}: title must be a string`);
+	if (
+		spec.instructions !== undefined &&
+		(typeof spec.instructions !== "string" || spec.instructions.trim().length === 0)
+	) {
+		throw new Error(`${where}: instructions must be a non-empty string`);
+	}
 	if (!Array.isArray(spec.tools)) throw new Error(`${where}: tools must be an array`);
 	const seen = new Set<string>();
 	const tools: AnyTool[] = [];
@@ -239,6 +283,7 @@ export function defineServer(spec: ServerSpec): ToolServer {
 		id: spec.id,
 		version: spec.version,
 		...(spec.title !== undefined ? { title: spec.title } : {}),
+		...(spec.instructions !== undefined ? { instructions: spec.instructions } : {}),
 		tools: Object.freeze(tools),
 	});
 }
@@ -263,6 +308,7 @@ export function policyManifest(server: ToolServer): PolicyManifest {
 				actionClass: tool.actionClass,
 				readOnly: tool.readOnly,
 				idempotent: tool.idempotent,
+				openWorld: tool.openWorld,
 				pathArguments,
 			};
 		});

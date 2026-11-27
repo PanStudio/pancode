@@ -263,10 +263,11 @@ async function runScientificOp(
 	format: DataFormat,
 	request: Omit<ScientificRequest, "op" | "container" | "path">,
 	signal: AbortSignal | undefined,
+	onProgress?: ((values: number) => void) | undefined,
 ): Promise<ScientificResult | DataRefusal> {
 	const container = await scientificContainer(path, format);
 	if (typeof container !== "string") return container;
-	return (await import("./runner.js")).runScientific({ op, container, path, ...request }, runtime, signal);
+	return (await import("./runner.js")).runScientific({ op, container, path, ...request }, runtime, signal, onProgress);
 }
 
 /** The scientific request fields an options object carries, without undefined members. */
@@ -586,6 +587,8 @@ async function validateData(
 export interface StatsDataOptions extends ScientificOptions {
 	format?: string | null;
 	signal?: AbortSignal | undefined;
+	/** Called with the count of values the pass has taken in so far, as each block is read. */
+	onProgress?: ((values: number) => void) | undefined;
 }
 
 /**
@@ -610,7 +613,15 @@ async function statsData(
 		);
 	}
 	try {
-		return await runScientificOp(runtime, "stats", path, format, scientificFields(options), options.signal);
+		return await runScientificOp(
+			runtime,
+			"stats",
+			path,
+			format,
+			scientificFields(options),
+			options.signal,
+			options.onProgress,
+		);
 	} catch (error) {
 		return refusalFromError(error, path, options.signal);
 	}

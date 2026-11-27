@@ -1,11 +1,13 @@
 {
 	"id": "catalog",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Dataset catalogs",
+	"instructions": "The datasets are the sources listed in one catalog file the operator writes; without that file every tool fails and names the path it looked for. A local source lists files on this host; a ckan source is a public CKAN portal reached over https, and downloads go only to its own host or the hosts its resourceHosts entry lists.",
 	"environment": [],
 	"tools": [
 		{
 			"name": "catalog_describe",
+			"title": "Describe a catalog dataset",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -25,13 +27,16 @@
 				"required": ["source", "id"]
 			},
 			"annotations": {
+				"title": "Describe a catalog dataset",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": true
 			}
 		},
 		{
 			"name": "catalog_search",
+			"title": "Search dataset catalogs",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -64,13 +69,16 @@
 				"required": ["query"]
 			},
 			"annotations": {
+				"title": "Search dataset catalogs",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": true
 			}
 		},
 		{
 			"name": "catalog_stage",
+			"title": "Stage a catalog resource",
 			"actionClass": "execute",
 			"pathArguments": {
 				"destination": "write"
@@ -111,9 +119,11 @@
 				"required": ["source", "dataset", "resource", "destination"]
 			},
 			"annotations": {
+				"title": "Stage a catalog resource",
 				"readOnlyHint": false,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": false,
+				"openWorldHint": true
 			}
 		}
 	]

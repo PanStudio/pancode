@@ -6,6 +6,8 @@ import { loadServer, SERVERS } from "./registry.js";
 
 export interface KitManifestTool {
 	name: string;
+	/** The name a host shows a person; also listed as `annotations.title`. */
+	title: string;
 	actionClass: ToolActionClass;
 	pathArguments: Record<string, ToolPathAccess>;
 	/** Exactly what the server lists in `tools/list`. */
@@ -17,6 +19,8 @@ export interface KitManifestServer {
 	id: string;
 	version: string;
 	title: string;
+	/** What the server serves as `instructions` in `initialize` and `server/discover`, when it has any. */
+	instructions?: string;
 	/** The variables the server reads from its caller's environment, sorted; a host passes exactly these through. */
 	environment: string[];
 	tools: KitManifestTool[];
@@ -51,9 +55,11 @@ export function manifestServer(server: ToolServer, environment: ReadonlyArray<st
 	const tools = policyManifest(server).tools.map((policy): KitManifestTool => {
 		const tool = byName.get(policy.name);
 		if (tool === undefined) throw new Error(`server ${server.id}: no tool named ${policy.name}`);
+		if (tool.title === undefined) throw new Error(`server ${server.id}: tool ${tool.name} has no title`);
 		const listed = listedTool(tool);
 		return {
 			name: policy.name,
+			title: tool.title,
 			actionClass: policy.actionClass,
 			pathArguments: policy.pathArguments,
 			inputSchema: listed.inputSchema as Record<string, unknown>,
@@ -64,6 +70,7 @@ export function manifestServer(server: ToolServer, environment: ReadonlyArray<st
 		id: server.id,
 		version: server.version,
 		title: server.title ?? server.id,
+		...(server.instructions !== undefined ? { instructions: server.instructions } : {}),
 		environment: environmentEntries(server.id, environment),
 		tools,
 	};

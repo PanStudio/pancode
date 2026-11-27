@@ -52,7 +52,9 @@ test("settings controls derive from the engine registry, write only the user lay
 				continue;
 			}
 			assert.equal(control.access, "read-only", control.path);
-			assert.match(control.value, /^\d+ entr(y|ies)$/, "structured content never crosses");
+			// A nullable object such as store.s3 crosses as empty while unset.
+			const size = control.optional ? /^(\d+ entr(y|ies))?$/ : /^\d+ entr(y|ies)$/;
+			assert.match(control.value, size, "structured content never crosses");
 		}
 		assert.equal(byPath.get("integrations.hub.confirmedRemote")?.access, "read-only");
 		assert.equal(byPath.get("fleet.permissions.mode")?.section, "safety");

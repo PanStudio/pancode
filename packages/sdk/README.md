@@ -101,7 +101,8 @@ await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo, sav
 
 - `actionClass` is `read`, `execute` or `destructive`. There is no `write` class: a tool that writes files is
   `execute` or `destructive` and names its write paths in `pathArguments`. `readOnly` defaults to true for a `read`
-  tool and may not be true for another class; `idempotent` defaults to false.
+  tool and may not be true for another class; `idempotent` and `openWorld` default to false. `title` is the name a
+  host shows, `output` is the listed `outputSchema`, and `defineServer` takes `instructions`.
 - `run` returns `{ text }`, `{ json }` or `{ error }`. A returned `error` or a thrown exception reaches the client as
   a tool result with `isError: true`. `serveStdio` does not truncate large results.
 - `defineTool` and `defineServer` throw when a definition is wrong, so a broken server fails as it starts.
@@ -109,6 +110,9 @@ await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo, sav
   process's stdout it also points the global `console` at stderr, but a tool that writes to `process.stdout`
   directly still corrupts the stream.
 - `context.signal` aborts when the client cancels the call; a cancelled call sends no response.
+- `context.progress(progress, total?, message?)` sends `notifications/progress` when the caller asked for progress.
+- `serveStdio` serves MCP `2026-07-28` statelessly to a request that names it in `_meta`, and `2025-11-25` to
+  `2024-11-05` after `initialize`.
 - `policyManifest(server)` returns the server's tools, classes and path arguments as stable JSON.
 
 What a server says about itself is a hint to any host. PanCode decides a tool's class from the operator's approval or

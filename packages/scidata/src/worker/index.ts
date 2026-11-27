@@ -6,7 +6,13 @@ import { inspectAdios2, selectAdios2, statsAdios2 } from "../adios2.js";
 import { type H5Library, inspectHdf5, selectHdf5, statsHdf5 } from "../hdf5.js";
 import { inspectNetcdf3, selectNetcdf3, statsNetcdf3 } from "../netcdf3.js";
 import { inspectParquet, type ParquetLibrary, selectParquet, statsParquet } from "../parquet.js";
-import type { ScientificReply, ScientificRequest, ScientificResult } from "../scientific-shared.js";
+import {
+	type ScientificProgress,
+	type ScientificReply,
+	type ScientificRequest,
+	type ScientificResult,
+	setStatsProgress,
+} from "../scientific-shared.js";
 import { DataRefusalError, refusal } from "../shared.js";
 import { inspectZarr, selectZarr, statsZarr } from "../zarr.js";
 
@@ -22,6 +28,8 @@ interface WorkerInput {
 	request: ScientificRequest;
 	/** Absolute path of the reader library's entry module; absent for the native readers (NetCDF-3, Zarr, ADIOS2 BP). */
 	entry?: string;
+	/** Post a `ScientificProgress` as each block of a stats pass is taken in. */
+	progress?: boolean;
 }
 
 async function run(input: WorkerInput): Promise<ScientificResult> {
@@ -55,8 +63,19 @@ async function run(input: WorkerInput): Promise<ScientificResult> {
 	return statsParquet(lib, request);
 }
 
+const PROGRESS_INTERVAL_MS = 50;
+
 async function main(): Promise<void> {
 	const input = workerData as WorkerInput;
+	if (input.progress === true) {
+		let sentAt = Number.NEGATIVE_INFINITY;
+		setStatsProgress((values) => {
+			const now = performance.now();
+			if (now - sentAt < PROGRESS_INTERVAL_MS) return;
+			sentAt = now;
+			parentPort?.postMessage({ progress: values } satisfies ScientificProgress);
+		});
+	}
 	let reply: ScientificReply;
 	try {
 		reply = { ok: true, result: await run(input) };

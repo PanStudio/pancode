@@ -18,6 +18,7 @@ import type { McpBuiltinSource } from "../../src/domains/gateway/mcp/index.js";
 
 const echo = defineTool({
 	name: "echo",
+	title: "Echo",
 	description: "Echo the text back.",
 	input: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
 	actionClass: "read",
@@ -27,6 +28,7 @@ const echo = defineTool({
 
 const stamp = defineTool({
 	name: "stamp",
+	title: "Stamp",
 	description: "Name the file a stamp would be written to.",
 	input: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
 	actionClass: "execute",
@@ -36,6 +38,7 @@ const stamp = defineTool({
 
 const env = defineTool({
 	name: "env",
+	title: "Environment variable",
 	description: "Return the value of a named environment variable, or null when it is unset.",
 	input: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
 	actionClass: "read",
@@ -44,6 +47,7 @@ const env = defineTool({
 
 const slurmList = defineTool({
 	name: "slurm_list",
+	title: "List jobs",
 	description: "List queued jobs.",
 	input: { type: "object", properties: {} },
 	actionClass: "read",
@@ -52,6 +56,7 @@ const slurmList = defineTool({
 
 const slurmSubmit = defineTool({
 	name: "slurm_submit",
+	title: "Submit a job",
 	description: "Submit a batch script.",
 	input: { type: "object", properties: { script: { type: "string" } }, required: ["script"] },
 	actionClass: "execute",
@@ -61,6 +66,7 @@ const slurmSubmit = defineTool({
 /** Stands in for PanKit's store server: one put that reports the options it was started with instead of storing. */
 const storePut = defineTool({
 	name: "store_put",
+	title: "Put a file",
 	description: "Report the argv this server was started with after serve store.",
 	input: {
 		type: "object",

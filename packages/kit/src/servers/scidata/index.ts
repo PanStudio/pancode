@@ -14,7 +14,7 @@ import { configureScidata, readerCacheDir, readerCacheStates, USAGE } from "./ru
 import { SCIDATA_TOOLS } from "./tools.js";
 import { readerWorker } from "./worker.js";
 
-export const server = defineServer({ id: "scidata", version: "0.1.0", title: "Scientific data", tools: SCIDATA_TOOLS });
+export const server = defineServer({ id: "scidata", version: "0.2.0", title: "Scientific data", tools: SCIDATA_TOOLS });
 
 export const usage = USAGE;
 

@@ -1,11 +1,12 @@
 {
 	"id": "darshan",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Darshan I/O traces",
 	"environment": [],
 	"tools": [
 		{
 			"name": "darshan_files",
+			"title": "Darshan per-file I/O",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -40,13 +41,16 @@
 				"required": ["path"]
 			},
 			"annotations": {
+				"title": "Darshan per-file I/O",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "darshan_modules",
+			"title": "Darshan module counters",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -70,13 +74,16 @@
 				"required": ["path"]
 			},
 			"annotations": {
+				"title": "Darshan module counters",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "darshan_summary",
+			"title": "Darshan log summary",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -95,13 +102,16 @@
 				"required": ["path"]
 			},
 			"annotations": {
+				"title": "Darshan log summary",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "darshan_timeline",
+			"title": "Darshan I/O timeline",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -125,9 +135,11 @@
 				"required": ["path"]
 			},
 			"annotations": {
+				"title": "Darshan I/O timeline",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		}
 	]

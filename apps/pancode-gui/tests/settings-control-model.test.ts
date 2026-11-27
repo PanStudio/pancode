@@ -56,6 +56,7 @@ test("a select never rewrites a saved value it does not recognise, and an option
 	// Suggestions on a list stay free text; a list is not one value.
 	assert.equal(selectOptions(control({ kind: "list", suggestions: ["a"] })), null);
 	assert.equal(emptyMeaning(control({ kind: "list" })), "None");
+	assert.equal(emptyMeaning(control({ path: "store.s3", kind: "json", optional: true, value: "" })), "Not set");
 	assert.equal(emptyMeaning(control()), "Not set");
 });
 

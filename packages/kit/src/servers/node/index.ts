@@ -11,7 +11,7 @@ import { resolveProgram } from "../../exec.js";
 import type { ServerProbe } from "../../registry.js";
 import { NODE_TOOLS } from "./tools.js";
 
-export const server = defineServer({ id: "node", version: "0.1.0", title: "Node facts", tools: NODE_TOOLS });
+export const server = defineServer({ id: "node", version: "0.2.0", title: "Node facts", tools: NODE_TOOLS });
 
 /** Available everywhere; names which optional sources this host has, looking them up without running any. */
 export async function probe(): Promise<ServerProbe> {

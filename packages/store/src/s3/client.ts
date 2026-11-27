@@ -21,7 +21,7 @@ export interface S3ClientOptions {
 }
 
 /** A body the client signs: bytes in memory, or a file whose size and sha256 were taken before the send. */
-export type S3Body = Uint8Array | { file: string; bytes: number; sha256: string };
+export type S3Body = Uint8Array<ArrayBuffer> | { file: string; bytes: number; sha256: string };
 
 export interface S3Request {
 	query?: Record<string, string>;
