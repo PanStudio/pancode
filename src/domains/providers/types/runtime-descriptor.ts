@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ThinkingLevel } from "../../../core/views/thinking-levels.js";
 import type { Api, Model } from "../../../engine/types.js";
 import type { ProfileId } from "../../system-one/profiles.js";
 import type { CapabilityFlags } from "./capability-flags.js";
@@ -109,7 +110,7 @@ export interface ProbeModelStatus {
 	/** Load configuration echoed by LM Studio for the selected instance. */
 	loadConfig?: Readonly<Record<string, unknown>>;
 	/** Reasoning levels accepted by this model after LM Studio option clamping. */
-	reasoningLevels?: ReadonlyArray<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
+	reasoningLevels?: ReadonlyArray<ThinkingLevel>;
 }
 
 export interface ProbeResult {

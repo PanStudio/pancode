@@ -4,14 +4,15 @@
  * Safe settings and targets: the `_pancode/settings` read and patch shapes,
  * the target list and probe result, and the model-to-target setting paths.
  */
-import type { Static } from "typebox";
+
+import type { Static, TLiteral } from "typebox";
 import { Type } from "typebox";
+import { THINKING_LEVELS } from "../../core/views/thinking-levels.js";
 import {
 	ACP_MAX_MODEL_ID_BYTES,
 	ACP_MAX_TARGET_ID_BYTES,
 	ACP_MAX_TARGETS,
 	ACP_TARGET_MODEL_LIMIT,
-	ACP_THINKING_LEVELS,
 	ACP_TRUNCATED_META_KEY,
 	AcpRuntimeComponent,
 	closed,
@@ -26,15 +27,10 @@ const settingModel = Type.Union([
 	Type.String({ minLength: 1, maxLength: ACP_MAX_MODEL_ID_BYTES, pattern: noControls }),
 	Type.Null(),
 ]);
-export const AcpThinkingLevelSchema = Type.Union([
-	Type.Literal("off"),
-	Type.Literal("minimal"),
-	Type.Literal("low"),
-	Type.Literal("medium"),
-	Type.Literal("high"),
-	Type.Literal("xhigh"),
-	Type.Literal("max"),
-]);
+type LiteralTuple<T extends readonly string[]> = { -readonly [K in keyof T]: TLiteral<T[K]> };
+export const AcpThinkingLevelSchema = Type.Union(
+	THINKING_LEVELS.map((level) => Type.Literal(level)) as LiteralTuple<typeof THINKING_LEVELS>,
+);
 export type AcpAutonomyLevel = "default" | "yolo";
 export const AcpAutonomyLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("yolo")]);
 export const ACP_SAFE_SETTINGS_KEYS = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"] as const;
@@ -85,7 +81,7 @@ export const AcpTarget = Type.Object(
 		thinkingLevels: Type.Optional(
 			Type.Record(
 				Type.String({ maxLength: ACP_MAX_MODEL_ID_BYTES }),
-				Type.Array(Type.String({ maxLength: 16 }), { maxItems: ACP_THINKING_LEVELS.length }),
+				Type.Array(Type.String({ maxLength: 16 }), { maxItems: THINKING_LEVELS.length }),
 			),
 		),
 		isOrchestrator: Type.Boolean(),

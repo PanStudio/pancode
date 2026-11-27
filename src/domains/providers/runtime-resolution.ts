@@ -24,7 +24,7 @@ import {
 } from "./model-runtime-capabilities.js";
 import { runtimeNotRegistered } from "./runtime-not-registered.js";
 import type { CapabilityFlags, ThinkingLevel } from "./types/capability-flags.js";
-import { VALID_THINKING_LEVELS } from "./types/capability-flags.js";
+import { THINKING_LEVELS } from "./types/capability-flags.js";
 import type { ContextWindowSlots } from "./types/context-window-slots.js";
 import type { KnowledgeBase } from "./types/knowledge-base.js";
 import type {
@@ -307,7 +307,7 @@ function appendThinkingDiagnostics(
 		// stays info and out of start-up notices; a mapping down or to a switch still warns.
 		// `off` mapped to an always-on level is the operator's request being overridden, so it
 		// warns even though the level moved up.
-		const order: ReadonlyArray<ThinkingLevel> = VALID_THINKING_LEVELS;
+		const order: ReadonlyArray<ThinkingLevel> = THINKING_LEVELS;
 		const mappedUp = order.indexOf(thinking.effectiveLevel) > order.indexOf(requested);
 		const informational = mappedUp && requested !== "off";
 		diagnostics.push(

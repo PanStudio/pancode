@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { THINKING_LEVELS } from "../core/views/thinking-levels.js";
 import { parseWorkerContextPolicy } from "../domains/context/worker/contract.js";
 
 /** Pure model-argument parsing; every returned DispatchRequest has a concrete agent id. */
@@ -103,7 +104,6 @@ function jobBaselineAgentId(task: string, args: Record<string, unknown>, hasAgen
 }
 const DEFAULT_MAX_OUTPUT_BYTES = 20_000;
 const PERSONA_MAX_CHARS = 8_000;
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const VALID_THINKING = new Set<JobThinkingLevel>(THINKING_LEVELS);
 
 export interface DispatchArgumentParserOptions {

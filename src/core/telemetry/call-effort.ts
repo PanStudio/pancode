@@ -7,8 +7,7 @@
  * message the way the request size does, and reaches `call.settled`. Nothing here throws into the request path.
  */
 
-export const REQUESTED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type RequestedThinkingLevel = (typeof REQUESTED_THINKING_LEVELS)[number];
+import { THINKING_LEVELS, type ThinkingLevel } from "../views/thinking-levels.js";
 
 /** The journaled effort when the request named none. */
 export const WIRE_EFFORT_OMITTED = "omitted";
@@ -17,9 +16,9 @@ export const WIRE_EFFORT_PATTERN = "^[A-Za-z0-9_.-]{1,32}$";
 const WIRE_EFFORT = new RegExp(WIRE_EFFORT_PATTERN);
 
 /** The `thinkingLevel` fact for a call's start, empty when the value names no level. */
-export function requestedThinking(level: unknown): { thinkingLevel?: RequestedThinkingLevel } {
-	return typeof level === "string" && (REQUESTED_THINKING_LEVELS as readonly string[]).includes(level)
-		? { thinkingLevel: level as RequestedThinkingLevel }
+export function requestedThinking(level: unknown): { thinkingLevel?: ThinkingLevel } {
+	return typeof level === "string" && (THINKING_LEVELS as readonly string[]).includes(level)
+		? { thinkingLevel: level as ThinkingLevel }
 		: {};
 }
 

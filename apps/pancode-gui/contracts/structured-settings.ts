@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Presentation metadata only. PanCode's settings parser remains the authority for every write. */
 import { RUN_ROLES } from "../../../src/core/views/run-roles.js";
+import { THINKING_LEVELS } from "../../../src/core/views/thinking-levels.js";
 
 export type StructuredField = { key: string; label: string; kind?: "number" | "list"; choices?: readonly string[] };
 export type StructuredSettingEditor = {
@@ -9,7 +10,6 @@ export type StructuredSettingEditor = {
 	name: string;
 	fields: readonly StructuredField[];
 };
-const thinking = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEditor>> = {
 	"fleet.profiles": {
 		kind: "map",
@@ -17,7 +17,7 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 		fields: [
 			{ key: "target", label: "Connection" },
 			{ key: "model", label: "Model" },
-			{ key: "thinkingLevel", label: "Thinking", choices: thinking },
+			{ key: "thinkingLevel", label: "Thinking", choices: THINKING_LEVELS },
 			{ key: "node", label: "Worker machine" },
 		],
 	},
@@ -33,7 +33,7 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 			{ key: "label", label: "Member label" },
 			{ key: "target", label: "Connection" },
 			{ key: "model", label: "Model" },
-			{ key: "thinkingLevel", label: "Thinking", choices: thinking },
+			{ key: "thinkingLevel", label: "Thinking", choices: THINKING_LEVELS },
 			{ key: "color", label: "Member color" },
 		],
 	},

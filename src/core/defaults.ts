@@ -21,20 +21,12 @@ import type { SandboxMode, UnixSocketMode } from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
 import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
 import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
+import type { ThinkingLevel } from "./views/thinking-levels.js";
 
 export type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 export type { AutonomyLevel } from "../domains/safety/autonomy.js";
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-export const THINKING_LEVELS: ReadonlyArray<ThinkingLevel> = [
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-];
+export { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
 interface WorkerTarget {
 	target: string | null;

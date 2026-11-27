@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeCacheDir, pancodeCachePath } from "../../core/xdg.js";
-import { type CapabilityFlags, type ThinkingLevel, VALID_THINKING_LEVELS } from "./types/capability-flags.js";
+import { type CapabilityFlags, THINKING_LEVELS, type ThinkingLevel } from "./types/capability-flags.js";
 import type { ProbeResult, RuntimeDescriptor } from "./types/runtime-descriptor.js";
 import { type CopilotContextTier, copilotContextTierOf, type TargetDescriptor } from "./types/target-descriptor.js";
 
@@ -103,10 +103,10 @@ function normalizedLabels(models: ReadonlyArray<string>, labels: unknown): Recor
 	return Object.keys(out).length > 0 ? out : undefined;
 }
 
-const THINKING_LEVELS = new Set<string>(VALID_THINKING_LEVELS);
+const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
-	return typeof value === "string" && THINKING_LEVELS.has(value);
+	return typeof value === "string" && THINKING_LEVEL_SET.has(value);
 }
 
 function positiveInteger(value: unknown): value is number {

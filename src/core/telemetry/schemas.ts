@@ -8,7 +8,8 @@
 import type { Static, TSchema } from "typebox";
 import { Type } from "typebox";
 import { SURFACE_IDS } from "../side-surfaces.js";
-import { REQUESTED_THINKING_LEVELS, WIRE_EFFORT_PATTERN } from "./call-effort.js";
+import { THINKING_LEVELS } from "../views/thinking-levels.js";
+import { WIRE_EFFORT_PATTERN } from "./call-effort.js";
 import {
 	CallEconomicsSchema,
 	ChargeDiscrepancySchema,
@@ -163,7 +164,7 @@ const call = {
 	/** Present only when the request bound its reply to a JSON schema through `response_format`. */
 	responseFormat: Type.Optional(vocabulary(["json-schema"])),
 	/** The thinking level the call asked for, as PanCode names it; absent where the caller did not state one (FX-49). */
-	thinkingLevel: Type.Optional(vocabulary(REQUESTED_THINKING_LEVELS)),
+	thinkingLevel: Type.Optional(vocabulary(THINKING_LEVELS)),
 };
 const span = { start: duration, end: duration };
 export const sha256Hex = Type.String({ pattern: "^[0-9a-f]{64}$" });

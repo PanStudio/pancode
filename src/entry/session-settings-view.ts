@@ -46,7 +46,7 @@ import {
 	isOrchestratorEligibleRuntime,
 	resolveModelRuntimeCapabilitiesForProviders,
 	resolveRuntimeTarget,
-	VALID_THINKING_LEVELS,
+	THINKING_LEVELS,
 } from "../domains/providers/index.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.js";
@@ -74,7 +74,7 @@ interface SessionSettingsViewDeps {
 }
 
 function advanceThinkingLevel(current: ThinkingLevel, available: ReadonlyArray<ThinkingLevel>): ThinkingLevel {
-	const levels = available.length > 0 ? available : VALID_THINKING_LEVELS;
+	const levels = available.length > 0 ? available : THINKING_LEVELS;
 	if (!levels.includes(current)) return levels[0] ?? "off";
 	const normalized = current;
 	const idx = levels.indexOf(normalized);

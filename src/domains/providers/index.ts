@@ -188,7 +188,7 @@ export type {
 export {
 	availableThinkingLevels,
 	EMPTY_CAPABILITIES,
-	VALID_THINKING_LEVELS,
+	THINKING_LEVELS,
 } from "./types/capability-flags.js";
 export { type ContextWindowSlots, formatContextWindowSlots } from "./types/context-window-slots.js";
 export type { KnowledgeBase, KnowledgeBaseEntry, KnowledgeBaseHit } from "./types/knowledge-base.js";
