@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Desktop or terminal: find your workspace · PanCode</title><meta name="description" content="See both interfaces, learn how to launch them, and choose where to start your next coding session."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
-<link rel="canonical" href="https://pancode.dev/tutorials/desktop-and-terminal.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://www.googletagmanager.com; style-src 'self'; img-src 'self' data: https://*.google-analytics.com https://*.googletagmanager.com; font-src 'self'; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Desktop or terminal: find your workspace · PanCode</title><meta name="description" content="See both interfaces, learn how to launch them, and choose where to start your next coding session."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#0e1113"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1113">
+<link rel="canonical" href="https://pancode.dev/tutorials/desktop-and-terminal.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=52cb756433" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark-small.svg?v=59a3bf7f66" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=8cfff2e4d9" sizes="180x180"><link rel="author" href="/humans.txt">
 <link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+<link rel="stylesheet" href="/css/site.css?v=2bbe37a98f"><link rel="stylesheet" href="/css/art.css?v=e571ac33f3"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Runs before first paint; explicit choices take priority over the sanctioned default.
 (() => {
@@ -30,31 +30,33 @@
 	document.documentElement.dataset.theme = theme;
 	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
 	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
-})();</script><script src="/js/cast.js?v=5cec636500" data-player-src="/assets/player/asciinema-player.min.js?v=752c9b528b" data-player-css="/assets/player/asciinema-player.css?v=981fe7bc60" data-cast-css="/css/cast.css?v=ad7414d08f" defer></script>
-<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/desktop-and-terminal.html"><meta property="og:title" content="Desktop or terminal: find your workspace · PanCode"><meta property="og:description" content="See both interfaces, learn how to launch them, and choose where to start your next coding session."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+})();</script><script src="/js/analytics.js?v=729082091e" data-ga4="G-65SSCG9E0G" defer></script><script src="/js/cast.js?v=5cec636500" data-player-src="/assets/player/asciinema-player.min.js?v=752c9b528b" data-player-css="/assets/player/asciinema-player.css?v=981fe7bc60" data-cast-css="/css/cast.css?v=ad7414d08f" defer></script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/desktop-and-terminal.html"><meta property="og:title" content="Desktop or terminal: find your workspace · PanCode"><meta property="og:description" content="See both interfaces, learn how to launch them, and choose where to start your next coding session."><meta property="og:image" content="https://pancode.dev/assets/social/gui-task.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="PanCode"><meta property="article:published_time" content="2026-11-26T17:28:23-06:00"><meta property="article:modified_time" content="2026-11-26T17:28:23-06:00">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Desktop or terminal: find your workspace · PanCode"><meta name="twitter:description" content="See both interfaces, learn how to launch them, and choose where to start your next coding session."><meta name="twitter:image" content="https://pancode.dev/assets/social/gui-task.png"><meta name="twitter:image:alt" content="PanCode">
-<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/desktop-and-terminal.html#page","name":"Desktop or terminal: find your workspace · PanCode","description":"See both interfaces, learn how to launch them, and choose where to start your next coding session.","url":"https://pancode.dev/tutorials/desktop-and-terminal.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Desktop or terminal: find your workspace","mainEntityOfPage":"https://pancode.dev/tutorials/desktop-and-terminal.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png","https://pancode.dev/assets/gui-task.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/desktop-and-terminal.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/desktop-and-terminal.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Desktop or terminal: find your workspace","item":"https://pancode.dev/tutorials/desktop-and-terminal.html"}]}]}</script></head><body>
-<a class="skip" href="#content">Skip to content</a><header class="mast">
-  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It installs on HPC login nodes without root and ships checks for numerical work.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#founder"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/desktop-and-terminal.html#page","name":"Desktop or terminal: find your workspace · PanCode","description":"See both interfaces, learn how to launch them, and choose where to start your next coding session.","url":"https://pancode.dev/tutorials/desktop-and-terminal.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/gui-task.png","width":1200,"height":630},"datePublished":"2026-11-26T17:28:23-06:00","dateModified":"2026-11-26T17:28:23-06:00","headline":"Desktop or terminal: find your workspace","mainEntityOfPage":"https://pancode.dev/tutorials/desktop-and-terminal.html","author":{"@id":"https://pancode.dev/#founder"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/gui-task.png","https://pancode.dev/assets/gui-task.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/desktop-and-terminal.html#breadcrumbs"}},{"@type":"Organization","@id":"https://pancode.dev/#publisher","name":"PanStudio","url":"https://pancode.dev/","founder":{"@id":"https://pancode.dev/#founder"}},{"@type":"Person","@id":"https://pancode.dev/#founder","name":"Anthony Kougkas","url":"https://akougkas.io/","jobTitle":"Founder, PanStudio"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/desktop-and-terminal.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Desktop or terminal: find your workspace","item":"https://pancode.dev/tutorials/desktop-and-terminal.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><section class="consent" data-consent hidden aria-label="Analytics choice">
+  <p>pancode.dev uses Google Analytics. Accept lets it set cookies to tell return visits apart; Decline keeps it cookieless. <a href="/privacy.html">Privacy</a></p>
+  <div class="consent-actions"><button class="btn btn-small" type="button" data-consent-choice="granted">Accept</button><button class="btn-small consent-decline" type="button" data-consent-choice="denied">Decline</button></div>
+</section><header class="mast">
   <div class="mast-row page">
-    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
-    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a></nav>
-    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+    <a class="brand" href="/" aria-label="PanCode home"><svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="4 4 56 56" aria-hidden="true" focusable="false"><path class="mark-left" d="M6.04 10.72L30.45 60L18 60A14 14 0 0 1 4 46L4 18A14 14 0 0 1 6.04 10.72Z"/><path class="mark-top" d="M18 4L46 4A14 14 0 0 1 54.34 6.76L46.55 22.5L17.45 22.5L9.66 6.76A14 14 0 0 1 18 4Z"/><path class="mark-right" d="M33.55 60L57.96 10.72A14 14 0 0 1 60 18L60 46A14 14 0 0 1 46 60L33.55 60Z"/><path class="mark-point" d="M19.93 27.5L44.07 27.5L32 51.87L19.93 27.5Z"/></svg><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><a href="/hub.html">PanHub</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/PanStudio/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span class="theme-icon" aria-hidden="true"><svg class="theme-sun" viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="4.25" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M12 2.5v2.25M12 19.25v2.25M2.5 12h2.25M19.25 12h2.25M5.28 5.28l1.6 1.6M17.12 17.12l1.6 1.6M5.28 18.72l1.6-1.6M17.12 6.88l1.6-1.6" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg><svg class="theme-moon" viewBox="0 0 24 24" focusable="false"><path d="M20 14.6A8.25 8.25 0 0 1 9.4 4a8.25 8.25 0 1 0 10.6 10.6Z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></span></button><a class="btn btn-small" href="/#start">Install</a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><a href="/hub.html">PanHub</a><a href="https://github.com/PanStudio/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install</a></nav></details></div>
   </div>
 </header>
-<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Product tour</span>4 min read</p><h1>Desktop or terminal: find your workspace</h1><p class="lede">See both interfaces, learn how to launch them, and choose where to start your next coding session.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal · Desktop alpha</dd></div><div><dt class="eyebrow">Basis</dt><dd>Product tour</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover"><a class="capture-frame" href="/assets/gui-task.png?v=4b38c7395c"><img src="/assets/gui-task.webp?v=bf1968af3b" width="2880" height="1920" alt="PanCode desktop app, version 0.9.0-dev, with the calibration-lab workspace in the sidebar. A finished task: after groups of 8 and 2 completed tools, Panos reports it removed dist/, rebuilt it and that npm test passed all 7 tests, then lists the reference points for freezing, boiling and absolute zero and the Celsius values the round-trip checks use. The footer reads Done, 21s, 10 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low." fetchpriority="high" srcset="/assets/responsive/gui-task-640.webp?v=edd5323df8 640w, /assets/responsive/gui-task-960.webp?v=f70378c19a 960w, /assets/responsive/gui-task-1280.webp?v=4469f761cf 1280w, /assets/gui-task.webp?v=bf1968af3b 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">A finished task in the desktop app: the tool groups, the answer and the turn footer. <span class="tag">Desktop (alpha) · v0.9.0-dev</span></figcaption></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#pancode-in-the-terminal">PanCode in the terminal</a>
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Getting started</span>4 min read</p><h1>Desktop or terminal: find your workspace</h1><p class="lede">See both interfaces, learn how to launch them, and choose where to start your next coding session.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal · Desktop alpha</dd></div><div><dt class="eyebrow">Basis</dt><dd>Product tour</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T17:28:23-06:00">November 26, 2026</time></dd></div></dl></header><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover"><a class="capture-frame" href="/assets/gui-task.png?v=6a6213c103"><img src="/assets/gui-task.webp?v=7ef228a43d" width="2880" height="1920" alt="PanCode desktop app, version 0.9.1, with the calibration-lab workspace in the sidebar. A finished task: two collapsed tool groups (3 searches; then 2 file reads, a folder listing and a command), with Panos reporting it deleted dist/, rebuilt it and that npm test passed all 7 tests, then listing the reference temperatures calibration.test.mjs checks: freezing, boiling, absolute zero and the round-trip inputs 25, −10, 36.6, 100, 273.15, 0 and −40°C. The footer reads Done, 12s, 7 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low." fetchpriority="high" srcset="/assets/responsive/gui-task-640.webp?v=e8cfbcccec 640w, /assets/responsive/gui-task-960.webp?v=a67309fa0e 960w, /assets/responsive/gui-task-1280.webp?v=867658b942 1280w, /assets/gui-task.webp?v=7ef228a43d 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">A finished task in the desktop app: the tool groups, the answer and the turn footer. <span class="tag">Desktop (alpha) · v0.9.1</span></figcaption></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#pancode-in-the-terminal">PanCode in the terminal</a>
 <a href="#pancode-on-the-desktop">PanCode on the desktop</a>
 <a href="#choose-where-to-begin">Choose where to begin</a></details><p>PanCode has two interfaces to the same runtime. The terminal offers the primary workflow. The desktop alpha opens locally in your browser and gives you a visual workspace for projects and conversations.</p>
 <h2 id="pancode-in-the-terminal">PanCode in the terminal</h2>
 <p>Open your repository and launch PanCode:</p>
 <div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">cd /path/to/your/project
 pancode</code></pre></div>
-<p><img width="2268" height="1308" src="/assets/tui-boot.webp?v=554167e576" alt="PanCode terminal at start: the PanCode wordmark beside the version, health ready with the copilot target healthy, sandbox auto edits, the Ask Panos composer, and a status bar with the calibration-lab workspace on main and copilot · gpt-6-luna." loading="lazy" srcset="/assets/responsive/tui-boot-640.webp?v=8e03150cad 640w, /assets/responsive/tui-boot-960.webp?v=6ac891c468 960w, /assets/responsive/tui-boot-1280.webp?v=6f577b094a 1280w, /assets/tui-boot.webp?v=554167e576 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></p>
+<p><img width="2268" height="1308" src="/assets/tui-boot.webp?v=75c2c27082" alt="PanCode terminal at start: the PanCode wordmark beside the version, health ready with the copilot target healthy, sandbox auto edits, the Ask Panos composer, and a status bar with the calibration-lab workspace on main and copilot · gpt-6-luna." loading="lazy" srcset="/assets/responsive/tui-boot-640.webp?v=dc34c1a26a 640w, /assets/responsive/tui-boot-960.webp?v=4ec156579f 960w, /assets/responsive/tui-boot-1280.webp?v=12bc108913 1280w, /assets/tui-boot.webp?v=75c2c27082 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></p>
 <p>The terminal combines the conversation, tool calls, permissions, and worker activity. Type <code>/help</code> to see available commands, or <code>/model</code> to choose a model.</p>
-<p><img width="2268" height="1024" src="/assets/tui-verify.webp?v=6a240aaf8f" alt="PanCode in the terminal changing one line of temperature.mjs to fix a failing test, then running the declared test check through verify with exit 0" loading="lazy" srcset="/assets/responsive/tui-verify-640.webp?v=c918a309ab 640w, /assets/responsive/tui-verify-960.webp?v=a5ee081930 960w, /assets/responsive/tui-verify-1280.webp?v=48cc9e630b 1280w, /assets/tui-verify.webp?v=6a240aaf8f 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></p>
+<p><img width="2268" height="1024" src="/assets/tui-verify.webp?v=97aa5857b2" alt="PanCode in the terminal changing one line of temperature.mjs to fix a failing test, then running the declared test check through verify with exit 0" loading="lazy" srcset="/assets/responsive/tui-verify-640.webp?v=303128ff49 640w, /assets/responsive/tui-verify-960.webp?v=e28d6a5106 960w, /assets/responsive/tui-verify-1280.webp?v=eaec8c8812 1280w, /assets/tui-verify.webp?v=97aa5857b2 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></p>
 <p>Each tool call stays on its own line with its result, so you can see what ran before you read the answer. <code>/view</code> opens the recorded calls and their output.</p>
-<figure class="guide-capture" data-cast="/assets/casts/anim-fix-a-test.cast?v=93b663462d" data-cast-cols="100" data-cast-rows="30" data-cast-poster="17.142" data-cast-length="0:20"><a class="capture-frame" href="/assets/guides/anim-fix-a-test.png?v=0064b0dd92"><img src="/assets/guides/anim-fix-a-test.webp?v=17e59cbe59" width="1908" height="1308" alt="Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin &lt;= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s." loading="lazy" decoding="async"></a><figcaption class="caption">A short task on GPT-6 Luna through GitHub Copilot: the agent finds the off-by-one guard, edits it, and runs the project&#39;s test check. <span class="tag">Terminal · v0.9.0-dev</span> <a class="cast-download" href="/assets/casts/anim-fix-a-test.cast?v=93b663462d" download>Recording · 0:20</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">Fixing a failing test in PanCode with GPT-6 Luna
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+<figure class="guide-capture" data-cast="/assets/casts/anim-fix-a-test.cast?v=c982885b43" data-cast-cols="100" data-cast-rows="30" data-cast-poster="18.651" data-cast-length="0:22"><a class="capture-frame" href="/assets/guides/anim-fix-a-test.png?v=4058e7037f"><img src="/assets/guides/anim-fix-a-test.webp?v=a929d08ca5" width="1908" height="1308" alt="Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos explores the project with 5 searches and 2 files, runs the test check and sees 6 pass and 1 fail, edits one line of temperature.mjs, runs the test check again with exit 0, and explains that kelvinToCelsius rejected 0 K because its check used &lt;= 0 and that all 7 tests passed, in 11s." loading="lazy" decoding="async"></a><figcaption class="caption">A short task on GPT-6 Luna through GitHub Copilot: the agent finds the off-by-one guard, edits it, and runs the project&#39;s test check. <span class="tag">Terminal · v0.9.1</span> <a class="cast-download" href="/assets/casts/anim-fix-a-test.cast?v=c982885b43" download>Recording · 0:22</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">Fixing a failing test in PanCode with GPT-6 Luna
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
@@ -62,8 +64,8 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /model switches the chat model.
 
 
 
@@ -87,7 +89,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
+  ∀  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
 
 == asked
 
@@ -102,8 +104,8 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /model switches the chat model.
 
 
 
@@ -120,7 +122,7 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Why does the absolute-zero test fail?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
 
 == edited
 
@@ -134,26 +136,26 @@ Why does the absolute-zero test fail?
 
 
 
-
-
-
-
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ● waiting for model · 0s · Esc stops
-  P  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+  ∀  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == checked
 
@@ -166,27 +168,27 @@ Why does the absolute-zero test fail?
 
 
 
-
-
-
-
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
-$ checked test · exit 0 · 24 lines ✓
+$ checked test · exit 0 · 19 lines ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ● waiting for model · 0s · Esc stops
-  P  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+  ∀  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == done
 
@@ -194,32 +196,32 @@ $ checked test · exit 0 · 24 lines ✓
 
 
 
-
-
-
-
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
-$ checked test · exit 0 · 24 lines ✓
+$ checked test · exit 0 · 19 lines ✓
 
-  The absolute-zero test failed because kelvinToCelsius rejected kelvin &lt;= 0, treating exactly 0 K
-  as below absolute zero. Changed the check to reject only values below 0 K. The test check passes:
-  all 7 tests passed.
+  Found it: kelvinToCelsius rejected 0 K because its absolute-zero check used &lt;= 0, although
+  absolute zero is valid. Changed it to reject only values below zero. The test check passes: all 7
+  tests passed.
 
-✓ Done · 9.1s · 13:51
+✓ Done · 11s · 12:35
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main* │ ✓ ready               ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna · ?</pre></div></details></figure><p>During a turn, <strong>Enter</strong> queues a message that PanCode reads at the next pause between tool calls, <strong>Alt+S</strong> sends it now, and <strong>Escape</strong> cancels the run.</p>
+  ∀  default · calibration-lab · main* │ ✓ ready               ctx ▰▱▱▱▱▱ 6% · low · gpt-6-luna · ?</pre></details></figure><p>During a turn, <strong>Enter</strong> queues a message that PanCode reads at the next pause between tool calls, <strong>Alt+S</strong> sends it now, and <strong>Escape</strong> cancels the run.</p>
 <p>On a permission card, <strong>Enter</strong> allows the call. <strong>Esc</strong> denies it, which skips that call and leaves the run going. <strong>Alt+X</strong> stops the turn.</p>
 <h2 id="pancode-on-the-desktop">PanCode on the desktop</h2>
 <p>From a terminal, run:</p>
@@ -231,7 +233,7 @@ $ checked test · exit 0 · 24 lines ✓
 <p>With the default <strong>Ask first</strong> setting, PanCode reads, edits files in the workspace, and runs commands it recognizes, such as read-only inspection and the project&#39;s test runners, without stopping. An unrecognized shell command, a large dispatch plan, or anything that publishes outside the project waits for you. The approval names the call, what allowing it authorizes, and what it can affect.</p>
 <p>The same control can be switched to <strong>Run without asking</strong> for one task after a second confirmation. The cards stop, and by default the sandbox, snapshots, and safety judge stay on. A turn that changed files ends with a card that opens the changes for review. Type <code>/</code> in the composer to list session commands.</p>
 <p>A first run with no model connection opens on guided setup, which asks the same questions as <code>pancode configure</code>.</p>
-<figure class="guide-sequence" data-sequence><ol class="guide-frames"><li class="guide-frame" id="frame-gui-home" data-label="Start a task"><a class="capture-frame" href="/assets/guides/gui-home.png?v=0f561f2592"><img src="/assets/guides/gui-home.webp?v=9ef1de1e87" width="2880" height="1920" alt="PanCode desktop app Start a task page: a prompt box bound to the calibration-lab workspace, gpt-6-luna with thinking low, and three starting points: Build something, Fix a problem and Explore a project. The earlier task is listed under the workspace in the sidebar." loading="lazy" srcset="/assets/responsive/gui-home-640.webp?v=9f6eba9498 640w, /assets/responsive/gui-home-1024.webp?v=ca1dd9a780 1024w, /assets/responsive/gui-home-1600.webp?v=883a3d99c1 1600w, /assets/guides/gui-home.webp?v=9ef1de1e87 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">01</span> Start a task in a workspace; earlier tasks stay under it in the sidebar. <span class="tag">Desktop (alpha) · v0.9.0-dev</span></p></li><li class="guide-frame" id="frame-gui-task" data-label="Task"><a class="capture-frame" href="/assets/gui-task.png?v=4b38c7395c"><img src="/assets/gui-task.webp?v=bf1968af3b" width="2880" height="1920" alt="PanCode desktop app, version 0.9.0-dev, with the calibration-lab workspace in the sidebar. A finished task: after groups of 8 and 2 completed tools, Panos reports it removed dist/, rebuilt it and that npm test passed all 7 tests, then lists the reference points for freezing, boiling and absolute zero and the Celsius values the round-trip checks use. The footer reads Done, 21s, 10 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low." loading="lazy" srcset="/assets/responsive/gui-task-640.webp?v=edd5323df8 640w, /assets/responsive/gui-task-960.webp?v=f70378c19a 960w, /assets/responsive/gui-task-1280.webp?v=4469f761cf 1280w, /assets/gui-task.webp?v=bf1968af3b 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">02</span> A finished task in the desktop app: the tool groups, the answer and the turn footer. <span class="tag">Desktop (alpha) · v0.9.0-dev</span></p></li><li class="guide-frame" id="frame-gui-approval" data-label="Approval"><a class="capture-frame" href="/assets/guides/gui-approval.png?v=00087e60a1"><img src="/assets/guides/gui-approval.webp?v=dc8512adde" width="2880" height="1920" alt="PanCode desktop app approval card for git push origin main: an Approval needed banner with the time left and a Needs your approval badge, the exact command, and rows for authorization, consequence, the effect Publishes to origin, reversibility not guaranteed, why it asked, the task, who requested it and the target, above Reject, Reject and stop the turn, and Allow once." loading="lazy" srcset="/assets/responsive/gui-approval-640.webp?v=c5f3e8de9e 640w, /assets/responsive/gui-approval-1024.webp?v=0c238eea79 1024w, /assets/responsive/gui-approval-1600.webp?v=09d2d080cc 1600w, /assets/guides/gui-approval.webp?v=dc8512adde 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">03</span> An outward command waits for you; the card says what it would change and nothing runs until you answer. <span class="tag">Desktop (alpha) · v0.9.0-dev</span></p></li><li class="guide-frame" id="frame-gui-setup" data-label="Setup"><a class="capture-frame" href="/assets/guides/gui-setup.png?v=51f8356942"><img src="/assets/guides/gui-setup.webp?v=5f751c7697" width="2880" height="1920" alt="PanCode desktop app on a fresh profile with no model: guided setup opens on Welcome to PanCode, with the steps Provider, Connect, Model, Test and Workspace across the top, the PanCode logo beside a note that Panos works in the folders you choose, three numbered steps (pick a provider, connect and choose a model, open a folder), and the buttons Get started and Explore without a model." loading="lazy" srcset="/assets/responsive/gui-setup-640.webp?v=dc537673d3 640w, /assets/responsive/gui-setup-1024.webp?v=51af2bbe4d 1024w, /assets/responsive/gui-setup-1600.webp?v=827b3cd347 1600w, /assets/guides/gui-setup.webp?v=5f751c7697 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">04</span> With no model connection, the desktop app opens on guided setup. <span class="tag">Desktop (alpha) · v0.9.0-dev</span></p></li></ol><figcaption class="caption">The desktop from a new task to a finished one: the composer, the answer with its tool calls, a waiting approval, and guided setup.
+<figure class="guide-sequence" data-sequence><ol class="guide-frames"><li class="guide-frame" id="frame-gui-home" data-label="Start a task"><a class="capture-frame" href="/assets/guides/gui-home.png?v=3eee93b7b2"><img src="/assets/guides/gui-home.webp?v=dbe01ee5f7" width="2880" height="1920" alt="PanCode desktop app Start a task page: a prompt box bound to the calibration-lab workspace, gpt-6-luna with thinking low, and three starting points: Build something, Fix a problem and Explore a project. The earlier task is listed under the workspace in the sidebar." loading="lazy" srcset="/assets/responsive/gui-home-640.webp?v=e8bee30f68 640w, /assets/responsive/gui-home-1024.webp?v=ae993cd835 1024w, /assets/responsive/gui-home-1600.webp?v=34c2ff346b 1600w, /assets/guides/gui-home.webp?v=dbe01ee5f7 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">01</span> Start a task in a workspace; earlier tasks stay under it in the sidebar. <span class="tag">Desktop (alpha) · v0.9.1</span></p></li><li class="guide-frame" id="frame-gui-task" data-label="Task"><a class="capture-frame" href="/assets/gui-task.png?v=6a6213c103"><img src="/assets/gui-task.webp?v=7ef228a43d" width="2880" height="1920" alt="PanCode desktop app, version 0.9.1, with the calibration-lab workspace in the sidebar. A finished task: two collapsed tool groups (3 searches; then 2 file reads, a folder listing and a command), with Panos reporting it deleted dist/, rebuilt it and that npm test passed all 7 tests, then listing the reference temperatures calibration.test.mjs checks: freezing, boiling, absolute zero and the round-trip inputs 25, −10, 36.6, 100, 273.15, 0 and −40°C. The footer reads Done, 12s, 7 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low." loading="lazy" srcset="/assets/responsive/gui-task-640.webp?v=e8cfbcccec 640w, /assets/responsive/gui-task-960.webp?v=a67309fa0e 960w, /assets/responsive/gui-task-1280.webp?v=867658b942 1280w, /assets/gui-task.webp?v=7ef228a43d 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">02</span> A finished task in the desktop app: the tool groups, the answer and the turn footer. <span class="tag">Desktop (alpha) · v0.9.1</span></p></li><li class="guide-frame" id="frame-gui-approval" data-label="Approval"><a class="capture-frame" href="/assets/guides/gui-approval.png?v=6deefa03cc"><img src="/assets/guides/gui-approval.webp?v=6e8aa7c7ae" width="2880" height="1920" alt="PanCode desktop app approval card for git push origin main: an Approval needed banner with the time left and a Needs your approval badge, the exact command, and rows for authorization, consequence, the effect Publishes to origin, reversibility not guaranteed, why it asked, the task, who requested it and the target, above Reject, Reject and stop the turn, and Allow once." loading="lazy" srcset="/assets/responsive/gui-approval-640.webp?v=7d06b24b3b 640w, /assets/responsive/gui-approval-1024.webp?v=5d08e6d110 1024w, /assets/responsive/gui-approval-1600.webp?v=2d8071562b 1600w, /assets/guides/gui-approval.webp?v=6e8aa7c7ae 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">03</span> An outward command waits for you; the card says what it would change and nothing runs until you answer. <span class="tag">Desktop (alpha) · v0.9.1</span></p></li><li class="guide-frame" id="frame-gui-setup" data-label="Setup"><a class="capture-frame" href="/assets/guides/gui-setup.png?v=ff48540798"><img src="/assets/guides/gui-setup.webp?v=9a1f3c666b" width="2880" height="1920" alt="PanCode desktop app on a fresh profile with no model: guided setup opens on Welcome to PanCode, with the steps Provider, Connect, Model, Test and Workspace across the top, the PanCode logo beside a note that Panos works in the folders you choose, three numbered steps (pick a provider, connect and choose a model, open a folder), and the buttons Get started and Explore without a model." loading="lazy" srcset="/assets/responsive/gui-setup-640.webp?v=852514a4e6 640w, /assets/responsive/gui-setup-1024.webp?v=392954d3af 1024w, /assets/responsive/gui-setup-1600.webp?v=8d65b68d5d 1600w, /assets/guides/gui-setup.webp?v=9a1f3c666b 2880w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><p class="caption"><span class="step-number">04</span> With no model connection, the desktop app opens on guided setup. <span class="tag">Desktop (alpha) · v0.9.1</span></p></li></ol><figcaption class="caption">The desktop from a new task to a finished one: the composer, the answer with its tool calls, a waiting approval, and guided setup.
 </figcaption></figure><p>The desktop is in alpha and covers a subset of terminal workflows. Treat it as an optional way to use PanCode, and keep the terminal available for commands that the desktop does not yet expose.</p>
 <p>On Linux with a systemd user session, you can install the optional background application, which starts at login and appears in your app menu. The installer offers the same step, and <code>--gui</code> accepts it without asking:</p>
 <div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 3"><code class="language-sh">pancode gui background install --open</code></pre></div>
@@ -244,7 +246,13 @@ $ checked test · exit 0 · 24 lines ✓
 <a href="#pancode-on-the-desktop">PanCode on the desktop</a>
 <a href="#choose-where-to-begin">Choose where to begin</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
 <footer class="colophon page">
-  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
-  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
-</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+  <div class="footer-top"><a class="brand" href="/" aria-label="PanCode home"><svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="4 4 56 56" aria-hidden="true" focusable="false"><path class="mark-left" d="M6.04 10.72L30.45 60L18 60A14 14 0 0 1 4 46L4 18A14 14 0 0 1 6.04 10.72Z"/><path class="mark-top" d="M18 4L46 4A14 14 0 0 1 54.34 6.76L46.55 22.5L17.45 22.5L9.66 6.76A14 14 0 0 1 18 4Z"/><path class="mark-right" d="M33.55 60L57.96 10.72A14 14 0 0 1 60 18L60 46A14 14 0 0 1 46 60L33.55 60Z"/><path class="mark-point" d="M19.93 27.5L44.07 27.5L32 51.87L19.93 27.5Z"/></svg><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>One harness for your models and agents.</p></div>
+  <nav class="footer-links" aria-label="Footer">
+    <div><p class="eyebrow">Start</p><ul><li><a href="/#start">Install</a></li><li><a href="/tutorials/first-session.html">Your first session</a></li><li><a href="/docs.html">Docs</a></li></ul></div>
+    <div><p class="eyebrow">Learn</p><ul><li><a href="/learn.html">Tutorials</a></li><li><a href="/learn.html#path-agents">Coding agents</a></li><li><a href="/learn.html#path-hpc">Science and HPC</a></li><li><a href="/learn.html#path-local">Local models</a></li></ul></div>
+    <div><p class="eyebrow">Build</p><ul><li><a href="/hub.html">PanHub</a></li><li><a href="/research.html">Research</a></li><li><a href="https://github.com/PanStudio/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li></ul></div>
+    <div><p class="eyebrow">Project</p><ul><li><a href="https://github.com/PanStudio/pancode/blob/main/LICENSE">PanCode License 1.0 <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li><li><a href="https://github.com/PanStudio/pancode/blob/main/NOTICE">Notices <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li><li><a href="https://github.com/PanStudio/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li><li><a href="/privacy.html">Privacy</a></li></ul></div>
+  </nav>
+  <div class="footer-bottom"><p>PanCode by PanStudio</p><p>Copyright 2026 Anthony Kougkas</p></div>
+</footer><script src="/js/site.js?v=5062607fac" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
 </body></html>

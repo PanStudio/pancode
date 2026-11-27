@@ -147,7 +147,7 @@
   {
     "path": "guide/panstore.md",
     "title": "Keep results in PanStore",
-    "group": "The family",
+    "group": "Store, hub and toolkit",
     "excerpt": "Keep datasets and results outside the working tree, with a record of where each came from.",
     "headings": [
       "Keep results out of your working tree",
@@ -161,7 +161,7 @@
   {
     "path": "guide/panhub.md",
     "title": "Packs from PanHub",
-    "group": "The family",
+    "group": "Store, hub and toolkit",
     "excerpt": "Find, install and manage skills, plugins, extensions and other packs.",
     "headings": [
       "Find a useful skill",
@@ -176,7 +176,7 @@
   {
     "path": "guide/pankit.md",
     "title": "Tool servers with PanKit",
-    "group": "The family",
+    "group": "Store, hub and toolkit",
     "excerpt": "Run PanKit's MCP tool servers in PanCode or in any other MCP host.",
     "headings": [
       "What PanKit gives you",
@@ -186,19 +186,6 @@
       "Limits"
     ],
     "url": "/docs/guide/pankit.html"
-  },
-  {
-    "path": "guide/sdk.md",
-    "title": "Write extensions and tools with PanSDK",
-    "group": "The family",
-    "excerpt": "Scaffold, validate and test extensions, and write MCP tool servers.",
-    "headings": [
-      "What PanSDK holds",
-      "Start an extension",
-      "Write a tool server",
-      "Limits"
-    ],
-    "url": "/docs/guide/sdk.html"
   },
   {
     "path": "guide/fleet-dispatch.md",
@@ -241,6 +228,19 @@
       "Write one"
     ],
     "url": "/docs/guide/harness-extensions.html"
+  },
+  {
+    "path": "guide/sdk.md",
+    "title": "Extension API (unstable)",
+    "group": "Extend PanCode",
+    "excerpt": "Scaffold, validate and test extensions, and write MCP tool servers.",
+    "headings": [
+      "What the extension API holds",
+      "Start an extension",
+      "Write a tool server",
+      "Limits"
+    ],
+    "url": "/docs/guide/sdk.html"
   },
   {
     "path": "guide/interop.md",

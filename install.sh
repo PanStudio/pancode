@@ -19,7 +19,7 @@
 #   4. Writes a small launcher (default ~/.local/bin/pancode) that runs the
 #      new version, replacing it atomically and keeping the previous version
 #      for --rollback, and one beside it for each other command the package
-#      declares (panstore, pankit).
+#      declares (pankit).
 #
 # Shell startup files are edited only with --modify-path. Proxies are honored
 # through https_proxy/http_proxy (curl and wget both read them).
@@ -33,14 +33,15 @@ set -eu
 # before its trap runs (#436).
 trap '' PIPE
 
-NPM_PACKAGE="@akougkas/pancode"
+NPM_PACKAGE="@panstudio/pancode"
 # Mirrors package.json engines.node, for the advice printed where no bundle fits.
 NODE_MIN="22.19.0"
-RELEASE_BASE="https://github.com/akougkas/pancode/releases/download"
+RELEASE_BASE="https://github.com/PanStudio/pancode/releases/download"
 CHANNEL_BASE="https://pancode.dev/channel"
 LAUNCHER_MARK="# pancode-installer launcher"
 MANIFEST_KIND="pancode-installer"
 FAILED_CANDIDATE_MARK=".pancode-refused-candidate"
+BUNDLE_DIGEST_MARK=".pancode-bundle-sha256"
 # A bundle is about 85 MB and unpacks to about 330 MB. Refuse early rather
 # than die half way through on a quota.
 MIN_FREE_KB=500000
@@ -84,7 +85,7 @@ Options:
                         PANCODE_INSTALL_GUI=1
   --no-gui              Skip the desktop app. Default: ask on a terminal, skip
                         otherwise. Env: PANCODE_INSTALL_GUI=0
-  --force               Replace a pancode launcher this installer did not write.
+  --force               Replace a pancode or pankit launcher this installer did not write.
   --dry-run             Print the plan; download and change nothing.
   -h, --help            Show this help.
 
@@ -195,21 +196,37 @@ pick_downloader() {
 }
 
 # download <url> <file>. file:// URLs are copied, so an airgapped mirror on a
-# shared filesystem needs no web server.
+# shared filesystem needs no web server. The downloader's complaint goes to
+# $work/download.err, which download_failure reads.
 download() {
+	: >"$work/download.err"
 	case "$1" in
 		file://*)
-			cp -- "${1#file://}" "$2" 2>/dev/null
+			[ -e "${1#file://}" ] || {
+				echo "not found" >"$work/download.err"
+				return 1
+			}
+			cp -- "${1#file://}" "$2" 2>"$work/download.err"
 			return
 			;;
 	esac
 	if [ "$downloader" = curl ]; then
 		case "$1" in
-			https://*) curl -fsSL --proto '=https' --retry 3 --connect-timeout 20 -o "$2" "$1" ;;
-			*) curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1" ;;
+			https://*) curl -fsSL --proto '=https' --retry 3 --connect-timeout 20 -o "$2" "$1" 2>"$work/download.err" ;;
+			*) curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1" 2>"$work/download.err" ;;
 		esac
 	else
-		wget -q --tries=3 --timeout=20 -O "$2" "$1"
+		wget -nv --tries=3 --timeout=20 -O "$2" "$1" 2>"$work/download.err"
+	fi
+}
+
+# Why the last download failed: "not found" when the server or mirror has no
+# such file (HTTP 404), else the downloader's last line of complaint.
+download_failure() {
+	if grep -Eq 'returned error: 404|ERROR 404|^not found$' "$work/download.err" 2>/dev/null; then
+		echo "not found"
+	else
+		sed '/^[[:space:]]*$/d' "$work/download.err" 2>/dev/null | tail -n 1 | sed 's/^curl: ([0-9]*) //'
 	fi
 }
 
@@ -288,8 +305,10 @@ select_target() {
 
 # The version a channel names: one line at <channel base>/<channel>.
 resolve_channel() {
-	download "$channel_base/$1" "$work/channel" ||
-		fail "could not read $channel_base/$1; check the network or proxy (https_proxy), pass --version <exact version>, or set PANCODE_RELEASE_MIRROR"
+	download "$channel_base/$1" "$work/channel" || {
+		why="$(download_failure)"
+		fail "could not read $channel_base/$1${why:+ ($why)}; check the network or proxy (https_proxy), pass --version <exact version>, or set PANCODE_RELEASE_MIRROR"
+	}
 	resolved="$(head -n 1 "$work/channel" | tr -d ' \r')"
 	printf '%s\n' "$resolved" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || fail "$channel_base/$1 does not name a version"
 	printf '%s\n' "$resolved"
@@ -320,12 +339,23 @@ guard_downgrade() {
 # against the release's SHA256SUMS. Sets bundle_file.
 fetch_bundle() {
 	asset="pancode-$1-$target.tar.gz"
-	download "$release_base/v$1/SHA256SUMS" "$work/SHA256SUMS" ||
-		fail "could not read $release_base/v$1/SHA256SUMS; PanCode $1 may not exist, or the network or proxy (https_proxy) blocks it"
+	if ! download "$release_base/v$1/SHA256SUMS" "$work/SHA256SUMS"; then
+		why="$(download_failure)"
+		if [ "$why" = "not found" ]; then
+			# A missing release is an answer, not a network fault.
+			hint=""
+			[ "$version" != "$1" ] || hint="; check the version, or leave out --version to install the latest release"
+			fail "PanCode $1 is not published at $release_base (it has no v$1/SHA256SUMS)$hint"
+		fi
+		fail "could not read $release_base/v$1/SHA256SUMS${why:+ ($why)}; check the network or proxy (https_proxy)"
+	fi
 	expected="$(awk -v file="$asset" '$2 == file || $2 == "*" file {print $1; exit}' "$work/SHA256SUMS")"
 	[ -n "$expected" ] || fail "PanCode $1 ships no $target bundle. Install Node $NODE_MIN or newer yourself, then: npm install -g $NPM_PACKAGE@$1"
 	log "downloading $asset"
-	download "$release_base/v$1/$asset" "$work/$asset" || fail "could not download $release_base/v$1/$asset"
+	download "$release_base/v$1/$asset" "$work/$asset" || {
+		why="$(download_failure)"
+		fail "could not download $release_base/v$1/$asset${why:+ ($why)}"
+	}
 	actual="$(sha256_of "$work/$asset")"
 	[ "$actual" = "$expected" ] || fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed"
 	ok "verified $asset (sha256 $expected)"
@@ -488,8 +518,9 @@ offer_gui() {
 		read -r answer </dev/tty || answer=n
 		case "$answer" in "" | [Yy]*) ;; *) return 0 ;; esac
 	fi
-	# The command's report is JSON for scripts; the installer states the outcome in its own words.
-	if "$node_bin" "$entry" gui background install --handover --json </dev/null >"$work/gui.out"; then
+	# The command's report is JSON for scripts; the installer states the outcome in its own words. It never
+	# passes --handover: an app another installation runs stays with it, and moving it is the person's choice.
+	if "$node_bin" "$entry" gui background install --json </dev/null >"$work/gui.out" 2>"$work/gui.err"; then
 		if "$node_bin" -e 'try { process.exit(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).windows?.status === "installed" ? 0 : 1); } catch { process.exit(1); }' "$work/gui.out"; then
 			ok "desktop app installed; open PanCode from the Windows Start Menu or your app menu, or run: pancode gui"
 		elif [ "$gui_os" = Darwin ]; then
@@ -500,7 +531,10 @@ offer_gui() {
 		gui_warning="$("$node_bin" -e 'try { const w=JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).windows; if(w?.status === "failed") process.stdout.write("Windows desktop setup failed: " + String(w.reason || "unknown error") + "; run pancode doctor --fix"); } catch { process.stdout.write("Could not read the desktop setup report; run pancode doctor"); }' "$work/gui.out")"
 		[ -z "$gui_warning" ] || warn "$gui_warning"
 		log "the desktop app uses PanCode's saved credentials; save a key that lives only in your shell with: pancode auth login <target>"
+	elif grep -q "belongs to another installation" "$work/gui.err" 2>/dev/null; then
+		warn "the desktop app runs from another installation and was left as it is; move it to this one with: $launcher gui background install --handover"
 	else
+		cat "$work/gui.err" >&2
 		warn "the desktop app was not set up. Retry with: pancode doctor --fix (verified service handover waits until active work finishes)"
 	fi
 }
@@ -597,6 +631,12 @@ reclaim_stale_install_lock() {
 
 acquire_install_lock() {
 	check_writable_dir "install dir" "$install_root" "--install-dir"
+	# The topmost directory this run creates; a run that ends with no installation removes it again.
+	probe="$install_root"
+	while [ ! -e "$probe" ]; do
+		created_top="$probe"
+		probe="$(dirname "$probe")"
+	done
 	mkdir -p "$install_root"
 	if ! mkdir "$install_root/.install-lock" 2>/dev/null && ! reclaim_stale_install_lock; then
 		# Only a lock directory that is there is another run's; any other mkdir failure is ours to report.
@@ -654,9 +694,21 @@ cleanup() {
 		kill -KILL "$unpack_pid" 2>/dev/null || true
 		wait "$unpack_pid" 2>/dev/null || true
 	fi
-	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
 	if [ -n "${work:-}" ]; then rm -rf "$work"; fi
 	if [ -n "${install_root:-}" ]; then rm -rf "$install_root/versions/.staging.$$"; fi
+	# A run that ends with no installation takes back only what it created, while it still holds the lock; rmdir
+	# never takes a directory that holds anything, so an existing root or a kept version stays as it was.
+	unclaimed=0
+	if [ "${lock_owned:-0}" = 1 ] && [ ! -f "$install_root/install.json" ]; then
+		unclaimed=1
+		if [ "${created_versions:-0}" = 1 ]; then rmdir "$install_root/versions" 2>/dev/null || true; fi
+		if [ "${created_owner:-0}" = 1 ]; then rm -f "$install_root/.installer-owner"; fi
+	fi
+	if [ "${lock_owned:-0}" = 1 ]; then rm -rf "$install_root/.install-lock"; fi
+	if [ "$unclaimed" = 1 ] && [ -n "${created_top:-}" ]; then
+		dir="$install_root"
+		while rmdir "$dir" 2>/dev/null && [ "$dir" != "$created_top" ]; do dir="$(dirname "$dir")"; done
+	fi
 	return 0
 }
 
@@ -802,7 +854,9 @@ main() {
 	if [ -f "$install_root/install.json" ] && ! grep -Eq '"schema": *3[,}]?$' "$install_root/install.json"; then
 		fail "$install_root holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another --install-dir, then rerun."
 	fi
+	[ -e "$install_root/.installer-owner" ] || created_owner=1
 	printf '%s\n' "$MANIFEST_KIND" >"$install_root/.installer-owner"
+	[ -e "$install_root/versions" ] || created_versions=1
 	mkdir -p "$install_root/versions" || fail "could not create $install_root"
 	available="$(free_kb "$install_root")"
 	case "$available" in
@@ -827,31 +881,60 @@ main() {
 		fetch_bundle "$resolved"
 	fi
 
-	# Active sessions may still lazily read any prior version.
-	staging="$install_root/versions/.staging.$$"
-	rm -rf "$staging"
-	mkdir -p "$staging"
-	# tar runs as a waited background child: a shell defers its INT/TERM trap
-	# until a foreground child exits, so a quitting session's installer would
-	# outlive it. `wait` returns at once on a trapped signal and cleanup kills
-	# tar before removing staging (#436). stdin is closed because under
-	# `curl | sh` it carries the rest of this script.
-	tar -xzf "$bundle_file" -C "$staging" </dev/null &
-	unpack_pid=$!
-	unpack_status=0
-	wait "$unpack_pid" || unpack_status=$?
-	unpack_pid=""
-	[ "$unpack_status" = 0 ] || fail "could not unpack $bundle_file under $install_root (a full disk, or not a PanCode bundle)"
-	node_bin="$staging/bin/node"
-	pkg_dir="$staging/lib/node_modules/pancode"
-	[ -x "$node_bin" ] && [ -f "$pkg_dir/package.json" ] || fail "$bundle_file is not a PanCode bundle for Linux or macOS"
-	check_node_runs
-	installed_version="$("$node_bin" -e 'const p=require(process.argv[1]);if(p.name!==process.argv[2])process.exit(1);process.stdout.write(p.version)' "$pkg_dir/package.json" "$NPM_PACKAGE" 2>/dev/null)" ||
-		fail "$bundle_file does not hold the $NPM_PACKAGE package"
-	final_prefix="$install_root/versions/$installed_version"
-	if [ -e "$final_prefix" ]; then final_prefix="$final_prefix-$(date -u +%Y%m%d%H%M%S)-$$"; fi
-	mv "$staging" "$final_prefix"
-	node_bin="$final_prefix/bin/node"
+	# Each version prefix records the digest of the bundle it came from, so reinstalling that bundle
+	# activates the prefix again instead of unpacking a second copy beside it.
+	bundle_digest=""
+	if have sha256sum || have shasum || have openssl; then bundle_digest="$(sha256_of "$bundle_file")"; fi
+	final_prefix=""
+	reused=0
+	if [ -n "$bundle_digest" ]; then
+		for kept in "$install_root"/versions/*; do
+			[ "$(cat "$kept/$BUNDLE_DIGEST_MARK" 2>/dev/null)" = "$bundle_digest" ] || continue
+			# A copy missing any part it needs is left alone and the bundle unpacks beside it.
+			[ ! -e "$kept/$FAILED_CANDIDATE_MARK" ] && [ -f "$kept/lib/node_modules/pancode/dist/cli/index.js" ] &&
+				[ -f "$kept/lib/node_modules/pancode/scripts/native-install.cjs" ] || continue
+			# Its Node must run and its package must be the one this archive holds, name and version.
+			kept_version="$(tar -xzOf "$bundle_file" ./lib/node_modules/pancode/package.json </dev/null 2>/dev/null |
+				"$kept/bin/node" -e 'const a=JSON.parse(require("fs").readFileSync(0,"utf8")),p=require(process.argv[1]);if(p.name!==process.argv[2]||a.name!==p.name||a.version!==p.version)process.exit(1);process.stdout.write(p.version)' "$kept/lib/node_modules/pancode/package.json" "$NPM_PACKAGE" 2>/dev/null)" || continue
+			# The bundle's helper runs the check activation runs; a copy that fails it is left as it is.
+			"$kept/bin/node" "$kept/lib/node_modules/pancode/scripts/native-install.cjs" probe "$kept" </dev/null >/dev/null 2>&1 || continue
+			final_prefix="$kept"
+			installed_version="$kept_version"
+			reused=1
+			break
+		done
+	fi
+	if [ "$reused" = 1 ]; then
+		node_bin="$final_prefix/bin/node"
+		log "this bundle is already unpacked at versions/${final_prefix##*/}; using it"
+	else
+		# Active sessions may still lazily read any prior version.
+		staging="$install_root/versions/.staging.$$"
+		rm -rf "$staging"
+		mkdir -p "$staging"
+		# tar runs as a waited background child: a shell defers its INT/TERM trap
+		# until a foreground child exits, so a quitting session's installer would
+		# outlive it. `wait` returns at once on a trapped signal and cleanup kills
+		# tar before removing staging (#436). stdin is closed because under
+		# `curl | sh` it carries the rest of this script.
+		tar -xzf "$bundle_file" -C "$staging" </dev/null &
+		unpack_pid=$!
+		unpack_status=0
+		wait "$unpack_pid" || unpack_status=$?
+		unpack_pid=""
+		[ "$unpack_status" = 0 ] || fail "could not unpack $bundle_file under $install_root (a full disk, or not a PanCode bundle)"
+		node_bin="$staging/bin/node"
+		pkg_dir="$staging/lib/node_modules/pancode"
+		[ -x "$node_bin" ] && [ -f "$pkg_dir/package.json" ] || fail "$bundle_file is not a PanCode bundle for Linux or macOS"
+		check_node_runs
+		installed_version="$("$node_bin" -e 'const p=require(process.argv[1]);if(p.name!==process.argv[2])process.exit(1);process.stdout.write(p.version)' "$pkg_dir/package.json" "$NPM_PACKAGE" 2>/dev/null)" ||
+			fail "$bundle_file does not hold the $NPM_PACKAGE package"
+		final_prefix="$install_root/versions/$installed_version"
+		if [ -e "$final_prefix" ]; then final_prefix="$final_prefix-$(date -u +%Y%m%d%H%M%S)-$$"; fi
+		mv "$staging" "$final_prefix"
+		[ -z "$bundle_digest" ] || printf '%s\n' "$bundle_digest" >"$final_prefix/$BUNDLE_DIGEST_MARK"
+		node_bin="$final_prefix/bin/node"
+	fi
 	entry="$final_prefix/lib/node_modules/pancode/dist/cli/index.js"
 	[ -f "$entry" ] || fail "the bundle has no dist/cli/index.js"
 	if [ "$include_claude_sdk" = 1 ]; then
@@ -868,8 +951,9 @@ main() {
 		pin="$installed_version"
 		pin_source=bundle-file
 	fi
-	"$node_bin" "$helper" activate "$install_root" "$final_prefix" "$launcher" "$channel" "$pin" "$auto_update" "$post_install" "$pin_source" </dev/null || {
-		: >"$final_prefix/$FAILED_CANDIDATE_MARK"
+	"$node_bin" "$helper" activate "$install_root" "$final_prefix" "$launcher" "$channel" "$pin" "$auto_update" "$post_install" "$pin_source" "$force" </dev/null || {
+		# A reused prefix may be the active or previous version, which this run did not bring.
+		[ "$reused" = 1 ] || : >"$final_prefix/$FAILED_CANDIDATE_MARK"
 		active_version="$("$node_bin" -e 'process.stdout.write(require(process.argv[1]).version)' "$(manifest_field current)/lib/node_modules/pancode/package.json" 2>/dev/null)" || active_version=""
 		if [ -n "$active_version" ] && ! version_ge "${installed_version%%-*}" "${active_version%%-*}"; then
 			# An older version rejects keys a newer one wrote, and its own doctor --fix exits 1 and changes nothing.

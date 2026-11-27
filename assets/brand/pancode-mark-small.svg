@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+	<title>PanCode</title>
+	<style>
+		.green400 { fill: #07e4b4; }
+		.orange400 { fill: #ffa24d; }
+		.teal400 { fill: #28c6da; }
+	</style>
+	<!-- The mark for 16 to 24 pixels: flat colour and a channel 7.2 units wide, so it holds at favicon size. -->
+	<path class="green400" d="M5.21 11.52L29.22 60L17 60A13 13 0 0 1 4 47L4 17A13 13 0 0 1 5.21 11.52Z"/>
+	<path class="green400" d="M17 4L47 4A13 13 0 0 1 53.59 5.8L45.86 21.4L18.14 21.4L10.41 5.8A13 13 0 0 1 17 4Z"/>
+	<path class="teal400" d="M34.78 60L58.79 11.52A13 13 0 0 1 60 17L60 47A13 13 0 0 1 47 60L34.78 60Z"/>
+	<path class="orange400" d="M21.7 28.6L42.3 28.6L32 49.39L21.7 28.6Z"/>
+</svg>

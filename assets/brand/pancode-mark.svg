@@ -1,10 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
 	<title>PanCode</title>
 	<style>
-		.tile { fill: #000000; }
-		.glyph { fill: #00e884; }
+		.amber300 { stop-color: #f2b106; }
+		.azure400 { stop-color: #4aa8ff; }
+		.green300 { stop-color: #0becbb; }
+		.green400 { stop-color: #07e4b4; }
+		.green500 { stop-color: #08d4a7; }
+		.orange400 { stop-color: #ffa24d; }
+		.teal400 { stop-color: #28c6da; }
 	</style>
-	<rect width="16" height="16" rx="3" class="tile"/>
-	<!-- The P of the wordmark: cap height 10 units, stem on whole units. -->
-	<path class="glyph" d="M4 13V3H8.62Q10.41 3 11.31 3.76Q12.2 4.5 12.2 5.98Q12.2 7.44 11.25 8.19Q10.3 8.95 8.37 8.95H6.14V13ZM6.14 7.29H8.5Q9.25 7.29 9.67 6.94Q10.07 6.6 10.07 5.99Q10.07 5.41 9.68 5.04Q9.29 4.66 8.46 4.66H6.14Z"/>
+	<defs>
+		<linearGradient id="left" x1="6" y1="8" x2="26" y2="58" gradientUnits="userSpaceOnUse"><stop class="green300"/><stop offset="1" class="green500"/></linearGradient>
+		<linearGradient id="top" x1="12" y1="6" x2="52" y2="22" gradientUnits="userSpaceOnUse"><stop class="green400"/><stop offset="1" class="teal400"/></linearGradient>
+		<linearGradient id="right" x1="58" y1="8" x2="38" y2="58" gradientUnits="userSpaceOnUse"><stop class="teal400"/><stop offset="1" class="azure400"/></linearGradient>
+		<linearGradient id="point" x1="32" y1="26" x2="32" y2="56" gradientUnits="userSpaceOnUse"><stop class="orange400"/><stop offset="1" class="amber300"/></linearGradient>
+	</defs>
+	<!-- Four facets of one stone on a 64 unit grid. The channel between them, 5 units wide, is the for-all sign. -->
+	<path fill="url(#left)" d="M6.04 10.72L30.45 60L18 60A14 14 0 0 1 4 46L4 18A14 14 0 0 1 6.04 10.72Z"/>
+	<path fill="url(#top)" d="M18 4L46 4A14 14 0 0 1 54.34 6.76L46.55 22.5L17.45 22.5L9.66 6.76A14 14 0 0 1 18 4Z"/>
+	<path fill="url(#right)" d="M33.55 60L57.96 10.72A14 14 0 0 1 60 18L60 46A14 14 0 0 1 46 60L33.55 60Z"/>
+	<path fill="url(#point)" d="M19.93 27.5L44.07 27.5L32 51.87L19.93 27.5Z"/>
 </svg>

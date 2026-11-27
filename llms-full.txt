@@ -1,18 +1,18 @@
 # PanCode
 
-> PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.
+> PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It installs on HPC login nodes without root and ships checks for numerical work.
 
 PanCode is a harness for development work. Panos, its orchestrator agent, plans a task, runs it on the models you connect and hands parts of it to workers, including the coding agents you already have. It routes across providers, sandboxes commands, checks finished work against what ran and keeps memory, in the terminal, in scripts and CI, in ACP editors or on the desktop. PanHub packs and PanKit servers cover HPC and scientific software.
 
-PanCode needs no account and no root, and sends nothing home. It is source-available under the PanCode License 1.0: free for individuals, small organizations, and noncommercial research and teaching. Anthony Kougkas writes and maintains it.
+PanCode is a product of PanStudio. It needs no account and no root, and sends nothing home. It is free for individuals, small organizations (fewer than 100 people and under $1M revenue), and noncommercial research and teaching. Its source is available on GitHub under the PanCode License 1.0. Larger organizations get a 32-day evaluation, then a commercial license from PanStudio.
 
 - Install on macOS, Linux, or WSL: `curl -fsSL https://pancode.dev/install.sh | sh`
 - Install on Windows (best effort) in PowerShell: `irm https://pancode.dev/install.ps1 | iex`
-- Install with npm (Node.js 22.19 or newer): `npm install -g @akougkas/pancode`
+- Install with npm (Node.js 22.19 or newer): `npm install -g @panstudio/pancode`
 - Connect a model in a project: `pancode configure`; then run `pancode` for the terminal or `pancode gui --open` for the desktop alpha.
-- Current release: v0.9.0. Source: https://github.com/akougkas/pancode. License: PanCode License 1.0.
+- Current release: v0.9.1. Source: https://github.com/PanStudio/pancode. License: PanCode License 1.0.
 
-This file holds the public PanCode guides (documentation for v0.9.0), the family pages, tutorials, and research pages as Markdown. Each section names the page it comes from.
+This file holds the public PanCode guides (documentation for v0.9.1), the PanHub catalog, tutorials, and research pages as Markdown. Each section names the page it comes from.
 
 ---
 
@@ -71,13 +71,13 @@ CMD shows `C:\>` without the `PS`. If you see `'irm' is not recognized as an int
 With your own **Node.js 22.19 or newer** on `PATH`:
 
 ```sh
-npm install -g @akougkas/pancode
+npm install -g @panstudio/pancode
 ```
 
 ### bun
 
 ```sh
-bun add -g @akougkas/pancode
+bun add -g @panstudio/pancode
 ```
 
 bun installs the package, but `pancode` still runs on Node.js, so it needs **Node.js 22.19 or newer** on `PATH` too.
@@ -127,8 +127,8 @@ Installer installs update themselves in the background, at most once a day. On L
 | Installed with | Update | Remove the program |
 | --- | --- | --- |
 | Installer | `pancode upgrade`. The new version, with the Node.js it runs on, installs beside the current one and must start before the launcher switches to it. | `pancode uninstall` |
-| npm | `pancode upgrade` | `npm uninstall -g @akougkas/pancode` |
-| bun | `bun add -g @akougkas/pancode@latest`, then `pancode upgrade --post-install` | `bun remove -g @akougkas/pancode` |
+| npm | `pancode upgrade` | `npm uninstall -g @panstudio/pancode` |
+| bun | `bun add -g @panstudio/pancode@latest`, then `pancode upgrade --post-install` | `bun remove -g @panstudio/pancode` |
 
 The installer keeps the previous version. `pancode upgrade --rollback` makes it current again. An install made with an exact `--version` stays pinned to that version until you run the installer with `--version latest`.
 
@@ -136,7 +136,7 @@ If an upgrade is refused over a setting the installed version cannot repair, the
 
 `pancode uninstall` removes your settings, credentials, sessions and caches, the launcher, the desktop app's background service, every installed version of an installer install, and the package of an npm global install. It previews what it will delete and asks first, and it stops with exit 1 while a session is open on this state directory. Add `--keep-binary` to keep the program, `--keep-config` to keep settings and credentials, or `--dry-run` to only look. Removing the program with npm or bun keeps those files. Project `.pancode/` directories are never removed.
 
-If pancode.dev is unreachable, the latest GitHub release carries the installer, at `https://github.com/akougkas/pancode/releases/latest/download/install.sh`. Run it with `--version <x.y.z>`, because the file that says which version is latest lives on pancode.dev.
+If pancode.dev is unreachable, the latest GitHub release carries the installer, at `https://github.com/PanStudio/pancode/releases/latest/download/install.sh`. Run it with `--version <x.y.z>`, because the file that says which version is latest lives on pancode.dev.
 
 ## Give PanCode a useful first task
 
@@ -212,13 +212,13 @@ curl -fsSL https://pancode.dev/install.sh | sh -s -- --install-dir /project/$USE
 
 ## Verified downloads
 
-The installer compares the bundle's SHA-256 with the release's `SHA256SUMS`, and a mismatch stops the install. Every release file also has a GitHub build attestation, which `gh attestation verify <file> --repo akougkas/pancode` checks on a machine with the GitHub CLI.
+The installer compares the bundle's SHA-256 with the release's `SHA256SUMS`, and a mismatch stops the install. Every release file also has a GitHub build attestation, which `gh attestation verify <file> --repo PanStudio/pancode` checks on a machine with the GitHub CLI.
 
 ## Airgapped sites and your own Node
 
 With no route out, download the bundle for the cluster and `install.sh` from the GitHub release on a connected machine, copy both over, and run `sh install.sh --bundle pancode-<version>-<target>.tar.gz`. Nothing else is fetched. A site that mirrors the releases sets `PANCODE_RELEASE_MIRROR` to the mirror's base URL, which can be a `file://` URL on a shared filesystem.
 
-If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g @akougkas/pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
+If the site already provides Node 22.19 or newer, you can install with its npm instead: `npm install -g @panstudio/pancode`. When an older `node` comes first on `PATH`, set `PANCODE_NODE` to the newer binary.
 
 Pick versions with `--version` or `--channel`, and undo an upgrade with `--rollback`. The full guide covers the mirror layout; `sh install.sh --help` lists every option.
 
@@ -288,7 +288,7 @@ Every connection names a runtime, which fixes how PanCode talks to the server. `
 
 A server that speaks the OpenAI or Anthropic API but has no runtime of its own usually works through `openai-compat` or `anthropic-compat`, or through a LiteLLM gateway. Local runtimes probe the server, report the loaded models, and price usage as free; the compatible runtimes make no local-server assumptions and are priced as free only when the connection declares it.
 
-When none of these fits, a developer can add a runtime as a plugin: a JavaScript file in the `runtimes/` folder of PanCode's config directory, or an npm package listed under `integrations.runtimePlugins`, which takes effect after a restart. A broken plugin is reported on stderr and never stops startup. The [provider adapter cookbook](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/architecture/provider-adapter-cookbook.md) describes the runtime descriptor a plugin exports.
+When none of these fits, a developer can add a runtime as a plugin: a JavaScript file in the `runtimes/` folder of PanCode's config directory, or an npm package listed under `integrations.runtimePlugins`, which takes effect after a restart. A broken plugin is reported on stderr and never stops startup. The [provider adapter cookbook](https://github.com/PanStudio/pancode/blob/0241470c83204f6dfb03baa5771a8d125fda3014/docs/architecture/provider-adapter-cookbook.md) describes the runtime descriptor a plugin exports.
 
 ---
 
@@ -425,7 +425,7 @@ Tool results are bounded. Each reading tool has a size cap per call, and all of 
 
 Run `pancode --allow-tools read,grep,find,ls` to limit the main agent to those tools, and `--delegate-tools` to limit its workers. Both take a comma-separated list or `none`. A prompt, skill or worker recipe can narrow these limits but never widen them. `/view` shows what the tools produced, a cut result in full included.
 
-The full guide lists every tool and its limits. Developers can read [how the prompt and tool surface are assembled](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/architecture/prompt-envelope-and-tools.md).
+The full guide lists every tool and its limits. Developers can read [how the prompt and tool surface are assembled](https://github.com/PanStudio/pancode/blob/0241470c83204f6dfb03baa5771a8d125fda3014/docs/architecture/prompt-envelope-and-tools.md).
 
 ---
 
@@ -710,7 +710,7 @@ pancode store ls results
 pancode store stat results:summary.parquet
 ```
 
-`put` creates a missing tag as an input tag. `stat` shows the record and whether the bytes have drifted since: `none`, `changed`, `missing` or `unrecorded`. `get` prints the path of a read-only copy, or copies the blob elsewhere with `--to <path>`. Every command takes `--json`. Outside a PanCode project, the `panstore` command that PanCode installs runs the same commands against a store root you name.
+`put` creates a missing tag as an input tag. `stat` shows the record and whether the bytes have drifted since: `none`, `changed`, `missing` or `unrecorded`. `get` prints the path of a read-only copy, or copies the blob elsewhere with `--to <path>`. Every command takes `--json`. `pancode store where` prints the store's folders and ends with the `pankit serve store` line that serves this store over MCP to another agent on this machine.
 
 ## Ask PanCode to use it
 
@@ -824,7 +824,7 @@ Run PanKit's MCP tool servers in PanCode or in any other MCP host.
 
 ## What PanKit gives you
 
-PanKit is a suite of MCP tool servers for HPC and scientific work. PanCode installs it as the `pankit` command. PanCode loads every server as a builtin MCP server, and any other MCP host can launch one with `pankit serve <server>`.
+PanKit is PanCode's agent toolkit, shareable with other agents over MCP: seven tool servers for HPC and scientific work. PanCode installs it as the `pankit` command. PanCode loads every server as a builtin MCP server, and any other MCP host can launch one with `pankit serve <server>`.
 
 | Server | What it answers |
 | --- | --- |
@@ -861,12 +861,12 @@ PanCode starts `scidata` with its reader cache, `catalog` with `pankit/catalog.j
 
 ## Use them from another MCP host
 
-A host launches a server over stdio. Without a global install, `npx` fetches the `@akougkas/pancode` package and runs its `pankit`:
+A host launches a server over stdio. Without a global install, `npx` fetches the `@panstudio/pancode` package and runs its `pankit`:
 
 ```json
 {
 	"mcpServers": {
-		"node": { "command": "npx", "args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"] }
+		"node": { "command": "npx", "args": ["-y", "-p", "@panstudio/pancode", "pankit", "serve", "node"] }
 	}
 }
 ```
@@ -880,70 +880,6 @@ A server's own description of its tools is a hint; each host decides the policy 
 - No `modules` tool loads a module, and `node_gpus` reports NVIDIA GPUs only.
 - A fleet worker that may write the project starts a builtin server without its network grant.
 - PanKit servers on macOS and Windows are unverified beyond one `pankit serve node` handshake.
-
----
-
-Source: https://pancode.dev/docs/guide/sdk.html
-
-# Write extensions and tools with PanSDK
-
-Scaffold, validate and test extensions, and write MCP tool servers.
-
-## What PanSDK holds
-
-PanSDK is the contract for writing PanCode extensions, packs, tools and MCP servers. It ships inside the `@akougkas/pancode` npm package, licensed Apache-2.0, as five imports:
-
-| Import | Holds |
-| --- | --- |
-| `pancode/sdk/extension` | The types an extension runtime is written against. |
-| `pancode/sdk/pack` | The validators and limits PanCode applies to a pack's manifest and to what its runtime returns. |
-| `pancode/sdk/testing` | A test host that runs a runtime in process, under the same rules. |
-| `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
-| `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio. |
-
-The [PanKit](https://pancode.dev/docs/guide/pankit.html) servers are built on the last two.
-
-## Start an extension
-
-A scaffolded extension needs no `npm install`: its tsconfig points at the installed PanCode.
-
-```sh
-pancode extensions init lab-hello
-pancode extensions validate .pancode/dev/extensions/lab-hello
-pancode extensions test .pancode/dev/extensions/lab-hello
-```
-
-`init` writes a package from a template (`status`, `hook`, `panel`, `tool` or `workspace`). `validate` prints `Valid` or `Invalid` with each diagnostic and the capability envelope you will approve, and checks that the runtime registers exactly what its manifest declares. `test` runs the package's tests. See [extensions](https://pancode.dev/docs/guide/harness-extensions.html) for the runtime API.
-
-## Write a tool server
-
-Any other Node project adds the package as a dependency with `npm install --save-dev pancode@npm:@akougkas/pancode` (Node 22.19 or later) and imports the subpaths:
-
-```js
-import { serveStdio } from "pancode/sdk/mcp-server";
-import { defineServer, defineTool } from "pancode/sdk/tool";
-
-const echo = defineTool({
-	name: "echo",
-	description: "Echo the text back.",
-	input: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
-	actionClass: "read",
-	run: (args) => ({ text: args.text }),
-});
-
-await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo] }));
-```
-
-`actionClass` is `read`, `execute` or `destructive`; a tool that writes files names its write paths in `pathArguments`. A wrong definition throws when the server starts. Log through `context.log`, because stdout carries only protocol frames.
-
-To use the server from PanCode, declare it in `<config>/mcp.yaml` with its classes, since PanCode does not take them from the server, then review it with `pancode mcp trust notes --surface`.
-
-## Limits
-
-- A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/testing` without `node_modules`.
-- The scaffold's tsconfig names the installed PanCode by its absolute path, so moving PanCode leaves it pointing at the old place.
-- `pancode/sdk/mcp-server` serves tools only, over stdio only, and refuses an inbound line over 4 MiB.
-- A server's declared classes are a hint; PanCode applies the classes its operator declares or the policy it ships.
 
 ---
 
@@ -1020,7 +956,7 @@ Some failures retry automatically and some never do:
 - No attempt retries automatically after it ran a state-changing call, or when its records cannot prove the checkout unchanged.
 - Backoff starts at 500 ms, doubles, and stops at 60 seconds.
 
-A remote node that fails its channel twice in a row is marked offline. Its in-flight runs settle as `stalled` and retry without that node, and each reroute is recorded on the run. Read the stop reason in **Workers** or with `pancode fleet status` before retrying by hand. The [dispatch mechanics reference](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/architecture/worker-dispatch-mechanics.md) gives the full failure taxonomy and exit codes.
+A remote node that fails its channel twice in a row is marked offline. Its in-flight runs settle as `stalled` and retry without that node, and each reroute is recorded on the run. Read the stop reason in **Workers** or with `pancode fleet status` before retrying by hand. The [dispatch mechanics reference](https://github.com/PanStudio/pancode/blob/0241470c83204f6dfb03baa5771a8d125fda3014/docs/architecture/worker-dispatch-mechanics.md) gives the full failure taxonomy and exit codes.
 
 ---
 
@@ -1147,6 +1083,70 @@ The code must register exactly what the manifest declares, and PanCode never ins
 
 ---
 
+Source: https://pancode.dev/docs/guide/sdk.html
+
+# Extension API (unstable)
+
+Scaffold, validate and test extensions, and write MCP tool servers.
+
+## What the extension API holds
+
+The extension API is how you write PanCode extensions, packs, tools and MCP servers. It is unstable: its imports, types and limits can change in any release, so pin the PanCode version an extension is tested against. It ships inside the `@panstudio/pancode` npm package, licensed Apache-2.0, as five imports:
+
+| Import | Holds |
+| --- | --- |
+| `pancode/sdk/extension` | The types an extension runtime is written against. |
+| `pancode/sdk/pack` | The validators and limits PanCode applies to a pack's manifest and to what its runtime returns. |
+| `pancode/sdk/testing` | A test host that runs a runtime in process, under the same rules. |
+| `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
+| `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio. |
+
+The [PanKit](https://pancode.dev/docs/guide/pankit.html) servers are built on the last two.
+
+## Start an extension
+
+A scaffolded extension needs no `npm install`: its tsconfig points at the installed PanCode.
+
+```sh
+pancode extensions init lab-hello
+pancode extensions validate .pancode/dev/extensions/lab-hello
+pancode extensions test .pancode/dev/extensions/lab-hello
+```
+
+`init` writes a package from a template (`status`, `hook`, `panel`, `tool` or `workspace`). `validate` prints `Valid` or `Invalid` with each diagnostic and the capability envelope you will approve, and checks that the runtime registers exactly what its manifest declares. `test` runs the package's tests. See [extensions](https://pancode.dev/docs/guide/harness-extensions.html) for the runtime API.
+
+## Write a tool server
+
+Any other Node project adds the package as a dependency with `npm install --save-dev pancode@npm:@panstudio/pancode` (Node 22.19 or later) and imports the subpaths:
+
+```js
+import { serveStdio } from "pancode/sdk/mcp-server";
+import { defineServer, defineTool } from "pancode/sdk/tool";
+
+const echo = defineTool({
+	name: "echo",
+	description: "Echo the text back.",
+	input: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+	actionClass: "read",
+	run: (args) => ({ text: args.text }),
+});
+
+await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo] }));
+```
+
+`actionClass` is `read`, `execute` or `destructive`; a tool that writes files names its write paths in `pathArguments`. A wrong definition throws when the server starts. Log through `context.log`, because stdout carries only protocol frames.
+
+To use the server from PanCode, declare it in `<config>/mcp.yaml` with its classes, since PanCode does not take them from the server, then review it with `pancode mcp trust notes --surface`.
+
+## Limits
+
+- A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/testing` without `node_modules`.
+- The scaffold's tsconfig names the installed PanCode by its absolute path, so moving PanCode leaves it pointing at the old place.
+- `pancode/sdk/mcp-server` serves tools only, over stdio only, and refuses an inbound line over 4 MiB.
+- A server's declared classes are a hint; PanCode applies the classes its operator declares or the policy it ships.
+
+---
+
 Source: https://pancode.dev/docs/guide/interop.html
 
 # Editors and other agents
@@ -1205,13 +1205,13 @@ These launch options are the operator's limits; a client can narrow them but nev
 | `--delegate-tools NAMES` | Limits the tools the session's dispatched workers may hold. |
 | `--read-only` | Holds every session at the read-only ceiling. No file outside PanCode's own home changes. |
 
-`pancode acp auth login` opens the interactive Quick Connect setup, so an editor's terminal sign-in step can create a connection. Stdout carries only protocol messages; diagnostics go to stderr. The [ACP protocol reference](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/architecture/acp.md) covers capabilities, authentication, permissions, and telemetry in detail. Consult the full guide for peer-specific setup and for installing PanCode's portable skills and plugins in other agents.
+`pancode acp auth login` opens the interactive Quick Connect setup, so an editor's terminal sign-in step can create a connection. Stdout carries only protocol messages; diagnostics go to stderr. The [ACP protocol reference](https://github.com/PanStudio/pancode/blob/0241470c83204f6dfb03baa5771a8d125fda3014/docs/architecture/acp.md) covers capabilities, authentication, permissions, and telemetry in detail. Consult the full guide for peer-specific setup and for installing PanCode's portable skills and plugins in other agents.
 
 ## Built on the Pi SDK
 
 PanCode's model connections, agent loop, and terminal interface are built on the Pi SDK. PanCode pins the Pi 1.5.2 packages to exact versions and bundles the one terminal package it patches, so an npm install needs no patch step. PanCode owns everything above that layer: permissions, workers, sessions, run records, and its own handling for local model servers.
 
-Pi's coding agent is also a delegation peer. With the `pi` command installed and signed in, a target on the `pi-cli` runtime runs headless worker tasks under Pi's own login. Like other peers that run their own tool loop, it needs `trustedUnmediated: true` on the target before it may take write-capable work. Developers upgrading the SDK can read the [Pi SDK boundary](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/architecture/pi-boundary.md).
+Pi's coding agent is also a delegation peer. With the `pi` command installed and signed in, a target on the `pi-cli` runtime runs headless worker tasks under Pi's own login. Like other peers that run their own tool loop, it needs `trustedUnmediated: true` on the target before it may take write-capable work. Developers upgrading the SDK can read the [Pi SDK boundary](https://github.com/PanStudio/pancode/blob/0241470c83204f6dfb03baa5771a8d125fda3014/docs/architecture/pi-boundary.md).
 
 ---
 
@@ -1235,7 +1235,7 @@ Read three rows first: `chat` names your route and what is missing, each `connec
 
 | Flag | Effect |
 | --- | --- |
-| `--verbose` | Print every row instead of folding quiet families |
+| `--verbose` | Print every row, including the checks that passed |
 | `--json` | Emit findings as JSON on stdout |
 | `--deep` | Add the live tool probe and validation dry run |
 | `--tools-timeout <seconds>` | Bound each tool probe; default 120, needs `--deep` |
@@ -2032,234 +2032,66 @@ The body is the agent's instructions. Model and target are chosen at dispatch, n
 
 ---
 
-Source: https://pancode.dev/panstore.html
-
-# PanStore
-
-> PanStore keeps a project's datasets and results outside the working tree, each file recorded with who put it, from where, and its hash.
-
-PanStore keeps a project's datasets and results as blobs in named tags outside the working tree. Each put appends a record of who stored the file, from which run and with which SHA-256, so a result can be traced and checked later. Every checkout and task worktree of one repository reaches the same store.
-
-## Install
-
-PanStore ships with PanCode. Installing PanCode, with the installer or from npm, also installs the `panstore` command.
-
-```bash
-curl -fsSL https://pancode.dev/install.sh | sh
-npm install -g @akougkas/pancode   # or, with Node.js 22.19 or newer
-```
-
-Inside a PanCode project, the same commands run as `pancode store <command>` with the roots and cache from your settings. The model reaches the store through its `store` tool, and any MCP host reaches it through the [PanKit](https://pancode.dev/pankit.html) `store` server.
-
-## Example
-
-Store a result under a tag with a note, then show its record and check that its bytes still match:
-
-```bash
-pancode store put results run-042.csv --note "baseline, 4 nodes"
-pancode store stat results:run-042.csv
-pancode store verify results
-```
-
-`stat` shows the blob's drift (`none`, `changed`, `missing` or `unrecorded`), its SHA-256, the run that produced it and who put it. Outside a PanCode project, `panstore --root <dir> <command>` runs the same commands without the harness. Every command takes `--json`.
-
-## Limits
-
-**What PanStore does not do**
-
-- PanStore is exercised on Linux only until its conformance suite runs on macOS and Windows.
-- It keeps no blob versions, does no deduplication and has no remote backend. A put replaces the blob's bytes; its records remain.
-- A lock left by a host that crashed is never broken automatically: an operator runs `locks break`.
-- The full list is in [the guide's limits](https://pancode.dev/docs/guide/panstore.html#limits).
-
-## Learn more
-
-**Learn more**
-
-- [Keep results in PanStore](https://pancode.dev/docs/guide/panstore.html)
-- [Keep results in the project store, a tutorial](https://pancode.dev/tutorials/keep-results-in-the-project-store.html)
-- [The PanStore package and its source](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/packages/store/README.md)
-- [@akougkas/pancode on npm](https://www.npmjs.com/package/@akougkas/pancode)
-
----
-
-Source: https://pancode.dev/pankit.html
-
-# PanKit
-
-> PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store.
-
-PanKit is a suite of MCP tool servers for HPC and scientific work. Every server speaks the Model Context Protocol over stdio, so any MCP host can run it, and PanCode reaches the same servers through its MCP gateway as `builtin` servers. One command, `pankit`, lists, checks and serves them.
-
-## The seven servers
-
-| Server | What it answers |
-| --- | --- |
-| `node` | This machine's CPU, memory, disks, network interfaces, NVIDIA GPUs and top processes, all read-only. |
-| `modules` | The site's software modules through Lmod or Environment Modules, and the `module load` lines a batch script needs. |
-| `spack` | Installed Spack specs, package details, prefixes, concretization and environments. It never installs anything. |
-| `darshan` | What one Darshan log says about a job's I/O: per-module totals, top files and a timeline. |
-| `scidata` | The structure, a bounded slice and summary statistics of HDF5, NetCDF, Zarr, Parquet, CSV and JSON files. |
-| `catalog` | Search, describe and stage datasets from the catalogs an operator lists, including public CKAN portals. |
-| `store` | A project's [PanStore](https://pancode.dev/panstore.html): tags, blobs, records, and writes only to the tags it was started with. |
-
-## Install
-
-PanKit ships with PanCode. Installing PanCode, with the installer or from npm, also installs the `pankit` command.
-
-```bash
-curl -fsSL https://pancode.dev/install.sh | sh
-npm install -g @akougkas/pancode   # or, with Node.js 22.19 or newer
-```
-
-## Example
-
-Check which servers can run on this host, then serve one over stdio:
-
-```bash
-pankit doctor
-pankit serve node
-```
-
-An MCP host that reads the common `mcpServers` shape can start a server without a global install:
-
-```json
-{
-	"mcpServers": {
-		"node": { "command": "npx", "args": ["-y", "-p", "@akougkas/pancode", "pankit", "serve", "node"] }
-	}
-}
-```
-
-## Limits
-
-**What PanKit does not do**
-
-- `catalog` ships no sources and reads public CKAN portals only, without credentials or proxy support.
-- No `modules` tool loads a module, and `node_gpus` reports NVIDIA GPUs only.
-- PanKit servers on macOS and Windows are unverified beyond one `pankit serve node` handshake.
-- The full list is in [the guide's limits](https://pancode.dev/docs/guide/pankit.html#limits).
-
-## Learn more
-
-**Learn more**
-
-- [Tool servers with PanKit](https://pancode.dev/docs/guide/pankit.html)
-- [The PanKit package and its source](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/packages/kit/README.md)
-- [@akougkas/pancode on npm](https://www.npmjs.com/package/@akougkas/pancode)
-
----
-
 Source: https://pancode.dev/hub.html
 
 # PanHub
 
-> Every PanHub pack bundled with this PanCode release: skills, plugins and extensions, each with its tier, licence, source and install command.
+> The PanHub marketplace: every pack in the index bundled with this PanCode release, with its tier, licence, source and the command that installs or serves it.
 
-The 44 packs bundled with PanCode v0.9.0, from `hub/index.yaml` (sha256 21c008b483c8d9cde3f3618042c0c194a99893e28078b8c0845bcd434c504e32). Install one with the command on its row; add `--project` to install it into the current project. A listing at any tier is not an endorsement.
+The 52 packs listed in the index bundled with PanCode v0.9.1, from `hub/index.yaml` (sha256 833411c8c5eecfd29937b806ddf606d9424890bf553895b778b54e88ea2a5fee). A skill, plugin or extension installs with the command on its row, for your user; add `--project` to install it into the current project. A server is built into PanCode, so there is nothing to install: its row gives the command that serves it to another agent host over MCP, and that command takes no install flags. A listing at any tier is not an endorsement.
 
 - `extension:local-status` v0.1.1, core, pancode, LicenseRef-PanCode-1.0: A small local status command and ambient status example. Install: `pancode hub install extension:local-status`
-- `extension:wtfp` v0.9.0, verified, akougkas, MIT: The WTF-P writing desk for PanCode; paper state, gates and the write guard run in code. Install: `pancode hub install extension:wtfp`
-- `plugin:autotldr` v0.2.0, verified, akougkas, MIT: Point it at anything. Get back what it means, in the shape you asked for. Install: `pancode hub install plugin:autotldr`
-- `plugin:cite-nexus` v0.2.5, verified, akougkas, MIT: CiteNexus connects research assistants to free scholarly metadata and optional academic APIs. Discover papers, resolve identifiers, check references, and export BibTeX, RIS or CSL-JSON with source provenance. No model or API key is required for default searches. Install: `pancode hub install plugin:cite-nexus`
-- `plugin:hpc` v0.4.1, core, pancode, LicenseRef-PanCode-1.0: HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack and darshan servers with the cluster's own tools as the fallback. Install: `pancode hub install plugin:hpc`
-- `plugin:life-science` v0.1.1, core, pancode, LicenseRef-PanCode-1.0: Life-science pack: skills that query the RCSB Protein Data Bank, UniProtKB and PubChem over their public, key-free REST APIs with web_fetch, and stamp each answer with the source's entry revision or release. Every lookup needs network; offline the skills say the source is unreachable. Install: `pancode hub install plugin:life-science`
-- `plugin:literature` v0.3.0, core, pancode, LicenseRef-PanCode-1.0: Literature pack: verifies citations and resolves DOIs and arXiv IDs through the CiteNexus MCP server from the cite-nexus pack (key-free Crossref, DataCite, Europe PMC and arXiv), with an offline extractor for BibTeX and Markdown and a web_fetch fallback. Adds a hypothesis workflow: cited grounding, independent council proposals, a testability ranking and the smallest experiment per hypothesis, ending at the operator's own choice. Extends arxiv-literature. Needs network for every lookup. Install: `pancode hub install plugin:literature`
-- `plugin:science-data` v0.4.1, core, pancode, LicenseRef-PanCode-1.0: Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it. Install: `pancode hub install plugin:science-data`
-- `plugin:wtfp` v0.9.0, verified, akougkas, MIT: Portable, evidence-grounded academic research and writing workflows. Install: `pancode hub install plugin:wtfp`
-- `plugin:zulipchat` v0.8.1, verified, akougkas, MIT: Zulip messaging and search, and hand-off to Zulip agent bots. Install: `pancode hub install plugin:zulipchat`
-- `skill:architecture` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Decides the engineering approach for an intent in an interactive session: investigates, proposes two or three genuinely different approaches with trade-offs, recommends, lets the user decide, and writes the decision doc. Not a task-by-task plan; use sprint-plan. Not a multi-perspective debate; use design-council. Not product intent; use product-intent. Not a typed implementation handoff; use tech-spec. Install: `pancode hub install skill:architecture`
-- `skill:arxiv-literature` v0.6.3, core, pancode, LicenseRef-PanCode-1.0: Searches arXiv, summarizes or compares papers, and builds a compact literature survey as citation-ready, source-linked paper cards, with BibTeX export and ID verification through the CiteNexus server when the cite-nexus pack is installed. Fetches arXiv directly by default and dispatches the researcher shadow agent only when the user asks for a deep or broad survey. Install: `pancode hub install skill:arxiv-literature`
-- `skill:ast-grep` v0.3.4, core, pancode, LicenseRef-PanCode-1.0: Structural code search with ast-grep rules: finds code by shape when grep on text is too noisy, and never rewrites it. Not for plain string or filename lookups; use grep or find. Install: `pancode hub install skill:ast-grep`
-- `skill:backlog` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Turns a finished PRD or architecture doc into a ticket backlog of small stories with verifiable acceptance criteria, confirmed, then created as GitHub issues or in another configured tracker. Not for local sprint slicing into a SPRINT.md; use sprint-plan. Install: `pancode hub install skill:backlog`
-- `skill:branch-closeout` v0.1.2, core, pancode, LicenseRef-PanCode-1.0: Proves merged work on the canonical base, inspects and removes associated worktrees through Git, deletes local branches safely, and audits surviving repository refs. Not for creating worktrees; use worktree-create. Not for integrating branches; use worktree-merge. Install: `pancode hub install skill:branch-closeout`
-- `skill:coding-standards` v0.4.4, core, pancode, LicenseRef-PanCode-1.0: Correct-by-construction TypeScript rules (errors as values, parse don't validate, illegal states unrepresentable, deep modules) for writing or refactoring TypeScript when the project has not pinned its own standards. Install: `pancode hub install skill:coding-standards`
-- `skill:context-handoff` v0.5.7, core, pancode, LicenseRef-PanCode-1.0: Writes a durable, redacted, reference-not-copy handoff document when a session winds down or context is about to be compacted or lost, so the next session or agent can continue. Not for orienting at the start of a session; use context-prime. Install: `pancode hub install skill:context-handoff`
-- `skill:context-prime` v0.4.4, core, pancode, LicenseRef-PanCode-1.0: Orients a fresh session in a repository by loading the last handoff, git state, the project constitution, and active-work signals before acting. Not for writing the handoff; use context-handoff. Install: `pancode hub install skill:context-prime`
-- `skill:credentials` v0.2.2, core, pancode, LicenseRef-PanCode-1.0: Handles API keys, tokens, and facility credentials (kerberos tickets, globus and scheduler tokens, ssh agents, netrc) before a tool needs one, after an auth error, when a new secret is supplied, or when one may have leaked. Not for provider target configuration; use pancode auth and target settings. Install: `pancode hub install skill:credentials`
-- `skill:design-council` v0.6.5, core, pancode, LicenseRef-PanCode-1.0: Convenes several expert perspectives that challenge each other on a design decision with real trade-offs before code is written; quick mode runs a single round. Not for a one-question-at-a-time interrogation of a plan; use plan-interview. Not for splitting implementation across workers; use dispatch directly. Install: `pancode hub install skill:design-council`
-- `skill:experiment-protocol` v0.3.4, core, pancode, LicenseRef-PanCode-1.0: Pre-registers a performance study, numerical comparison, parameter sweep, or benchmark: thresholds, tolerances, environment pins, and verdict conditions locked into the validation contract before any measurement. Not for diagnosing a stalled bug; use scientific-debugging. Install: `pancode hub install skill:experiment-protocol`
-- `skill:extension-authoring` v0.1.7, core, pancode, LicenseRef-PanCode-1.0: Builds, tests, and debugs PanCode api 2 extensions with declared capabilities and host-rendered views. Not for instruction-only skills; use skill-authoring. Install: `pancode hub install skill:extension-authoring`
-- `skill:file-ticket` v0.3.4, core, pancode, LicenseRef-PanCode-1.0: Turns something noticed mid-session into a tracker issue: captures evidence, dedups against existing issues, composes a labeled issue with acceptance criteria, confirms, and creates it via gh. Not for batch ticket creation from a PRD; use backlog. Not for diagnosing an existing issue; use fix-issue. Install: `pancode hub install skill:file-ticket`
-- `skill:find-skills` v0.3.3, core, pancode, LicenseRef-PanCode-1.0: Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring. Install: `pancode hub install skill:find-skills`
-- `skill:fix-issue` v0.3.3, core, pancode, LicenseRef-PanCode-1.0: Resolves a tracker issue end to end: fetches it, diagnoses only when the issue does not name the code, fixes test-first, and self-reviews against the acceptance criteria, leaving a verified uncommitted change. Not for filing; use file-ticket. Not for committing or PRs; use ship. Install: `pancode hub install skill:fix-issue`
-- `skill:map-codebase` v0.2.1, core, pancode, LicenseRef-PanCode-1.0: Builds an interactive map of a codebase from verified repository structure, symbols and imports, as one standalone HTML file with a readable overview and expandable source evidence. Install: `pancode hub install skill:map-codebase`
-- `skill:pancode-dev` v0.7.2, core, pancode, LicenseRef-PanCode-1.0: Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation. Install: `pancode hub install skill:pancode-dev`
-- `skill:pancode-test` v0.5.1, core, pancode, LicenseRef-PanCode-1.0: Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself. Install: `pancode hub install skill:pancode-test`
-- `skill:plan-interview` v0.5.6, core, pancode, LicenseRef-PanCode-1.0: Stress-tests a plan, design, or idea through a phased one-question-at-a-time interview before code is written, ending in a compact decision log. Not for a multi-perspective debate; use design-council. Install: `pancode hub install skill:plan-interview`
-- `skill:prd` v0.4.4, core, pancode, LicenseRef-PanCode-1.0: Turns an idea into a product requirements document through a phase-gated interview, ending in PRD.md plus per-milestone prompt files ready to drive a coding agent. Not for the problem-first product thesis; use product-intent. Install: `pancode hub install skill:prd`
-- `skill:product-intent` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Writes a problem-first product document for a greenfield effort: interviews for the problem, evidence, and a falsifiable hypothesis, with zero engineering decisions. Not for engineering decisions; use architecture. Not for turning a locked idea into milestone build prompts; use prd. Install: `pancode hub install skill:product-intent`
-- `skill:prototype` v0.4.3, core, pancode, LicenseRef-PanCode-1.0: Answers a design question with throwaway code: a clearly marked, runnable, no-persistence prototype whose verdict is kept and whose code is discarded. Not for pre-registered performance experiments; use experiment-protocol. Not for production implementation. Install: `pancode hub install skill:prototype`
-- `skill:resolve-merge-conflicts` v0.4.2, core, pancode, LicenseRef-PanCode-1.0: Resolves a merge, rebase, or cherry-pick stopped on conflicts by reconstructing both sides' intent, validating with the project's own checks, and completing the operation. Not for integrating many branches; use worktree-merge. Install: `pancode hub install skill:resolve-merge-conflicts`
-- `skill:scientific-debugging` v0.3.4, core, pancode, LicenseRef-PanCode-1.0: Diagnoses stalled or cross-system failures and wrong, NaN, nondeterministic, or unexpectedly slow scientific results through falsifiable hypotheses across distinct fault classes, with evidence-cited verdicts before any fix. Not for designing benchmarks or pre-registered experiments; use experiment-protocol. Install: `pancode hub install skill:scientific-debugging`
-- `skill:scientific-modernization` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Modernizes, ports, rewrites, packages, or replaces established scientific software in independently validated stages against an external scientific oracle, settling compatibility and upstream stewardship before calling it complete. Not for an isolated benchmark; use experiment-protocol. Not for diagnosing wrong results; use scientific-debugging. Install: `pancode hub install skill:scientific-modernization`
-- `skill:ship` v0.5.4, core, pancode, LicenseRef-PanCode-1.0: Ships finished work: writes one reviewed atomic commit, keeps maintainer branches local, or pushes a contributor branch to their fork and opens a PR only on explicit intent. Not for producing the change; use fix-issue. Install: `pancode hub install skill:ship`
-- `skill:skill-authoring` v0.4.2, core, pancode, LicenseRef-PanCode-1.0: Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture. Install: `pancode hub install skill:skill-authoring`
-- `skill:sprint-plan` v0.4.4, core, pancode, LicenseRef-PanCode-1.0: Slices an existing plan, PRD, or milestone into an executable sprint of dependency-ordered vertical slices sized for one agent run each, with done-when verification per slice; never fabricates a plan. Not for deciding the approach; use architecture. Install: `pancode hub install skill:sprint-plan`
-- `skill:tdd` v0.4.2, core, pancode, LicenseRef-PanCode-1.0: Builds a feature or fix test-first, red to green at pre-agreed public seams, one vertical slice at a time. Not for designing benchmark criteria; use experiment-protocol. Install: `pancode hub install skill:tdd`
-- `skill:tech-spec` v0.3.5, core, pancode, LicenseRef-PanCode-1.0: Writes a typed call-stack architecture handoff: code-shaped contracts plus execution flows, implementation-ready for another engineer. User-invoked only. Not for weighing approaches or deciding the design; use architecture first. Install: `pancode hub install skill:tech-spec`
-- `skill:web-debug` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: Debugs a web front end in a headless browser: starts the dev server and a page check in one command, reads console errors, uncaught exceptions and failed requests as JSON, runs Playwright step files, and takes screenshots only for layout. Not for fetching documentation pages; use web_fetch. Install: `pancode hub install skill:web-debug`
-- `skill:workflow-capture` v0.4.7, core, pancode, LicenseRef-PanCode-1.0: Packages a workflow that just happened into a reusable SKILL.md: reconstructs it from the session record, checks overlap with installed skills, gates on approval, then writes it following skill-authoring. Not for authoring a skill with no prior workflow; use skill-authoring. Install: `pancode hub install skill:workflow-capture`
-- `skill:worktree-create` v0.6.2, core, pancode, LicenseRef-PanCode-1.0: Stands up one or more git worktrees for parallel work, each on its own branch with gitignored config copied in, dependencies installed, and a verified health check. Not for merging finished worktrees; use worktree-merge. Not for closeout; use branch-closeout. Install: `pancode hub install skill:worktree-create`
-- `skill:worktree-merge` v0.6.2, core, pancode, LicenseRef-PanCode-1.0: Integrates finished worktree branches through one throwaway integration branch, testing after each merge and running the full suite before the main line moves, with exact rollback on failure. Not for creating worktrees; use worktree-create. Not for closeout; use branch-closeout. Install: `pancode hub install skill:worktree-merge`
-
----
-
-Source: https://pancode.dev/sdk.html
-
-# PanSDK
-
-> PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0.
-
-PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers. It is licensed Apache-2.0, bundled into the `@akougkas/pancode` npm package and imported from five subpaths. PanKit's servers are built on it.
-
-| Import | Holds |
-| --- | --- |
-| `pancode/sdk/extension` | The types an extension runtime is written against. |
-| `pancode/sdk/pack` | The validators and limits PanCode applies to a package's manifest and its runtime's output. |
-| `pancode/sdk/testing` | A test host that runs an extension runtime in process, under the same rules. |
-| `pancode/sdk/tool` | `defineTool`, `defineServer` and `policyManifest`, for MCP tools with a declared policy. |
-| `pancode/sdk/mcp-server` | `serveStdio`, which serves a defined server over MCP stdio. |
-
-## Install
-
-An extension made with `pancode extensions init` needs no install: its tsconfig points at the installed PanCode. Any other Node project adds the package as a dependency under the name `pancode`, so the `pancode/sdk` imports resolve. Node 22.19 or later is required.
-
-```bash
-npm install --save-dev pancode@npm:@akougkas/pancode
-```
-
-## Example
-
-An extension runtime exports a function that receives the API and registers its handlers:
-
-```ts
-import type { ExtensionApiV2 } from "pancode/sdk/extension";
-
-export default function activate(api: ExtensionApiV2): void {
-	api.handle("hello", () => ({ text: "hello" }));
-}
-```
-
-`pancode extensions init` scaffolds a package around it, `pancode extensions validate` checks the manifest and `pancode extensions test` runs its tests against the test host.
-
-## Limits
-
-**What PanSDK does not do**
-
-- A scaffolded package resolves only `pancode/sdk/extension` and `pancode/sdk/testing` without `node_modules`.
-- `pancode/sdk/mcp-server` serves tools only, over stdio only: no resources, prompts or sampling.
-- A server's declared classes are a hint to any host; PanCode applies the classes its operator declares.
-- The full list is in [the guide's limits](https://pancode.dev/docs/guide/sdk.html#limits).
-
-## Learn more
-
-**Learn more**
-
-- [Write extensions and tools with PanSDK](https://pancode.dev/docs/guide/sdk.html)
-- [Write an extension with declared capabilities, a tutorial](https://pancode.dev/tutorials/write-an-extension-with-declared-capabilities.html)
-- [The PanSDK package and its source](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/packages/sdk/README.md)
-- [@akougkas/pancode on npm](https://www.npmjs.com/package/@akougkas/pancode)
+- `extension:wtfp` v0.9.0, verified, panstudio, MIT: The WTF-P writing desk for PanCode; paper state, gates and the write guard run in code. Install: `pancode hub install extension:wtfp`
+- `plugin:autotldr` v0.2.0, verified, panstudio, MIT: Point it at anything. Get back what it means, in the shape you asked for. Install: `pancode hub install plugin:autotldr`
+- `plugin:cite-nexus` v0.2.5, verified, panstudio, MIT: CiteNexus connects research assistants to free scholarly metadata and optional academic APIs. Discover papers, resolve identifiers, check references, and export BibTeX, RIS or CSL-JSON with source provenance. No model or API key is required for default searches. Install: `pancode hub install plugin:cite-nexus`
+- `plugin:hpc` v0.4.2, core, pancode, LicenseRef-PanCode-1.0: HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack and darshan servers with the cluster's own tools as the fallback. Install: `pancode hub install plugin:hpc`
+- `plugin:life-science` v0.1.2, core, pancode, LicenseRef-PanCode-1.0: Life-science pack: skills that query the RCSB Protein Data Bank, UniProtKB and PubChem over their public, key-free REST APIs with web_fetch, and stamp each answer with the source's entry revision or release. Every lookup needs network; offline the skills say the source is unreachable. Install: `pancode hub install plugin:life-science`
+- `plugin:literature` v0.3.1, core, pancode, LicenseRef-PanCode-1.0: Literature pack: verifies citations and resolves DOIs and arXiv IDs through the CiteNexus MCP server from the cite-nexus pack (key-free Crossref, DataCite, Europe PMC and arXiv), with an offline extractor for BibTeX and Markdown and a web_fetch fallback. Adds a hypothesis workflow: cited grounding, independent council proposals, a testability ranking and the smallest experiment per hypothesis, ending at the operator's own choice. Extends arxiv-literature. Needs network for every lookup. Install: `pancode hub install plugin:literature`
+- `plugin:pankit` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: PanKit for Claude Code: the node, modules, darshan, spack, scidata and catalog MCP servers of PanCode's toolkit, each started with npx from the @panstudio/pancode package. Install: `pancode hub install plugin:pankit`
+- `plugin:science-data` v0.4.2, core, pancode, LicenseRef-PanCode-1.0: Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it. Install: `pancode hub install plugin:science-data`
+- `plugin:wtfp` v0.9.0, verified, panstudio, MIT: Portable, evidence-grounded academic research and writing workflows. Install: `pancode hub install plugin:wtfp`
+- `plugin:zulipchat` v0.8.1, verified, panstudio, MIT: Zulip messaging and search, and hand-off to Zulip agent bots. Install: `pancode hub install plugin:zulipchat`
+- `server:catalog` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: The dataset catalogs the operator names in a catalog file, local and public CKAN, and staging one resource. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve catalog`.
+- `server:darshan` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: What one Darshan log says about a job's I/O, through darshan-parser. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve darshan`.
+- `server:modules` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: The site's software modules through Lmod or Environment Modules, and the module load lines a batch script needs. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve modules`.
+- `server:node` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: This machine's CPU topology and load, memory and swap, mounted file systems, network interfaces, NVIDIA GPUs and top processes. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve node`.
+- `server:scidata` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: The structure, a bounded slice and statistics of CSV, TSV, JSON, HDF5, NetCDF, Zarr and Parquet files. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve scidata`.
+- `server:spack` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: The Spack instance on PATH or SPACK_ROOT: installed specs, package recipes, prefixes, concretization and environments. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve spack`.
+- `server:store` v0.1.0, core, pancode, LicenseRef-PanCode-1.0: A project's PanStore: tags, blobs, records and read-only copies, with writes only into allowed tags. Built into PanCode; serve it to another agent host: `npx -y -p @panstudio/pancode pankit serve store`. Started as shown, it runs with no store root configured; in a project, `pancode store where` prints the full command with its `--root`, `--cache` and `--project`.
+- `skill:architecture` v0.4.6, core, pancode, LicenseRef-PanCode-1.0: Decides the engineering approach for an intent in an interactive session: investigates, proposes two or three genuinely different approaches with trade-offs, recommends, lets the user decide, and writes the decision doc. Not a task-by-task plan; use sprint-plan. Not a multi-perspective debate; use design-council. Not product intent; use product-intent. Not a typed implementation handoff; use tech-spec. Install: `pancode hub install skill:architecture`
+- `skill:arxiv-literature` v0.6.4, core, pancode, LicenseRef-PanCode-1.0: Searches arXiv, summarizes or compares papers, and builds a compact literature survey as citation-ready, source-linked paper cards, with BibTeX export and ID verification through the CiteNexus server when the cite-nexus pack is installed. Fetches arXiv directly by default and dispatches the researcher shadow agent only when the user asks for a deep or broad survey. Install: `pancode hub install skill:arxiv-literature`
+- `skill:ast-grep` v0.3.5, core, pancode, LicenseRef-PanCode-1.0: Structural code search with ast-grep rules: finds code by shape when grep on text is too noisy, and never rewrites it. Not for plain string or filename lookups; use grep or find. Install: `pancode hub install skill:ast-grep`
+- `skill:backlog` v0.4.6, core, pancode, LicenseRef-PanCode-1.0: Turns a finished PRD or architecture doc into a ticket backlog of small stories with verifiable acceptance criteria, confirmed, then created as GitHub issues or in another configured tracker. Not for local sprint slicing into a SPRINT.md; use sprint-plan. Install: `pancode hub install skill:backlog`
+- `skill:branch-closeout` v0.1.3, core, pancode, LicenseRef-PanCode-1.0: Proves merged work on the canonical base, inspects and removes associated worktrees through Git, deletes local branches safely, and audits surviving repository refs. Not for creating worktrees; use worktree-create. Not for integrating branches; use worktree-merge. Install: `pancode hub install skill:branch-closeout`
+- `skill:coding-standards` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Correct-by-construction TypeScript rules (errors as values, parse don't validate, illegal states unrepresentable, deep modules) for writing or refactoring TypeScript when the project has not pinned its own standards. Install: `pancode hub install skill:coding-standards`
+- `skill:context-handoff` v0.5.8, core, pancode, LicenseRef-PanCode-1.0: Writes a durable, redacted, reference-not-copy handoff document when a session winds down or context is about to be compacted or lost, so the next session or agent can continue. Not for orienting at the start of a session; use context-prime. Install: `pancode hub install skill:context-handoff`
+- `skill:context-prime` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Orients a fresh session in a repository by loading the last handoff, git state, the project constitution, and active-work signals before acting. Not for writing the handoff; use context-handoff. Install: `pancode hub install skill:context-prime`
+- `skill:credentials` v0.2.3, core, pancode, LicenseRef-PanCode-1.0: Handles API keys, tokens, and facility credentials (kerberos tickets, globus and scheduler tokens, ssh agents, netrc) before a tool needs one, after an auth error, when a new secret is supplied, or when one may have leaked. Not for provider target configuration; use pancode auth and target settings. Install: `pancode hub install skill:credentials`
+- `skill:design-council` v0.6.6, core, pancode, LicenseRef-PanCode-1.0: Convenes several expert perspectives that challenge each other on a design decision with real trade-offs before code is written; quick mode runs a single round. Not for a one-question-at-a-time interrogation of a plan; use plan-interview. Not for splitting implementation across workers; use dispatch directly. Install: `pancode hub install skill:design-council`
+- `skill:experiment-protocol` v0.3.5, core, pancode, LicenseRef-PanCode-1.0: Pre-registers a performance study, numerical comparison, parameter sweep, or benchmark: thresholds, tolerances, environment pins, and verdict conditions locked into the validation contract before any measurement. Not for diagnosing a stalled bug; use scientific-debugging. Install: `pancode hub install skill:experiment-protocol`
+- `skill:extension-authoring` v0.1.8, core, pancode, LicenseRef-PanCode-1.0: Builds, tests, and debugs PanCode api 2 extensions with declared capabilities and host-rendered views. Not for instruction-only skills; use skill-authoring. Install: `pancode hub install skill:extension-authoring`
+- `skill:file-ticket` v0.3.5, core, pancode, LicenseRef-PanCode-1.0: Turns something noticed mid-session into a tracker issue: captures evidence, dedups against existing issues, composes a labeled issue with acceptance criteria, confirms, and creates it via gh. Not for batch ticket creation from a PRD; use backlog. Not for diagnosing an existing issue; use fix-issue. Install: `pancode hub install skill:file-ticket`
+- `skill:find-skills` v0.3.4, core, pancode, LicenseRef-PanCode-1.0: Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring. Install: `pancode hub install skill:find-skills`
+- `skill:fix-issue` v0.3.4, core, pancode, LicenseRef-PanCode-1.0: Resolves a tracker issue end to end: fetches it, diagnoses only when the issue does not name the code, fixes test-first, and self-reviews against the acceptance criteria, leaving a verified uncommitted change. Not for filing; use file-ticket. Not for committing or PRs; use ship. Install: `pancode hub install skill:fix-issue`
+- `skill:map-codebase` v0.2.2, core, pancode, LicenseRef-PanCode-1.0: Builds an interactive map of a codebase from verified repository structure, symbols and imports, as one standalone HTML file with a readable overview and expandable source evidence. Install: `pancode hub install skill:map-codebase`
+- `skill:pancode-dev` v0.7.3, core, pancode, LicenseRef-PanCode-1.0: Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation. Install: `pancode hub install skill:pancode-dev`
+- `skill:pancode-test` v0.5.2, core, pancode, LicenseRef-PanCode-1.0: Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself. Install: `pancode hub install skill:pancode-test`
+- `skill:plan-interview` v0.5.7, core, pancode, LicenseRef-PanCode-1.0: Stress-tests a plan, design, or idea through a phased one-question-at-a-time interview before code is written, ending in a compact decision log. Not for a multi-perspective debate; use design-council. Install: `pancode hub install skill:plan-interview`
+- `skill:prd` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Turns an idea into a product requirements document through a phase-gated interview, ending in PRD.md plus per-milestone prompt files ready to drive a coding agent. Not for the problem-first product thesis; use product-intent. Install: `pancode hub install skill:prd`
+- `skill:product-intent` v0.4.6, core, pancode, LicenseRef-PanCode-1.0: Writes a problem-first product document for a greenfield effort: interviews for the problem, evidence, and a falsifiable hypothesis, with zero engineering decisions. Not for engineering decisions; use architecture. Not for turning a locked idea into milestone build prompts; use prd. Install: `pancode hub install skill:product-intent`
+- `skill:prototype` v0.4.4, core, pancode, LicenseRef-PanCode-1.0: Answers a design question with throwaway code: a clearly marked, runnable, no-persistence prototype whose verdict is kept and whose code is discarded. Not for pre-registered performance experiments; use experiment-protocol. Not for production implementation. Install: `pancode hub install skill:prototype`
+- `skill:resolve-merge-conflicts` v0.4.3, core, pancode, LicenseRef-PanCode-1.0: Resolves a merge, rebase, or cherry-pick stopped on conflicts by reconstructing both sides' intent, validating with the project's own checks, and completing the operation. Not for integrating many branches; use worktree-merge. Install: `pancode hub install skill:resolve-merge-conflicts`
+- `skill:scientific-debugging` v0.3.5, core, pancode, LicenseRef-PanCode-1.0: Diagnoses stalled or cross-system failures and wrong, NaN, nondeterministic, or unexpectedly slow scientific results through falsifiable hypotheses across distinct fault classes, with evidence-cited verdicts before any fix. Not for designing benchmarks or pre-registered experiments; use experiment-protocol. Install: `pancode hub install skill:scientific-debugging`
+- `skill:scientific-modernization` v0.4.6, core, pancode, LicenseRef-PanCode-1.0: Modernizes, ports, rewrites, packages, or replaces established scientific software in independently validated stages against an external scientific oracle, settling compatibility and upstream stewardship before calling it complete. Not for an isolated benchmark; use experiment-protocol. Not for diagnosing wrong results; use scientific-debugging. Install: `pancode hub install skill:scientific-modernization`
+- `skill:ship` v0.5.5, core, pancode, LicenseRef-PanCode-1.0: Ships finished work: writes one reviewed atomic commit, keeps maintainer branches local, or pushes a contributor branch to their fork and opens a PR only on explicit intent. Not for producing the change; use fix-issue. Install: `pancode hub install skill:ship`
+- `skill:skill-authoring` v0.4.3, core, pancode, LicenseRef-PanCode-1.0: Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture. Install: `pancode hub install skill:skill-authoring`
+- `skill:sprint-plan` v0.4.5, core, pancode, LicenseRef-PanCode-1.0: Slices an existing plan, PRD, or milestone into an executable sprint of dependency-ordered vertical slices sized for one agent run each, with done-when verification per slice; never fabricates a plan. Not for deciding the approach; use architecture. Install: `pancode hub install skill:sprint-plan`
+- `skill:tdd` v0.4.3, core, pancode, LicenseRef-PanCode-1.0: Builds a feature or fix test-first, red to green at pre-agreed public seams, one vertical slice at a time. Not for designing benchmark criteria; use experiment-protocol. Install: `pancode hub install skill:tdd`
+- `skill:tech-spec` v0.3.6, core, pancode, LicenseRef-PanCode-1.0: Writes a typed call-stack architecture handoff: code-shaped contracts plus execution flows, implementation-ready for another engineer. User-invoked only. Not for weighing approaches or deciding the design; use architecture first. Install: `pancode hub install skill:tech-spec`
+- `skill:web-debug` v0.1.1, core, pancode, LicenseRef-PanCode-1.0: Debugs a web front end in a headless browser: starts the dev server and a page check in one command, reads console errors, uncaught exceptions and failed requests as JSON, runs Playwright step files, and takes screenshots only for layout. Not for fetching documentation pages; use web_fetch. Install: `pancode hub install skill:web-debug`
+- `skill:workflow-capture` v0.4.8, core, pancode, LicenseRef-PanCode-1.0: Packages a workflow that just happened into a reusable SKILL.md: reconstructs it from the session record, checks overlap with installed skills, gates on approval, then writes it following skill-authoring. Not for authoring a skill with no prior workflow; use skill-authoring. Install: `pancode hub install skill:workflow-capture`
+- `skill:worktree-create` v0.6.3, core, pancode, LicenseRef-PanCode-1.0: Stands up one or more git worktrees for parallel work, each on its own branch with gitignored config copied in, dependencies installed, and a verified health check. Not for merging finished worktrees; use worktree-merge. Not for closeout; use branch-closeout. Install: `pancode hub install skill:worktree-create`
+- `skill:worktree-merge` v0.6.3, core, pancode, LicenseRef-PanCode-1.0: Integrates finished worktree branches through one throwaway integration branch, testing after each merge and running the full suite before the main line moves, with exact rollback on failure. Not for creating worktrees; use worktree-create. Not for closeout; use branch-closeout. Install: `pancode hub install skill:worktree-merge`
 
 ---
 
@@ -2303,13 +2135,17 @@ Setup looks for a provider key in your environment, a stored sign-in and a local
 PanCode sends the model one short test request and saves only when it answers; a browser sign-in you complete is the exception. In the recording of `pancode configure` on a fresh profile, setup found the stored GitHub Copilot sign-in and recommended gpt-6-luna. Choosing it printed these lines:
 
 ```text
-◇  Testing copilot-sdk / gpt-6-luna ... answered in 1.7 s.
+◇  Testing copilot-sdk / gpt-6-luna ... answered in 3.2 s.
 ◇  target copilot-sdk saved, runtime copilot-sdk
 ◇  chat runs on copilot-sdk, model gpt-6-luna
 ◇  fleet default is copilot-sdk
 ◇  settings written to ~/.config/pancode/settings.yaml
 ◇  Saved. Chat and workers use this model. Change it any time with /model or /config.
 ```
+
+![Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher's GitHub Copilot subscription on github.com is used under the organization's Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 3.2 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure.](https://pancode.dev/assets/guides/tui-configure-saved.webp)
+
+*Accepting the offer tests the recommended model and saves it as the default for chat and workers.*
 
 `pancode configure` runs setup again at any time. Its **Connect by endpoint** is the shortcut when you already know the URL. LM Studio commonly serves at `http://localhost:1234`; Ollama commonly serves at `http://localhost:11434`. The [connection guide](https://pancode.dev/docs/guide/configuration-and-targets.html) covers setup and credentials.
 
@@ -2351,22 +2187,22 @@ Once you understand the project, ask for one change you can check. Name the prob
 
 *A first task at default autonomy: the agent finds the guard that rejects 0 K, edits one line, and runs the project's declared test check without asking.*
 
-[Recording (asciicast)](https://pancode.dev/assets/casts/cast-first-task.cast), 0:23. Transcript:
+[Recording (asciicast)](https://pancode.dev/assets/casts/cast-first-task.cast), 0:22. Transcript:
 
 ```text
 A first task in PanCode: fix a failing test and verify
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
-   ██████   ██████  ███   ██
-   ██   ██ ██    ██ ████  ██
-   ██████  ████████ ██ ██ ██
-   ██      ██    ██ ██  ████       ▐P▌ PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-   ██      ██    ██ ██   ███         awareness  not indexed yet · /context init
+   ██████  ██    ██ ███   ██
+   ██   ██ ████████ ████  ██
+   ██████  ██    ██ ██ ██ ██
+   ██      ██    ██ ██  ████       ▐∀▌ PanCode 0.9.1 · Systems software for coding agents
+   ██       ██████  ██   ███         awareness  not indexed yet · /context init
                                      last here  no earlier session here
  ██████  ██████  ██████  ███████
-██      ██    ██ ██   ██ ██          Ask Panos to explain code before you change it.
+██      ██    ██ ██   ██ ██          /view shows every tool call and its full output.
 ██      ██    ██ ██   ██ █████
 ██      ██    ██ ██   ██ ██
  ██████  ██████  ██████  ███████
@@ -2375,19 +2211,23 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  i No PANCODE.md detected. Run /context init to explore the repo and bootstrap context.                Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
  ? keys · / commands                                              Try /run to dispatch parallel workers │ Alt+U details
 
 == tui-verify
 
+▐∀▌ PanCode 0.9.1
+
+▌ The absolute-zero test fails. Find the cause, fix it, and run the test check.
+
 ▸ navigated project · 1 result ✓
-▸ searched for `absolute|zero|273\.15|273` · 19 matches ✓
-▸ navigated path `temperature.mjs` · 1 result ✓
+▸ navigated entries · 0 results ✓
+▸ searched for `absolute|kelvin|Kelvin|273\.15|273.15` · 40+ matches · truncated ✓
 
 ▸ read · 4.8KB ✓
   │ paths › temperature.mjs · calibration.test.mjs
 
-│ Thinking · I need to address an issue where Kelvin values less than or equal to zero are wrongly rejecting zero, whi…
+│ Thinking · I see there’s an issue with how Kelvin values are handled—specifically, that they should allow zero. I ne…
 
 ▸ navigated symbol `kelvinToCelsius` · 2 results ✓
 
@@ -2400,33 +2240,27 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
   │  25 }
   │     ...
 
-$ checked test · exit 0 · 24 lines ✓
-  │ … 21 earlier lines · /view
+$ checked test · exit 0 · 19 lines ✓
+  │ … 16 earlier lines · /view
   │ ℹ pass 7
   │ ℹ fail 0
-
-■ Fixed kelvinToCelsius: its kelvin <= 0 check incorrectly rejected exactly 0 K. It now rejects only values below zero.
-  The test check passes: all 7 tests passed.
-
-✓ Done · 12s · 8 calls · in 24 · out 374 · cached 96.3k · cache write 3.8k · 13:41
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- i checks passed; coverage of the change not measured                                                  Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
- /view inspects recorded tool calls and full outputs                                                      Alt+U details
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ● waiting for model · 1s              ctx ▰▱▱▱▱▱ 6% │ copilot · gpt-6-luna
+ Esc stops · Type while running to steer at the next step · Alt+Q manages queue                           Alt+U details
 
 == tui-verify-result
 
 ▸ navigated project · 1 result ✓
-▸ searched for `absolute|zero|273\.15|273` · 19 matches ✓
-▸ navigated path `temperature.mjs` · 1 result ✓
+▸ navigated entries · 0 results ✓
+▸ searched for `absolute|kelvin|Kelvin|273\.15|273.15` · 40+ matches · truncated ✓
 
 ▸ read · 4.8KB ✓
   │ paths › temperature.mjs · calibration.test.mjs
 
-│ Thinking · I need to address an issue where Kelvin values less than or equal to zero are wrongly rejecting zero, whi…
+│ Thinking · I see there’s an issue with how Kelvin values are handled—specifically, that they should allow zero. I ne…
 
 ▸ navigated symbol `kelvinToCelsius` · 2 results ✓
 
@@ -2439,21 +2273,21 @@ $ checked test · exit 0 · 24 lines ✓
   │  25 }
   │     ...
 
-$ checked test · exit 0 · 24 lines ✓
-  │ … 21 earlier lines · /view
+$ checked test · exit 0 · 19 lines ✓
+  │ … 16 earlier lines · /view
   │ ℹ pass 7
   │ ℹ fail 0
 
-■ Fixed kelvinToCelsius: its kelvin <= 0 check incorrectly rejected exactly 0 K. It now rejects only values below zero.
-  The test check passes: all 7 tests passed.
+■ Fixed: kelvinToCelsius rejected 0 K because its absolute-zero check used <= 0. Changed it to reject only values below
+  zero. The test check passes: all 7 tests passed.
 
-✓ Done · 12s · 8 calls · in 24 · out 374 · cached 96.3k · cache write 3.8k · 13:41
+✓ Done · 12s · 8 calls · in 24 · out 365 · cached 101k · cache write 5.1k · 12:17
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  i checks passed; coverage of the change not measured                                                  Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 6% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
  /view inspects recorded tool calls and full outputs                                                      Alt+U details
 ```
 
@@ -2502,99 +2336,111 @@ The terminal combines the conversation, tool calls, permissions, and worker acti
 
 Each tool call stays on its own line with its result, so you can see what ran before you read the answer. `/view` opens the recorded calls and their output.
 
-![Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos searches the project, finds kelvinToCelsius, edits one line of temperature.mjs, runs the test check with exit 0, and explains that kelvin <= 0 rejected exactly 0 K and that all 7 tests passed, in 9.1s.](https://pancode.dev/assets/guides/anim-fix-a-test.webp)
+![Fullscreen terminal recording of PanCode on gpt-6-luna: the question why the absolute-zero test fails is typed into the composer and sent with a request to fix it and run the test check; Panos explores the project with 5 searches and 2 files, runs the test check and sees 6 pass and 1 fail, edits one line of temperature.mjs, runs the test check again with exit 0, and explains that kelvinToCelsius rejected 0 K because its check used <= 0 and that all 7 tests passed, in 11s.](https://pancode.dev/assets/guides/anim-fix-a-test.webp)
 
 *A short task on GPT-6 Luna through GitHub Copilot: the agent finds the off-by-one guard, edits it, and runs the project's test check.*
 
-[Recording (asciicast)](https://pancode.dev/assets/casts/anim-fix-a-test.cast), 0:20. Transcript:
+[Recording (asciicast)](https://pancode.dev/assets/casts/anim-fix-a-test.cast), 0:22. Transcript:
 
 ```text
 Fixing a failing test in PanCode with GPT-6 Luna
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /model switches the chat model.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
+  ∀  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
 
 == asked
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /model switches the chat model.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Why does the absolute-zero test fail?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
 
 == edited
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ● waiting for model · 0s · Esc stops
-  P  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+  ∀  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == checked
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
-$ checked test · exit 0 · 24 lines ✓
+$ checked test · exit 0 · 19 lines ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ● waiting for model · 0s · Esc stops
-  P  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
+  ∀  default · calibration-lab · main                              ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna
 
 == done
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
   Why does the absolute-zero test fail? Fix it and run the test check.
 
-▸ explored 1 search ✓
-  │ project
-▸ searched for `absolute.?zero|273\.15|Kelvin|kelvin` · 20+ matches · truncated ✓
-▸ explored 1 search, 1 file ✓
-  │ symbol `kelvinToCelsius`
+▸ explored 5 searches, 2 files ✓
+  │ project · `absolute.?zero|Absolute Zero|absolute zero` · entries `temperature conversion
+  │ absolute zero test` · path `temperature.mjs` · path `calibration.test.mjs` · temperature.mjs ·
+  │ calibration.test.mjs
+$ checked test · 1.4KB ✗ failed
+  │ … 29 earlier lines · /view
+  │ ℹ pass 6
+  │ ℹ fail 1
+  │       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
 ± edited temperature.mjs · +1 -1 ✓
-$ checked test · exit 0 · 24 lines ✓
+$ checked test · exit 0 · 19 lines ✓
 
-  The absolute-zero test failed because kelvinToCelsius rejected kelvin <= 0, treating exactly 0 K
-  as below absolute zero. Changed the check to reject only values below 0 K. The test check passes:
-  all 7 tests passed.
+  Found it: kelvinToCelsius rejected 0 K because its absolute-zero check used <= 0, although
+  absolute zero is valid. Changed it to reject only values below zero. The test check passes: all 7
+  tests passed.
 
-✓ Done · 9.1s · 13:51
+✓ Done · 11s · 12:35
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main* │ ✓ ready               ctx ▰▱▱▱▱▱ 5% · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main* │ ✓ ready               ctx ▰▱▱▱▱▱ 6% · low · gpt-6-luna · ?
 ```
 
 During a turn, **Enter** queues a message that PanCode reads at the next pause between tool calls, **Alt+S** sends it now, and **Escape** cancels the run.
@@ -2627,7 +2473,7 @@ A first run with no model connection opens on guided setup, which asks the same 
 
 *Start a task in a workspace; earlier tasks stay under it in the sidebar.*
 
-![PanCode desktop app, version 0.9.0-dev, with the calibration-lab workspace in the sidebar. A finished task: after groups of 8 and 2 completed tools, Panos reports it removed dist/, rebuilt it and that npm test passed all 7 tests, then lists the reference points for freezing, boiling and absolute zero and the Celsius values the round-trip checks use. The footer reads Done, 21s, 10 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low.](https://pancode.dev/assets/gui-task.webp)
+![PanCode desktop app, version 0.9.1, with the calibration-lab workspace in the sidebar. A finished task: two collapsed tool groups (3 searches; then 2 file reads, a folder listing and a command), with Panos reporting it deleted dist/, rebuilt it and that npm test passed all 7 tests, then listing the reference temperatures calibration.test.mjs checks: freezing, boiling, absolute zero and the round-trip inputs 25, −10, 36.6, 100, 273.15, 0 and −40°C. The footer reads Done, 12s, 7 tool calls; the composer shows Ask first, gpt-6-luna and Thinking low.](https://pancode.dev/assets/gui-task.webp)
 
 *A finished task in the desktop app: the tool groups, the answer and the turn footer.*
 
@@ -2705,16 +2551,16 @@ This is a hard block; confirmation cannot override it.
 
 ```text
 PanCode refuses to read a project secret
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
-   ██████   ██████  ███   ██
-   ██   ██ ██    ██ ████  ██
-   ██████  ████████ ██ ██ ██
+   ██████  ██    ██ ███   ██
+   ██   ██ ████████ ████  ██
+   ██████  ██    ██ ██ ██ ██
    ██      ██    ██ ██  ████
-   ██      ██    ██ ██   ███       ▐P▌ PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                                   /rewind undoes file changes.
+   ██       ██████  ██   ███       ▐∀▌ PanCode 0.9.1 · Systems software for coding agents
+                                   /model switches the chat model.
  ██████  ██████  ██████  ███████
 ██      ██    ██ ██   ██ ██
 ██      ██    ██ ██   ██ █████
@@ -2724,11 +2570,11 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- ▐P▌ default · projects/calibration-lab · main* │ ✓ ready                               ctx 272k · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · main* │ ✓ ready                               ctx 272k · low · gpt-6-luna · ?
 
 == blocked
 
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ How many bytes is .env? Run wc -c .env with bash and tell me exactly what happens. If it is blocked, name the rule.
 
@@ -2737,20 +2583,20 @@ $ bash `wc -c .env` · runs a command ✗ blocked
   │ rule: secret_path_bash
   │ This is a hard block; confirmation cannot override it.
 
-■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches a zero-access path. The command did not run,
-  so I can’t report its byte count.
+■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches the zero-access path. The command did not
+  run, so I can’t report its byte count. The rule says this is a hard block; confirmation cannot override it.
 
-✓ Done · 3.2s · 13:44
+✓ Done · 2.9s · 12:18
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ! PanCode's safety net blocked bash because it runs a command. This gate applies at…     Alt+U more · Ctrl+G X dismiss
- ▐P▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
 
 == answer
 
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ How many bytes is .env? Run wc -c .env with bash and tell me exactly what happens. If it is blocked, name the rule.
 
@@ -2759,16 +2605,16 @@ $ bash `wc -c .env` · runs a command ✗ blocked
   │ rule: secret_path_bash
   │ This is a hard block; confirmation cannot override it.
 
-■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches a zero-access path. The command did not run,
-  so I can’t report its byte count.
+■ PanCode blocked wc -c .env under the secret_path_bash rule: .env matches the zero-access path. The command did not
+  run, so I can’t report its byte count. The rule says this is a hard block; confirmation cannot override it.
 
-✓ Done · 3.2s · 13:44
+✓ Done · 2.9s · 12:18
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ! PanCode's safety net blocked bash because it runs a command. This gate applies at…     Alt+U more · Ctrl+G X dismiss
- ▐P▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
+ ▐∀▌ default · projects/calibration-lab · main* │ ✓ ready                          ctx ▰▱▱▱▱▱ 4% · low · gpt-6-luna · ?
 ```
 
 ### Give it a task and watch what happens
@@ -2855,6 +2701,7 @@ To keep unconfined yolo inside the sandbox, also set `safety.sandbox: required`.
 - [Check a change against your repository](https://pancode.dev/tutorials/check-a-change-against-your-repository.html)
 - [Tools and permissions](https://pancode.dev/docs/guide/tool-usage.html)
 - [Keep a long coding task on track](https://pancode.dev/tutorials/keep-long-coding-tasks-on-track.html)
+- [How protection works](https://pancode.dev/research/protection.html)
 
 ---
 
@@ -2961,6 +2808,7 @@ This copies the built-in playbook to `.pancode/playbooks/parser-fix.md`, where y
 
 - [Workers and fleets](https://pancode.dev/docs/guide/fleet-dispatch.html)
 - [See what a session cost and what a run did](https://pancode.dev/tutorials/see-what-a-session-cost-and-what-a-run-did.html)
+- [How scheduling works](https://pancode.dev/research/scheduling.html)
 
 ---
 
@@ -3085,6 +2933,7 @@ The real frame carries more fields, such as usage, timings, and tool counts. `pa
 - [Let PanCode work without watching every call](https://pancode.dev/tutorials/let-it-work-with-containment-and-rewind.html)
 - [Report a problem without leaking your machine](https://pancode.dev/tutorials/report-a-problem-without-leaking-your-machine.html)
 - [Commands and shortcuts](https://pancode.dev/docs/guide/commands-and-modes.html)
+- [How protection works](https://pancode.dev/research/protection.html)
 
 ---
 
@@ -3275,6 +3124,12 @@ Pass the task as an argument. `run` reads stdin only when you pass `-`, so a pip
 
 [Run it unattended within limits](https://pancode.dev/tutorials/run-it-unattended-within-limits.html) covers read-only runs, yolo, and scheduled turns. The [exit codes and output guide](https://pancode.dev/docs/guide/exit-codes-and-output.html) lists every field and cause.
 
+**Next steps**
+
+- [Run it unattended within limits](https://pancode.dev/tutorials/run-it-unattended-within-limits.html)
+- [Automate with pancode run](https://pancode.dev/docs/guide/exit-codes-and-output.html)
+- [How accounting works](https://pancode.dev/research/accounting.html)
+
 ---
 
 Source: https://pancode.dev/tutorials/see-what-a-session-cost-and-what-a-run-did.html
@@ -3283,7 +3138,7 @@ Source: https://pancode.dev/tutorials/see-what-a-session-cost-and-what-a-run-did
 
 > Read session cost and stop reasons from local journals, verify a sealed record, and prepare an archive that uploads nothing.
 
-PanCode records what each process, session, and worker run did in local journals, and every usage figure in every interface comes from those journals. This guide shows how to read a session's cost, find out why it stopped, check a run's record, and prepare an archive for a maintainer.
+PanCode records what each process, session, and worker run did in local journals, and every usage figure in every interface comes from those journals. This guide shows how to read a session's cost, find out why it stopped, check a run's record, and prepare an archive for the maintainers.
 
 **Version scope**
 
@@ -3343,7 +3198,7 @@ pancode telemetry share --session <id> --profile content-free --out report.tar.g
 
 Without `--send`, `share` writes an archive and uploads nothing. `content-free` is the default profile, with structural records and no objects or content. `structural` adds objects that hold structure, such as prompt manifests. Read the dry run before you send anything.
 
-![Terminal: telemetry why-stopped says the session closed after a normal last turn, with spend not measured over 208,794 tokens; telemetry verify reports the session sealed with 151 lines in 1 segment and 3 objects and its head hash; telemetry cost --by turn shows one turn with 14 calls and 208,794 tokens, cost not measured, and an economy line of 0.5053 credits.](https://pancode.dev/assets/guides/cli-telemetry-session.webp)
+![Terminal: telemetry why-stopped says the session closed after a normal last turn, with spend not measured over 147,026 tokens; telemetry verify reports the session sealed with 127 lines in 1 segment and 3 objects and its head hash; telemetry cost --by turn shows one turn with 10 calls and 147,026 tokens, cost not measured, and an economy line of 0.3362 credits.](https://pancode.dev/assets/guides/cli-telemetry-session.webp)
 
 *The session's record: why it stopped, whether it verifies, and what each turn used.*
 
@@ -3368,6 +3223,7 @@ Figures labelled by provenance, and a `verify` result that names any gap. A clea
 - [Keep a long coding task on track](https://pancode.dev/tutorials/keep-long-coding-tasks-on-track.html)
 - [Run it unattended within limits](https://pancode.dev/tutorials/run-it-unattended-within-limits.html)
 - [Check your installation](https://pancode.dev/docs/guide/doctor.html)
+- [How accounting works](https://pancode.dev/research/accounting.html)
 
 ---
 
@@ -3443,6 +3299,7 @@ Passing tests establish the behavior covered by those tests. This small example 
 
 - [Check a change against your repository](https://pancode.dev/tutorials/check-a-change-against-your-repository.html)
 - [Quality policy guide](https://pancode.dev/docs/guide/quality-policy.html)
+- [How accounting works](https://pancode.dev/research/accounting.html)
 
 ---
 
@@ -3520,7 +3377,7 @@ Setup sends the model one short test request and saves when it answers. After a 
 
 *Guided setup asks what you have: an API key, a subscription, a model server or gateway, or a setup file.*
 
-![Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher's GitHub Copilot subscription on github.com is used under the organization's Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 1.7 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure.](https://pancode.dev/assets/guides/tui-configure-saved.webp)
+![Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher's GitHub Copilot subscription on github.com is used under the organization's Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 3.2 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure.](https://pancode.dev/assets/guides/tui-configure-saved.webp)
 
 *Accepting the offer tests the recommended model and saves it as the default for chat and workers.*
 
@@ -3532,25 +3389,25 @@ After setup, `/model` lists the models of every connected target and switches th
 
 *One subscription, many models: /model lists what the connected target offers and switches the session without leaving the conversation.*
 
-[Recording (asciicast)](https://pancode.dev/assets/casts/anim-model-switch.cast), 0:21. Transcript:
+[Recording (asciicast)](https://pancode.dev/assets/casts/anim-model-switch.cast), 0:20. Transcript:
 
 ```text
 Switching models in PanCode
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
-                           P  PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-                          Ask Panos how to use or extend PanCode.
+                           ∀  PanCode 0.9.1 · Systems software for coding agents
+                          /usage shows activity, accounts and model use.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
+  ∀  default · calibration-lab │ ✓ ready                                                 gpt-6-luna
 
 == models
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 ━ Models ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   all · 26 of 26 models · 1 target · ✓ current copilot · gpt-6-luna
@@ -3569,34 +3426,34 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
   1–10 of 26 models · PgUp/PgDn page
   ✓ copilot · gpt-6-luna · healthy · in use, its connection's default · no sign-in needed
 ━━━━━━━━━━━━━━━━━ [type] filter · [Enter] use · [s] save · [Tab] focus/all · [*] fav · [Esc] close ━
-  P  default · calibration-lab · main │ ✓ ready                         ctx 272k · low · gpt-6-luna
+  ∀  default · calibration-lab · main │ ✓ ready                         ctx 272k · low · gpt-6-luna
 
 == sonnet
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready              ctx 200k · low · claude-sonnet-5.5 · ?
+  ∀  default · calibration-lab · main │ ✓ ready              ctx 200k · low · claude-sonnet-5.5 · ?
 
 == gemini
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                 ctx 200k · low · gemini-4-argon · ?
+  ∀  default · calibration-lab · main │ ✓ ready                 ctx 200k · low · gemini-4-argon · ?
 
 == back
 
- P  PanCode 0.9.0-dev · 765279a
+ ∀  PanCode 0.9.1
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…  ? keys · / commands
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  P  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
+  ∀  default · calibration-lab · main │ ✓ ready                     ctx 272k · low · gpt-6-luna · ?
 ```
 
 **What you should see**
@@ -3641,13 +3498,14 @@ Vision support depends on the model and the route. A model advertised as multimo
 
 - PanCode runs locally, but a configured cloud model receives the input sent to that provider.
 - Local inference keeps inference on the selected server; tools, peers, plugins, and commands can still make network requests.
-- PanCode is free for individuals, small organizations, and noncommercial research and teaching. Inference hardware, provider usage, and subscriptions can still cost money.
+- PanCode is free for individuals, small organizations (fewer than 100 people and under $1M revenue), and noncommercial research and teaching. Inference hardware, provider usage, and subscriptions can still cost money.
 
 **Next steps**
 
 - [See what a session cost and what a run did](https://pancode.dev/tutorials/see-what-a-session-cost-and-what-a-run-did.html)
 - [Connection guide](https://pancode.dev/docs/guide/configuration-and-targets.html)
 - [Install PanCode](https://pancode.dev/#start)
+- [How the drivers work](https://pancode.dev/research/drivers.html)
 
 ---
 
@@ -3655,13 +3513,13 @@ Source: https://pancode.dev/tutorials/coordinate-your-coding-agents.html
 
 # Coordinate the coding agents you already use
 
-> Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them.
+> Hand a bounded task to a coding agent you have installed, tell a managed run from an interactive handoff, and review what comes back before you combine it.
 
 You can use PanCode to coordinate the coding agents you already have installed. Give a peer a focused assignment, follow a managed run where the connector supports it, and review its output before accepting the change.
 
 **Version scope**
 
-The supported peer family includes Claude Code, Codex, OpenCode, Pi, and Antigravity. Their modes and controls differ. Install and authenticate each peer's own CLI before configuring it in PanCode.
+The supported peers are Claude Code, Codex, OpenCode, Pi, and Antigravity. Their modes and controls differ. Install and authenticate each peer's own CLI before configuring it in PanCode.
 
 ## Before you start
 
@@ -3752,6 +3610,7 @@ When comparing agents, give them the same task and evaluate the actual output. R
 - [Ask several agents at once](https://pancode.dev/tutorials/ask-several-agents-at-once.html)
 - [Project quality checks](https://pancode.dev/docs/guide/quality-policy.html)
 - [Interoperability guide](https://pancode.dev/docs/guide/interop.html)
+- [How scheduling works](https://pancode.dev/research/scheduling.html)
 
 ---
 
@@ -3759,7 +3618,7 @@ Source: https://pancode.dev/tutorials/keep-long-coding-tasks-on-track.html
 
 # Keep a long coding task on track
 
-> Inspect context, preserve decisions through a handoff, and resume the correct branch without turning every past message into a current instruction.
+> See what fills the context, carry your decisions through a handoff, and resume the right branch of a long task.
 
 Long coding work needs more than saved chat history. You need the current objective, the decisions that still apply, the relevant files, and the checks left to run. PanCode gives you controls for inspecting that context and continuing after a session grows.
 
@@ -3793,11 +3652,11 @@ The codemap locates structural information without reading every file into the c
 
 In the terminal, `/context` shows usage, output reservation, remaining headroom, and any pending handoff. On the desktop alpha, the Session column has **Context** and **Branches** cards, and typing `/` in the composer offers `/context`, `/tree`, `/fork`, and `/handoff`.
 
-![Terminal /context panel after one turn: 12.8k / 272k tokens in use (4.7%), split into system prompt, tool definitions, agent fleet, project context, messages, tool results and assistant output, with 205k free and a 54.4k autocompact reserve; autocompact runs at 80% with 12 active tools, and the next request has 226k of headroom.](https://pancode.dev/assets/guides/tui-context.webp)
+![Terminal /context panel after one turn: 12.9k / 272k tokens in use (4.7%), split into system prompt, tool definitions, agent fleet, project context, messages, tool results and assistant output, with 205k free and a 54.4k autocompact reserve; autocompact runs at 80% with 12 active tools, and the next request has 226k of headroom.](https://pancode.dev/assets/guides/tui-context.webp)
 
 */context: the window size, the tokens in use, and what fills them.*
 
-![Terminal after /fork: a notice that the conversation forked into a new session while the original is unchanged and workspace files were not rewound, then the Session tree dock showing where the fork came from, a legend, and the first 10 of 41 turns (You, Panos, tool calls and tool results), with the selected turn's id, time and what Enter does.](https://pancode.dev/assets/guides/tui-tree.webp)
+![Terminal after /fork: a notice that the conversation forked into a new session while the original is unchanged and workspace files were not rewound, then the Session tree dock showing where the fork came from, a legend, and the first 10 of 35 turns (You, Panos, tool calls and tool results), with the selected turn's id, time and what Enter does.](https://pancode.dev/assets/guides/tui-tree.webp)
 
 */tree after /fork: the branch records where it came from, and Enter continues from an earlier turn.*
 
@@ -3861,6 +3720,7 @@ Stored memory is not fine-tuning of the underlying model. Its value depends on s
 - [Run a research campaign and a blind arena](https://pancode.dev/tutorials/run-a-research-campaign-and-a-blind-arena.html)
 - [Continuity guide](https://pancode.dev/docs/guide/context-continuity.html)
 - [PanHub](https://pancode.dev/docs/guide/panhub.html)
+- [How memory works](https://pancode.dev/research/memory.html)
 
 ---
 
@@ -3868,7 +3728,7 @@ Source: https://pancode.dev/tutorials/check-a-change-against-your-repository.htm
 
 # Check a change against your repository
 
-> Declare which checks matter, run them through verification, and inspect whether passing results still match the files you are reviewing.
+> Name the checks that matter, run them through verify, and see whether a passing result still matches the files you are reviewing.
 
 A useful coding result includes more than "done." You need to know what changed, which checks ran, and whether those results still apply to the files you are reviewing. PanCode can use your repository's declared checks and a project quality policy to make those questions explicit.
 
@@ -3900,7 +3760,7 @@ Read the resolved command and working directory in the tool activity. A recogniz
 
 When a command does ask, the terminal approval card names the tool and the exact command. Its **effect** row says in plain words what a recognized command changes, and warns when PanCode cannot classify the command at all.
 
-![Terminal approval card for bash git push origin main, after the request Run git push origin main: it is marked outward consequence at default autonomy, with timeout_ms=300000, effect Publishes to origin and undo not guaranteed, Enter to allow, Esc to deny and Alt+X to stop the turn, and a note that no answer in 4:59 denies the call.](https://pancode.dev/assets/guides/tui-approval-effect.webp)
+![Terminal approval card for bash git push origin main, after the request Run git push origin main: it is marked runs a command at default autonomy, with effect Publishes to origin and undo not guaranteed, Enter to allow, Esc to deny and Alt+X to stop the turn, and a note that no answer in 4:59 denies the call.](https://pancode.dev/assets/guides/tui-approval-effect.webp)
 
 *An outward command such as git push comes to you; the effect row says what it would change.*
 
@@ -3981,6 +3841,7 @@ The actual check, its result, and any missing evidence. A sealed run record is a
 - [Run a research campaign and a blind arena](https://pancode.dev/tutorials/run-a-research-campaign-and-a-blind-arena.html)
 - [Quality policy guide](https://pancode.dev/docs/guide/quality-policy.html)
 - [Install PanCode](https://pancode.dev/#start)
+- [How accounting works](https://pancode.dev/research/accounting.html)
 
 ---
 
@@ -4116,7 +3977,7 @@ Source: https://pancode.dev/tutorials/work-from-a-laptop-with-remote-workers.htm
 
 # Work from a laptop with remote workers
 
-> Use a local PanCode session to coordinate SSH workers when your machines share the required project path, runtime version, and approved access.
+> Coordinate workers on other machines over SSH from your laptop, once each node has the same PanCode version and the project at the same path.
 
 Your conversation can stay on your laptop while a worker runs tools on another machine. Register an SSH node, install the exact PanCode build if needed, verify its project and model route, then choose where the first bounded task runs.
 
@@ -4219,7 +4080,7 @@ Model facts distinguish network reachability, access to the model listing, model
 
 Each registered node adds a `fleet node <id>` row to `doctor` with its host, remote version and project check. The recording shows the report on a fresh install, before any node or model is added; each warning names the command that clears it.
 
-![Terminal recording of pancode doctor --fix and then pancode doctor on a fresh install of PanCode 0.9.0-dev: a WARN row says chat cannot run yet because no model target is configured and names pancode configure, an OK row shows the version, and a WARN row says the herdr pane host 0.9.5 is not installed and names pancode panes install. The second report ends with 2 rows need attention, 42 checks passed, 13 notes, and points to pancode doctor --verbose for every row.](https://pancode.dev/assets/guides/cli-doctor.webp)
+![Terminal recording of pancode doctor --fix and then pancode doctor on a fresh install of PanCode 0.9.1: a WARN row says chat cannot run yet because no model target is configured and names pancode configure, an OK row shows the version, and a WARN row says the herdr pane host 0.9.5 is not installed and names pancode panes install. The second report ends with 2 rows need attention, 42 checks passed, 13 notes, and points to pancode doctor --verbose for every row.](https://pancode.dev/assets/guides/cli-doctor.webp)
 
 *Doctor on a fresh install lists only the rows that need attention, each with the command that clears it.*
 
@@ -4227,13 +4088,13 @@ Each registered node adds a `fleet node <id>` row to `doctor` with its host, rem
 
 ```text
 PanCode doctor on a fresh install
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == repaired
 
 ~ $ pancode doctor --fix
 WARN chat                   cannot run yet: no model target is configured; run `pancode configure` to choose one
-OK   PanCode version        0.9.0-dev (unreleased · 765279a)
+OK   PanCode version        0.9.1
 WARN external tool herdr    pane host 0.9.5 is not installed; run `pancode panes install`
 chat is not set up: run `pancode configure`
 2 rows need attention, 44 checks passed, 13 notes; `pancode doctor --verbose` prints every row
@@ -4243,7 +4104,7 @@ chat is not set up: run `pancode configure`
 
 ~ $ pancode doctor
 WARN chat                   cannot run yet: no model target is configured; run `pancode configure` to choose one
-OK   PanCode version        0.9.0-dev (unreleased · 765279a)
+OK   PanCode version        0.9.1
 WARN external tool herdr    pane host 0.9.5 is not installed; run `pancode panes install`
 chat is not set up: run `pancode configure`
 2 rows need attention, 42 checks passed, 13 notes; `pancode doctor --verbose` prints every row
@@ -4325,6 +4186,7 @@ PanCode does not submit jobs for its own workers. The agent submits scheduler wo
 - [Fleet guide](https://pancode.dev/docs/guide/fleet-dispatch.html)
 - [Install on a cluster](https://pancode.dev/docs/guide/hpc-clusters.html)
 - [Install PanCode](https://pancode.dev/#start)
+- [How scheduling works](https://pancode.dev/research/scheduling.html)
 
 ---
 
@@ -4473,6 +4335,7 @@ Try it on a task you can check before trusting it with a long one. This page mak
 - [Choose a model for your project](https://pancode.dev/tutorials/choose-model-for-your-project.html)
 - [Connection guide](https://pancode.dev/docs/guide/configuration-and-targets.html)
 - [Bring a fast decision model with System One](https://pancode.dev/research/system-one-decisions.html)
+- [How the drivers work](https://pancode.dev/research/drivers.html)
 
 ---
 
@@ -4639,8 +4502,9 @@ Native workers check each model request. Coding agents that make their own model
 **Next steps**
 
 - [Tools and permissions](https://pancode.dev/docs/guide/tool-usage.html)
-- [Information flow guide in the repository](https://github.com/akougkas/pancode/blob/ff215460f467aea6f3b0211a6996e5746e87ae75/docs/guide/information-flow.md)
+- [Information flow guide in the repository](https://github.com/PanStudio/pancode/blob/0241470c83204f6dfb03baa5771a8d125fda3014/docs/guide/information-flow.md)
 - [Choose a model for your project](https://pancode.dev/tutorials/choose-model-for-your-project.html)
+- [How protection works](https://pancode.dev/research/protection.html)
 
 ---
 
@@ -4814,6 +4678,7 @@ To enforce a boundary for named files, use [information-flow rules](https://panc
 - [Choose a model for your project](https://pancode.dev/tutorials/choose-model-for-your-project.html)
 - [Connection guide](https://pancode.dev/docs/guide/configuration-and-targets.html)
 - [When do several agents or small models pay off?](https://pancode.dev/research/fleets-and-local-models.html)
+- [How the drivers work](https://pancode.dev/research/drivers.html)
 
 ---
 
@@ -5122,6 +4987,7 @@ If you change the settings of a target a member already has, their import is ref
 - [Connect PanCode on an HPC login node](https://pancode.dev/docs/guide/hpc-clusters.html)
 - [Setup files and model targets](https://pancode.dev/docs/guide/configuration-and-targets.html)
 - [Run on a local model](https://pancode.dev/tutorials/run-on-a-local-model.html)
+- [How the drivers work](https://pancode.dev/research/drivers.html)
 
 ---
 
@@ -5287,7 +5153,7 @@ pancode research start --check bench --metric wall_ms --direction min \
 
 `--scope` limits which files the agent may change, and an iteration that changes anything outside it is archived without being measured. The checks and every file they name are protected the same way, so the agent cannot speed up the benchmark by editing it.
 
-**What the recorded session printed**
+**What the session printed**
 
 ```text
 campaign r20261114-233756-1d28 (stopped: max-iterations)
@@ -5357,7 +5223,7 @@ pancode arena standings --suite speed
 
 Before a vote, `show` lists A and B in a seeded random order and hides the target, model, duration, tokens and cost. `--reveal` before a vote is refused. PanCode never grades a contender; the vote is yours, and so is the note.
 
-**What the recorded session printed**
+**What the session printed**
 
 ```text
 recorded tie for match 20261114-233756-7102; arena show 20261114-233756-7102 reveals who is who
@@ -5431,7 +5297,7 @@ Without `--body-file`, a terminal opens `$EDITOR` on a template. `--session <id>
 The preview opens with where the report would go, then the body exactly as it would be sent:
 
 ```text
-Public, posted from your gh account to github.com/akougkas/pancode; nothing sent yet
+Public, posted from your gh account to github.com/PanStudio/pancode; nothing sent yet
 
 ----- title -----
 
@@ -5451,7 +5317,7 @@ Masked by PanCode: 1 path, 1 host name. No secrets recognized.
 No diagnostic bundle is attached.
 
 Sending will, in this order:
-  1. search akougkas/pancode for an existing report of the same problem
+  1. search PanStudio/pancode for an existing report of the same problem
   2. post the text you reviewed as a public issue from your gh account
 dry run: nothing sent
 ```
@@ -5635,6 +5501,7 @@ The answers stay out of your main conversation. `/fleet share <runId>` brings on
 - [Workers and fleets](https://pancode.dev/docs/guide/fleet-dispatch.html)
 - [Commands and shortcuts](https://pancode.dev/docs/guide/commands-and-modes.html)
 - [Coordinate the coding agents you already use](https://pancode.dev/tutorials/coordinate-your-coding-agents.html)
+- [How scheduling works](https://pancode.dev/research/scheduling.html)
 
 ---
 
@@ -5646,9 +5513,9 @@ Source: https://pancode.dev/research/drivers.html
 
 A model reaches PanCode through a wire format, and each wire caches, prices, and constrains a request in its own way. The driver layer shapes every request for its wire and records what the provider's cache did with it. This page describes that design, where it lives in the source, and how to measure it.
 
-**Design described for the 0.9.0 development tree**
+**Design described for PanCode 0.9.1**
 
-The mechanisms here are read from source on the development branch, and some are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 
 ## The design
 
@@ -5657,7 +5524,7 @@ The mechanisms here are read from source on the development branch, and some are
 - **Tool rounds that keep the prefix.** When a turn must call one named tool, wires that allow it keep the full tool list and name the tool, so the cached tool block survives. A provider's rejection is remembered for that target and model.
 - **Keepalive that has to pay for itself.** While a turn waits on a long tool, a small request can keep the cache warm. It is sent only when the expected saving exceeds its own cost by at least five cents.
 - **Capabilities from the live server.** A probe of the inference server decides tools, vision, and reasoning before a packaged profile does, and an operator setting can only lower what was found. A context window that nobody reported stays unknown.
-- **Family repairs.** Parsers recover tool calls from models that emit them in a nonstandard channel, and a response that stops with thinking and no answer is retried once at a lower thinking level.
+- **Per-model repairs.** Parsers recover tool calls from models that emit them in a nonstandard channel, and a response that stops with thinking and no answer is retried once at a lower thinking level.
 
 Reasoning, vision, and diffusion models run through this layer. For a diffusion model, PanCode renders refinement frames in the terminal, and the agent loop is the same one other models use. A decision model is a separate, opt-in engine for typed questions.
 
@@ -5674,7 +5541,7 @@ Reasoning, vision, and diffusion models run through this layer. For a diffusion 
 
 ## The question
 
-Does shaping each request for its wire reduce the fresh input a session pays for, and by how much on each model family? The answer could be no. A provider may cache well enough without help that the split adds nothing.
+Does shaping each request for its wire reduce the fresh input a session pays for, and by how much on each model lineage? The answer could be no. A provider may cache well enough without help that the split adds nothing.
 
 ## What is known so far
 
@@ -5683,7 +5550,7 @@ These are facts about the design, read from source. They are not study results.
 - Behavior on the Codex wire rests on measurements of one model on one date.
 - The thresholds that declare a cache break are empirical, and some breaks still record an unknown cause.
 - The pinned prefix and tool-round control have no off switch, so they cannot be compared with a baseline yet.
-- Prompt wording changes very little between model families.
+- Prompt wording changes very little between model lineages.
 - Nothing in the loop, the budgets, or tool handling is specific to diffusion models.
 
 ## Why it matters
@@ -5716,13 +5583,15 @@ pancode targets --probe
 
 The probe shows the capabilities each target answered with.
 
+Worked example: [Choose a model for your project](https://pancode.dev/tutorials/choose-model-for-your-project.html).
+
 ## First experiment
 
 **Proposed, not yet run**
 
 Nobody has run this protocol. If you do, your numbers are the first this page has.
 
-Pick one long task and one model from each family your subscription offers. Run it three times with keepalive on and three times with it off, holding the repository and thinking level fixed. Record cached and fresh input per turn, and the recorded cause of every cache break.
+Pick one long task and one model from each lineage your subscription offers. Run it three times with keepalive on and three times with it off, holding the repository and thinking level fixed. Record cached and fresh input per turn, and the recorded cause of every cache break.
 
 The main mechanism needs a switch first. Until the pinned prefix can be turned off, only keepalive and prewarm can be compared with a baseline.
 
@@ -5732,7 +5601,7 @@ The main mechanism needs a switch first. Until the pinned prefix can be turned o
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
 
 ---
 
@@ -5744,9 +5613,9 @@ Source: https://pancode.dev/research/memory.html
 
 A context window is storage that fills, and the provider's prompt cache makes some of that storage cheap to keep and expensive to disturb. PanCode manages the window as a tiered store: live context, records it can recall exactly, and a summary as the last resort. This page describes that design and how to measure it.
 
-**Design described for the 0.9.0 development tree**
+**Design described for PanCode 0.9.1**
 
-The mechanisms here are read from source on the development branch. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 
 ## The design
 
@@ -5809,6 +5678,8 @@ pancode telemetry tokens --session <id> --by-source --json
 
 Compare cached and fresh input across the turns that follow an eviction.
 
+Worked example: [Keep a long coding task on track](https://pancode.dev/tutorials/keep-long-coding-tasks-on-track.html).
+
 ## First experiment
 
 **Proposed, not yet run**
@@ -5826,7 +5697,7 @@ Cache-priced eviction itself has no switch yet. Adding one would let the pricing
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
 
 ---
 
@@ -5838,9 +5709,9 @@ Source: https://pancode.dev/research/scheduling.html
 
 A group of agents is a workload. Each job needs a route, a share of a real endpoint, a boundary on what it may touch, and a way to tell whether it did its work. PanCode schedules its own workers and other coding agents under those rules. This page describes that design and how to measure it.
 
-**Design described for the 0.9.0 development tree**
+**Design described for PanCode 0.9.1**
 
-The mechanisms here are read from source on the development branch. The role grader, the evidence packets, and the capability envelope are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 
 ## The design
 
@@ -5874,8 +5745,8 @@ Does a graded fleet finish more work per token than one agent on the same tasks?
 These are facts about the design, read from source. They are not study results.
 
 - One policy is enforced for PanCode's own workers, the Claude SDK, and agents reached through mediated ACP. Other agent command lines receive the closest flags they support, and OpenCode cannot enforce read-only.
-- Whether a reviewer is independent of the builder (a different agent and model family) is recorded and never enforced.
-- Candidates in compete mode share one model, so their diversity comes from short prompts.
+- Whether a reviewer is independent of the builder (a different agent and model lineage) is recorded and never enforced.
+- Compete takes 2 to 4 candidates, and each can name its own target and model. Given only a count, they share one model and differ by a one-line stance in each prompt.
 - Matching a worker's claim to a command that ran is text matching.
 - Adaptive routing from past results is off by default.
 - No comparison between a single agent and any of these arrangements has been run.
@@ -5905,6 +5776,8 @@ pancode fleet verify <run-id> --json
 pancode config set fleet.retry.maxRetries 0
 ```
 
+Worked examples: [Run a playbook from plan to commit](https://pancode.dev/tutorials/run-a-playbook-and-land-it.html) and [Coordinate the coding agents you already use](https://pancode.dev/tutorials/coordinate-your-coding-agents.html).
+
 ## First experiment
 
 **Proposed, not yet run**
@@ -5913,7 +5786,7 @@ Nobody has run this protocol. If you do, your numbers are the first this page ha
 
 Choose ten tasks with a hidden check each, half of them hard enough that a single agent often fails. Run each task three ways: one builder, one builder behind a review gate, and compete mode with a judge. Record the pass rate on the hidden check, the runs that reported success and failed it, and tokens per passed task.
 
-Vary the reviewer's model family in a second round. That measures whether independence, which the record already tracks, changes the outcome.
+Vary the reviewer's model lineage in a second round. That measures whether independence, which the record already tracks, changes the outcome.
 
 ## Open questions
 
@@ -5921,7 +5794,7 @@ Vary the reviewer's model family in a second round. That measures whether indepe
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
 
 ---
 
@@ -5933,9 +5806,9 @@ Source: https://pancode.dev/research/protection.html
 
 An agent runs commands with your permissions, and some of what it reads was written by strangers. PanCode decides each call in layers: a floor that never moves, containment where the host offers it, a judge for what remains, and you for what only you can decide. This page describes that design and how to measure it.
 
-**Design described for the 0.9.0 development tree**
+**Design described for PanCode 0.9.1**
 
-The mechanisms here are read from source on the development branch. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 
 ## The design
 
@@ -5999,6 +5872,8 @@ Run the same task and count the approval cards.
 
 Type `/rewind` in a session. It previews and restores files from a snapshot and never moves your branches.
 
+Worked example: [Let PanCode work without watching every call](https://pancode.dev/tutorials/let-it-work-with-containment-and-rewind.html).
+
 ## First experiment
 
 **Proposed, not yet run**
@@ -6015,7 +5890,7 @@ Record approval cards per task, calls admitted that the planted instruction aske
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
 
 ---
 
@@ -6027,9 +5902,9 @@ Source: https://pancode.dev/research/accounting.html
 
 When an agent says a task is done, that is a claim. PanCode keeps its own account of what happened: which checks ran on the final tree, which of the agent's statements a command supports, and what was never measured. This page describes that design and the first experiment the project plans to run.
 
-**Design described for the 0.9.0 development tree**
+**Design described for PanCode 0.9.1**
 
-The mechanisms here are read from source on the development branch. The claimed and assessed completion states and the intervention ledger are newer than the 0.8.4 release. Nothing on this page is measured yet. The experiment is proposed and not yet run.
+The mechanisms here are read from source. Nothing on this page is measured yet. The experiment is proposed and not yet run.
 
 ## The design
 
@@ -6099,6 +5974,8 @@ pancode telemetry verify --run <run-id>
 
 The command uses only the record's own files, so it works on another machine.
 
+Worked example: [Check a change against your repository](https://pancode.dev/tutorials/check-a-change-against-your-repository.html).
+
 ## First experiment
 
 **Proposed, not yet run**
@@ -6107,9 +5984,9 @@ This is the first experiment the project plans to run. Nobody has run it yet.
 
 Write trap tasks, each with a hidden grader the agent never sees. In one, the natural fix passes the visible test and a later cleanup edit breaks it. In another, the test runner cannot start. In a third, a numerical result drifts inside the test's tolerance and outside the reference's. A fourth cannot be completed as stated.
 
-Run each task several times on one model from each family, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.
+Run each task several times on one model from each model lineage, at normal and at high rigor. Record three rates: declared done with the grader failing, those the host lowered, and done lowered while the grader passed.
 
-Two things are needed first. The trap tasks do not exist yet, and the campaign runner does not read the sealed assessment or repeat a run.
+One thing is needed first: the trap tasks do not exist yet. The campaign runner already repeats a roster with `--repeat` and records each run's sealed completion and verification.
 
 ## Open questions
 
@@ -6119,7 +5996,7 @@ Two things are needed first. The trap tasks do not exist yet, and the campaign r
 
 ## How to join
 
-Open a [GitHub issue](https://github.com/akougkas/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
+Open a [GitHub issue](https://github.com/PanStudio/pancode/issues) that says what you plan to measure, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md). Results are published on this page with their numbers, including null and negative ones.
 
 ---
 
@@ -6147,7 +6024,7 @@ Three questions sit inside the big one, and each could come back negative.
 
 ## What is measured so far
 
-These were measured on the design 0.6.8 shipped, which 0.8.0 keeps, on small samples. They show what the parts do. None of them shows that System One improves an agent's work.
+These were measured on an earlier build of the same design, on small samples. They show what the parts do. None of them shows that System One improves an agent's work.
 
 | Measurement | Result | Sample |
 | --- | --- | --- |
@@ -6165,7 +6042,7 @@ Precision is weak. Between a third and more than half of filter matches can be w
 
 ### Filter across routes
 
-These also ran on the 0.6.8 design. They are small samples, and the query sets were regression sets, so they were not independent of the work being tested.
+These also ran on that earlier build. They are small samples, and the query sets were regression sets, so they were not independent of the work being tested.
 
 | Route | Recall | Precision | Median latency | Returns |
 | --- | --- | --- | --- | --- |
@@ -6291,7 +6168,7 @@ A natural second experiment, also proposed and not yet run, is a small paired on
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 **Boundaries**
 
@@ -6429,7 +6306,7 @@ Needs: any chat route and a repository with tests. A local model server avoids A
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 **Boundaries**
 
@@ -6473,7 +6350,7 @@ Durable lessons are separate from those banks, and only eligible approved record
 
 Repository knowledge from a task-bank entry can also receive automatic approval once one session records that the lesson held, with no contradiction or recorded regression. It waits for a person if another approved or rejected lesson already carries the same command as evidence.
 
-In 0.8.0 the gate is narrower. Automatic approval needs a command that could have failed. A lesson backed only by a quote from a repository file waits for a person, and so does one whose only command cannot fail, such as `echo`, `ls` or `true`. Expect more pending lessons than 0.7.0 produced.
+The gate is narrow. Automatic approval needs a command that could have failed. A lesson backed only by a quote from a repository file waits for a person, and so does one whose only command cannot fail, such as `echo`, `ls` or `true`.
 
 PanCode records two useful observations about an approved lesson: `delivered` when its reminder was submitted, and `held` when the recommended command then succeeds exactly. A held lesson did not necessarily cause that success, and the agent might have run the command anyway. That gap is the research problem in one sentence.
 
@@ -6487,7 +6364,7 @@ Memory is the obvious fix, and also an easy way to pay for tokens that do nothin
 
 **Measure counterfactual effect.** Compare paired sessions on seeded tasks with memory on and off, and with a lesson present and absent. Count repeated failures, rounds, and cost, including memory's own calls.
 
-**Audit the approval gate.** Collect automatically approved lessons from real repositories and have a person grade them. A false-approval rate, even from a small sample, would be new evidence about whether one held session is enough. Lessons approved before and after the 0.8.0 change are separate samples, because the rule changed between them.
+**Audit the approval gate.** Collect automatically approved lessons from real repositories and have a person grade them. A false-approval rate, even from a small sample, would be new evidence about whether one held session is enough. Lessons approved under an earlier, wider gate are a separate sample, because the rule changed.
 
 **Study reminder timing.** Reminders can land at tool-batch boundaries, at turn end, or on the next prompt. Cadence is configurable, so whether frequent reminders help or distract can be tested.
 
@@ -6543,7 +6420,7 @@ Needs: any chat route and a repository you can publish or describe. A local mode
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 **Boundaries**
 
@@ -6661,7 +6538,7 @@ Needs: any chat route, and a session long enough to reduce. A local model server
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 **Boundaries**
 
@@ -6694,7 +6571,7 @@ The fleet features on this page have shipped. This page has no comparative resul
 - **Multi-agent value.** Per dollar and per hour, when does compete or council beat one agent on the same task?
 - **Local capability.** Which coding tasks can a model on one workstation finish, and where does it fail?
 - **Heterogeneous fleets.** Does a mix of a strong planner and small workers beat a uniform fleet of either?
-- **Other model families.** Do diffusion language models hold up on long agentic work?
+- **Other kinds of model.** Do diffusion language models hold up on long agentic work?
 
 ## What is known so far
 
@@ -6785,7 +6662,7 @@ Needs: one machine that can run a tool-calling model through a local server. A G
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 **Boundaries**
 
@@ -6848,7 +6725,7 @@ A wrong numerical result can look fine and travel into a paper. If agents are go
 
 **Test the oracle.** Inject known errors into a scientific kernel and find out how often a pre-registered check catches them, and how often an agent talks its way around one.
 
-**Run a real modernization.** Take a small code with reference output through `scientific-modernization`, and report stages, costs, failures, and what the maintainer thought of the result.
+**Run a real modernization.** Take a small code with reference output through `scientific-modernization`, and report stages, costs, failures, and what the code's maintainers thought of the result.
 
 **Measure scheduler behavior.** Using a small allocation, record what an agent submits, how often it resubmits, and how much of the allocation produces useful output.
 
@@ -6916,7 +6793,7 @@ Needs: a laptop and any chat route for everything above. A local model server av
 
 ## How to join
 
-Open a GitHub issue on [the repository](https://github.com/akougkas/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/akougkas/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
+Open a GitHub issue on [the repository](https://github.com/PanStudio/pancode/issues) saying what you want to try, before or after you run it, and read the [contributor guide](https://github.com/PanStudio/pancode/blob/main/CONTRIBUTING.md) for code changes. Negative results and replications are welcome.
 
 **Boundaries**
 

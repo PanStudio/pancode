@@ -53,10 +53,10 @@ function Install-Pancode {
 	# Windows PowerShell 5.1 defaults to TLS 1.0, which GitHub refuses.
 	[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-	$PackageName = "@akougkas/pancode"
+	$PackageName = "@panstudio/pancode"
 	$LauncherMark = "# pancode-installer launcher"
 	$mirror = if ($env:PANCODE_RELEASE_MIRROR) { $env:PANCODE_RELEASE_MIRROR.TrimEnd("/") } else { "" }
-	$ReleaseBase = if ($mirror) { $mirror } else { "https://github.com/akougkas/pancode/releases/download" }
+	$ReleaseBase = if ($mirror) { $mirror } else { "https://github.com/PanStudio/pancode/releases/download" }
 	$ChannelBase = if ($mirror) { "$mirror/channel" } else { "https://pancode.dev/channel" }
 
 	function Say([string]$Text) { Write-Host "[install] $Text" }
@@ -64,12 +64,24 @@ function Install-Pancode {
 	function Warn([string]$Text) { Write-Warning $Text }
 	function Fail([string]$Text) { throw "[install] error: $Text" }
 
+	# file:// URLs are copied, so an airgapped mirror on a shared filesystem needs no web server.
 	function Get-File([string]$Url, [string]$Out) {
 		if ($Url.StartsWith("file://")) {
-			Copy-Item -LiteralPath ([uri]$Url).LocalPath -Destination $Out
+			$local = ([uri]$Url).LocalPath
+			if (-not (Test-Path -LiteralPath $local)) { throw [IO.FileNotFoundException]::new("not found", $local) }
+			Copy-Item -LiteralPath $local -Destination $Out
 			return
 		}
 		Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Out
+	}
+	# Why a download failed: "not found" when the server or mirror has no such file (HTTP 404), else the reason
+	# the downloader gave, as install.sh reports it.
+	function Get-DownloadFailure($Record) {
+		$e = $Record.Exception
+		$code = 0
+		try { if ($e.Response) { $code = [int]$e.Response.StatusCode } } catch { $code = 0 }
+		if ($code -eq 404 -or $e -is [IO.FileNotFoundException]) { return "not found" }
+		return ([string]$e.Message).Trim()
 	}
 
 	if ($Options.Channel -notin @("latest", "beta")) { Fail "-Channel must be latest or beta, got '$($Options.Channel)'" }
@@ -134,6 +146,16 @@ function Install-Pancode {
 
 	$manifestFile = Join-Path $installRoot "install.json"
 	if ($Options.Rollback -and -not (Test-Path -LiteralPath $manifestFile)) { Fail "no installer manifest at $manifestFile; nothing to roll back" }
+	# The topmost directories this run creates; a run that ends with no installation removes them again.
+	function Get-CreatedTop([string]$Path) {
+		$top = $null
+		while ($Path -and -not (Test-Path -LiteralPath $Path)) { $top = $Path; $Path = Split-Path -Parent $Path }
+		$top
+	}
+	$createdRootTop = Get-CreatedTop $installRoot
+	$createdBinTop = Get-CreatedTop $binDir
+	$createdOwner = $false
+	$createdVersions = $false
 	New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 	$lock = Join-Path $installRoot ".install-lock"
 	# A killed installer skips the finally block and leaves the lock and its
@@ -197,7 +219,9 @@ function Install-Pancode {
 	if ((Test-Path -LiteralPath $manifestFile) -and [int](Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json).schema -ne 3) {
 		Fail "$installRoot holds an installation this installer cannot read. Remove that directory (your settings and sessions live elsewhere and stay), or choose another -InstallDir, then rerun."
 	}
+	$createdOwner = -not (Test-Path -LiteralPath $owner)
 	[IO.File]::WriteAllText($owner, "pancode-installer")
+	$createdVersions = -not (Test-Path -LiteralPath (Join-Path $installRoot "versions"))
 	New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "versions"), $binDir | Out-Null
 	$work = Join-Path $installRoot (".work." + [guid]::NewGuid().ToString("N").Substring(0, 8))
 	New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -213,7 +237,7 @@ function Install-Pancode {
 			$resolved = $spec
 			if ($spec -in @("latest", "beta")) {
 				$channelFile = Join-Path $work "channel"
-				try { Get-File "$ChannelBase/$spec" $channelFile } catch { Fail "could not read $ChannelBase/$spec; check the network or proxy (HTTPS_PROXY), pass -Version <exact version>, or set PANCODE_RELEASE_MIRROR" }
+				try { Get-File "$ChannelBase/$spec" $channelFile } catch { Fail "could not read $ChannelBase/$spec ($(Get-DownloadFailure $_)); check the network or proxy (HTTPS_PROXY), pass -Version <exact version>, or set PANCODE_RELEASE_MIRROR" }
 				$resolved = ([string](Get-Content -LiteralPath $channelFile -TotalCount 1)).Trim()
 				if ($resolved -notmatch "^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") { Fail "$ChannelBase/$spec does not name a version" }
 				if ($previous) {
@@ -236,30 +260,70 @@ function Install-Pancode {
 			}
 			$asset = "pancode-$resolved-$build.tar.gz"
 			$sums = Join-Path $work "SHA256SUMS"
-			try { Get-File "$ReleaseBase/v$resolved/SHA256SUMS" $sums } catch { Fail "could not read $ReleaseBase/v$resolved/SHA256SUMS; PanCode $resolved may not exist, or the network or proxy (HTTPS_PROXY) blocks it" }
+			try { Get-File "$ReleaseBase/v$resolved/SHA256SUMS" $sums } catch {
+				$why = Get-DownloadFailure $_
+				# A missing release is an answer, not a network fault.
+				if ($why -eq "not found") {
+					$hint = if ($spec -eq $resolved) { "; check the version, or leave out -Version to install the latest release" } else { "" }
+					Fail "PanCode $resolved is not published at $ReleaseBase (it has no v$resolved/SHA256SUMS)$hint"
+				}
+				Fail "could not read $ReleaseBase/v$resolved/SHA256SUMS ($why); check the network or proxy (HTTPS_PROXY)"
+			}
 			$expected = (Get-Content -LiteralPath $sums | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($asset))$" } | Select-Object -First 1) -replace "\s.*$", ""
 			if (-not $expected) { Fail "PanCode $resolved ships no $build bundle" }
 			$bundleFile = Join-Path $work $asset
 			Say "downloading $asset"
-			Get-File "$ReleaseBase/v$resolved/$asset" $bundleFile
+			try { Get-File "$ReleaseBase/v$resolved/$asset" $bundleFile } catch { Fail "could not download $ReleaseBase/v$resolved/$asset ($(Get-DownloadFailure $_))" }
 			$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleFile).Hash.ToLowerInvariant()
 			if ($actual -ne $expected) { Fail "$asset has SHA-256 $actual, but the release lists $expected; nothing was installed" }
 			Ok "verified $asset (sha256 $expected)"
 		}
-		$staging = Join-Path $installRoot "versions\.staging-$PID"
-		New-Item -ItemType Directory -Force -Path $staging | Out-Null
-		& $tar -xzf $bundleFile -C $staging
-		if ($LASTEXITCODE -ne 0) { Fail "could not unpack $bundleFile under $installRoot (a full disk, or not a PanCode bundle)" }
-		$pkgJson = Join-Path $staging "lib\node_modules\pancode\package.json"
-		if (-not (Test-Path -LiteralPath (Join-Path $staging "node.exe")) -or -not (Test-Path -LiteralPath $pkgJson)) { Fail "$bundleFile is not a PanCode bundle for Windows" }
-		$ran = & (Join-Path $staging "node.exe") -e "process.stdout.write(process.versions.node)"
-		if ($LASTEXITCODE -ne 0 -or -not $ran) { Fail "the bundled Node in $bundleFile does not run" }
-		Ok "Node v$ran runs ($build)"
-		$pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
-		if ($pkg.name -ne $PackageName) { Fail "$bundleFile does not hold the $PackageName package" }
-		$final = Join-Path $installRoot "versions\$($pkg.version)"
-		if (Test-Path -LiteralPath $final) { $final = "$final-$(Get-Date -Format yyyyMMddHHmmss)-$PID" }
-		Move-Item -LiteralPath $staging -Destination $final
+		# Each version prefix records the digest of the bundle it came from, so reinstalling that bundle
+		# activates the prefix again instead of unpacking a second copy beside it.
+		$bundleDigest = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleFile).Hash.ToLowerInvariant()
+		$final = $null
+		$bundlePackage = $null
+		foreach ($kept in Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory) {
+			$dir = $kept.FullName
+			# A copy that cannot be read, run or matched to this archive is a miss, and the bundle unpacks beside it.
+			try {
+				$receipt = Join-Path $dir ".pancode-bundle-sha256"
+				if ($kept.Name.StartsWith(".") -or -not (Test-Path -LiteralPath $receipt) -or ([string](Get-Content -LiteralPath $receipt -TotalCount 1)).Trim() -ne $bundleDigest) { continue }
+				if ((Test-Path -LiteralPath (Join-Path $dir ".pancode-refused-candidate")) -or
+					-not (Test-Path -LiteralPath (Join-Path $dir "node.exe")) -or
+					-not (Test-Path -LiteralPath (Join-Path $dir "lib\node_modules\pancode\dist\cli\index.js")) -or
+					-not (Test-Path -LiteralPath (Join-Path $dir "lib\node_modules\pancode\scripts\native-install.cjs"))) { continue }
+				if (-not $bundlePackage) { $bundlePackage = ((& $tar -xzOf $bundleFile "./lib/node_modules/pancode/package.json") -join "`n") | ConvertFrom-Json }
+				$keptVersion = & (Join-Path $dir "node.exe") -e 'try{const p=require(process.argv[1]);if(p.name!==process.argv[2])process.exit(1);process.stdout.write(p.version)}catch{process.exit(1)}' (Join-Path $dir "lib\node_modules\pancode\package.json") $PackageName
+				if ($LASTEXITCODE -ne 0 -or $bundlePackage.name -ne $PackageName -or [string]$keptVersion -ne [string]$bundlePackage.version) { continue }
+				# The bundle's helper runs the check activation runs; a copy that fails it is left as it is.
+				$null = & (Join-Path $dir "node.exe") (Join-Path $dir "lib\node_modules\pancode\scripts\native-install.cjs") probe $dir
+				if ($LASTEXITCODE -ne 0) { continue }
+			} catch { continue }
+			$final = $dir
+			$pkg = [pscustomobject]@{ version = [string]$keptVersion }
+			break
+		}
+		$reused = [bool]$final
+		if ($reused) {
+			Say "this bundle is already unpacked at versions\$(Split-Path -Leaf $final); using it"
+		} else {
+			$staging = Join-Path $installRoot "versions\.staging-$PID"
+			New-Item -ItemType Directory -Force -Path $staging | Out-Null
+			& $tar -xzf $bundleFile -C $staging
+			if ($LASTEXITCODE -ne 0) { Fail "could not unpack $bundleFile under $installRoot (a full disk, or not a PanCode bundle)" }
+			$pkgJson = Join-Path $staging "lib\node_modules\pancode\package.json"
+			if (-not (Test-Path -LiteralPath (Join-Path $staging "node.exe")) -or -not (Test-Path -LiteralPath $pkgJson)) { Fail "$bundleFile is not a PanCode bundle for Windows" }
+			$ran = & (Join-Path $staging "node.exe") -e "process.stdout.write(process.versions.node)"
+			if ($LASTEXITCODE -ne 0 -or -not $ran) { Fail "the bundled Node in $bundleFile does not run" }
+			Ok "Node v$ran runs ($build)"
+			$pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
+			if ($pkg.name -ne $PackageName) { Fail "$bundleFile does not hold the $PackageName package" }
+			$final = Join-Path $installRoot "versions\$($pkg.version)"
+			if (Test-Path -LiteralPath $final) { $final = "$final-$(Get-Date -Format yyyyMMddHHmmss)-$PID" }
+			Move-Item -LiteralPath $staging -Destination $final
+			Set-Content -LiteralPath (Join-Path $final ".pancode-bundle-sha256") -Value $bundleDigest
+		}
 		$node = Join-Path $final "node.exe"
 		$entry = Join-Path $final "lib\node_modules\pancode\dist\cli\index.js"
 		if ($Options.IncludeClaudeSdk) {
@@ -275,9 +339,10 @@ function Install-Pancode {
 		if ($Options.AutoUpdate) { $auto = "1" }
 		$post = if ($Options.NoPostInstall) { "0" } else { "1" }
 		$pinSource = if ($Options.Bundle) { "bundle-file" } else { "version-flag" }
-		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource
+		& $node $helper activate $installRoot $final $launcher $Options.Channel $pin $auto $post $pinSource $(if ($Options.Force) { "1" } else { "0" })
 		# The pancode on PATH is still the previous version, and a version that predates a repair reports nothing to fix.
-		if ($LASTEXITCODE -ne 0) { New-Item -ItemType File -Force -Path (Join-Path $final ".pancode-refused-candidate") | Out-Null }
+		# A reused prefix may be the active or previous version, which this run did not bring.
+		if ($LASTEXITCODE -ne 0 -and -not $reused) { New-Item -ItemType File -Force -Path (Join-Path $final ".pancode-refused-candidate") | Out-Null }
 		if ($LASTEXITCODE -ne 0) {
 			$activeVersion = $null
 			if ($previous) {
@@ -367,9 +432,30 @@ function Install-Pancode {
 		# tree before the lock and staging go (#436).
 		Get-CimInstance Win32_Process -Filter "ParentProcessId=$PID" -ErrorAction SilentlyContinue |
 			ForEach-Object { & taskkill.exe /T /F /PID $_.ProcessId 2>$null | Out-Null }
-		Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
 		if ($work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 		Remove-Item -LiteralPath (Join-Path $installRoot "versions\.staging-$PID") -Recurse -Force -ErrorAction SilentlyContinue
+		# A run that ends with no installation takes back only what it created, while it still holds the lock; a
+		# directory that holds anything stays, so an existing root or a kept version is left as it was.
+		function Remove-IfEmpty([string]$Path) {
+			if ((Test-Path -LiteralPath $Path) -and -not (Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+				Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+				return -not (Test-Path -LiteralPath $Path)
+			}
+			$false
+		}
+		function Remove-CreatedChain([string]$Path, [string]$Top) {
+			while ($Top -and (Remove-IfEmpty $Path) -and $Path -ne $Top) { $Path = Split-Path -Parent $Path }
+		}
+		$unclaimed = -not (Test-Path -LiteralPath (Join-Path $installRoot "install.json"))
+		if ($unclaimed) {
+			if ($createdVersions) { Remove-IfEmpty (Join-Path $installRoot "versions") | Out-Null }
+			if ($createdOwner) { Remove-Item -LiteralPath (Join-Path $installRoot ".installer-owner") -Force -ErrorAction SilentlyContinue }
+		}
+		Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
+		if ($unclaimed) {
+			Remove-CreatedChain $installRoot $createdRootTop
+			Remove-CreatedChain $binDir $createdBinTop
+		}
 	}
 }
 

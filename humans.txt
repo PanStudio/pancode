@@ -1,6 +1,6 @@
 /* TEAM */
 Author: Anthony Kougkas
-Role: Creator and maintainer of PanCode
+Role: Founder, PanStudio
 Site: https://akougkas.io/
 GitHub: https://github.com/akougkas
 
@@ -8,8 +8,9 @@ GitHub: https://github.com/akougkas
 The authors of the Pi agent framework, Schibsted Grotesk, Instrument Sans, IBM Plex Mono and marked.
 
 /* SITE */
+Publisher: PanStudio
 Product: PanCode, systems software for coding agents
-Source: https://github.com/akougkas/pancode
+Source: https://github.com/PanStudio/pancode
 License: PanCode License 1.0 (source-available)
 Language: English
 Standards: HTML, CSS, JSON-LD, llms.txt

@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Your first session with PanCode</title><meta name="description" content="Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#000000"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
-<link rel="canonical" href="https://pancode.dev/tutorials/first-session.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=36bbdab4ae" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark.svg?v=6e6f5be359" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=2add9de73a" sizes="180x180"><link rel="author" href="/humans.txt">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Yamn0WSUYzztBuAOSzl4ivQWP1am0zz+IWyfxpfTGs4=' https://www.googletagmanager.com; style-src 'self'; img-src 'self' data: https://*.google-analytics.com https://*.googletagmanager.com; font-src 'self'; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'none'"><meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Your first session with PanCode</title><meta name="description" content="Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests."><meta name="color-scheme" content="dark light"><meta name="pancode-default-theme" content="dark"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#0e1113"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1113">
+<link rel="canonical" href="https://pancode.dev/tutorials/first-session.html"><link rel="manifest" href="/site.webmanifest"><link rel="icon" href="/favicon.ico?v=52cb756433" sizes="16x16 32x32 48x48"><link rel="icon" href="/assets/brand/pancode-mark-small.svg?v=59a3bf7f66" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/responsive/pancode-icon-180.png?v=8cfff2e4d9" sizes="180x180"><link rel="author" href="/humans.txt">
 <link rel="preload" href="/assets/fonts/instrument-sans.woff2?v=2ee17598a9" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/fonts/schibsted-grotesk.woff2?v=4c8b93f431" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/css/site.css?v=d37b031c70"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+<link rel="stylesheet" href="/css/site.css?v=2bbe37a98f"><link rel="stylesheet" href="/css/art.css?v=e571ac33f3"><script>// SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Runs before first paint; explicit choices take priority over the sanctioned default.
 (() => {
@@ -30,20 +30,22 @@
 	document.documentElement.dataset.theme = theme;
 	const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
 	for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = paper;
-})();</script><script src="/js/cast.js?v=5cec636500" data-player-src="/assets/player/asciinema-player.min.js?v=752c9b528b" data-player-css="/assets/player/asciinema-player.css?v=981fe7bc60" data-cast-css="/css/cast.css?v=ad7414d08f" defer></script>
-<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/first-session.html"><meta property="og:title" content="Your first session with PanCode"><meta property="og:description" content="Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests."><meta property="og:image" content="https://pancode.dev/assets/social/cast-first-launch.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Terminal recording of the first pancode launch in ~/projects/calibration-lab: with no model target configured, setup starts, says it sends one short test message before saving, and offers GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else. Chat then opens on copilot-sdk · gpt-6-luna; asked how the repository builds and runs its tests, Panos reads package.json, README.md, temperature.mjs and calibration.test.mjs, says there is no build step and npm test runs node --test calibration.test.mjs, suggests npm test as the check, and notes without running it that kelvinToCelsius rejects 0 K while the absolute-zero test expects a value."><meta property="article:published_time" content="2026-11-26T00:19:37-06:00"><meta property="article:modified_time" content="2026-11-26T00:19:37-06:00">
+})();</script><script src="/js/analytics.js?v=729082091e" data-ga4="G-65SSCG9E0G" defer></script><script src="/js/cast.js?v=5cec636500" data-player-src="/assets/player/asciinema-player.min.js?v=752c9b528b" data-player-css="/assets/player/asciinema-player.css?v=981fe7bc60" data-cast-css="/css/cast.css?v=ad7414d08f" defer></script>
+<meta property="og:locale" content="en_US"><meta property="og:site_name" content="PanCode"><meta property="og:type" content="article"><meta property="og:url" content="https://pancode.dev/tutorials/first-session.html"><meta property="og:title" content="Your first session with PanCode"><meta property="og:description" content="Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests."><meta property="og:image" content="https://pancode.dev/assets/social/cast-first-launch.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Terminal recording of the first pancode launch in ~/projects/calibration-lab: with no model target configured, setup starts, says it sends one short test message before saving, and offers GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else. Chat then opens on copilot-sdk · gpt-6-luna; asked how the repository builds and runs its tests, Panos reads package.json, README.md, temperature.mjs and calibration.test.mjs, says there is no build step and npm test runs node --test calibration.test.mjs, suggests npm test as the check, and notes without running it that kelvinToCelsius rejects 0 K while the absolute-zero test expects a value."><meta property="article:published_time" content="2026-11-26T17:28:23-06:00"><meta property="article:modified_time" content="2026-11-26T17:28:23-06:00">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Your first session with PanCode"><meta name="twitter:description" content="Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests."><meta name="twitter:image" content="https://pancode.dev/assets/social/cast-first-launch.png"><meta name="twitter:image:alt" content="Terminal recording of the first pancode launch in ~/projects/calibration-lab: with no model target configured, setup starts, says it sends one short test message before saving, and offers GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else. Chat then opens on copilot-sdk · gpt-6-luna; asked how the repository builds and runs its tests, Panos reads package.json, README.md, temperature.mjs and calibration.test.mjs, says there is no build step and npm test runs node --test calibration.test.mjs, suggests npm test as the check, and notes without running it that kelvinToCelsius rejects 0 K while the absolute-zero test expects a value.">
-<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#publisher"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/first-session.html#page","name":"Your first session with PanCode","description":"Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests.","url":"https://pancode.dev/tutorials/first-session.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/cast-first-launch.png","width":1200,"height":630},"datePublished":"2026-11-26T00:19:37-06:00","dateModified":"2026-11-26T00:19:37-06:00","headline":"Your first session with PanCode","mainEntityOfPage":"https://pancode.dev/tutorials/first-session.html","author":{"@type":"Person","name":"Anthony Kougkas","url":"https://pancode.dev/#project"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/cast-first-launch.png","https://pancode.dev/assets/guides/cast-first-launch.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/first-session.html#breadcrumbs"}},{"@type":"Person","@id":"https://pancode.dev/#publisher","name":"Anthony Kougkas","url":"https://akougkas.io/"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/first-session.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Your first session with PanCode","item":"https://pancode.dev/tutorials/first-session.html"}]}]}</script></head><body>
-<a class="skip" href="#content">Skip to content</a><header class="mast">
-  <nav class="family" aria-label="Family"><div class="family-row page"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div></nav>
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://pancode.dev/#site","name":"PanCode","url":"https://pancode.dev/","description":"PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It installs on HPC login nodes without root and ships checks for numerical work.","inLanguage":"en","publisher":{"@id":"https://pancode.dev/#publisher"},"copyrightHolder":{"@id":"https://pancode.dev/#founder"},"copyrightYear":2026},{"@type":"Article","@id":"https://pancode.dev/tutorials/first-session.html#page","name":"Your first session with PanCode","description":"Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests.","url":"https://pancode.dev/tutorials/first-session.html","isPartOf":{"@id":"https://pancode.dev/#site"},"inLanguage":"en","primaryImageOfPage":{"@type":"ImageObject","url":"https://pancode.dev/assets/social/cast-first-launch.png","width":1200,"height":630},"datePublished":"2026-11-26T17:28:23-06:00","dateModified":"2026-11-26T17:28:23-06:00","headline":"Your first session with PanCode","mainEntityOfPage":"https://pancode.dev/tutorials/first-session.html","author":{"@id":"https://pancode.dev/#founder"},"publisher":{"@id":"https://pancode.dev/#publisher"},"image":["https://pancode.dev/assets/social/cast-first-launch.png","https://pancode.dev/assets/guides/cast-first-launch.webp"],"about":{"@id":"https://pancode.dev/#application"},"breadcrumb":{"@id":"https://pancode.dev/tutorials/first-session.html#breadcrumbs"}},{"@type":"Organization","@id":"https://pancode.dev/#publisher","name":"PanStudio","url":"https://pancode.dev/","founder":{"@id":"https://pancode.dev/#founder"}},{"@type":"Person","@id":"https://pancode.dev/#founder","name":"Anthony Kougkas","url":"https://akougkas.io/","jobTitle":"Founder, PanStudio"},{"@type":"BreadcrumbList","@id":"https://pancode.dev/tutorials/first-session.html#breadcrumbs","itemListElement":[{"@type":"ListItem","position":1,"name":"PanCode","item":"https://pancode.dev/"},{"@type":"ListItem","position":2,"name":"Tutorials","item":"https://pancode.dev/learn.html"},{"@type":"ListItem","position":3,"name":"Your first session with PanCode","item":"https://pancode.dev/tutorials/first-session.html"}]}]}</script></head><body>
+<a class="skip" href="#content">Skip to content</a><section class="consent" data-consent hidden aria-label="Analytics choice">
+  <p>pancode.dev uses Google Analytics. Accept lets it set cookies to tell return visits apart; Decline keeps it cookieless. <a href="/privacy.html">Privacy</a></p>
+  <div class="consent-actions"><button class="btn btn-small" type="button" data-consent-choice="granted">Accept</button><button class="btn-small consent-decline" type="button" data-consent-choice="denied">Decline</button></div>
+</section><header class="mast">
   <div class="mast-row page">
-    <a class="brand" href="/" aria-label="PanCode home"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
-    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a></nav>
-    <div class="mast-actions"><a class="source-link" href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span aria-hidden="true">◐</span></button><a class="btn btn-small" href="/#start">Install PanCode <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><div class="nav-family" role="group" aria-label="Family"><a href="/"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></a><a href="/panstore.html"><span class="brand-pan">Pan</span><span class="brand-code">Store</span></a><a href="/pankit.html"><span class="brand-pan">Pan</span><span class="brand-code">Kit</span></a><a href="/hub.html"><span class="brand-pan">Pan</span><span class="brand-code">Hub</span></a><a href="/sdk.html"><span class="brand-pan">Pan</span><span class="brand-code">SDK</span></a></div><a href="https://github.com/akougkas/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install PanCode</a></nav></details></div>
+    <a class="brand" href="/" aria-label="PanCode home"><svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="4 4 56 56" aria-hidden="true" focusable="false"><path class="mark-left" d="M6.04 10.72L30.45 60L18 60A14 14 0 0 1 4 46L4 18A14 14 0 0 1 6.04 10.72Z"/><path class="mark-top" d="M18 4L46 4A14 14 0 0 1 54.34 6.76L46.55 22.5L17.45 22.5L9.66 6.76A14 14 0 0 1 18 4Z"/><path class="mark-right" d="M33.55 60L57.96 10.72A14 14 0 0 1 60 18L60 46A14 14 0 0 1 46 60L33.55 60Z"/><path class="mark-point" d="M19.93 27.5L44.07 27.5L32 51.87L19.93 27.5Z"/></svg><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a>
+    <nav class="nav" aria-label="Primary"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><a href="/hub.html">PanHub</a></nav>
+    <div class="mast-actions"><a class="source-link" href="https://github.com/PanStudio/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme"><span class="theme-icon" aria-hidden="true"><svg class="theme-sun" viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="4.25" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M12 2.5v2.25M12 19.25v2.25M2.5 12h2.25M19.25 12h2.25M5.28 5.28l1.6 1.6M17.12 17.12l1.6 1.6M5.28 18.72l1.6-1.6M17.12 6.88l1.6-1.6" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg><svg class="theme-moon" viewBox="0 0 24 24" focusable="false"><path d="M20 14.6A8.25 8.25 0 0 1 9.4 4a8.25 8.25 0 1 0 10.6 10.6Z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/></svg></span></button><a class="btn btn-small" href="/#start">Install</a><details class="nav-more"><summary>Menu</summary><nav aria-label="Mobile"><a href="/">Overview</a><a href="/docs.html">Docs</a><a href="/learn.html" aria-current="page">Tutorials</a><a href="/research.html">Research</a><a href="/hub.html">PanHub</a><a href="https://github.com/PanStudio/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a><a href="/#start">Install</a></nav></details></div>
   </div>
 </header>
-<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Getting started</span>5 min read</p><h1>Your first session with PanCode</h1><p class="lede">Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal · Desktop alpha</dd></div><div><dt class="eyebrow">Basis</dt><dd>Recorded session</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T00:19:37-06:00">November 26, 2026</time></dd></div></dl></header><nav class="path-strip" aria-label="Learning path"><ul><li><a class="path-strip-path" href="/learn.html#path-agents">Coding agents · step 1 of 5</a><span>Next: <a href="/tutorials/let-it-work-with-containment-and-rewind.html">Let PanCode work without watching every call</a></span></li><li><a class="path-strip-path" href="/learn.html#path-hpc">Science and HPC · step 1 of 4</a><span>Next: <a href="/tutorials/temperature-calibration.html">A numerical change, checked with PanCode</a></span></li></ul></nav><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover" data-cast="/assets/casts/cast-first-launch.cast?v=108fa2ca1c" data-cast-cols="120" data-cast-rows="36" data-cast-poster="3.545" data-cast-length="0:24"><a class="capture-frame" href="/assets/guides/cast-first-launch.png?v=a7ff3543fd"><img src="/assets/guides/cast-first-launch.webp?v=cb2a90eac4" width="2268" height="1548" alt="Terminal recording of the first pancode launch in ~/projects/calibration-lab: with no model target configured, setup starts, says it sends one short test message before saving, and offers GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else. Chat then opens on copilot-sdk · gpt-6-luna; asked how the repository builds and runs its tests, Panos reads package.json, README.md, temperature.mjs and calibration.test.mjs, says there is no build step and npm test runs node --test calibration.test.mjs, suggests npm test as the check, and notes without running it that kelvinToCelsius rejects 0 K while the absolute-zero test expects a value." fetchpriority="high" srcset="/assets/responsive/cast-first-launch-640.webp?v=208c5dc5f2 640w, /assets/responsive/cast-first-launch-1024.webp?v=79522b38bd 1024w, /assets/responsive/cast-first-launch-1600.webp?v=8726959226 1600w, /assets/guides/cast-first-launch.webp?v=cb2a90eac4 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">First launch: setup finds the stored GitHub Copilot sign-in, chat opens, and the first question is answered from the files it read. <span class="tag">Terminal · v0.9.0-dev</span> <a class="cast-download" href="/assets/casts/cast-first-launch.cast?v=108fa2ca1c" download>Recording · 0:24</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">First launch of PanCode: setup finds a stored login and chat opens
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+<main id="content" class="page guide"><header class="page-intro guide-head"><a class="text-link" href="/learn.html"><span class="arrow arrow-back" aria-hidden="true">←</span> All tutorials</a><p class="eyebrow"><span class="chapter">Getting started</span>5 min read</p><h1>Your first session with PanCode</h1><p class="lede">Connect a model, open a repository, and ask PanCode to explain how it builds and runs its tests.</p><dl class="guide-facts"><div><dt class="eyebrow">Written for</dt><dd>v0.9.0</dd></div><div><dt class="eyebrow">Works in</dt><dd>Terminal · Desktop alpha</dd></div><div><dt class="eyebrow">Basis</dt><dd>Recorded session</dd></div><div><dt class="eyebrow">Updated</dt><dd><time datetime="2026-11-26T17:28:23-06:00">November 26, 2026</time></dd></div></dl></header><nav class="path-strip" aria-label="Learning path"><ul><li><a class="path-strip-path" href="/learn.html#path-agents">Coding agents · step 1 of 5</a><span>Next: <a href="/tutorials/let-it-work-with-containment-and-rewind.html">Let PanCode work without watching every call</a></span></li><li><a class="path-strip-path" href="/learn.html#path-hpc">Science and HPC · step 1 of 4</a><span>Next: <a href="/tutorials/temperature-calibration.html">A numerical change, checked with PanCode</a></span></li></ul></nav><div class="guide-layout"><article class="doc guide-body" id="doc"><figure class="guide-capture guide-cover" data-cast="/assets/casts/cast-first-launch.cast?v=a0e8ddba66" data-cast-cols="120" data-cast-rows="36" data-cast-poster="3.353" data-cast-length="0:20"><a class="capture-frame" href="/assets/guides/cast-first-launch.png?v=c099d3a20e"><img src="/assets/guides/cast-first-launch.webp?v=cd03716e3d" width="2268" height="1548" alt="Terminal recording of the first pancode launch in ~/projects/calibration-lab: with no model target configured, setup starts, says it sends one short test message before saving, and offers GitHub Copilot SDK, signed in, with model gpt-6-luna recommended, or Set up something else. Chat then opens on copilot-sdk · gpt-6-luna; asked how the repository builds and runs its tests, Panos reads package.json, README.md, temperature.mjs and calibration.test.mjs, says there is no build step and npm test runs node --test calibration.test.mjs, suggests npm test as the check, and notes without running it that kelvinToCelsius rejects 0 K while the absolute-zero test expects a value." fetchpriority="high" srcset="/assets/responsive/cast-first-launch-640.webp?v=657566acf6 640w, /assets/responsive/cast-first-launch-1024.webp?v=91a7bbda31 1024w, /assets/responsive/cast-first-launch-1600.webp?v=ee915423f7 1600w, /assets/guides/cast-first-launch.webp?v=cd03716e3d 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">First launch: setup finds the stored GitHub Copilot sign-in, chat opens, and the first question is answered from the files it read. <span class="tag">Terminal · v0.9.1</span> <a class="cast-download" href="/assets/casts/cast-first-launch.cast?v=a0e8ddba66" download>Recording · 0:20</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">First launch of PanCode: setup finds a stored login and chat opens
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == setup
 
@@ -75,14 +77,14 @@ No model target is configured. PanCode needs a model before it can do anything e
 
 
 
-   ██████   ██████  ███   ██
-   ██   ██ ██    ██ ████  ██
-   ██████  ████████ ██ ██ ██
-   ██      ██    ██ ██  ████       ▐P▌ PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-   ██      ██    ██ ██   ███         awareness  not indexed yet · /context init
+   ██████  ██    ██ ███   ██
+   ██   ██ ████████ ████  ██
+   ██████  ██    ██ ██ ██ ██
+   ██      ██    ██ ██  ████       ▐∀▌ PanCode 0.9.1 · Systems software for coding agents
+   ██       ██████  ██   ███         awareness  not indexed yet · /context init
                                      last here  no earlier session here
  ██████  ██████  ██████  ███████
-██      ██    ██ ██   ██ ██          /rewind undoes file changes.
+██      ██    ██ ██   ██ ██          Ask Panos how to use or extend PanCode.
 ██      ██    ██ ██   ██ █████
 ██      ██    ██ ██   ██ ██
  ██████  ██████  ██████  ███████
@@ -100,19 +102,12 @@ No model target is configured. PanCode needs a model before it can do anything e
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  i No PANCODE.md detected. Run /context init to explore the repo and bootstrap context.                Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main │ ✓ ready                   ctx 272k │ low ● ○ ○ ○ │ copilot-sdk · gpt-6-luna
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                   ctx 272k │ low ● ○ ○ ○ │ copilot-sdk · gpt-6-luna
  ? keys · / commands                                              Try /run to dispatch parallel workers │ Alt+U details
 
 == sent
 
-
-
-
-
-
-
-
-▐P▌ PanCode 0.9.0-dev · 765279a
+▐∀▌ PanCode 0.9.1
 
 ▌ Explain how this repository builds and runs its tests. Identify the main entry points and suggest one verification
 ▌ task. Do not change files yet.
@@ -120,37 +115,44 @@ No model target is configured. PanCode needs a model before it can do anything e
 ▸ navigated project · 1 result ✓
 ▸ navigated entries · 0 results ✓
 ▸ listed workspace · 5 entries ✓
-▸ found `**/package.json` · 1 path ✓
+
+$ listed checks · 5 lines ✓
+  │ … 3 earlier lines · /view
+  │
+  │ Run one with verify(check=&quot;&lt;id&gt;&quot;). verify(check=&quot;frontend&quot;, path=&lt;file&gt;) validates an HTML/CSS/JS artifact.
+
+▸ searched for `&quot;(scripts|build|test|main|bin)&quot;|vitest|jest|mocha|tsx|ts-node` · 2 matches ✓
 ▸ read package.json · lines 1-9 of 9 · 196B ✓
 ▸ read README.md · lines 1-24 of 24 · 938B ✓
-▸ read temperature.mjs · lines 1-41 of 41 · 1.5KB ✓
-▸ read calibration.test.mjs · lines 1-67 of 67 · 3.3KB ✓
 
-■ There is no build step or dependency installation: package.json defines only npm test, which runs node --test
-  calibration.test.mjs. The library entry point is temperature.mjs, exporting the four conversion functions;
-  calibration.test.mjs is the test entry point.
+▸ read · 4.8KB ✓
+  │ paths › temperature.mjs · calibration.test.mjs
 
-  Suggested verification: run npm test. The source appears inconsistent with an existing test: kelvinToCelsius rejects
-  0 K (temperature.mjs:21), while the absolute-zero test expects it to return -273.15°C (calibration.test.mjs:19–20). I
-  haven’t run the test suite, so that failure is inferred from the code, not verified.
+■ This is a small JavaScript ES module project. package.json declares no build script or TypeScript compiler; the code
+  runs directly on Node.js, with no extra dependencies. The main entry point is temperature.mjs, which exports four
+  conversion functions. calibration.test.mjs is the test entry point, using Node’s built-in node:test and
+  node:assert/strict. Run the tests with npm test (equivalent to node --test calibration.test.mjs).
 
-✓ Done · 8.2s · 3 calls · in 9 · out 504 · cached 32.2k · cache write 3.0k · 13:40
+  Suggested verification task: run the declared test check and confirm the conversion, input-validation, and
+  absolute-zero tests pass. I inspected the setup but have not run the tests. No files were changed.
+
+✓ Done · 6.6s · 4 calls · in 12 · out 389 · cached 45.7k · cache write 3.1k · 12:16
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- ▐P▌ default · ~/…/calibration-lab · main │ ✓ ready              ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot-sdk · gpt-6-luna
- /view inspects recorded tool calls and full outputs                                                      Alt+U details</pre></div></details></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#1-install-pancode">1. Install PanCode</a>
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready              ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot-sdk · gpt-6-luna
+ /view inspects recorded tool calls and full outputs                                                      Alt+U details</pre></details></figure><details class="doc-toc-mobile"><summary>On this page</summary><a href="#1-install-pancode">1. Install PanCode</a>
 <a href="#2-connect-a-model">2. Connect a model</a>
 <a href="#3-open-a-workspace">3. Open a workspace</a>
 <a href="#4-ask-a-focused-question">4. Ask a focused question</a>
 <a href="#5-make-the-next-task-specific">5. Make the next task specific</a>
 <a href="#keep-going">Keep going</a></details><p>PanCode works in the repository you open. For your first session, give it a small, concrete task: explain how the project builds and runs its tests. That lets you see how it reads code and uses tools before asking it to make a change.</p>
 <aside class="guide-note"><p class="eyebrow">Version scope</p><p>The recordings on this page come from a small JavaScript project with one failing test and GPT-6 Luna through a GitHub Copilot subscription. The first starts with no model configured and one stored sign-in. The install step was not recorded.</p>
-</aside><h2 id="1-install-pancode">1. Install PanCode</h2>
+</aside><h2 id="1-install-pancode" class="numbered-section"><span class="step-number">1.</span> <span>Install PanCode</span></h2>
 <p>The installer brings its own Node.js and needs no root. Linux, macOS, and WSL are the primary platforms. Native Windows is best effort, so use the current stable release. On Linux, the installer offers to add the desktop app when it finishes.</p>
 <div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 1"><code class="language-sh">curl -fsSL https://pancode.dev/install.sh | sh</code></pre></div>
-<h2 id="2-connect-a-model">2. Connect a model</h2>
+<h2 id="2-connect-a-model" class="numbered-section"><span class="step-number">2.</span> <span>Connect a model</span></h2>
 <p>Open a terminal in a repository you know and start PanCode:</p>
 <div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 2"><code class="language-sh">cd /path/to/your/project
 pancode</code></pre></div>
@@ -158,34 +160,34 @@ pancode</code></pre></div>
 <div class="code-block"><pre tabindex="0" aria-label="Code example 3"><code class="language-text">No model target is configured. PanCode needs a model before it can do anything else, so setup starts now.</code></pre></div>
 <p>Setup looks for a provider key in your environment, a stored sign-in and a local model server, and lists what it found. Pick one, or choose <strong>Set up something else</strong> and answer what you have: an API key, a subscription, a model server or gateway, or a setup file from your lab or team. Use a model that supports tool calling.</p>
 <p>PanCode sends the model one short test request and saves only when it answers; a browser sign-in you complete is the exception. In the recording of <code>pancode configure</code> on a fresh profile, setup found the stored GitHub Copilot sign-in and recommended gpt-6-luna. Choosing it printed these lines:</p>
-<div class="code-block"><pre tabindex="0" aria-label="Code example 4"><code class="language-text">◇  Testing copilot-sdk / gpt-6-luna ... answered in 1.7 s.
+<div class="code-block"><pre tabindex="0" aria-label="Code example 4"><code class="language-text">◇  Testing copilot-sdk / gpt-6-luna ... answered in 3.2 s.
 ◇  target copilot-sdk saved, runtime copilot-sdk
 ◇  chat runs on copilot-sdk, model gpt-6-luna
 ◇  fleet default is copilot-sdk
 ◇  settings written to ~/.config/pancode/settings.yaml
 ◇  Saved. Chat and workers use this model. Change it any time with /model or /config.</code></pre></div>
-<p><code>pancode configure</code> runs setup again at any time. Its <strong>Connect by endpoint</strong> is the shortcut when you already know the URL. LM Studio commonly serves at <code>http://localhost:1234</code>; Ollama commonly serves at <code>http://localhost:11434</code>. The <a href="/docs/guide/configuration-and-targets.html">connection guide</a> covers setup and credentials.</p>
+<figure class="guide-capture"><a class="capture-frame" href="/assets/guides/tui-configure-saved.png?v=088b6dd76c"><img src="/assets/guides/tui-configure-saved.webp?v=d33c1b38ec" width="2268" height="1304" alt="Guided setup in the terminal after choosing GitHub Copilot SDK: it notes that researcher&#39;s GitHub Copilot subscription on github.com is used under the organization&#39;s Copilot policies, tests copilot-sdk / gpt-6-luna (answered in 3.2 s), saves target copilot-sdk as the chat and fleet default, writes ~/.config/pancode/settings.yaml, and ends with how to start pancode and change the setup later with pancode configure." loading="lazy" srcset="/assets/responsive/tui-configure-saved-640.webp?v=9eaa6b10f2 640w, /assets/responsive/tui-configure-saved-1024.webp?v=d402a0f9b2 1024w, /assets/responsive/tui-configure-saved-1600.webp?v=50d794292d 1600w, /assets/guides/tui-configure-saved.webp?v=d33c1b38ec 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">Accepting the offer tests the recommended model and saves it as the default for chat and workers. <span class="tag">Terminal · v0.9.1</span></figcaption></figure><p><code>pancode configure</code> runs setup again at any time. Its <strong>Connect by endpoint</strong> is the shortcut when you already know the URL. LM Studio commonly serves at <code>http://localhost:1234</code>; Ollama commonly serves at <code>http://localhost:11434</code>. The <a href="/docs/guide/configuration-and-targets.html">connection guide</a> covers setup and credentials.</p>
 <p>If you have used PanCode before, you can skip this step. A chat route you already chose stays in use, and PanCode will not swap it for another when it stops working.</p>
 <p>If a connection fails, run:</p>
 <div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 5"><code class="language-sh">pancode doctor</code></pre></div>
-<h2 id="3-open-a-workspace">3. Open a workspace</h2>
+<h2 id="3-open-a-workspace" class="numbered-section"><span class="step-number">3.</span> <span>Open a workspace</span></h2>
 <p>When setup saves, the terminal workspace opens in the same folder. In the recording, its status line read <code>✓ ready</code> and ended with <code>copilot-sdk · gpt-6-luna</code>. Later, <code>pancode</code> opens the workspace directly.</p>
 <p>Or open the desktop alpha in your browser:</p>
 <div class="code-block"><p class="code-label eyebrow">Shell</p><pre tabindex="0" aria-label="Code example 6"><code class="language-sh">pancode gui --open</code></pre></div>
 <p>In the desktop, open a workspace folder and start a task. If you have not configured a model, <strong>Guided setup</strong> is also available in the browser; terminal configuration is optional. For this tutorial, either interface gives you a place to enter the first request.</p>
-<h2 id="4-ask-a-focused-question">4. Ask a focused question</h2>
+<h2 id="4-ask-a-focused-question" class="numbered-section"><span class="step-number">4.</span> <span>Ask a focused question</span></h2>
 <p>Try this request:</p>
 <blockquote>
 <p>Explain how this repository builds and runs its tests. Identify the main entry points and suggest one verification task. Do not change files yet.</p>
 </blockquote>
 <p>Follow the tool activity as PanCode reads the repository. In the recording, the agent read <code>package.json</code>, <code>README.md</code>, <code>temperature.mjs</code> and <code>calibration.test.mjs</code>, then named <code>npm test</code> as the test command and the two files as the main entry points. If an approval card appears, read the call before allowing it. If the answer misses an important directory or build system, name it in a follow-up.</p>
-<h2 id="5-make-the-next-task-specific">5. Make the next task specific</h2>
+<h2 id="5-make-the-next-task-specific" class="numbered-section"><span class="step-number">5.</span> <span>Make the next task specific</span></h2>
 <p>Once you understand the project, ask for one change you can check. Name the problem, what to do and how to verify it. The recording below gave this request for the project&#39;s one failing test:</p>
 <blockquote>
 <p>The absolute-zero test fails. Find the cause, fix it, and run the test check.</p>
 </blockquote>
-<figure class="guide-capture" data-cast="/assets/casts/cast-first-task.cast?v=93983463d3" data-cast-cols="120" data-cast-rows="36" data-cast-poster="20.735" data-cast-length="0:23"><a class="capture-frame" href="/assets/guides/cast-first-task.png?v=dbe1520704"><img src="/assets/guides/cast-first-task.webp?v=35d0f42e39" width="2268" height="1548" alt="Terminal recording of a first task on copilot · gpt-6-luna: asked to fix the failing absolute-zero test, Panos searches the project (19 matches), reads temperature.mjs and calibration.test.mjs, changes if (kelvin &lt;= 0) to if (kelvin &lt; 0) on line 21 of temperature.mjs, and runs the test check, which exits 0 with pass 7 and fail 0. It reports that all 7 tests passed (Done · 12s · 8 calls), and a notice says checks passed but coverage of the change was not measured." loading="lazy" srcset="/assets/responsive/cast-first-task-640.webp?v=f105228ca0 640w, /assets/responsive/cast-first-task-1024.webp?v=18f89e5771 1024w, /assets/responsive/cast-first-task-1600.webp?v=188d1e0028 1600w, /assets/guides/cast-first-task.webp?v=35d0f42e39 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">A first task at default autonomy: the agent finds the guard that rejects 0 K, edits one line, and runs the project&#39;s declared test check without asking. <span class="tag">Terminal · v0.9.0-dev</span> <a class="cast-download" href="/assets/casts/cast-first-task.cast?v=93983463d3" download>Recording · 0:23</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">A first task in PanCode: fix a failing test and verify
-Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that moment.
+<figure class="guide-capture" data-cast="/assets/casts/cast-first-task.cast?v=f35fb61897" data-cast-cols="120" data-cast-rows="36" data-cast-poster="19.782" data-cast-length="0:22"><a class="capture-frame" href="/assets/guides/cast-first-task.png?v=015993b476"><img src="/assets/guides/cast-first-task.webp?v=3fa2f69945" width="2268" height="1548" alt="Terminal recording of a first task on copilot · gpt-6-luna: asked to fix the failing absolute-zero test, Panos searches the project (19 matches), reads temperature.mjs and calibration.test.mjs, changes if (kelvin &lt;= 0) to if (kelvin &lt; 0) on line 21 of temperature.mjs, and runs the test check, which exits 0 with pass 7 and fail 0. It reports that all 7 tests passed (Done · 12s · 8 calls), and a notice says checks passed but coverage of the change was not measured." loading="lazy" srcset="/assets/responsive/cast-first-task-640.webp?v=af449ff16c 640w, /assets/responsive/cast-first-task-1024.webp?v=0047a25ca7 1024w, /assets/responsive/cast-first-task-1600.webp?v=cacd74d03c 1600w, /assets/guides/cast-first-task.webp?v=3fa2f69945 2268w" sizes="(max-width: 600px) calc(100vw - 40px), (max-width: 1100px) calc(100vw - 64px), 1000px" decoding="async"></a><figcaption class="caption">A first task at default autonomy: the agent finds the guard that rejects 0 K, edits one line, and runs the project&#39;s declared test check without asking. <span class="tag">Terminal · v0.9.1</span> <a class="cast-download" href="/assets/casts/cast-first-task.cast?v=f35fb61897" download>Recording · 0:22</a></figcaption><details class="cast-transcript"><summary>Transcript</summary><pre class="cast-transcript-text" tabindex="0" aria-label="Transcript of the recording">A first task in PanCode: fix a failing test and verify
+Recorded with PanCode 0.9.1. Each section is the terminal screen at that moment.
 
 == ready
 
@@ -198,14 +200,14 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
 
 
 
-   ██████   ██████  ███   ██
-   ██   ██ ██    ██ ████  ██
-   ██████  ████████ ██ ██ ██
-   ██      ██    ██ ██  ████       ▐P▌ PanCode 0.9.0-dev · 765279a · Systems software for coding agents
-   ██      ██    ██ ██   ███         awareness  not indexed yet · /context init
+   ██████  ██    ██ ███   ██
+   ██   ██ ████████ ████  ██
+   ██████  ██    ██ ██ ██ ██
+   ██      ██    ██ ██  ████       ▐∀▌ PanCode 0.9.1 · Systems software for coding agents
+   ██       ██████  ██   ███         awareness  not indexed yet · /context init
                                      last here  no earlier session here
  ██████  ██████  ██████  ███████
-██      ██    ██ ██   ██ ██          Ask Panos to explain code before you change it.
+██      ██    ██ ██   ██ ██          /view shows every tool call and its full output.
 ██      ██    ██ ██   ██ █████
 ██      ██    ██ ██   ██ ██
  ██████  ██████  ██████  ███████
@@ -223,19 +225,25 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  i No PANCODE.md detected. Run /context init to explore the repo and bootstrap context.                Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ ▐∀▌ default · ~/…/calibration-lab · main │ ✓ ready                       ctx 272k │ low ● ○ ○ ○ │ copilot · gpt-6-luna
  ? keys · / commands                                              Try /run to dispatch parallel workers │ Alt+U details
 
 == tui-verify
 
+
+
+▐∀▌ PanCode 0.9.1
+
+▌ The absolute-zero test fails. Find the cause, fix it, and run the test check.
+
 ▸ navigated project · 1 result ✓
-▸ searched for `absolute|zero|273\.15|273` · 19 matches ✓
-▸ navigated path `temperature.mjs` · 1 result ✓
+▸ navigated entries · 0 results ✓
+▸ searched for `absolute|kelvin|Kelvin|273\.15|273.15` · 40+ matches · truncated ✓
 
 ▸ read · 4.8KB ✓
   │ paths › temperature.mjs · calibration.test.mjs
 
-│ Thinking · I need to address an issue where Kelvin values less than or equal to zero are wrongly rejecting zero, whi…
+│ Thinking · I see there’s an issue with how Kelvin values are handled—specifically, that they should allow zero. I ne…
 
 ▸ navigated symbol `kelvinToCelsius` · 2 results ✓
 
@@ -248,33 +256,27 @@ Recorded with PanCode 0.9.0-dev. Each section is the terminal screen at that mom
   │  25 }
   │     ...
 
-$ checked test · exit 0 · 24 lines ✓
-  │ … 21 earlier lines · /view
+$ checked test · exit 0 · 19 lines ✓
+  │ … 16 earlier lines · /view
   │ ℹ pass 7
   │ ℹ fail 0
-
-■ Fixed kelvinToCelsius: its kelvin &lt;= 0 check incorrectly rejected exactly 0 K. It now rejects only values below zero.
-  The test check passes: all 7 tests passed.
-
-✓ Done · 12s · 8 calls · in 24 · out 374 · cached 96.3k · cache write 3.8k · 13:41
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- i checks passed; coverage of the change not measured                                                  Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
- /view inspects recorded tool calls and full outputs                                                      Alt+U details
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ● waiting for model · 1s              ctx ▰▱▱▱▱▱ 6% │ copilot · gpt-6-luna
+ Esc stops · Type while running to steer at the next step · Alt+Q manages queue                           Alt+U details
 
 == tui-verify-result
 
 ▸ navigated project · 1 result ✓
-▸ searched for `absolute|zero|273\.15|273` · 19 matches ✓
-▸ navigated path `temperature.mjs` · 1 result ✓
+▸ navigated entries · 0 results ✓
+▸ searched for `absolute|kelvin|Kelvin|273\.15|273.15` · 40+ matches · truncated ✓
 
 ▸ read · 4.8KB ✓
   │ paths › temperature.mjs · calibration.test.mjs
 
-│ Thinking · I need to address an issue where Kelvin values less than or equal to zero are wrongly rejecting zero, whi…
+│ Thinking · I see there’s an issue with how Kelvin values are handled—specifically, that they should allow zero. I ne…
 
 ▸ navigated symbol `kelvinToCelsius` · 2 results ✓
 
@@ -287,22 +289,22 @@ $ checked test · exit 0 · 24 lines ✓
   │  25 }
   │     ...
 
-$ checked test · exit 0 · 24 lines ✓
-  │ … 21 earlier lines · /view
+$ checked test · exit 0 · 19 lines ✓
+  │ … 16 earlier lines · /view
   │ ℹ pass 7
   │ ℹ fail 0
 
-■ Fixed kelvinToCelsius: its kelvin &lt;= 0 check incorrectly rejected exactly 0 K. It now rejects only values below zero.
-  The test check passes: all 7 tests passed.
+■ Fixed: kelvinToCelsius rejected 0 K because its absolute-zero check used &lt;= 0. Changed it to reject only values below
+  zero. The test check passes: all 7 tests passed.
 
-✓ Done · 12s · 8 calls · in 24 · out 374 · cached 96.3k · cache write 3.8k · 13:41
+✓ Done · 12s · 8 calls · in 24 · out 365 · cached 101k · cache write 5.1k · 12:17
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Ask Panos…
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  i checks passed; coverage of the change not measured                                                  Ctrl+G X dismiss
- ▐P▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 5% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
- /view inspects recorded tool calls and full outputs                                                      Alt+U details</pre></div></details></figure><p>The agent changed <code>kelvin &lt;= 0</code> to <code>kelvin &lt; 0</code> in <code>temperature.mjs</code>, ran the declared test check (<code>checked test · exit 0</code>), and ended its report with <code>The test check passes: all 7 tests passed.</code></p>
+ ▐∀▌ default · ~/…/calibration-lab · main* │ ✓ ready                 ctx ▰▱▱▱▱▱ 6% │ low ● ○ ○ ○ │ copilot · gpt-6-luna
+ /view inspects recorded tool calls and full outputs                                                      Alt+U details</pre></details></figure><p>The agent changed <code>kelvin &lt;= 0</code> to <code>kelvin &lt; 0</code> in <code>temperature.mjs</code>, ran the declared test check (<code>checked test · exit 0</code>), and ended its report with <code>The test check passes: all 7 tests passed.</code></p>
 <p>Use your project&#39;s real test name. Read the diff and the check output yourself before you commit the change.</p>
 <h2 id="keep-going">Keep going</h2>
 <p>In the terminal, <code>/help</code> lists commands, <code>/model</code> selects a model, <code>/settings</code> opens the settings center, and <code>/config</code> opens your connections, where <strong>Add a target</strong> runs setup again without leaving the session.</p>
@@ -320,7 +322,13 @@ $ checked test · exit 0 · 24 lines ✓
 <a href="#5-make-the-next-task-specific">5. Make the next task specific</a>
 <a href="#keep-going">Keep going</a></aside></div><div class="tutorial-end"><p class="caption">By Anthony Kougkas · PanCode</p><a class="text-link" href="/docs.html">Continue with the documentation <span class="arrow arrow-forward" aria-hidden="true">→</span></a></div></main>
 <footer class="colophon page">
-  <div class="footer-top"><a class="brand" href="/"><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>Systems software for coding agents.</p></div>
-  <div class="footer-bottom"><p>Copyright 2026 Anthony Kougkas</p><div><a href="https://github.com/akougkas/pancode/blob/main/LICENSE">PanCode License 1.0</a><a href="https://github.com/akougkas/pancode/blob/main/NOTICE">Notices</a><a href="https://github.com/akougkas/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></div></div>
-</footer><script src="/js/site.js?v=7a8de004d2" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
+  <div class="footer-top"><a class="brand" href="/" aria-label="PanCode home"><svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="4 4 56 56" aria-hidden="true" focusable="false"><path class="mark-left" d="M6.04 10.72L30.45 60L18 60A14 14 0 0 1 4 46L4 18A14 14 0 0 1 6.04 10.72Z"/><path class="mark-top" d="M18 4L46 4A14 14 0 0 1 54.34 6.76L46.55 22.5L17.45 22.5L9.66 6.76A14 14 0 0 1 18 4Z"/><path class="mark-right" d="M33.55 60L57.96 10.72A14 14 0 0 1 60 18L60 46A14 14 0 0 1 46 60L33.55 60Z"/><path class="mark-point" d="M19.93 27.5L44.07 27.5L32 51.87L19.93 27.5Z"/></svg><span class="brand-name"><span class="brand-pan">Pan</span><span class="brand-code">Code</span></span></a><p>One harness for your models and agents.</p></div>
+  <nav class="footer-links" aria-label="Footer">
+    <div><p class="eyebrow">Start</p><ul><li><a href="/#start">Install</a></li><li><a href="/tutorials/first-session.html">Your first session</a></li><li><a href="/docs.html">Docs</a></li></ul></div>
+    <div><p class="eyebrow">Learn</p><ul><li><a href="/learn.html">Tutorials</a></li><li><a href="/learn.html#path-agents">Coding agents</a></li><li><a href="/learn.html#path-hpc">Science and HPC</a></li><li><a href="/learn.html#path-local">Local models</a></li></ul></div>
+    <div><p class="eyebrow">Build</p><ul><li><a href="/hub.html">PanHub</a></li><li><a href="/research.html">Research</a></li><li><a href="https://github.com/PanStudio/pancode">GitHub <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li></ul></div>
+    <div><p class="eyebrow">Project</p><ul><li><a href="https://github.com/PanStudio/pancode/blob/main/LICENSE">PanCode License 1.0 <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li><li><a href="https://github.com/PanStudio/pancode/blob/main/NOTICE">Notices <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li><li><a href="https://github.com/PanStudio/pancode/issues">Feedback <span class="arrow arrow-diagonal" aria-hidden="true">↗</span></a></li><li><a href="/privacy.html">Privacy</a></li></ul></div>
+  </nav>
+  <div class="footer-bottom"><p>PanCode by PanStudio</p><p>Copyright 2026 Anthony Kougkas</p></div>
+</footer><script src="/js/site.js?v=5062607fac" defer></script><script src="/js/docs.js?v=322a6ce8d1" defer></script>
 </body></html>

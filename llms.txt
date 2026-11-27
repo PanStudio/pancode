@@ -1,16 +1,16 @@
 # PanCode
 
-> PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It is used on HPC and scientific software.
+> PanCode is one harness for the models and coding agents you already use. Panos, its orchestrator agent, routes work across providers, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, in the terminal, in scripts and CI, in ACP editors and on the desktop (alpha). It installs on HPC login nodes without root and ships checks for numerical work.
 
 PanCode is a harness for development work. Panos, its orchestrator agent, plans a task, runs it on the models you connect and hands parts of it to workers, including the coding agents you already have. It routes across providers, sandboxes commands, checks finished work against what ran and keeps memory, in the terminal, in scripts and CI, in ACP editors or on the desktop. PanHub packs and PanKit servers cover HPC and scientific software.
 
-PanCode needs no account and no root, and sends nothing home. It is source-available under the PanCode License 1.0: free for individuals, small organizations, and noncommercial research and teaching. Anthony Kougkas writes and maintains it.
+PanCode is a product of PanStudio. It needs no account and no root, and sends nothing home. It is free for individuals, small organizations (fewer than 100 people and under $1M revenue), and noncommercial research and teaching. Its source is available on GitHub under the PanCode License 1.0. Larger organizations get a 32-day evaluation, then a commercial license from PanStudio.
 
 - Install on macOS, Linux, or WSL: `curl -fsSL https://pancode.dev/install.sh | sh`
 - Install on Windows (best effort) in PowerShell: `irm https://pancode.dev/install.ps1 | iex`
-- Install with npm (Node.js 22.19 or newer): `npm install -g @akougkas/pancode`
+- Install with npm (Node.js 22.19 or newer): `npm install -g @panstudio/pancode`
 - Connect a model in a project: `pancode configure`; then run `pancode` for the terminal or `pancode gui --open` for the desktop alpha.
-- Current release: v0.9.0. Source: https://github.com/akougkas/pancode. License: PanCode License 1.0.
+- Current release: v0.9.1. Source: https://github.com/PanStudio/pancode. License: PanCode License 1.0.
 
 ## Start
 
@@ -33,18 +33,18 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - [Semantic context](https://pancode.dev/docs/guide/semantic-context.html): Search your project by meaning with a local embedding route.
 - [Built-in and custom agents](https://pancode.dev/docs/guide/built-in-agents.html): See the agents you can dispatch and add your own.
 
-## The family
+## Store, hub and toolkit
 
 - [Keep results in PanStore](https://pancode.dev/docs/guide/panstore.html): Keep datasets and results outside the working tree, with a record of where each came from.
 - [Packs from PanHub](https://pancode.dev/docs/guide/panhub.html): Find, install and manage skills, plugins, extensions and other packs.
 - [Tool servers with PanKit](https://pancode.dev/docs/guide/pankit.html): Run PanKit's MCP tool servers in PanCode or in any other MCP host.
-- [Write extensions and tools with PanSDK](https://pancode.dev/docs/guide/sdk.html): Scaffold, validate and test extensions, and write MCP tool servers.
 
 ## Extend PanCode
 
 - [Workers and fleets](https://pancode.dev/docs/guide/fleet-dispatch.html): Assign focused tasks and combine workers into a workflow.
 - [Install plugins](https://pancode.dev/docs/guide/plugins.html): Add reusable resources to your PanCode installation.
 - [Write and install extensions](https://pancode.dev/docs/guide/harness-extensions.html): Install and write extensions that declare what they may do.
+- [Extension API (unstable)](https://pancode.dev/docs/guide/sdk.html): Scaffold, validate and test extensions, and write MCP tool servers.
 - [Editors and other agents](https://pancode.dev/docs/guide/interop.html): Use supported agent connections and editor integrations.
 
 ## Reference
@@ -57,12 +57,9 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - [Information flow](https://pancode.dev/docs/guide/information-flow.html): Keep named files away from destinations you did not choose.
 - [Glossary](https://pancode.dev/docs/guide/glossary.html): Plain-language meanings of the words PanCode uses, from target to worktree.
 
-## Family pages
+## PanHub
 
-- [PanStore](https://pancode.dev/panstore.html): PanStore keeps a project's datasets and results outside the working tree, each file recorded with who put it, from where, and its hash.
-- [PanKit](https://pancode.dev/pankit.html): PanKit serves seven MCP tool servers for node facts, modules, Spack, Darshan, scientific data, dataset catalogs and the project store.
-- [PanHub](https://pancode.dev/hub.html): Every PanHub pack bundled with this PanCode release: skills, plugins and extensions, each with its tier, licence, source and install command.
-- [PanSDK](https://pancode.dev/sdk.html): PanSDK is the typed surface for writing PanCode extensions, packs, tools and MCP servers, imported from pancode/sdk and licensed Apache-2.0.
+- [PanHub](https://pancode.dev/hub.html): The PanHub marketplace: every pack in the index bundled with this PanCode release, with its tier, licence, source and the command that installs or serves it.
 
 ## Tutorials
 
@@ -75,11 +72,11 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 - [See what a session cost and what a run did](https://pancode.dev/tutorials/see-what-a-session-cost-and-what-a-run-did.html): Read session cost and stop reasons from local journals, verify a sealed record, and prepare an archive that uploads nothing.
 - [A numerical change, checked with PanCode](https://pancode.dev/tutorials/temperature-calibration.html): Follow a temperature-conversion example through a floating-point test failure, a correction, and recorded verification.
 - [Choose a model for your project](https://pancode.dev/tutorials/choose-model-for-your-project.html): Connect a local server, a cloud API, or a supported subscription route, then choose models separately for conversation and delegated work.
-- [Coordinate the coding agents you already use](https://pancode.dev/tutorials/coordinate-your-coding-agents.html): Use supported coding peers for bounded assignments, distinguish managed runs from interactive handoffs, and review the results before combining them.
-- [Keep a long coding task on track](https://pancode.dev/tutorials/keep-long-coding-tasks-on-track.html): Inspect context, preserve decisions through a handoff, and resume the correct branch without turning every past message into a current instruction.
-- [Check a change against your repository](https://pancode.dev/tutorials/check-a-change-against-your-repository.html): Declare which checks matter, run them through verification, and inspect whether passing results still match the files you are reviewing.
+- [Coordinate the coding agents you already use](https://pancode.dev/tutorials/coordinate-your-coding-agents.html): Hand a bounded task to a coding agent you have installed, tell a managed run from an interactive handoff, and review what comes back before you combine it.
+- [Keep a long coding task on track](https://pancode.dev/tutorials/keep-long-coding-tasks-on-track.html): See what fills the context, carry your decisions through a handoff, and resume the right branch of a long task.
+- [Check a change against your repository](https://pancode.dev/tutorials/check-a-change-against-your-repository.html): Name the checks that matter, run them through verify, and see whether a passing result still matches the files you are reviewing.
 - [Add skills and plugins deliberately](https://pancode.dev/tutorials/add-skills-and-plugins-deliberately.html): Preview a project skill or plugin, inspect its package pin, and load only what your task needs; installing is not a permission grant.
-- [Work from a laptop with remote workers](https://pancode.dev/tutorials/work-from-a-laptop-with-remote-workers.html): Use a local PanCode session to coordinate SSH workers when your machines share the required project path, runtime version, and approved access.
+- [Work from a laptop with remote workers](https://pancode.dev/tutorials/work-from-a-laptop-with-remote-workers.html): Coordinate workers on other machines over SSH from your laptop, once each node has the same PanCode version and the project at the same path.
 - [Write an extension with declared capabilities](https://pancode.dev/tutorials/write-an-extension-with-declared-capabilities.html): Scaffold, test, and install a small extension, and see exactly what approving its capabilities covers.
 - [Diffusion models in the terminal](https://pancode.dev/tutorials/diffusion-models.html): Connect Inception's Mercury models for chat and workers, and watch an answer refine as a whole instead of arriving token by token.
 - [Panes and docks: files, workers, and music](https://pancode.dev/tutorials/panes-and-docks.html): Show and hide a file browser, a live worker dashboard, and a focus radio beside the terminal conversation with one key each.
@@ -110,8 +107,8 @@ PanCode needs no account and no root, and sends nothing home. It is source-avail
 
 ## Optional
 
-- [Full text](https://pancode.dev/llms-full.txt): every guide, family page, tutorial, and research page above as Markdown in one file
+- [Full text](https://pancode.dev/llms-full.txt): every guide, the PanHub catalog, and every tutorial and research page above as Markdown in one file
 - [Overview](https://pancode.dev/): capabilities, models, installation, and common questions
-- [Source repository](https://github.com/akougkas/pancode): code, issues, and the full upstream guides
-- [npm package](https://www.npmjs.com/package/@akougkas/pancode)
-- [License](https://github.com/akougkas/pancode/blob/main/LICENSE): PanCode License 1.0
+- [Source repository](https://github.com/PanStudio/pancode): code, issues, and the full upstream guides
+- [npm package](https://www.npmjs.com/package/@panstudio/pancode)
+- [License](https://github.com/PanStudio/pancode/blob/main/LICENSE): PanCode License 1.0
