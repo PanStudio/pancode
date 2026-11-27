@@ -160,6 +160,12 @@ export function resolvePackBinary(extensionId: string, binary: ExtensionBinaryDe
 	return resolvePinnedEntryBinary(packBinaryTool(extensionId, binary), binary.name);
 }
 
+/** The pinned copy's expected sha256 for the current platform, or undefined if this platform has no pin. */
+export function packBinarySha256(binary: ExtensionBinaryDeclaration): string | undefined {
+	const platform = currentToolPlatform();
+	return platform === null ? undefined : binary.downloads[platform]?.sha256;
+}
+
 /** The binary's path, or one sentence on why it has none, naming what fixes it. */
 export function packBinaryPath(
 	extensionId: string,

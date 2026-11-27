@@ -12,8 +12,7 @@ import { runCommandVector } from "../../../core/safe-exec.js";
 import { ownerTelemetryContext } from "../../../core/telemetry/context.js";
 import { telemetryHub } from "../../../core/telemetry/hub.js";
 import { isSecretArgKey, redactSecretString } from "../../safety/redaction.js";
-import { currentToolPlatform } from "../../toolchain/index.js";
-import { BINARY_RUN_LIMITS, type PackBinaryRunRequest, packBinaryPath } from "./binaries.js";
+import { BINARY_RUN_LIMITS, type PackBinaryRunRequest, packBinaryPath, packBinarySha256 } from "./binaries.js";
 
 export interface PackBinaryRunResult {
 	exitCode: number | null;
@@ -30,13 +29,22 @@ function capText(text: string): string {
 
 /** The requests that may start a program: what the operator typed or pressed, and a tool call admission passed. */
 const BINARY_PARENTS: ReadonlySet<string> = new Set(["command", "action", "tool"]);
+const KNOWN_PARENTS = new Set(["command", "action", "tool", "observe", "hook", "interview"] as const);
+type BinaryParentKind = "command" | "action" | "tool" | "observe" | "hook" | "interview" | "unknown";
 const PARENT_LABELS: Readonly<Record<string, string>> = {
 	observe: "an event or timer handler",
 	hook: "a hook",
 	interview: "an interview step",
+	unknown: "an unknown request",
 };
 const SHOWN_ARGS = 16;
 const SHOWN_ARG_CHARS = 200;
+
+function normalizeParent(parent: string): BinaryParentKind {
+	return KNOWN_PARENTS.has(parent as Exclude<BinaryParentKind, "unknown">)
+		? (parent as Exclude<BinaryParentKind, "unknown">)
+		: "unknown";
+}
 
 export type PackBinaryRefusalCode = "background-request" | "read-only" | "not-installed";
 
@@ -54,10 +62,11 @@ function packBinaryRefusal(
 	service: "binaries" | "pane",
 	caller: Pick<PackBinaryCaller, "parent" | "readOnly">,
 ): { code: PackBinaryRefusalCode; reason: string } | null {
-	if (!BINARY_PARENTS.has(caller.parent))
+	const parent = normalizeParent(caller.parent);
+	if (!BINARY_PARENTS.has(parent))
 		return {
 			code: "background-request",
-			reason: `ctx.${service} runs only from a command, an action or a tool call, not from ${PARENT_LABELS[caller.parent] ?? `a ${caller.parent} request`}`,
+			reason: `ctx.${service} runs only from a command, an action or a tool call, not from ${PARENT_LABELS[parent] ?? `a ${parent} request`}`,
 		};
 	if (caller.readOnly) return { code: "read-only", reason: `ctx.${service} is refused in a read-only turn` };
 	return null;
@@ -93,8 +102,8 @@ function recordPackBinaryRun(
 	args: ReadonlyArray<string>,
 	result: PackBinaryOutcome,
 ): void {
-	const platform = currentToolPlatform();
-	const sha256 = platform === null ? undefined : binary.downloads[platform]?.sha256;
+	const sha256 = packBinarySha256(binary);
+	const parent = normalizeParent(caller.parent);
 	const { owner } = caller;
 	try {
 		telemetryHub().emit(
@@ -110,7 +119,7 @@ function recordPackBinaryRun(
 				version: binary.version,
 				...(sha256 !== undefined ? { sha256 } : {}),
 				via,
-				parent: caller.parent as "command",
+				parent,
 				outcome: result.outcome,
 				...(result.reasonCode !== undefined ? { reasonCode: result.reasonCode } : {}),
 				...(typeof result.exitCode === "number" ? { exitCode: result.exitCode } : {}),
@@ -130,7 +139,7 @@ function recordPackBinaryRun(
 		details: {
 			binary: binary.name,
 			version: binary.version,
-			parent: caller.parent,
+			parent,
 			args: shownArgs(args),
 			...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
 			...(result.durationMs !== undefined ? { durationMs: Math.round(result.durationMs) } : {}),
@@ -147,14 +156,23 @@ function admitPackBinary(
 	args: ReadonlyArray<string>,
 	caller: PackBinaryCaller,
 ): string {
+	const callerRefusal = packBinaryRefusal(via === "pane" ? "pane" : "binaries", caller);
+	if (callerRefusal !== null) {
+		recordPackBinaryRun(caller, binary, via, args, {
+			outcome: "refused",
+			reasonCode: callerRefusal.code,
+			reason: callerRefusal.reason,
+		});
+		throw new Error(callerRefusal.reason);
+	}
 	const resolved = packBinaryPath(extensionId, binary);
-	const refused =
-		packBinaryRefusal(via === "pane" ? "pane" : "binaries", caller) ??
-		("reason" in resolved ? { code: "not-installed" as const, reason: resolved.reason } : null);
-	if (refused !== null || "reason" in resolved) {
-		const reason = refused?.reason ?? "";
-		recordPackBinaryRun(caller, binary, via, args, { outcome: "refused", reasonCode: refused?.code, reason });
-		throw new Error(reason);
+	if ("reason" in resolved) {
+		recordPackBinaryRun(caller, binary, via, args, {
+			outcome: "refused",
+			reasonCode: "not-installed",
+			reason: resolved.reason,
+		});
+		throw new Error(resolved.reason);
 	}
 	return resolved.path;
 }

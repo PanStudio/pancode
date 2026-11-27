@@ -15,6 +15,11 @@ import type {
 	ExtensionWorkPlace,
 } from "@pancode/sdk/extension";
 import { runCommandVector, type SafeCommandResult } from "../../../core/safe-exec.js";
+import {
+	EXTENSION_RUN_DEPTH_ENV,
+	MAX_EXTENSION_RUN_DEPTH,
+	parseExtensionRunDepth,
+} from "../../../core/tool-env-controls.js";
 import { withContainedYoloPin } from "../../safety/autonomy.js";
 import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "./run-env.js";
 import type { ExtensionRequestScope } from "./scope.js";
@@ -81,12 +86,6 @@ const MAX_PAGE = 1000;
 const MAX_WAIT_MS = 30_000;
 /** Finished runs kept for `frames` and `wait` before the oldest is forgotten. */
 const MAX_FINISHED = 64;
-/**
- * How many pack-started runs deep a chain may go. Each run's process carries its depth, and the model's shell in it
- * passes it to a pack verb it runs, so a run that starts runs that start runs stops here.
- */
-const RUN_DEPTH_ENV = "PANCODE_EXTENSION_RUN_DEPTH";
-const MAX_RUN_DEPTH = 2;
 const ROUTE_WORD = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/u;
 
 interface Frame {
@@ -256,11 +255,16 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 		async start(request, scope) {
 			const signal = scope?.signal;
 			const run = clampRequest(request, deps.ceilings);
-			const depth = Number.parseInt(deps.sourceEnv[RUN_DEPTH_ENV] ?? "", 10) || 0;
-			if (depth >= MAX_RUN_DEPTH)
+			const depth = parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]);
+			if (depth === "invalid")
 				throw new ExtensionRunError(
 					"refused",
-					`runs.start: this process is already ${depth} extension runs deep; runs nest at most ${MAX_RUN_DEPTH} deep`,
+					`runs.start: invalid ${EXTENSION_RUN_DEPTH_ENV}; runs nest at most ${MAX_EXTENSION_RUN_DEPTH} deep`,
+				);
+			if (depth >= MAX_EXTENSION_RUN_DEPTH)
+				throw new ExtensionRunError(
+					"refused",
+					`runs.start: this process is already ${depth} extension runs deep; runs nest at most ${MAX_EXTENSION_RUN_DEPTH} deep`,
 				);
 			if (deps.readOnly?.() === true && (!run.readOnly || run.autonomy === "yolo"))
 				throw new ExtensionRunError("refused", "runs.start: writable or yolo runs are refused in a read-only session");
@@ -304,7 +308,7 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 			const env = {
 				...runEnv(deps.sourceEnv, deps.envPolicy, run.target),
 				...deps.launch.env,
-				[RUN_DEPTH_ENV]: String(depth + 1),
+				[EXTENSION_RUN_DEPTH_ENV]: String(depth + 1),
 			};
 			const controller = new AbortController();
 			const stop = (): void => controller.abort();

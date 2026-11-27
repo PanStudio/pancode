@@ -33,7 +33,8 @@ export interface ExtensionHostOptions {
 	list: NonNullable<OperatorExtensionsOptions["list"]>;
 	runtimeHooks: ExtensionRuntimeHookBridge;
 	bus: TelemetryHub;
-	chat: Pick<ChatLoop, "isStreaming" | "turnPreparation" | "onEvent">;
+	chat: Pick<ChatLoop, "isStreaming" | "turnPreparation" | "onEvent"> &
+		Partial<Pick<ChatLoop, "toolLimits" | "currentTurnConstraints">>;
 	sessionId: () => string | null;
 	targetId: () => string;
 	frozenTools?: OperatorExtensionsOptions["frozenTools"];
@@ -72,6 +73,10 @@ export function startExtensionHost(options: ExtensionHostOptions): ExtensionHost
 		(!options.chat.isStreaming() && options.chat.turnPreparation().phase === "idle");
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let disposed = false;
+	const readOnly = (): boolean =>
+		options.readOnly?.() === true ||
+		options.chat.toolLimits?.()?.readOnly === true ||
+		options.chat.currentTurnConstraints?.()?.readOnly === true;
 	const operator = new OperatorExtensions({
 		context: () => ({ workspace: process.cwd(), sessionId: options.sessionId(), mode: options.mode }),
 		isIdle,
@@ -80,7 +85,7 @@ export function startExtensionHost(options: ExtensionHostOptions): ExtensionHost
 		...(options.frozenTools ? { frozenTools: options.frozenTools } : {}),
 		...(options.services ? { services: createExtensionHostServices(options.services) } : {}),
 		...(options.sandboxUnixSockets ? { sandboxUnixSockets: options.sandboxUnixSockets } : {}),
-		...(options.readOnly ? { readOnly: options.readOnly } : {}),
+		readOnly,
 		...(options.pruneOrphanedSessionState === false ? { pruneOrphanedSessionState: false } : {}),
 		onChange: () => schedule(),
 		onDiagnostic: (message) => options.notify(message),

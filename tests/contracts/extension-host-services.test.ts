@@ -23,9 +23,11 @@ import {
 	parseExtensionRuntimeV2,
 } from "@pancode/sdk/pack";
 import { readBlobHistory } from "@pancode/store";
+import { Value } from "typebox/value";
 import { sha256Hex } from "../../src/core/hash.js";
 import { recentPackageActivity } from "../../src/core/package-activity.js";
-import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { ExtensionBinaryRanSchema } from "../../src/core/telemetry/host-schemas.js";
+import { createTelemetryHub, telemetryHub } from "../../src/core/telemetry/hub.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
@@ -943,6 +945,21 @@ describe("extension binaries service", () => {
 				["refused", "observe", ["status"]],
 				["refused", "tool", ["status"]],
 			],
+		);
+
+		const seenJournal: Array<Record<string, unknown>> = [];
+		const offJournal = telemetryHub().subscribe("extension.binary_ran", (payload) => {
+			ok(Value.Check(ExtensionBinaryRanSchema, payload), "emitted payload matches ExtensionBinaryRanSchema");
+			seenJournal.push(payload as Record<string, unknown>);
+		});
+		try {
+			await rejects(runPackBinary("fixture", [pinned], request, store, caller("")), /not from an unknown request/u);
+		} finally {
+			offJournal();
+		}
+		deepStrictEqual(
+			seenJournal.map((entry) => [entry.parent, entry.outcome, entry.reasonCode]),
+			[["unknown", "refused", "background-request"]],
 		);
 
 		removePackBinaries("fixture");

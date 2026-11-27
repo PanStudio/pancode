@@ -105,7 +105,7 @@ export const ExtensionBinaryRanSchema = Type.Object(
 		/** The pinned download for this platform; absent when the declaration pins none here. */
 		sha256: Type.Optional(sha256Hex),
 		via: vocabulary(["run", "pane"]),
-		parent: vocabulary(["command", "action", "tool", "observe", "hook", "interview"]),
+		parent: vocabulary(["command", "action", "tool", "observe", "hook", "interview", "unknown"]),
 		outcome: vocabulary(["ok", "failed", "timeout", "refused"]),
 		reasonCode: Type.Optional(vocabulary(["background-request", "read-only", "not-installed"])),
 		exitCode: Type.Optional(Type.Integer()),
