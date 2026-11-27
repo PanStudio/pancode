@@ -171,19 +171,18 @@ function readRecord(canonicalRoot: string): WorkspaceTrustRecord | null {
 		const raw: unknown = JSON.parse(readFileSync(recordPath(canonicalRoot), "utf8"));
 		if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
 		const record = raw as Record<string, unknown>;
-		if ((record.version !== 1 && record.version !== 2) || record.workspaceRoot !== canonicalRoot) return null;
+		if (record.version !== 2 || record.workspaceRoot !== canonicalRoot) return null;
 		if (!isRecord(record.surfaces)) return null;
 		const surfaces: WorkspaceTrustRecord["surfaces"] = {};
 		for (const surface of SURFACES) {
 			const approval = record.surfaces[surface];
 			if (approval === undefined) continue;
 			if (typeof approval === "string" && SHA256.test(approval)) {
-				// A version 1 package digest stays an exact-bytes approval.
+				// A digest approves exact bytes, for a package surface whose state pins no content too.
 				surfaces[surface] = approval;
 				continue;
 			}
 			if (
-				record.version !== 2 ||
 				!isPackageSurface(surface) ||
 				!isRecord(approval) ||
 				!Array.isArray(approval.identities) ||
@@ -258,15 +257,10 @@ export function recordProjectPackageTrust(snapshot: ProjectSurfaceSnapshot): voi
 	);
 }
 
-/**
- * Version 2 only when an identity set needs it, so an older build that reads
- * only version 1 keeps reading a file that holds nothing but digests.
- */
 function writeRecord(record: WorkspaceTrustRecord): void {
-	const version = Object.values(record.surfaces).some((approval) => typeof approval === "object") ? 2 : 1;
 	safeResourceWrite(
 		recordPath(record.workspaceRoot),
-		`${JSON.stringify({ version, workspaceRoot: record.workspaceRoot, surfaces: record.surfaces }, null, 2)}\n`,
+		`${JSON.stringify({ version: 2, workspaceRoot: record.workspaceRoot, surfaces: record.surfaces }, null, 2)}\n`,
 		{ mode: 0o600 },
 	);
 }

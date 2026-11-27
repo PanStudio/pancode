@@ -9,9 +9,23 @@
  * handler can be tested by calling it.
  */
 
-import type { ExtensionRuntimeSnapshot, ExtensionStatus, ExtensionTone } from "./public-api.js";
 import type { View, ViewTone } from "./view.js";
 import type { EmbeddingInput, EmbeddingResponse, EmbeddingTask, FactSum, ModelRunInfo, TurnOrigin } from "./wire.js";
+
+export type ExtensionTone = "neutral" | "positive" | "warning" | "error";
+
+export interface ExtensionStatus {
+	text: string;
+	tone?: ExtensionTone;
+}
+
+export interface ExtensionRuntimeSnapshot {
+	workspace: string;
+	sessionId: string | null;
+	generation: number;
+	/** The surface hosting the session: the terminal, a headless `run` (or the one-shot `extensions run`), or an ACP client such as the GUI. */
+	mode: "interactive" | "headless" | "acp";
+}
 
 export type ExtensionObservationEventV2 =
 	| "session_open"

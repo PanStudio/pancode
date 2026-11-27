@@ -69,7 +69,6 @@ export {
 } from "./config.js";
 export {
 	describeValue,
-	fieldValueError,
 	formContentErrors,
 	type McpElicitAction,
 	type McpElicitationContext,
@@ -77,9 +76,7 @@ export {
 	type McpElicitationRequest,
 	type McpElicitResult,
 	type McpElicitValue,
-	type McpFieldOption,
 	type McpFormElicitation,
-	type McpFormField,
 	type McpUrlElicitation,
 	readTypedValue,
 } from "./elicitation.js";

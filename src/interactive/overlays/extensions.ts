@@ -177,7 +177,7 @@ export function openExtensionsOverlay(tui: TUI, ctx: SlashCommandContext, onClos
 			if (command.available && !runnable.has(command.extensionId)) runnable.set(command.extensionId, command.invocation);
 		return list.map((ext, index) => {
 			const state = extensionState(ext);
-			const hasRuntime = Boolean(ext.runtime || ext.runtimeV2);
+			const hasRuntime = Boolean(ext.runtimeV2);
 			const runtime = runtimes.find((entry) => entry.id === ext.id && entry.scope === ext.scope);
 			const runtimeWord = runtimeWords(runtime?.state);
 			const id = ext.id;
@@ -301,9 +301,8 @@ export function openExtensionsOverlay(tui: TUI, ctx: SlashCommandContext, onClos
 						if (provenance)
 							facts.push({
 								label: "Authority",
-								value: ext.runtimeV2
-									? "Runtime code executes on interactive startup/reload after installation, under Node permissions built from its manifest. Those are a seat belt, not a boundary: a package allowed to run programs has your account's authority except where the OS sandbox confines it."
-									: "Runtime code executes on interactive startup/reload after installation. It has your user account's authority; it is not an OS sandbox.",
+								value:
+									"Runtime code executes on interactive startup/reload after installation, under Node permissions built from its manifest. Those are a seat belt, not a boundary: a package allowed to run programs has your account's authority except where the OS sandbox confines it.",
 								tone: "muted",
 							});
 					}

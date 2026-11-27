@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ExtensionPanel } from "@pancode/sdk/extension";
 import type { ProjectTrustCardModel } from "../cli/project-trust-card.js";
 import { promptRefs } from "../domains/extensions/operator-commands.js";
 import type { HubEntryKind, ResourcesContract } from "../domains/resources/index.js";
@@ -9,7 +8,6 @@ import { promptSourceLabel } from "../session-control/prompt-source-label.js";
 import type { HubBrowseRequest, SlashCommandContext } from "../session-control/slash-command-types.js";
 import type { PancodeKeybindingManager } from "./keybinding-manager.js";
 import type { OverlayTransitions } from "./overlay-transitions.js";
-import { openExtensionPanel } from "./overlays/extension-panel.js";
 import { openExtensionViewPanel } from "./overlays/extension-view-panel.js";
 import { openExtensionsOverlay } from "./overlays/extensions.js";
 import { openHelpOverlay } from "./overlays/help-reference.js";
@@ -37,7 +35,6 @@ export interface OverlayResourceOpenersDeps {
 }
 
 export interface OverlayResourceOpeners {
-	openExtensionPanelState(owner: string, panel: ExtensionPanel, valid: () => boolean): boolean;
 	openExtensionViewPanelState(
 		owner: string,
 		deps: Omit<Parameters<typeof openExtensionViewPanel>[2], "close"> & { onClosed(): void },
@@ -160,13 +157,6 @@ export function createOverlayResourceOpeners(deps: OverlayResourceOpenersDeps): 
 	};
 
 	return {
-		openExtensionPanelState(owner, panel, valid) {
-			if (deps.transitions.state !== "closed") return false;
-			deps.transitions.state = "extensions";
-			deps.transitions.handle = openExtensionPanel(deps.tui, owner, panel, valid, deps.closeOverlay);
-			deps.tui.requestRender();
-			return true;
-		},
 		openExtensionViewPanelState(owner, panelDeps) {
 			if (deps.transitions.state !== "closed") return false;
 			deps.transitions.state = "extensions";

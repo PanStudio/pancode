@@ -13,15 +13,14 @@
 
 import { openBrowser } from "../../core/open-browser.js";
 import { sleep } from "../../core/timers.js";
+import { elicitationValueError, type McpFormField } from "../../core/views/elicitation-values.js";
 import {
 	describeValue,
-	fieldValueError,
 	type McpElicitationContext,
 	type McpElicitationHost,
 	type McpElicitResult,
 	type McpElicitValue,
 	type McpFormElicitation,
-	type McpFormField,
 	type McpUrlElicitation,
 	readTypedValue,
 } from "../../domains/gateway/mcp/index.js";
@@ -144,14 +143,14 @@ function readField(field: McpFormField, answer: AskUserAnswer | undefined): Fiel
 		const read = readTypedValue(field, typed);
 		if ("error" in read) return { error: read.error, typed };
 		value = read.value;
-		const error = fieldValueError(field, value);
+		const error = elicitationValueError(field, value);
 		return error === null ? { value } : { error, typed };
 	}
 	const chosen = picked.filter((label) => label !== unset).map((label) => values[labels.indexOf(label)]);
 	if (chosen.some((item) => item === undefined)) return { error: "names an option the form does not offer" };
 	value = field.kind === "multi" ? (chosen as string[]) : (chosen[0] as McpElicitValue);
 	if (field.kind !== "multi" && chosen.length !== 1) return { error: "needs exactly one choice" };
-	const error = fieldValueError(field, value);
+	const error = elicitationValueError(field, value);
 	return error === null ? { value } : { error };
 }
 

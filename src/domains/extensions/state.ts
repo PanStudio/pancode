@@ -381,7 +381,6 @@ function installedFromRoot(
 		version: manifest?.version ?? "unknown",
 		description: manifest?.description ?? "Installed extension has an invalid manifest.",
 		...(manifest?.capabilities ? { capabilities: manifest.capabilities } : {}),
-		...(manifest?.runtime ? { runtime: manifest.runtime } : {}),
 		...(manifest?.runtimeV2 ? { runtimeV2: manifest.runtimeV2 } : {}),
 		...(manifest?.plugin ? { plugin: manifest.plugin } : {}),
 		scope,
@@ -455,7 +454,7 @@ export function installedExtensionClaims(token: string, cwd = process.cwd()): bo
 	return listInstalledExtensions(cwd).some(
 		(entry) =>
 			entry.loadable &&
-			(entry.runtimeV2 ?? entry.runtime)?.commands.some(
+			entry.runtimeV2?.commands.some(
 				(command) =>
 					token === extensionInvocation(entry.id, command.name) ||
 					("replaces" in command &&

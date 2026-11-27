@@ -207,6 +207,16 @@ function mcpTrustRemedy(id: string): { remedy: string; interactiveRemedy: string
 	return { remedy: `pancode mcp trust ${id}`, interactiveRemedy: `/mcp trust ${id}` };
 }
 
+/** Create the `${PLUGIN_DATA}` directory an installed plugin's stdio server is promised before it starts. */
+function preparePluginDataDir(declaration: GatewayMcpServer): void {
+	if (declaration.plugin === undefined || declaration.command === undefined) return;
+	try {
+		mkdirSync(declaration.plugin.dataDir, { recursive: true, mode: 0o700 });
+	} catch (error) {
+		throw new Error(`the data directory of plugin ${declaration.plugin.id} cannot be created: ${errorMessage(error)}`);
+	}
+}
+
 /** Serialize an argv vector for the shell classifier only. No shell executes this text. */
 function quoted(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
@@ -1108,15 +1118,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 					}
 					if (launchRefusal !== null) throw new Error(launchRefusal);
-					if (declaration.plugin !== undefined && declaration.command !== undefined) {
-						try {
-							mkdirSync(declaration.plugin.dataDir, { recursive: true, mode: 0o700 });
-						} catch (error) {
-							throw new Error(
-								`the data directory of plugin ${declaration.plugin.id} cannot be created: ${errorMessage(error)}`,
-							);
-						}
-					}
+					preparePluginDataDir(declaration);
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),

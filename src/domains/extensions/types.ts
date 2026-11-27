@@ -3,7 +3,6 @@
 import type {
 	ExtensionCapabilities,
 	ExtensionDiagnostic,
-	ExtensionRuntimeDeclaration,
 	ExtensionRuntimeDeclarationV2,
 	PancodeExtensionManifest,
 } from "@pancode/sdk/pack";
@@ -45,7 +44,6 @@ export interface InstalledExtension {
 	 * has this source, so an operator or project prompt of that name keeps it.
 	 */
 	pluginSource?: string;
-	runtime?: ExtensionRuntimeDeclaration;
 	runtimeV2?: ExtensionRuntimeDeclarationV2;
 	id: string;
 	name: string;
@@ -229,7 +227,7 @@ export interface ExtensionState {
 			source?: string;
 			origin?: ExtensionOrigin;
 			contentDigest?: string;
-			/** Digest of the capability envelope the operator reviewed at install; absent for api 1. */
+			/** Digest of the capability envelope the operator reviewed at install; absent for a package with no api 2 runtime. */
 			envelopeDigest?: string;
 			/** The operator's choices for the host services the envelope declares. */
 			services?: { model?: ExtensionModelAssignment };

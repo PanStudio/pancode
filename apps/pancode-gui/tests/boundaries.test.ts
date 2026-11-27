@@ -240,7 +240,7 @@ function violations(file: string, source: string): string[] {
 				if (!adapters.has(rootTarget)) errors.push(`adapter allowlist: ${rootTarget}`);
 			} else if (name.startsWith("tests/harness/") || name.startsWith("tests/fixtures/")) {
 				if (!testModules.has(rootTarget)) errors.push(`test seam allowlist: ${rootTarget}`);
-			} else if (!(name.startsWith("client/") && rootTarget.startsWith(`${sharedViews}/`)))
+			} else if (!(/^(?:client|contracts)\//.test(name) && rootTarget.startsWith(`${sharedViews}/`)))
 				errors.push(`root import outside pancode seam: ${rootTarget}`);
 		}
 		if (

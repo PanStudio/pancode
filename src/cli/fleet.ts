@@ -38,7 +38,6 @@ import {
 import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import {
-	AgentsDomainModule,
 	loadPlaybook,
 	PLAYBOOK_COMMANDS_REMEDY,
 	type Playbook,
@@ -48,8 +47,9 @@ import {
 	playbookPromptVariables,
 	renderPlaybookPrompt,
 } from "../domains/agents/index.js";
-import { ConfigDomainModule } from "../domains/config/index.js";
-import { ContextDomainModule } from "../domains/context/runtime.js";
+import { AgentsDomainModule } from "../domains/agents/module.js";
+import { ConfigDomainModule } from "../domains/config/module.js";
+import { ContextDomainModule } from "../domains/context/module.js";
 import { clearRootCancelRequest, readRootCancelRequest } from "../domains/dispatch/cancel-requests.js";
 import { capacityDrain, fleetAdmissionRefusal, setCapacityDraining } from "../domains/dispatch/capacity-lease.js";
 import type { DispatchRequest } from "../domains/dispatch/contract.js";
@@ -71,7 +71,6 @@ import {
 } from "../domains/dispatch/fleet-root-record.js";
 import type { FleetRunStepOutcome } from "../domains/dispatch/fleet-run-types.js";
 import {
-	createDispatchDomainModule,
 	describeFleetResumeDiff,
 	type ExecuteFleetRunInput,
 	executeFleetRun,
@@ -81,20 +80,23 @@ import {
 	readFleetRun,
 	WriterSetBusyError,
 } from "../domains/dispatch/index.js";
+import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
 import { WRITE_BOUNDARY_VIOLATION_REASON } from "../domains/dispatch/write-boundary.js";
 import { preflightWriteBoundaries } from "../domains/dispatch/write-boundary-enforcer.js";
-import { ExtensionsDomainModule } from "../domains/extensions/index.js";
+import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { ensurePancodeState } from "../domains/lifecycle/index.js";
-import { createPromptsDomainModule } from "../domains/prompts/index.js";
-import { foregroundStreamUsage, ProvidersDomainModule } from "../domains/providers/index.js";
-import { ResourcesDomainModule } from "../domains/resources/index.js";
+import { createPromptsDomainModule } from "../domains/prompts/module.js";
+import { foregroundStreamUsage } from "../domains/providers/index.js";
+import { ProvidersDomainModule } from "../domains/providers/module.js";
+import { ResourcesDomainModule } from "../domains/resources/module.js";
 import type { SafetyContract } from "../domains/safety/contract.js";
-import { SafetyDomainModule } from "../domains/safety/index.js";
+import { SafetyDomainModule } from "../domains/safety/module.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
-import { budgetRemainingText, SchedulingDomainModule } from "../domains/scheduling/index.js";
-import { SessionDomainModule } from "../domains/session/index.js";
-import { TelemetryDomainModule } from "../domains/telemetry/index.js";
+import { budgetRemainingText } from "../domains/scheduling/index.js";
+import { SchedulingDomainModule } from "../domains/scheduling/module.js";
+import { SessionDomainModule } from "../domains/session/module.js";
+import { TelemetryDomainModule } from "../domains/telemetry/module.js";
 import { answerFleetHelp, FLEET_HELP as HELP } from "./fleet-help.js";
 import { runFleetWithShutdown } from "./fleet-lifecycle.js";
 import { createFleetReporter } from "./fleet-reporting.js";

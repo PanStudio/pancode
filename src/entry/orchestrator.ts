@@ -63,38 +63,38 @@ import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/worksp
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { autonomyCeilingRefusal, launchAutonomyRefusal, yoloRootRefusal } from "../core/yolo-host.js";
 import { renderAgentCatalogSectionsFromSpecs } from "../domains/agents/catalog.js";
-import { AgentsDomainModule } from "../domains/agents/index.js";
+import { AgentsDomainModule } from "../domains/agents/module.js";
 import {
 	createClaimCaptureRegistration,
 	createClaimsDeliveryRegistrations,
 	createHypothesisCaptureRegistration,
 } from "../domains/claims/index.js";
-import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/index.js";
 import { PANCODE_KEYBINDINGS, type PancodeKeybinding } from "../domains/config/keybindings.js";
+import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/module.js";
 import { liveHistoryBudget } from "../domains/context/budget/inspection.js";
 import { bootstrapInputFromInitOptions } from "../domains/context/init-options.js";
-import { createContextDomainModule } from "../domains/context/runtime.js";
+import { createContextDomainModule } from "../domains/context/module.js";
 import { runOperatorRecall } from "../domains/context/working-set/operator-recall.js";
 import { createSessionRereadPort } from "../domains/context/working-set/session-reread.js";
 import { createDispatchDedupRegistration } from "../domains/dispatch/dedup.js";
 import { agentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import {
 	compileFleetRunPreview,
-	createDispatchDomainModule,
 	createWorktreeBootRecovery,
 	executeFleetRun,
 	fleetAdmissionRefusal,
 	fleetRouteResolver,
 	runUsageFromCallRecords,
 } from "../domains/dispatch/index.js";
+import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
 import {
 	createExtensionRuntimeHookBridge,
-	ExtensionsDomainModule,
 	installedExtensionClaims,
 	isLoadableExtension,
 } from "../domains/extensions/index.js";
-import { InteropDomainModule } from "../domains/interop/index.js";
+import { ExtensionsDomainModule } from "../domains/extensions/module.js";
+import { InteropDomainModule } from "../domains/interop/module.js";
 import {
 	describeUpgradeNotice,
 	ensurePancodeState,
@@ -152,7 +152,6 @@ import {
 	type CompletionFact,
 	createExplorationNudgeRegistrations,
 	createMarketplaceOfferRegistration,
-	createMiddlewareDomain,
 	createMiddlewareToolChoiceControl,
 	createSkillsReminderRegistration,
 	createTurnPlanCueRegistration,
@@ -160,17 +159,20 @@ import {
 	writeMiddlewareDiagnosticToStderr,
 } from "../domains/middleware/index.js";
 import { createLocalClockReminderRegistration } from "../domains/middleware/local-clock-reminder.js";
+import { createMiddlewareDomain } from "../domains/middleware/module.js";
 import { createPlanCloseRegistration } from "../domains/middleware/plan-close.js";
 import { createStaleBuildReminderRegistration } from "../domains/middleware/stale-build-reminder.js";
 import { createTaskBoardReminderRegistration } from "../domains/middleware/task-board-reminder.js";
 import { createTaskNudgeRegistration } from "../domains/middleware/task-nudge.js";
 import { createWatchdogRegistration } from "../domains/middleware/watchdog.js";
-import { committedPluginSnapshot, PluginsDomainModule, pluginSnapshotFor } from "../domains/plugins/index.js";
-import { createPromptsDomainModule } from "../domains/prompts/index.js";
+import { committedPluginSnapshot, pluginSnapshotFor } from "../domains/plugins/index.js";
+import { PluginsDomainModule } from "../domains/plugins/module.js";
+import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { agentRoleToolWarnings } from "../domains/providers/agent-role-warnings.js";
 import { credentialsPresent } from "../domains/providers/credentials.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
-import { createProvidersDomainModule, modelEndpointKey, registerForegroundStream } from "../domains/providers/index.js";
+import { modelEndpointKey, registerForegroundStream } from "../domains/providers/index.js";
+import { createProvidersDomainModule } from "../domains/providers/module.js";
 import {
 	type LlmRequestAdmission,
 	type OneShotPort,
@@ -184,12 +186,12 @@ import { createVisionSidecar } from "../domains/providers/vision-sidecar.js";
 import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota } from "../domains/quota/index.js";
 import { lazyReportTextHost, reportWiring } from "../domains/report/wiring.js";
 import {
-	createResourcesDomainModule,
 	discoverMarketplaceSkills,
 	installedSkillNames,
 	installSkill,
 	suggestableSkills,
 } from "../domains/resources/index.js";
+import { createResourcesDomainModule } from "../domains/resources/module.js";
 import {
 	expandSubmitReferences,
 	expandSubmitText,
@@ -211,11 +213,11 @@ import {
 	parseRigorOverride,
 	resolveModelDestination,
 	resolveRigor,
-	SafetyDomainModule,
 	sessionChangesTree,
 } from "../domains/safety/index.js";
 import { workerFlowPolicyInput } from "../domains/safety/information-flow.js";
 import { createInternalGitPolicy } from "../domains/safety/internal-git-policy.js";
+import { SafetyDomainModule } from "../domains/safety/module.js";
 import { createStandingChecks } from "../domains/safety/observed-checks.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
@@ -223,7 +225,7 @@ import { SAFETY_JUDGE_CONSECUTIVE_BLOCKS, type SafetyJudgeSeat } from "../domain
 import { createSessionCodeConsent } from "../domains/safety/session-code-consent.js";
 import { unattendedWindowMs } from "../domains/safety/unattended.js";
 import { createRunCostCap, runCostCeilingUsd } from "../domains/scheduling/budget.js";
-import { createSchedulingDomainModule } from "../domains/scheduling/index.js";
+import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import {
 	type CompactionFlowAdmission,
@@ -238,7 +240,8 @@ import type { SessionContract, SessionMeta } from "../domains/session/contract.j
 import { activeDecisionRefs, createDecisionBoardStore } from "../domains/session/decision-board.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import { commitHandoff, type HandoffServiceDeps, prepareHandoff } from "../domains/session/handoff-service.js";
-import { runHeadlessCompaction, SessionDomainModule, SessionLiveError } from "../domains/session/index.js";
+import { runHeadlessCompaction, SessionLiveError } from "../domains/session/index.js";
+import { SessionDomainModule } from "../domains/session/module.js";
 import { reconcilePendingProtectedArtifacts } from "../domains/session/protected-artifact-journal.js";
 import {
 	appendProtectedArtifactRegistryEvent,
@@ -255,10 +258,12 @@ import { writeTranscriptExport } from "../domains/session/transcript-export.js";
 import { activePath } from "../domains/session/tree/active-path.js";
 import { latestUserImages } from "../domains/session/vision-images.js";
 import { probeWorkspaceAsync } from "../domains/session/workspace/index.js";
-import { archiveCommandHost, ShareDomainModule } from "../domains/share/index.js";
+import { archiveCommandHost } from "../domains/share/index.js";
+import { ShareDomainModule } from "../domains/share/module.js";
 import type { SystemOneInstance } from "../domains/system-one/index.js";
 import { createSystemOne, parseRouteList } from "../domains/system-one/index.js";
-import { createTelemetryDomain, READ_MODEL_FOLD } from "../domains/telemetry/index.js";
+import { READ_MODEL_FOLD } from "../domains/telemetry/index.js";
+import { createTelemetryDomain } from "../domains/telemetry/module.js";
 import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
 import { activeUserTaskAcceptance } from "../domains/user-tasks/active-acceptance.js";
 import { createUserTasksStore } from "../domains/user-tasks/store.js";

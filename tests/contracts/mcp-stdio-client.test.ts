@@ -1298,6 +1298,32 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 		deepStrictEqual(outcome, { action: "accept", content: { note: "Leave unset" } });
 	});
 
+	it("checks date and date-time fields numerically without Date.parse", () => {
+		const form = parseElicitationRequest(
+			{
+				message: "When",
+				requestedSchema: {
+					type: "object",
+					properties: {
+						on: { type: "string", format: "date" },
+						at: { type: "string", format: "date-time" },
+					},
+				},
+			},
+			false,
+		);
+		ok(form.kind === "ok" && form.request.mode === "form");
+		deepStrictEqual(formContentErrors(form.request, { on: "0099-01-01" }), []);
+		deepStrictEqual(formContentErrors(form.request, { on: "2024-02-29" }), []);
+		strictEqual(formContentErrors(form.request, { on: "2026-02-30" }).length, 1);
+		strictEqual(formContentErrors(form.request, { on: "1900-02-29" }).length, 1);
+		deepStrictEqual(formContentErrors(form.request, { at: "2026-07-28 09:30:00Z" }), []);
+		deepStrictEqual(formContentErrors(form.request, { at: "0099-01-01T00:00:00.123+02:30" }), []);
+		strictEqual(formContentErrors(form.request, { at: "2026-07-28T24:00:00Z" }).length, 1);
+		strictEqual(formContentErrors(form.request, { at: "2026-07-28 09:30:00+25:00" }).length, 1);
+		strictEqual(formContentErrors(form.request, { at: "2026-07-28T09:30:00+02:60" }).length, 1);
+	});
+
 	it("ignores bare list_changed on modern servers, keeps live clients alive on listResources abort, and omits empty getPrompt arguments", async () => {
 		let events: McpTransportEvents | null = null;
 		let started = false;

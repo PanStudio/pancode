@@ -4,7 +4,7 @@ import type { DomainModule, LoadResult } from "../core/domain-loader.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
 import type { DispatchBundleOptions } from "../domains/dispatch/extension.js";
 import { type ExtensionsContract, isLoadableExtension } from "../domains/extensions/index.js";
-import { createMiddlewareDomain } from "../domains/middleware/index.js";
+import { createMiddlewareDomain } from "../domains/middleware/module.js";
 import type { WorkerHookHost } from "../entry/worker-hook-host.js";
 import type { WorkerExtensionHook } from "../worker/protocol.js";
 
