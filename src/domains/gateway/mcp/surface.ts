@@ -110,7 +110,7 @@ function surfaceChange(approved: Readonly<Record<string, string>>, served: Reado
  * been listed, in which case only a missing approval can be judged.
  */
 export function judgeMcpSurface(
-	server: { id: string; scope: string },
+	server: { id: string; scope: string; plugin?: { core?: true } },
 	approved: McpSurface | undefined,
 	served: McpSurface | null,
 ): McpSurfaceStatus {
@@ -124,7 +124,9 @@ export function judgeMcpSurface(
 			reason:
 				server.scope === "user"
 					? `the tool surface of user-scope server '${server.id}' is not recorded; an attended session records it on its first listing, or review it and run ${remedy}`
-					: `the tool surface of '${server.id}' is not approved; launch trust lets it start so its tools can be listed, and no tool runs until the operator reviews them and runs ${remedy}`,
+					: server.plugin?.core === true
+						? `the tool surface of core plugin server '${server.id}' is not recorded yet; the first session or pancode mcp test that lists its tools records it`
+						: `the tool surface of '${server.id}' is not approved; launch trust lets it start so its tools can be listed, and no tool runs until the operator reviews them and runs ${remedy}`,
 		};
 	}
 	if (served === null || served.digest === approved.digest) {

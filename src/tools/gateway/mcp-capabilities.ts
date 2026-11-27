@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
@@ -294,19 +295,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	/**
 	 * Judge a served surface against the approval the trust state holds now. An
 	 * attended session records a user-scope server's surface the first time it
-	 * sees one; a project or plugin server's surface is only ever approved by the
-	 * operator's own command, and a changed surface is never recorded over.
+	 * sees one, and any session records a core plugin's, its files being the
+	 * ones PanCode pins; a project or plugin server's surface is otherwise only
+	 * ever approved by the operator's own command, and a changed surface is never recorded over.
 	 */
 	const judgeServedSurface = (declaration: ResolvedMcpServer, served: McpSurface): McpServerSurfaceListing => {
 		if (options.admitted !== undefined) return judgeAttestedSurface(declaration, served, options.admitted);
 		const status = judgeMcpSurface(declaration, currentMcpSurfaceApproval(declaration, trustOptions), served);
-		if (
-			status.status !== "unapproved" ||
-			declaration.scope !== "user" ||
-			!attended ||
-			options.persistCatalog === false ||
-			options.admitted !== undefined
-		) {
+		const recordsFirst = (declaration.scope === "user" && attended) || declaration.plugin?.core === true;
+		if (status.status !== "unapproved" || !recordsFirst || options.persistCatalog === false) {
 			return surfaceListing(declaration, status);
 		}
 		const recorded = approveMcpSurface({ ...trustOptions, id: declaration.id, surface: served });
@@ -1111,6 +1108,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 					}
 					if (launchRefusal !== null) throw new Error(launchRefusal);
+					if (declaration.plugin !== undefined && declaration.command !== undefined) {
+						try {
+							mkdirSync(declaration.plugin.dataDir, { recursive: true, mode: 0o700 });
+						} catch (error) {
+							throw new Error(
+								`the data directory of plugin ${declaration.plugin.id} cannot be created: ${errorMessage(error)}`,
+							);
+						}
+					}
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
@@ -1164,6 +1170,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							command: declaration.command,
 							args: launchArgs.length > 0 ? [...declaration.args, ...launchArgs] : declaration.args,
 							cwd: placement.cwd,
+							...(declaration.plugin !== undefined ? { ownNodeFirst: true as const } : {}),
 							// A builtin server gets the variables its manifest names from this process; no other scope gains any.
 							env:
 								declaration.builtin !== undefined

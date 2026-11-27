@@ -449,6 +449,11 @@ function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state
 	}
 	const record = state.records.find((item) => item.projectRoot === projectRoot && item.id === server.id);
 	const origin = server.plugin !== undefined ? ` from plugin ${server.plugin.id}` : "";
+	if (server.plugin?.core === true && record?.digest !== server.digest) {
+		// The files are the ones PanCode ships pinned; per-tool classes come from its mcp.json.
+		const recorded = state.surfaces?.find((item) => item.id === server.id && item.digest === server.digest)?.surface;
+		return { status: "trusted", actionClass: "unknown", ...(recorded !== undefined ? { surface: recorded } : {}) };
+	}
 	if (record === undefined) {
 		return {
 			status: "untrusted",
@@ -735,7 +740,8 @@ export type ApproveMcpSurfaceResult = { ok: true; surface: McpApprovedSurface } 
  * Record the operator's approval of the surface a launch-trusted server serves.
  * A project or plugin server must hold current launch trust; the approval is
  * written onto that record and grants nothing about launch. A user-scope
- * server's surface goes into the separate surface list under its declaration digest.
+ * server's surface, and that of a core plugin trusted without a record, goes
+ * into the separate surface list under its declaration digest.
  */
 export function approveMcpSurface(options: ApproveMcpSurfaceOptions): ApproveMcpSurfaceResult {
 	return withStateFileLockSync(mcpTrustPath(options.configDir), () => approveMcpSurfaceLocked(options));
@@ -771,7 +777,10 @@ function approveMcpSurfaceLocked(options: ApproveMcpSurfaceOptions): ApproveMcpS
 	};
 	let records = trust.state.records;
 	let surfaces = trust.state.surfaces ?? [];
-	if (server.scope === "user") {
+	const onRecord = records.some(
+		(entry) => entry.projectRoot === projectRoot && entry.id === server.id && entry.digest === server.digest,
+	);
+	if (server.scope === "user" || (server.plugin?.core === true && !onRecord)) {
 		surfaces = [
 			...surfaces.filter((entry) => entry.id !== server.id),
 			{ id: server.id, digest: server.digest, surface: approved },

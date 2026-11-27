@@ -8,6 +8,7 @@ export const PluginsDomainModule: DomainModule<"plugins"> = {
 	manifest: PluginsManifest,
 	createExtension: createPluginsBundle,
 };
+export { bundledPluginCatalog } from "./catalog.js";
 export {
 	isPluginId,
 	PLUGIN_EXTENSION_KEY,
@@ -24,6 +25,7 @@ export {
 	reportInvalidInstallRecordsAsRows,
 } from "./install-records.js";
 export { pluginContentDigest, pluginContentDigestWithCapture } from "./integrity.js";
+export { pluginDataDir } from "./paths.js";
 export { pluginPromptNames } from "./prompt-names.js";
 export {
 	buildPluginSnapshot,
