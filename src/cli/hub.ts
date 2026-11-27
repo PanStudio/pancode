@@ -1079,8 +1079,7 @@ async function executeHubCommand(
 						for (const diag of result.diagnostics) {
 							process.stderr.write(`  [manifest] ${diag.message}${diag.path ? ` (${diag.path})` : ""}\n`);
 						}
-					}
-					if (!result.validation.contentValid) {
+					} else if (!result.validation.contentValid) {
 						printError(`pack ${name} authored content is invalid`);
 						for (const diag of result.validation.diagnostics) {
 							process.stderr.write(`  [${diag.code}] ${diag.message}${diag.path ? ` (${diag.path})` : ""}\n`);

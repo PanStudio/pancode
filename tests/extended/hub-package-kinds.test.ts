@@ -18,7 +18,9 @@ import {
 	updatePlugin,
 } from "../../src/domains/plugins/index.js";
 
+import { registerHubPackage } from "../../src/domains/resources/hub.js";
 import { HUB_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
+import { addedKitServers, addKitServer, kitServeLaunch } from "../../src/domains/resources/kit-items.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
@@ -30,8 +32,10 @@ function write(root: string, file: string, body: string): void {
 }
 function fixture(root: string, kind: HubEntryKind, version = "1.0.0"): void {
 	const file = kind === "skill" ? "skills/example/SKILL.md" : `${kind}s/example.md`;
-	if (kind !== "plugin")
-		write(root, file, `---\nname: example\ndescription: Fixture content\n---\nContent ${version}\n`);
+	const bare = kind === "plugin" || kind === "server";
+	if (!bare) write(root, file, `---\nname: example\ndescription: Fixture content\n---\nContent ${version}\n`);
+	if (kind === "server")
+		write(root, "mcp.json", JSON.stringify({ mcpServers: { example: { command: "node", args: ["server.mjs"] } } }));
 	write(root, "assets/proof.txt", version);
 	write(
 		root,
@@ -44,8 +48,8 @@ function fixture(root: string, kind: HubEntryKind, version = "1.0.0"): void {
 				"dev.pancode": {
 					manifestVersion: 1,
 					kind,
-					resources: kind === "plugin" ? {} : { [`${kind}s`]: `${kind}s` },
-					components: kind === "plugin" ? [] : [{ kind, id: "example", path: file }],
+					resources: bare ? {} : { [`${kind}s`]: `${kind}s` },
+					components: bare ? [] : [{ kind, id: "example", path: file }],
 				},
 			},
 		}),
@@ -222,6 +226,83 @@ test("package versions share strict prerelease validation and single kinds canno
 		fixture(root, "prompt");
 		write(root, "prompts/undeclared.md", "Unexpected public prompt");
 		equal(readPluginManifest(root).valid, false);
+	} finally {
+		env.restore();
+	}
+});
+
+test("addKitServer requires an index row and ignores a local server:<name> directory in cwd", async () => {
+	const env = await isolatePancodeEnv("kit-add-catalog-only-");
+	try {
+		const cwd = join(env.dir, "workspace");
+		mkdirSync(cwd);
+		const registered = join(env.dir, "registered");
+		fixture(registered, "server", "1.0.0");
+		const shadow = join(cwd, "server:example");
+		fixture(shadow, "server", "9.9.9");
+
+		// A project-only install with no PanHub row is refused even though discoverHub lists it as origin: installed.
+		ok(
+			installHubPackage({
+				kind: "server",
+				sourcePath: registered,
+				scope: "project",
+				cwd,
+				origin: { kind: "local", source: registered },
+				trust: "trusted",
+			}).plugin?.valid,
+		);
+		const missing = addKitServer("example", cwd);
+		equal(missing.ok, false);
+		match(missing.message, /no PanHub server pack is named example/);
+
+		// Once registered in PanHub, cwd/server:example must not shadow the indexed row.
+		registerHubPackage(registered, { scope: "user", cwd });
+		const added = addKitServer("example", cwd);
+		ok(added.ok, added.ok ? "" : added.message);
+		equal(added.value.version, "1.0.0");
+		equal(added.value.sha256, pluginContentDigest(registered));
+
+		// Malformed state.json reports the copy as unloadable instead of throwing in list or serve.
+		writeFileSync(join(dirname(added.value.destination), "state.json"), "{broken");
+		const listed = addedKitServers(cwd);
+		equal(listed.length, 1);
+		equal(listed[0]?.loadable, false);
+		match(listed[0]?.reason ?? "", /plugin install state/);
+		const launch = kitServeLaunch("example", cwd);
+		ok(launch !== undefined && !launch.ok);
+		match(launch.message, /does not load/);
+	} finally {
+		env.restore();
+	}
+});
+
+test("an added server keeps its install tier and remains repairable when its tree changes", async () => {
+	const env = await isolatePancodeEnv("kit-copy-");
+	try {
+		const source = join(env.dir, "source");
+		fixture(source, "server");
+		registerHubPackage(source, { cwd: env.dir, scope: "user" });
+		const installed = installHubPackage({
+			kind: "server",
+			sourcePath: source,
+			scope: "user",
+			cwd: env.dir,
+			origin: { kind: "catalog", source },
+			tier: "listed",
+			trust: "foreign",
+		}).plugin;
+		ok(installed?.valid);
+		const row = addedKitServers(env.dir)[0];
+		equal(row?.tier, "listed");
+		equal(row.loadable, false);
+		match(row.reason ?? "", /trustProjectImports/);
+		write(installed.rootPath, "server.json", "{}");
+		const launch = kitServeLaunch("example", env.dir);
+		ok(launch && !launch.ok);
+		match(launch.message, /pankit add example/);
+		ok(addKitServer("example", env.dir).ok);
+		equal(existsSync(join(installed.rootPath, "server.json")), false);
 	} finally {
 		env.restore();
 	}

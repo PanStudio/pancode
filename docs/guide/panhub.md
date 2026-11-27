@@ -10,7 +10,7 @@ A **pack** is one installable unit, and each pack has one kind: `plugin`, `exten
 
 - The five content kinds carry a root `plugin.json`, an explicit Semantic Version and a full-tree SHA-256 pin, and share one installation state. A plugin carries several components; each other content kind exposes one public component and may include supporting files.
 - An `extension` is code that runs in its own process. It carries `pancode-extension.yaml`, has its own installation state, and installs only after the operator reviews its capability envelope. A plugin and an extension are always separate packs.
-- A `server` is one of the seven [PanKit](pankit.md) tool servers PanCode carries (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`, `store`). Each is a core row with its pack under `hub/packs/servers/`; it is built in and has no installed copy.
+- A `server` is one [PanKit](pankit.md) tool server. The seven core rows (`node`, `modules`, `darshan`, `spack`, `scidata`, `catalog`, `store`) are built in and have no installed copy. A third-party server pack declares its launcher in `mcp.json` and installs as a plugin-scope MCP server.
 
 PanHub has three parts:
 
