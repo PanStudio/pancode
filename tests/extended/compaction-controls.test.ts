@@ -56,12 +56,12 @@ import {
 	createApplicationController,
 } from "../../src/interactive/application-controller.js";
 import { tokenRow } from "../../src/interactive/context-operation-view.js";
+import { createChatLoop } from "../../src/session-control/chat-loop.js";
 import {
+	CONTEXT_STATUS_NOTICE_KEY,
 	renderCompactionSummaryLine,
 	renderEvictionSkipLine,
-} from "../../src/interactive/renderers/compaction-summary.js";
-import { createChatLoop } from "../../src/session-control/chat-loop.js";
-import { CONTEXT_STATUS_NOTICE_KEY } from "../../src/session-control/compaction-lines.js";
+} from "../../src/session-control/compaction-lines.js";
 import { createHostInserts } from "../../src/session-control/host-inserts.js";
 import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";
 import { createTurnContext, type TurnContextDeps } from "../../src/session-control/turn-context.js";
