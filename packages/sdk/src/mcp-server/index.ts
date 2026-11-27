@@ -222,7 +222,7 @@ function toCallResult(tool: AnyTool, result: unknown, era: Era): CallResult {
 }
 
 function isProgressToken(value: unknown): value is string | number {
-	return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
+	return typeof value === "string" || (typeof value === "number" && Number.isInteger(value));
 }
 
 /**
@@ -342,9 +342,10 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 		return (progress, total, message) => {
 			if (token === undefined || entry.answered || entry.cancelled) return;
 			if (typeof progress !== "number" || !Number.isFinite(progress) || progress <= last) return;
-			const knownTotal = typeof total === "number" && Number.isFinite(total) ? total : undefined;
+			const knownTotal = typeof total === "number" && Number.isFinite(total) && total >= 0 ? total : undefined;
 			const now = performance.now();
-			if (!(knownTotal !== undefined && progress >= knownTotal) && now - sentAt < PROGRESS_INTERVAL_MS) return;
+			const reachesTotal = knownTotal !== undefined && progress >= knownTotal && last < knownTotal;
+			if (!reachesTotal && now - sentAt < PROGRESS_INTERVAL_MS) return;
 			last = progress;
 			sentAt = now;
 			notify("notifications/progress", {

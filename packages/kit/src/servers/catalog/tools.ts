@@ -664,7 +664,8 @@ function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 						error: `catalog_stage: the download answered HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
 					};
 				}
-				const length = Number(response.headers.get("content-length") ?? Number.NaN);
+				const rawLength = response.headers.get("content-length")?.trim();
+				const length = rawLength !== undefined && /^\d+$/.test(rawLength) ? Number(rawLength) : Number.NaN;
 				if (Number.isFinite(length) && length > maxBytes) {
 					await discard(response);
 					return {
@@ -673,7 +674,7 @@ function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 				}
 				stall.touch();
 				const body = response.body ?? (async function* () {})();
-				const total = Number.isFinite(length) ? length : undefined;
+				const total = Number.isFinite(length) && length > 0 ? length : undefined;
 				const staged = await writeStaged(body, { ...target, expectedSha256: resource.sha256 }, (bytes) => {
 					stall.touch();
 					context.progress(bytes, total, `${bytes}${total !== undefined ? ` of ${total}` : ""} bytes downloaded`);

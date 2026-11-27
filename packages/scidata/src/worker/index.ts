@@ -63,10 +63,18 @@ async function run(input: WorkerInput): Promise<ScientificResult> {
 	return statsParquet(lib, request);
 }
 
+const PROGRESS_INTERVAL_MS = 50;
+
 async function main(): Promise<void> {
 	const input = workerData as WorkerInput;
 	if (input.progress === true) {
-		setStatsProgress((values) => parentPort?.postMessage({ progress: values } satisfies ScientificProgress));
+		let sentAt = Number.NEGATIVE_INFINITY;
+		setStatsProgress((values) => {
+			const now = performance.now();
+			if (now - sentAt < PROGRESS_INTERVAL_MS) return;
+			sentAt = now;
+			parentPort?.postMessage({ progress: values } satisfies ScientificProgress);
+		});
 	}
 	let reply: ScientificReply;
 	try {

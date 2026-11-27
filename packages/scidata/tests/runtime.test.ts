@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,5 +77,44 @@ describe("scidata runtime", () => {
 		strictEqual(workers.length, 1);
 		strictEqual(exited, 1);
 		strictEqual(workers[0]?.threadId, -1);
+	});
+
+	it("reports stats progress and completes even when onProgress throws", async () => {
+		const root = mkdtempSync(join(tmpdir(), "scidata-progress-"));
+		const store = join(root, "grid.zarr");
+		const arr = join(store, "t");
+		mkdirSync(arr, { recursive: true });
+		writeFileSync(join(store, ".zgroup"), JSON.stringify({ zarr_format: 2 }));
+		writeFileSync(
+			join(arr, ".zarray"),
+			JSON.stringify({
+				zarr_format: 2,
+				shape: [4],
+				chunks: [4],
+				dtype: "<f8",
+				compressor: null,
+				fill_value: null,
+				order: "C",
+				filters: null,
+			}),
+		);
+		const raw = new Float64Array([1, 2, 3, 4]);
+		writeFileSync(join(arr, "0"), Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength));
+		const scidata = createScidata({
+			cacheDir: join(root, "cache"),
+			resolveAsset: unreachable,
+			workerUrl: sourceWorkerUrl(),
+		});
+		const seen: number[] = [];
+		const result = await scidata.statsData(store, {
+			variable: "t",
+			onProgress: (values) => {
+				seen.push(values);
+				throw new Error("progress sink failed");
+			},
+		});
+		ok(!isDataRefusal(result));
+		strictEqual(result.elementsScanned, 4);
+		deepStrictEqual(seen, [4]);
 	});
 });

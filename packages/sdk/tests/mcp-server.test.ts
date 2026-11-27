@@ -163,6 +163,8 @@ test("a request with the 2026-07-28 _meta is served statelessly beside a legacy 
 			progress(1, 3, "one");
 			progress(1, 3);
 			progress(3, 3);
+			progress(4, 3, "past total");
+			progress(5, -1, "negative total");
 			return { json: [1, 2, 3] };
 		},
 	});
@@ -206,6 +208,13 @@ test("a request with the 2026-07-28 _meta is served statelessly beside a legacy 
 			{ progressToken: "p1", progress: 3, total: 3 },
 		],
 	);
+	const beforeFloat = client.frames.filter((frame) => frame.method === "notifications/progress").length;
+	await client.request("tools/call", {
+		name: "counted",
+		arguments: {},
+		_meta: { ...meta, progressToken: 1.5 },
+	});
+	assert.equal(client.frames.filter((frame) => frame.method === "notifications/progress").length, beforeFloat);
 	const noCapabilities = await client.request("tools/list", {
 		_meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
 	});

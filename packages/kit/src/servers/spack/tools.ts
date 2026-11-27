@@ -356,6 +356,7 @@ const spackSpec = defineTool({
 			const seconds = Math.round((performance.now() - started) / 1000);
 			context.progress(seconds, undefined, `spack spec has run for ${seconds} seconds`);
 		}, SPEC_PROGRESS_MS);
+		ticker.unref();
 		const [concretized, installed] = await Promise.all([
 			runSpack(program, ["-E", "spec", "--json", ...tokens.tokens], {
 				timeoutMs: SPACK_TIMEOUTS.specMs,

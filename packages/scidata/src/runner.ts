@@ -88,7 +88,13 @@ export async function runScientific(
 			timer.unref();
 			worker.on("message", (message: ScientificReply | ScientificProgress) => {
 				if ("progress" in message) {
-					if (!settled) onProgress?.(message.progress);
+					if (!settled && onProgress !== undefined) {
+						try {
+							onProgress(message.progress);
+						} catch {
+							// A progress sink cannot abort or crash the read.
+						}
+					}
 					return;
 				}
 				finish(message.ok ? message.result : message.refusal);
