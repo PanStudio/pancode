@@ -174,7 +174,7 @@ The entrypoint is a `.mjs`, `.ts` or `.mts` file inside the package. PanCode nev
 
 | `runtime` key | Rule |
 | --- | --- |
-| `commands` | Up to 32 `{ name, description, timeoutMs }`. Names match `[a-z][a-z0-9_-]*`. The slash form is `/ext:<id>:<name>`. `timeoutMs` defaults to 30 s and is bounded at 300 s. A command with `replaces: prompt` is described under [Pairing](#pairing-with-a-plugin). |
+| `commands` | Up to 32 `{ name, description, timeoutMs }`. Names match `[a-z][a-z0-9_-]*`. The slash form is `/ext:<id>:<name>`. `timeoutMs` defaults to 30 s and is bounded at 300 s. A command marked `long: true` may set up to 24 hours and is described under [Runs, worktrees and checks](#runs-worktrees-and-checks). A command with `replaces: prompt` is described under [Pairing](#pairing-with-a-plugin). |
 | `events` | Passive observations: `session_open`, `session_close`, `turn_start`, `turn_end`, `tool_end`, `permission_requested`, `permission_resolved`, `dispatch_started`, `dispatch_completed`, `dispatch_failed`, `compaction_end`, `budget_alert`, `safety_blocked`, `fs_changed`, `workspace_enter`, `workspace_leave`, plus one `{ tick: <duration> }` entry. A tick is at least 5 s and at most one hour. `compaction_end` carries `outcome` (`ok`, `failed` or `unknown`) and `trigger`: `auto`, `force`, `overflow`, `step` for the checkpoint a `turnPolicy: step` turn starts from on a small or uncached route, or `unknown`. An extension that rebuilds state after a compaction can tell a step checkpoint from a native one by it. |
 | `watch` | Up to 8 workspace-relative globs behind `fs_changed`. `watch` and the `fs_changed` event are declared together. |
 | `hooks` | Up to 16 awaited gates at `prompt_submit`, `before_tool`, `after_tool`, `turn_start` or `turn_end`. Each declares `timeoutMs` (50 to 2000, default 250), `onTimeout` and `onError` as `pass` or `block` (only `pass` at `turn_end`, which runs after the turn), and optionally the `tools` it matches at the two tool points. |
@@ -183,7 +183,8 @@ The entrypoint is a `.mjs`, `.ts` or `.mts` file inside the package. PanCode nev
 | `ui` | Slots the extension may fill: `status`, `band`, `card`, `toast`, `panel`, `dock`, `interview`. |
 | `workspaces` | Up to 4 workspaces: `{ id, title, regions, board, skin, keys }`. See [Workspaces and skins](#workspaces-and-skins). |
 | `access` | Content that crosses the boundary: `prompt`, `tool-args`, `tool-results`, `assistant-text`. Without a class, the matching event field is absent. |
-| `services` | `{ embedding: true }` asks for the host embedding service. The envelope review shows it as `may request embeddings from the configured model`. |
+| `services` | `{ embedding: true }` asks for the host embedding service. The envelope review shows it as `may request embeddings from the configured model`. `runs`, `worktrees`, `verify` and `claims` ask for the work services under [Runs, worktrees and checks](#runs-worktrees-and-checks). |
+| `cli` | Up to 4 top-level verbs `{ verb, command, summary }`. `pancode <verb> [--json] [arguments]` runs the named command headlessly. See [Runs, worktrees and checks](#runs-worktrees-and-checks). |
 | `permissions` | `fs.read` (`workspace`, `home`, or a path), `fs.write` (`store` or a workspace-relative directory), `exec`, `net`. All default to none. A write root cannot name the workspace root or anything under `.pancode/`. |
 | `state` | `session` and `store`, each default false. `ctx.state` survives a reload and a restart that resumes the session (256 KiB, 256 keys). `ctx.store` is kept per extension across sessions on this machine (1 MiB, 256 keys). Both are versioned key-value tables, and `set` takes `ifVersion` for a compare-and-set. |
 | `config` | Up to 24 typed fields `{ key, type, default, description, options }`, delivered as `ctx.options` with defaults filled in. |
@@ -211,6 +212,27 @@ Every hook event carries `model`, the model the call or turn runs on: `id` (the 
 ### Embeddings
 
 An approved extension that declares `runtime.services.embedding: true` gets `ctx.embed({ inputs, task, expectedProfileIdentity? })` on its handler context. The host embeds through the semantic index's configured embedding profile (`context.semantic`), in the foreground with a 25 s timeout, and returns the vectors with the profile they came from; the extension never sees the model's URL or credentials. A request whose `expectedProfileIdentity` differs from the live profile is rejected with `Embedding profile changed; re-embed saved vectors before comparing them`, so vectors from two profiles are never compared. Without the declaration, or before it is approved, `ctx.embed` is absent. See [Semantic Context](semantic-context.md) for the profile.
+
+### Runs, worktrees and checks
+
+Four host services let a command or an action drive work that outlives one call. Each appears on the handler context only when it is declared under `runtime.services` and approved. Tools, hooks, events and fleet workers never receive them.
+
+| Service | Declaration | Context member |
+| --- | --- | --- |
+| Headless runs | `runs: { maxTimeoutSeconds, maxConcurrent?, autonomy?, maxCostUsd? }` | `ctx.runs`: `start`, `frames`, `wait`, `cancel` |
+| Git worktrees | `worktrees: true`, with `fs.write: ["store"]` | `ctx.worktrees`: `create`, `list`, `remove`, `git`, `checkout`, `clean`, `copy`, `commit`, `refs` |
+| Checks | `verify: true` | `ctx.verify`: `list`, `check`, `measure` |
+| Claims ledger | `claims: true`, with `verify` | `ctx.claims`: `hypotheses`, `begin`, `finish`, `read` |
+
+`ctx.runs.start` launches `pancode run --output-format stream-json` with the target, model, prompt and timeout it is given. `maxTimeoutSeconds` (at most 86400) bounds each run's timeout. `maxConcurrent` defaults to 1 and is at most 8. `autonomy` lists `default` and optionally `yolo`, and a yolo run is refused unless it can run contained. `maxCostUsd` (at most 1000) is a per-run spend ceiling and the default ceiling. A run's environment is the allowlist its target needs, never the whole host environment. `frames` pages the run's frames, and `wait` returns its exit code, outcome and `run_end` frame.
+
+A worktree is a detached checkout of the workspace's repository inside the extension's store directory (`ctx.storeDir`). `git` runs read-only git commands, `commit` commits with the host identity, and `refs` reads and moves branches under `refs/heads/pancode/<extension id>/` only. `ctx.verify.check` runs one of the project's checks as `pancode verify` would, in the workspace or a worktree, and returns a receipt. `ctx.claims.finish` takes those receipts, so every claim it records comes from a check PanCode ran itself.
+
+The work belongs to the request that started it. When the command or action settles, PanCode cancels its runs that are still going and removes the worktrees it created without `keep`. A worktree created with `keep` stays until `remove` is called. An action is bounded by its short observation deadline, so long work belongs in a command marked `long: true`. A long command may set `timeoutMs` up to 24 hours and gets `ctx.progress(text)`: the latest line shows in the extension's status slot when it declares `ui: ["status"]`, and on standard error under `pancode extensions run`. The operator's next slash command does not wait for a long command to finish.
+
+A command result may set `exitCode` (0 to 125). `pancode extensions run` and a declared verb exit with it, so a verb can be a shell gate. A verb runs only when no built-in command has its name, and a verb two installed extensions both declare runs from neither. `pancode <verb> --help` prints the verb's summary.
+
+The envelope review lists each service, the run ceilings, the long commands and the verbs. Adding any of them, or raising a run ceiling, is envelope growth that an update shows before it installs.
 
 ### Tool hooks on dispatched workers
 
@@ -496,6 +518,7 @@ pancode extensions install <path> [--user|--project] [--force] [--json]
 pancode extensions enable <id> [--user|--project] [--json]
 pancode extensions disable <id> [--user|--project] [--json]
 pancode extensions remove <id> [--user|--project] [--json]
+pancode <verb> [--json] [arguments]
 ```
 
 `install` defaults to user scope. `enable`, `disable`, and `remove` act on the project copy when one exists and otherwise on the user copy; `--user` or `--project` selects exactly that copy. `list` hides shadowed entries unless `--all` is given, while disabled, untrusted, invalid, and incompatible packages stay visible. The state column reads `eligible`, `inactive`, `disabled`, `untrusted`, `shadowed:<scope>`, `incompatible`, or `invalid`. `untrusted` marks an enabled, valid, compatible project copy in a workspace whose project extensions are not approved. An operator `install --project` into new or already trusted project state can approve the identities it writes; see [Workspace trust for project extensions](#workspace-trust-for-project-extensions). `install` refuses an existing ID without `--force` and enables the installed package. `discover` inspects a path or a directory of packages without installing and exits 1 when any candidate is invalid. A bare `pancode extensions` or a usage error exits 2, and error diagnostics exit 1. Updating an installed extension from PanHub is `pancode hub update extension:<name>`, which reviews the envelope growth first.
