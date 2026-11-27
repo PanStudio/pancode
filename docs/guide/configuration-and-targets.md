@@ -233,7 +233,7 @@ explains worker route selection.
 | `fleet.defaultNode` | `null` | next dispatch |
 | `fleet.default.node` | unset | next dispatch |
 | `fleet.nodes` | `[]` | next dispatch |
-| `fleet.nodes[].allowUnsandboxed` | absent (`false`) | next dispatch; admits native workers on a node whose recorded check found no OS sandbox, with their commands unsandboxed; ignored under `safety.sandbox: required` |
+| `fleet.nodes[].allowUnsandboxed` | absent (`false`) | next dispatch; user settings only (ignored from project layers); admits native workers on a node whose recorded check found no OS sandbox, with their commands unsandboxed; ignored under `safety.sandbox: required` |
 | `fleet.adaptiveRouting.roles` | `[]` | next dispatch |
 | `fleet.adaptiveRouting.postures` | `[]` | next dispatch |
 | `fleet.adaptiveRouting.agentRoles` | `[]` | next dispatch |

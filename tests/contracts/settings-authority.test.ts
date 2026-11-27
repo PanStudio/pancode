@@ -237,3 +237,27 @@ test("store.projectId is the tracked project file's alone: the user and local fi
 		["project"],
 	);
 });
+
+test("fleet.nodes[].allowUnsandboxed is set only in user settings; project layers are stripped", async (t) => {
+	const home = await isolatePancodeEnv("pancode-fleet-allow-unsandboxed-authority-");
+	t.after(() => home.restore());
+	const workspace = join(home.dir, "workspace");
+	const projectDir = join(workspace, ".pancode");
+	mkdirSync(projectDir, { recursive: true });
+	mkdirSync(join(home.dir, "config"), { recursive: true });
+	writeFileSync(join(home.dir, "config", "settings.yaml"), "version: 2\n");
+	writeFileSync(
+		join(projectDir, "settings.yaml"),
+		"fleet:\n  nodes:\n    - id: gpu\n      host: gpu.invalid\n      allowUnsandboxed: true\n",
+	);
+	const snapshot = captureProjectSurface(workspace, "settings");
+	if (!snapshot.contentHash) throw new Error("missing project settings hash");
+	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+	const layered = readLayeredSettings(workspace);
+	strictEqual(layered.settings.fleet.nodes[0]?.id, "gpu");
+	strictEqual(layered.settings.fleet.nodes[0]?.allowUnsandboxed, undefined);
+	const issue = layered.issues.find(
+		(item) => item.origin === "project" && item.path === "fleet.nodes[0].allowUnsandboxed",
+	);
+	match(issue?.message ?? "", /allowUnsandboxed is set only in user settings/u);
+});

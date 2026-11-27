@@ -662,20 +662,43 @@ function stripProjectWidening(
 			else cleaned.safety = safety;
 		}
 	}
-	if (isRecord(blob.fleet) && isRecord(blob.fleet.permissions) && Object.hasOwn(blob.fleet.permissions, "mode")) {
-		const userFleet = isRecord(userBlob?.fleet) ? userBlob.fleet : {};
-		const userPermissions = isRecord(userFleet.permissions) ? userFleet.permissions : {};
-		const operator =
-			FLEET_MODE_RANK[String(userPermissions.mode)] ?? FLEET_MODE_RANK[DEFAULT_SETTINGS.fleet.permissions.mode] ?? 2;
-		const requested = FLEET_MODE_RANK[String(blob.fleet.permissions.mode)];
-		if (requested === undefined || requested > operator) {
-			drop(
-				"fleet.permissions.mode",
-				"a project may only tighten the fleet permission mode from user settings; project value ignored",
-			);
-			const { mode: _ignored, ...permissions } = blob.fleet.permissions;
-			cleaned = { ...cleaned, fleet: { ...blob.fleet, permissions } };
+	if (isRecord(blob.fleet)) {
+		let fleet: Record<string, unknown> = { ...blob.fleet };
+		let fleetChanged = false;
+		if (isRecord(fleet.permissions) && Object.hasOwn(fleet.permissions, "mode")) {
+			const userFleet = isRecord(userBlob?.fleet) ? userBlob.fleet : {};
+			const userPermissions = isRecord(userFleet.permissions) ? userFleet.permissions : {};
+			const operator =
+				FLEET_MODE_RANK[String(userPermissions.mode)] ?? FLEET_MODE_RANK[DEFAULT_SETTINGS.fleet.permissions.mode] ?? 2;
+			const requested = FLEET_MODE_RANK[String(fleet.permissions.mode)];
+			if (requested === undefined || requested > operator) {
+				drop(
+					"fleet.permissions.mode",
+					"a project may only tighten the fleet permission mode from user settings; project value ignored",
+				);
+				const { mode: _ignored, ...permissions } = fleet.permissions;
+				fleet = { ...fleet, permissions };
+				fleetChanged = true;
+			}
 		}
+		if (Array.isArray(fleet.nodes)) {
+			let nodesChanged = false;
+			const nodes = fleet.nodes.map((entry, index) => {
+				if (!isRecord(entry) || !Object.hasOwn(entry, "allowUnsandboxed")) return entry;
+				drop(
+					`fleet.nodes[${index}].allowUnsandboxed`,
+					"allowUnsandboxed is set only in user settings; project value ignored",
+				);
+				nodesChanged = true;
+				const { allowUnsandboxed: _ignored, ...rest } = entry;
+				return rest;
+			});
+			if (nodesChanged) {
+				fleet = { ...fleet, nodes };
+				fleetChanged = true;
+			}
+		}
+		if (fleetChanged) cleaned = { ...cleaned, fleet };
 	}
 	if (isRecord(blob.integrations)) {
 		const integrations: Record<string, unknown> = { ...blob.integrations };
