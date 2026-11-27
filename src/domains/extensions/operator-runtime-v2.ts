@@ -40,7 +40,7 @@ import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcess
 import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
 import { type ExtensionGlobWatch, watchExtensionGlobs } from "./runtime-watch.js";
-import { runPackBinary } from "./services/binaries.js";
+import { type PackBinaryCaller, runPackBinary, servePackPane } from "./services/binary-runs.js";
 import type { ExtensionKeyClaims } from "./services/keys.js";
 import type { ExtensionPaneHost } from "./services/pane.js";
 import { createExtensionWork, type ExtensionWorkOptions } from "./services/work.js";
@@ -465,9 +465,15 @@ export class OperatorExtensionRuntimeV2 {
 		};
 		const complete = entry.runtimeV2.services?.model ? services?.complete : undefined;
 		const blobs = entry.runtimeV2.services?.store ? services?.blobs : undefined;
-		const readOnly = this.options.readOnly?.() === true;
-		const binaries = readOnly ? [] : (entry.runtimeV2.binaries ?? []);
-		const pane = !readOnly && entry.runtimeV2.services?.pane ? this.options.pane : undefined;
+		const binaries = entry.runtimeV2.binaries ?? [];
+		const pane = entry.runtimeV2.services?.pane ? this.options.pane : undefined;
+		// Read when each call arrives: a runtime started for a writable turn serves read-only turns too.
+		const caller = (parent: string): PackBinaryCaller => ({
+			owner: extensionIdentity(entry),
+			sessionId: context.sessionId,
+			parent,
+			readOnly: binding.readOnly(),
+		});
 		const unixSockets = this.options.sandboxUnixSockets?.();
 		const sandboxMode = (this.options.sandboxMode ?? layeredSandboxMode)(context.workspace);
 		const work = createExtensionWork(
@@ -490,12 +496,17 @@ export class OperatorExtensionRuntimeV2 {
 			...(blobs ? { blobs: (request, signal) => blobs(binding, request, signal) } : {}),
 			...(work ? { work: work.host, disposeWork: () => work.dispose() } : {}),
 			...(binaries.length > 0
-				? { binaries: (request, signal) => runPackBinary(entry.id, binaries, request, paths.storeDir, signal) }
+				? {
+						binaries: (request, signal, parent) =>
+							runPackBinary(entry.id, binaries, request, paths.storeDir, caller(parent), signal),
+					}
 				: {}),
 			...(pane
 				? {
-						pane: (op, payload) =>
-							pane.call({ extensionId: entry.id, declaration: entry.runtimeV2, storeDir: paths.storeDir }, op, payload),
+						pane: (op, payload, parent) =>
+							servePackPane(entry.id, binaries, op, payload, caller(parent), () =>
+								pane.call({ extensionId: entry.id, declaration: entry.runtimeV2, storeDir: paths.storeDir }, op, payload),
+							),
 					}
 				: {}),
 			...(unixSockets !== undefined ? { unixSockets } : {}),

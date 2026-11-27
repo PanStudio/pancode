@@ -37,6 +37,8 @@ export interface RunTelemetryJournal {
 	 * the seal covers both (#425, #434). Resolves once the record is durable; a close waits for it too.
 	 */
 	settle(settlement: RunSettlement): Promise<void>;
+	/** The settlement this journal durably recorded, once its settle resolved; undefined before then. */
+	landed(): RunSettlement | undefined;
 	/** A channel failure the host saw, after exit included; a closed journal records nothing (#425). */
 	channel(data: EventPayload<"worker.channel_failed">): void;
 	/** `position` is where the run's feed.jsonl put this row: its seq, and any truncation marker it wrote (C-29). */
@@ -179,6 +181,7 @@ async function journalAssessment(
 		const text = await writer.storeObject("evidence-findings", assessed.text);
 		if (!telemetryHub().emit("evidence.assessed", { runId: context.runId, ...assessed.data, text }, context))
 			throw new Error("assessment record refused");
+		await writer.flush();
 	} catch {
 		writeDiagnostic("[pancode:telemetry] run assessment could not be journaled; the run seals without one\n");
 	}
@@ -293,6 +296,7 @@ async function openOwnedRunTelemetry(
 	let settled = previous.records.some(({ record }) => record.k === "run.settled");
 	let settling: Promise<void> = Promise.resolve();
 	let durableSettle: Promise<void> = Promise.resolve();
+	let landedSettlement: RunSettlement | undefined;
 	const reportHealth = () => {
 		const health = writer.health();
 		if (!reported && (health.writeErrors > 0 || health.dropped > 0 || health.invalid > 0)) {
@@ -371,12 +375,12 @@ async function openOwnedRunTelemetry(
 				const after = writer.health();
 				if (after.writeErrors > before.writeErrors || after.invalid > before.invalid)
 					throw new Error("run.settled was not persisted");
+				landedSettlement = settlement;
 				// The assessment is best-effort: a run whose assessment fails still seals, without one.
 				await journalAssessment(writer, directory, context, settlement.assessment ?? null);
-				await writer.flush();
 			})().catch((error: unknown) => {
 				// A settlement that did not land leaves the scope unsealed; a later settle may try again.
-				settled = false;
+				if (landedSettlement === undefined) settled = false;
 				writeDiagnostic("[pancode:telemetry] run settlement could not be persisted; the run stays unsealed\n");
 				throw error;
 			});
@@ -384,6 +388,9 @@ async function openOwnedRunTelemetry(
 			durableSettle = durable;
 			settling = durable.catch(() => undefined);
 			return durable;
+		},
+		landed() {
+			return landedSettlement;
 		},
 		channel(data) {
 			if (journal.closed) return;

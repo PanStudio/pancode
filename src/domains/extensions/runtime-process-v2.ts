@@ -50,7 +50,8 @@ import {
 	readOnlyRuntimeDeclaration,
 	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
-import { type PackBinaryRunRequest, type PackBinaryRunResult, parsePackBinaryRun } from "./services/binaries.js";
+import { type PackBinaryRunRequest, parsePackBinaryRun } from "./services/binaries.js";
+import type { PackBinaryRunResult } from "./services/binary-runs.js";
 import type { ExtensionWorkHost, ExtensionWorkKind } from "./services/host.js";
 import { createExtensionRequestScope, type OwnedExtensionRequestScope } from "./services/scope.js";
 import type { LoadableExtension } from "./types.js";
@@ -78,10 +79,13 @@ export interface RuntimeProcessV2Options {
 	work?: ExtensionWorkHost;
 	/** Ends remaining work-service runs and removes transient worktrees when this process exits or disposes. */
 	disposeWork?: () => Promise<void>;
-	/** Runs a declared binary; the request is already checked against the declaration. */
-	binaries?: (request: PackBinaryRunRequest, signal: AbortSignal) => Promise<PackBinaryRunResult>;
-	/** One `ctx.pane` call; the pane host checks the payload against the declaration. */
-	pane?: (op: string, payload: unknown) => Promise<unknown>;
+	/**
+	 * Runs a declared binary; the request is already checked against the declaration. `parent` is the kind of request
+	 * the call belongs to, which the host checks on every call.
+	 */
+	binaries?: (request: PackBinaryRunRequest, signal: AbortSignal, parent: string) => Promise<PackBinaryRunResult>;
+	/** One `ctx.pane` call; the pane host checks the payload against the declaration, and the caller as `binaries`. */
+	pane?: (op: string, payload: unknown, parent: string) => Promise<unknown>;
 	onState?: () => void;
 	/** A rejection the runtime's code left unhandled once it was active, once per distinct reason; the runtime keeps serving. */
 	onUnhandled?: (error: string) => void;
@@ -570,8 +574,9 @@ export class ExtensionRuntimeProcessV2 {
 			const declared = this.declaration.binaries ?? [];
 			if (declared.length === 0 || !binaries) throw new Error("binaries are not declared or this host does not run them");
 			const request = parsePackBinaryRun(m.request, declared);
+			const parent = this.pending.get(m.parentRequestId)?.kind ?? "";
 			timeoutMs = request.timeoutMs + 1000;
-			run = (signal) => binaries(request, signal);
+			run = (signal) => binaries(request, signal, parent);
 		} else if (kind === "pane") {
 			const pane = this.options.pane;
 			if (!services?.pane || !pane) throw new Error("pane: this session has no pane host; run PanCode inside herdr");
@@ -579,7 +584,8 @@ export class ExtensionRuntimeProcessV2 {
 			if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("invalid pane request");
 			const { op, ...payload } = request as Record<string, unknown>;
 			if (typeof op !== "string") throw new Error("invalid pane request");
-			run = () => pane(op, payload);
+			const parent = this.pending.get(m.parentRequestId)?.kind ?? "";
+			run = () => pane(op, payload, parent);
 		} else {
 			const blobs = this.options.blobs;
 			if (!services?.store || !blobs) throw new Error("store service is not declared or available");

@@ -33,6 +33,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AUTONOMY_CEILING_ENV } from "../../src/core/bash-exec.js";
+import { EXTENSION_RUN_DEPTH_ENV } from "../../src/core/tool-env-controls.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
 import { YOLO_CONFINEMENT_PIN_ENV } from "../../src/domains/safety/autonomy.js";
 
@@ -40,7 +41,11 @@ import { YOLO_CONFINEMENT_PIN_ENV } from "../../src/domains/safety/autonomy.js";
  * The keys a PanCode session writes into its tool commands' environment. A test
  * run from that session's bash inherits them, so a scratch env drops them.
  */
-export const GENERATED_TOOL_ENV_KEYS = [AUTONOMY_CEILING_ENV, YOLO_CONFINEMENT_PIN_ENV] as const;
+export const GENERATED_TOOL_ENV_KEYS = [
+	AUTONOMY_CEILING_ENV,
+	YOLO_CONFINEMENT_PIN_ENV,
+	EXTENSION_RUN_DEPTH_ENV,
+] as const;
 
 /** Removes the generated tool env keys from `env` in place. */
 export function dropGeneratedToolEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

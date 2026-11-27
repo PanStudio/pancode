@@ -5,8 +5,8 @@
 import type { PancodeSettings } from "../../core/config.js";
 import type { FleetNodeSettings } from "../../core/defaults.js";
 import type { FleetRegistry } from "../scheduling/cluster.js";
+import type { DispatchNodePlacement } from "./bundle-types.js";
 import type { DispatchRequest } from "./contract.js";
-import type { DispatchNodePlacement } from "./extension.js";
 import { sessionFleetNode } from "./fleet-placement-preference.js";
 import {
 	type FleetNodeSandbox,
