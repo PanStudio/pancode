@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	existsSync,
@@ -14,7 +13,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync, gitVia } from "../../core/internal-git-run.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { redactCommandOutputSecrets } from "../evidence/redact.js";
 import { OUTPUT_TAIL_BYTES } from "./host-verification-runner.js";
@@ -34,7 +33,7 @@ const DEPENDENCY_MANIFESTS = [
 /** Each manifest is absent on both sides or has the same blob id; hashes avoid reading lockfiles into memory. */
 export async function manifestsMatchBase(root: string, base: string): Promise<boolean> {
 	const git = (args: string[]) =>
-		runCommandVector("git", internalGitArgv(["-C", root, ...args]), { timeoutMs: 5_000, maxOutputBytes: 1_024 });
+		gitVia(runCommandVector, ["-C", root, ...args], { timeoutMs: 5_000, maxOutputBytes: 1_024 });
 	try {
 		return await manifestsMatch(root, base, git);
 	} catch {
@@ -186,7 +185,7 @@ export function boundedLine(line: string): string {
 
 export function resolvedBaseSha(root: string, base: string): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(["-C", root, "rev-parse", "--verify", "-q", `${base}^{commit}`]), {
+		return gitExecFileSync(["-C", root, "rev-parse", "--verify", "-q", `${base}^{commit}`], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: 30_000,

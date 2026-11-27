@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFile, execFileSync } from "node:child_process";
-import { internalGitArgv } from "../../../core/internal-git.js";
+import type { ChildProcess } from "node:child_process";
+import { gitExecFile, gitExecFileSync } from "../../../core/internal-git-run.js";
 
 const TIMEOUT_MS = 1000;
 /**
@@ -105,7 +105,7 @@ function timedOut(err: unknown): boolean {
 function gateSync(cwd: string, args: string[]): GateAnswer {
 	for (const timeout of [TIMEOUT_MS, GATE_RETRY_TIMEOUT_MS]) {
 		try {
-			const out = execFileSync("git", internalGitArgv(args, cwd), { cwd, timeout, stdio: ["ignore", "pipe", "ignore"] });
+			const out = gitExecFileSync(args, { cwd, timeout, stdio: ["ignore", "pipe", "ignore"] });
 			return { out: out.toString().trim(), timedOut: false };
 		} catch (err) {
 			if (!timedOut(err)) return { out: null, timedOut: false };
@@ -123,22 +123,21 @@ function gateSync(cwd: string, args: string[]): GateAnswer {
  */
 function askGit(cwd: string, args: string[], timeout: number): Promise<GateAnswer> {
 	return new Promise((resolve) => {
-		let argv: string[];
+		let stopped = false;
+		let child: ChildProcess;
 		try {
-			argv = internalGitArgv(args, cwd);
+			child = gitExecFile(args, { cwd, encoding: "utf8" }, (err, stdout) => {
+				clearTimeout(timer);
+				if (err === null) {
+					resolve({ out: stdout.trim(), timedOut: false });
+					return;
+				}
+				resolve({ out: null, timedOut: (stopped && err.signal !== null) || timedOut(err) });
+			});
 		} catch {
 			resolve({ out: null, timedOut: false });
 			return;
 		}
-		let stopped = false;
-		const child = execFile("git", argv, { cwd, encoding: "utf8" }, (err, stdout) => {
-			clearTimeout(timer);
-			if (err === null) {
-				resolve({ out: stdout.trim(), timedOut: false });
-				return;
-			}
-			resolve({ out: null, timedOut: (stopped && err.signal !== null) || timedOut(err) });
-		});
 		const timer = setTimeout(() => {
 			stopped = child.exitCode === null && child.signalCode === null;
 			if (stopped) child.kill("SIGTERM");
@@ -156,7 +155,7 @@ async function gateAsync(cwd: string, args: string[]): Promise<GateAnswer> {
 
 function gitOk(cwd: string, args: string[]): string | null {
 	try {
-		const out = execFileSync("git", internalGitArgv(args, cwd), {
+		const out = gitExecFileSync(args, {
 			cwd,
 			timeout: TIMEOUT_MS,
 			stdio: ["ignore", "pipe", "ignore"],

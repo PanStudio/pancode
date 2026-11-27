@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	closeSync,
@@ -16,6 +15,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 import { sha256Hex } from "../hash.js";
+import { gitExecFileSync } from "../internal-git-run.js";
 import { isStrictDescendant } from "../path-containment.js";
 import { gitConfigScopeFiles, mainSandboxGitLayout } from "./main-session.js";
 import type { WorkerSandboxSpec } from "./types.js";
@@ -419,7 +419,7 @@ function listExecutableConfig(dir: string): { entries: Map<string, GitHookFile>;
 	let usageError = false;
 	const list = (args: string[]): string | null => {
 		try {
-			return execFileSync("git", ["config", "--list", ...args, "--show-origin", "-z"], {
+			return gitExecFileSync(["config", "--list", ...args, "--show-origin", "-z"], {
 				cwd: dir,
 				env,
 				encoding: "utf8",

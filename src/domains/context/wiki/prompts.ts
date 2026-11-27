@@ -12,10 +12,9 @@
  * writer needed once was being prefilled hundreds of times.
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { internalGitArgv } from "../../../core/internal-git.js";
+import { gitExecFileSync } from "../../../core/internal-git-run.js";
 import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { loadFragments } from "../../prompts/fragment-loader.js";
 import { type DecisionLedgerEntry, decisionRef } from "../../session/entries.js";
@@ -111,7 +110,7 @@ function repositoryGuidance(cwd: string): string {
 
 function gitLines(cwd: string, args: ReadonlyArray<string>, cap: number): string | null {
 	try {
-		const out = execFileSync("git", internalGitArgv(args, cwd), {
+		const out = gitExecFileSync(args, {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],

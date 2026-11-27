@@ -3,7 +3,7 @@
 import { relative, resolve, sep } from "node:path";
 import { attributeCommitMessage, PANCODE_COMMIT_EMAIL, PANCODE_COMMIT_NAME } from "../../core/commit-attribution.js";
 import { autonomousLandAuthorship } from "../../core/git-commit-attribution.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { writeRootsCover } from "../../core/path-boundary.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { runCommandVector } from "../../core/safe-exec.js";
@@ -175,15 +175,11 @@ export async function prepareFleetChangeReturn(
 }
 
 async function git(root: string, args: string[], env?: Record<string, string>): Promise<string> {
-	const result = await runCommandVector(
-		"git",
-		internalGitArgv(["-C", root, "-c", "core.hooksPath=/dev/null", ...args]),
-		{
-			timeoutMs: 60_000,
-			maxOutputBytes: 1024 * 1024,
-			...(env ? { env } : {}),
-		},
-	);
+	const result = await gitVia(runCommandVector, ["-C", root, "-c", "core.hooksPath=/dev/null", ...args], {
+		timeoutMs: 60_000,
+		maxOutputBytes: 1024 * 1024,
+		...(env ? { env } : {}),
+	});
 	if (result.exitCode !== 0) throw new Error(`SSH change return: ${result.stderr.trim()}`);
 	return result.stdout;
 }

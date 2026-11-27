@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { InternalGitRefusedError, installInternalGitPolicy, internalGitArgv } from "../../src/core/internal-git.js";
+import { gitExecFileSync } from "../../src/core/internal-git-run.js";
 import { createGitHooksFingerprinter } from "../../src/core/sandbox/git-hooks-fingerprint.js";
 import { git as researchGit } from "../../src/domains/research/git.js";
 import { createGitHookDriftGuard } from "../../src/domains/safety/hook-drift.js";
@@ -112,6 +113,17 @@ test("PanCode's status probe does not run a configured core.fsmonitor command", 
 	strictEqual(existsSync(marker), false, "the internal status probe did not run it");
 	spawnSync("git", ["-C", root, "status", "--porcelain"]);
 	ok(existsSync(marker), "a plain git status runs it, so the fixture is live");
+	rmSync(scratch, { recursive: true, force: true });
+});
+
+test("PanCode's config read sees the repository's own core.fsmonitor, and its status through the runner does not run it", () => {
+	const { root, scratch } = repository();
+	const marker = join(scratch, "fsmonitor-ran");
+	const program = markerScript(join(scratch, "fsmonitor.sh"), marker, "exit 1\n");
+	git(root, "config", "core.fsmonitor", program);
+	strictEqual(gitExecFileSync(["config", "--get", "core.fsmonitor"], { cwd: root, encoding: "utf8" }).trim(), program);
+	gitExecFileSync(["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+	strictEqual(existsSync(marker), false, "the runner's status did not run it");
 	rmSync(scratch, { recursive: true, force: true });
 });
 

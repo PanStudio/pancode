@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { internalGitArgv, withoutRepositoryEnv } from "../core/internal-git.js";
+import { withoutRepositoryEnv } from "../core/internal-git.js";
+import { gitExecFileSync } from "../core/internal-git-run.js";
 import { isStrictDescendant } from "../core/path-containment.js";
 import { dropHostTerminalEnv, TOOL_SESSION_SPAWN } from "../core/tool-env-controls.js";
 
@@ -13,7 +13,7 @@ interface GitOptions {
 }
 
 export function gitBytes(root: string, args: string[], options: GitOptions = {}): Buffer {
-	return execFileSync("git", internalGitArgv(["-C", root, ...args]), {
+	return gitExecFileSync(["-C", root, ...args], {
 		stdio: ["ignore", "pipe", "pipe"],
 		timeout: 30_000,
 		...options,

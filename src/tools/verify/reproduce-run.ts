@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { release, tmpdir } from "node:os";
 import path from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFile } from "../../core/internal-git-run.js";
 import { readPancodeVersion } from "../../core/package-root.js";
 import { resolveSafeCwd, runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { type MainSandboxPolicy, mainSandboxWriteHint } from "../../core/sandbox/main-session.js";
@@ -139,9 +138,8 @@ function errorText(error: unknown): string {
 
 function git(cwd: string, args: ReadonlyArray<string>): Promise<string> {
 	return new Promise((resolve, reject) => {
-		execFile(
-			"git",
-			internalGitArgv(["-C", cwd, ...args]),
+		gitExecFile(
+			["-C", cwd, ...args],
 			{ encoding: "utf8", timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
 			(error, stdout, stderr) => {
 				if (error) reject(new Error(`git ${args[0] ?? ""} failed: ${(stderr || error.message).trim()}`));
