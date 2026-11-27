@@ -38,7 +38,10 @@ export interface ExtensionRunFrames {
 
 export interface ExtensionRunEnd {
 	exitCode: number | null;
-	/** The `run_end` frame's outcome, or `canceled`/`timed_out`/`error` when the run ended without one. */
+	/**
+	 * The `run_end` frame's outcome (`succeeded`, `failed`, `canceled` or `timed_out`), or `canceled`/`timed_out`/`error`
+	 * when the run ended without one.
+	 */
 	outcome: string;
 	/** The run's `run_end` frame (the `run --output-format json` envelope), null when it wrote none. */
 	end: Readonly<Record<string, unknown>> | null;
@@ -56,7 +59,7 @@ export interface ExtensionRuns {
 
 export interface ExtensionWorktree {
 	id: string;
-	/** The worktree's root, an absolute path inside this extension's store directory. */
+	/** The worktree's root, an absolute path under the project's `.pancode/worktrees/ext-<extension id>/`. */
 	path: string;
 	/** Where the workspace sits in the worktree: `path` itself unless the workspace is a subdirectory of its repository. */
 	cwd: string;

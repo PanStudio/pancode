@@ -69,13 +69,13 @@ function harness(ceilings: Partial<ExtensionRunCeilings> = {}, yolo: string | nu
 				}
 				if (prompt === "flood") {
 					for (let index = 0; index < 5000; index += 1) emit(`{"type":"tick","n":${index}}\n`);
-					emit('{"type":"run_end","outcome":"ok","exitCode":0}\n');
+					emit('{"type":"run_end","outcome":"succeeded","exitCode":0}\n');
 					setImmediate(() => finish({}));
 					return;
 				}
 				emit('{"type":"session","id":"s1"}\nnot json\n{"type":"turn_');
 				setImmediate(() => {
-					emit('end","text":"hi"}\n{"type":"run_end","outcome":"ok","exitCode":0}');
+					emit('end","text":"hi"}\n{"type":"run_end","outcome":"succeeded","exitCode":0}');
 					finish({});
 				});
 			}),
@@ -90,7 +90,7 @@ describe("extension run service", () => {
 		const h = harness();
 		const { id } = await h.service.start({ ...base, thinking: "high", answers: "yes\n", cwd: { worktree: "a1" } });
 		const end = await h.service.wait(id);
-		assert.equal(end.outcome, "ok");
+		assert.equal(end.outcome, "succeeded");
 		assert.equal(end.end?.type, "run_end");
 		const call = h.calls[0] as Call;
 		assert.deepEqual(call.args.slice(0, 6), ["/pancode.js", "run", "--cwd", "/t/a1", "--target", "openai-codex"]);
@@ -210,7 +210,7 @@ const driverSource = `export default (api) => {
 		ctx.progress("starting " + args);
 		const { id } = await ctx.runs.start({ prompt: args, target: "fixture", model: "chat", timeoutSeconds: 60 });
 		const end = await ctx.runs.wait(id);
-		return { text: end.outcome + " " + typeof ctx.storeDir, exitCode: end.outcome === "ok" ? 0 : 3 };
+		return { text: end.outcome + " " + typeof ctx.storeDir, exitCode: end.outcome === "succeeded" ? 0 : 3 };
 	});
 	api.handle("plain", (_args, ctx) => ({ text: [typeof ctx.progress, typeof ctx.runs].join(" "), exitCode: 4 }));
 };
@@ -257,7 +257,7 @@ describe("an installed extension's work services", () => {
 		const fakeRun = join(env.dir, "fake-run.mjs");
 		writeFileSync(
 			fakeRun,
-			'process.stdout.write(JSON.stringify({ type: "run_end", outcome: "ok", exitCode: 0 }) + "\\n");\n',
+			'process.stdout.write(JSON.stringify({ type: "run_end", outcome: "succeeded", exitCode: 0 }) + "\\n");\n',
 		);
 		return { cwd, cleanup, launch: { file: process.execPath, args: [fakeRun] } };
 	}
@@ -277,7 +277,7 @@ describe("an installed extension's work services", () => {
 		const output = await operator.invoke(extensionInvocation("driver", "drive"), "now", [], signal, (text) =>
 			progress.push(text),
 		);
-		assert.deepEqual(output, { text: "ok string", exitCode: 0 });
+		assert.deepEqual(output, { text: "succeeded string", exitCode: 0 });
 		assert.deepEqual(progress, ["starting now"]);
 		const plain = await operator.invoke(extensionInvocation("driver", "plain"), "", [], signal, (text) =>
 			progress.push(text),
