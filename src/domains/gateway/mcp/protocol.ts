@@ -11,10 +11,12 @@
  * the model with silently replaced bytes would misreport what the server said.
  */
 
-/** The legacy revision PanCode negotiates through the initialize handshake. */
 import { isRecord } from "../../../core/type-guards.js";
 
-export const MCP_PROTOCOL_VERSION = "2025-06-18";
+/** The legacy revision PanCode offers in the initialize handshake. */
+export const MCP_PROTOCOL_VERSION = "2025-11-25";
+/** The oldest legacy revision a server may answer initialize with; anything outside this range is refused. */
+export const MCP_OLDEST_PROTOCOL_VERSION = "2024-11-05";
 /**
  * The modern revision: no handshake, and every request carries its version,
  * client identity and client capabilities in `_meta`. A server is spoken to in
@@ -27,9 +29,15 @@ export const MCP_META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersio
 export const MCP_META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo";
 export const MCP_META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 export const MCP_META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
+/** Tags every notification of one `subscriptions/listen` stream with the id of the listen request. */
+export const MCP_META_SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
 export const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
 export const JSON_RPC_METHOD_NOT_FOUND = -32601;
 export const JSON_RPC_INVALID_PARAMS = -32602;
+/** Legacy resource-not-found; the modern revision answers -32602 instead. */
+export const MCP_RESOURCE_NOT_FOUND = -32002;
+/** Modern-era error: the request needs a client capability it did not declare, named in `data.requiredCapabilities`. */
+export const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
 /** Modern-era error: the server does not serve the requested revision, and names the ones it does. */
 export const MCP_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
@@ -170,13 +178,20 @@ export function parseJsonRpcLine(line: Buffer): JsonRpcMessage | McpError {
 			: isRecord(parsed.result) && parsed.result.status === "completed" && isRecord(parsed.result.result)
 				? parsed.result.result
 				: parsed.result;
-		if (isRecord(toolResult) && isRecord(toolResult.structuredContent)) {
+		// structuredContent may be any JSON value (2026-07-28 server/tools), so a
+		// bare number at the top keeps its token the same way a nested one does.
+		if (isRecord(toolResult) && Object.hasOwn(toolResult, "structuredContent")) {
 			const content = toolResult.structuredContent;
+			const topSource = sources.get(toolResult)?.get("structuredContent");
+			// The replacer sees a top-level scalar under key "" of a wrapper the reviver never saw.
+			const sourceOf = (holder: object, key: string, value: unknown): string | undefined =>
+				sources.get(holder)?.get(key) ??
+				(key === "" && typeof value === "number" && !sources.has(holder) ? topSource : undefined);
 			// ES2022 typings predate this supported Node runtime API. No custom
 			// tokenizer is needed, and the existing incoming-line cap bounds it.
 			const rawJSON = (JSON as JSON & { rawJSON(source: string): unknown }).rawJSON;
 			const exact = JSON.stringify(content, function (this: object, key: string, value: unknown) {
-				const source = sources.get(this)?.get(key);
+				const source = sourceOf(this, key, value);
 				return source === undefined ? value : rawJSON(source);
 			});
 			// Plain JSON evidence must survive cloning and serialization as well.
@@ -184,7 +199,7 @@ export function parseJsonRpcLine(line: Buffer): JsonRpcMessage | McpError {
 			// numbers, Infinity (which serializes to null), or a signless zero.
 			toolResult.structuredContent = JSON.parse(
 				JSON.stringify(content, function (this: object, key: string, value: unknown) {
-					const source = sources.get(this)?.get(key);
+					const source = sourceOf(this, key, value);
 					return source !== undefined && JSON.stringify(value) !== source ? { $literal: source } : value;
 				}),
 			) as unknown;

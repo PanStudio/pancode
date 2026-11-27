@@ -292,6 +292,21 @@ function handleModern(message) {
 				reply(message.id, { resultType: "complete", content: [{ type: "text", text: info }] });
 				return;
 			}
+			if (message.params?.name === "confirm") {
+				const state = message.params.requestState;
+				process.stderr.write(`confirm state=${state ?? "none"}\n`);
+				if (message.params.arguments?.ask === true) {
+					reply(message.id, {
+						resultType: "input_required",
+						inputRequests: { pick: { method: "elicitation/create", params: {} } },
+					});
+				} else if (state === undefined) {
+					reply(message.id, { resultType: "input_required", requestState: "round-1" });
+				} else {
+					reply(message.id, { resultType: "complete", content: [{ type: "text", text: `confirmed ${state}` }] });
+				}
+				return;
+			}
 			if (message.params?.name !== "task") {
 				handleToolCall(message.id, message.params);
 				return;

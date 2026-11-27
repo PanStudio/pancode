@@ -313,10 +313,11 @@ describe("mcp stdio client", () => {
 			{ content: null },
 			{ content: [], isError: "true" },
 			{ content: [], isError: 0 },
-			{ content: [], structuredContent: "not an object" },
 		]) {
 			await rejectsWithCode(c.callTool("echo", { result }), "protocol", /tools\/call/u);
 		}
+		const scalar = await c.callTool("echo", { result: { content: [], structuredContent: "a string" } });
+		strictEqual(scalar.structuredContent, "a string");
 		const empty = await c.callTool("echo", { result: { content: [], isError: false } });
 		strictEqual(empty.isError, false);
 		strictEqual(empty.text, "");
@@ -816,6 +817,14 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 		await c.initialize();
 		const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version: string };
 		deepStrictEqual(JSON.parse((await c.callTool("client-info", {})).text), { name: "pancode", version: pkg.version });
+	});
+
+	it("sends an input_required call again with its requestState and refuses one that asks for input", async () => {
+		const c = client("modern");
+		strictEqual((await c.callTool("confirm", {})).text, "confirmed round-1");
+		strictEqual(countOf(c, "confirm state=none"), 1);
+		strictEqual(countOf(c, "confirm state=round-1"), 1);
+		await rejectsWithCode(c.callTool("confirm", { ask: true }), "protocol", /asking for elicitation\/create/);
 	});
 
 	it("reports a failed task as the server's JSON-RPC error", async () => {

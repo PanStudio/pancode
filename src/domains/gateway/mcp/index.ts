@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * Public surface of the local stdio MCP module: protocol framing, the
- * one-process client, strict configuration loading, and explicit trust.
+ * Public surface of the MCP module: protocol framing, the protocol client
+ * and the stdio transport under it, strict configuration loading, and
+ * explicit trust.
  */
 
 export { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "./action-classes.js";
@@ -14,17 +15,30 @@ export {
 	mcpBuiltinLaunchEnvironment,
 } from "./builtin.js";
 export {
+	createMcpProtocolClient,
 	createMcpStdioClient,
 	DEFAULT_KILL_GRACE_MS,
+	DEFAULT_RESULT_TEXT_BYTES,
 	DEFAULT_TEARDOWN_BOUND_MS,
+	MCP_INSTRUCTIONS_BYTES,
 	MCP_TOOL_LIST_CAP,
+	type McpCallToolOptions,
 	type McpClient,
 	type McpClientOptions,
+	type McpContentBlock,
+	type McpProgressUpdate,
+	type McpProtocolClientOptions,
+	type McpServerInfo,
 	type McpServerSpec,
+	type McpSubscription,
+	type McpSubscriptionFilter,
 	type McpTeardownOutcome,
 	type McpToolCallResult,
 	type McpToolDescriptor,
 	type McpToolListing,
+	type McpTransport,
+	type McpTransportEvents,
+	mcpRequiredCapabilities,
 	renderMcpContent,
 } from "./client.js";
 export {
@@ -63,7 +77,9 @@ export {
 	type JsonRpcRequest,
 	type JsonRpcResponse,
 	type LineFramer,
+	MCP_MISSING_REQUIRED_CLIENT_CAPABILITY,
 	MCP_PROTOCOL_VERSION,
+	MCP_RESOURCE_NOT_FOUND,
 	McpError,
 	type McpErrorCode,
 	type ProtocolFrame,

@@ -351,7 +351,7 @@ it("tests one trusted server through the gateway's client and never launches an 
 		strictEqual(tested.status, 0, tested.stderr);
 		const data = JSON.parse(tested.stdout);
 		strictEqual(data.ok, true);
-		strictEqual(data.protocolVersion, "2025-06-18");
+		strictEqual(data.protocolVersion, "2025-11-25");
 		deepStrictEqual(data.serverInfo, { name: "fake", version: "1.0" });
 		deepStrictEqual(
 			data.tools.find((tool: { name: string }) => tool.name === "sleep"),

@@ -1,61 +1,74 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * One local MCP server over stdio: spawn, initialize, list and call tools,
- * close. The client owns exactly one child process and never restarts it; a
- * server that dies stays dead until the gateway decides to create a new
- * client. Every request carries its own timeout, every failure is a typed
- * McpError, and nothing the server prints reaches this process's stdout or
- * stderr. The child gets the allowlisted tool environment and a
- * workspace-contained cwd. Inside a dispatched worker it also runs under the
- * worker's OS sandbox, like every other child the worker starts; in the
- * orchestrator no sandbox policy is configured and it runs directly.
+ * The MCP protocol client: one server, reached over one transport. It settles
+ * the protocol era, sends requests with their own timeouts, cancels them,
+ * lists and calls tools, follows tasks, and reads every answer into a typed
+ * result or a typed McpError. The transport underneath owns the bytes and the
+ * peer's lifetime; `createMcpStdioClient` pairs this client with a local
+ * server process (stdio-transport.ts), and another transport plugs in through
+ * `createMcpProtocolClient`.
  *
- * Both directions are bounded. The framer caps inbound lines; an outbound
- * cap bounds the bytes waiting on a server that stopped reading its stdin,
- * and crossing it is a fatal `overload` that closes the client. Teardown
- * covers the server's whole process group, not only the child it spawned,
- * escalates to SIGKILL for any member that outlives the grace period, and
- * begins the moment the leader is seen to exit, whether or not close() has
- * been called.
+ * The client never restarts its transport; a server that dies stays dead
+ * until the gateway decides to create a new client, which discovers, lists,
+ * and subscribes again from scratch.
  */
 
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { realpathSync, statSync } from "node:fs";
-import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
 import { readPancodeVersion } from "../../../core/package-root.js";
-import { buildSafeToolEnv, resolveSafeCwd } from "../../../core/safe-exec.js";
-import { signalSandboxPayload } from "../../../core/sandbox/signal.js";
-import { planSandboxedSpawn } from "../../../core/sandbox/worker-process.js";
+import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { clampTimerDelayMs, sleep } from "../../../core/timers.js";
 import { isRecord } from "../../../core/type-guards.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
 import {
-	createLineFramer,
 	DEFAULT_MAX_LINE_BYTES,
-	encodeJsonRpcMessage,
 	JSON_RPC_METHOD_NOT_FOUND,
 	MCP_META_CLIENT_CAPABILITIES,
 	MCP_META_CLIENT_INFO,
 	MCP_META_PROTOCOL_VERSION,
 	MCP_META_SERVER_INFO,
+	MCP_META_SUBSCRIPTION_ID,
+	MCP_MISSING_REQUIRED_CLIENT_CAPABILITY,
 	MCP_MODERN_PROTOCOL_VERSION,
+	MCP_OLDEST_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
 	MCP_TASKS_EXTENSION,
 	MCP_UNSUPPORTED_PROTOCOL_VERSION,
 	McpError,
-	structuredContentJson,
 } from "./protocol.js";
+import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "./stdio-transport.js";
+import {
+	cutUtf8,
+	DEFAULT_RESULT_TEXT_BYTES,
+	type McpToolCallResult,
+	type McpToolDescriptor,
+	outputSchemaMismatch,
+	parseToolCallResult,
+	parseToolDescriptor,
+} from "./tool-results.js";
+import type {
+	McpOutboundMessage,
+	McpSendOptions,
+	McpSendOutcome,
+	McpTeardownOutcome,
+	McpTransport,
+	McpTransportEvents,
+} from "./transport.js";
+
+export {
+	DEFAULT_RESULT_TEXT_BYTES,
+	type McpContentBlock,
+	type McpToolCallResult,
+	type McpToolDescriptor,
+	renderMcpContent,
+} from "./tool-results.js";
+export type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
 export const MCP_CLIENT_NAME = "pancode";
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 15_000;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_STDERR_TAIL_BYTES = 16 * 1024;
-export const DEFAULT_RESULT_TEXT_BYTES = 1024 * 1024;
 export const DEFAULT_KILL_GRACE_MS = 3_000;
 /** Bound for checking server responsiveness after cancelling an in-flight call. */
 export const DEFAULT_CANCEL_GRACE_MS = 1_000;
@@ -71,24 +84,21 @@ const MIN_OUTBOUND_BYTES = 4096;
 export const DEFAULT_TEARDOWN_BOUND_MS = 2_000;
 /** Poll interval for a task whose server suggests none. */
 export const DEFAULT_TASK_POLL_INTERVAL_MS = 1_000;
-/** Floor under a server-suggested poll interval, so a zero cannot spin the event loop. */
-const MIN_TASK_POLL_INTERVAL_MS = 10;
+/** Bounds on a server-suggested poll interval: a zero cannot spin the server, a huge one cannot stall the call. */
+export const MIN_TASK_POLL_INTERVAL_MS = 250;
+export const MAX_TASK_POLL_INTERVAL_MS = 30_000;
 /** Silence on the server/discover probe after which the legacy handshake is sent beside it. */
 const DISCOVER_PROBE_GRACE_MS = 1_000;
 /** Bytes of one server-written text (an error message, its detail, a task status message) an error carries. */
 const SERVER_TEXT_BYTES = 2048;
-/** Characters of a crashed server's last stderr lines its exit error carries. */
-const EXIT_STDERR_CHARS = 600;
-/** Wait for a crashed server's stderr to reach end of file, which a descendant holding the pipe can delay. */
-const EXIT_STDERR_GRACE_MS = 250;
+/** Bytes of a server's instructions PanCode keeps and shows. */
+export const MCP_INSTRUCTIONS_BYTES = 2048;
+/** Bytes of one progress message passed on to the caller. */
+const PROGRESS_MESSAGE_BYTES = 512;
+/** Retries of one request that the server keeps answering with input_required and only a requestState. */
+export const MCP_INPUT_REQUIRED_ROUNDS = 8;
 
-export interface McpServerSpec {
-	id: string;
-	command: string;
-	args?: ReadonlyArray<string>;
-	cwd?: string;
-	env?: Readonly<Record<string, string>>;
-}
+export type McpServerSpec = McpStdioServerSpec;
 
 export interface McpClientOptions {
 	/** Containment root for the server's cwd; a cwd outside it, by path or by symlink, is refused before spawn. */
@@ -117,17 +127,19 @@ export interface McpClientOptions {
 	sandboxNetwork?: boolean;
 }
 
-export type McpClientStatus = "idle" | "starting" | "ready" | "closed" | "failed";
+/** The options that belong to the protocol, whatever transport carries it. */
+export type McpProtocolClientOptions = Pick<
+	McpClientOptions,
+	| "clientVersion"
+	| "initializeTimeoutMs"
+	| "requestTimeoutMs"
+	| "maxResultTextBytes"
+	| "cancelGraceMs"
+	| "onFailure"
+	| "signal"
+>;
 
-/**
- * How the process-group teardown ended. `complete: false` means members of
- * the group were still present when the post-SIGKILL bound passed; the id was
- * released all the same (see GroupPhase), so `pgid` is for the operator's
- * report, never for another signal.
- */
-export type McpTeardownOutcome =
-	| { complete: true }
-	| { complete: false; reason: "group-survived-sigkill"; pgid: number; boundMs: number };
+export type McpClientStatus = "idle" | "starting" | "ready" | "closed" | "failed";
 
 export type McpClientState = ({ status: Exclude<McpClientStatus, "failed"> } | { status: "failed"; reason: string }) & {
 	/** Group members were still present when the post-SIGKILL bound passed; the client stopped waiting for them. */
@@ -139,48 +151,55 @@ export type McpClientState = ({ status: Exclude<McpClientStatus, "failed"> } | {
 export interface McpServerInfo {
 	/** The negotiated legacy revision, or the modern revision when the `server/discover` probe selected it. */
 	protocolVersion: string;
+	/** Display only; a modern result's `_meta` refreshes it, and nothing trusts it. */
 	serverInfo: { name: string; version: string } | null;
 	capabilities: Record<string, unknown>;
+	/** Server-written guidance, cut at MCP_INSTRUCTIONS_BYTES. */
 	instructions: string | null;
-}
-
-export interface McpToolDescriptor {
-	name: string;
-	title: string | null;
-	description: string;
-	inputSchema: Record<string, unknown>;
-	/** Server-declared hints; advisory defaults, overridden by operator policy. */
-	annotations: Record<string, unknown> | null;
+	/** The discover result's freshness hint, modern era only; absent or negative reads as 0. */
+	ttlMs?: number;
 }
 
 export interface McpToolListing {
 	tools: McpToolDescriptor[];
 	/** True when the server offered more tools than the cap admits. */
 	truncated: boolean;
+	/** Modern era: the shortest freshness hint of the discover result and every page; absent or negative reads as 0. */
+	ttlMs?: number;
 }
 
-export type McpContentBlock =
-	| { type: "text"; text: string }
-	| { type: "image"; mimeType: string; data: string }
-	| { type: "audio"; mimeType: string; data: string }
-	| { type: "resource"; uri: string; text?: string; mimeType?: string }
-	| { type: "other"; raw: unknown };
-
-export interface McpToolCallResult {
-	content: McpContentBlock[];
-	isError: boolean;
-	/** JSON-safe values; numeric tokens that do not round-trip use {$literal: source}. */
-	structuredContent?: unknown;
-	/** Normalized structured JSON retaining numeric source tokens, bounded by the incoming-line cap. */
-	structuredContentJson?: string;
-	/** Bounded plain rendering of the content blocks. */
-	text: string;
-	textTruncated: boolean;
+export interface McpProgressUpdate {
+	/** Increases with every update the caller receives. */
+	progress: number;
+	total?: number;
+	/** Server-written, bounded to one line and unable to open a host frame. */
+	message?: string;
 }
 
 export interface McpCallToolOptions {
 	signal?: AbortSignal;
 	timeoutMs?: number;
+	/** Receives the server's `notifications/progress` for this call, in increasing order, until it settles. */
+	onProgress?: (update: McpProgressUpdate) => void;
+}
+
+/** What one `subscriptions/listen` stream asks for (MCP 2026-07-28 basic/patterns/subscriptions). */
+export interface McpSubscriptionFilter {
+	toolsListChanged?: true;
+	promptsListChanged?: true;
+	resourcesListChanged?: true;
+	resourceSubscriptions?: string[];
+}
+
+export interface McpSubscription {
+	/** The listen request's id, which tags every notification of the stream; null when it was never sent. */
+	readonly id: number | null;
+	/** The subset of the filter the server honours, from `notifications/subscriptions/acknowledged`. */
+	readonly acknowledged: Promise<Record<string, unknown>>;
+	/** Settles when the stream ends: the server answered the listen request, the client closed, or cancel(). */
+	readonly ended: Promise<void>;
+	/** Stop the stream with `notifications/cancelled`. */
+	cancel(): void;
 }
 
 export interface McpClient {
@@ -195,10 +214,17 @@ export interface McpClient {
 	killOwnedOnExit(): void;
 	state(): McpClientState;
 	serverInfo(): McpServerInfo | null;
-	/** Set by `notifications/tools/list_changed`; cleared by acknowledgeToolsChanged. */
+	/** Set by `notifications/tools/list_changed`, legacy or on a listen stream; cleared by acknowledgeToolsChanged. */
 	toolsChanged(): boolean;
 	acknowledgeToolsChanged(): void;
 	notificationCount(): number;
+	/**
+	 * Receive every notification of one method that no listen stream claims,
+	 * such as a legacy server's untagged list_changed. Returns the unregister.
+	 */
+	onNotification(method: string, handler: (params: unknown) => void): () => void;
+	/** Open a `subscriptions/listen` stream; its notifications reach `handler` after the server acknowledges it. */
+	subscribe(filter: McpSubscriptionFilter, handler: (method: string, params: unknown) => void): McpSubscription;
 	/** Bounded tail of everything the server wrote to stderr. */
 	stderrTail(): string;
 }
@@ -210,107 +236,64 @@ interface PendingRequest {
 	reject(error: McpError): void;
 }
 
-type OutboundMessage = Parameters<typeof encodeJsonRpcMessage>[0];
-
-interface OutboundEntry {
-	payload: Buffer;
-	/** The request this line carries, so a request that settles unsent can be withdrawn. */
-	requestId: number | null;
-	onError: ((error: Error) => void) | undefined;
+interface ActiveSubscription {
+	acknowledged: boolean;
+	acknowledge(honored: Record<string, unknown>): void;
+	handler: (method: string, params: unknown) => void;
 }
 
-type EnqueueOutcome = { kind: "queued" } | { kind: "oversized"; bytes: number } | { kind: "overloaded" };
-
-/**
- * Lifecycle of the server's process group as this client tracks it. The
- * leader's pid doubles as the group id because the child is spawned detached.
- * The kernel keeps a group id reserved only while some member of that group
- * exists; once the last member is reaped, the number can be handed to an
- * unrelated process, and a signal-0 probe would then report a stranger as
- * alive. Two rules keep this client from ever signalling a stranger:
- *
- *   1. Cleanup starts the moment the leader is seen to exit, not when close()
- *      happens to be called. At that instant the group is still ours or is
- *      already empty, so an arbitrarily late close() never gets to signal a
- *      number that has had time to change hands.
- *   2. Once the group has been observed gone (ESRCH), or cleanup has run to
- *      its bound, the id is `released` and is never probed or signalled
- *      again, whatever a later probe would say. A group that survives SIGKILL
- *      for the confirm window is unreaped zombies or something we cannot end
- *      either way; keeping the number is worth nothing and risks a stranger.
- *
- * The residual exposure is a reuse of the number between two 10 ms polls of
- * one active cleanup, the same window every group-signalling spawner in this
- * codebase accepts. Direct-child signals go through Node's own handle, which
- * knows whether that pid has been reaped, so they carry no such risk.
- */
-type GroupPhase = "unspawned" | "live" | "cleaning" | "released";
+interface ProgressRoute {
+	last: number;
+	onProgress: (update: McpProgressUpdate) => void;
+}
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/** Cut a string at a UTF-8 byte boundary at or below `maxBytes`. */
-function cutUtf8(text: string, maxBytes: number): string {
-	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-	const bytes = Buffer.from(text, "utf8");
-	let cut = Math.max(0, maxBytes);
-	while (cut > 0) {
-		const byte = bytes[cut];
-		if (byte === undefined || (byte & 0xc0) !== 0x80) break;
-		cut -= 1;
-	}
-	return bytes.subarray(0, cut).toString("utf8");
+/** Text a server wrote, redacted and clipped before it enters an error the model and the operator read. */
+function serverText(text: string): string {
+	return boundedExternalDiagnostic(text, SERVER_TEXT_BYTES);
 }
 
-/**
- * The canonical directory the server starts in, or why there is none. The cwd
- * must stay inside the workspace root lexically and after every symbolic link
- * is followed, and it must exist as a directory. Checked once at creation for
- * early feedback and again at spawn, which is the boundary that matters.
- */
-function containedCwd(spec: McpServerSpec, workspaceRoot: string): string | Error {
-	let lexical: string;
-	try {
-		lexical = resolveSafeCwd(spec.cwd, workspaceRoot);
-	} catch (error) {
-		return error instanceof Error ? error : new Error(String(error));
-	}
-	let realRoot: string;
-	let real: string;
-	try {
-		realRoot = realpathSync(path.resolve(workspaceRoot));
-		real = realpathSync(lexical);
-		if (!statSync(real).isDirectory()) return new Error(`cwd is not a directory: ${lexical}`);
-	} catch (error) {
-		return new Error(`cwd cannot be resolved: ${lexical} (${errorMessage(error)})`);
-	}
-	try {
-		resolveSafeCwd(real, realRoot);
-	} catch {
-		return new Error(`cwd escapes workspace root through a symbolic link: ${lexical} -> ${real}`);
-	}
-	return real;
+function boundedInstructions(value: unknown): string | null {
+	if (typeof value !== "string" || value.trim().length === 0) return null;
+	const marker = `\n[instructions truncated at ${MCP_INSTRUCTIONS_BYTES} bytes]`;
+	return Buffer.byteLength(value, "utf8") <= MCP_INSTRUCTIONS_BYTES
+		? value
+		: `${cutUtf8(value, MCP_INSTRUCTIONS_BYTES - Buffer.byteLength(marker, "utf8"))}${marker}`;
 }
 
-function parseServerInfo(value: unknown): McpServerInfo | McpError {
+/** A freshness hint as the caching rules read it: a missing, negative or malformed value is 0. */
+function freshnessOf(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function serverIdentity(value: unknown): McpServerInfo["serverInfo"] {
+	if (!isRecord(value)) return null;
+	return {
+		name: typeof value.name === "string" ? value.name : "",
+		version: typeof value.version === "string" ? value.version : "",
+	};
+}
+
+function parseServerInfo(value: unknown, id: string): McpServerInfo | McpError {
 	if (!isRecord(value)) return new McpError("protocol", "initialize result is not an object");
 	if (typeof value.protocolVersion !== "string" || value.protocolVersion.length === 0) {
 		return new McpError("protocol", "initialize result lacks a protocolVersion string");
 	}
-	const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
-	let serverInfo: McpServerInfo["serverInfo"] = null;
-	if (isRecord(value.serverInfo)) {
-		serverInfo = {
-			name: typeof value.serverInfo.name === "string" ? value.serverInfo.name : "",
-			version: typeof value.serverInfo.version === "string" ? value.serverInfo.version : "",
-		};
+	const version = value.protocolVersion;
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(version) || version < MCP_OLDEST_PROTOCOL_VERSION || version > MCP_PROTOCOL_VERSION) {
+		return new McpError(
+			"protocol",
+			`mcp server ${id} answered protocolVersion ${serverText(JSON.stringify(version))}; PanCode speaks ${MCP_OLDEST_PROTOCOL_VERSION} through ${MCP_PROTOCOL_VERSION} in the initialize handshake, or ${MCP_MODERN_PROTOCOL_VERSION} through server/discover`,
+		);
 	}
 	return {
-		protocolVersion: value.protocolVersion,
-		serverInfo,
-		capabilities,
-		instructions: typeof value.instructions === "string" ? value.instructions : null,
+		protocolVersion: version,
+		serverInfo: serverIdentity(value.serverInfo),
+		capabilities: isRecord(value.capabilities) ? value.capabilities : {},
+		instructions: boundedInstructions(value.instructions),
 	};
 }
 
@@ -323,17 +306,12 @@ function parseDiscoverResult(value: unknown): McpServerInfo | null {
 	if (!isRecord(value) || !Array.isArray(value.supportedVersions)) return null;
 	if (!value.supportedVersions.includes(MCP_MODERN_PROTOCOL_VERSION)) return null;
 	const meta = isRecord(value._meta) ? value._meta : {};
-	const reported = meta[MCP_META_SERVER_INFO];
 	return {
 		protocolVersion: MCP_MODERN_PROTOCOL_VERSION,
-		serverInfo: isRecord(reported)
-			? {
-					name: typeof reported.name === "string" ? reported.name : "",
-					version: typeof reported.version === "string" ? reported.version : "",
-				}
-			: null,
+		serverInfo: serverIdentity(meta[MCP_META_SERVER_INFO]),
 		capabilities: isRecord(value.capabilities) ? value.capabilities : {},
-		instructions: typeof value.instructions === "string" ? value.instructions : null,
+		instructions: boundedInstructions(value.instructions),
+		ttlMs: freshnessOf(value.ttlMs),
 	};
 }
 
@@ -376,9 +354,32 @@ function parseTaskState(value: unknown, method: string, expectedId: string | nul
 	};
 }
 
-/** Text a server wrote, redacted and clipped before it enters an error the model and the operator read. */
-function serverText(text: string): string {
-	return boundedExternalDiagnostic(text, SERVER_TEXT_BYTES);
+/**
+ * The client capabilities a -32021 MissingRequiredClientCapability answer
+ * names in `data.requiredCapabilities`: `sampling`, `roots`, `elicitation`, or
+ * `extension <id>` for each extension. Empty when the server named none.
+ */
+export function mcpRequiredCapabilities(data: unknown): string[] {
+	const required = isRecord(data) && isRecord(data.requiredCapabilities) ? data.requiredCapabilities : null;
+	if (required === null) return [];
+	const names: string[] = [];
+	for (const [key, value] of Object.entries(required)) {
+		if (key === "extensions" && isRecord(value)) names.push(...Object.keys(value).map((id) => `extension ${id}`));
+		else names.push(key);
+	}
+	return names.map((name) => serverText(name));
+}
+
+/** What PanCode can say about each capability a server required and the client did not declare. */
+function missingCapabilityRemedy(names: ReadonlyArray<string>): string {
+	if (names.length === 0) return "the server named no capability, so PanCode cannot tell what it needs";
+	return names
+		.map((name) =>
+			name === `extension ${MCP_TASKS_EXTENSION}`
+				? `PanCode declares ${MCP_TASKS_EXTENSION} only on tools/call and tasks/* requests`
+				: `PanCode does not offer ${name}`,
+		)
+		.join("; ");
 }
 
 /**
@@ -388,6 +389,14 @@ function serverText(text: string): string {
  * explanation follows the code. The whole error object stays on `data`.
  */
 function serverAnswerError(method: string, error: JsonRpcErrorObject): McpError {
+	if (error.code === MCP_MISSING_REQUIRED_CLIENT_CAPABILITY) {
+		const names = mcpRequiredCapabilities(error.data);
+		return new McpError(
+			"server",
+			`${method}: the server requires client capabilities PanCode did not declare${names.length > 0 ? `: ${names.join(", ")}` : ""} (code ${error.code}); ${missingCapabilityRemedy(names)}`,
+			error,
+		);
+	}
 	const { data } = error;
 	const detail = typeof data === "string" ? data : isRecord(data) && typeof data.detail === "string" ? data.detail : "";
 	const explained = detail.trim().length > 0 ? `: ${serverText(detail)}` : "";
@@ -404,136 +413,46 @@ function serverErrorFrom(method: string, error: unknown, fallback: string): McpE
 	return new McpError("server", `${method}: ${fallback}`);
 }
 
-function parseToolDescriptor(value: unknown): McpToolDescriptor | McpError {
-	if (!isRecord(value)) return new McpError("protocol", "tools/list entry is not an object");
-	if (typeof value.name !== "string" || value.name.length === 0) {
-		return new McpError("protocol", "tools/list entry lacks a name");
-	}
-	const inputSchema = isRecord(value.inputSchema) ? value.inputSchema : { type: "object" };
-	return {
-		name: value.name,
-		title: typeof value.title === "string" ? value.title : null,
-		description: typeof value.description === "string" ? value.description : "",
-		inputSchema,
-		annotations: isRecord(value.annotations) ? value.annotations : null,
-	};
-}
-
-function normalizeContentBlock(value: unknown): McpContentBlock {
-	if (!isRecord(value) || typeof value.type !== "string") return { type: "other", raw: value };
-	switch (value.type) {
-		case "text":
-			return typeof value.text === "string" ? { type: "text", text: value.text } : { type: "other", raw: value };
-		case "image":
-		case "audio":
-			if (typeof value.data === "string" && typeof value.mimeType === "string") {
-				return { type: value.type, mimeType: value.mimeType, data: value.data };
-			}
-			return { type: "other", raw: value };
-		case "resource": {
-			const resource = value.resource;
-			if (!isRecord(resource) || typeof resource.uri !== "string") return { type: "other", raw: value };
-			return {
-				type: "resource",
-				uri: resource.uri,
-				...(typeof resource.text === "string" ? { text: resource.text } : {}),
-				...(typeof resource.mimeType === "string" ? { mimeType: resource.mimeType } : {}),
-			};
-		}
-		case "resource_link":
-			if (typeof value.uri !== "string") return { type: "other", raw: value };
-			return {
-				type: "resource",
-				uri: value.uri,
-				...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
-			};
-		default:
-			return { type: "other", raw: value };
-	}
-}
-
-function renderContentBlock(block: McpContentBlock): string {
-	switch (block.type) {
-		case "text":
-			return block.text;
-		case "image":
-		case "audio":
-			return `[${block.type} ${block.mimeType}, ${Buffer.byteLength(block.data, "base64")} bytes]`;
-		case "resource":
-			return block.text === undefined ? `[resource ${block.uri}]` : `[resource ${block.uri}]\n${block.text}`;
-		case "other": {
-			const type = isRecord(block.raw) && typeof block.raw.type === "string" ? block.raw.type : "unknown";
-			return `[unsupported content type ${type}]`;
-		}
-	}
-}
-
-/** Render every block as plain text and bound the whole rendering. */
-export function renderMcpContent(
-	blocks: ReadonlyArray<McpContentBlock>,
-	maxBytes: number = DEFAULT_RESULT_TEXT_BYTES,
-): { text: string; truncated: boolean } {
-	const joined = blocks.map(renderContentBlock).join("\n");
-	if (Buffer.byteLength(joined, "utf8") <= maxBytes) return { text: joined, truncated: false };
-	const marker = `\n[mcp result text truncated at ${maxBytes} bytes]`;
-	const budget = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
-	return { text: `${cutUtf8(joined, budget)}${marker}`, truncated: true };
-}
-
-function parseToolCallResult(value: unknown, maxTextBytes: number): McpToolCallResult | McpError {
-	if (!isRecord(value)) return new McpError("protocol", "tools/call result is not an object");
-	if (!Array.isArray(value.content)) return new McpError("protocol", "tools/call result.content must be an array");
-	if (value.isError !== undefined && typeof value.isError !== "boolean") {
-		return new McpError("protocol", "tools/call result.isError must be a boolean");
-	}
-	if (value.structuredContent !== undefined && !isRecord(value.structuredContent)) {
-		return new McpError("protocol", "tools/call result.structuredContent must be an object");
-	}
-	const content = value.content.map(normalizeContentBlock);
-	const structuredText = structuredContentJson(value);
-	// Use transport-retained numeric tokens, not reserialized JS numbers.
-	// The evidence object uses explicit $literal tags for non-round-trips.
-	const rendered = renderMcpContent(
-		content.length === 0 && value.structuredContent !== undefined
-			? [{ type: "text", text: structuredText ?? JSON.stringify(value.structuredContent) }]
-			: content,
-		maxTextBytes,
-	);
-	const result: McpToolCallResult = {
-		content,
-		isError: value.isError === true,
-		text: rendered.text,
-		textTruncated: rendered.truncated,
-	};
-	if (value.structuredContent !== undefined) result.structuredContent = value.structuredContent;
-	if (structuredText !== undefined) result.structuredContentJson = structuredText;
-	return result;
-}
-
 export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOptions): McpClient {
 	const initialCwd = containedCwd(spec, options.workspaceRoot);
 	if (initialCwd instanceof Error) throw new McpError("spawn", `mcp server ${spec.id}: ${initialCwd.message}`);
+	return createMcpProtocolClient(
+		spec.id,
+		(events) =>
+			createMcpStdioTransport(
+				spec,
+				{
+					workspaceRoot: options.workspaceRoot,
+					stderrTailBytes: Math.max(0, options.stderrTailBytes ?? DEFAULT_STDERR_TAIL_BYTES),
+					maxLineBytes: options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES,
+					maxOutboundBytes: Math.max(MIN_OUTBOUND_BYTES, options.maxOutboundBytes ?? DEFAULT_MAX_OUTBOUND_BYTES),
+					killGraceMs: clampTimerDelayMs(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS),
+					teardownBoundMs: clampTimerDelayMs(options.teardownBoundMs ?? DEFAULT_TEARDOWN_BOUND_MS),
+					sandboxNetwork: options.sandboxNetwork === true,
+				},
+				events,
+			),
+		options,
+	);
+}
+
+/**
+ * The protocol client over any transport. `openTransport` is called once, at
+ * creation, with the events the transport reports; nothing is sent until the
+ * first initialize starts it.
+ */
+export function createMcpProtocolClient(
+	id: string,
+	openTransport: (events: McpTransportEvents) => McpTransport,
+	options: McpProtocolClientOptions,
+): McpClient {
 	const initializeTimeoutMs = clampTimerDelayMs(options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS);
 	const requestTimeoutMs = clampTimerDelayMs(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
-	const stderrTailBytes = Math.max(0, options.stderrTailBytes ?? DEFAULT_STDERR_TAIL_BYTES);
 	const maxResultTextBytes = Math.max(64, options.maxResultTextBytes ?? DEFAULT_RESULT_TEXT_BYTES);
-	const maxOutboundBytes = Math.max(MIN_OUTBOUND_BYTES, options.maxOutboundBytes ?? DEFAULT_MAX_OUTBOUND_BYTES);
-	const killGraceMs = clampTimerDelayMs(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS);
-	const teardownBoundMs = clampTimerDelayMs(options.teardownBoundMs ?? DEFAULT_TEARDOWN_BOUND_MS);
 	const clientVersion = options.clientVersion ?? readPancodeVersion();
-	const framer = createLineFramer(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES);
 
 	let status: McpClientStatus = "idle";
 	let failure: McpError | null = null;
-	let child: ChildProcess | null = null;
-	let spawned: Promise<boolean> | null = null;
-	let exited: Promise<void> | null = null;
-	let leaderExited = false;
-	let groupPhase: GroupPhase = "unspawned";
-	let sandboxedLauncher = false;
-	let groupCleanup: Promise<McpTeardownOutcome> | null = null;
-	let teardown: McpTeardownOutcome | null = null;
-	let closing = false;
 	let initializePromise: Promise<McpServerInfo> | null = null;
 	let closePromise: Promise<McpTeardownOutcome> | null = null;
 	let info: McpServerInfo | null = null;
@@ -544,20 +463,18 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 	 */
 	let era: "legacy" | "modern" = "legacy";
 	let nextId = 1;
+	let nextProgressToken = 1;
 	const pending = new Map<number, PendingRequest>();
-	const outbound: OutboundEntry[] = [];
-	let outboundQueuedBytes = 0;
-	let awaitingDrain = false;
+	const subscriptions = new Map<number, ActiveSubscription>();
+	const progressRoutes = new Map<string, ProgressRoute>();
+	const notificationHandlers = new Map<string, Set<(params: unknown) => void>>();
+	/** The outputSchema of each tool in the latest listing, which its structuredContent is checked against. */
+	let outputSchemas = new Map<string, Record<string, unknown>>();
 	let notifications = 0;
 	let toolsChangedFlag = false;
-	let stderrTailBuffer = Buffer.alloc(0);
-	/** Set when the server exits unbidden; settles once its exit error, stderr included, is the client's failure. */
-	let exitReported: Promise<void> | null = null;
-
-	const isAlive = (): boolean => child !== null && child.exitCode === null && child.signalCode === null;
 
 	/** The error every later request gets once the client cannot serve it. */
-	const closedError = (): McpError => failure ?? new McpError("closed", `mcp server ${spec.id} is closed`);
+	const closedError = (): McpError => failure ?? new McpError("closed", `mcp server ${id} is closed`);
 
 	const rejectAllPending = (error: McpError): void => {
 		for (const entry of [...pending.values()]) entry.reject(error);
@@ -573,204 +490,119 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 		options.onFailure?.(error);
 	};
 
-	/** The group id may be signalled only while the group is known to be ours (see GroupPhase). */
-	const groupOwned = (): boolean => groupPhase === "live" || groupPhase === "cleaning";
+	const transport = openTransport({
+		message: (frame) => {
+			if (status === "closed" || status === "failed") return;
+			dispatch(frame);
+		},
+		fatal: (error, ended) => {
+			fail(error);
+			if (!ended) void close();
+		},
+	});
 
-	const signalGroup = (signalName: NodeJS.Signals): void => {
-		const pid = child?.pid;
-		if (pid !== undefined && process.platform !== "win32" && groupOwned()) {
-			// A sandboxed server runs in its own session inside the sandbox, so TERM
-			// goes to it alone and the launcher exits after it; KILL reaches both.
-			if (sandboxedLauncher && signalSandboxPayload(pid, signalName) && signalName !== "SIGKILL") return;
-			try {
-				process.kill(-pid, signalName);
-				return;
-			} catch (error) {
-				// ESRCH: the group is gone, and the number is no longer ours to touch.
-				if ((error as NodeJS.ErrnoException).code === "ESRCH") groupPhase = "released";
-			}
+	const send = (message: McpOutboundMessage, sendOptions?: McpSendOptions): McpSendOutcome =>
+		transport.send(message, sendOptions);
+
+	/** A modern result's `_meta` names the server again; the latest name is the one shown. */
+	const refreshServerInfo = (result: unknown): void => {
+		if (era !== "modern" || info === null || !isRecord(result) || !isRecord(result._meta)) return;
+		const reported = serverIdentity(result._meta[MCP_META_SERVER_INFO]);
+		if (reported !== null) info = { ...info, serverInfo: reported };
+	};
+
+	/**
+	 * -32022 on a request other than the probe means the server stopped
+	 * serving the revision this client settled on. Nothing it answers can be
+	 * trusted until the era is settled again, which a restart does.
+	 */
+	const unsupportedVersionError = (method: string, error: JsonRpcErrorObject): McpError => {
+		const data = isRecord(error.data) ? error.data : {};
+		const supported = Array.isArray(data.supported) ? serverText(data.supported.map(String).join(", ")) : "none listed";
+		const requested = typeof data.requested === "string" ? serverText(data.requested) : (info?.protocolVersion ?? "?");
+		return new McpError(
+			"closed",
+			`mcp server ${id} answered ${method} with UnsupportedProtocolVersion (code ${error.code}): it supports ${supported}, and PanCode sent ${requested}; PanCode closed it, and its next start negotiates the revision again`,
+			error,
+		);
+	};
+
+	const routeProgress = (params: unknown): void => {
+		if (!isRecord(params)) return;
+		const token = params.progressToken;
+		if (typeof token !== "string" && typeof token !== "number") return;
+		const route = progressRoutes.get(String(token));
+		const progress = params.progress;
+		if (route === undefined || typeof progress !== "number" || !Number.isFinite(progress) || progress <= route.last) {
+			return;
 		}
-		// Node's handle knows whether this pid was reaped, so the direct child is always safe to address.
+		route.last = progress;
+		const update: McpProgressUpdate = { progress };
+		if (typeof params.total === "number" && Number.isFinite(params.total)) update.total = params.total;
+		if (typeof params.message === "string") {
+			const line = neutralizeFraming(
+				boundedExternalDiagnostic(params.message.replace(/\s+/g, " "), PROGRESS_MESSAGE_BYTES),
+			).trim();
+			if (line.length > 0) update.message = line;
+		}
 		try {
-			child?.kill(signalName);
+			route.onProgress(update);
 		} catch {
-			// Already exited.
+			// A caller's display failure never reaches the protocol.
 		}
 	};
 
-	/** True while any member of the server's process group exists, whether or not the leader does. */
-	const groupAlive = (): boolean => {
-		const pid = child?.pid;
-		if (pid === undefined || !groupOwned()) return false;
-		if (process.platform !== "win32") {
-			try {
-				process.kill(-pid, 0);
-				return true;
-			} catch (error) {
-				// ESRCH means every member is gone; the number is released for good.
-				// EPERM means a member exists that this process may not signal;
-				// anything else is treated as alive so cleanup never reports a
-				// teardown it did not observe.
-				if ((error as NodeJS.ErrnoException).code !== "ESRCH") return true;
-				groupPhase = "released";
-				return false;
-			}
+	const routeSubscription = (subscriptionId: unknown, method: string, params: unknown): void => {
+		if (typeof subscriptionId !== "number") return;
+		const subscription = subscriptions.get(subscriptionId);
+		if (subscription === undefined) return;
+		if (method === "notifications/subscriptions/acknowledged") {
+			if (subscription.acknowledged) return;
+			subscription.acknowledged = true;
+			subscription.acknowledge(isRecord(params) && isRecord(params.notifications) ? params.notifications : {});
+			return;
 		}
-		return isAlive();
-	};
-
-	const terminationObserved = (): boolean => leaderExited && !groupAlive();
-
-	/** Poll until the leader has been reaped and its group is empty, or the bound elapses. */
-	const waitForTermination = async (timeoutMs: number): Promise<boolean> => {
-		const deadline = performance.now() + timeoutMs;
-		while (!terminationObserved()) {
-			const remaining = deadline - performance.now();
-			if (remaining <= 0) return terminationObserved();
-			const nap = sleep(Math.min(10, remaining));
-			await (leaderExited || exited === null ? nap : Promise.race([exited, nap]));
+		// The acknowledgement comes first; anything before it belongs to no stream the client has seen open.
+		if (!subscription.acknowledged) return;
+		try {
+			subscription.handler(method, params);
+		} catch {
+			// A subscriber's failure never reaches the protocol.
 		}
-		return true;
-	};
-
-	const destroyStdio = (): void => {
-		for (const stream of [child?.stdin, child?.stdout, child?.stderr]) stream?.destroy();
-	};
-
-	/**
-	 * Tear the group down once: SIGTERM, the grace period, SIGKILL for whatever
-	 * is left, a bounded wait for it to disappear, then release the id for
-	 * good. Runs from close() and from the leader's exit, whichever comes first;
-	 * the second caller shares the first run. When something survives even
-	 * SIGKILL the outcome says so, with the group id, and our pipe ends are
-	 * dropped so the survivor cannot pin this process's event loop; otherwise
-	 * the pipes drain naturally and the stderr tail stays whole. The outcome is
-	 * flagged rather than thrown: a caller's shutdown loop cannot do anything
-	 * about a survivor except report it, and the flag carries what to report.
-	 */
-	const cleanupGroup = (): Promise<McpTeardownOutcome> => {
-		if (groupCleanup !== null) return groupCleanup;
-		groupCleanup = (async () => {
-			let terminated = true;
-			const pgid = child?.pid;
-			if (groupPhase === "live" && pgid !== undefined) {
-				groupPhase = "cleaning";
-				if (groupAlive()) signalGroup("SIGTERM");
-				terminated = await waitForTermination(killGraceMs);
-				if (!terminated) {
-					if (groupAlive()) signalGroup("SIGKILL");
-					terminated = await waitForTermination(teardownBoundMs);
-				}
-			} else {
-				await (exited ?? Promise.resolve());
-			}
-			groupPhase = "released";
-			const outcome: McpTeardownOutcome =
-				terminated || pgid === undefined
-					? { complete: true }
-					: { complete: false, reason: "group-survived-sigkill", pgid, boundMs: killGraceMs + teardownBoundMs };
-			teardown = outcome;
-			if (!outcome.complete) destroyStdio();
-			return outcome;
-		})();
-		return groupCleanup;
-	};
-
-	/** Bytes accepted for the server but not yet flushed: this queue plus the stream's own buffer. */
-	const pendingOutboundBytes = (): number => outboundQueuedBytes + (child?.stdin?.writableLength ?? 0);
-
-	const flushOutbound = (): void => {
-		while (!awaitingDrain) {
-			const entry = outbound.shift();
-			if (entry === undefined) return;
-			outboundQueuedBytes -= entry.payload.length;
-			const stdin = child?.stdin;
-			if (!stdin || stdin.destroyed || !stdin.writable) {
-				entry.onError?.(new Error("server stdin is not writable"));
-				continue;
-			}
-			if (entry.requestId !== null) {
-				const request = pending.get(entry.requestId);
-				if (request !== undefined) request.sent = true;
-			}
-			const accepted = stdin.write(entry.payload, (error) => {
-				if (error) entry.onError?.(error);
-			});
-			if (!accepted) {
-				awaitingDrain = true;
-				stdin.once("drain", () => {
-					awaitingDrain = false;
-					flushOutbound();
-				});
-			}
-		}
-	};
-
-	/**
-	 * Queue one line for the server. A line larger than the cap is refused on
-	 * its own; a line that would push the unflushed total over the cap means the
-	 * server stopped reading, which fails the client and closes it.
-	 */
-	const enqueueOutbound = (
-		message: OutboundMessage,
-		requestId: number | null,
-		onError?: (error: Error) => void,
-	): EnqueueOutcome => {
-		const payload = encodeJsonRpcMessage(message);
-		if (payload.length > maxOutboundBytes) return { kind: "oversized", bytes: payload.length };
-		const queued = pendingOutboundBytes();
-		if (queued + payload.length > maxOutboundBytes) {
-			fail(
-				new McpError(
-					"overload",
-					`mcp server ${spec.id} stopped reading its stdin: ${queued} bytes are queued for it and the outbound cap is ${maxOutboundBytes} bytes`,
-				),
-			);
-			void close();
-			return { kind: "overloaded" };
-		}
-		outbound.push({ payload, requestId, onError });
-		outboundQueuedBytes += payload.length;
-		flushOutbound();
-		return { kind: "queued" };
-	};
-
-	/** Drop a request's line if it is still waiting in the queue. */
-	const withdrawOutbound = (requestId: number): void => {
-		const index = outbound.findIndex((entry) => entry.requestId === requestId);
-		if (index === -1) return;
-		const [entry] = outbound.splice(index, 1);
-		if (entry !== undefined) outboundQueuedBytes -= entry.payload.length;
 	};
 
 	const dispatch = (frame: JsonRpcMessage): void => {
 		if (frame.kind === "response") {
-			const id = frame.message.id;
-			if (typeof id !== "number") return;
-			const entry = pending.get(id);
+			const responseId = frame.message.id;
+			if (typeof responseId !== "number") return;
+			const entry = pending.get(responseId);
 			if (entry === undefined) return;
-			if (frame.message.error !== undefined) {
-				entry.reject(serverAnswerError(entry.method, frame.message.error));
+			const error = frame.message.error;
+			if (error !== undefined) {
+				if (error.code === MCP_UNSUPPORTED_PROTOCOL_VERSION && entry.method !== "server/discover") {
+					fail(unsupportedVersionError(entry.method, error));
+					void close();
+					return;
+				}
+				entry.reject(serverAnswerError(entry.method, error));
 				return;
 			}
+			refreshServerInfo(frame.message.result);
 			entry.resolve(frame.message.result);
 			return;
 		}
 		if (frame.kind === "request") {
 			const request = frame.message;
-			const outcome = enqueueOutbound(
-				{
-					jsonrpc: "2.0",
-					id: request.id as JsonRpcId,
-					error: { code: JSON_RPC_METHOD_NOT_FOUND, message: `method not found: ${request.method}` },
-				},
-				null,
-			);
+			const outcome = send({
+				jsonrpc: "2.0",
+				id: request.id as JsonRpcId,
+				error: { code: JSON_RPC_METHOD_NOT_FOUND, message: `method not found: ${request.method}` },
+			});
 			if (outcome.kind === "oversized") {
 				fail(
 					new McpError(
 						"overload",
-						`mcp server ${spec.id} sent a request whose ${outcome.bytes}-byte reply exceeds the ${maxOutboundBytes}-byte outbound cap`,
+						`mcp server ${id} sent a request whose ${outcome.bytes}-byte reply exceeds the ${outcome.cap}-byte outbound cap`,
 					),
 				);
 				void close();
@@ -778,124 +610,21 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 			return;
 		}
 		notifications += 1;
-		if (frame.message.method === "notifications/tools/list_changed") toolsChangedFlag = true;
-	};
-
-	const consumeFrames = (frames: ReturnType<typeof framer.push>): void => {
-		for (const frame of frames) {
-			if (status === "closed" || status === "failed") return;
-			if (frame.kind === "message") {
-				dispatch(frame.message);
-				continue;
-			}
-			fail(new McpError("protocol", `protocol error from mcp server ${spec.id}: ${frame.error.message}`));
-			void close();
+		const { method, params } = frame.message;
+		const meta = isRecord(params) && isRecord(params._meta) ? params._meta : null;
+		if (meta !== null && Object.hasOwn(meta, MCP_META_SUBSCRIPTION_ID)) {
+			routeSubscription(meta[MCP_META_SUBSCRIPTION_ID], method, params);
 			return;
 		}
-	};
-
-	/** Node may report a child's exit before the last stderr bytes it wrote; wait for end of file, bounded. */
-	const stderrEnded = async (proc: ChildProcess): Promise<void> => {
-		const stream = proc.stderr;
-		if (stream === null || stream.readableEnded || stream.destroyed) return;
-		const settled = new AbortController();
-		await Promise.race([
-			once(stream, "close", { signal: settled.signal }),
-			sleep(EXIT_STDERR_GRACE_MS, settled.signal),
-		]).catch(() => {
-			// Neither side rejects before the race settles; the abort below only releases the loser.
-		});
-		settled.abort();
-	};
-
-	/** The last lines a crashed server wrote to stderr, which usually say why it exited. */
-	const stderrEnding = (): string => {
-		const lines = stderrTailBuffer
-			.toString("utf8")
-			.split("\n")
-			.map((line) => line.trim())
-			.filter((line) => line.length > 0);
-		if (lines.length === 0) return "";
-		const ending = Array.from(boundedExternalDiagnostic(lines.slice(-3).join(" | "), stderrTailBytes));
-		return `; its stderr ends with: ${ending.length > EXIT_STDERR_CHARS ? `…${ending.slice(-EXIT_STDERR_CHARS).join("")}` : ending.join("")}`;
-	};
-
-	const spawnChild = (): boolean => {
-		const cwd = containedCwd(spec, options.workspaceRoot);
-		if (cwd instanceof Error) {
-			fail(new McpError("spawn", `mcp server ${spec.id} failed to start: ${cwd.message}`));
-			return false;
+		if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+		if (method === "notifications/progress") routeProgress(params);
+		for (const handler of notificationHandlers.get(method) ?? []) {
+			try {
+				handler(params);
+			} catch {
+				// A listener's failure never reaches the protocol.
+			}
 		}
-		// A worker's policy engine admits execute-class calls under write roots on
-		// the promise that bwrap binds every child it starts to those roots, so a
-		// server must not be the one child that escapes them or the network policy.
-		const sandbox = planSandboxedSpawn({ argv: [spec.command, ...(spec.args ?? [])] }, cwd, [], {
-			network: options.sandboxNetwork === true,
-		});
-		if (sandbox.kind === "refused") {
-			fail(new McpError("spawn", `mcp server ${spec.id} failed to start: ${sandbox.message}`));
-			return false;
-		}
-		sandboxedLauncher = sandbox.kind === "sandboxed";
-		let proc: ChildProcess;
-		try {
-			const [file, args] =
-				sandbox.kind === "sandboxed" ? [sandbox.file, sandbox.args] : [spec.command, [...(spec.args ?? [])]];
-			proc = spawn(file, args, {
-				cwd,
-				env: buildSafeToolEnv({ ...(spec.env ?? {}) }),
-				detached: process.platform !== "win32",
-				stdio: ["pipe", "pipe", "pipe"],
-			});
-		} catch (error) {
-			fail(new McpError("spawn", `mcp server ${spec.id} failed to start: ${errorMessage(error)}`));
-			return false;
-		}
-		child = proc;
-		if (proc.pid !== undefined) groupPhase = "live";
-		spawned = new Promise<boolean>((resolve) => {
-			proc.once("spawn", () => resolve(true));
-			proc.once("error", (error) => {
-				fail(new McpError("spawn", `mcp server ${spec.id} failed to start: ${error.message}`));
-				resolve(false);
-			});
-		});
-		exited = new Promise<void>((resolve) => {
-			proc.once("exit", (code, signal) => {
-				leaderExited = true;
-				if (!closing && status !== "failed") {
-					const how = signal !== null ? `signal ${signal}` : `code ${code ?? "?"}`;
-					exitReported = stderrEnded(proc).then(() =>
-						fail(
-							new McpError("closed", `mcp server ${spec.id} exited with ${how} before the client closed it${stderrEnding()}`),
-						),
-					);
-				} else {
-					rejectAllPending(closedError());
-				}
-				resolve();
-				// Whatever the leader left in its group is torn down now, while the id is still ours.
-				void cleanupGroup();
-			});
-			proc.once("error", () => {
-				if (proc.pid === undefined) {
-					leaderExited = true;
-					resolve();
-				}
-			});
-		});
-		proc.stdin?.on("error", () => {
-			// Surfaced through the write callbacks; a bare listener keeps the event from throwing.
-		});
-		proc.stdout?.on("data", (chunk: Buffer) => consumeFrames(framer.push(chunk)));
-		proc.stdout?.on("end", () => consumeFrames(framer.flush()));
-		proc.stderr?.on("data", (chunk: Buffer) => {
-			if (stderrTailBytes === 0) return;
-			const joined = Buffer.concat([stderrTailBuffer, chunk]);
-			stderrTailBuffer =
-				joined.length > stderrTailBytes ? Buffer.from(joined.subarray(joined.length - stderrTailBytes)) : joined;
-		});
-		return true;
 	};
 
 	/**
@@ -920,35 +649,42 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 		};
 	};
 
-	const request = (method: string, rawParams: unknown, timeoutMs: number, signal?: AbortSignal): Promise<unknown> =>
+	const request = (
+		method: string,
+		rawParams: unknown,
+		timeoutMs: number,
+		signal?: AbortSignal,
+		onId?: (requestId: number) => void,
+	): Promise<unknown> =>
 		new Promise<unknown>((resolve, reject) => {
 			const params = withEnvelope(method, rawParams);
 			if (signal?.aborted) {
 				reject(new McpError("aborted", `${method} aborted before it was sent`));
 				return;
 			}
-			if (child === null || status === "closed" || status === "failed") {
+			if (!transport.started() || status === "closed" || status === "failed") {
 				reject(closedError());
 				return;
 			}
-			if (exitReported !== null) {
+			const ended = transport.endReported();
+			if (ended !== null) {
 				// The server is gone and its exit error is about to be the failure; that, not a write error, answers.
-				void exitReported.then(() => reject(closedError()));
+				void ended.then(() => reject(closedError()));
 				return;
 			}
-			const id = nextId++;
+			const requestId = nextId++;
 			let timer: ReturnType<typeof setTimeout> | null = null;
 			const settle = (finish: () => void): void => {
-				if (!pending.has(id)) return;
-				pending.delete(id);
-				withdrawOutbound(id);
+				if (!pending.has(requestId)) return;
+				pending.delete(requestId);
+				transport.withdraw(requestId);
 				if (timer !== null) clearTimeout(timer);
 				signal?.removeEventListener("abort", onAbort);
 				finish();
 			};
 			let cancelling = false;
 			const cancel = (error: McpError): void => {
-				const entry = pending.get(id);
+				const entry = pending.get(requestId);
 				if (entry === undefined || cancelling) return;
 				cancelling = true;
 				if (timer !== null) clearTimeout(timer);
@@ -974,10 +710,11 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 				// effects. The modern revision removed ping, so it asks server/discover.
 				entry.resolve = () => settle(() => reject(error));
 				entry.reject = () => settle(() => reject(error));
-				enqueueOutbound(
-					{ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: error.message } },
-					null,
-				);
+				send({
+					jsonrpc: "2.0",
+					method: "notifications/cancelled",
+					params: { requestId, reason: error.message },
+				});
 				void request(
 					era === "modern" ? "server/discover" : "ping",
 					undefined,
@@ -988,21 +725,28 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 				);
 			};
 			const onAbort = (): void => cancel(new McpError("aborted", `${method} aborted`));
-			pending.set(id, {
+			pending.set(requestId, {
 				method,
 				sent: false,
 				resolve: (value) => settle(() => resolve(value)),
 				reject: (error) => settle(() => reject(error)),
 			});
+			onId?.(requestId);
 			if (timeoutMs > 0) {
 				timer = setTimeout(() => cancel(new McpError("timeout", `${method} timed out after ${timeoutMs}ms`)), timeoutMs);
 			}
 			signal?.addEventListener("abort", onAbort, { once: true });
-			const outcome = enqueueOutbound(
-				{ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) },
-				id,
-				(error) => {
-					settle(() => reject(failure ?? new McpError("closed", `write to mcp server ${spec.id} failed: ${error.message}`)));
+			const outcome = send(
+				{ jsonrpc: "2.0", id: requestId, method, ...(params === undefined ? {} : { params }) },
+				{
+					requestId,
+					onSent: () => {
+						const entry = pending.get(requestId);
+						if (entry !== undefined) entry.sent = true;
+					},
+					onError: (error) => {
+						settle(() => reject(failure ?? new McpError("closed", `write to mcp server ${id} failed: ${error.message}`)));
+					},
 				},
 			);
 			if (outcome.kind === "oversized") {
@@ -1010,7 +754,7 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 					reject(
 						new McpError(
 							"overload",
-							`${method} request of ${outcome.bytes} bytes exceeds the ${maxOutboundBytes}-byte outbound cap`,
+							`${method} request of ${outcome.bytes} bytes exceeds the ${outcome.cap}-byte outbound cap`,
 						),
 					),
 				);
@@ -1062,7 +806,7 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 				fail(
 					new McpError(
 						"protocol",
-						`initialize failed: mcp server ${spec.id} does not support MCP ${MCP_MODERN_PROTOCOL_VERSION} (it supports ${supported})`,
+						`initialize failed: mcp server ${id} does not support MCP ${MCP_MODERN_PROTOCOL_VERSION} (it supports ${serverText(supported)})`,
 						answered,
 					),
 				);
@@ -1077,16 +821,28 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 		return parseDiscoverResult(result);
 	};
 
+	/**
+	 * A modern server that announces tools.listChanged is asked for the change
+	 * stream at once (MCP 2026-07-28 basic/patterns/subscriptions). The stream
+	 * lives as long as this client; a restarted server gets a new client, which
+	 * listens again.
+	 */
+	const listenForToolChanges = (capabilities: Record<string, unknown>): void => {
+		if (!isRecord(capabilities.tools) || capabilities.tools.listChanged !== true) return;
+		const stream = subscribe({ toolsListChanged: true }, (method) => {
+			if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+		});
+		stream.acknowledged.catch(() => {
+			// A server that refuses or ends the stream still serves calls; the next discovery lists again.
+		});
+	};
+
 	const initializeOnce = (signal?: AbortSignal): Promise<McpServerInfo> => {
 		if (status === "closed" || status === "failed") return Promise.reject(closedError());
 		if (initializePromise !== null) return initializePromise;
 		initializePromise = (async () => {
 			status = "starting";
-			if (!spawnChild()) {
-				await close();
-				throw closedError();
-			}
-			const started = await (spawned ?? Promise.resolve(false));
+			const started = await transport.start();
 			if (!started) {
 				await close();
 				throw closedError();
@@ -1124,14 +880,14 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 			let pendingHandshake: Promise<unknown> | null = null;
 			let discovered = early.found;
 			if (!early.answered) {
-				const started = handshake();
-				pendingHandshake = started;
-				started.catch(() => {
+				const sent = handshake();
+				pendingHandshake = sent;
+				sent.catch(() => {
 					// Awaited below when the server turns out to be legacy.
 				});
 				discovered = await Promise.race([
 					probe,
-					started.then(
+					sent.then(
 						() => null,
 						() => probe,
 					),
@@ -1141,6 +897,7 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 				era = "modern";
 				info = discovered;
 				if (status === "starting") status = "ready";
+				listenForToolChanges(discovered.capabilities);
 				return discovered;
 			}
 			let result: unknown;
@@ -1152,14 +909,14 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 				await close();
 				throw closedError();
 			}
-			const parsed = parseServerInfo(result);
+			const parsed = parseServerInfo(result, id);
 			if (parsed instanceof McpError) {
 				fail(new McpError("protocol", `initialize failed: ${parsed.message}`));
 				await close();
 				throw closedError();
 			}
 			info = parsed;
-			enqueueOutbound({ jsonrpc: "2.0", method: "notifications/initialized" }, null);
+			send({ jsonrpc: "2.0", method: "notifications/initialized" });
 			if (status === "starting") status = "ready";
 			return parsed;
 		})();
@@ -1177,47 +934,126 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 			const tools: McpToolDescriptor[] = [];
 			let cursor: string | undefined;
 			let pages = 0;
+			// Each page carries its own freshness; the listing is as fresh as its stalest part.
+			let ttlMs = era === "modern" ? (info?.ttlMs ?? 0) : undefined;
+			const finish = (truncated: boolean): McpToolListing => {
+				outputSchemas = new Map(tools.flatMap((tool) => (tool.outputSchema ? [[tool.name, tool.outputSchema]] : [])));
+				return { tools, truncated, ...(ttlMs !== undefined ? { ttlMs } : {}) };
+			};
 			for (;;) {
 				pages += 1;
 				const result = await request("tools/list", cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal);
 				if (!isRecord(result) || !Array.isArray(result.tools)) {
 					throw new McpError("protocol", "tools/list result lacks a tools array");
 				}
+				if (ttlMs !== undefined) ttlMs = Math.min(ttlMs, freshnessOf(result.ttlMs));
 				for (const entry of result.tools) {
-					if (tools.length >= MCP_TOOL_LIST_CAP) return { tools, truncated: true };
+					if (tools.length >= MCP_TOOL_LIST_CAP) return finish(true);
 					const descriptor = parseToolDescriptor(entry);
 					if (descriptor instanceof McpError) throw descriptor;
 					tools.push(descriptor);
 				}
 				const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
-				if (next === undefined) return { tools, truncated: false };
-				if (tools.length >= MCP_TOOL_LIST_CAP || pages >= MCP_TOOL_LIST_PAGE_CAP) return { tools, truncated: true };
+				if (next === undefined) return finish(false);
+				if (tools.length >= MCP_TOOL_LIST_CAP || pages >= MCP_TOOL_LIST_PAGE_CAP) return finish(true);
 				cursor = next;
 			}
 		});
+
+	/** Route this call's progress notifications to its caller while the call runs (basic/utilities/progress). */
+	const trackProgress = (onProgress: (update: McpProgressUpdate) => void): { token: string; release(): void } => {
+		const token = `pancode-${nextProgressToken++}`;
+		progressRoutes.set(token, { last: Number.NEGATIVE_INFINITY, onProgress });
+		return { token, release: () => progressRoutes.delete(token) };
+	};
+
+	/**
+	 * The one place an `input_required` answer (MCP 2026-07-28
+	 * basic/patterns/mrtr) is handled; it returns the params of the retry.
+	 * PanCode declares no client capability a server could ask for through
+	 * `inputRequests`, so a server that asks anyway breaks the protocol, and
+	 * a bare `requestState` is echoed back verbatim under a new request id.
+	 */
+	const answerInputRequired = (
+		method: string,
+		params: Record<string, unknown>,
+		result: Record<string, unknown>,
+		round: number,
+	): Record<string, unknown> => {
+		const asked = isRecord(result.inputRequests) ? Object.values(result.inputRequests) : [];
+		if (asked.length > 0) {
+			const methods = [
+				...new Set(asked.map((entry) => (isRecord(entry) && typeof entry.method === "string" ? entry.method : "?"))),
+			];
+			throw new McpError(
+				"protocol",
+				`mcp server ${id} answered ${method} with input_required asking for ${serverText(methods.join(", "))}, but PanCode declared no client capabilities, so a server must not ask it for input`,
+			);
+		}
+		if (typeof result.requestState !== "string") {
+			throw new McpError(
+				"protocol",
+				`mcp server ${id} answered ${method} with input_required carrying neither inputRequests nor a requestState`,
+			);
+		}
+		if (round > MCP_INPUT_REQUIRED_ROUNDS) {
+			throw new McpError(
+				"protocol",
+				`mcp server ${id} answered ${method} with input_required ${round} times in a row; PanCode stops retrying after ${MCP_INPUT_REQUIRED_ROUNDS}`,
+			);
+		}
+		const { requestState: _previous, ...base } = params;
+		return { ...base, requestState: result.requestState };
+	};
+
+	/** Read a final tools/call answer and check its structuredContent against the tool's outputSchema. */
+	const finishToolResult = async (name: string, value: unknown): Promise<McpToolCallResult> => {
+		const parsed = parseToolCallResult(value, maxResultTextBytes);
+		if (parsed instanceof McpError) throw parsed;
+		const schema = outputSchemas.get(name);
+		if (parsed.isError || schema === undefined || parsed.structuredContent === undefined) return parsed;
+		const mismatch = await outputSchemaMismatch(schema, parsed.structuredContent);
+		if (mismatch === null) return parsed;
+		return { ...parsed, isError: true, outputSchemaMismatch: serverText(`mcp server ${id}, tool ${name}: ${mismatch}`) };
+	};
 
 	const callTool = async (
 		name: string,
 		args: Record<string, unknown>,
 		callOptions: McpCallToolOptions = {},
 	): Promise<McpToolCallResult> => {
-		if (callOptions.signal?.aborted) throw new McpError("aborted", "tools/call aborted before it was sent");
-		await ensureReady(callOptions.signal);
+		const signal = callOptions.signal;
+		if (signal?.aborted) throw new McpError("aborted", "tools/call aborted before it was sent");
+		await ensureReady(signal);
 		const timeoutMs = clampTimerDelayMs(callOptions.timeoutMs ?? requestTimeoutMs);
 		const startedAt = performance.now();
-		const result = await request("tools/call", { name, arguments: args }, timeoutMs, callOptions.signal);
-		if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
-			if (result.resultType === "task") return awaitTask(result, startedAt, timeoutMs, callOptions.signal);
-			// Multi round-trip input (resultType input_required) needs elicitation or
-			// sampling, which this client does not offer.
-			throw new McpError(
-				"protocol",
-				`tools/call returned resultType ${JSON.stringify(result.resultType)}, which this client does not handle`,
-			);
+		const progress = callOptions.onProgress === undefined ? null : trackProgress(callOptions.onProgress);
+		try {
+			let params: Record<string, unknown> = { name, arguments: args };
+			for (let round = 1; ; round += 1) {
+				let budget = timeoutMs;
+				if (round > 1 && timeoutMs > 0) {
+					budget = Math.ceil(startedAt + timeoutMs - performance.now());
+					if (budget <= 0) throw new McpError("timeout", `tools/call timed out after ${timeoutMs}ms`);
+				}
+				const sent = progress === null ? params : { ...params, _meta: { progressToken: progress.token } };
+				const result = await request("tools/call", sent, budget, signal);
+				if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
+					if (result.resultType === "task") return await awaitTask(name, result, startedAt, timeoutMs, signal);
+					if (result.resultType === "input_required") {
+						params = answerInputRequired("tools/call", params, result, round);
+						continue;
+					}
+					throw new McpError(
+						"protocol",
+						`tools/call returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
+					);
+				}
+				return await finishToolResult(name, result);
+			}
+		} finally {
+			progress?.release();
 		}
-		const parsed = parseToolCallResult(result, maxResultTextBytes);
-		if (parsed instanceof McpError) throw parsed;
-		return parsed;
 	};
 
 	/**
@@ -1241,12 +1077,14 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 	 * (MCP Tasks extension, specification 2026-07-28). The whole task is the one
 	 * tool call the gateway admitted: polling shares the call's timeout and abort
 	 * signal, and the completed task yields the same McpToolCallResult a direct
-	 * answer would. Polling waits the server's pollIntervalMs between tasks/get
+	 * answer would. Polling waits the server's pollIntervalMs, held between
+	 * MIN_TASK_POLL_INTERVAL_MS and MAX_TASK_POLL_INTERVAL_MS, between tasks/get
 	 * requests, stops at a terminal status, and sends tasks/cancel when the turn
 	 * aborts, the call times out, the task outlives its ttlMs, or the server
 	 * asks for input this client cannot give.
 	 */
 	const awaitTask = async (
+		name: string,
 		created: Record<string, unknown>,
 		startedAt: number,
 		timeoutMs: number,
@@ -1265,11 +1103,8 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 		try {
 			for (;;) {
 				switch (task.status) {
-					case "completed": {
-						const parsed = parseToolCallResult(task.result, maxResultTextBytes);
-						if (parsed instanceof McpError) throw parsed;
-						return parsed;
-					}
+					case "completed":
+						return await finishToolResult(name, task.result);
 					case "failed":
 						throw serverErrorFrom(
 							"tools/call",
@@ -1301,7 +1136,10 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 				}
 				const remaining = deadline - now;
 				if (remaining <= 0) throw timedOut();
-				const interval = Math.max(MIN_TASK_POLL_INTERVAL_MS, task.pollIntervalMs ?? DEFAULT_TASK_POLL_INTERVAL_MS);
+				const interval = Math.min(
+					MAX_TASK_POLL_INTERVAL_MS,
+					Math.max(MIN_TASK_POLL_INTERVAL_MS, task.pollIntervalMs ?? DEFAULT_TASK_POLL_INTERVAL_MS),
+				);
 				try {
 					await sleep(Math.min(interval, remaining, expiresAt - now), signal);
 				} catch {
@@ -1329,33 +1167,95 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 		}
 	};
 
+	const onNotification = (method: string, handler: (params: unknown) => void): (() => void) => {
+		let handlers = notificationHandlers.get(method);
+		if (handlers === undefined) {
+			handlers = new Set();
+			notificationHandlers.set(method, handlers);
+		}
+		handlers.add(handler);
+		return () => {
+			notificationHandlers.get(method)?.delete(handler);
+		};
+	};
+
 	/**
-	 * End the server: close its stdin, then run (or join) the group teardown.
-	 * The leader's exit is not the end of it; a descendant that outlives the
-	 * leader is signalled and waited for the same way. Our ends of the pipes
-	 * are dropped last, since nobody reads them after close.
+	 * Open one listen stream. The request has no timeout: it is answered only
+	 * when the server ends the stream, and close() or cancel() ends it from
+	 * this side with `notifications/cancelled`. Over stdio every stream shares
+	 * one pipe, so each notification is routed by the subscription id the
+	 * server tags it with, which is the listen request's id.
+	 */
+	const subscribe = (
+		filter: McpSubscriptionFilter,
+		handler: (method: string, params: unknown) => void,
+	): McpSubscription => {
+		let streamId: number | null = null;
+		let acknowledge: (honored: Record<string, unknown>) => void = () => {};
+		let refuse: (error: McpError) => void = () => {};
+		const acknowledged = new Promise<Record<string, unknown>>((resolve, reject) => {
+			acknowledge = resolve;
+			refuse = reject;
+		});
+		acknowledged.catch(() => {
+			// A caller that never awaits the acknowledgement is not told about an ended stream.
+		});
+		const controller = new AbortController();
+		const listening = request("subscriptions/listen", { notifications: filter }, 0, controller.signal, (assigned) => {
+			streamId = assigned;
+			subscriptions.set(assigned, { acknowledged: false, acknowledge, handler });
+		});
+		const ended = listening.then(
+			() => {
+				refuse(new McpError("server", `mcp server ${id} ended the subscription before acknowledging it`));
+			},
+			(error: unknown) => {
+				refuse(error instanceof McpError ? error : new McpError("protocol", errorMessage(error)));
+			},
+		);
+		void ended.finally(() => {
+			if (streamId !== null) subscriptions.delete(streamId);
+		});
+		return {
+			get id() {
+				return streamId;
+			},
+			acknowledged,
+			ended: ended.then(() => undefined),
+			cancel: () => {
+				if (streamId === null || !subscriptions.delete(streamId)) return;
+				send({
+					jsonrpc: "2.0",
+					method: "notifications/cancelled",
+					params: { requestId: streamId, reason: "subscription closed by the client" },
+				});
+				controller.abort();
+			},
+		};
+	};
+
+	/**
+	 * End the server: every open listen stream is cancelled, every pending
+	 * request rejected, and the transport closed, which runs (or joins) its
+	 * teardown.
 	 */
 	const close = (): Promise<McpTeardownOutcome> => {
 		if (closePromise !== null) return closePromise;
 		closePromise = (async () => {
-			closing = true;
 			options.signal?.removeEventListener("abort", onParentAbort);
 			if (status !== "failed") status = "closed";
+			if (transport.started() && transport.endReported() === null) {
+				for (const streamId of subscriptions.keys()) {
+					send({
+						jsonrpc: "2.0",
+						method: "notifications/cancelled",
+						params: { requestId: streamId, reason: "client closed" },
+					});
+				}
+			}
+			subscriptions.clear();
 			rejectAllPending(closedError());
-			outbound.length = 0;
-			outboundQueuedBytes = 0;
-			if (child === null) {
-				teardown ??= { complete: true };
-				return teardown;
-			}
-			try {
-				child.stdin?.end();
-			} catch {
-				// Nothing to flush on a dead pipe.
-			}
-			const outcome = await cleanupGroup();
-			destroyStdio();
-			return outcome;
+			return await transport.close();
 		})();
 		return closePromise;
 	};
@@ -1370,23 +1270,20 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 	}
 
 	return {
-		id: spec.id,
+		id,
 		get pid() {
-			return child?.pid;
+			return transport.pid;
 		},
 		initialize,
 		listTools,
 		callTool,
 		close,
-		killOwnedOnExit: () => {
-			// ESRCH releases ownership before the asynchronous teardown record settles.
-			// Check the live ownership state, never the retained pid or final outcome.
-			if (groupOwned()) signalGroup("SIGKILL");
-		},
+		killOwnedOnExit: () => transport.killOwnedOnExit(),
 		state: () => {
+			const teardown = transport.teardown();
 			const cleanup = { cleanupIncomplete: teardown?.complete === false, teardown };
 			return status === "failed"
-				? { status, reason: failure?.message ?? `mcp server ${spec.id} failed`, ...cleanup }
+				? { status, reason: failure?.message ?? `mcp server ${id} failed`, ...cleanup }
 				: { status, ...cleanup };
 		},
 		serverInfo: () => info,
@@ -1395,6 +1292,8 @@ export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOpti
 			toolsChangedFlag = false;
 		},
 		notificationCount: () => notifications,
-		stderrTail: () => stderrTailBuffer.toString("utf8"),
+		onNotification,
+		subscribe,
+		stderrTail: () => transport.stderrTail(),
 	};
 }

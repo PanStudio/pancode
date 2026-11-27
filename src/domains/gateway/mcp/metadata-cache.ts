@@ -22,7 +22,7 @@ import { sha256Hex } from "../../../core/hash.js";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { pancodeCacheDir } from "../../../core/xdg.js";
-import { MCP_TOOL_LIST_CAP, type McpToolDescriptor } from "./client.js";
+import { MCP_INSTRUCTIONS_BYTES, MCP_TOOL_LIST_CAP, type McpToolDescriptor } from "./client.js";
 import type { McpServerScope } from "./config.js";
 import { readBoundedFileText } from "./config.js";
 
@@ -32,7 +32,8 @@ export const MCP_METADATA_CACHE_VERSION = 1;
  * How long a catalog is used before a live listing has to produce it again.
  * A day matches `TARGET_MODEL_CACHE_TTL_MS`, which solves the same problem for
  * provider model lists, and keeps a server that quietly gained or lost tools
- * from staying wrong across a week of sessions.
+ * from staying wrong across a week of sessions. A modern server's own `ttlMs`
+ * shortens it (MCP 2026-07-28 server/utilities/caching), never lengthens it.
  */
 export const MCP_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
@@ -44,6 +45,8 @@ export const MCP_METADATA_CACHE_CAPS = Object.freeze({
 	toolNameBytes: 512,
 	descriptionBytes: 8 * 1024,
 	schemaBytes: 64 * 1024,
+	/** The client keeps at most MCP_INSTRUCTIONS_BYTES plus its truncation marker. */
+	instructionsBytes: MCP_INSTRUCTIONS_BYTES + 64,
 });
 
 const CACHE_SUBDIRECTORY = "mcp-catalogs";
@@ -90,6 +93,14 @@ export interface McpServerCatalog {
 	 */
 	truncated: boolean;
 	observedAt: string;
+	/**
+	 * The freshness the server gave the listing, modern era only. Absent for a
+	 * legacy listing, which keeps MCP_METADATA_CACHE_TTL_MS; 0 means the
+	 * catalog is stale at once and the next live connection lists again.
+	 */
+	ttlMs?: number;
+	/** The server's own guidance, shown as server-written text beside its tools. */
+	instructions?: string;
 	tools: McpCachedTool[];
 }
 
@@ -154,6 +165,14 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		return null;
 	if (typeof value.truncated !== "boolean") return null;
 	if (!Number.isFinite(Date.parse(value.observedAt as string))) return null;
+	const { ttlMs, instructions } = value;
+	if (ttlMs !== undefined && (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs < 0)) return null;
+	if (
+		instructions !== undefined &&
+		(typeof instructions !== "string" ||
+			Buffer.byteLength(instructions, "utf8") > MCP_METADATA_CACHE_CAPS.instructionsBytes)
+	)
+		return null;
 	if (!Array.isArray(value.tools) || value.tools.length > MCP_METADATA_CACHE_CAPS.tools) return null;
 	const tools: McpCachedTool[] = [];
 	const seen = new Set<string>();
@@ -173,6 +192,8 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		cwd: value.cwd as string,
 		truncated: value.truncated,
 		observedAt: value.observedAt as string,
+		...(ttlMs === undefined ? {} : { ttlMs }),
+		...(instructions === undefined ? {} : { instructions }),
 		tools,
 	};
 }
@@ -211,7 +232,7 @@ export function readMcpServerCatalog(
 	}
 	const observedMs = Date.parse(catalog.observedAt);
 	const nowMs = options.nowMs ?? Date.now();
-	const ttlMs = options.ttlMs ?? MCP_METADATA_CACHE_TTL_MS;
+	const ttlMs = options.ttlMs ?? Math.min(catalog.ttlMs ?? MCP_METADATA_CACHE_TTL_MS, MCP_METADATA_CACHE_TTL_MS);
 	if (observedMs > nowMs || nowMs - observedMs >= ttlMs) return null;
 	return catalog;
 }
@@ -223,7 +244,12 @@ export function readMcpServerCatalog(
  */
 export function writeMcpServerCatalog(
 	identity: McpCatalogIdentity,
-	listing: { tools: ReadonlyArray<McpToolDescriptor>; truncated: boolean },
+	listing: {
+		tools: ReadonlyArray<McpToolDescriptor>;
+		truncated: boolean;
+		ttlMs?: number;
+		instructions?: string | null;
+	},
 	options: Pick<McpCatalogOptions, "cacheDir" | "nowMs"> = {},
 ): boolean {
 	if (listing.tools.length > MCP_METADATA_CACHE_CAPS.tools) return false;
@@ -250,6 +276,13 @@ export function writeMcpServerCatalog(
 		// A tool dropped above is as much missing catalog as one the client's cap cut.
 		truncated: listing.truncated || tools.length !== listing.tools.length,
 		observedAt: new Date(options.nowMs ?? Date.now()).toISOString(),
+		...(listing.ttlMs === undefined
+			? {}
+			: { ttlMs: Math.min(MCP_METADATA_CACHE_TTL_MS, Math.max(0, Math.floor(listing.ttlMs))) }),
+		...(typeof listing.instructions === "string" &&
+		Buffer.byteLength(listing.instructions, "utf8") <= MCP_METADATA_CACHE_CAPS.instructionsBytes
+			? { instructions: listing.instructions }
+			: {}),
 		tools,
 	};
 	const text = `${JSON.stringify(catalog, null, 2)}\n`;
