@@ -69,6 +69,7 @@ import type {
 	InternalGitDriftPayload,
 	JobClockResumedPayload,
 	LoopBlockedPayload,
+	McpServersReloadedPayload,
 	MemoryGuardianChangedPayload,
 	MiddlewareHookFailedPayload,
 	PermissionRequestedPayload,
@@ -621,6 +622,7 @@ export const EVENTS = {
 		scope: "process",
 		project: (_issue: ExtensionsLoadIssuePayload) => ({}),
 	}),
+	"mcp.servers_reloaded": live<McpServersReloadedPayload>(),
 	"context.activity_changed": live<ContextActivityPayload>(),
 	"context.sources_changed": live<ContextSourcesChangedPayload>(),
 	/** `/reload prompts`: re-read fragments, recipes and session prompt sources now. */

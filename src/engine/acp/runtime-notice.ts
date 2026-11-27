@@ -8,8 +8,15 @@
  * startup and host status lines use, once per notice key per session. A notice
  * raised before a session is bound waits for that session's next prompt, the
  * way startup hints do, so the client already holds the session id.
+ *
+ * Session notices (a restart-bound setting, a changed git hook, a failed
+ * extension or middleware hook, a foreign worker's ask, an MCP reload) cross
+ * on the same channel. Each one is news, so these are not deduplicated by key;
+ * a held one is replaced by a newer one with its key.
  */
+import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { RuntimeNoticePayload } from "../../core/telemetry/live-events.js";
+import { type SessionNotice, subscribeSessionNotices } from "../../session-control/session-notices.js";
 
 export interface AcpRuntimeNotice {
 	level: RuntimeNoticePayload["level"];
@@ -41,6 +48,8 @@ function readRuntimeNotice(payload: unknown): AcpRuntimeNotice | null {
 export interface AcpRuntimeNoticeRelay {
 	/** One `runtime.notice_raised` payload; `sessionId` is the bound session, or null before one is bound. */
 	raise(payload: unknown, sessionId: string | null): void;
+	/** One session notice; `sessionId` as for `raise`. */
+	session(notice: SessionNotice, sessionId: string | null): void;
 	/** Sends the notices held while no session was bound. */
 	flush(sessionId: string): void;
 }
@@ -63,10 +72,33 @@ export function createAcpRuntimeNoticeRelay(
 			if (sessionId !== null) deliver(sessionId, notice);
 			else if (!held.has(notice.key) && held.size < MAX_HELD_NOTICES) held.set(notice.key, notice);
 		},
+		session(notice, sessionId) {
+			const relayed: AcpRuntimeNotice = {
+				level: notice.level === "warn" ? "warning" : notice.level,
+				text: notice.text,
+				key: notice.key,
+			};
+			if (sessionId !== null) send(sessionId, relayed);
+			else if (held.has(relayed.key) || held.size < MAX_HELD_NOTICES) held.set(relayed.key, relayed);
+		},
 		flush(sessionId) {
 			const pending = [...held.values()];
 			held.clear();
 			for (const notice of pending) deliver(sessionId, notice);
 		},
+	};
+}
+
+/** Subscribes the relay to runtime and session notices; `boundSession` reads the session a notice goes to now. */
+export function subscribeAcpNotices(
+	bus: Pick<TelemetryHub, "subscribe">,
+	relay: AcpRuntimeNoticeRelay,
+	boundSession: () => string | null,
+): () => void {
+	const unsubscribeRuntime = bus.subscribe("runtime.notice_raised", (payload) => relay.raise(payload, boundSession()));
+	const unsubscribeSession = subscribeSessionNotices(bus, (notice) => relay.session(notice, boundSession()));
+	return () => {
+		unsubscribeRuntime();
+		unsubscribeSession();
 	};
 }

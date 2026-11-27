@@ -114,7 +114,7 @@ import {
 import type { AcpReadoutsSession } from "./readouts.js";
 import { createAcpReadoutsEmitter } from "./readouts.js";
 import { ACP_MAX_JOBS } from "./runtime.js";
-import { createAcpRuntimeNoticeRelay } from "./runtime-notice.js";
+import { createAcpRuntimeNoticeRelay, subscribeAcpNotices } from "./runtime-notice.js";
 import {
 	boundString,
 	requireBoundedClientString,
@@ -613,9 +613,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const bus = options.bus;
 		unsubscribeEvents.push(
 			bus.subscribe("context.pruned", () => telemetry.contextFolded()),
-			bus.subscribe("runtime.notice_raised", (payload) =>
-				runtimeNotices.raise(payload, handshake.initialized ? (activeSessionId ?? boundSessionId) : null),
-			),
+			subscribeAcpNotices(bus, runtimeNotices, () => (handshake.initialized ? (activeSessionId ?? boundSessionId) : null)),
 			bus.subscribe("session.eggs_changed", (payload) => {
 				const sessionId = activeSessionId ?? boundSessionId;
 				if (!handshake.initialized || sessionId === null || payload.sessionId !== sessionId) return;

@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
+import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
 import { mcpLiveStatuses } from "../cli/mcp.js";
 import { segmentUsageFromView } from "../cli/modes/json-stream.js";
 import { runHeadlessMainAgent } from "../cli/modes/print.js";
@@ -1089,17 +1090,8 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		if (!interactive) writeMiddlewareDiagnosticToStderr(diagnostic);
 	});
 
-	// Residency and runtime notices (model swaps, double residency, VRAM
-	// stress) reach the operator through the interactive notice renderer; a
-	// headless run has no subscriber, so mirror them to stderr there; ACP sends them as session info. Silent
-	// model swaps are exactly the failure mode the residency policy forbids.
-	if (!interactive && !acpMode) {
-		bus.subscribe("runtime.notice_raised", (payload: unknown) => {
-			const notice = payload as { level?: string; message?: string } | undefined;
-			if (typeof notice?.message !== "string") return;
-			process.stderr.write(`[pancode:runtime] ${notice.level ?? "info"}: ${notice.message}\n`);
-		});
-	}
+	// Runtime and session notices: the terminal renders them, ACP sends them as session info, a headless run prints them.
+	if (!interactive && !acpMode) writeHeadlessNoticesToStderr(bus);
 
 	termination.onDrain(watchCopilotStreamQuota());
 	termination.onDrain(
@@ -1479,9 +1471,9 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		recordReceipt: extensionHookReceiptSink(() => session?.current()?.id),
 		report: (line) => {
 			if (reloadClasses.captureIssue(line)) return;
-			if (!interactive) process.stderr.write(`${line}\n`);
-			else if (bootHookNotices) initialNotices.push(line);
-			else bus.emit("extension.load_failed", { message: line });
+			if (!bootHookNotices) bus.emit("extension.load_failed", { message: line });
+			else if (interactive) initialNotices.push(line);
+			else process.stderr.write(`${line}\n`);
 		},
 		onCommitted: () => {
 			if (!reloadClasses.active) reloadPlugins();

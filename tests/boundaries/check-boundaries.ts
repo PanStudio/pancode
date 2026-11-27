@@ -806,10 +806,10 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
 	["src/engine/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/engine/acp/server.ts#servePancodeAcpAgent", 3788],
+	["src/engine/acp/server.ts#servePancodeAcpAgent", 3786],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3708],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3699],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
@@ -1130,6 +1130,11 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 		module: "src/session-control/slash-commands.ts",
 		reason:
 			"one slash parser and one registry-membership source for both surfaces. The headless refusal in src/cli/run.ts and the TUI editor must agree on which tokens name a command, and a second copy of the parser would drift. The registry's own imports are what the closure guard below watches.",
+	},
+	{
+		module: "src/session-control/session-notices.ts",
+		reason:
+			"one projection of the session facts every surface reports. The headless stderr sink in src/cli/headless-notices.ts reads the same facts the terminal and ACP render; its value closure is formatter text over core shapes.",
 	},
 	{
 		module: "src/session-control/chat-loop.ts",
