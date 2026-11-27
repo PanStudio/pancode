@@ -20,7 +20,7 @@ import type { TurnContinuationCause } from "../job-types.js";
 import type { SkillActivation } from "../skill-activation.js";
 import type { ContextFoldSchema, ContextPrunedSchema, ContextRecalledSchema } from "./context-schemas.js";
 import type { EvidenceAssessed } from "./evidence-schemas.js";
-import type { DomainLoadedSchema, PluginReloadedSchema, ShutdownRequestedSchema } from "./host-schemas.js";
+import type { PluginReloadedSchema } from "./host-schemas.js";
 import type { RunUsageFacts } from "./schemas.js";
 
 /**
@@ -468,9 +468,6 @@ export interface SessionTurnSwitchedPayload {
 	turnId: string;
 	at: number;
 }
-
-/** Published on `domain.loaded` per successfully started domain. */
-export type DomainLoadedPayload = Static<typeof DomainLoadedSchema>;
 
 /** Published on `domain.failed` right before the loader throws. */
 export interface DomainFailedPayload {
@@ -948,6 +945,3 @@ export interface InternalGitDriftPayload {
 	outcome: "hooks-off" | "overridden" | "skipped" | "yolo";
 	changes: ReadonlyArray<{ path: string; kind: "added" | "changed" | "removed"; key?: string }>;
 }
-
-/** Published on `shutdown.requested` as draining begins. */
-export type ShutdownRequestedPayload = Static<typeof ShutdownRequestedSchema>;

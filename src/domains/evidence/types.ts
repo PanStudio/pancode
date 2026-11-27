@@ -23,8 +23,6 @@ export const FAILURE_CAUSE_TAG_ORDER = [
 	"blocked-tool",
 ] as const satisfies readonly EvidenceTag[];
 
-export type FailureCauseTag = (typeof FAILURE_CAUSE_TAG_ORDER)[number];
-
 /** Fast membership test for the canonical failure-cause subset. */
 export const FAILURE_CAUSE_TAGS: ReadonlySet<EvidenceTag> = new Set(FAILURE_CAUSE_TAG_ORDER);
 

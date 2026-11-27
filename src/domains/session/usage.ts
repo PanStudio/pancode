@@ -9,25 +9,18 @@
 import type { ResponseModelIdObservation } from "../../core/response-model-id.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
-import type { RunUsageFacts } from "../../core/telemetry/schemas.js";
 import type { CallTotals } from "../telemetry/folds.js";
 import { foldCallJournal, foldCalls } from "../telemetry/folds.js";
 import type { SessionEntry } from "./entries.js";
 import { journalOwnsSideUsage, usageCallsFromJournal } from "./journal-usage.js";
 
-/** One attempt, or one run's contribution, projected from the journal; every quantity is a fact sum (#434). */
+/** One attempt projected from the journal; every quantity is a fact sum (#434). */
 export interface LedgerUsageCall {
-	runId?: string;
-	runJournalUnavailable?: boolean;
-	/** Replay-only boundary for comparing a frozen fork prefix with the run owner's complete scope (#434). */
-	runCutoff?: number;
 	callId?: string;
 	attemptId?: string;
-	/** The attempt's fold; a run contribution carries its run's spend instead. */
+	/** The attempt's fold. */
 	facts?: CallTotals;
 	usageFacts?: CallTotals["usage"];
-	/** A run contribution's spend as one fact per quantity; unknown when its journal is unreadable or damaged. */
-	runSpend?: RunUsageFacts;
 	callOutcome?: "success" | "error" | "aborted";
 	compactionOutcome?: EventPayload<"compaction.settled">["outcome"] | "unknown";
 	providerId: string;
