@@ -17,6 +17,7 @@ import {
 	createExtensionCheckReceipts,
 	createExtensionVerifyService,
 } from "../../src/domains/extensions/services/verify.js";
+import { createExtensionWorktreeService } from "../../src/domains/extensions/services/worktrees.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 function git(cwd: string, ...args: string[]): void {
@@ -180,5 +181,38 @@ describe("extension claims service", () => {
 		await assert.rejects(claims.finish("run-2", [{ check: "sane", receipt: score.receipt }]), code("unknown_receipt"));
 		await assert.rejects(claims.hypotheses("../escape", "{}"), code("invalid"));
 		assert.equal(readClaims(realpathSync(repo)).records.length, 0);
+	});
+
+	it("claims a check run in an extension worktree for the project, naming the worktree it ran in", async (t) => {
+		const env = await isolatePancodeEnv("pancode-ext-claims-");
+		t.after(() => env.restore());
+		const { repo, receipts, cleanup } = project();
+		t.after(cleanup);
+		const worktrees = createExtensionWorktreeService({
+			extensionId: "research",
+			workspace: repo,
+			storeDir: join(repo, "..", "store"),
+		});
+		t.after(() => worktrees.dispose());
+		const verify = createExtensionVerifyService({
+			settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "targets">,
+			resolvePlace: (place) => worktrees.resolvePlace(place),
+			receipts,
+			launch: { file: process.execPath, args: ["-e", "process.exit(9)"], env: {} },
+			sourceEnv: {},
+			envPolicy: { targets: [], passEnv: [] },
+		});
+		const claims = createExtensionClaimsService({ extensionId: "research", workspace: repo, sessionId: null, receipts });
+		const tree = await worktrees.create();
+		writeFileSync(join(tree.path, "value.txt"), "50\n");
+		assert.deepEqual(await verify.measure("score", "score", { worktree: tree.id }), { ok: true, value: 50 });
+		const result = await verify.check("sane", { worktree: tree.id });
+		assert.equal(result.ok, false);
+		await claims.begin("run-3", ["sane"]);
+		const recorded = await claims.finish("run-3", [{ check: "sane", receipt: result.receipt }]);
+		const claim = readClaims(realpathSync(repo)).records.find((record) => record.id === recorded.sane);
+		assert.equal(claim?.verdict, "disagrees");
+		assert.equal(claim?.project, realpathSync(repo));
+		assert.equal(claim?.worktree, realpathSync(tree.path));
 	});
 });
