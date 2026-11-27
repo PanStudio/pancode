@@ -791,7 +791,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/dispatch/extension.ts#createDispatchBundle.dispatchAcpDelegation", 1006],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1055],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 741],
-	["src/domains/gateway/mcp/client.ts#createMcpProtocolClient", 1889],
 	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
 	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
@@ -1010,6 +1009,12 @@ function extractSpecifiers(source: string): ExtractedSpecifier[] {
 		if (!specifier) continue;
 		const typeOnly = isTypeOnlyImportOrExportClause(clause);
 		specifiers.push({ specifier, typeOnly, dynamic: false });
+	}
+
+	const sideEffectRegex = /(?:^|[;\n])\s*import\s*["']([^"']+)["']/g;
+	for (const match of stripped.matchAll(sideEffectRegex)) {
+		const specifier = match[1];
+		if (specifier) specifiers.push({ specifier, typeOnly: false, dynamic: false });
 	}
 
 	const dynRegex = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -1349,6 +1354,67 @@ function valueImportClosure(entry: string): Set<string> {
 	return seen;
 }
 
+/**
+ * The static value-import closure of `entry`, each file mapped to the file
+ * that first imported it (the entry maps to null). Type-only imports erase and
+ * dynamic imports split a chunk, so neither is followed: this is what the
+ * entry's chunk loads before its first line runs.
+ */
+function staticValueImportClosure(entry: string): Map<string, string | null> {
+	const parents = new Map<string, string | null>([[entry, null]]);
+	const queue = [entry];
+	for (let index = 0; index < queue.length; index++) {
+		const file = queue[index] as string;
+		let source: string;
+		try {
+			source = readFileSync(file, "utf8");
+		} catch {
+			continue;
+		}
+		for (const { specifier, typeOnly, dynamic } of extractSpecifiers(source)) {
+			if (typeOnly || dynamic) continue;
+			if (!(specifier.startsWith(".") || specifier.startsWith("/"))) continue;
+			const resolved = resolveRelativeImport(file, specifier);
+			if (parents.has(resolved)) continue;
+			parents.set(resolved, file);
+			queue.push(resolved);
+		}
+	}
+	return parents;
+}
+
+/**
+ * Orchestrator-only modules the worker must not load statically (rule 2b):
+ * every domain bundle (`extension.ts`) and the heavy modules only the
+ * orchestrator's composition reaches.
+ */
+function isWorkerDeniedModule(relative: string): boolean {
+	return (
+		/^src\/domains\/[^/]+\/extension\.ts$/u.test(relative) ||
+		relative === "src/domains/telemetry/read-model.ts" ||
+		relative === "src/domains/memory/intervention.ts" ||
+		relative.startsWith("src/domains/context/wiki/") ||
+		relative === "src/core/settings-controls.ts"
+	);
+}
+
+function checkWorkerClosure(projectRoot: string): string[] {
+	const entry = path.join(projectRoot, "src", "worker", "entry.ts");
+	const parents = staticValueImportClosure(entry);
+	const relative = (file: string): string => path.relative(projectRoot, file).split(path.sep).join("/");
+	const violations: string[] = [];
+	for (const file of parents.keys()) {
+		const rel = relative(file);
+		if (!isWorkerDeniedModule(rel)) continue;
+		const chain: string[] = [];
+		for (let at: string | null | undefined = file; at; at = parents.get(at)) chain.unshift(relative(at));
+		violations.push(
+			`rule2b: the worker statically loads ${rel}, an orchestrator-only module (import it lazily or from a lighter module): ${chain.join(" -> ")}`,
+		);
+	}
+	return violations;
+}
+
 function domainOf(filePath: string, domainsRoot: string): string | null {
 	if (!isWithin(filePath, domainsRoot)) return null;
 	const rel = path.relative(domainsRoot, filePath);
@@ -1639,6 +1705,11 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
  *      provider runtime registry, builtin descriptors, and plugin loader used
  *      to rehydrate runtime descriptors from stdin. Type-only imports are
  *      allowed because they erase at compile time.
+ *   2b. The static value-import closure of src/worker/entry.ts contains no
+ *      domain bundle (any domain's extension.ts), telemetry/read-model.ts,
+ *      memory/intervention.ts, context/wiki/** or core/settings-controls.ts.
+ *      Those are orchestrator-only; a worker reaches them by dynamic import
+ *      at most, so they never load before the worker reads its spec.
  *   3. src/domains/<x> never imports src/domains/<y>/extension.ts for y != x.
  *   7. src/domains/turn-control/** imports no interactive, engine, tools or
  *      worker modules, and reaches other domains only through index.ts.
@@ -1702,7 +1773,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const stage0Owner = path.join(projectRoot, STAGE_0_OWNER);
 	const stage0Closure = valueImportClosure(stage0Owner);
 
-	const violations: string[] = [];
+	const violations: string[] = [...checkWorkerClosure(projectRoot)];
 	/** Runtime importers by declared seam, so rule 6b can disposition each reacher. */
 	const valueReachedSeams = new Map<string, Set<string>>();
 	const usedSurfaceExemptions = new Set<string>();

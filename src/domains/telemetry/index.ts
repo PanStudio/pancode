@@ -1,17 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { DomainModule } from "../../core/domain-loader.js";
-import { createTelemetryBundle } from "./extension.js";
-import { TelemetryManifest } from "./manifest.js";
-
-export const TelemetryDomainModule: DomainModule<"telemetry"> = {
-	manifest: TelemetryManifest,
-	createExtension: (context) => {
-		const { extension, contract } = createTelemetryBundle(context);
-		return { extension, contract };
-	},
-};
-
 /** The read boundary every telemetry reader opens its paths through, for surfaces that report a store present (#434). */
 export { withinStateRoot } from "../../core/state-boundary.js";
 export type { AccountabilitySummary } from "./accountability.js";
@@ -25,7 +13,6 @@ export type {
 	TokenThroughputSnapshot,
 } from "./contract.js";
 export type { TelemetryDomain } from "./extension.js";
-export { createTelemetryDomain } from "./extension.js";
 export type {
 	DecisionRow,
 	DecisionsFold,

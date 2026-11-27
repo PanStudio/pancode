@@ -14,7 +14,8 @@ import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { DispatchContract } from "../../src/domains/dispatch/contract.js";
 import { createUnbackedWorkerClaimRegistration } from "../../src/domains/middleware/dispatch-nudge.js";
 import { nextFiringId } from "../../src/domains/middleware/fired-record.js";
-import { createExplorationNudgeRegistrations, createMiddlewareBundle } from "../../src/domains/middleware/index.js";
+import { createExplorationNudgeRegistrations } from "../../src/domains/middleware/index.js";
+import { createMiddlewareBundle } from "../../src/domains/middleware/module.js";
 import type { MiddlewareHookInput } from "../../src/domains/middleware/types.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import {

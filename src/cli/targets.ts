@@ -16,7 +16,7 @@ import {
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
 import { loadDomains } from "../core/domain-loader.js";
 import { readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
-import { ConfigDomainModule } from "../domains/config/index.js";
+import { ConfigDomainModule } from "../domains/config/module.js";
 import { ensurePancodeState } from "../domains/lifecycle/index.js";
 import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
 import { missingVllmHarmonyFlags } from "../domains/providers/harmony-server.js";
@@ -24,9 +24,9 @@ import {
 	endpointCapacityForStatus,
 	isOrchestratorEligibleRuntime,
 	isTargetEligibleRuntime,
-	ProvidersDomainModule,
 	runtimeListsModelsLive,
 } from "../domains/providers/index.js";
+import { ProvidersDomainModule } from "../domains/providers/module.js";
 import { closestRuntimeId, getRuntimeRegistry } from "../domains/providers/registry.js";
 import { runtimeNotRegistered } from "../domains/providers/runtime-not-registered.js";
 import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.js";

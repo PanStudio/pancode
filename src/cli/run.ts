@@ -853,25 +853,25 @@ async function runDispatch(
 
 	// The dispatch graph loads after the usage checks above, in the order these were once static imports.
 	const { readDispatchScopeNotice } = await import("../core/dispatch-scope-notice.js");
-	const { AgentsDomainModule } = await import("../domains/agents/index.js");
+	const { AgentsDomainModule } = await import("../domains/agents/module.js");
 	const { audienceRefusalStandIn } = await import("../domains/agents/spec.js");
-	const { ConfigDomainModule } = await import("../domains/config/index.js");
-	const { createContextDomainModule } = await import("../domains/context/runtime.js");
+	const { ConfigDomainModule } = await import("../domains/config/module.js");
+	const { createContextDomainModule } = await import("../domains/context/module.js");
 	const { agentRoleFactsResolver, withRunRole } = await import("../domains/dispatch/execution-role.js");
-	const { createDispatchDomainModule } = await import("../domains/dispatch/index.js");
+	const { createDispatchDomainModule } = await import("../domains/dispatch/module.js");
 	const { configureRunEventJournal } = await import("../domains/dispatch/run-event-journal.js");
 	const { WORKER_PROCESS_CLEANUP_BOUND_MS } = await import("../domains/dispatch/worker-spawn.js");
-	const { ExtensionsDomainModule } = await import("../domains/extensions/index.js");
+	const { ExtensionsDomainModule } = await import("../domains/extensions/module.js");
 	const { ensurePancodeState } = await import("../domains/lifecycle/index.js");
 	const { buildDispatchMemorySection } = await import("../domains/memory/index.js");
-	const { createPromptsDomainModule } = await import("../domains/prompts/index.js");
+	const { createPromptsDomainModule } = await import("../domains/prompts/module.js");
 	const { resolveEffectivePricing } = await import("../domains/providers/catalog.js");
-	const { ProvidersDomainModule } = await import("../domains/providers/index.js");
-	const { ResourcesDomainModule } = await import("../domains/resources/index.js");
-	const { SafetyDomainModule } = await import("../domains/safety/index.js");
-	const { SchedulingDomainModule } = await import("../domains/scheduling/index.js");
-	const { SessionDomainModule } = await import("../domains/session/index.js");
-	const { TelemetryDomainModule } = await import("../domains/telemetry/index.js");
+	const { ProvidersDomainModule } = await import("../domains/providers/module.js");
+	const { ResourcesDomainModule } = await import("../domains/resources/module.js");
+	const { SafetyDomainModule } = await import("../domains/safety/module.js");
+	const { SchedulingDomainModule } = await import("../domains/scheduling/module.js");
+	const { SessionDomainModule } = await import("../domains/session/module.js");
+	const { TelemetryDomainModule } = await import("../domains/telemetry/module.js");
 	const { assistantTextFromEvent } = await import("../tools/dispatch-event-text.js");
 	const { createJsonCredentialScrub, projectDispatchJsonEvent } = await import("./modes/json-stream.js");
 	const { agentRunCompletion, dispatchAnswerText, formatDispatchHumanOutput, verifierVerdict } = await import(

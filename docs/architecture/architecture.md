@@ -229,12 +229,12 @@ must go through the coordinator.
 ## Lazy built-in tool boundary
 
 The registry always owns one complete, immutable `ToolSpec` surface before a
-model turn starts. Seventeen tools register through `lazyTool` and keep their
+model turn starts. Eighteen tools register through `lazyTool` and keep their
 name, description, TypeBox schema, action class, execution mode, synchronous
 argument hooks, source provenance, and policy metadata in lightweight surface
 modules. [core-bootstrap.ts](../../src/tools/core-bootstrap.ts) registers `context`, `code_nav`,
-`verify`, `data`, `store`, `web_fetch`, `web_read`, `run_script`, `pancode_docs`, and
-`pancode_hub`. [bootstrap.ts](../../src/tools/bootstrap.ts) registers `ledger`, `monitor`,
+`verify`, `data`, `store`, `web_fetch`, `web_read`, `run_script`, `pancode_docs`,
+`pancode_hub`, and `configure_pancode`. [bootstrap.ts](../../src/tools/bootstrap.ts) registers `ledger`, `monitor`,
 `steer`, `panes`, `report`, `music`, and `browser`. `registerAllTools` registers those surfaces in
 the same order as every other built-in; capability discovery, worker
 attestation, provider schema serialization, safety classification, autonomy and
@@ -285,7 +285,7 @@ The enforced import rules below are complemented by the maintained
 [Pi SDK boundary table](pi-boundary.md), which records the semantic owner of
 each overlapping helper and the PanCode deltas that must survive an SDK upgrade.
 
-Nine import rules apply. The same checker also runs rules 10 to 14, which hold telemetry accounting rather than imports and are described in [Telemetry](telemetry.md), rules 15 to 18, and rule 23. Rule 15 holds [orchestrator.ts](../../src/entry/orchestrator.ts) to wiring: no value import of a feature module's internals, no module-scope function outside the declared wiring helpers, and at most 4,800 lines. Rule 16 lets only `chat-loop.ts` and `turn-state.ts` in `src/session-control/` name `ChatTurnState`, and only `turn-state.ts` assign a continuation field. Rule 17 keeps a domain owner's capability inside its domain and its declared holders. Rule 18 forbids branching on a built-in recipe id outside `src/domains/agents/`. Rule 23 holds every function under `src/` to 500 lines, counted from the line of its first token to the line of its last, with a nested function counted on its own as well as inside its parent. The functions over that when the rule landed are listed in `FUNCTION_LINE_EXEMPTIONS` at their sizes; an entry may only shrink, and the check fails on an entry whose function shrank or no longer exists until the entry is lowered or removed. Rules 1, 3, 4, 5, 7, 8, and 9 hold for every import form, type-only and dynamic included. Rule 2 and rule 6 treat a type-only import differently from a value import, because a type-only import erases at compile time. A dynamic `import()` always counts as a value import.
+Nine import rules apply. The same checker also runs rules 10 to 14, which hold telemetry accounting rather than imports and are described in [Telemetry](telemetry.md), rules 15 to 18, and rule 23. Rule 15 holds [orchestrator.ts](../../src/entry/orchestrator.ts) to wiring: no value import of a feature module's internals, no module-scope function outside the declared wiring helpers, and at most 4,800 lines. Rule 16 lets only `chat-loop.ts` and `turn-state.ts` in `src/session-control/` name `ChatTurnState`, and only `turn-state.ts` assign a continuation field. Rule 17 keeps a domain owner's capability inside its domain and its declared holders. Rule 18 forbids branching on a built-in recipe id outside `src/domains/agents/`. Rule 23 holds every function under `src/` to 500 lines, counted from the line of its first token to the line of its last, with a nested function counted on its own as well as inside its parent. The functions over that when the rule landed are listed in `FUNCTION_LINE_EXEMPTIONS` at their sizes; an entry may only shrink, and the check fails on an entry whose function shrank or no longer exists until the entry is lowered or removed. Rules 1, 3, 4, 5, 7, 8, and 9 hold for every import form, type-only and dynamic included. Rule 2 and rule 6 treat a type-only import differently from a value import, because a type-only import erases at compile time. A dynamic `import()` counts as a value import, except in rule 2's worker closure, which measures what loads before the worker reads its spec.
 
 ### Rule 1: `@earendil-works/pi-*` imports stay in `src/engine/**`
 
@@ -302,6 +302,8 @@ Files under `src/worker/**` may not value-import `src/domains/**`, with the sole
 - [builtins.ts](../../src/domains/providers/runtimes/builtins.ts)
 
 Type-only imports erase at compile time and are permitted. Workers receive a serializable `WorkerSpec` envelope, rehydrate only necessary target/runtime descriptors, and avoid pulling interactive state or domain stores into worker subprocesses.
+
+The rule also holds the worker's whole static value-import closure. Starting at [entry.ts](../../src/worker/entry.ts) and following every static value import through engine, tools and domains, the closure contains no domain bundle (`src/domains/<name>/extension.ts`), `telemetry/read-model.ts`, `memory/intervention.ts`, `context/wiki/**` or `core/settings-controls.ts`. Those are orchestrator-only, and the checker reports any hit with the import chain that reaches it. A domain's `index.ts` therefore exports only its contract. The `DomainModule` that builds the bundle lives in the domain's `module.ts`, which only `src/entry/**` and `src/cli/**` import. A heavy tool the worker registers, such as `configure_pancode`, loads its implementation with `lazyTool` on its first call.
 
 ### Rule 3: Domains do not import each other's `extension.ts`
 

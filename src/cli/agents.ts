@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { loadDomains } from "../core/domain-loader.js";
-import { AgentsDomainModule } from "../domains/agents/index.js";
+import { AgentsDomainModule } from "../domains/agents/module.js";
 import { type AgentSpec, isUserVisibleAgent } from "../domains/agents/spec.js";
-import { ConfigDomainModule } from "../domains/config/index.js";
+import { ConfigDomainModule } from "../domains/config/module.js";
 import { ensurePancodeState } from "../domains/lifecycle/index.js";
-import { SafetyDomainModule } from "../domains/safety/index.js";
+import { SafetyDomainModule } from "../domains/safety/module.js";
 import { writeCliFailure } from "./kit/json-out.js";
 
 const HELP = `pancode agents [list] [--json] [--all]

@@ -3,16 +3,16 @@
 import chalk from "chalk";
 import { loadDomains } from "../core/domain-loader.js";
 import { formatCount } from "../core/format-time.js";
-import { ConfigDomainModule } from "../domains/config/index.js";
+import { ConfigDomainModule } from "../domains/config/module.js";
 import { ensurePancodeState } from "../domains/lifecycle/index.js";
 import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
 import {
 	modelCandidatesForStatus,
 	modelListNoteForStatus,
-	ProvidersDomainModule,
 	resolveModelCapabilities,
 	resolveRuntimeTarget,
 } from "../domains/providers/index.js";
+import { ProvidersDomainModule } from "../domains/providers/module.js";
 import { printError } from "./shared.js";
 
 export interface ModelRow {

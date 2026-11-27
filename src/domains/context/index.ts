@@ -103,12 +103,6 @@ export {
 	runContextRefresh,
 } from "./refresh.js";
 export {
-	type ContextBundleOptions,
-	ContextDomainModule,
-	createContextDomainModule,
-	type StartupHintHost,
-} from "./runtime.js";
-export {
 	type BootstrapGenerationMode,
 	type BootstrapGenerationState,
 	type BootstrapParserOutcome,
