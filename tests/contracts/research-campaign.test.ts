@@ -982,6 +982,8 @@ describe("research review fixes", () => {
 			"value.txt": "100\n",
 			"score.js": overridableScore,
 			".gitignore": "build/\n",
+			".gitattributes": "setup.txt filter=setup\n",
+			"setup.txt": "setup\n",
 			".pancode/verifiers.yaml": JSON.stringify({
 				version: 2,
 				checks: [
@@ -990,10 +992,9 @@ describe("research review fixes", () => {
 				],
 			}),
 		});
-		// A setup step: every worktree checkout installs an ignored build/ the gate needs.
-		const hook = join(repo, ".git/hooks/post-checkout");
-		writeFileSync(hook, "#!/bin/sh\nmkdir -p build && echo dep > build/dep.txt\n");
-		chmodSync(hook, 0o755);
+		// A setup step: every worktree checkout installs an ignored build/ the gate needs. PanCode's own git runs
+		// no repository hook, so the step is a smudge filter, which its worktree add still runs.
+		git(repo, "config", "filter.setup.smudge", "mkdir -p build && echo dep > build/dep.txt && cat");
 		const campaign = openScore(repo, { maxIterations: 3, allowUnpriced: false }, ["dep"]);
 		const edits: Array<(worktree: string) => void> = [
 			(worktree) => {

@@ -322,6 +322,8 @@ describe("Claude Code external subprocess contract", () => {
 				equal(result.exitCode, 1);
 				equal(assistant(result).stopReason, "aborted");
 			} finally {
+				// An assertion that failed before the abort above leaves the run going; without this the await below never returns.
+				handle.abort();
 				// These PIDs come only from this test's freshly created worker tree.
 				for (const name of ["grandchild.spawned.pid", "leader.pid"]) {
 					const pid = readPid(name);
