@@ -748,7 +748,12 @@ export function capabilityEnvelope(
 							Object.entries(binary.downloads).flatMap(([platform, download]) =>
 								download === undefined
 									? []
-									: [[platform, { sha256: download.sha256, ...(download.member !== undefined ? { member: download.member } : {}) }]],
+									: [
+											[
+												platform,
+												{ sha256: download.sha256, ...(download.member !== undefined ? { member: download.member } : {}) },
+											],
+										],
 							),
 						),
 					})),

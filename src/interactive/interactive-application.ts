@@ -19,7 +19,7 @@ import {
 	subscribeExtensionObservations,
 } from "../domains/extensions/bus-observations.js";
 import { createExtensionHostServices } from "../domains/extensions/host-services.js";
-import { promptRefs } from "../domains/extensions/operator-commands.js";
+import { type PromptRef, promptRefs } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import { bindExtensionOwnerNames, extensionOwnerLabel } from "../domains/extensions/owner-label.js";
 import { openDetachedBatchViews } from "../domains/middleware/index.js";
@@ -147,6 +147,10 @@ const REPORT_OFFER_TTL_MS = 60_000;
 function availableInteractiveThinkingLevels(deps: InteractiveDeps): ReadonlyArray<ThinkingLevel> {
 	const settings = deps.getSettings?.();
 	return settings ? resolveAvailableThinkingLevels(deps.providers, settings) : ["off"];
+}
+
+function livePrompts(resources: InteractiveDeps["resources"]): PromptRef[] {
+	return promptRefs(resources?.promptsForDisplay(process.cwd()).items ?? []);
 }
 
 export async function createInteractiveApplication(host: InteractiveDeps): Promise<number> {
@@ -546,8 +550,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		bus: deps.bus,
 		getLifecycleHint: () => updateMonitor?.text() ?? null,
 		getLeaderArmed: () => leaderArmed,
-		extensionCommands: () =>
-			operatorExtensions?.commands(promptRefs(deps.resources?.promptsForDisplay(process.cwd()).items ?? [])) ?? [],
+		extensionCommands: () => operatorExtensions?.commands(livePrompts(deps.resources)) ?? [],
 		...(workspaceSurfaces ? { workspaceSurfaces } : {}),
 		// Extension statuses reach the footer once, through the workspace surfaces' status facts, which
 		// also drop an owner name the text repeats. A second feed here printed each one twice (tui-verify 16).

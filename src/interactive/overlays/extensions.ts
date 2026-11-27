@@ -180,10 +180,9 @@ function extensionKeyFacts(
 		.filter((entry) => entry.extensionId === extensionId)
 		.map((entry) => ({
 			label: "Key",
-			value: [
-				theme.fg("inlineCode", entry.key),
-				statusChip(theme, "warning", sanitizeCallTargetText(entry.reason)),
-			].join(sep),
+			value: [theme.fg("inlineCode", entry.key), statusChip(theme, "warning", sanitizeCallTargetText(entry.reason))].join(
+				sep,
+			),
 		}));
 	return [...bound, ...refused];
 }
