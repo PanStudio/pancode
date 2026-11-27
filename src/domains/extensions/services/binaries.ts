@@ -5,7 +5,7 @@
  *
  * A declared binary is downloaded and verified at install, after the operator
  * approved the envelope that names it, and run by the host outside the
- * runtime's sandbox: a program such as cliamp is controlled over a Unix socket,
+ * runtime's sandbox: a program such as a music player is controlled over a Unix socket,
  * which the sandbox refuses. The runtime never gets a path to exec. It asks the
  * host to run a binary it declared, with arguments and only the environment keys
  * it declared, and the host answers with the exit code and bounded output.
