@@ -160,8 +160,9 @@ JSON responses (--json):
     judge may allow it), and a tool the server does not list is never sent. A
     call whose request gets no answer is recorded as {tool, error} and ends
     the calls; a JSON-RPC error answer is that call's error.
-    An untrusted or stale declaration is never launched. Test never records a
-    surface approval, so its calls are refused until the surface is approved.
+    An untrusted or stale declaration is never launched. Test records a first
+    surface only for a pinned core plugin; any other server's calls are refused
+    until its surface is approved.
     dropped lists [{name, reason}] for each tool a remote server offered with
     an x-mcp-header PanCode cannot send; such a tool is never registered.
     A server that declares the io.modelcontextprotocol/skills extension also
@@ -1101,7 +1102,7 @@ async function mcpSurfaceOutput(options: McpSurfaceApprovalOptions): Promise<Mcp
 		import("../engine/worker-tools.js"),
 	]);
 	const registry = createRegistry({ safety: createWorkerSafety({ cwd: options.cwd }) });
-	const source = createMcpCapabilitySource({ ...trustOptions, registry, attended: false });
+	const source = createMcpCapabilitySource({ ...trustOptions, registry, attended: false, persistCatalog: false });
 	let served: McpSurface | null;
 	try {
 		const refreshed = await source.refresh(id);

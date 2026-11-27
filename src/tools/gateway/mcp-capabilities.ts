@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
@@ -207,13 +207,35 @@ function mcpTrustRemedy(id: string): { remedy: string; interactiveRemedy: string
 	return { remedy: `pancode mcp trust ${id}`, interactiveRemedy: `/mcp trust ${id}` };
 }
 
-/** Create the `${PLUGIN_DATA}` directory an installed plugin's stdio server is promised before it starts. */
+/** Create the `${PLUGIN_DATA}` directory (and any declared subdirectory cwd under it) before launch. */
 function preparePluginDataDir(declaration: GatewayMcpServer): void {
 	if (declaration.plugin === undefined || declaration.command === undefined) return;
+	const { dataDir, id } = declaration.plugin;
 	try {
-		mkdirSync(declaration.plugin.dataDir, { recursive: true, mode: 0o700 });
+		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+		if (declaration.cwdRoot !== dataDir || declaration.cwd === undefined || declaration.cwd === dataDir) return;
+		const relative = path.relative(dataDir, declaration.cwd);
+		if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) return;
+		let cursor = realpathSync(dataDir);
+		for (const segment of relative.split(path.sep)) {
+			if (segment.length === 0 || segment === ".") continue;
+			const next = path.join(cursor, segment);
+			let stat: ReturnType<typeof lstatSync> | undefined;
+			try {
+				stat = lstatSync(next);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+			if (stat === undefined) {
+				mkdirSync(next, { mode: 0o700 });
+			} else if (stat.isSymbolicLink() || !stat.isDirectory()) {
+				// Leave symlink or non-directory refusal to containedCwd at spawn.
+				return;
+			}
+			cursor = next;
+		}
 	} catch (error) {
-		throw new Error(`the data directory of plugin ${declaration.plugin.id} cannot be created: ${errorMessage(error)}`);
+		throw new Error(`the data directory of plugin ${id} cannot be created: ${errorMessage(error)}`);
 	}
 }
 

@@ -605,14 +605,17 @@ function expandPluginVariables(value: string, root: string, dataDir: string): st
  * resolved here only by its text; the spawn checks the real path.
  */
 function resolvePluginCwd(raw: string | null, root: string, dataDir: string, location: string): ResolvedCwd | Error {
+	const refused = cwdTextRefusal(raw, location);
+	if (refused !== null) return refused;
 	const anchored = raw === null ? null : ANCHORED_PLUGIN_CWD.exec(raw);
 	const rest = anchored === null ? raw : anchored[2] !== undefined && anchored[2].length > 0 ? anchored[2] : null;
 	if (rest !== null && NAMES_PLUGIN_VARIABLE.test(rest)) {
 		return new Error(`${location} may name \${PLUGIN_ROOT} or \${PLUGIN_DATA} only at its start: '${raw}'`);
 	}
 	if (anchored?.[1] !== "PLUGIN_DATA") return resolveCwd(rest, "plugin", root, location);
-	const refused = cwdTextRefusal(raw, location);
-	if (refused !== null) return refused;
+	if (rest !== null && (path.isAbsolute(rest) || path.win32.isAbsolute(rest))) {
+		return new Error(`${location} escapes the plugin data directory: '${raw}'`);
+	}
 	try {
 		return { cwd: resolveSafeCwd(rest ?? undefined, dataDir), cwdRoot: dataDir };
 	} catch {
@@ -1362,6 +1365,7 @@ function loadPluginServers(cwd: string): McpConfigLoadResult {
 			rootPath: item.provenance.canonicalRoot,
 			contentDigest: item.provenance.contentDigest,
 			core:
+				item.kind === "plugin" &&
 				item.trust === "trusted" &&
 				typeof item.origin === "object" &&
 				item.origin.kind === "catalog" &&

@@ -600,6 +600,11 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 	const hashes = Object.fromEntries(entries.flatMap((entry) => ("sha256" in entry ? [[entry.path, entry.sha256]] : [])));
 	// A surface approval judges what the process serves, which a re-trust does not change, so it carries over.
 	const previous = trust.state.records.find((entry) => entry.projectRoot === projectRoot && entry.id === server.id);
+	const coreSurface =
+		previous?.surface === undefined && server.plugin?.core === true
+			? trust.state.surfaces?.find((entry) => entry.id === server.id && entry.digest === server.digest)?.surface
+			: undefined;
+	const carriedSurface = previous?.surface ?? coreSurface;
 	const record: McpTrustRecord = {
 		projectRoot,
 		id: server.id,
@@ -608,7 +613,7 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 		trustedAt: (options.now?.() ?? new Date()).toISOString(),
 		...(options.network === true ? { network: true as const } : {}),
 		...(Object.keys(hashes).length > 0 ? { entryScriptHashes: hashes } : {}),
-		...(previous?.surface !== undefined ? { surface: previous.surface } : {}),
+		...(carriedSurface !== undefined ? { surface: carriedSurface } : {}),
 	};
 	const records = trust.state.records.filter((entry) => !(entry.projectRoot === projectRoot && entry.id === server.id));
 	records.push(record);
