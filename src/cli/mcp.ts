@@ -142,6 +142,10 @@ JSON responses (--json):
     reason}]} or {reason} when none could be listed. approval is approved,
     unapproved or changed for this project. Listing reads no skill file and
     records the listing that dispatch admission reads.
+    A server that offers the io.modelcontextprotocol/events extension also
+    carries events: [{name, description, delivery, arguments}],
+    eventsTruncated when the listing stopped at PanCode's cap, or
+    eventsFailure when events/list failed; text prints one event line each.
     The supported seam for external integration checks; nothing outside
     PanCode needs to import its source.
   trust: {ok: true, record: {projectRoot, id, digest, actionClass, trustedAt, network?,
@@ -781,6 +785,9 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			...(dropped.length > 0 ? { dropped } : {}),
 			truncated: listing?.truncated === true,
 			...(surface !== null ? { surface } : {}),
+			...(listing?.events !== undefined ? { events: listing.events } : {}),
+			...(listing?.eventsTruncated === true ? { eventsTruncated: true } : {}),
+			...(listing?.eventsFailure !== undefined ? { eventsFailure: listing.eventsFailure } : {}),
 			...(skills !== null ? { skills: skills.data } : {}),
 			calls: results,
 		};
@@ -789,6 +796,14 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
 			...dropped.map((tool) => `  dropped ${tool.name}: ${escapeTerminalControls(tool.reason)}`),
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
+			...(listing?.events ?? []).map(
+				(event) =>
+					`  event ${escapeTerminalControls(event.name)} delivery=${event.delivery.join(",")} arguments=${boundedCallText(JSON.stringify(event.arguments))}${event.description.length > 0 ? ` ${boundedCallText(escapeTerminalControls(event.description.replace(/\s+/g, " ")))}` : ""}`,
+			),
+			...(listing?.eventsTruncated === true ? ["  events truncated at the client cap"] : []),
+			...(listing?.eventsFailure !== undefined
+				? [`  events unavailable: ${escapeTerminalControls(listing.eventsFailure)}`]
+				: []),
 			...(latestInfo.instructions !== null ? instructionsLines(latestInfo.instructions) : []),
 			...(skills?.lines ?? []),
 			...results.map(

@@ -267,16 +267,18 @@ export async function outputSchemaMismatch(
 	schema: Record<string, unknown>,
 	value: unknown,
 	rawJson?: string,
+	/** How the reason names the value and its schema; an event's arguments and inputSchema reuse the same check. */
+	names: { value: string; schema: string } = { value: "structuredContent", schema: "outputSchema" },
 ): Promise<string | null> {
 	const refused = outputSchemaRefusal(schema);
-	if (refused !== null) return `its outputSchema cannot be checked: ${refused}`;
+	if (refused !== null) return `its ${names.schema} cannot be checked: ${refused}`;
 	const { Value } = await import("typebox/value");
 	let candidate: unknown = value;
 	if (rawJson !== undefined) {
 		try {
 			candidate = JSON.parse(rawJson) as unknown;
 		} catch {
-			return "its outputSchema cannot be checked: structuredContent could not be parsed";
+			return `its ${names.schema} cannot be checked: ${names.value} could not be parsed`;
 		}
 	}
 	try {
@@ -286,8 +288,8 @@ export async function outputSchemaMismatch(
 			failures.push(`at ${error.instancePath === "" ? "(root)" : error.instancePath}: ${error.message}`);
 			if (failures.length >= OUTPUT_SCHEMA_ERRORS_SHOWN) break;
 		}
-		return `structuredContent does not match its outputSchema: ${failures.length > 0 ? failures.join("; ") : "rejected"}`;
+		return `${names.value} does not match its ${names.schema}: ${failures.length > 0 ? failures.join("; ") : "rejected"}`;
 	} catch (error) {
-		return `its outputSchema cannot be checked: ${error instanceof Error ? error.message : String(error)}`;
+		return `its ${names.schema} cannot be checked: ${error instanceof Error ? error.message : String(error)}`;
 	}
 }

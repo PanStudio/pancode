@@ -60,10 +60,13 @@ type PreparedJob =
 
 function jobToolResult(job: JobRecord): ToolResult {
 	const scope = `session ${job.owner.sessionId}; cwd=${job.owner.cwd}`;
+	const runner = job.spec.runner;
 	const conditions =
-		job.spec.runner.kind === "command" && job.spec.runner.also !== undefined
-			? `; waits on ${job.spec.runner.also.length + 1} conditions, all checked each poll`
-			: "";
+		runner.kind === "command" && runner.also !== undefined
+			? `; waits on ${runner.also.length + 1} conditions, all checked each poll`
+			: runner.kind === "mcp_event"
+				? ` ${runner.server} ${runner.event}; starts when an event arrives`
+				: "";
 	const bounds = `${job.spec.untilStopped === true ? "runs until stopped" : job.spec.count === null ? "deadline bound" : `${job.spec.count} starts`}; timeout=${job.spec.timeoutMs}ms${job.spec.timeoutDefaulted === true ? " (default)" : ""}${job.spec.onMatch.kind === "main_turn" ? `; follow-up timeout=${jobExecutionTimeoutMs(job.spec, "delivery")}ms` : ""}${job.spec.deadlineAt === null ? "" : `; deadline=${new Date(job.spec.deadlineAt).toISOString()}`}`;
 	return {
 		kind: "ok",
@@ -96,6 +99,9 @@ export function createJobTool(deps: JobToolDeps): {
 		"follow_up",
 		"until_stopped",
 		"also",
+		"server",
+		"event",
+		"arguments",
 	]);
 	const prepare = (raw: Record<string, unknown>): Record<string, unknown> => {
 		if (prepared.has(raw)) return raw;
@@ -129,11 +135,34 @@ export function createJobTool(deps: JobToolDeps): {
 			}
 			if (!turnAllowsTool(deps.constraints(), ToolNames.Job))
 				throw new Error("job: the current task constraints do not allow scheduling jobs.");
+			// An event job starts on arrivals; every_ms only spaces its starts, so a burst coalesces.
+			if (args.runner === "mcp_event" && args.every_ms === undefined) args.every_ms = 1000;
 			if (typeof args.every_ms !== "number" || !Number.isSafeInteger(args.every_ms) || args.every_ms < 1000)
 				throw new Error("job: every_ms must be an exact integer interval of at least 1000 ms.");
+			if (
+				args.runner !== "mcp_event" &&
+				(args.server !== undefined || args.event !== undefined || args.arguments !== undefined)
+			)
+				throw new Error("job: server, event and arguments belong to runner=mcp_event.");
+			if (
+				args.runner === "mcp_event" &&
+				(args.prompt !== undefined ||
+					args.argv !== undefined ||
+					args.cwd !== undefined ||
+					args.also !== undefined ||
+					args.allow !== undefined)
+			)
+				throw new Error(
+					"job: runner=mcp_event takes server, event and arguments; it runs no prompt or command, so prompt, argv, cwd, also and allow do not apply. Put the work in follow_up with on_match=main_turn.",
+				);
+			if (
+				args.arguments !== undefined &&
+				(args.arguments === null || typeof args.arguments !== "object" || Array.isArray(args.arguments))
+			)
+				throw new Error("job: arguments must be a JSON object matching the event's inputSchema.");
 			if (args.cwd !== undefined && typeof args.cwd !== "string")
 				throw new Error("job: cwd must be a workspace path string.");
-			canonicalJobCwd(owner.cwd, args.cwd as string | undefined);
+			if (args.runner !== "mcp_event") canonicalJobCwd(owner.cwd, args.cwd as string | undefined);
 			const runner =
 				args.runner === "main"
 					? typeof args.prompt === "string" && args.prompt.trim()
@@ -141,10 +170,21 @@ export function createJobTool(deps: JobToolDeps): {
 						: null
 					: args.runner === "command"
 						? prepareJobCommand(args.argv, owner.cwd)
-						: null;
+						: args.runner === "mcp_event" &&
+								typeof args.server === "string" &&
+								args.server.trim() &&
+								typeof args.event === "string" &&
+								args.event.trim()
+							? {
+									kind: "mcp_event" as const,
+									server: args.server,
+									event: args.event,
+									arguments: structuredClone((args.arguments ?? {}) as Record<string, unknown>),
+								}
+							: null;
 			if (runner === null)
 				throw new Error(
-					"job: runner=main requires prompt; runner=command requires a literal argv array. Workers, events and cron are later scope.",
+					"job: runner=main requires prompt; runner=command requires a literal argv array; runner=mcp_event requires server and event. Workers and cron are later scope.",
 				);
 			if (
 				runner.kind === "main" &&
@@ -169,7 +209,11 @@ export function createJobTool(deps: JobToolDeps): {
 				throw new Error("job: the creating task does not allow executable command effects.");
 			if (args.on_match !== undefined && args.on_match !== "notice" && args.on_match !== "main_turn")
 				throw new Error("job: on_match must be notice or main_turn.");
-			if ((args.on_match !== undefined || args.follow_up !== undefined) && args.until === undefined)
+			if (
+				runner.kind !== "mcp_event" &&
+				(args.on_match !== undefined || args.follow_up !== undefined) &&
+				args.until === undefined
+			)
 				throw new Error("job: a match action requires a typed until predicate.");
 			if (args.on_match === "main_turn" && (typeof args.follow_up !== "string" || !args.follow_up.trim()))
 				throw new Error("job: on_match=main_turn requires an explicit follow_up prompt.");
@@ -236,17 +280,29 @@ export function createJobTool(deps: JobToolDeps): {
 		name: ToolNames.Job,
 		placement: "gateway",
 		description:
-			"Create and control bounded session-owned interval jobs. main repeats an explicit prompt; command polls exact argv without a shell. The first run is due immediately after creation, then every interval. A job without count or for_ms defaults to five starts. until_stopped=true runs it until the operator stops it (or until matches); use it when the operator says to keep going until they say so. To wait on several conditions (CI and a cluster run, a file and a check), give one command job also=[{argv, until}, ...] next to its own argv and until: every poll the host runs each command and checks each predicate itself, and the job matches only when all hold at once. Never leave a condition only in the conversation. Each occurrence rechecks current policy; scheduling approval never approves future effects. Use allow=[capability names] to enforce a main job tool boundary regardless of autonomy; prompt text alone does not restrict tools. Observe with monitor(job_id=...).",
+			"Create and control bounded session-owned interval jobs. main repeats an explicit prompt; command polls exact argv without a shell. The first run is due immediately after creation, then every interval. A job without count or for_ms defaults to five starts. until_stopped=true runs it until the operator stops it (or until matches); use it when the operator says to keep going until they say so. To wait on several conditions (CI and a cluster run, a file and a check), give one command job also=[{argv, until}, ...] next to its own argv and until: every poll the host runs each command and checks each predicate itself, and the job matches only when all hold at once. Never leave a condition only in the conversation. mcp_event subscribes to an MCP server's event (server, event, arguments from mcp find with the server id) and runs nothing on a clock: the job matches on the first arrival whose data meets until (any arrival without until), then on_match=main_turn wakes a turn with follow_up and the event's data; every_ms (default 1000) only spaces starts so a burst wakes once. Each occurrence rechecks current policy; scheduling approval never approves future effects. Use allow=[capability names] to enforce a main job tool boundary regardless of autonomy; prompt text alone does not restrict tools. Observe with monitor(job_id=...).",
 		parameters: Type.Object({
 			action: StringEnum(["create", "pause", "resume", "stop", "cancel"]),
 			job_id: Type.Optional(Type.String()),
-			runner: Type.Optional(StringEnum(["main", "command"])),
-			every_ms: Type.Optional(Type.Integer({ minimum: 1000, description: "Interval between starts in ms." })),
+			runner: Type.Optional(StringEnum(["main", "command", "mcp_event"])),
+			server: Type.Optional(Type.String({ description: "mcp_event: the declared MCP server id." })),
+			event: Type.Optional(Type.String({ description: "mcp_event: the event name the server lists." })),
+			arguments: Type.Optional(
+				Type.Record(Type.String(), Type.Unknown(), {
+					description: "mcp_event: arguments matching the event's inputSchema.",
+				}),
+			),
+			every_ms: Type.Optional(
+				Type.Integer({ minimum: 1000, description: "Interval between starts in ms; for mcp_event the least spacing." }),
+			),
 			count: Type.Optional(
 				Type.Integer({ minimum: 1, description: "Total starts, at most 100000 (default 5 without for_ms)." }),
 			),
 			timeout_ms: Type.Optional(
-				Type.Integer({ minimum: 1000, description: "Per-occurrence limit (default 3600000 main, 60000 command)." }),
+				Type.Integer({
+					minimum: 1000,
+					description: "Per-occurrence limit (default 3600000 main, 60000 command and mcp_event).",
+				}),
 			),
 			for_ms: Type.Optional(Type.Integer({ minimum: 1000, description: "Run until this many ms pass, up to 7 days." })),
 			prompt: Type.Optional(Type.String()),
@@ -254,11 +310,13 @@ export function createJobTool(deps: JobToolDeps): {
 			argv: Type.Optional(Type.Array(Type.String())),
 			cwd: Type.Optional(Type.String()),
 			until: Type.Optional(
-				predicateSchema("command only: end the job when complete stdout JSON at path matches op and value."),
+				predicateSchema(
+					"command: end the job when complete stdout JSON at path matches op and value; mcp_event: when one arrival's data at path does.",
+				),
 			),
 			on_match: Type.Optional(
 				StringEnum(["notice", "main_turn"], {
-					description: "With until: notice (default) or main_turn, which starts a turn with follow_up.",
+					description: "With until (or any mcp_event): notice (default) or main_turn, which starts a turn with follow_up.",
 				}),
 			),
 			follow_up: Type.Optional(Type.String({ description: "main_turn prompt, at most 8192 characters." })),
@@ -332,7 +390,8 @@ export function createJobTool(deps: JobToolDeps): {
 						: await deps.controller.control(artifact.id, artifact.action, artifact.owner);
 				return jobToolResult(job);
 			} catch (error) {
-				return { kind: "error", message: `job: ${error instanceof Error ? error.message : String(error)}` };
+				const message = error instanceof Error ? error.message : String(error);
+				return { kind: "error", message: message.startsWith("job: ") ? message : `job: ${message}` };
 			}
 		},
 	};

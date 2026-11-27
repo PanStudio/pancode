@@ -33,6 +33,8 @@ export type { SchedulingContract } from "./contract.js";
 export { createJobController } from "./job-controller.js";
 export {
 	JOB_CONDITION_LIMIT,
+	JOB_EVENT_IDS_LIMIT,
+	JOB_JSON_BYTES,
 	type JobConditionEvidence,
 	jobExecutionTimeoutMs,
 	jobHasUnresolvedCleanup,

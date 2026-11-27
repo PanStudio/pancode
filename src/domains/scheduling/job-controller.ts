@@ -12,6 +12,7 @@ import {
 import { processAlive, processBirthToken } from "../../core/process-identity.js";
 import {
 	clipJobText,
+	JOB_EVENT_IDS_LIMIT,
 	JOB_HISTORY_LIMIT,
 	JOB_SESSION_LIMIT,
 	jobConditionsMet,
@@ -70,6 +71,18 @@ const deadlineAdmits = (job: JobRecord, kind: "run" | "delivery", nowMs: number)
 	job.spec.deadlineAt === null ||
 	nowMs < job.spec.deadlineAt ||
 	(kind === "delivery" && followUpContinuationPending(job));
+const eventJob = (job: JobRecord): boolean => job.spec.runner.kind === "mcp_event";
+/**
+ * An event job's server refused its subscription for a reason a retry cannot fix: an unknown event, a forbidden
+ * subscription or invalid arguments. A refused admission is not one; it pauses the job like any other.
+ */
+const eventJobFailed = (job: JobRecord, evidence: JobEvidence): boolean =>
+	eventJob(job) &&
+	evidence.outcome === "failed" &&
+	evidence.errorClass !== "infrastructure" &&
+	evidence.json !== null &&
+	typeof evidence.json === "object" &&
+	(evidence.json as Record<string, unknown>).subscription === "failed";
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const copy = <T>(value: T): T => structuredClone(value);
 
@@ -165,16 +178,18 @@ export function createJobController(options: JobControllerOptions): JobControlle
 		result: JobRunResult,
 	): TurnContinuationCause | null {
 		if (evidence.cleanupUnresolved || job.generation !== execution.generation) return null;
-		if (execution.kind === "run" && job.spec.runner.kind === "command") {
+		if (execution.kind === "run" && job.spec.runner.kind !== "main") {
 			// The turn that made this job ended waiting on its match, so without this nothing ever wakes it (#445).
 			const waited =
-				job.spec.until !== null &&
+				(job.spec.until !== null || eventJob(job)) &&
 				job.spec.onMatch.kind === "main_turn" &&
 				job.state === "active" &&
 				(execution.forced === null || execution.clockExpired === true) &&
 				options.continuation?.allowed(job) === true;
 			if (!waited) return null;
+			if (eventJobFailed(job, evidence)) return "polls_failing";
 			if (job.spec.count !== null && job.starts >= job.spec.count) return "job_exhausted";
+			if (eventJob(job)) return null;
 			return pollFailed(evidence) && (job.failedPolls ?? 0) + 1 >= JOB_FAILED_POLL_WAKE && job.pollFailureWoken !== true
 				? "polls_failing"
 				: null;
@@ -223,8 +238,9 @@ export function createJobController(options: JobControllerOptions): JobControlle
 		if (counted) draft.clockResumes = (draft.clockResumes ?? 0) + 1;
 		const pending =
 			cause === "job_exhausted" || cause === "job_deadline" ? jobPendingConditions(draft.spec, evidence) : [];
+		const failed = cause === "polls_failing" && eventJob(draft);
 		const detail =
-			cause === "failure" && evidence.summary
+			(cause === "failure" || failed) && evidence.summary
 				? `: ${evidence.summary.slice(0, 200)}`
 				: pending.length > 0
 					? `; still pending: ${pending.join("; ")}`
@@ -237,7 +253,7 @@ export function createJobController(options: JobControllerOptions): JobControlle
 			createdAt: now(),
 			startedAt: null,
 			endedAt: null,
-			reason: `${CONTINUATION_REASON[cause]}${detail}`,
+			reason: `${failed ? "its event subscription failed" : CONTINUATION_REASON[cause]}${detail}`,
 			evidence: null,
 			continuation: cause,
 		};
@@ -255,8 +271,8 @@ export function createJobController(options: JobControllerOptions): JobControlle
 		const wake =
 			reason === "deadline" &&
 			job.state === "active" &&
-			job.spec.runner.kind === "command" &&
-			job.spec.until !== null &&
+			job.spec.runner.kind !== "main" &&
+			(job.spec.until !== null || eventJob(job)) &&
 			job.spec.onMatch.kind === "main_turn" &&
 			job.delivery?.state !== "running" &&
 			options.continuation?.allowed(job) === true;
@@ -485,6 +501,10 @@ export function createJobController(options: JobControllerOptions): JobControlle
 			draft.settled += 1;
 			if (draft.spec.runner.kind === "command")
 				draft.failedPolls = pollFailed(evidence) ? (draft.failedPolls ?? 0) + 1 : 0;
+			if (eventJob(draft) && draft.generation === execution.generation) {
+				if (result.eventCursor !== undefined) draft.eventCursor = result.eventCursor;
+				if (result.eventIds !== undefined) draft.eventIds = result.eventIds.slice(-JOB_EVENT_IDS_LIMIT);
+			}
 			if (evidence.cleanupUnresolved) {
 				blockUnresolvedCleanup(draft);
 				return;
@@ -493,7 +513,7 @@ export function createJobController(options: JobControllerOptions): JobControlle
 			if (draft.state === "terminal") return;
 			const matched =
 				draft.generation === execution.generation &&
-				draft.spec.until !== null &&
+				(draft.spec.until !== null || eventJob(draft)) &&
 				jobConditionsMet(draft.spec, evidence).every(Boolean);
 			if (matched) {
 				draft.reason = "condition";
@@ -511,6 +531,14 @@ export function createJobController(options: JobControllerOptions): JobControlle
 					reason: null,
 					evidence: null,
 				};
+			} else if (draft.generation === execution.generation && eventJobFailed(draft, evidence)) {
+				// Retrying cannot fix an unknown event, a refused subscription or invalid arguments.
+				draft.state = "terminal";
+				draft.reason = "failure";
+				draft.pending = null;
+				draft.nextDueAt = null;
+				draft.pendingReason = evidence.summary;
+				if (resuming !== null) queueContinuation(draft, occurrence.id, resuming, evidence);
 			} else if (draft.spec.count !== null && draft.starts >= draft.spec.count) {
 				draft.state = "terminal";
 				draft.reason = "count";
@@ -539,6 +567,9 @@ export function createJobController(options: JobControllerOptions): JobControlle
 					// The operator reads this after the fact, so it carries the failure and not only the count (#445).
 					const last = evidence.summary.slice(0, 200);
 					draft.pendingReason = `three consecutive infrastructure failures${last ? `; last: ${last}` : ""}`;
+				} else if (draft.state === "active" && eventJob(draft)) {
+					// The subscription reconnects on its own clock; this run only recorded that it failed.
+					draft.pendingReason = clipJobText(`subscription failing; reconnecting: ${evidence.summary.slice(0, 200)}`);
 				} else if (draft.state === "active") {
 					const retryAfter =
 						typeof result.retryAfterMs === "number" && Number.isFinite(result.retryAfterMs)
@@ -594,13 +625,17 @@ export function createJobController(options: JobControllerOptions): JobControlle
 			return;
 		}
 		const main = kind === "delivery" ? job.delivery?.kind === "main_turn" : job.spec.runner.kind === "main";
-		const occupied = [...live.entries()].filter(([otherId, other]) => {
-			const row = current(otherId);
-			return main
-				? sameJobOwner(row.owner, job.owner) &&
-						(other.kind === "delivery" ? row.delivery?.kind === "main_turn" : row.spec.runner.kind === "main")
-				: kind === "run" && other.kind === "run" && row.spec.runner.kind === "command";
-		}).length;
+		// Draining an event job's arrivals runs no process and no turn, so it waits on no capacity.
+		const occupied =
+			kind === "run" && eventJob(job)
+				? 0
+				: [...live.entries()].filter(([otherId, other]) => {
+						const row = current(otherId);
+						return main
+							? sameJobOwner(row.owner, job.owner) &&
+									(other.kind === "delivery" ? row.delivery?.kind === "main_turn" : row.spec.runner.kind === "main")
+							: kind === "run" && other.kind === "run" && row.spec.runner.kind === "command";
+					}).length;
 		if (occupied >= (main ? 1 : 2)) {
 			failAdmission(
 				id,
@@ -712,7 +747,8 @@ export function createJobController(options: JobControllerOptions): JobControlle
 						job = commit(job, (draft) => {
 							const due = draft.nextDueAt as number;
 							const newest = due + Math.floor((now() - due) / draft.spec.intervalMs) * draft.spec.intervalMs;
-							draft.nextDueAt = newest + draft.spec.intervalMs;
+							// An event job runs only when an arrival wakes it.
+							draft.nextDueAt = eventJob(draft) ? null : newest + draft.spec.intervalMs;
 							if (draft.spec.count === null || draft.starts < draft.spec.count) {
 								// A reserved pending occurrence keeps its identity until admission settles (#411).
 								if (!draft.pending)
@@ -869,8 +905,8 @@ export function createJobController(options: JobControllerOptions): JobControlle
 						persistenceError: null,
 					};
 					await authorization(job, "create");
-					// First run is due immediately after admission (#417), never before it (#411).
-					job.nextDueAt = now();
+					// First run is due immediately after admission (#417), never before it (#411). An event job waits for an arrival.
+					job.nextDueAt = eventJob(job) ? null : now();
 					store.write(job, null);
 					const sessionRows = [...records.values()].filter((row) => sameJobOwner(row.owner, owner));
 					if (sessionRows.length >= JOB_SESSION_LIMIT) {
@@ -925,7 +961,7 @@ export function createJobController(options: JobControllerOptions): JobControlle
 							draft.owner = owner;
 							draft.generation += 1;
 							draft.state = draft.reason === "condition" ? "terminal" : "active";
-							draft.nextDueAt = draft.state === "active" ? now() + draft.spec.intervalMs : null;
+							draft.nextDueAt = draft.state === "active" && !eventJob(draft) ? now() + draft.spec.intervalMs : null;
 							draft.pending = null;
 							draft.pendingReason = null;
 							draft.consecutiveFailures = 0;
@@ -983,6 +1019,49 @@ export function createJobController(options: JobControllerOptions): JobControlle
 			await Promise.allSettled([...creating]);
 		},
 		tick,
+		wake(id) {
+			const job = records.get(id);
+			if (
+				closed ||
+				job === undefined ||
+				!owned(job) ||
+				!eventJob(job) ||
+				job.state !== "active" ||
+				job.persistenceError !== null ||
+				job.pending !== null ||
+				job.nextDueAt !== null
+			)
+				return;
+			const last = job.active?.startedAt ?? job.history.at(-1)?.startedAt ?? null;
+			try {
+				commit(job, (draft) => {
+					draft.nextDueAt = Math.max(now(), last === null ? 0 : last + draft.spec.intervalMs);
+				});
+			} catch (error) {
+				report(error);
+			}
+			schedule();
+		},
+		recordEventCursor(id, cursor) {
+			const job = records.get(id);
+			if (
+				closed ||
+				job === undefined ||
+				!owned(job) ||
+				!eventJob(job) ||
+				job.state !== "active" ||
+				job.persistenceError !== null ||
+				job.eventCursor === cursor
+			)
+				return;
+			try {
+				commit(job, (draft) => {
+					draft.eventCursor = cursor;
+				});
+			} catch (error) {
+				report(error);
+			}
+		},
 	};
 	return api;
 }

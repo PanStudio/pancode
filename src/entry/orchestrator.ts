@@ -2222,6 +2222,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		sessionCodeConsentPending: () => sessionCodeConsent.pending(),
 		untilStoppedDefault: () => getCurrentSettings().chat.loopsUntilStopped,
 		createSession: createRoutedSession,
+		mcpEvents: () => toolBootstrap.mcpCapabilities ?? null,
 		notice: (text) => {
 			if (deferredWatchdogNoticeSink) deferredWatchdogNoticeSink(text);
 			else bootStderr(`${text}\n`);

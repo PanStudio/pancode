@@ -5,6 +5,8 @@ import type {
 	McpBuiltinSource,
 	McpClient,
 	McpClientOptions,
+	McpEventDescriptor,
+	McpEventListing,
 	McpHeaderCredentialStore,
 	McpServerCatalog,
 	McpServerSpec,
@@ -84,7 +86,29 @@ export interface McpServerListing {
 	 * for inspection and refuses each call with `reason` and `remedy`.
 	 */
 	surface?: McpServerSurfaceListing;
+	/**
+	 * Event types the server offers through MCP Events, live or recorded, for
+	 * an `mcp_event` job. Server-written; a scoped find carries them.
+	 */
+	events?: McpServerEventListing[];
+	/** The server's event list was cut at the client cap. */
+	eventsTruncated?: true;
+	/** Why the server's event types could not be listed. */
+	eventsFailure?: string;
 }
+
+/** One event type as discovery lists it. */
+export interface McpServerEventListing {
+	name: string;
+	description: string;
+	/** Delivery modes the server offers; PanCode subscribes with push when offered, else poll. */
+	delivery: string[];
+	/** JSON Schema of the subscription arguments, the job's `arguments`. */
+	arguments: Record<string, unknown>;
+}
+
+/** A declared server reachable for an event subscription, or why it is not. */
+export type McpEventServer = { client: McpClient; events: McpEventDescriptor[] } | { refusal: string };
 
 /** A trusted server's surface approval as discovery lists it. */
 export interface McpServerSurfaceListing extends McpSurfaceStatus {
@@ -292,6 +316,20 @@ export interface McpCapabilitySource {
 	/** Ids of the servers launched this session and still open. */
 	connectedIds(options?: { readyOnly?: boolean }): string[];
 	/**
+	 * Synchronous policy/authority check for an `mcp_event` job without
+	 * launching or reconnecting the server: declared, not client-scoped,
+	 * trusted, plugin not revoked, read-only launch allowed if unstarted, and
+	 * approved surface if already listed. Null when authorized.
+	 */
+	eventAuthorityRefusal?(id: string, options?: { readOnly?: boolean }): string | null;
+	/**
+	 * A declared, trusted server with an approved surface that offers MCP
+	 * Events, launched when needed, with its current event types; an ACP
+	 * client's server, an untrusted or failed one, or one offering no events is
+	 * refused with the reason and its remedy.
+	 */
+	eventServer(id: string, options?: McpLaunchOptions): Promise<McpEventServer>;
+	/**
 	 * Close every launched client. Idempotent. A process group that survived
 	 * the client's own SIGKILL is reported here and on stderr, with its pgid,
 	 * and is never signalled again by the gateway: the client already did
@@ -363,6 +401,10 @@ export interface ServerState {
 	/** Calls running on the client now, and when the last one started or ended; a remote server closes when idle. */
 	inflight?: number;
 	lastUsed?: number;
+	/** The event types of the last listing, for a server that offers MCP Events. */
+	events?: McpEventListing;
+	/** Why the last events/list failed; the server's tools still serve. */
+	eventsFailure?: string;
 	/** This session's skills listing of a server that serves the skills extension; absent until listed. */
 	skills?: { listing: McpSkillListing; listedAtMs: number } | { failure: string; listedAtMs: number };
 	/** The skills listing in flight, shared by everyone waiting on it. */
