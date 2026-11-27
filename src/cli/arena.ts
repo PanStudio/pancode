@@ -21,8 +21,8 @@ import {
 	validateArenaRunInput,
 } from "../domains/arena/index.js";
 import { type RunEnvPolicy, selfPancodeLaunch } from "../domains/extensions/services/run-env.js";
+import { containedYoloRefusal } from "../domains/safety/contained-yolo.js";
 import { formatColumns, printError } from "./argv.js";
-import { containedYoloRefusal } from "./contained-yolo-gate.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
 import { installStopSignals } from "./stop-signals.js";

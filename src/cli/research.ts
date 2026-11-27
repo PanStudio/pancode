@@ -22,8 +22,8 @@ import {
 	runResearchCampaign,
 	summarizeCampaign,
 } from "../domains/research/index.js";
+import { containedYoloRefusal } from "../domains/safety/contained-yolo.js";
 import { printError } from "./argv.js";
-import { containedYoloRefusal } from "./contained-yolo-gate.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import { installStopSignals, type StopSignals } from "./stop-signals.js";
 
