@@ -2,12 +2,12 @@
 
 Focus radio in a dock pane below PanCode, played by [cliamp](https://cliamp.stream), a terminal music player. `/music` and `Alt+A` show or hide the pane, and the player keeps running while the pane is hidden. The model never touches the player unless you turn that on with `/music agent on`.
 
-Music is a first-party PanHub extension, installed, updated and removed on its own like any other pack:
+Music is a first-party PanHub extension that ships with PanCode: the installer and `pancode upgrade` install it once, and it is updated and removed on its own like any other pack:
 
 ```sh
-pancode hub install extension:music
+pancode hub remove extension:music     # stays removed across upgrades
+pancode hub install extension:music    # brings it back
 pancode hub update extension:music     # moves to the release's pinned copy
-pancode hub remove extension:music
 ```
 
 It plays only in an interactive session inside a herdr pane host. Bare `pancode` opens its own private pane host, and `pancode --with-panes` started inside a herdr pane joins that one. Headless runs, `pancode acp` and sessions without the pane layer have no music pane; `/music` there replies `music is unavailable: this session has no pane host; run PanCode inside herdr`.

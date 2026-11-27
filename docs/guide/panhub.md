@@ -106,6 +106,12 @@ pancode hub remove plugin:hpc --project
 - `update` moves a catalog copy to its index row's version and pin, and requires its dependencies to be installed and enabled. `update --all` updates every copy its row has moved past and skips extensions, naming the command for each, because each extension update needs its own envelope review. A local install updates from its recorded source directory. Update and replacement keep a disabled copy disabled.
 - `disable` and `remove` refuse when an enabled dependent would lose a requirement. Removal keeps edited content and reports the recovery path. An installed copy stays addressable after its index row disappears.
 
+### Packs that ship with PanCode
+
+A few first-party packs are installed with PanCode. [`hub/defaults.yaml`](../../hub/defaults.yaml) names them (today `extension:music`), and their bundled rows carry `default: true`. `pancode upgrade --post-install`, which every installer and `upgrade` run, installs each into the user scope the first time a release offers it, without a prompt: it stages the pinned tree, and writes nothing unless the tree's sha256 and envelope digest match the row the release was reviewed with. It prints the envelope and the command that removes the pack, then downloads the pinned programs; a download that fails warns and never fails the install.
+
+Each pack given is recorded in `<config>/extensions/defaults.json`, and a recorded pack is never installed by default again, so `pancode hub remove extension:music` stays removed across upgrades and `pancode hub install extension:music` brings it back. A later post-install moves an installed default pack to the release's row when its envelope reaches no further than the installed copy; when it does, the copy stays as it is and the post-install prints the `pancode hub update` command that shows the growth. A disabled copy is left alone. `upgrade --post-install --dry-run` names the packs it would install.
+
 A foreign pack (from `hub import` or `interop adopt`) cannot be updated or force-replaced: remove it and review a new adoption. Its skills and prompts load only while `integrations.projectResources.trustProjectImports` is true; see [interoperability](interop.md).
 
 ### Import
@@ -199,7 +205,7 @@ Your own index may also give a GitHub tree URL as `sourceUrl`; its ref is resolv
 
 `requires` holds typed pack references and must agree with the manifest's `extensions["dev.pancode"].requires`. Missing, malformed and cyclic dependencies are refused.
 
-PanCode's own indexes, the bundled one and the verified remote one, hold a stricter schema. Every row names a `publisher`, a `tier` and a `license` (an SPDX expression). A first-party row comes from `packs/` with publisher `pancode` and tier `core`. A community row uses `source`, names its own publisher, never `pancode`, and is `verified` or `listed`. Such a row may also carry `envelopeDigest` and `mcpDigest`, the digests of its extension envelope and its MCP declarations, and an install refuses a tree whose digests differ. In your own user, project or `--from` index the tier is ignored and the publisher is honoured.
+PanCode's own indexes, the bundled one and the verified remote one, hold a stricter schema. Every row names a `publisher`, a `tier` and a `license` (an SPDX expression). A first-party row comes from `packs/` with publisher `pancode` and tier `core`. A community row uses `source`, names its own publisher, never `pancode`, and is `verified` or `listed`. Such a row may also carry `envelopeDigest` and `mcpDigest`, the digests of its extension envelope and its MCP declarations, and an install refuses a tree whose digests differ. A first-party row in the bundled index may carry `default: true`; see [Packs that ship with PanCode](#packs-that-ship-with-pancode). In your own user, project or `--from` index the tier is ignored and the publisher is honoured.
 
 ### Tiers and publishers
 

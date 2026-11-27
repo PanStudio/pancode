@@ -294,6 +294,8 @@ function hubRowProblems(item: Record<string, unknown>, mode: HubIndexMode): stri
 			problems.push(`${field} must be a SHA-256 digest`);
 	if (item.envelopeDigest !== undefined && item.kind !== "extension")
 		problems.push("only an extension row has envelopeDigest");
+	if (item.default !== undefined && item.default !== true) problems.push("default is true or absent");
+	if (item.default === true && hasSource) problems.push("only a first-party row is installed by default");
 	if (!strict) return problems;
 	if (typeof item.publisher !== "string") problems.push("publisher is required");
 	if (item.tier === undefined) problems.push("tier is required");
@@ -419,6 +421,7 @@ export function parseHubIndexRows(
 				...(mode !== "operator" && typeof item.tier === "string" ? { tier: item.tier as HubTier } : {}),
 				...(typeof item.envelopeDigest === "string" ? { envelopeDigest: item.envelopeDigest } : {}),
 				...(typeof item.mcpDigest === "string" ? { mcpDigest: item.mcpDigest } : {}),
+				...(mode === "bundled" && item.default === true ? { default: true as const } : {}),
 				...(typeof item.category === "string" ? { category: item.category } : {}),
 				...(["pass", "warn", "fail", "unknown"].includes(String(item.audit))
 					? { audit: item.audit as NonNullable<HubPackageEntry["audit"]> }

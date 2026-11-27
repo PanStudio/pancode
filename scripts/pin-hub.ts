@@ -205,6 +205,27 @@ const localEntries: RegistryRow[] = validatedPackages.map(({ directory, expected
 });
 
 // ---------------------------------------------------------------------------
+// hub/defaults.yaml names the first-party packs a PanCode install gives once;
+// their rows carry `default: true` for `upgrade --post-install` to read.
+// ---------------------------------------------------------------------------
+const defaultsFile = path.join(root, "hub", "defaults.yaml");
+const defaultRefs = existsSync(defaultsFile)
+	? ((parse(readFileSync(defaultsFile, "utf8")) as { defaults?: unknown } | null)?.defaults ?? [])
+	: [];
+if (!Array.isArray(defaultRefs) || defaultRefs.some((ref) => typeof ref !== "string")) {
+	process.stderr.write("hub/defaults.yaml: defaults must be a list of kind:name refs\n");
+	process.exit(1);
+}
+for (const ref of defaultRefs as string[]) {
+	const row = localEntries.find((item) => `${item.kind}:${item.name}` === ref);
+	if (!row) {
+		process.stderr.write(`hub/defaults.yaml: ${ref} is not a first-party pack under hub/packs\n`);
+		process.exit(1);
+	}
+	row.default = true;
+}
+
+// ---------------------------------------------------------------------------
 // A released version names one tree forever. `hub update` compares
 // versions to tell an operator a package moved, so bytes that change under an
 // unchanged version would never reach the copies already installed. The last

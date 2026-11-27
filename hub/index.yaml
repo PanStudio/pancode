@@ -574,7 +574,7 @@ entries:
     description: Focus radio in a dock pane below PanCode, played by cliamp.
     version: 0.1.0
     sourceUrl: packs/extensions/music
-    sha256: 73c886df597c1d1e6d463103aa31120ead8ef3142be03893a9c2d182baa0db90
+    sha256: 8f1b4e06584ce4a8e112c2d9cd5d57f83efea4081f9fe1896d422eddd71e3cc5
     license: LicenseRef-PanCode-1.0
     tier: core
     envelopeDigest: 702a742056b471cfe660da7ecb98e6813ec5ca54e7f429f9a40bcac51c4797d3
@@ -582,6 +582,7 @@ entries:
       - kind: extension
         name: music
         description: Focus radio in a dock pane below PanCode, played by cliamp.
+    default: true
   - kind: skill
     publisher: pancode
     name: pancode-dev

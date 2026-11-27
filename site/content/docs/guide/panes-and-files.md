@@ -40,7 +40,7 @@ Check `pancode doctor` if the host or files engine is unavailable.
 
 The files and workers panes are docks with fixed places. **Alt+E** and **Alt+W** show or hide them, and a second press within a moment closes one. Alt+W opens a dashboard with a card for each worker in the session; Enter follows one worker's live stream.
 
-An installed extension can open its own pane below the conversation, in the `extension` dock. The music extension pack (`pancode hub install extension:music`) plays focus radio there with `/music` or **Alt+A**.
+An installed extension can open its own pane below the conversation, in the `extension` dock. The music extension pack, installed with PanCode, plays focus radio there with `/music` or **Alt+A**.
 
 | Command | Companion pane |
 | --- | --- |
