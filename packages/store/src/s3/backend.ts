@@ -41,6 +41,7 @@ import {
 	STORE_DEFAULT_ROOT_NAME,
 	storeCacheDir,
 	validateBlobName,
+	validateS3Prefix,
 	validateTagName,
 } from "../paths/index.js";
 import { S3Client, type S3ClientOptions } from "./client.js";
@@ -148,11 +149,8 @@ function racing(status: number): boolean {
 }
 
 export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
-	if (options.prefix !== "" && (!options.prefix.endsWith("/") || options.prefix.startsWith("/")))
-		throw new StoreRefusal(
-			"invalid-name",
-			`The S3 key prefix ${options.prefix} must be empty or end in '/', without a leading '/'.`,
-		);
+	const prefixProblem = validateS3Prefix(options.prefix);
+	if (prefixProblem !== null) throw new StoreRefusal("invalid-name", prefixProblem);
 	if (options.bucket.length === 0) throw new StoreRefusal("invalid-name", "The S3 bucket name is empty.");
 	const client = new S3Client(options);
 	const base = `${options.prefix}projects/${options.projectKey}/`;

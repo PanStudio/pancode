@@ -149,7 +149,7 @@ export class S3Client {
 		const headers: Record<string, string> = { ...signed };
 		delete headers.host;
 		headers.authorization = `AWS4-HMAC-SHA256 Credential=${this.options.accessKeyId}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}`;
-		const init: RequestInit & { duplex?: "half" } = { method, headers };
+		const init: RequestInit & { duplex?: "half" } = { method, headers, redirect: "error" };
 		if (body instanceof Uint8Array) init.body = body;
 		else if (body !== undefined) {
 			// The length is fixed up front, so the bytes go as one plain body; S3 refuses a chunked one.
@@ -195,13 +195,25 @@ export class S3Client {
 		const response = await this.send("GET", "", { query });
 		if (response.status !== 200) throw await this.refusal(response, `the listing of ${this.location(prefix)}`);
 		const xml = await response.text();
+		const truncated = xmlField(xml, "IsTruncated");
+		const next = truncated === "true" ? xmlField(xml, "NextContinuationToken") : null;
+		if (
+			!/<ListBucketResult(?:\s[^>]*)?>/u.test(xml) ||
+			!xml.trimEnd().endsWith("</ListBucketResult>") ||
+			(truncated !== "true" && truncated !== "false") ||
+			(truncated === "true" && !next)
+		)
+			throw new StoreRefusal(
+				"io",
+				`The S3 endpoint did not return a complete bucket listing for ${this.location(prefix)}.`,
+			);
 		return {
 			objects: xmlBlocks(xml, "Contents").map((block) => ({
 				key: listedKey(xmlField(block, "Key") ?? ""),
 				bytes: Number(xmlField(block, "Size") ?? "0"),
 			})),
 			prefixes: xmlBlocks(xml, "CommonPrefixes").map((block) => listedKey(xmlField(block, "Prefix") ?? "")),
-			next: xmlField(xml, "IsTruncated") === "true" ? xmlField(xml, "NextContinuationToken") : null,
+			next,
 		};
 	}
 }

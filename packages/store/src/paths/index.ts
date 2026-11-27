@@ -77,6 +77,13 @@ export function validateBlobName(blob: string): string | null {
 	return pathShapeProblem("blob", blob);
 }
 
+export function validateS3Prefix(prefix: string): string | null {
+	if (prefix === "") return null;
+	if (!prefix.endsWith("/") || prefix.startsWith("/") || prefix.split("/").some((part) => part === "." || part === ".."))
+		return "Expected an empty prefix or one ending in '/', without a leading '/' or '.' or '..' segments.";
+	return null;
+}
+
 export function recordsTag(tag: string): string {
 	return `${tag}${STORE_RECORDS_SUFFIX}`;
 }

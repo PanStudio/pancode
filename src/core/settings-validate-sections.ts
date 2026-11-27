@@ -7,6 +7,7 @@ import {
 	STORE_DEFAULT_ROOT_NAME,
 	STORE_TAG_CLASSES,
 	validatePlacementRules,
+	validateS3Prefix,
 	validateStoreProjectId,
 	validateStoreRoots,
 } from "@pancode/store/paths";
@@ -473,10 +474,13 @@ function validateStoreS3(issues: Issues, raw: unknown): StoreS3Setting | null {
 		if (typeof raw.prefix !== "string") {
 			issues.add("store.s3.prefix", `expected a string, got ${describe(raw.prefix)}`);
 			prefix = undefined;
-		} else if (raw.prefix !== "" && (!raw.prefix.endsWith("/") || raw.prefix.startsWith("/"))) {
-			issues.add("store.s3.prefix", "expected an empty prefix or one ending in '/', without a leading '/'");
-			prefix = undefined;
-		} else prefix = raw.prefix;
+		} else {
+			const problem = validateS3Prefix(raw.prefix);
+			if (problem !== null) {
+				issues.add("store.s3.prefix", problem);
+				prefix = undefined;
+			} else prefix = raw.prefix;
+		}
 	}
 	const pathStyle = "pathStyle" in raw ? expectBoolean(issues, "store.s3.pathStyle", raw.pathStyle) : false;
 	if (
