@@ -7,8 +7,8 @@
  */
 
 import type { SafetyContract } from "../safety/contract.js";
+import type { DispatchBundleOptions } from "./bundle-types.js";
 import type { DispatchContract, DispatchRequest, MainGrantOutcome, WorkerGrantView } from "./contract.js";
-import type { DispatchBundleOptions } from "./extension.js";
 import { evaluateJudgedGrant, evaluateMainGrant } from "./grant-authority.js";
 import type { GrantBroker, GrantRecord } from "./grant-broker.js";
 import { evaluateWriteRootGrant, WRITE_ROOTS_GRANT_TOOL, writeRootOutcomeMessage } from "./write-root-requests.js";

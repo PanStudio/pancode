@@ -18,6 +18,7 @@ import type { Rigor } from "../safety/rigor.js";
 import { parseRigorOverride, resolveRigor } from "../safety/rigor.js";
 import type { DispatchPreparationOptions, DispatchRequest } from "./contract.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
+import type { RunSettlement } from "./run-settlement.js";
 import type { DispatchRequestOrigin, RunKind, RunLineage, RunOutcome, RunResult, RunResultDraft } from "./types.js";
 import { workerMergedNotice } from "./workspace-mutation.js";
 
@@ -95,6 +96,52 @@ export function emitTerminalDispatchEvent(
 		return;
 	}
 	context.bus.emit("run.failed", { ...payload, reason: outcome });
+}
+
+/**
+ * Publishes the terminal event of a run whose finalization failed after its run.settled landed: the outcome that record
+ * states, so live consumers agree with the journal and the ledger row.
+ */
+export function emitSettledDispatchEvent(
+	{ context }: Pick<RunFinishScope, "context">,
+	run: FinalizingRun,
+	settled: RunSettlement["facts"],
+): void {
+	const startMs = Date.parse(settled.startedAt);
+	const endMs = Date.parse(settled.endedAt);
+	const durationMs = Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, rawDurationMs(startMs, endMs)) : 0;
+	const payload: DispatchCompletedPayload = {
+		runId: run.runId,
+		agentId: run.req.agentId,
+		task: run.req.task,
+		...(run.agentAudience !== undefined ? { agentAudience: run.agentAudience } : {}),
+		requestOrigin: run.requestOrigin,
+		targetId: run.targetId,
+		wireModelId: run.wireModelId,
+		runtimeId: run.runtimeId,
+		runtimeKind: run.runtimeKind,
+		outcome: settled.outcome,
+		outcomeCode: settled.outcomeCode,
+		outcomeDetail: settled.outcomeDetail,
+		lineage: publishedLineage(run.lineage, run.hostRun),
+		sessionId: run.req.ownerSessionId ?? null,
+		spend: {
+			usage: settled.usage,
+			totalTokens: settled.totalTokens,
+			apiCalls: settled.apiCalls,
+			pricing: settled.pricing,
+		},
+		durationMs,
+		exitCode: settled.exitCode ?? settled.processExitCode ?? 1,
+		toolActivity: settled.toolActivity,
+		...(settled.hostVerification !== null ? { hostVerification: settled.hostVerification.status } : {}),
+		...(settled.flowRestrictions !== null ? { flowRestrictions: settled.flowRestrictions } : {}),
+	};
+	if (settled.outcome === "succeeded") {
+		context.bus.emit("run.completed", payload);
+		return;
+	}
+	context.bus.emit("run.failed", { ...payload, reason: settled.outcome });
 }
 
 /** Judges the worker's last turn against the finish contract and audits the verdict; null when it said nothing. */

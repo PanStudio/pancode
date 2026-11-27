@@ -83,8 +83,9 @@ directory present when the campaign opens, each recorded as its own `<sweep>/<ru
 
 Install what the checks need in the project before the campaign starts, not through the agent. Each candidate is
 measured and gated as its commit plus the environment its worktree had before the agent ran, such as installed
-dependencies or build output a checkout step leaves. The worktrees sit under `.pancode/worktrees/` inside the
-project, so a `node_modules` there resolves from them. That environment is read-only to the agent: a file added,
+dependencies or build output a checkout step leaves. PanCode creates the worktree with no repository hook, so a
+`post-checkout` hook does not run there; a smudge filter does. The worktrees sit under `.pancode/worktrees/` inside
+the project, so a `node_modules` there resolves from them. That environment is read-only to the agent: a file added,
 removed or changed inside it rejects the candidate unmeasured as `protected` ("changed the pre-agent environment").
 Anything else the agent leaves untracked or ignored, a fresh install or a check's output included, is removed before
 measuring, and the checks recreate their own output.
