@@ -31,6 +31,7 @@ import type { AuthStorage } from "../../domains/providers/auth/index.js";
 import type { ActionClass } from "../../domains/safety/action-classifier.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
+import type { McpSkillLoading } from "../context/mcp-skills.js";
 import type { ToolRegistry } from "../registry-contract.js";
 import type { ToolSpec } from "../tool-spec.js";
 import type { McpStoreAccess } from "./mcp-store-references.js";
@@ -283,6 +284,12 @@ export interface McpCapabilitySource {
 	attachClientServers(servers: ReadonlyArray<McpClientServerSpec>, options?: { start?: boolean }): Promise<void>;
 	/** Tear down only the servers supplied by the ACP client for this session. */
 	detachClientServers(): Promise<void>;
+	/**
+	 * Read the declarations again and swap what changed. A removed or changed server closes and its tools
+	 * unregister, an added or changed one enters with the trust its declaration holds now, and an unchanged one
+	 * keeps its connection. Null, with nothing swapped, while a removed or changed server has a call in flight.
+	 */
+	reloadDeclarations(): Promise<McpDeclarationReload | null>;
 	/** Launch every trusted server not yet launched, register its tools, and describe every declared server. */
 	list(options?: { signal?: AbortSignal }): Promise<McpListing>;
 	/**
@@ -375,6 +382,11 @@ export interface McpCapabilitySource {
 	skillAccess(id: string, options?: McpSkillAccessOptions): Promise<McpSkillAccess>;
 	/** The skills server `id` listed this session, or null when it has listed none. */
 	servedSkills(id: string): McpSkillListing | null;
+	/**
+	 * The context tool's code for loading the skills this source serves. It travels with the source,
+	 * so a registry that admits no MCP server never loads it.
+	 */
+	readonly skillLoading: McpSkillLoading;
 	/** Ids of the servers launched this session and still open. */
 	connectedIds(options?: { readyOnly?: boolean }): string[];
 	/**
@@ -401,6 +413,17 @@ export interface McpCapabilitySource {
 	close(): Promise<McpCloseReport>;
 	/** Every teardown outcome recorded so far, for evidence. */
 	teardownReports(): ReadonlyArray<McpTeardownReport>;
+}
+
+/** What a declaration reload changed, by server id; ACP client servers are not declarations and never appear. */
+export interface McpDeclarationReload {
+	added: string[];
+	removed: string[];
+	changed: string[];
+	unchanged: string[];
+	/** Declared servers, changed or not, whose declaration is not trusted as it stands now. */
+	needsTrust: string[];
+	diagnostics: string[];
 }
 
 export interface McpTeardownReport {

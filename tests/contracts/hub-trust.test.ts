@@ -21,6 +21,7 @@ import { test } from "node:test";
 import { stringify } from "yaml";
 import { runHubCommand } from "../../src/cli/hub.js";
 import { readSettings } from "../../src/core/config.js";
+import { revokedHubDigests } from "../../src/core/hub-revocations.js";
 import {
 	bindPackageActivitySink,
 	flushPackageActivities,
@@ -49,7 +50,6 @@ import {
 	planHubInstall,
 	syncHub,
 } from "../../src/domains/resources/hub.js";
-import { revokedHubDigests } from "../../src/domains/resources/hub-revocations.js";
 import {
 	HUB_INDEX_PAYLOAD_TYPE,
 	HUB_KEYS_PAYLOAD_TYPE,

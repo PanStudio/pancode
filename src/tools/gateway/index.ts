@@ -35,7 +35,6 @@ import type { McpCapabilitySource, McpLaunchOptions, McpServerListing } from "./
 import { misplacedFieldHint } from "./misplaced-fields.js";
 
 export { GATEWAY_FIND_SELF_CAP_BYTES } from "./caps.js";
-export { createMcpCapabilitySource } from "./mcp-capabilities.js";
 export type { McpCapabilitySource } from "./mcp-capability-types.js";
 
 /**

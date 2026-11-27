@@ -10,12 +10,14 @@
  * The projection is text only. Hooks, MCP, LSP, apps, monitors, output styles,
  * scripts and host settings are reported and never activated.
  */
+
 import { existsSync, lstatSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
 import { isSemanticVersion } from "../extensions/compatibility.js";
-import { isPluginId, PLUGIN_EXTENSION_KEY, PLUGIN_SCHEMA } from "../plugins/index.js";
+import { PLUGIN_EXTENSION_KEY, PLUGIN_SCHEMA } from "../plugins/index.js";
 import type { ForeignPackageFormat, PluginComponent } from "../plugins/types.js";
 import { nestedSkillDirectories } from "../resources/skills/bare-skill.js";
 import { inventoryText } from "./inventory.js";

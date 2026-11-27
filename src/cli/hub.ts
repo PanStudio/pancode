@@ -5,6 +5,7 @@ import path from "node:path";
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { GLYPH } from "../core/glyphs.js";
 import { discoveryScore } from "../core/harness-discovery.js";
+import { revokedHubDigests } from "../core/hub-revocations.js";
 import { detectPancodeRepo, PANCODE_SELF_DEVELOPMENT_SKILLS } from "../core/pancode-repo.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { ENVELOPE_SEAT_BELT, envelopeLines } from "../domains/extensions/envelope-review.js";
@@ -57,7 +58,6 @@ import {
 	readHubManifest as readPluginManifest,
 } from "../domains/resources/hub-packages.js";
 import { describeHubPair } from "../domains/resources/hub-pairing.js";
-import { revokedHubDigests } from "../domains/resources/hub-revocations.js";
 import {
 	autoRefreshRemoteIndex,
 	configuredHubIndexUrl,

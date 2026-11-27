@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/context-operation.js";
+import { writeDiagnostic } from "../core/diagnostics.js";
 import { enterAutonomousCommitScope } from "../core/git-commit-attribution.js";
 import { continuationCountsAgainstCap, JobClockExpired, TURN_CONTINUATION_CAP } from "../core/job-types.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
@@ -1005,6 +1006,21 @@ export function budgetCrossingContinues(input: {
 	return !(continuationCountsAgainstCap(cause) && input.continuations >= TURN_CONTINUATION_CAP);
 }
 
+/**
+ * One event to every listener. A listener's throw never reaches the turn that emitted, as on the telemetry hub; the
+ * snapshot keeps a listener that subscribes or leaves inside its own call from changing this delivery.
+ */
+function deliverChatLoopEvent(listeners: ReadonlySet<(event: ChatLoopEvent) => void>, event: ChatLoopEvent): void {
+	for (const listener of [...listeners]) {
+		try {
+			listener(event);
+		} catch (error) {
+			const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+			writeDiagnostic(`[pancode:chat-loop] Listener crashed on ${event.type}: ${message}`, "error");
+		}
+	}
+}
+
 export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	const listeners = new Set<(event: ChatLoopEvent) => void>();
 	const sessionResetListeners = new Set<() => void>();
@@ -1096,11 +1112,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		setTurnPreparation(preparingSubmits > 0 ? "preparing" : "idle");
 	};
 
-	const emit = (event: ChatLoopEvent): void => {
-		for (const listener of listeners) {
-			listener(event);
-		}
-	};
+	const emit = (event: ChatLoopEvent): void => deliverChatLoopEvent(listeners, event);
 
 	const refuseSkillRequests = (
 		requests: ReadonlyArray<PendingSkillRequest>,

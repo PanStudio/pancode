@@ -46,7 +46,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mcpPromptArgumentSource, mcpReferenceSource } from "../../src/interactive/mcp-completion.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
-import { createMcpCapabilitySource, type McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import { mcpSubmitReader } from "../../src/tools/gateway/mcp-submit-reader.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { RegistryDeps, ToolRegistry } from "../../src/tools/registry-contract.js";
@@ -701,7 +702,7 @@ describe("gateway MCP capabilities", () => {
 			import { createWorkerSafety } from ${moduleUrl("src/engine/worker-tools.ts")};
 			import { createRegistry } from ${moduleUrl("src/tools/registry.ts")};
 			import { registerAllTools } from ${moduleUrl("src/tools/bootstrap.ts")};
-			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/index.ts")};
+			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/mcp-capabilities.ts")};
 			import { createMcpClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
 			const registry = createRegistry({ safety: createWorkerSafety({cwd: ${JSON.stringify(scene.project)}}), autonomy: () => "yolo" });
 			let client;
@@ -2159,6 +2160,48 @@ describe("remote Streamable HTTP MCP safeguards", () => {
 				strictEqual(verdict.result.kind, "error");
 				match(verdict.result.message, /tool surface of 'remote' changed/u);
 				strictEqual(callCount, 1, "must not resend tools/call after schema/surface drifted on -32020");
+			} finally {
+				await source.close();
+			}
+		} finally {
+			env.restore();
+		}
+	});
+
+	it("reloadDeclarations detects user fileTargets changes even though fileTargets is outside the digest", async () => {
+		const env = await isolatePancodeEnv("pancode-mcp-reload-targets-");
+		try {
+			const project = join(env.dir, "project");
+			const configDir = join(env.dir, "config");
+			mkdirSync(project, { recursive: true });
+			mkdirSync(configDir, { recursive: true });
+			const writeCfg = (targets: string[]) =>
+				writeFileSync(
+					join(configDir, "mcp.yaml"),
+					[
+						"version: 1",
+						"servers:",
+						"  - id: files",
+						`    command: ${JSON.stringify(process.execPath)}`,
+						`    args: [${JSON.stringify(FIXTURE)}]`,
+						`    fileTargets: [${targets.map((t) => JSON.stringify(t)).join(", ")}]`,
+						"",
+					].join("\n"),
+				);
+			writeCfg(["https://a.example.com"]);
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" });
+			const source = createMcpCapabilitySource({ cwd: project, configDir, registry, attended: true });
+			try {
+				source.catalog();
+				writeCfg(["https://a.example.com", "https://b.example.com"]);
+				const first = await source.reloadDeclarations();
+				ok(first !== null);
+				deepStrictEqual(first.changed, ["files"]);
+				deepStrictEqual(first.unchanged, []);
+				const second = await source.reloadDeclarations();
+				ok(second !== null);
+				deepStrictEqual(second.changed, []);
+				deepStrictEqual(second.unchanged, ["files"]);
 			} finally {
 				await source.close();
 			}

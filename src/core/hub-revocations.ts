@@ -9,8 +9,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { resolvePackageRoot } from "../../core/package-root.js";
-import { pancodeStateDir } from "../../core/xdg.js";
+import { resolvePackageRoot } from "./package-root.js";
+import { pancodeStateDir } from "./xdg.js";
 
 export interface HubRevocation {
 	sha256: string;

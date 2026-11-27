@@ -20,6 +20,7 @@ export {
 	type InstallRecordReport,
 	reportInvalidInstallRecordsAsRows,
 } from "./install-store.js";
+export { extensionBaseDir } from "./listing.js";
 export {
 	disableExtension,
 	discoverExtensionPackages,
@@ -57,7 +58,6 @@ export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
 export {
 	assignExtensionModel,
 	auditExtensionInstallRecords,
-	extensionBaseDir,
 	installedExtensionClaims,
 	readExtensionInstallRecord,
 	repairExtensionInstallRecords,

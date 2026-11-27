@@ -21,6 +21,7 @@ import type {
 	WorkerMcpAttestation,
 	WorkerPermitAllowance,
 } from "../domains/safety/worker-permit.js";
+import type { createMcpCapabilitySource } from "../tools/gateway/mcp-capabilities.js";
 import type { ToolProfileName } from "../tools/profiles.js";
 import type { TaskWorktree } from "../tools/task-worktree.js";
 import type { AgentLedgerPort, WorkerExtensionHook, WorkerGrantRequestFrame } from "../worker/protocol.js";
@@ -119,8 +120,11 @@ export interface WorkerRunInput {
 	onPermission?: "deny" | "fail" | "escalate";
 	/** The permit allowance behind onPermission, so a denial can say why it was not routed. */
 	permitAllowance?: WorkerPermitAllowance;
-	/** The permit's MCP attestation; the worker launches only what it names. */
-	mcp?: WorkerMcpAttestation;
+	/**
+	 * The permit's MCP attestation, which names everything the worker may launch, and the MCP client the
+	 * worker entry loaded for it. A run whose permit attests no MCP capability never loads that client.
+	 */
+	mcp?: { attestation: WorkerMcpAttestation; createSource: typeof createMcpCapabilitySource };
 	/**
 	 * The permit's Git allowance, whether its tools already execute code, and
 	 * the task worktree the host created for this run, if any (Phase C).

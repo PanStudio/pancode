@@ -29,7 +29,6 @@ import { builtin, gatewayPromptHint } from "./builtin-tool-catalog.js";
 import { codeNavToolSurface } from "./codewiki/code-nav-surface.js";
 import { createConfigurePancodeTool } from "./configure-pancode.js";
 import { type ConsultDeps, createConsultTool } from "./consult.js";
-import { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation } from "./context/mcp-skills.js";
 import type { ContextSemanticDeps } from "./context/semantic.js";
 import { createContextToolSurface } from "./context/surface.js";
 import { countTool } from "./count.js";
@@ -288,7 +287,7 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 	// The registry reads an approval card synchronously, before the lazy context
 	// runner below has loaded, so the card sits on the registered surface and
 	// shares this activation with that runner.
-	const mcpSkillActivation = mcpSkills !== undefined ? createMcpSkillActivation(mcpSkills, getCwd) : undefined;
+	const mcpSkillActivation = mcpSkills?.source.skillLoading.createMcpSkillActivation(mcpSkills, getCwd);
 	const skillToolDeps = {
 		semantic,
 		...(deps.getContextBudget ? { getContextBudget: deps.getContextBudget } : {}),
@@ -361,8 +360,8 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 				mcpSkills !== undefined && mcpSkillActivation !== undefined
 					? {
 							...contextSurface,
-							confirmationFor: mcpSkillConfirmation(mcpSkillActivation, () =>
-								contextSkillLoadInput(getCwd(), deps.getSkillLoaderOptions?.() ?? {}, mcpSkills),
+							confirmationFor: mcpSkills.source.skillLoading.mcpSkillConfirmation(mcpSkillActivation, () =>
+								mcpSkills.source.skillLoading.contextSkillLoadInput(getCwd(), deps.getSkillLoaderOptions?.() ?? {}, mcpSkills),
 							),
 						}
 					: contextSurface,

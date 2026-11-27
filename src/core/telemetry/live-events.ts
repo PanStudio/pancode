@@ -831,6 +831,19 @@ export interface ExtensionsLoadIssuePayload {
 	message: string;
 }
 
+/** A `/reload` class that waited for the session to go idle has run; `text` is its one-line report. */
+export interface ReloadAppliedPayload {
+	target: "mcp" | "extensions";
+	text: string;
+	failed: boolean;
+}
+
+/** A `/reload` report finished on any surface; an ACP client re-reads the commands it may type. */
+export interface SessionReloadedPayload {
+	target: string;
+	failed: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------

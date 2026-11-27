@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 export { bundledPluginCatalog } from "./catalog.js";
 export {
-	isPluginId,
 	PLUGIN_EXTENSION_KEY,
 	PLUGIN_RESOURCE_KINDS,
 	PLUGIN_SCHEMA,

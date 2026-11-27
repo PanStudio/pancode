@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { readSettings, updateSettings } from "../../core/config.js";
 import { type LifecycleContext, recordLifecycleReceipt } from "../../core/hub-receipts.js";
+import { packRevokedMessage, revokedHubDigests } from "../../core/hub-revocations.js";
 import { gitVia } from "../../core/internal-git-run.js";
+import { publisherCollision } from "../../core/package-publisher.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
@@ -37,7 +40,6 @@ import {
 	pluginContentDigest,
 	readPluginInstallRecord,
 } from "../plugins/index.js";
-import { publisherCollision } from "../plugins/publisher.js";
 import { hubEnvelopeDigest, hubMcpDigest } from "./hub-digests.js";
 import {
 	extensionHubCopy,
@@ -46,7 +48,6 @@ import {
 	listInstalledHubPackages as listInstalledPlugins,
 	readHubInstallRecord,
 } from "./hub-packages.js";
-import { packRevokedMessage, revokedHubDigests } from "./hub-revocations.js";
 import { remoteIndexRows } from "./hub-trust.js";
 import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
 import { type HubPackageValidationResult, validateHubPackage } from "./hub-validation.js";

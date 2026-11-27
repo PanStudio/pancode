@@ -114,7 +114,7 @@ import {
 import type { AcpReadoutsSession } from "./readouts.js";
 import { createAcpReadoutsEmitter } from "./readouts.js";
 import { ACP_MAX_JOBS } from "./runtime.js";
-import { createAcpRuntimeNoticeRelay } from "./runtime-notice.js";
+import { createAcpRuntimeNoticeRelay, subscribeAcpNotices } from "./runtime-notice.js";
 import {
 	boundString,
 	requireBoundedClientString,
@@ -611,30 +611,24 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	);
 	if (options.bus !== undefined) {
 		const bus = options.bus;
+		const noticeSession = () => (handshake.initialized ? (activeSessionId ?? boundSessionId) : null);
+		const sessionMeta = (owner: string | null, meta: Record<string, unknown>) => {
+			const sessionId = noticeSession();
+			if (sessionId === null || owner !== sessionId) return;
+			options.transport.notify("session/update", {
+				sessionId,
+				update: { sessionUpdate: "session_info_update", _meta: meta },
+			});
+		};
 		unsubscribeEvents.push(
 			bus.subscribe("context.pruned", () => telemetry.contextFolded()),
-			bus.subscribe("runtime.notice_raised", (payload) =>
-				runtimeNotices.raise(payload, handshake.initialized ? (activeSessionId ?? boundSessionId) : null),
+			subscribeAcpNotices(bus, runtimeNotices, noticeSession, (sessionId) => announceCommands(sessionId)),
+			bus.subscribe("session.eggs_changed", (event) =>
+				sessionMeta(event.sessionId, { [ACP_EGGS_META_KEY]: event.active }),
 			),
-			bus.subscribe("session.eggs_changed", (payload) => {
-				const sessionId = activeSessionId ?? boundSessionId;
-				if (!handshake.initialized || sessionId === null || payload.sessionId !== sessionId) return;
-				options.transport.notify("session/update", {
-					sessionId,
-					update: { sessionUpdate: "session_info_update", _meta: { [ACP_EGGS_META_KEY]: payload.active } },
-				});
-			}),
-			bus.subscribe("memory.guardian_changed", (payload) => {
-				const sessionId = activeSessionId ?? boundSessionId;
-				if (!handshake.initialized || sessionId === null || payload.sessionId !== sessionId) return;
-				options.transport.notify("session/update", {
-					sessionId,
-					update: {
-						sessionUpdate: "session_info_update",
-						_meta: { [ACP_MEMORY_META_KEY]: { state: payload.state } },
-					},
-				});
-			}),
+			bus.subscribe("memory.guardian_changed", (event) =>
+				sessionMeta(event.sessionId, { [ACP_MEMORY_META_KEY]: { state: event.state } }),
+			),
 			bus.subscribe("budget.alerted", (payload: BudgetAlertPayload) => {
 				// The stop parks the request inside the running prompt, so it crosses
 				// as that prompt's notice chunk, figures beside the text (#424). Between

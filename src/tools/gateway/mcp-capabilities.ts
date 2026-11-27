@@ -58,6 +58,7 @@ import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import { mcpRemoteTransportIdentity, mcpTransportIdentity } from "../../domains/safety/information-flow.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
+import { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation } from "../context/mcp-skills.js";
 import { readMaxBytes } from "../read.js";
 import { MCP_DOWNLOADS_DIR, toolOffloadDir } from "../result-shaping.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
@@ -80,6 +81,7 @@ import type {
 	McpCapabilitySourceOptions,
 	McpCatalogEntry,
 	McpCloseReport,
+	McpDeclarationReload,
 	McpServerEventListing,
 	McpServerListing,
 	McpServerSurfaceListing,
@@ -235,6 +237,144 @@ function preparePluginDataDir(declaration: GatewayMcpServer): void {
 /** Serialize an argv vector for the shell classifier only. No shell executes this text. */
 function quoted(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function createMcpDeclarationReloader(deps: {
+	isClosed: () => boolean;
+	trustOptions: Parameters<typeof resolveMcpServers>[0];
+	states: () => Map<string, ServerState>;
+	close: (state: ServerState) => Promise<unknown> | undefined;
+	unregister: (name: DynamicToolName) => void;
+	admit: (declaration: ResolvedMcpServer) => GatewayMcpServer;
+	setDiagnostics: (next: string[]) => void;
+}): () => Promise<McpDeclarationReload | null> {
+	let tail: Promise<unknown> = Promise.resolve();
+	const run = async (): Promise<McpDeclarationReload | null> => {
+		if (deps.isClosed()) throw new Error("MCP capability source is closed");
+		const resolved = resolveMcpServers(deps.trustOptions);
+		const reload = await swapMcpDeclarations(deps.states(), resolved.servers, deps);
+		if (reload === null) return null;
+		const nextDiagnostics = resolvedDiagnostics(resolved);
+		deps.setDiagnostics(nextDiagnostics);
+		return { ...reload, diagnostics: [...nextDiagnostics] };
+	};
+	return () => {
+		const next = tail.then(run, run);
+		tail = next.catch(() => undefined);
+		return next;
+	};
+}
+
+function sameStringList(a: ReadonlyArray<string> | undefined, b: ReadonlyArray<string> | undefined): boolean {
+	if (a === b) return true;
+	if (!a || !b || a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+	return true;
+}
+
+/** Whether `current` admits what the session's snapshot `admitted` did: same file, digest, trust, classes, network grant and file targets. */
+function sameMcpAdmission(current: ResolvedMcpServer, admitted: GatewayMcpServer): boolean {
+	return (
+		current.scope === admitted.scope &&
+		current.path === admitted.path &&
+		current.digest === admitted.digest &&
+		current.trust.status === admitted.trust.status &&
+		current.trust.actionClass === admitted.trust.actionClass &&
+		(current.trust.status === "trusted" ? current.trust.network : undefined) ===
+			(admitted.trust.status === "trusted" ? admitted.trust.network : undefined) &&
+		sameStringList(current.fileTargets, admitted.fileTargets)
+	);
+}
+
+function resolvedDiagnostics(resolved: ReturnType<typeof resolveMcpServers>): string[] {
+	return [
+		...resolved.diagnostics.map((entry) => `${entry.scope} ${entry.path}: ${entry.message}`),
+		...resolved.trustDiagnostics,
+	];
+}
+
+/** A server not yet launched this session. An ACP client's server has no catalog to read. */
+function freshServerState(declaration: GatewayMcpServer): ServerState {
+	return {
+		declaration,
+		client: null,
+		connection: null,
+		tools: [],
+		truncated: false,
+		registered: [],
+		unregistrable: [],
+		refused: new Map(),
+		failure: null,
+		catalog: declaration.scope === "client" ? null : undefined,
+	};
+}
+
+/**
+ * The swap `/reload mcp` makes: the session's declared servers against a fresh resolve. A removed or changed
+ * server closes and its tools unregister; an added or changed one enters unlaunched, with the trust its
+ * declaration holds now. Every declared server left untrusted is named, changed or not. Nothing is swapped while
+ * a server it would close has a call in flight.
+ */
+async function swapMcpDeclarations(
+	states: Map<string, ServerState>,
+	resolved: ReadonlyArray<ResolvedMcpServer>,
+	host: {
+		close(state: ServerState): Promise<unknown> | undefined;
+		unregister(name: DynamicToolName): void;
+		admit(declaration: ResolvedMcpServer): GatewayMcpServer;
+	},
+): Promise<Omit<McpDeclarationReload, "diagnostics"> | null> {
+	const reload: Omit<McpDeclarationReload, "diagnostics"> = {
+		added: [],
+		removed: [],
+		changed: [],
+		unchanged: [],
+		needsTrust: [],
+	};
+	const retired: ServerState[] = [];
+	const entering: ResolvedMcpServer[] = [];
+	for (const state of states.values()) {
+		if (state.declaration.scope === "client") continue;
+		const next = resolved.find((declaration) => declaration.id === state.declaration.id);
+		if (next !== undefined && sameMcpAdmission(next, state.declaration)) {
+			reload.unchanged.push(next.id);
+			continue;
+		}
+		retired.push(state);
+		if (next === undefined) reload.removed.push(state.declaration.id);
+		else {
+			reload.changed.push(next.id);
+			entering.push(next);
+		}
+	}
+	if (retired.some((state) => (state.inflight ?? 0) > 0)) return null;
+	for (const declaration of resolved) {
+		if (states.has(declaration.id)) continue;
+		reload.added.push(declaration.id);
+		entering.push(declaration);
+	}
+	await Promise.all(retired.map((state) => host.close(state)));
+	await Promise.all(retired.map((state) => state.connection?.ready));
+	for (const state of retired) {
+		for (const name of state.registered) host.unregister(name);
+		states.delete(state.declaration.id);
+	}
+	for (const declaration of entering) states.set(declaration.id, freshServerState(host.admit(declaration)));
+	for (const state of states.values()) {
+		if (state.declaration.scope !== "client" && state.declaration.trust.status !== "trusted")
+			reload.needsTrust.push(state.declaration.id);
+	}
+	for (const ids of Object.values(reload)) ids.sort();
+	return reload;
+}
+
+/** The servers whose process group outlived its teardown. */
+function closeReport(teardowns: ReadonlyArray<McpTeardownReport>): McpCloseReport {
+	return {
+		incomplete: teardowns.flatMap(({ id, outcome }) =>
+			outcome.complete ? [] : [{ id, pgid: outcome.pgid, boundMs: outcome.boundMs }],
+		),
+	};
 }
 
 export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): McpCapabilitySource {
@@ -431,26 +571,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	const resolveStates = (): Map<string, ServerState> => {
 		if (states !== null) return states;
 		const resolved = resolveMcpServers(trustOptions);
-		diagnostics = [
-			...resolved.diagnostics.map((entry) => `${entry.scope} ${entry.path}: ${entry.message}`),
-			...resolved.trustDiagnostics,
-		];
+		diagnostics = resolvedDiagnostics(resolved);
 		states = new Map(
-			resolved.servers.map((declaration) => [
-				declaration.id,
-				{
-					declaration: admittedDeclaration(declaration),
-					client: null,
-					connection: null,
-					tools: [],
-					truncated: false,
-					registered: [],
-					unregistrable: [],
-					refused: new Map(),
-					failure: null,
-					catalog: undefined,
-				},
-			]),
+			resolved.servers.map((declaration) => [declaration.id, freshServerState(admittedDeclaration(declaration))]),
 		);
 		return states;
 	};
@@ -1059,17 +1182,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					// silently replace its digest, classes, or network grant.
 					if (declaration.scope !== "client") {
 						const current = resolveMcpServers(trustOptions).servers.find((entry) => entry.id === declaration.id);
-						if (
-							current === undefined ||
-							current.scope !== declaration.scope ||
-							current.path !== declaration.path ||
-							current.digest !== declaration.digest ||
-							current.trust.status !== "trusted" ||
-							current.trust.actionClass !== declaration.trust.actionClass ||
-							current.trust.network !== (declaration.trust.status === "trusted" ? declaration.trust.network : undefined)
-						) {
+						if (current?.trust.status !== "trusted" || !sameMcpAdmission(current, declaration)) {
 							throw new Error(
-								`MCP server '${declaration.id}' changed or is no longer trusted since this session admitted it; review its declaration and entry files, then start a new session`,
+								`MCP server '${declaration.id}' changed or is no longer trusted since this session admitted it; review its declaration and entry files, then ${options.admitted === undefined ? "run /reload mcp" : "dispatch again"}`,
 							);
 						}
 					}
@@ -1489,16 +1604,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						? { ...common, url: server.url, headers: {} }
 						: { ...common, command: server.command, args: [...server.args], env: { ...server.env } };
 				const state: ServerState = {
-					declaration,
-					client: null,
-					connection: null,
-					tools: [],
-					truncated: false,
-					registered: [],
-					unregistrable: [],
-					refused: new Map(),
-					failure: null,
-					catalog: null,
+					...freshServerState(declaration),
 					...("url" in server ? { clientHeaders: { ...server.headers } } : {}),
 				};
 				all.set(id, state);
@@ -1518,6 +1624,17 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				all.delete(state.declaration.id);
 			}
 		},
+		reloadDeclarations: createMcpDeclarationReloader({
+			isClosed: () => closed,
+			trustOptions,
+			states: resolveStates,
+			close: closeClient,
+			unregister: (name) => registry.unregister?.(name),
+			admit: admittedDeclaration,
+			setDiagnostics: (next) => {
+				diagnostics = next;
+			},
+		}),
 		async list(invokeOptions) {
 			if (invokeOptions?.signal?.aborted) throw new McpError("aborted", "MCP discovery aborted");
 			const all = [...resolveStates().values()];
@@ -1912,6 +2029,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const held = resolveStates().get(id)?.skills;
 			return held !== undefined && "listing" in held ? held.listing : null;
 		},
+		skillLoading: { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation },
 		connectedIds(options) {
 			return [...(states?.values() ?? [])]
 				.filter((state) => state.client !== null && (!options?.readyOnly || state.client.state().status === "ready"))
@@ -1928,10 +2046,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const all = [...(states?.values() ?? [])];
 				await Promise.all(all.map(closeClient));
 				await Promise.all(all.map((state) => state.connection?.ready));
-				const report: McpCloseReport = { incomplete: [] };
-				for (const { id, outcome } of teardowns) {
-					if (!outcome.complete) report.incomplete.push({ id, pgid: outcome.pgid, boundMs: outcome.boundMs });
-				}
+				const report = closeReport(teardowns);
 				if (exitHookInstalled) {
 					process.removeListener("exit", killLaunchedOnExit);
 					exitHookInstalled = false;

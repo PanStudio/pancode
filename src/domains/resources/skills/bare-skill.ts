@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { isPluginId } from "../../../core/plugin-id.js";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { isSemanticVersion } from "../../extensions/compatibility.js";
-import { isPluginId, PLUGIN_EXTENSION_KEY, PLUGIN_SCHEMA } from "../../plugins/index.js";
+import { PLUGIN_EXTENSION_KEY, PLUGIN_SCHEMA } from "../../plugins/index.js";
 import { splitYamlFrontmatter, stringField } from "../common-loader.js";
 
 /**

@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
+import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
 import { mcpLiveStatuses } from "../cli/mcp.js";
 import { segmentUsageFromView } from "../cli/modes/json-stream.js";
 import { runHeadlessMainAgent } from "../cli/modes/print.js";
@@ -311,6 +312,7 @@ import {
 	buildModelReplayAgentMessagesFromTurns,
 	continuityContextFromSession,
 } from "../session-control/model-session-replay.js";
+import type { ReloadTarget } from "../session-control/reload-report.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
 import { surfaceSpecPlacement } from "../tools/surface.js";
@@ -330,6 +332,7 @@ import { reloadPluginResourcesAndNotify } from "./plugin-reload.js";
 import { createReloadClasses } from "./reload-classes.js";
 import { applyRouteOverlay } from "./route-overlay.js";
 import { createJudgeScreen, createSafetyJudgeCompletion, createSafetyJudgeHost } from "./safety-judge-host.js";
+import { createSessionExtensionHosting } from "./session-extension-hosting.js";
 import { createSessionSettingsView } from "./session-settings-view.js";
 import { createSideRequestAdmission } from "./side-request-admission.js";
 import { createSystemOneControl } from "./system-one-control.js";
@@ -1089,17 +1092,8 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		if (!interactive) writeMiddlewareDiagnosticToStderr(diagnostic);
 	});
 
-	// Residency and runtime notices (model swaps, double residency, VRAM
-	// stress) reach the operator through the interactive notice renderer; a
-	// headless run has no subscriber, so mirror them to stderr there; ACP sends them as session info. Silent
-	// model swaps are exactly the failure mode the residency policy forbids.
-	if (!interactive && !acpMode) {
-		bus.subscribe("runtime.notice_raised", (payload: unknown) => {
-			const notice = payload as { level?: string; message?: string } | undefined;
-			if (typeof notice?.message !== "string") return;
-			process.stderr.write(`[pancode:runtime] ${notice.level ?? "info"}: ${notice.message}\n`);
-		});
-	}
+	// Runtime and session notices: the terminal renders them, ACP sends them as session info, a headless run prints them.
+	if (!interactive && !acpMode) writeHeadlessNoticesToStderr(bus);
 
 	termination.onDrain(watchCopilotStreamQuota());
 	termination.onDrain(
@@ -1457,6 +1451,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	let bootHookNotices = true;
 	const reloadPlugins = () =>
 		reloadPluginResourcesAndNotify(process.cwd(), (event) => bus.emit("plugin.reloaded", event));
+	const chatIdle = () => !chat.isStreaming() && chat.turnPreparation().phase === "idle";
 	const reloadClasses = createReloadClasses({
 		config,
 		bus,
@@ -1464,6 +1459,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		hub: () => committedPluginSnapshot(process.cwd()),
 		reloadHub: reloadPlugins,
 		extensions: () => extensions?.snapshot()?.packages ?? [],
+		mcp: { source: () => toolBootstrap.mcpCapabilities, idle: chatIdle },
 	});
 	// Every main session hosts api 2 runtimes: the TUI itself, a headless run
 	// and ACP through `startExtensionHost`. Workers never do.
@@ -1479,15 +1475,21 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		recordReceipt: extensionHookReceiptSink(() => session?.current()?.id),
 		report: (line) => {
 			if (reloadClasses.captureIssue(line)) return;
-			if (!interactive) process.stderr.write(`${line}\n`);
-			else if (bootHookNotices) initialNotices.push(line);
-			else bus.emit("extension.load_failed", { message: line });
+			if (!bootHookNotices) bus.emit("extension.load_failed", { message: line });
+			else if (interactive) initialNotices.push(line);
+			else process.stderr.write(`${line}\n`);
 		},
 		onCommitted: () => {
 			if (!reloadClasses.active) reloadPlugins();
 		},
 	});
 	workerHookSource = extensionReload.workerHooks;
+	const commitExtensionHooks = () => {
+		const outcome = extensionReload.reload();
+		for (const issue of outcome.diagnostics.entries) reloadClasses.captureIssue(`${issue.type}: ${issue.message}`);
+		reloadClasses.captureExtensionCommit(formatExtensionReloadNotice(outcome)[1]);
+		return outcome;
+	};
 	await bootPhaseBoundary?.();
 	extensionReload.applyBoot();
 	middlewareRegistrar.registerHook(protectedArtifactsGuard);
@@ -3089,10 +3091,14 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// A client that answers no interviews gets each tool interview cancelled
 		// with reason headless, the way a run without an operator does.
 		const acpExtensionAsk = acpInterviews ? askUserBridge : undefined;
-		let acpExtensionHost = await startSessionExtensionHost("acp", acpExtensionAsk);
-		// A session that booted with nothing to host gets its host from the
-		// reload that admits an extension installed later.
-		let acpExtensionHostStart: Promise<void> | undefined;
+		const acpExtensions = createSessionExtensionHosting({
+			start: () => startSessionExtensionHost("acp", acpExtensionAsk),
+			commit: commitExtensionHooks,
+			idle: chatIdle,
+			bus,
+			report: (line) => process.stderr.write(`[pancode:acp] ${line}\n`),
+		});
+		await acpExtensions.ensure();
 		let acpQuotaService: import("../domains/quota/service.js").QuotaService | undefined;
 		let acpQuotaRead: Promise<void> | undefined;
 		const refreshAcpQuota = (): Promise<void> => {
@@ -3418,6 +3424,10 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 								// `/share` picks from the runs this process watched, folded from the
 								// dispatch lifecycle exactly as the terminal's worker blocks are.
 								listWorkerRuns: () => acpWorkerRuns.list(),
+								reloadClasses: async (target: ReloadTarget): Promise<AcpHostReport> => {
+									const report = await reloadClasses.run(target, () => acpExtensions.reloadStep());
+									return { level: report.failed ? "warn" : "info", text: report.text };
+								},
 								...(session
 									? {
 											exportTranscript: (path?: string): AcpHostReport =>
@@ -3548,7 +3558,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 											listPrompts: () => resources.prompts(process.cwd()).items,
 										}
 									: {}),
-								operatorExtensions: () => acpExtensionHost?.operator,
+								operatorExtensions: () => acpExtensions.current?.operator,
 								...(mcpSubmit
 									? {
 											mcpPrompts: () => mcpPromptSlashRows(mcpSubmit, resources?.promptsForDisplay(process.cwd()).items ?? []),
@@ -3621,27 +3631,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 							extensions: {
 								list: () => extensions.list(process.cwd(), { all: true }),
 								// The runtimes restart on the generation this commit published.
-								reload: () => {
-									const outcome = extensionReload.reload();
-									if (outcome.status !== "committed") return outcome;
-									if (acpExtensionHost) void acpExtensionHost.restart();
-									else
-										acpExtensionHostStart ??= startSessionExtensionHost("acp", acpExtensionAsk)
-											.then(
-												(host) => {
-													acpExtensionHost = host;
-												},
-												(err) => {
-													process.stderr.write(
-														`[pancode:acp] extension host failed to start: ${err instanceof Error ? err.message : String(err)}\n`,
-													);
-												},
-											)
-											.finally(() => {
-												acpExtensionHostStart = undefined;
-											});
-									return outcome;
-								},
+								reload: () => acpExtensions.reload(),
 							},
 						}
 					: {}),
@@ -3735,8 +3725,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			// The drain hook that disposes the extension host never runs on this
 			// path either, and its runtime children would keep the process alive
 			// after the client left. Disposal is idempotent.
-			await acpExtensionHostStart;
-			await acpExtensionHost?.dispose();
+			await acpExtensions.dispose();
 			unsubscribeChatShutdown();
 			unsubscribeDispatchShutdown?.();
 			await dispatch.drain();
@@ -3752,8 +3741,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		} finally {
 			// A throw from the serve loop or settlement skips the disposal above,
 			// and the runtime children would still hold the process open.
-			await acpExtensionHostStart;
-			await acpExtensionHost?.dispose();
+			await acpExtensions.dispose();
 			acpWorkerRuns.dispose();
 			unsubscribeAcpRoutingNotices();
 			unsubscribeAcpLoopGuardStop();
@@ -3771,7 +3759,13 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// durable closing turn the interactive surface produces.
 		const unsubscribeLoopGuardStop = subscribeLoopGuardStop(bus, chat);
 		const headlessPermissionReason = HEADLESS_PERMISSION_DENIED_REASON;
-		let headlessExtensionHost: import("./extension-host.js").ExtensionHost | null = null;
+		const headlessExtensions = createSessionExtensionHosting({
+			start: () => startSessionExtensionHost("headless", options.headless?.answers?.interview),
+			commit: commitExtensionHooks,
+			idle: chatIdle,
+			bus,
+			report: (line) => process.stderr.write(`pancode: ${line}\n`),
+		});
 		// `--max-cost-usd` bounds what this run adds, so a continued session's
 		// earlier spend does not count against it. It becomes the session
 		// ceiling every paid request already passes: the main agent's, each
@@ -3822,7 +3816,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			// extension runtime with no model turn, as they do in the terminal.
 			const typed = parseSlashCommand(options.headless.prompt);
 			if (typed.kind === "unknown-command" && installedExtensionClaims(typed.token, process.cwd())) {
-				headlessExtensionHost = await startSessionExtensionHost("headless", options.headless.answers?.interview);
+				const headlessExtensionHost = await headlessExtensions.ensure();
 				await headlessExtensionHost?.ready.catch(() => undefined);
 				const answer = await answerExtensionLine(
 					options.headless.prompt,
@@ -3870,10 +3864,9 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			// Started only for a run that reaches the model, so the early exits
 			// above spawn no runtime. Only a --answers file answers here; without
 			// one a tool's interview is cancelled with reason headless.
-			headlessExtensionHost ??= await startSessionExtensionHost("headless", options.headless.answers?.interview);
 			// The first turn's turn_start reaches a runtime only once the startup
 			// generation has committed. A run whose startup failed goes on without runtimes.
-			await headlessExtensionHost?.ready.catch(() => undefined);
+			await (await headlessExtensions.ensure())?.ready.catch(() => undefined);
 			// SIGINT while an `@path` in the prompt is read ends the run before any
 			// request; aborting kills poppler, a detached child that would outlive it (#438).
 			const attachmentRead = new AbortController();
@@ -3953,7 +3946,12 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 					: {}),
 				mode: options.headless.mode ?? "text",
 				...(options.headless.routeNotice ? { routeNotice: options.headless.routeNotice } : {}),
-				...(options.headless.steerChannel ? { steerChannel: options.headless.steerChannel } : {}),
+				...(options.headless.steerChannel
+					? {
+							steerChannel: options.headless.steerChannel,
+							reload: (target: ReloadTarget) => reloadClasses.run(target, () => headlessExtensions.reloadStep()),
+						}
+					: {}),
 				...(options.headless.failOnNoop === true ? { failOnNoop: true } : {}),
 				...(options.headless.failOnVerify === true ? { failOnVerify: true } : {}),
 				...(options.headless.outputSchema !== undefined ? { outputSchema: options.headless.outputSchema } : {}),
@@ -4029,7 +4027,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			unsubscribeLoopGuardStop();
 			// A run that throws skips the termination drain; the host's runtime
 			// children would otherwise keep the process alive. Disposal is idempotent.
-			await headlessExtensionHost?.dispose();
+			await headlessExtensions.dispose();
 		}
 	}
 
@@ -4098,12 +4096,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		...(resources ? { resources } : {}),
 		...(extensions ? { extensions } : {}),
 		runtimeHooks,
-		reloadExtensions: () => {
-			const outcome = extensionReload.reload();
-			for (const issue of outcome.diagnostics.entries) reloadClasses.captureIssue(`${issue.type}: ${issue.message}`);
-			reloadClasses.captureExtensionCommit(formatExtensionReloadNotice(outcome)[1]);
-			return outcome;
-		},
+		reloadExtensions: commitExtensionHooks,
 		reloadPlugins,
 		...(toolBootstrap.mcpCapabilities
 			? { mcpStatuses: () => mcpLiveStatuses(toolBootstrap.mcpCapabilities?.catalog().servers ?? []) }

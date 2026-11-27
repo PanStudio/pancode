@@ -22,12 +22,6 @@ import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { isRecord } from "../../../core/type-guards.js";
 import type { McpResourceRead } from "./resources.js";
 
-/**
- * The rail an MCP skill's first activation asks on. Only the operator answers
- * it: an approval is a standing grant recorded in mcp-trust.json.
- */
-export const MCP_SKILL_APPROVAL_RULE_ID = "mcp-skill-approval";
-
 export const MCP_SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
 
 /** The per-skill limits the extension fixes; a host must load a skill up to both. */

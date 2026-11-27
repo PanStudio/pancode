@@ -21,14 +21,10 @@ import {
 	toolBudgetStopReason,
 } from "../session-control/loop-guard-interrupt.js";
 import type { NoticeSource } from "../session-control/notice-source.js";
+import { subscribeSessionNotices } from "../session-control/session-notices.js";
 import { chainStepToolCallId, displayToolCall, gatewayChainSteps } from "../tools/gateway-display.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
-import {
-	budgetAlertNotice,
-	middlewareHookFailedSessionNotice,
-	restartRequiredNotice,
-	safetyBlockedNotice,
-} from "./bus-notices.js";
+import { budgetAlertNotice, safetyBlockedNotice } from "./bus-notices.js";
 import { classifyNoticeLevel } from "./footer/notifications.js";
 import type { AgentStatus, TurnSummary } from "./status/index.js";
 
@@ -321,22 +317,6 @@ export function createInteractiveEventProjection(deps: InteractiveEventProjectio
 			deps.refreshFooter();
 			deps.requestRender();
 		}),
-		// The first sight of a hook file changed since the operator's baseline:
-		// the next git command PanCode runs outside the sandbox asks the operator.
-		deps.bus.subscribe("safety.git_hooks_changed", (payload) => {
-			if (typeof payload?.message !== "string" || payload.message.length === 0) return;
-			deps.appendTranscriptNotice("warn", payload.message, "safety");
-			deps.requestRender();
-		}),
-		// Git PanCode ran itself with hooks off after drift, announced once per set
-		// of changes. At yolo it ran as configured, and only the exit summary
-		// records it.
-		deps.bus.subscribe("safety.internal_git_drifted", (payload) => {
-			if (payload?.hardened !== true || payload.announce !== true) return;
-			if (typeof payload.message !== "string" || payload.message.length === 0) return;
-			deps.appendTranscriptNotice("warn", payload.message, "safety");
-			deps.requestRender();
-		}),
 		deps.bus.subscribe("run.scope_notice_raised", (payload) => {
 			const notice = readDispatchScopeNotice(payload);
 			if (notice === null) return;
@@ -449,14 +429,6 @@ export function createInteractiveEventProjection(deps: InteractiveEventProjectio
 			deps.refreshFooter();
 			deps.requestRender();
 		}),
-		deps.bus.subscribe("config.restart_required", (payload) => {
-			if (deps.isReloadReporting?.()) return;
-			const text = restartRequiredNotice(payload);
-			if (text === null) return;
-			deps.notify("warning", text, "config:restart-required", 0);
-			deps.refreshFooter();
-			deps.requestRender();
-		}),
 		deps.bus.subscribe("budget.alerted", (payload) => {
 			const notice = budgetAlertNotice(payload);
 			if (notice === null) return;
@@ -474,23 +446,27 @@ export function createInteractiveEventProjection(deps: InteractiveEventProjectio
 		}),
 	);
 
-	const seenMiddlewareBudgetWarnings = new Set<string>();
+	// The session facts every surface reports; the worker card already shows a foreign ask here.
 	remainingUnsubscribers.push(
-		deps.bus.subscribe("extension.load_failed", (payload) => {
-			if (typeof payload?.message !== "string" || payload.message.trim().length === 0) return;
-			deps.notify("warning", payload.message, `extension:${payload.message}`);
-			deps.requestRender();
-		}),
-		deps.bus.subscribe("middleware.hook_failed", (payload) => {
-			const notice = middlewareHookFailedSessionNotice(payload, seenMiddlewareBudgetWarnings);
-			if (notice === null) return;
-			deps.notify(
-				notice.level === "warn" ? "warning" : "error",
-				notice.text,
-				`middleware:${payload.registrationId}:${payload.hook}:${payload.kind}`,
-			);
-			deps.requestRender();
-		}),
+		subscribeSessionNotices(
+			deps.bus,
+			(notice) => {
+				if (notice.surface === "transcript") deps.appendTranscriptNotice(notice.level, notice.text, notice.source);
+				else
+					deps.notify(
+						notice.level === "warn" ? "warning" : notice.level,
+						notice.text,
+						notice.key,
+						...(notice.sticky ? [0] : []),
+					);
+				if (notice.sticky) deps.refreshFooter();
+				deps.requestRender();
+			},
+			{
+				skip: ["approval.foreign_changed"],
+				...(deps.isReloadReporting ? { reloadReporting: deps.isReloadReporting } : {}),
+			},
+		),
 	);
 
 	let primaryDisposed = false;
