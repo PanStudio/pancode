@@ -50,7 +50,8 @@ import {
 	readOnlyRuntimeDeclaration,
 	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
-import { type PackBinaryRunRequest, type PackBinaryRunResult, parsePackBinaryRun } from "./services/binaries.js";
+import { type PackBinaryRunRequest, parsePackBinaryRun } from "./services/binaries.js";
+import type { PackBinaryRunResult } from "./services/binary-runs.js";
 import type { ExtensionWorkHost, ExtensionWorkKind } from "./services/host.js";
 import { createExtensionRequestScope, type OwnedExtensionRequestScope } from "./services/scope.js";
 import type { LoadableExtension } from "./types.js";

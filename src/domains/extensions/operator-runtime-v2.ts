@@ -40,7 +40,7 @@ import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcess
 import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
 import { type ExtensionGlobWatch, watchExtensionGlobs } from "./runtime-watch.js";
-import { type PackBinaryCaller, runPackBinary, servePackPane } from "./services/binaries.js";
+import { type PackBinaryCaller, runPackBinary, servePackPane } from "./services/binary-runs.js";
 import type { ExtensionKeyClaims } from "./services/keys.js";
 import type { ExtensionPaneHost } from "./services/pane.js";
 import { createExtensionWork, type ExtensionWorkOptions } from "./services/work.js";

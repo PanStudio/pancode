@@ -45,14 +45,13 @@ import { createExtensionRuntimeHookBridge } from "../../src/domains/extensions/r
 import { readOnlyRuntimeDeclaration } from "../../src/domains/extensions/runtime-sandbox.js";
 import {
 	installPackBinaries,
-	type PackBinaryCaller,
 	packBinaryPath,
 	parsePackBinaryRun,
 	removePackBinaries,
 	resolvePackBinary,
-	runPackBinary,
 	syncPackBinaries,
 } from "../../src/domains/extensions/services/binaries.js";
+import { type PackBinaryCaller, runPackBinary } from "../../src/domains/extensions/services/binary-runs.js";
 import { resolveExtensionKeys } from "../../src/domains/extensions/services/keys.js";
 import { createExtensionPaneHost, type ExtensionPaneOwner } from "../../src/domains/extensions/services/pane.js";
 import {
