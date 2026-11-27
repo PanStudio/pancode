@@ -200,6 +200,9 @@ export async function prepareMcpFiles(input: {
 		if (argument?.maxSize != null && bytes.byteLength > argument.maxSize) {
 			return `${label} names a file of ${formatSize(bytes.byteLength)}; the tool takes at most ${argument.maxSize} bytes per file`;
 		}
+		if (total + bytes.byteLength > MCP_FILE_LIMITS.uploadBytesPerCall) {
+			return `the call's files pass PanCode's bound of ${formatSize(MCP_FILE_LIMITS.uploadBytesPerCall)} per call`;
+		}
 		total += bytes.byteLength;
 		const fileInput = mcpFileInput(`file-${index + 1}`, name, bytes);
 		if (!mcpFileAccepted(argument?.accept ?? null, name, fileInput.mimeType)) {

@@ -31,6 +31,7 @@ import {
 	MCP_TRUST_CAPS,
 	type McpBuiltinSource,
 	mcpConfigPaths,
+	mcpFileInput,
 	mcpServerDigest,
 	mcpSurfaceDigest,
 	mcpTrustPath,
@@ -44,6 +45,7 @@ import {
 import { clearPluginSnapshots, disablePlugin, installPlugin, PLUGIN_SCHEMA } from "../../src/domains/plugins/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/index.js";
+import { saveMcpDownloads, transferMcpUploads } from "../../src/tools/gateway/mcp-file-transfer.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { applyRegisteredToolClassification } from "../../src/tools/registry-call-prep.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
@@ -355,6 +357,69 @@ describe("mcp server trust", () => {
 			actionClass: "read",
 			reasons: ["mcp trust: read"],
 		});
+	});
+
+	it("scrubs target URLs from flow refusals and resolves cancellation without rejecting", async () => {
+		const { project } = scratch();
+		const bytes = new TextEncoder().encode("secret-payload");
+		const held = new Map([["file-1", { input: mcpFileInput("file-1", "notes.txt", bytes), bytes }]]);
+		const targetUrl = "https://storage.example.test/up/CAP_SECRET_PATH?sig=CAP_SECRET_SIG";
+		const request = {
+			requestState: "rs-1",
+			uploads: [
+				{
+					fileId: "file-1",
+					location: { url: targetUrl },
+					method: "PUT" as const,
+					form: null,
+					headers: [],
+					credentials: "omit" as const,
+					expiresAt: null,
+				},
+			],
+		};
+		const context = {
+			address: new URL("https://mcp.example.test/mcp"),
+			credentialOrigin: "https://mcp.example.test",
+			authorization: async () => null,
+			fileTargets: [],
+		};
+		const flowRefusal = await transferMcpUploads(request, held, {
+			context,
+			admitTarget: (url) => `rule 'confidential' blocks destination tool mcp_docs__summarize -> ${url}`,
+			signal: undefined,
+		});
+		ok(typeof flowRefusal === "string");
+		ok(flowRefusal.includes("https://storage.example.test"));
+		ok(!flowRefusal.includes("CAP_SECRET_PATH"), "target path token must not leak in flow refusal");
+		ok(!flowRefusal.includes("CAP_SECRET_SIG"), "target query token must not leak in flow refusal");
+
+		const aborted = new AbortController();
+		aborted.abort();
+		const uploadCancelled = await transferMcpUploads(request, held, {
+			context,
+			admitTarget: undefined,
+			signal: aborted.signal,
+		});
+		strictEqual(uploadCancelled, "the upload was cancelled");
+		const downloadCancelled = await saveMcpDownloads(
+			[
+				{
+					location: { url: targetUrl },
+					headers: [],
+					credentials: "omit",
+					expiresAt: null,
+					name: "report.csv",
+					mimeType: "text/csv",
+					size: 12,
+					digest: null,
+				},
+			],
+			join(project, "mcp-files"),
+			{ context, admitTarget: undefined, signal: aborted.signal },
+		);
+		deepStrictEqual(downloadCancelled.saved, []);
+		deepStrictEqual(downloadCancelled.dropped, ["download 1 (report.csv): the download was cancelled"]);
 	});
 
 	it("parses declared path arguments into the digest and refuses a write path on a read tool", () => {

@@ -63,7 +63,8 @@ export interface McpToolCallResult {
 	text: string;
 	textTruncated: boolean;
 	/** What the operator answered to each elicitation the server sent during this call, never the values. */
-	elicitations?: McpElicitationOutcome[] /** The result's files-extension download targets, read only when PanCode declared `download`. */;
+	elicitations?: McpElicitationOutcome[];
+	/** The result's files-extension download targets, read only when PanCode declared `download`. */
 	downloads?: { targets: McpDownloadTarget[]; dropped: string[] };
 }
 

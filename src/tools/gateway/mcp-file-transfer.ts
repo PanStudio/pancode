@@ -110,6 +110,13 @@ async function routeFor(resolved: McpResolvedTarget, signal: AbortSignal | undef
 	return { kind: "pinned", address: first };
 }
 
+function scrubTargetUrl(text: string, url: URL): string {
+	let out = text.replaceAll(url.href, url.origin);
+	const normalized = `${url.origin}${url.pathname}${url.search}`;
+	if (normalized !== url.origin) out = out.replaceAll(normalized, url.origin);
+	return out;
+}
+
 /** Every rule a target must pass before a byte moves: the target rules, expiry, the flow check, credentials and the address. */
 async function checkTarget(
 	target: McpUploadTarget | McpDownloadTarget,
@@ -122,7 +129,8 @@ async function checkTarget(
 		return "its target expired before PanCode could use it";
 	if (!resolved.serverOrigin) {
 		const refusal = policy.admitTarget?.(resolved.url.href) ?? null;
-		if (refusal !== null) return `the information-flow policy refuses its storage: ${refusal}`;
+		if (refusal !== null)
+			return `the information-flow policy refuses its storage: ${scrubTargetUrl(refusal, resolved.url)}`;
 	}
 	const headers = [...target.headers];
 	if (resolved.include) {
@@ -245,18 +253,38 @@ export async function transferMcpUploads(
 	};
 	const planned: Array<{ target: McpUploadTarget; held: McpHeldFile; checked: CheckedTarget }> = [];
 	for (const target of request.uploads) {
+		if (policy.signal?.aborted) return "the upload was cancelled";
 		const held = files.get(target.fileId);
 		if (held === undefined) return `the server named a file the call does not hold`;
-		const checked = await checkTarget(target, policy, credential);
+		let checked: CheckedTarget | string;
+		try {
+			checked = await checkTarget(target, policy, credential);
+		} catch (error) {
+			if (policy.signal?.aborted) return "the upload was cancelled";
+			return `the server's upload target for ${held.input.name} was rejected: ${errorCode(error)}`;
+		}
 		if (typeof checked === "string") return `the server's upload target for ${held.input.name} was rejected: ${checked}`;
 		planned.push({ target, held, checked });
 	}
+	let started = false;
 	for (const { target, held, checked } of planned) {
 		const { headers, body } = uploadRequestOf(target, held, checked.headers);
 		const attempts = target.method === "PUT" ? UPLOAD_PUT_RETRIES + 1 : 1;
 		let failure: string | null = null;
 		for (let attempt = 0; attempt < attempts; attempt += 1) {
-			policy.signal?.throwIfAborted();
+			if (policy.signal?.aborted) {
+				return started
+					? `the upload of ${held.input.name} was cancelled; the server's storage may already hold some of the call's file bytes`
+					: "the upload was cancelled";
+			}
+			if (target.expiresAt !== null && target.expiresAt <= Date.now()) {
+				if (!started) {
+					return `the server's upload target for ${held.input.name} was rejected: its target expired before PanCode could use it`;
+				}
+				failure = "its target expired before PanCode could use it";
+				break;
+			}
+			started = true;
 			const timeout = AbortSignal.timeout(uploadTimeoutMs(body.byteLength));
 			const signal = policy.signal === undefined ? timeout : AbortSignal.any([policy.signal, timeout]);
 			try {
@@ -269,7 +297,9 @@ export async function transferMcpUploads(
 				failure = statusFailure(response.status);
 				if (response.status < 500) break;
 			} catch (error) {
-				policy.signal?.throwIfAborted();
+				if (policy.signal?.aborted) {
+					return `the upload of ${held.input.name} was cancelled; the server's storage may already hold some of the call's file bytes`;
+				}
 				failure = errorCode(error);
 			}
 		}
@@ -349,7 +379,10 @@ export async function saveMcpDownloads(
 	for (const [index, target] of targets.entries()) {
 		const shown = safeBaseName(target.name);
 		const label = `download ${index + 1}${shown.length > 0 ? ` (${shown})` : ""}`;
-		policy.signal?.throwIfAborted();
+		if (policy.signal?.aborted) {
+			dropped.push(`${label}: the download was cancelled`);
+			continue;
+		}
 		if (deadline.aborted) {
 			dropped.push(`${label}: past PanCode's ${DOWNLOAD_TOTAL_MS / 1000}s bound for one result's downloads`);
 			continue;
@@ -358,7 +391,13 @@ export async function saveMcpDownloads(
 			dropped.push(`${label}: past PanCode's bound of ${MCP_FILE_LIMITS.downloadBytesPerResult} bytes per result`);
 			continue;
 		}
-		const checked = await checkTarget(target, policy, credential);
+		let checked: CheckedTarget | string;
+		try {
+			checked = await checkTarget(target, policy, credential);
+		} catch (error) {
+			dropped.push(`${label}: ${policy.signal?.aborted ? "the download was cancelled" : errorCode(error)}`);
+			continue;
+		}
 		if (typeof checked === "string") {
 			dropped.push(`${label}: ${checked}`);
 			continue;
@@ -368,7 +407,6 @@ export async function saveMcpDownloads(
 		const outcome = await download(target, checked, path, policy.signal, deadline);
 		if (typeof outcome === "string") {
 			await rm(path, { force: true });
-			policy.signal?.throwIfAborted();
 			dropped.push(`${label}: ${outcome}`);
 			continue;
 		}
@@ -413,7 +451,7 @@ async function download(
 		}
 		return true;
 	} catch (error) {
-		cancel?.throwIfAborted();
+		if (cancel?.aborted) return "the download was cancelled";
 		return errorCode(error);
 	} finally {
 		clearTimeout(timer);

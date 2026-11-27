@@ -425,11 +425,14 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		const refusal = deps.flow?.refusal() ?? null;
 		if (refusal !== null) return refusal;
 		const endpoint = flowEndpointIdentity(url);
-		return flowTransferRefusal(
+		const violation = flowTransferRefusal(
 			deps.safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
 			carriedWithFiles(spec, call),
 			{ kind: "tool", tool: spec.name, endpoint, ...(endpoint === null ? { endpointUnresolved: true } : {}) },
 		);
+		if (violation === null || endpoint === null) return violation;
+		const origin = URL.parse(url)?.origin ?? null;
+		return origin === null ? violation : violation.replaceAll(endpoint, origin);
 	};
 
 	/**

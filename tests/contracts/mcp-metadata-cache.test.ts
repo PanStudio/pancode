@@ -258,4 +258,22 @@ describe("MCP metadata cache", () => {
 		strictEqual(mcpPromptsStale(catalog, promptsAt + 23 * 60 * 60 * 1000), false);
 		strictEqual(mcpPromptsStale(catalog, promptsAt + 24 * 60 * 60 * 1000), true);
 	});
+
+	it("persists files capability so cached describe hides x-mcp-file behind the path schema", () => {
+		const id = identity();
+		const fileTool = tool({
+			name: "summarize",
+			inputSchema: {
+				type: "object",
+				properties: { doc: { type: "object", "x-mcp-file": { accept: ["text/plain"], maxSize: 1024 } } },
+				required: ["doc"],
+			},
+		});
+		ok(writeMcpServerCatalog(id, { tools: [fileTool], truncated: false, files: true }, { cacheDir }));
+		const withFiles = readMcpServerCatalog(id, { cacheDir });
+		strictEqual(withFiles?.files, true);
+		ok(writeMcpServerCatalog(id, { tools: [fileTool], truncated: false, files: false }, { cacheDir }));
+		const withoutFiles = readMcpServerCatalog(id, { cacheDir });
+		strictEqual(withoutFiles?.files, undefined);
+	});
 });

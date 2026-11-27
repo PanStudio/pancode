@@ -138,6 +138,8 @@ export interface McpServerCatalog {
 	resourceCount?: McpResourceCount;
 	/** The server declared the completions capability. */
 	completions?: true;
+	/** The server offered the experimental MCP files extension. */
+	files?: true;
 	/** Present when the server declared prompts and listed them. */
 	prompts?: McpCachedPrompts;
 	tools: McpCachedTool[];
@@ -290,6 +292,7 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		return null;
 	if (value.resources !== undefined && value.resources !== true) return null;
 	if (value.completions !== undefined && value.completions !== true) return null;
+	if (value.files !== undefined && value.files !== true) return null;
 	const resourceCount = value.resourceCount === undefined ? undefined : decodeResourceCount(value.resourceCount);
 	if (resourceCount === null) return null;
 	const prompts = value.prompts === undefined ? undefined : decodePrompts(value.prompts);
@@ -330,6 +333,7 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		...(value.resources === true ? { resources: true as const } : {}),
 		...(resourceCount === undefined ? {} : { resourceCount }),
 		...(value.completions === true ? { completions: true as const } : {}),
+		...(value.files === true ? { files: true as const } : {}),
 		...(prompts === undefined ? {} : { prompts }),
 		tools,
 		...(events === undefined ? {} : { events }),
@@ -461,6 +465,7 @@ export function writeMcpServerCatalog(
 		resources?: boolean;
 		resourceCount?: McpResourceCount | null;
 		completions?: boolean;
+		files?: boolean;
 		prompts?: {
 			prompts: ReadonlyArray<McpPromptRecord>;
 			truncated: boolean;
@@ -512,6 +517,7 @@ export function writeMcpServerCatalog(
 		...(listing.resources === true ? { resources: true as const } : {}),
 		...(listing.resources === true && listing.resourceCount ? { resourceCount: listing.resourceCount } : {}),
 		...(listing.completions === true ? { completions: true as const } : {}),
+		...(listing.files === true ? { files: true as const } : {}),
 		...(listing.prompts ? { prompts: encodePrompts(listing.prompts) } : {}),
 		tools,
 		...(events.length > 0 ? { events } : {}),

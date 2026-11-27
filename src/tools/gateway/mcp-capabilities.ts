@@ -511,6 +511,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				resources: declares(client, "resources"),
 				resourceCount,
 				completions: declares(client, "completions"),
+				files: client?.filesOffered() != null,
 				prompts,
 				...(state.events !== undefined ? { events: state.events.events } : {}),
 			},
@@ -525,6 +526,25 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	/** The main session transfers files out of band; a worker only with the server's attested network grant. */
 	const fileTransfersPermitted = (serverId: string): boolean =>
 		options.admitted === undefined || attestedNetwork(serverId);
+
+	const toolFilePresentation = (
+		declaration: GatewayMcpServer,
+		tool: { name: string; description: string; inputSchema: Record<string, unknown> },
+		filesOffered: boolean,
+	): {
+		description: string;
+		parameters: Record<string, unknown>;
+		fileArguments: ReadonlyArray<McpFileArgument> | null;
+	} => {
+		const fileSchema = filesOffered ? mcpFileSchema(tool.inputSchema) : null;
+		const fileArguments = fileSchema?.kind === "files" ? fileSchema.arguments : null;
+		const description =
+			fileSchema?.kind === "unsupported"
+				? `${describeTool(declaration, tool)}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
+				: describeTool(declaration, tool);
+		const parameters = fileArguments !== null ? mcpFileModelSchema(tool.inputSchema, fileArguments) : tool.inputSchema;
+		return { description, parameters, fileArguments };
+	};
 
 	const makeSpec = (state: ServerState, tool: McpToolDescriptor, name: DynamicToolName): ToolSpec => {
 		const { declaration } = state;
@@ -557,19 +577,13 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		const pathCwd = launchPlacement(declaration).cwd;
 		const writesStore = isBuiltinStoreWriteTool(declaration.id, declaration.scope, tool.name);
 		// Experimental MCP files extension: the model names files by path, and PanCode sends their bytes.
-		const fileSchema = state.client?.filesOffered() != null ? mcpFileSchema(tool.inputSchema) : null;
-		const fileArguments: ReadonlyArray<McpFileArgument> | null =
-			fileSchema?.kind === "files" ? fileSchema.arguments : null;
+		const presentation = toolFilePresentation(declaration, tool, state.client?.filesOffered() != null);
+		const { fileArguments } = presentation;
 		const fileTargets = declaration.fileTargets ?? [];
 		const spec: ToolSpec = {
 			name,
-			description:
-				fileSchema?.kind === "unsupported"
-					? `${describeTool(declaration, tool)}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
-					: describeTool(declaration, tool),
-			parameters: (fileArguments !== null
-				? mcpFileModelSchema(tool.inputSchema, fileArguments)
-				: tool.inputSchema) as TSchema,
+			description: presentation.description,
+			parameters: presentation.parameters as TSchema,
 			baseActionClass: trustClass,
 			...(readOnlyClass !== trustClass ? { readOnlyActionClass: readOnlyClass } : {}),
 			...(confirmationRuleId !== null ? { confirmationRuleId } : {}),
@@ -1418,9 +1432,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			// A name the registry already holds is served by that live spec instead;
 			// a cached descriptor must never shadow a connected one.
 			if (name === null || ownerOf(name) !== state || registry.get(name) !== undefined) continue;
+			const presentation = toolFilePresentation(declaration, tool, catalog.files === true);
 			entries.push({
 				name,
-				description: describeTool(declaration, tool),
+				description: presentation.description,
 				actionClass: actionClassFor(declaration, tool),
 			});
 		}
@@ -1638,12 +1653,13 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					reason: `mcp server ${declaration.id} records no tool named ${toolName}${catalog.truncated ? `, and its catalog is incomplete: list it again with ${catalogRemedy(declaration.id)}` : ""}`,
 				};
 			}
+			const presentation = toolFilePresentation(declaration, tool, catalog.files === true);
 			return {
 				metadata: {
 					name,
 					serverId: declaration.id,
-					description: describeTool(declaration, tool),
-					parameters: tool.inputSchema,
+					description: presentation.description,
+					parameters: presentation.parameters,
 					actionClass: actionClassFor(declaration, tool),
 					provenance: "cached",
 					truncated: catalog.truncated,
@@ -1772,10 +1788,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				? `Remote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)}`
 				: `Local stdio MCP server ${declaration.id}`;
 			const confinement = remote ? "it runs off this machine, and what a call sends leaves it" : launchConfinement();
+			const filesOffered =
+				owner.client !== null ? owner.client.filesOffered() !== null : cachedCatalog(owner)?.files === true;
 			const sendsFiles =
-				listed !== undefined &&
-				(owner.client === null || owner.client.filesOffered() !== null) &&
-				mcpFileSchema(listed.inputSchema).kind === "files"
+				listed !== undefined && filesOffered && mcpFileSchema(listed.inputSchema).kind === "files"
 					? " A call that names a file sends it to the server and storage it names, so that call is an outward action run as at least execute: the safety judge reviews it against the operator's messages, yolo runs it only when those messages name it, and read-only denies it."
 					: "";
 			return `${serverLabel} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${serverClass}${

@@ -555,6 +555,9 @@ function uploadTarget(value: unknown): McpUploadTarget | string {
 		if (typeof fileField !== "string" || fileField.length === 0 || FORM_NAME_FORBIDDEN.test(fileField)) {
 			return reject("its form fileField is empty or has a control character, quote or backslash");
 		}
+		if (bytes(fileField) > MCP_FILE_LIMITS.formNameBytes) {
+			return reject("its form fileField is over PanCode's size bound");
+		}
 		const fields = member(declared, "fields");
 		if (!Array.isArray(fields) || fields.length > MCP_FILE_LIMITS.formFields) {
 			return reject(`its form fields is not a list of at most ${MCP_FILE_LIMITS.formFields}`);
