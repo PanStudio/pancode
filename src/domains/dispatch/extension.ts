@@ -67,6 +67,7 @@ import { relativePathEscapes } from "../../core/path-containment.js";
 import { runtimeSpeaksResponseSchemaDialect, UnsupportedResponseSchemaError } from "../../core/response-schema.js";
 import { requirePricedRefusal } from "../../core/run-overrides.js";
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
+import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerMcpNoNetworkNotice, workerSandboxReceipt } from "../../core/sandbox/worker-policy.js";
 import { isSkillActivation, type SkillActivation } from "../../core/skill-activation.js";
 import { emitApproval } from "../../core/telemetry/approvals.js";
@@ -379,7 +380,7 @@ import {
 	importFleetChanges,
 	prepareFleetChangeReturn,
 } from "./fleet-change-return.js";
-import { routeFactVerdict } from "./fleet-preflight.js";
+import { type FleetNodeSandbox, fleetNodeSandboxAvailability, routeFactVerdict } from "./fleet-preflight.js";
 import { assertFleetProjectAuthority, verifyFleetProject } from "./fleet-project-verification.js";
 import { gateVerdictFactsOf } from "./gate-decisions.js";
 import { type GradeContract, type GradeFacts, type GradeVerdict, grade, type RunVerdict } from "./grading.js";
@@ -454,7 +455,11 @@ import {
 } from "./path-scope.js";
 import { type PeerInstructions, peerInstructionsStaleMessage, resolvePeerInstructions } from "./peer-instructions.js";
 import { deriveEnvelopePhaseDurations, recordRunTimingBestEffort } from "./phase-timing.js";
-import { createFleetPlacementPreviewResolver, createFleetPlacementResolver } from "./placement.js";
+import {
+	createFleetPlacementPreviewResolver,
+	createFleetPlacementResolver,
+	type FleetPlacementPreview,
+} from "./placement.js";
 import {
 	claimSharedPrefix,
 	claimWorkerCacheLane,
@@ -823,6 +828,8 @@ export interface DispatchNodePlacement {
 	spawn?: (spec: WorkerSpec, opts?: WorkerSpawnOptions) => SpawnedWorker;
 	/** Failover hops that preceded this placement, oldest first. */
 	reroutes?: ReadonlyArray<RunNodeReroute>;
+	/** An SSH node's recorded OS sandbox, null when it has none; absent for local placement. */
+	sandbox?: FleetNodeSandbox | null;
 }
 
 export interface DispatchBundleOptions {
@@ -831,7 +838,7 @@ export interface DispatchBundleOptions {
 	/** Resolve the attested node and transport before capacity admission; absent means local. */
 	resolveNode?: (req: DispatchRequest) => DispatchNodePlacement | null;
 	/** Side-effect-free companion to resolveNode, primarily for alternate fleet backends and deterministic tests. */
-	previewNode?: (req: DispatchRequest) => { node: RunNodeIdentity };
+	previewNode?: (req: DispatchRequest) => FleetPlacementPreview;
 	startAcpDelegationRun?: (input: AcpDelegationRunInput) => AcpDelegationRunHandle;
 	heartbeatSpec?: HeartbeatSpec;
 	heartbeatIntervalMs?: number;
@@ -3515,7 +3522,8 @@ export function createDispatchBundle(
 		target: ResolvedTarget,
 		settings: EffectiveSettings,
 		mcp: WorkerMcpAttestation | undefined,
-		withheld: ReadonlyArray<WorkerMcpNetworkWithheld> = [],
+		withheld: ReadonlyArray<WorkerMcpNetworkWithheld>,
+		placedSandbox: SandboxAvailability,
 	): void {
 		const servers = (mcp?.tools ?? []).filter((entry) =>
 			effectiveTools.includes(`mcp_${entry.serverId}__${entry.tool}` as ToolName),
@@ -3531,7 +3539,7 @@ export function createDispatchBundle(
 		}).spec;
 		if (sandbox === undefined) return;
 		const message = workerMcpNoNetworkNotice(
-			{ mode: sandbox.mode, network: sandbox.network, available: sandboxAvailability().available },
+			{ mode: sandbox.mode, network: sandbox.network, available: placedSandbox.available },
 			servers,
 			offeredWithheld,
 		);
@@ -3640,7 +3648,7 @@ export function createDispatchBundle(
 					pathScope,
 					target,
 					settings,
-					placement: () => previewNode(req).node,
+					placement: () => previewNode(req),
 				}),
 			);
 		} catch {
@@ -3742,7 +3750,7 @@ export function createDispatchBundle(
 			liveSettings: withLiveAutonomy(settings),
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
-			placement: () => previewNode(req).node,
+			placement: () => previewNode(req),
 		});
 		const { envelope, permit, readOnly, judgeWithheld } = stage;
 		const effectiveTools = stage.tools;
@@ -3753,7 +3761,7 @@ export function createDispatchBundle(
 				code: "write_roots_checks_withheld",
 				level: "warning",
 				message:
-					"[dispatch scope] Narrow write roots have neither an OS sandbox nor a task worktree binding commands to them, so bash and verify are withheld and the worker cannot run checks. Enable safety.sandbox (auto or required) with a usable local bubblewrap backend, or dispatch from a git checkout so the run gets its own worktree.",
+					"[dispatch scope] Narrow write roots have neither an OS sandbox nor a task worktree binding commands to them, so bash and verify are withheld and the worker cannot run checks. Enable safety.sandbox (auto or required) with a usable bubblewrap backend where the worker runs, or dispatch from a git checkout so the run gets its own worktree.",
 			});
 		}
 		assertPostRuntimeToolCompatibility(req.agentId, spec, envelope, target);
@@ -3766,7 +3774,8 @@ export function createDispatchBundle(
 			target,
 			settings,
 			admission.mcp,
-			admission.mcpNetworkWithheld,
+			admission.mcpNetworkWithheld ?? [],
+			stage.placedSandbox,
 		);
 		if (!judgeRoutedPermit(permit, settings)) assertMainGrantRoutable(req, target.runtime, permit);
 		if (judgeWithheld !== null && req.requestOrigin !== "internal" && !judgeWithheldAnnounced) {
@@ -3891,14 +3900,17 @@ export function createDispatchBundle(
 			cwd,
 			projectContextTier: tier,
 			autonomy: "default",
-			...workerSandboxPromptLine({
-				resultContract: dispatchResultContract(req, recipe) ?? null,
-				runtimeKind: target.runtime.kind,
-				req,
-				pathScope,
-				envelope,
-				settings,
-			}),
+			...workerSandboxPromptLine(
+				{
+					resultContract: dispatchResultContract(req, recipe) ?? null,
+					runtimeKind: target.runtime.kind,
+					req,
+					pathScope,
+					envelope,
+					settings,
+				},
+				stage.placedSandbox,
+			),
 			onPermission: workerPermissionMode,
 			permit,
 			...(req.taskWorktree !== undefined ? { taskWorktree: true } : {}),
@@ -6975,14 +6987,16 @@ export function createDispatchBundle(
 					...(protectedArtifacts !== undefined ? { protectedArtifacts } : {}),
 					...(trustedFlow !== null ? { flowRestrictions: trustedFlow } : {}),
 					runtimeLimitations: lifecycle.runtimeLimitations,
-					// A remote node probes its own backend; this host's answer would
+					// A remote worker reports its node's recorded sandbox; this host's answer would
 					// be a claim about the wrong machine.
 					...(lifecycle.target.runtime.kind === "http"
 						? {
 								sandbox: workerSandboxReceipt(
 									lifecycle.settings?.safety.sandbox ?? "auto",
 									spec.sandbox,
-									placement !== null && placement.node.kind !== "local" ? null : sandboxAvailability(),
+									placement !== null && placement.node.kind !== "local"
+										? fleetNodeSandboxAvailability(placement.sandbox ?? null)
+										: sandboxAvailability(),
 								),
 							}
 						: {}),
@@ -8553,7 +8567,7 @@ export function createDispatchBundle(
 			liveSettings: withLiveAutonomy(settings),
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
-			placement: () => previewNode(req).node,
+			placement: () => previewNode(req),
 		});
 		const effectiveTools = stage.tools;
 		const previewPermit = stage.permit;

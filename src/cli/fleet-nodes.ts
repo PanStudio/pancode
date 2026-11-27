@@ -3,7 +3,7 @@
 import { readSettings } from "../core/config.js";
 import type { FleetNodeSettings } from "../core/defaults.js";
 import { addFleetNode, inspectFleetNodes, removeFleetNode, testFleetNode } from "../domains/dispatch/fleet-nodes.js";
-import type { FleetPreflightRecord } from "../domains/dispatch/fleet-preflight.js";
+import { type FleetPreflightRecord, fleetNodeSandboxSummary } from "../domains/dispatch/fleet-preflight.js";
 
 const HELP = `pancode fleet nodes <command>
 
@@ -93,6 +93,7 @@ function writeRecord(record: FleetPreflightRecord, recorded: boolean): void {
 		process.stdout.write(
 			`  project=${record.project.kind}${record.project.head ? ` commit=${record.project.head}` : ""}\n`,
 		);
+	if (record.sandbox !== null) process.stdout.write(`  ${fleetNodeSandboxSummary(record.sandbox)}\n`);
 	if (record.detail) process.stdout.write(`  ${record.detail}\n`);
 	if (record.note) process.stdout.write(`  note: ${record.note}\n`);
 	for (const fact of record.targets)

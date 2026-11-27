@@ -21,6 +21,7 @@ import { readPancodeVersion } from "../../core/package-root.js";
 import { installedBuildId } from "../../core/running-build.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import type { SandboxAvailability, SandboxBackend } from "../../core/sandbox/types.js";
 import { shellQuote } from "../../core/shell-quote.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { resolvePancodeDirs } from "../../core/xdg.js";
@@ -70,6 +71,19 @@ export interface FleetBuildIdentity {
 	dirty: boolean;
 }
 
+/**
+ * The OS sandbox the node's own worker would start, as its `pancode version --sandbox` reported it. Dispatch seals
+ * a remote worker's envelope backend from this, as it does from the local probe for a local worker.
+ */
+export interface FleetNodeSandbox {
+	available: boolean;
+	backend: SandboxBackend | null;
+	/** Why the node has no sandbox, or a caveat when it has one. */
+	reason: string | null;
+	/** Null when the node's bubblewrap can also isolate the network, which a network-off command needs; else why not. */
+	network: string | null;
+}
+
 export interface FleetPreflightRecord {
 	nodeId: string;
 	connectionHash?: string;
@@ -108,10 +122,12 @@ export interface FleetPreflightRecord {
 	targets: NodeTargetFact[];
 	/** Bounded resource facts for this node; unknown values stay null. */
 	resources: NodeResourceFact | null;
+	/** The node's OS sandbox; null when the node was not reached. */
+	sandbox: FleetNodeSandbox | null;
 }
 
 interface FleetPreflightStoreFile {
-	version: 3;
+	version: 4;
 	records: FleetPreflightRecord[];
 }
 
@@ -125,7 +141,7 @@ export function readFleetPreflightRecords(): FleetPreflightRecord[] {
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf8")) as FleetPreflightStoreFile;
 		// One current version; a store at any other version is discarded and re-probed.
-		if (parsed?.version !== 3 || !Array.isArray(parsed.records)) return [];
+		if (parsed?.version !== 4 || !Array.isArray(parsed.records)) return [];
 		return parsed.records;
 	} catch {
 		return [];
@@ -143,7 +159,7 @@ export function recordFleetPreflight(records: ReadonlyArray<FleetPreflightRecord
 		for (const record of [...readFleetPreflightRecords(), ...records]) {
 			merged.set(`${record.nodeId}\0${record.projectRoot}`, record);
 		}
-		const file: FleetPreflightStoreFile = { version: 3, records: [...merged.values()] };
+		const file: FleetPreflightStoreFile = { version: 4, records: [...merged.values()] };
 		safeResourceWrite(storePath(), JSON.stringify(file, null, 2), { mode: 0o600 });
 	});
 }
@@ -256,6 +272,34 @@ export function routeFactVerdict(
 	return evaluateRouteFacts(targets, resources, requirement, options);
 }
 
+/** The sandbox the placed node recorded for this project, or null when it has no record. */
+export function fleetNodeSandbox(
+	nodeId: string,
+	projectRoot: string,
+	records: ReadonlyArray<FleetPreflightRecord> = readFleetPreflightRecords(),
+): FleetNodeSandbox | null {
+	return records.find((entry) => entry.nodeId === nodeId && entry.projectRoot === projectRoot)?.sandbox ?? null;
+}
+
+/** The node's sandbox as an availability answer, the shape the prompt line and the receipt read for a local worker. */
+export function fleetNodeSandboxAvailability(sandbox: FleetNodeSandbox | null): SandboxAvailability {
+	if (sandbox === null)
+		return { available: false, backend: null, executable: null, reason: "the node has no recorded sandbox check" };
+	return {
+		available: sandbox.available && sandbox.backend !== null,
+		backend: sandbox.available ? sandbox.backend : null,
+		executable: null,
+		reason: sandbox.reason,
+	};
+}
+
+/** `sandbox=bwrap`, or `sandbox=none (why)`, for node reports. */
+export function fleetNodeSandboxSummary(sandbox: FleetNodeSandbox | null): string {
+	if (sandbox === null) return "sandbox=unknown";
+	if (!sandbox.available || sandbox.backend === null) return `sandbox=none (${sandbox.reason ?? "no backend"})`;
+	return `sandbox=${sandbox.backend}${sandbox.network !== null ? ` (network-off commands refused: ${sandbox.network})` : ""}`;
+}
+
 /** The build this client would install on a node: the completed build on disk. */
 function localFleetBuild(): FleetBuildIdentity {
 	const provenance = readBuildProvenance();
@@ -311,17 +355,23 @@ const PREFLIGHT_MARKER = "pancode-preflight/1";
 const DEFAULT_PREFLIGHT_TIMEOUT_MS = 20_000;
 
 /**
+ * The CLI the worker invocation resolves to: the entry without its trailing `worker` subcommand. Null for a custom
+ * entry, which has no CLI to ask.
+ */
+function pancodeEntryCliBase(node: SshNodeEndpoint): string | null {
+	const entry =
+		node.pancodeEntry !== undefined && node.pancodeEntry.trim().length > 0 ? node.pancodeEntry.trim() : "pancode worker";
+	return entry.endsWith(" worker") ? entry.slice(0, -" worker".length) : null;
+}
+
+/**
  * One remote probe script, one SSH round trip. Marker lines keep parsing
  * order-independent and tolerant of login-shell noise. XDG_STATE_HOME
  * mirrors the local xdg resolution's Linux default; per-node PANCODE_* dir
  * overrides are not visible over this channel and are unsupported.
  */
 function buildPreflightScript(node: SshNodeEndpoint, projectRoot: string): string {
-	const entry =
-		node.pancodeEntry !== undefined && node.pancodeEntry.trim().length > 0 ? node.pancodeEntry.trim() : "pancode worker";
-	// Version-check the CLI the worker invocation resolves to: strip the
-	// trailing `worker` subcommand to get the base CLI invocation.
-	const cliBase = entry.endsWith(" worker") ? entry.slice(0, -" worker".length) : null;
+	const cliBase = pancodeEntryCliBase(node);
 	const versionCommand = node.pancodeVersionCommand ?? (cliBase !== null ? `${cliBase} --version` : null);
 	// The spec versions the node's worker reads. A build older than the report
 	// ignores the flag and prints its version line, which reads as unreported.
@@ -332,6 +382,9 @@ function buildPreflightScript(node: SshNodeEndpoint, projectRoot: string): strin
 	// A build older than the report prints its version line, which is no build id.
 	const buildProbe =
 		cliBase !== null ? `b=$(${cliBase} version --build 2>/dev/null | head -n 1); echo "build=$b"` : null;
+	// The node's own worker probes its own sandbox at run time; this asks the same probe ahead of dispatch.
+	const sandboxProbe =
+		cliBase !== null ? `s=$(${cliBase} version --sandbox 2>/dev/null | head -n 1); echo "sandbox=$s"` : null;
 	const versionProbe =
 		versionCommand !== null
 			? `v=$(${versionCommand} 2>/dev/null | head -n 1); if [ -n "$v" ]; then echo "pancode=$v"; else echo pancode=missing; fi`
@@ -342,6 +395,7 @@ function buildPreflightScript(node: SshNodeEndpoint, projectRoot: string): strin
 		versionProbe,
 		specProbe,
 		...(buildProbe !== null ? [buildProbe] : []),
+		...(sandboxProbe !== null ? [sandboxProbe] : []),
 		MACHINE_PROBE,
 		`d="\${XDG_STATE_HOME:-$HOME/.local/state}/pancode"; if [ -d "$d" ]; then if [ -w "$d" ]; then echo state=ok; else echo state=fail; fi; else p="$d"; while [ ! -e "$p" ] && [ "$p" != / ]; do p=$(dirname "$p"); done; if [ -d "$p" ] && [ -w "$p" ] && [ -x "$p" ]; then echo state=creatable; else echo state=fail; fi; fi`,
 		// Resource observation runs on the node. A node without nvidia-smi reports
@@ -368,6 +422,29 @@ function workerSpecMismatch(specs: ReadonlyArray<number>): string | null {
 	const local = WORKER_SPEC_VERSIONS.join(" and ");
 	if (WORKER_SPEC_VERSIONS.every((version) => specs.includes(version))) return null;
 	return `worker spec mismatch (this build writes versions ${local}, the node's worker reads ${specs.join(" and ")})`;
+}
+
+/** The node's `version --sandbox` line; anything else is a node that cannot say, which counts as no sandbox. */
+function parseNodeSandbox(lines: ReadonlyArray<string>, customEntry: boolean): FleetNodeSandbox {
+	const unreported = (reason: string): FleetNodeSandbox => ({ available: false, backend: null, reason, network: null });
+	if (customEntry) return unreported("a custom worker entry does not report its OS sandbox");
+	const raw = lines.find((line) => line.startsWith("sandbox="))?.slice("sandbox=".length) ?? "";
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return unreported("the node's PanCode does not report its OS sandbox");
+	}
+	const value = parsed as Partial<Record<keyof FleetNodeSandbox, unknown>> | null;
+	const backend = value?.backend;
+	if (
+		typeof value?.available !== "boolean" ||
+		(backend !== null && backend !== "bwrap" && backend !== "seatbelt") ||
+		(value.reason !== null && typeof value.reason !== "string") ||
+		(value.network !== null && typeof value.network !== "string")
+	)
+		return unreported("the node's PanCode does not report its OS sandbox");
+	return { available: value.available, backend, reason: value.reason, network: value.network };
 }
 
 function parseSemver(text: string): string | null {
@@ -513,6 +590,7 @@ export async function runFleetNodePreflight(
 		checks,
 		targets: [],
 		resources: null,
+		sandbox: null,
 	};
 	const script = buildPreflightScript(node, projectRoot);
 	const result = await runCommandVector(sshBinary, buildSshArgs(node, script), { timeoutMs, maxOutputBytes: 128_000 });
@@ -534,6 +612,7 @@ export async function runFleetNodePreflight(
 		observedAt: checkedAt,
 	};
 	record.machine = machineFingerprint(lines);
+	record.sandbox = parseNodeSandbox(lines, pancodeEntryCliBase(node) === null);
 	const notes: string[] = [];
 	if (record.machine !== null && record.machine === (await localMachineFingerprint()))
 		notes.push("this node is the machine running this client, so its workers share local CPU, memory and models");

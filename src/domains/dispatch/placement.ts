@@ -8,7 +8,7 @@ import type { FleetRegistry } from "../scheduling/cluster.js";
 import type { DispatchRequest } from "./contract.js";
 import type { DispatchNodePlacement } from "./extension.js";
 import { sessionFleetNode } from "./fleet-placement-preference.js";
-import { fleetPreflightVerdict } from "./fleet-preflight.js";
+import { type FleetNodeSandbox, fleetNodeSandbox, fleetPreflightVerdict } from "./fleet-preflight.js";
 import { createSshWorkerTransport, LOCAL_NODE_ID, localNodeIdentity, type WorkerTransport } from "./transport.js";
 import type { RunNodeIdentity, RunNodeReroute } from "./types.js";
 
@@ -21,11 +21,15 @@ export interface FleetPlacementDeps {
 	transportForNode?: (node: FleetNodeSettings) => WorkerTransport;
 	/** Preflight seam; defaults to the durable doctor store. */
 	preflightVerdict?: typeof fleetPreflightVerdict;
+	/** The placed node's recorded sandbox; defaults to the durable doctor store. */
+	nodeSandbox?: typeof fleetNodeSandbox;
 }
 
 /** Side-effect-free placement used to build an immutable approval plan. */
 export interface FleetPlacementPreview {
 	node: RunNodeIdentity;
+	/** An SSH node's recorded OS sandbox, null when it has none; absent for local placement. */
+	sandbox?: FleetNodeSandbox | null;
 }
 
 function admissionError(reason: string): Error {
@@ -79,6 +83,7 @@ export function createFleetPlacementResolver(
 ): (req: DispatchRequest) => DispatchNodePlacement | null {
 	const transportForNode = deps.transportForNode ?? ((node: FleetNodeSettings) => createSshWorkerTransport(node));
 	const verdictFor = deps.preflightVerdict ?? fleetPreflightVerdict;
+	const sandboxFor = deps.nodeSandbox ?? fleetNodeSandbox;
 
 	return (req: DispatchRequest): DispatchNodePlacement | null => {
 		const settings = deps.getSettings();
@@ -102,6 +107,8 @@ export function createFleetPlacementResolver(
 			return { node: localNodeIdentity(), ...(reroutes !== undefined ? { reroutes } : {}) };
 		};
 
+		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
+
 		const sshPlacement = (node: FleetNodeSettings): DispatchNodePlacement => {
 			if (fleet === undefined) throw admissionError(`fleet registry unavailable; cannot place on node '${node.id}'`);
 			const transport = transportForNode(node);
@@ -109,11 +116,10 @@ export function createFleetPlacementResolver(
 			return {
 				node: transport.node,
 				spawn: (spec, opts) => transport.spawn(spec, opts),
+				sandbox: sandboxFor(node.id, projectRoot),
 				...(reroutes !== undefined ? { reroutes } : {}),
 			};
 		};
-
-		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
 
 		if (requested !== null) {
 			if (requested === LOCAL_NODE_ID) return localPlacement();
@@ -150,16 +156,18 @@ export function createFleetPlacementPreviewResolver(
 	deps: FleetPlacementDeps,
 ): (req: DispatchRequest) => FleetPlacementPreview {
 	const verdictFor = deps.preflightVerdict ?? fleetPreflightVerdict;
+	const sandboxFor = deps.nodeSandbox ?? fleetNodeSandbox;
 	return (req: DispatchRequest): FleetPlacementPreview => {
 		const settings = deps.getSettings();
 		const nodes = settings?.fleet?.nodes ?? [];
 		const requested = requestedNodeId(req, settings, deps.getSessionId?.());
 		const fleet = deps.fleet;
+		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
 		const local = (): FleetPlacementPreview => ({ node: localNodeIdentity() });
 		const remote = (node: FleetNodeSettings): FleetPlacementPreview => ({
 			node: { id: node.id, kind: "ssh", host: node.host },
+			sandbox: sandboxFor(node.id, projectRoot),
 		});
-		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
 
 		if (requested !== null) {
 			if (requested === LOCAL_NODE_ID) return local();

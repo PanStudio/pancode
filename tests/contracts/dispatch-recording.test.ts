@@ -32,6 +32,7 @@ beforeEach(async () => {
 });
 afterEach(() => env.restore());
 const node = { id: "seven", kind: "ssh" as const, host: "fixture.invalid" };
+const NODE_SANDBOX = { available: true, backend: "bwrap" as const, reason: null, network: null };
 
 it("records display events without input, raw tools, reasoning, or worker protocol wrapping", () => {
 	let clock = 0;
@@ -262,7 +263,9 @@ it("dispatch preserves the explicit capture option with journal history disabled
 			spawnWorker,
 			journalRunEvents: false,
 			getSessionOrigin: () => selectedSession,
-			...(placed ? { resolveNode: () => ({ node, spawn: spawnWorker }), previewNode: () => ({ node }) } : {}),
+			...(placed
+				? { resolveNode: () => ({ node, spawn: spawnWorker }), previewNode: () => ({ node, sandbox: NODE_SANDBOX }) }
+				: {}),
 		});
 		await bundle.extension.start();
 		try {

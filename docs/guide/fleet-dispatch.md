@@ -315,6 +315,7 @@ fleet:
       labels: [cpu, build]      # declarations, distinct from resource observations
       maxWorkers: 1             # per-node cap; a YAML entry that omits it gets 2
       residency: observe        # default; manage requires an explicit opt-in
+      allowUnsandboxed: false   # default; true admits native workers when the node has no OS sandbox
 ```
 
 `/settings workers` opens **Settings → Workers**; the slash command `/fleet` opens the
@@ -476,6 +477,17 @@ passing record, because two entries for one machine double its worker capacity.
 A node that is the client's own machine passes with a note. Dispatch additionally
 rechecks project authority at launch. Failed nodes can remain doctor warnings
 while local work stays usable.
+
+The check also records the node's OS sandbox from its own `pancode version --sandbox`:
+the backend a worker there starts, or why it has none, and whether bubblewrap there can
+isolate the network. `fleet nodes test` prints it as `sandbox=bwrap` or
+`sandbox=none (<reason>)`, and doctor warns about a node whose native workers would be
+refused. A native worker placed on the node is sealed with that answer, so its commands
+run under the node's sandbox. With `safety.sandbox` at `auto` or `required`, admission
+refuses a native worker on a node with no sandbox, naming the node, the reason and the
+fix; `allowUnsandboxed: true` on the node admits it under `auto` with its commands
+unsandboxed, and `required` ignores the opt-in
+([safety-model.md](../architecture/safety-model.md#worker-os-sandbox)).
 
 Target facts stay separate: network reachability, access to a supported model
 listing, presence of the configured model and runtime support. Listing success
@@ -1212,9 +1224,10 @@ as `cwd`, and each worker gets that repository's rules
 ([Sister repositories](../architecture/worker-context.md#sister-repositories)).
 
 Narrow write roots confine a native worker one of two ways. When the OS sandbox
-covers the run (`safety.sandbox` is `auto` or `required`, a local bubblewrap backend
-is usable, and the worker runs on a local HTTP runtime placed on this host), the worker keeps `bash`, `verify` and `run_script`, and their commands can write only
-inside the roots. A worker placed on a fleet node, or whose placement the preview cannot settle, is not covered. A `dispatch` from that worker is still blocked. Otherwise
+covers the run (`safety.sandbox` is `auto` or `required`, the worker runs on an HTTP
+runtime, and bubblewrap is usable where it runs: on this host, or on its fleet node by
+the node's recorded check), the worker keeps `bash`, `verify` and `run_script`, and their commands can write only
+inside the roots. A worker whose placement the preview cannot settle is not covered. A `dispatch` from that worker is still blocked. Otherwise
 the worker loses `bash`, `verify`, `run_script` and `dispatch` for the run, cannot run
 checks itself, and a `write_roots_checks_withheld` scope notice says so. Declared host
 verification still runs on the host in both cases. A write root of `.` sets no boundary,

@@ -524,7 +524,7 @@ export function planSandboxedSpawn(
 	if (policy === null) return { kind: "direct" };
 	const network = policy.network || options.network === true;
 	let availability = withNetworkIsolation(sandboxAvailability(), network);
-	// The orchestrator saw the backend work; one failed local probe (a
+	// The orchestrator saw the backend work here; one failed local probe (a
 	// timeout is not cached) gets one retry before the command is refused.
 	if (!availability.available && policy.backendExpected === true) {
 		availability = withNetworkIsolation(sandboxAvailability(), network);
@@ -564,7 +564,7 @@ export function planSandboxedSpawn(
 	if (policy.backendExpected === true) {
 		return {
 			kind: "refused",
-			message: `sandbox: the orchestrator found a worker sandbox but this worker cannot start it (${reason}); the command was not run`,
+			message: `sandbox: the orchestrator found a worker sandbox on this host but this worker cannot start it (${reason}); the command was not run`,
 		};
 	}
 	if (!unavailableReported) {

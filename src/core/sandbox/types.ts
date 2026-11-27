@@ -57,8 +57,9 @@ export interface WorkerSandboxSpec {
 	/** A target declares `auth.headers`, so the worker's sandbox masks PanCode's settings.yaml as the main session's does. */
 	maskSettings?: true;
 	/**
-	 * The orchestrator found the backend usable on this host. A worker whose
-	 * own probe then fails refuses the command instead of running it direct.
+	 * The orchestrator found the backend usable where the worker runs: its own
+	 * probe for a local worker, the node's recorded check for a fleet node. A
+	 * worker whose own probe then fails refuses the command instead of running it direct.
 	 */
 	backendExpected?: true;
 }

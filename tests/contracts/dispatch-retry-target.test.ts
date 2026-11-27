@@ -129,6 +129,7 @@ async function retryFleet(
 					probeDurationMs: 1,
 				})),
 				resources: null,
+				sandbox: null,
 			},
 		]);
 	}

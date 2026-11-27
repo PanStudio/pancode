@@ -997,7 +997,9 @@ export async function runDoctorFleetChecks(
 	}
 	const nodes = settings.fleet?.nodes ?? [];
 	if (nodes.length === 0) return [];
-	const { recordFleetPreflight, fleetPreflightVerdict } = await import("../dispatch/fleet-preflight.js");
+	const { recordFleetPreflight, fleetPreflightVerdict, fleetNodeSandboxSummary } = await import(
+		"../dispatch/fleet-preflight.js"
+	);
 	const { rejectSameMachineNodes, testFleetNode } = await import("../dispatch/fleet-nodes.js");
 	const records = await Promise.all(
 		nodes.map((node) => testFleetNode(node.id, projectRoot, { sharedProbe: options.fix === true })),
@@ -1023,12 +1025,17 @@ export async function runDoctorFleetChecks(
 					`${fact.targetId}: network=${fact.reachable}, listingAccess=${fact.authentication ?? "unknown"}, model=${fact.modelAvailable}, runtime=${fact.runtimeCompatible}`,
 			)
 			.join("; ");
+		// Native workers are refused on a node with no sandbox unless it opts in, which a required sandbox ignores.
+		const mode = settings.safety.sandbox;
+		const unsandboxedRefused =
+			record.sandbox?.available !== true && mode !== "off" && (mode === "required" || node?.allowUnsandboxed !== true);
+		const sandbox = `${fleetNodeSandboxSummary(record.sandbox)}${unsandboxedRefused ? ", native workers refused (allowUnsandboxed admits them unless safety.sandbox is required)" : ""}`;
 		return {
 			ok: true,
-			level: record.ok ? ("ok" as const) : ("warn" as const),
+			level: record.ok && !unsandboxedRefused ? ("ok" as const) : ("warn" as const),
 			name: `fleet node ${record.nodeId}`,
 			detail: record.ok
-				? `checks passed; ${eligible ? "eligible from recorded preflight" : `not admitted, run fleet nodes test ${record.nodeId} --record`}${recorded ? " (recorded)" : ""}: ${record.host}, pancode ${record.remoteVersion}, project=${record.project?.kind ?? "not verified"}; ${targets}${record.note ? `; note: ${record.note}` : ""}`
+				? `checks passed; ${eligible ? "eligible from recorded preflight" : `not admitted, run fleet nodes test ${record.nodeId} --record`}${recorded ? " (recorded)" : ""}: ${record.host}, pancode ${record.remoteVersion}, project=${record.project?.kind ?? "not verified"}, ${sandbox}; ${targets}${record.note ? `; note: ${record.note}` : ""}`
 				: `needs attention: ${record.detail ?? "preflight failed"}`,
 		};
 	});

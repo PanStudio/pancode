@@ -310,7 +310,9 @@ describe("dispatch advisory admission and explicit authority", () => {
 	it("previews the run's store-grant, budget, remote-node and outside-read admission (FL-13)", async () => {
 		const cwd = realpathSync(mkdtempSync(join(tmpdir(), "fl13-preview-")));
 		let node: RunNodeIdentity = { id: "local", kind: "local" };
-		const bundle = makeDispatchBundle(dispatchStubContext(), { previewNode: () => ({ node }) });
+		const bundle = makeDispatchBundle(dispatchStubContext(), {
+			previewNode: () => ({ node, sandbox: { available: true, backend: "bwrap", reason: null, network: null } }),
+		});
 		await bundle.extension.start();
 		try {
 			const preview = bundle.contract.preview;

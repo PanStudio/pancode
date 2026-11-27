@@ -209,6 +209,7 @@ export function validateFleetNode(
 		"labels",
 		"maxWorkers",
 		"residency",
+		"allowUnsandboxed",
 	]);
 	const id = "id" in value ? expectString(issues, `${path}.id`, value.id) : undefined;
 	const host = "host" in value ? expectString(issues, `${path}.host`, value.host) : undefined;
@@ -245,6 +246,10 @@ export function validateFleetNode(
 	if ("residency" in value) {
 		const parsed = expectEnum(issues, `${path}.residency`, value.residency, ["observe", "manage"] as const);
 		if (parsed !== undefined) node.residency = parsed;
+	}
+	if ("allowUnsandboxed" in value) {
+		const parsed = expectBoolean(issues, `${path}.allowUnsandboxed`, value.allowUnsandboxed);
+		if (parsed !== undefined) node.allowUnsandboxed = parsed;
 	}
 	return node;
 }

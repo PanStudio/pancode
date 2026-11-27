@@ -15,7 +15,7 @@ import { protectedResidencyModels } from "../../core/residency-protection.js";
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { gitHookDirectories } from "../../core/sandbox/git-hooks-fingerprint.js";
-import type { WorkerSandboxSpec } from "../../core/sandbox/types.js";
+import type { SandboxAvailability, WorkerSandboxSpec } from "../../core/sandbox/types.js";
 import { resolveWorkerSandboxSpec, workerSandboxLine } from "../../core/sandbox/worker-policy.js";
 import type { SharedStoreGrant } from "../../core/store-shared-grant.js";
 import { workerAgent } from "../../core/telemetry/context.js";
@@ -233,7 +233,7 @@ export function workerSandboxFor(input: {
 			? { gitHooksDirs: gitHookDirectories(input.req.taskWorktree?.path ?? input.req.cwd ?? process.cwd()).directories }
 			: {}),
 	});
-	// The envelope names a backend only for a worker this host runs; a fleet node probes its own.
+	// The envelope names a backend only where the placed host, this one or a fleet node, reported one.
 	return {
 		applies: true,
 		spec:
@@ -247,10 +247,13 @@ export function workerSandboxFor(input: {
 	};
 }
 
-/** The sandbox sentence for the worker's safety line, probed on this host. */
-export function workerSandboxPromptLine(input: Parameters<typeof workerSandboxFor>[0]): { sandboxLine?: string } {
+/** The sandbox sentence for the worker's safety line, from the sandbox where the worker runs. */
+export function workerSandboxPromptLine(
+	input: Parameters<typeof workerSandboxFor>[0],
+	placedSandbox: SandboxAvailability,
+): { sandboxLine?: string } {
 	const sandbox = workerSandboxFor(input);
-	return sandbox.applies ? { sandboxLine: workerSandboxLine(sandbox.spec, sandboxAvailability()) } : {};
+	return sandbox.applies ? { sandboxLine: workerSandboxLine(sandbox.spec, placedSandbox) } : {};
 }
 
 /**
