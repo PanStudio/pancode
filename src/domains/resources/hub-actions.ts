@@ -10,13 +10,11 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { readPancodeVersion } from "../../core/package-root.js";
 import {
 	approveOperatorProjectInstall,
 	captureProjectInstallBaseline,
 	type ProjectInstallBaseline,
 } from "../../core/workspace-trust.js";
-import { pancodeConfigDir } from "../../core/xdg.js";
 import {
 	disableExtension,
 	type ExtensionCapabilityEnvelope,
@@ -25,7 +23,6 @@ import {
 	reviewExtensionEnvelope,
 	syncPackBinaries,
 } from "../extensions/index.js";
-import { MCP_USER_CONFIG_FILENAME } from "../gateway/mcp/config.js";
 import type { HubImportApplyResult, HubImportPlan } from "../interop/import.js";
 import {
 	disablePlugin,
@@ -44,8 +41,6 @@ import {
 	removePlugin,
 } from "../plugins/index.js";
 import {
-	type BuiltinHubServer,
-	builtinHubServerFor,
 	classifyHubRequirements,
 	commitHubInstallPlan,
 	discoverHub,
@@ -425,51 +420,12 @@ function requirementRefs(status: ReturnType<typeof classifyHubRequirements>): Hu
 	};
 }
 
-/**
- * What a lifecycle operation on a server PanCode carries answers. Install and update succeed and write nothing; the
- * others fail, since there is no installed copy to change.
- */
-export function builtinServerAnswer(
-	operation: HubOperation,
-	server: BuiltinHubServer,
-): { ok: boolean; message: string } {
-	// A revoked row gets no successful answer, the same as discovery no longer offering it; nor does a damaged pack.
-	if ((server.revoked || server.damaged) && (operation === "install" || operation === "update"))
-		return { ok: false, message: server.revoked ?? `server:${server.id} is damaged: ${server.damaged}` };
-	if (operation === "install" || operation === "update")
-		return {
-			ok: true,
-			message: `${server.ref} is built into PanCode ${readPancodeVersion()}; pancode mcp list shows it`,
-		};
-	return {
-		ok: false,
-		message: `${server.ref} is built into PanCode and has no installed copy; a user declaration with the same id in ${path.join(pancodeConfigDir(), MCP_USER_CONFIG_FILENAME)} overrides it`,
-	};
-}
-
 export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan {
 	const cwd = path.resolve(request.cwd ?? process.cwd());
 	const id = randomBytes(8).toString("hex");
 	const diagnostics: string[] = [];
 	const steps: HubPlanStep[] = [];
 	const discoveryOptions = { cwd, ...(request.catalog ? { catalog: request.catalog } : {}) };
-	const builtin = builtinHubServerFor(request.ref, discoveryOptions);
-	if (builtin) {
-		// A built-in server has no copy: install and update are an applicable plan of no steps, the rest refuse.
-		const answer = builtinServerAnswer(request.operation, builtin);
-		if (!answer.ok) throw new Error(answer.message);
-		return {
-			version: 1,
-			id,
-			createdAt: new Date().toISOString(),
-			cwd,
-			request,
-			steps,
-			reviews: [],
-			applicable: true,
-			diagnostics: [answer.message],
-		};
-	}
 	const entries = listInstalledPlugins(cwd, { all: true });
 	try {
 		if (request.operation === "install") {

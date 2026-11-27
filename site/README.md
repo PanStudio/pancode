@@ -20,7 +20,7 @@ Serve a finished build as Pages would with `node site/dev.mjs --serve <directory
 
 ## PanHub catalog
 
-PanCode is one platform: the site has no product family, no page for PanStore, PanKit or the extension API (their 0.9.0 URLs are gone, not redirected), and `policy.mjs` and `check.py` reject PanSDK, "family" and a `panstore` command anywhere a visitor or crawler reads. The PanHub page's title and description live in the `hub` object of `product.json`.
+PanCode is one platform: the site has no product family, no page for PanStore or the extension API (their 0.9.0 URLs are gone, not redirected), and `policy.mjs` and `check.py` reject PanSDK, "family" and a `panstore` command anywhere a visitor or crawler reads. The PanHub page's title and description live in the `hub` object of `product.json`.
 
 `/hub.html` lists the packs in the index bundled with this release; community pack trees are fetched and only their rows ship. `node site/hub-catalog.mjs` reads the bundled `hub/index.yaml`, validates every row with PanCode's own PanHub row validator, drops revoked digests, and writes `content/hub-catalog.json` with the index commit and sha256. A row the validator rejects is refused with its row named, and nothing is written. Run it again after `hub/index.yaml` changes. `node site/hub-catalog.mjs --check` fails when the committed catalog no longer matches the index; `--index <file>` and `--catalog <file>` point it at other files. The build never reads the network: the page is the committed snapshot, with a filter that needs JavaScript and a full list without it. `node --test site/tests/hub-catalog.test.mjs` covers the generator.
 

@@ -4,7 +4,7 @@ Find, install and manage skills, plugins, extensions and other packs.
 
 ## Find a useful skill
 
-PanHub holds installable packs, each of one kind: **skill, agent, prompt, playbook, plugin, or extension**. Open `/hub` or press **Alt+L**. Switch categories with left/right, search with `/`, and open a pack with Enter.
+PanHub holds installable packs, each of one kind: **skill, plugin, or extension**. Open `/hub` or press **Alt+L**. Switch categories with left/right, search with `/`, and open a pack with Enter.
 
 `pancode hub update --all` updates eligible copies, `pancode hub package <directory>` turns a skill directory into a pack, and `pancode hub validate` checks what you author.
 

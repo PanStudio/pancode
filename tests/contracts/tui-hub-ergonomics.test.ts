@@ -4,7 +4,7 @@ import { deepStrictEqual, equal, match, ok } from "node:assert/strict";
 import { it } from "node:test";
 import { stripVTControlCharacters as plain } from "node:util";
 import { setPresentationTier } from "../../src/core/presentation-tier.js";
-import type { HubComponent, HubCopy, HubEntryKind, HubInventory } from "../../src/domains/resources/index.js";
+import type { HubCategory, HubComponent, HubCopy, HubInventory } from "../../src/domains/resources/index.js";
 import { readHubInventory } from "../../src/domains/resources/index.js";
 import type { TUI } from "../../src/engine/tui.js";
 import { visibleWidth } from "../../src/engine/tui.js";
@@ -62,7 +62,7 @@ function inventory(): HubInventory {
 	};
 }
 
-function browser(category: HubEntryKind, data = inventory()) {
+function browser(category: HubCategory, data = inventory()) {
 	let view!: ListOverlayView;
 	let reads = 0;
 	let plans = 0;

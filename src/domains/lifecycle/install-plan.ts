@@ -258,11 +258,6 @@ export function inactiveInstallerLauncher(record: InstallerRecord): string | nul
 	return launcherRuns(record.launcher, record.root) ? record.launcher : null;
 }
 
-/** The package's other launchers (pankit) an inactive installer root recorded and still owns. */
-export function inactiveInstallerBinLaunchers(record: InstallerRecord): string[] {
-	return (record.binLaunchers ?? []).filter((file) => launcherRuns(file, record.root));
-}
-
 function launcherRuns(file: string, root: string): boolean {
 	try {
 		if (lstatSync(file).isSymbolicLink()) return false;

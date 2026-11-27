@@ -261,24 +261,6 @@ export function validateStoreRoots(roots: ReadonlyArray<StoreRootSpec>): string 
 	return null;
 }
 
-/**
- * One `--root` option of the store server (`pancode mcp serve store`): `<name>=<dir>`, or for the first root a bare `<dir>`,
- * which is named `default`. A tag is placed on a root by name, so a primary configured under another name is
- * given as `<name>=<dir>`. Null when a further root is not `<name>=<dir>`.
- */
-export function parseStoreRootOption(value: string, first: boolean, cwd: string): StoreRootSpec | null {
-	const eq = value.indexOf("=");
-	const name = eq > 0 && eq < value.length - 1 ? value.slice(0, eq) : null;
-	if (name !== null && (!first || ROOT_NAME.test(name)))
-		return { name, path: resolve(cwd, value.slice(eq + 1)), durable: true, purge: null };
-	return first ? { name: STORE_DEFAULT_ROOT_NAME, path: resolve(cwd, value), durable: true, purge: null } : null;
-}
-
-/** The `--root` value that gives `root` back through `parseStoreRootOption`. */
-export function storeRootOption(root: { name: string; path: string }, first: boolean): string {
-	return first && root.name === STORE_DEFAULT_ROOT_NAME ? root.path : `${root.name}=${root.path}`;
-}
-
 /** null when every rule names a configured root, a valid tag and a known class, else the first problem. */
 export function validatePlacementRules(rules: StorePlacementRules, rootNames: ReadonlyArray<string>): string | null {
 	const known = new Set(rootNames);

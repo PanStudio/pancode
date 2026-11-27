@@ -4,9 +4,6 @@ export type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "./co
 export { resolveResourceCollisions } from "./collision.js";
 export type { ResourceList, ResourcesContract } from "./contract.js";
 export {
-	type BuiltinHubServer,
-	builtinHubServer,
-	builtinHubServerFor,
 	classifyHubRequirements,
 	commitHubInstallPlan,
 	confirmHubRemote,
@@ -22,7 +19,6 @@ export {
 	hubEntryRef,
 	hubInstallPath,
 	installHubPlan,
-	isBuiltinServerRow,
 	pinHubEntry,
 	planHubInstall,
 	planHubUpdate,
@@ -33,7 +29,6 @@ export {
 } from "./hub.js";
 export {
 	applyHubLifecycle,
-	builtinServerAnswer,
 	type HubApplyResult,
 	type HubExpectedCopy,
 	type HubExtensionRefresh,
@@ -92,6 +87,7 @@ export {
 } from "./hub-pairing.js";
 export {
 	HUB_COMPONENT_KINDS,
+	type HubCategory,
 	type HubComponentKind,
 	type HubProvidedResource,
 	isHubComponentKind,

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import type { PendingSkillRequest } from "../../src/core/skill-activation.js";
 import {
 	createReportTextHost,
@@ -198,20 +197,12 @@ test("argv is refused rather than escaped where the tokenizer would disagree wit
 });
 
 test("a headless invoke of a simple command returns its lines", async () => {
-	// The scratch home declares no server, so the list is exactly the builtin servers PanCode ships (93f6dabdb).
-	const manifest = JSON.parse(
-		readFileSync(fileURLToPath(new URL("../../packages/kit/servers.json", import.meta.url)), "utf8"),
-	) as { servers: Array<{ id: string }> };
 	const result = await invokeAcpCommand({ command: "mcp", argv: ["list"] }, host());
 	assert.equal(result.level, "info");
-	const servers = result.lines.filter((line) => !line.startsWith("  "));
-	assert.deepEqual(
-		servers.map((line) => line.split(" ").slice(0, 2).join(" ")),
-		manifest.servers.map(({ id }) => `${id} scope=builtin`),
-	);
+	assert.deepEqual(result.lines, ["mcp: none"]);
 
 	const bare = await invokeAcpCommand({ command: "mcp", argv: [] }, host());
-	assert.deepEqual(bare.lines, result.lines);
+	assert.deepEqual(bare.lines, ["mcp: none"]);
 });
 
 test("export reaches the host, and says so when the host has no transcript", async () => {

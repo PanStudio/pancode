@@ -6,13 +6,12 @@
  *
  * PanCode publishes one npm package, `@panstudio/pancode`. This proves its tarball (`npm pack`) is all an npm
  * user needs: every `bin` and `exports` target is in the tarball, it installs alone into an empty prefix with an
- * empty npm cache of its own and no `@pancode/*` package beside it, and from inside that prefix `pancode --version`,
- * `pancode store --help`, `pankit list` and `pankit manifest` run and every `sdk/<subpath>` export imports. The
- * release checks follow: `pankit list` names exactly the seven
- * PanKit servers and `pankit serve node` completes one MCP handshake and exits 0 (`scripts/release/installed-commands.mjs`). Then the
- * installed CLI scaffolds an extension outside the prefix and `pancode extensions test` runs its tests
- * against `pancode/sdk/testing`; when this checkout has TypeScript, the scaffold also type-checks against
- * the installed declarations. Third-party runtime dependencies come from the configured registry or mirror.
+ * empty npm cache of its own and no `@pancode/*` package beside it, and from inside that prefix `pancode --version`
+ * and `pancode store --help` run and every `sdk/<subpath>` export imports. The release check follows: the installed
+ * `pancode --version` names the packed version (`scripts/release/installed-commands.mjs`). Then the installed CLI
+ * scaffolds an extension outside the prefix and `pancode extensions test` runs its tests against
+ * `pancode/sdk/testing`; when this checkout has TypeScript, the scaffold also type-checks against the installed
+ * declarations. Third-party runtime dependencies come from the configured registry or mirror.
  *
  * `--prefix` must be absent or empty. The installed CLI runs with a scratch PanCode home.
  */
@@ -30,7 +29,7 @@ const shell = process.platform === "win32";
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 /** The commands the package installs. */
-export const COMMANDS = ["pancode", "pankit"];
+export const COMMANDS = ["pancode"];
 
 /** The regular files in a gzipped tarball, as a map of path to contents. Reads ustar and pax headers. */
 export function readTarball(bytes) {
@@ -143,13 +142,8 @@ export async function checkPackedInstall({ tarball, prefix }) {
 		const lines = [`pancode --version: ${run(bin("pancode"), ["--version"], { cwd: prefix, env }).split("\n")[0]}`];
 		run(bin("pancode"), ["store", "--help"], { cwd: prefix, env });
 		lines.push("pancode store --help ok");
-		const listed = run(bin("pankit"), ["list"], { cwd: prefix, env }).trim();
-		const kitManifest = JSON.parse(run(bin("pankit"), ["manifest"], { cwd: prefix, env }));
-		lines.push(`pankit: list ${listed.split("\n").length} servers, manifest ${kitManifest.servers.length} servers`);
-		const installed = await checkInstalledCommands({ prefix, env, version: manifest.version });
-		lines.push(
-			`pankit list ${installed.pankitServers.join(", ")}; pankit serve node handshake ${installed.pankitServeNode.serverInfo.name} in ${installed.pankitServeNode.ms} ms`,
-		);
+		const installed = checkInstalledCommands({ prefix, env, version: manifest.version });
+		lines.push(`installed pancode --version: ${installed.pancodeVersion} in ${installed.ms} ms`);
 		const specifiers = Object.keys(manifest.exports ?? {})
 			.filter((key) => key.startsWith("./sdk/"))
 			.map((key) => `${manifest.name}/${key.slice(2)}`);

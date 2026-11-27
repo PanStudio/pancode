@@ -125,14 +125,13 @@ how to withdraw the choice. It is the only tracker; do not add another, any ads
 feature or an unsupported adoption claim. PanCode the program still needs no
 account and sends nothing home; keep the two apart in copy.
 
-## PanHub, PanStore and PanKit
+## PanHub and PanStore
 
 PanCode is one platform, and the site presents it that way. PanHub's page is
 the catalog, generated from the bundled index and labelled as the packs listed
 in that index; community pack trees are fetched and only their rows ship. A listing is not an endorsement; the page says what each
-tier means. PanStore is the store behind `pancode store` and PanKit is
-PanCode's agent toolkit, shareable with other agents over MCP; each is
-documented in its guide and has no page of its own. Never name PanSDK (the
+tier means. PanStore is the store behind `pancode store`; it is documented
+in its guide and has no page of its own. Never name PanSDK (the
 extension API is unstable), a `panstore` command, or a family of products.
 
 ## Guide composition

@@ -21,13 +21,11 @@ import {
 	currentMcpSurfaceApproval,
 	findMcpSkill,
 	getMcpSkill,
-	grantMcpBuiltinNetwork,
 	judgeMcpSkillApproval,
 	judgeMcpSurface,
 	MCP_TRUST_ACTION_CLASSES,
 	type McpTrustActionClass,
 	type McpTrustOptions,
-	mcpBuiltinTrustRefusal,
 	mcpCatalogDigest,
 	mcpCredentialRoutes,
 	mcpSkillApprovalsFor,
@@ -35,10 +33,7 @@ import {
 	mcpSkillRelativePath,
 	mcpSkillsSettings,
 	mcpSurfaceRemedy,
-	mcpSurfaceRemedyFor,
-	readMcpTrustState,
 	resolveMcpServers,
-	revokeMcpBuiltinNetwork,
 	revokeMcpSkill,
 	trustMcpServer,
 	untrustMcpServer,
@@ -129,21 +124,12 @@ JSON responses (--json):
     network, networkSource?, cached tools with per-tool actionClass, and
     instructions? the server wrote, from its catalog (at most 2 KiB).
     network is true when the server holds the worker network grant
-    described under trust; networkSource says whether the trust file (project,
-    plugin and builtin servers) or the user declaration granted it. --refresh lists
+    described under trust; networkSource says whether the trust file (project
+    and plugin servers) or the user declaration granted it. --refresh lists
     trusted servers live and updates their catalogs; untrusted declarations
     are never launched. Each server it reached carries status {status, reason?,
     remedy?}: connected, failed, or needs-auth (a remote server that refused
     its credentials or lacks one) with the pancode mcp login command. A diagnostic with severity "warning" is advisory.
-    A server with scope builtin ships with PanCode: it is trusted by
-    authorship, its tools and their classes come from the policy this PanCode
-    ships (catalog "shipped", builtin {version, title, environment}), and its
-    surface is approved only while it serves that policy, which reinstalling or
-    rebuilding restores. environment names the variables it is started with
-    from PanCode's own environment; values are never shown. A user declaration with its id overrides it, with a
-    warning; a project or plugin declaration with its id is shadowed. trust
-    --network records its network grant and untrust removes that grant; any
-    other trust refuses it.
     Each trusted server also carries surface {status, digest, approvedDigest,
     reason?, remedy?}: whether the tool surface it serves is approved (see
     trust --surface). Without --refresh no server is launched, so digest is
@@ -218,10 +204,6 @@ JSON responses (--json):
     A user-scope server's surface is recorded on its first listing in an
     attended session and reported as recorded; a headless session or worker
     never records one. The tool metadata cache is never read as approval.
-    On a builtin server trust takes only --network and returns {ok: true,
-    grant: {id, network, grantedAt}}. The grant is keyed by the server id, not
-    by a project or a digest, so it holds in every project and survives an
-    upgrade; the classes, path arguments and surface stay the shipped policy.
   trust --skill: {ok, recorded, skill: {name, uri, manifestDigest, bytes,
     files: [{path, uri, size, digest}], frontmatter}, approval: {status,
     approvedDigest, reason?}, record?}
@@ -306,7 +288,7 @@ function boundedCallText(text: string): string {
 
 /**
  * The server-wide class a text listing prints. A trusted server whose own class is the `unknown` fallback for undeclared
- * tools, and whose every listed tool declares one class, reads as that class (a builtin server; dogfood F13).
+ * tools, and whose every listed tool declares one class, reads as that class (dogfood F13).
  */
 function serverClassLabel(
 	trust: { status: string; actionClass: string },
@@ -356,7 +338,7 @@ function launchLabel(server: {
 	return `url=${JSON.stringify(server.url)}${named.length > 0 ? ` headers=${named.join(",")}` : ""}`;
 }
 
-/** The variable names a builtin manifest or a plugin's envVars passes from PanCode's environment. */
+/** The variable names a plugin's envVars passes from PanCode's environment. */
 function environmentLabel(names: ReadonlyArray<string>): string {
 	return names.length > 0 ? ` environment=${names.join(",")}` : "";
 }
@@ -396,27 +378,23 @@ function surfaceStatusOf(
 	if (server.trust.status !== "trusted") return null;
 	const approved = served === null ? server.trust.surface : currentMcpSurfaceApproval(server, trustOptions);
 	const status = judgeMcpSurface(server, approved, served);
-	return status.status === "approved" ? status : { ...status, remedy: mcpSurfaceRemedyFor(server) };
+	return status.status === "approved" ? status : { ...status, remedy: mcpSurfaceRemedy(server.id) };
 }
 
 /**
- * The tools a server lists without launching it: a builtin server's from the
- * policy this PanCode ships, any other trusted server's from its recorded catalog.
+ * The tools a server lists without launching it: a trusted server's from its recorded catalog.
  */
 function offlineTools(
 	server: ResolvedMcpServer,
 	cwd: string,
 ): {
 	tools: Array<{ name: string; annotations: Record<string, unknown> | null }>;
-	catalog: "shipped" | "cached" | "missing";
+	catalog: "cached" | "missing";
 	catalogStale?: true;
 	instructions?: string;
 	resources?: McpResourceCount | "unlisted";
 	prompts?: { count: number; stale?: true };
 } {
-	if (server.builtin !== undefined) {
-		return { tools: server.builtin.tools.map(({ name, annotations }) => ({ name, annotations })), catalog: "shipped" };
-	}
 	const catalog =
 		server.trust.status !== "trusted"
 			? null
@@ -466,7 +444,7 @@ function resourcesAndPromptsLine(
 export function recordedMcpPromptCommands(cwd: string): Set<string> {
 	const names = new Set<string>();
 	for (const server of resolveMcpServers({ cwd }).servers) {
-		if (server.trust.status !== "trusted" || server.builtin !== undefined) continue;
+		if (server.trust.status !== "trusted") continue;
 		const catalog = readMcpServerCatalog({
 			projectRoot: canonicalProjectRoot(cwd),
 			scope: server.scope,
@@ -545,17 +523,12 @@ export function mcpCommandOutput(
 					const entry = boundEntry(server);
 					const surface = surfaceStatusOf(server, served.get(server.id) ?? null, options);
 					const state = live.get(server.id);
-					// The shipped schemas are policy, not a listing; list shows the version, title and the variable names it is given.
-					const { builtin, ...declaration } = server;
 					return {
-						...declaration,
+						...server,
 						...(state !== undefined ? { status: state } : {}),
 						// An env value is often a token: list names the keys and never prints a value.
 						...(server.env !== undefined
 							? { env: Object.fromEntries(Object.keys(server.env).map((key) => [key, "[redacted]"])) }
-							: {}),
-						...(builtin !== undefined
-							? { builtin: { version: builtin.version, title: builtin.title, environment: builtin.environment } }
 							: {}),
 						...(entry !== null ? { entry } : {}),
 						...networkGrant(server),
@@ -577,7 +550,7 @@ export function mcpCommandOutput(
 			// Each server's tools and surface sit under its own header line (CLI audit 7).
 			const lines = result.servers.flatMap((server) => {
 				const block = [
-					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${environmentLabel(server.builtin?.environment ?? ("envVars" in server ? server.envVars : undefined) ?? [])} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
+					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${environmentLabel(("envVars" in server ? server.envVars : undefined) ?? [])} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
 				];
 				if (server.status?.reason !== undefined) {
 					const remedy =
@@ -640,32 +613,6 @@ export function mcpCommandOutput(
 			actionClass = value as McpTrustActionClass;
 		}
 		const declared = resolveMcpServers(options).servers.find((entry) => entry.id === id);
-		const builtin = declared?.scope === "builtin";
-		if (command === "trust" && builtin) {
-			// The network grant is the one decision an operator records for a builtin server.
-			if (!network || actionClass !== undefined) return fail(1, mcpBuiltinTrustRefusal(id));
-			const result = grantMcpBuiltinNetwork({ ...options, id });
-			if (!result.ok) return fail(1, result.message);
-			return {
-				code: 0,
-				text: `mcp: granted ${id} network in fleet workers (recorded ${result.grant.grantedAt})`,
-				data: result,
-			};
-		}
-		// A grant outlives the server's removal from a later PanCode, so untrust still finds it.
-		const leftover =
-			declared === undefined &&
-			readMcpTrustState(options.configDir).state.builtins?.some((entry) => entry.id === id) === true;
-		if (command === "untrust" && (builtin || leftover)) {
-			const result = revokeMcpBuiltinNetwork({ ...options, id });
-			return result.ok
-				? {
-						code: 0,
-						text: `mcp: untrusted ${id} (network grant ${result.removed ? "removed" : "already absent"})`,
-						data: result,
-					}
-				: fail(1, result.message);
-		}
 		if (command === "trust") {
 			const result = trustMcpServer({ ...options, id, ...(actionClass ? { actionClass } : {}), network });
 			if (!result.ok) return fail(1, result.message);
@@ -1094,11 +1041,9 @@ async function mcpSurfaceOutput(options: McpSurfaceApprovalOptions): Promise<Mcp
 	const trustOptions = {
 		cwd: options.cwd,
 		...(options.configDir ? { configDir: options.configDir } : {}),
-		...(options.builtin !== undefined ? { builtin: options.builtin } : {}),
 	};
 	const server = resolveMcpServers(trustOptions).servers.find((entry) => entry.id === id);
 	if (server === undefined) return fail(`no declared MCP server with id '${id}'`);
-	if (server.scope === "builtin") return fail(mcpBuiltinTrustRefusal(id));
 	if (server.trust.status !== "trusted")
 		return fail(`server '${id}' is ${server.trust.status}; approve its launch first: pancode mcp trust ${id}`);
 	const [{ createMcpCapabilitySource }, { createRegistry }, { createWorkerSafety }] = await Promise.all([
@@ -1178,7 +1123,6 @@ export async function mcpSkillApprovalOutput(options: McpSkillApprovalOptions): 
 	const trustOptions = {
 		cwd: options.cwd,
 		...(options.configDir ? { configDir: options.configDir } : {}),
-		...(options.builtin !== undefined ? { builtin: options.builtin } : {}),
 	};
 	const server = resolveMcpServers(trustOptions).servers.find((entry) => entry.id === id);
 	if (server === undefined) return fail(`no declared MCP server with id '${id}'`);

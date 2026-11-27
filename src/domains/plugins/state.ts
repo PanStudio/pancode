@@ -35,7 +35,7 @@ import {
 } from "../extensions/install-store.js";
 import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
 import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
-import { HUB_TIERS, isHubKind } from "../resources/hub-types.js";
+import { isHubKind } from "../resources/hub-types.js";
 import { isPluginId, readPluginManifest } from "./discovery.js";
 import { passPluginCandidate } from "./discovery-pass.js";
 import { pluginContentDigest } from "./integrity.js";
@@ -90,8 +90,6 @@ function readInstallRecord(id: string, entry: unknown): PluginInstallRecord {
 	if (entry.origin !== undefined && typeof entry.origin !== "string" && !validOrigin(entry.origin))
 		throw new Error("origin is not a valid origin");
 	if (entry.kind !== undefined && !isHubKind(entry.kind)) throw new Error("kind is not a pack kind");
-	if (entry.kind === "server" && entry.tier !== null && !HUB_TIERS.some((tier) => tier === entry.tier))
-		throw new Error("a server record requires its catalog tier, or null for an untiered source");
 	if (entry.trust !== undefined && entry.trust !== "trusted" && entry.trust !== "foreign")
 		throw new Error("trust must be trusted or foreign");
 	readPublisher(entry.publisher);
@@ -692,7 +690,7 @@ export function installPlugin(sourcePath: string, options: PluginInstallOptions 
 						: (options.trust ?? state.installed[manifest.name]?.trust ?? "trusted");
 			const kind = manifest.pancode.kind ?? "plugin";
 			state.installed[manifest.name] = {
-				...(kind === "server" ? { kind, tier: options.tier ?? null } : { kind }),
+				kind,
 				installedAt: new Date().toISOString(),
 				source: typeof origin === "string" ? origin : origin.source,
 				origin,

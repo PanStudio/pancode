@@ -52,14 +52,16 @@ function repositoryFilter(entry: GitHookFile): boolean {
  * session would run with the operator's privileges on PanCode's next internal
  * operation, without any tool call for the drift guard's ask to stop.
  *
- * Before such an operation the policy checks the session's drift guard, and
- * for a repository outside the workspace a guard of its own whose baseline is
- * the first operation there. Without drift the operation runs as the
- * repository configures it. After drift at autonomy `default` it runs with
- * hooks off (core.hooksPath at an empty directory) and every changed
- * executable config key set to a value that runs nothing, and the transcript
- * and the exit summary name the operation and the changes. At `yolo` it runs
- * as configured and the exit summary still records the drift.
+ * Such an operation never runs a repository hook: `internalGitArgv` pins
+ * core.hooksPath to /dev/null on every one. Before it the policy checks the
+ * session's drift guard, and for a repository outside the workspace a guard
+ * of its own whose baseline is the first operation there. Without drift the
+ * operation runs as the repository configures it, hooks apart. After drift at
+ * autonomy `default` it also runs with core.hooksPath at an empty directory
+ * and every changed executable config key set to a value that runs nothing,
+ * and the transcript and the exit summary name the operation and the changes.
+ * At `yolo` changed config runs as configured and the exit summary still
+ * records the drift.
  */
 
 /**

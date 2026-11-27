@@ -4,11 +4,10 @@ PanStore is PanCode's project store: it keeps files as blobs in named tags outsi
 
 The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), `createSharedStoreBackend` in [shared/backend.ts](../../packages/store/src/shared/backend.ts) for a store in a folder several hosts mount ([Storing in a shared folder](#storing-in-a-shared-folder)), or `createS3StoreBackend` in [s3/backend.ts](../../packages/store/src/s3/backend.ts) for a store in an S3 bucket ([Storing in an S3 bucket](#storing-in-an-s3-bucket)), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
 
-Its code is the private workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
+Its code is the private workspace package `@pancode/store`, bundled into PanCode. It reaches you two ways, both over the same files:
 
 - `pancode store <command>` inside a PanCode project, with the roots, cache and placement from your settings.
 - The model's `store` tool.
-- The PanKit `store` MCP server ([PanKit](pankit.md)).
 
 Every checkout and task worktree of one repository reaches the same store: the store is keyed by the main checkout's real path, so a task worktree and the checkout it came from share one project key. A project whose tracked settings set `store.projectId` is keyed by that id instead, so checkouts at different paths, on different hosts, reach one store ([Sharing a store across hosts](#sharing-a-store-across-hosts)).
 
@@ -28,7 +27,7 @@ Each command below runs as `pancode store <command>`. Changing the backend does 
 | `rm <tag>:<blob> --yes` | Delete one blob and append a remove record. Without `--yes` it deletes nothing, prints what it would delete and exits 0. |
 | `rm-tag <tag> --yes` | Delete a tag. Without `--yes` it deletes nothing, prints what it would delete and exits 0. |
 | `adopt [<projectKey>]` | Without a key, list store directories whose project root no longer exists and that carry no project id. With a key, move that store to this project; refuses when this project already has one. |
-| `where` | Print the store root, project root, project id, project key, project directory, each root's id and the `pankit serve store` command line that serves this store over MCP from any directory. With a project id, it also names a store still left under the path key, which `adopt <key>` moves. |
+| `where` | Print the store root, project root, project id, project key, project directory, and each root's id. With a project id, it also names a store still left under the path key, which `adopt <key>` moves. |
 | `usage [tag]` | Count blobs and bytes per tag and per root by walking the store, with each root's file system free space. |
 | `locks` | List the project's store locks: each holder's key, pid, host and time, and its state (see [Locks](#locks)). |
 | `locks break <id> --yes` | Remove a lock that is not `live`. Without `--yes` it removes nothing, prints what it would remove and exits 0. It never touches a blob or a record. |
@@ -46,7 +45,7 @@ pancode store get results:data.csv
 pancode store where
 ```
 
-`where` ends with the `pankit serve store` line that serves this project's store over MCP from any directory, so an MCP host on this machine can reach the store PanCode uses:
+`where` prints where this project's store lives:
 
 ```text
 store root   /home/me/.local/share/pancode/data/store
@@ -55,10 +54,7 @@ project id   (none)
 project key  cb6fe116fff133e1
 project dir  /home/me/.local/share/pancode/data/store/projects/cb6fe116fff133e1
 root default  /home/me/.local/share/pancode/data/store  id 6f1c2a9e-5b7d-4e8a-9c3f-2d4b6a8e0f17
-store server pankit serve store --root /home/me/.local/share/pancode/data/store --cache /home/me/.cache/pancode --project /home/me/src/sim
 ```
-
-The line names no `--write-tag`, so that server only reads.
 
 ## Records and actors
 
@@ -72,7 +68,7 @@ The actor says who wrote the record:
 | `worker` | The `store` tool in a dispatched worker, with the dispatch run id. |
 | `standalone` | Any `pancode store` command run from a shell, whoever runs it. |
 | `extension` | An extension, with its id. |
-| `mcp` | An MCP server writing through a store reference or the builtin `store` server, with the server id as the client. |
+| `mcp` | An MCP server writing through a store reference, with the server id as the client. |
 
 A put or remove holds the blob's lock across the change and its record, whether it comes from the CLI, the `store` tool or an MCP server, so no other writer's change lands between them, on this host or on another host sharing the root. A put that fails before the bytes commit changes nothing. A put whose bytes committed but whose record failed exits 1 and says so; the blob then shows drift `unrecorded`, and `verify <tag> --record-unrecorded` records it from the stored bytes. A crash between a remove's delete and its record leaves drift `missing` over the last put record.
 
@@ -130,7 +126,7 @@ store:
   projectId: sim
 ```
 
-`store.projectId` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit. It is read only from the tracked project file, and only while you trust the project's settings, so an untrusted checkout cannot name another project's store; set in user settings or in the private local file it is ignored with a settings issue. The project key becomes the first 16 hex of the SHA-256 of `project-id:<id>`, so every checkout with that id reaches one project directory, whatever its path. A store already written under the path key stays where it is: `where` names it and `adopt <key>` moves it. The PanKit `store` server takes the id as `--project-id`, and `where` prints it in the `store server` line.
+`store.projectId` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit. It is read only from the tracked project file, and only while you trust the project's settings, so an untrusted checkout cannot name another project's store; set in user settings or in the private local file it is ignored with a settings issue. The project key becomes the first 16 hex of the SHA-256 of `project-id:<id>`, so every checkout with that id reaches one project directory, whatever its path. A store already written under the path key stays where it is: `where` names it and `adopt <key>` moves it.
 
 Each host lists the shared roots in its own `store.roots`; the mount paths may differ, since root ids match them. The primary must be shared as well, because it holds the records and the locks.
 
@@ -155,7 +151,7 @@ Locks are leases in the log. The holder renews its lease every 10 seconds. A lea
 
 The folder must be on Linux, on a file system that links atomically: a local one, or NFS mounted with `lookupcache=positive` or `lookupcache=none`, so a host sees a name another host has just created. Anything else is refused as `unavailable` before the first write.
 
-Everything a local store does works on a shared one except the index: `adopt` (one change in the log), `put --link`, tag grants to a worker on an SSH node (whose host also sets `store.backend: shared`), store references and the PanKit `store` server, which PanCode launches with `--shared`.
+Everything a local store does works on a shared one except the index: `adopt` (one change in the log), `put --link`, tag grants to a worker on an SSH node (whose host also sets `store.backend: shared`) and store references.
 
 ## Storing in an S3 bucket
 
@@ -189,8 +185,7 @@ An s3 store refuses, naming the limit:
 - a single put larger than 5 GiB (one request, no multipart upload);
 - `adopt`, which moves a project directory between local roots;
 - tag grants to a worker on an SSH node, which opens its own host's store;
-- write store references from an MCP server, which has no local path to write to;
-- the PanKit `store` server, which opens local roots only.
+- write store references from an MCP server, which has no local path to write to.
 
 There is no host-local index and no free-space figure; `put --link` copies.
 
@@ -221,8 +216,6 @@ An MCP server's declared path argument can name a blob instead of a file with th
 
 Admission judges each reference as the `store` call it stands for, so a reference to a records tag or a malformed reference is refused, and a worker writes only the tags its dispatch granted.
 
-The builtin PanKit `store` server is launched by PanCode with this session's roots, cache, project and writable tags as launch arguments, outside the server's declaration digest; when the session may write a tag created after launch, the server is relaunched once. Its `store_put` and `store_note` are admitted as the `store` tool's own put and note into that tag. Its tools are listed in [PanKit](pankit.md#store).
-
 ## Limits
 
 - PanStore is exercised on Linux only until its conformance suite runs on the macOS and Windows runners.
@@ -230,7 +223,6 @@ The builtin PanKit `store` server is launched by PanCode with this session's roo
 - On a local store, a `remote` or `unreadable` lock is never broken automatically: a host that crashed while writing blocks that blob or tag until an operator runs `locks break`.
 - PanStore keeps no blob versions and does no deduplication. A put replaces the blob's bytes; its records remain.
 - On a shared or s3 store, each change writes a new page listing every blob of its tag, so a change to a tag holding many blobs costs time and space in proportion to them, until `reclaim` deletes the old pages.
-- An s3 store refuses puts over 5 GiB, `adopt`, SSH tag grants, write store references and the PanKit `store` server ([Storing in an S3 bucket](#storing-in-an-s3-bucket)).
+- An s3 store refuses puts over 5 GiB, `adopt`, SSH tag grants and write store references ([Storing in an S3 bucket](#storing-in-an-s3-bucket)).
 - A tag grant is a permission, not a confinement, outside the parallel-batch case in [Workers and tags](#workers-and-tags).
-- The builtin `store` server's writes are limited to the tags it was started with, but its reads are not confined: it can read every tag of the project, whatever the session's grants.
 - `put --link` copies on file systems without reflinks, such as ext4; the output says which happened.

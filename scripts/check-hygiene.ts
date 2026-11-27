@@ -344,16 +344,6 @@ async function checkHubPin(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// kit-manifest: packages/kit/servers.json, the PanKit policy PanCode ships,
-// and each hub/packs/servers/<id>/server.json must match what the kit's
-// server registry generates.
-// ---------------------------------------------------------------------------
-async function checkKitManifest(): Promise<void> {
-	const result = await runProcess("node", ["--import", "tsx", "scripts/kit-manifest.ts", "--check"], {});
-	if (result.status !== 0) fail("kit-manifest", result.output.trim());
-}
-
-// ---------------------------------------------------------------------------
 // third-party-notices: THIRD-PARTY-NOTICES.md must match what
 // scripts/third-party-notices.mjs generates from the packages dist/ bundles.
 // ---------------------------------------------------------------------------
@@ -1594,7 +1584,6 @@ async function checkPromptPreconditions(): Promise<void> {
 const checks: ReadonlyArray<[string, () => void | Promise<void>]> = [
 	["boundaries", checkBoundaries],
 	["hub-pin", checkHubPin],
-	["kit-manifest", checkKitManifest],
 	["third-party-notices", checkThirdPartyNotices],
 	["license-headers", checkLicenseHeaders],
 	["site-docs-snapshot", checkSiteDocsSnapshot],

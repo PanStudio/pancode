@@ -6,18 +6,14 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { readBlobHistory, type StoreBackend } from "@pancode/store";
 import { sha256Hex } from "../../src/core/hash.js";
-import { provideStoreSettings, storeBlobPath, storeRootSpecs } from "../../src/core/store-paths.js";
+import { provideStoreSettings, storeBlobPath } from "../../src/core/store-paths.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { pancodeCachePath } from "../../src/core/xdg.js";
-import { resolveWorkerMcpAdmission } from "../../src/domains/dispatch/worker-mcp.js";
 import {
 	approveMcpSurface,
 	createMcpClient,
-	type McpBuiltinSource,
 	type McpClient,
-	mcpBuiltinLaunchArgs,
 	mcpSurface,
-	resolveMcpServers,
 	trustMcpServer,
 } from "../../src/domains/gateway/mcp/index.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
@@ -29,28 +25,24 @@ import type { McpStoreAccess } from "../../src/tools/gateway/mcp-store-reference
 import { createRegistry } from "../../src/tools/registry.js";
 import type { RegistryVerdict } from "../../src/tools/registry-contract.js";
 import { createStoreTool } from "../../src/tools/store/store-tool.js";
-import { builtinFixtureSource, emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**
  * Store references `store:<tag>:<blob>` in an MCP server's declared path
- * arguments, and the builtin `store` server in a session. Every input here is
- * constructed: the CSV and text bytes, the tag and blob names, the session,
- * turn and dispatch ids, and both fixture servers (`mcp-file-server.mjs` and
- * the `store` server of `mcp-builtin-server.ts`).
+ * arguments. Every input here is constructed: the CSV and text bytes, the tag
+ * and blob names, the session, turn and dispatch ids, and the fixture server
+ * `mcp-file-server.mjs`.
  */
 
 const FILE_SERVER = resolve("tests/fixtures/mcp-file-server.mjs");
 const COPY = "mcp_files__copy_file";
 const WRITE = "mcp_files__write_text";
-const STORE_PUT = "mcp_store__store_put";
 const CSV = "a,b\n1,2\n";
 const IDS = { sessionId: "session-1", turnId: "turn-1" };
 
 interface Session {
 	registry: ReturnType<typeof createRegistry>;
 	source: McpCapabilitySource;
-	launches: Array<{ id: string; args: ReadonlyArray<string> }>;
 }
 
 function failedMessage(verdict: RegistryVerdict): string {
@@ -82,7 +74,6 @@ describe("store references in MCP path arguments", () => {
 	let env: IsolatedPancodeEnv;
 	let project: string;
 	let configDir: string;
-	let builtin: McpBuiltinSource;
 	const open: McpCapabilitySource[] = [];
 
 	beforeEach(async () => {
@@ -91,7 +82,6 @@ describe("store references in MCP path arguments", () => {
 		configDir = join(env.dir, "config");
 		mkdirSync(join(project, ".pancode"), { recursive: true });
 		mkdirSync(configDir, { recursive: true });
-		builtin = emptyBuiltinSource(env.dir);
 		writeFileSync(
 			join(project, ".pancode", "mcp.yaml"),
 			[
@@ -127,20 +117,17 @@ describe("store references in MCP path arguments", () => {
 
 	function session(
 		store: McpStoreAccess | undefined,
-		options: { openBackend?: (cwd: string) => Promise<StoreBackend>; builtin?: McpBuiltinSource } = {},
+		options: { openBackend?: (cwd: string) => Promise<StoreBackend> } = {},
 	): Session {
-		const launches: Session["launches"] = [];
 		const registry = createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" });
 		const source = createMcpCapabilitySource({
 			cwd: project,
 			configDir,
-			builtin: options.builtin ?? builtin,
 			registry,
 			requestTimeoutMs: 10_000,
 			...(store !== undefined ? { store } : {}),
 			...(options.openBackend !== undefined ? { openStoreBackend: options.openBackend } : {}),
 			clientFactory: (spec, clientOptions) => {
-				launches.push({ id: spec.id, args: "args" in spec ? (spec.args ?? []) : [] });
 				const client: McpClient = createMcpClient(spec, {
 					...clientOptions,
 					initializeTimeoutMs: 10_000,
@@ -160,7 +147,7 @@ describe("store references in MCP path arguments", () => {
 		open.push(source);
 		registerCoreTools(registry, { mcpCapabilities: source });
 		registry.onPermissionRequired((_call, _decision, meta) => registry.cancelParkedCall(meta.requestId, "denied"));
-		return { registry, source, launches };
+		return { registry, source };
 	}
 
 	async function invoke(wired: Session, tool: string, args: Record<string, unknown>): Promise<RegistryVerdict> {
@@ -306,114 +293,5 @@ describe("store references in MCP path arguments", () => {
 		match(message, /drift "unrecorded"/u);
 		strictEqual(readFileSync(storeBlobPath(project, "results", "u.txt"), "utf8"), "x");
 		deepStrictEqual(await history("results", "u.txt"), []);
-	});
-
-	describe("the builtin store server", () => {
-		function storeBuiltin(): McpBuiltinSource {
-			const dir = join(env.dir, `builtin-${Math.random().toString(16).slice(2)}`);
-			mkdirSync(dir);
-			return builtinFixtureSource(dir, ["store"]);
-		}
-
-		function argvOf(output: string): string[] {
-			return (JSON.parse(output) as { argv: string[] }).argv;
-		}
-
-		it("9. starts with the session's roots, cache, project and write tags, outside the declaration digest", async () => {
-			const shipped = storeBuiltin();
-			const digest = () => resolveMcpServers({ cwd: project, builtin: shipped }).servers.find((s) => s.id === "store");
-			const before = digest()?.digest;
-			ok(before);
-			const scratch = join(env.dir, "scratch-root");
-			mkdirSync(scratch);
-			const primary = storeRootSpecs()[0];
-			ok(primary);
-			provideStoreSettings(() => ({
-				roots: [primary, { name: "scratch", path: scratch, durable: true, purge: null }],
-				placement: { byTag: {}, byClass: {} },
-			}));
-			strictEqual(digest()?.digest, before, "another home's roots leave the declaration digest as it was");
-
-			const main = session({ writable: true }, { builtin: shipped });
-			const argv = argvOf(okOutput(await invoke(main, STORE_PUT, { tag: "results", blob: "b.csv" })));
-			deepStrictEqual(argv, [
-				"--root",
-				primary.path,
-				"--root",
-				`scratch=${scratch}`,
-				"--cache",
-				pancodeCachePath(),
-				"--project",
-				project,
-				"--write-tag",
-				"inputs",
-				"--write-tag",
-				"other",
-				"--write-tag",
-				"results",
-			]);
-			const keyed = mcpBuiltinLaunchArgs("store", {
-				store: { roots: [primary], cache: "c", project, projectId: "proof-shared", writeTags: [] },
-			});
-			deepStrictEqual(keyed.slice(-4), ["--project", project, "--project-id", "proof-shared"]);
-			const named = mcpBuiltinLaunchArgs("store", {
-				store: { roots: [{ ...primary, name: "shared" }], cache: "c", project, writeTags: [] },
-			});
-			deepStrictEqual(named.slice(0, 2), ["--root", `shared=${primary.path}`]);
-
-			const tools = [ToolNames.Gateway, STORE_PUT as ToolName];
-			const attestation = resolveWorkerMcpAdmission({ agentId: "coder", projectCwd: project, tools, builtin: shipped });
-			ok(attestation);
-			const registry = createRegistry({ safety: createWorkerSafety({ cwd: project }), autonomy: () => "yolo" });
-			const source = createMcpCapabilitySource({
-				cwd: attestation.projectRoot,
-				registry,
-				persistCatalog: false,
-				admitted: attestation,
-				builtin: shipped,
-				store: { writable: false, grant: { tags: ["results"], dispatchRunId: "run-9" } },
-			});
-			open.push(source);
-			registerCoreTools(registry, { mcpCapabilities: source });
-			ok((await source.ensure(STORE_PUT)).spec !== null);
-			const ran = await registry.invoke({ tool: STORE_PUT as ToolName, args: { tag: "results", blob: "w.csv" } });
-			const workerArgv = argvOf(okOutput(ran));
-			deepStrictEqual(workerArgv.slice(-2), ["--write-tag", "results"]);
-			strictEqual(workerArgv.filter((arg) => arg === "--write-tag").length, 1);
-		});
-
-		it("10. restarts once for a tag created after launch and refuses a missing tag before the call", async () => {
-			const main = session({ writable: true }, { builtin: storeBuiltin() });
-			okOutput(await invoke(main, STORE_PUT, { tag: "results", blob: "b.csv" }));
-			strictEqual(main.launches.length, 1);
-			const created = await createStoreTool({ getCwd: () => project, writable: true }).run({ op: "create", tag: "late" });
-			strictEqual(created.kind, "ok");
-			const argv = argvOf(okOutput(await invoke(main, STORE_PUT, { tag: "late", blob: "b.csv" })));
-			ok(argv.includes("late"), argv.join(" "));
-			strictEqual(main.launches.length, 2);
-			okOutput(await invoke(main, STORE_PUT, { tag: "late", blob: "c.csv" }));
-			strictEqual(main.launches.length, 2, "a tag the server was started with needs no restart");
-
-			match(
-				failedMessage(await invoke(main, STORE_PUT, { tag: "nosuch", blob: "b.csv" })),
-				/tag 'nosuch' does not exist; create it/u,
-			);
-			strictEqual(main.launches.length, 2, "a missing tag starts nothing again");
-		});
-
-		it("does not start without the session's store when a further root is missing", async () => {
-			const primary = storeRootSpecs()[0];
-			ok(primary);
-			const missing = join(env.dir, "gone");
-			provideStoreSettings(() => ({
-				roots: [primary, { name: "gone", path: missing, durable: true, purge: null }],
-				placement: { byTag: {}, byClass: {} },
-			}));
-			const main = session({ writable: true }, { builtin: storeBuiltin() });
-			const ensured = await main.source.ensure(STORE_PUT);
-			strictEqual(ensured.spec, null);
-			match(String(ensured.reason), /builtin store server cannot start.*store root gone \(.*\) is missing/u);
-			deepStrictEqual(main.launches, []);
-		});
 	});
 });

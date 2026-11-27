@@ -42,7 +42,6 @@ import {
 	launcherPathFor,
 } from "../domains/lifecycle/install-method.js";
 import {
-	inactiveInstallerBinLaunchers,
 	inactiveInstallerLauncher,
 	inactiveInstallerRoots,
 	installerExeFiles,
@@ -263,27 +262,6 @@ function ownedCliEntries(): string[] {
 			return realpathSync(entry);
 		} catch {
 			return entry;
-		}
-	});
-}
-
-/** The symlinks install-local.sh put beside pancode for the package's other commands that still run this checkout. */
-function sourceCompanionLinks(binDir: string): string[] {
-	const root = resolvePackageRoot();
-	let bin: unknown;
-	try {
-		bin = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { bin?: unknown }).bin;
-	} catch {
-		return [];
-	}
-	if (bin === null || typeof bin !== "object") return [];
-	return Object.entries(bin).flatMap(([name, target]) => {
-		if (name === "pancode" || typeof target !== "string") return [];
-		const link = join(binDir, name);
-		try {
-			return lstatSync(link).isSymbolicLink() && realpathSync(link) === realpathSync(join(root, target)) ? [link] : [];
-		} catch {
-			return [];
 		}
 	});
 }
@@ -593,15 +571,9 @@ async function uninstallInactive(
 			detail: "installer root this binary does not run from",
 		});
 		const launcher = inactiveInstallerLauncher(record);
-		const files = inactiveInstallerBinLaunchers(record);
-		launchers.set(record.root, [
-			...(launcher ? [launcher, ...(installerExeFiles(launcher, record.root) ?? [])] : []),
-			...files,
-		]);
+		launchers.set(record.root, launcher ? [launcher, ...(installerExeFiles(launcher, record.root) ?? [])] : []);
 		if (launcher)
 			items.push({ label: "Its launcher", path: launcher, status: "remove", detail: "install.sh launcher for it" });
-		for (const file of files)
-			items.push({ label: "Its launcher", path: file, status: "remove", detail: "install.sh launcher for it" });
 	}
 	presenter.listItems("The following will be removed", items);
 	presenter.note("Config, data, sessions, this installation and the desktop app stay.");
@@ -750,19 +722,8 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	const inactiveSize = inactiveInstall ? measurePath(inactiveInstall.root) : null;
 	const linkSize = measurePath(linkPath);
 	const launcher = classifyLauncher(linkPath, installation);
-	// The package's other commands (pankit) go with pancode's launcher, each only when this install wrote it.
-	const binLaunchers =
-		launcher.kind !== "remove"
-			? []
-			: installerRecord
-				? (installerRecord.binLaunchers ?? []).filter((file) => isInstallerLauncher(file, installation))
-				: method === "source"
-					? sourceCompanionLinks(dirname(linkPath))
-					: [];
 	const launcherFiles =
-		launcher.kind === "remove" && installerRecord
-			? [...(installerExeFiles(linkPath, installerRecord.root) ?? []), ...binLaunchers]
-			: binLaunchers;
+		launcher.kind === "remove" && installerRecord ? (installerExeFiles(linkPath, installerRecord.root) ?? []) : [];
 	const runtimeSize = installerRecord ? measurePath(installerRecord.root) : null;
 	const shellEdits = detectShellRcEdits(dirname(linkPath));
 	const paneHosts = process.platform === "win32" ? [] : privatePaneHosts(dirs.state);
@@ -895,8 +856,7 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	// points at; any other mention is reported and never edited.
 	// The block put a shared directory on PATH, and other tools (pipx, uv, pip --user)
 	// rely on it once they install there, so it goes only when the launcher was alone.
-	const ownCommands = new Set(binLaunchers.map((file) => basename(file)));
-	const binShared = otherBinEntries(dirname(linkPath), linkPath).some((name) => !ownCommands.has(name));
+	const binShared = otherBinEntries(dirname(linkPath), linkPath).length > 0;
 	const removePathBlocks = !args.keepBinary && launcher.kind !== "keep" && !binShared;
 	const pathBlockKept =
 		args.keepBinary || launcher.kind === "keep" ? "kept with the launcher" : sharedBinReason(linkPath);

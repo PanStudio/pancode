@@ -3,9 +3,8 @@
 /**
  * A first-party pack references an MCP server by id and tool name in its
  * prose. The hpc and science-data packs ship their own server in `mcp.json`,
- * and every tool their text names is one that `mcp.json` classes; a server
- * the pack does not ship (`scidata`, `store`) is checked against the PanKit
- * manifest `packages/kit/servers.json`. Every input is a tracked repository file.
+ * and every tool their text names is one that `mcp.json` classes. Every input
+ * is a tracked repository file.
  */
 import { deepStrictEqual, ok } from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -16,11 +15,6 @@ import { fileURLToPath } from "node:url";
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const PLUGINS = path.join(REPO, "hub/packs/plugins");
 const SERVER_OF: Record<string, string> = { hpc: "hpc", "science-data": "catalog" };
-
-const manifest = JSON.parse(readFileSync(path.join(REPO, "packages/kit/servers.json"), "utf8")) as {
-	servers: Array<{ id: string; tools: Array<{ name: string }> }>;
-};
-const toolsOf = new Map(manifest.servers.map((server) => [server.id, new Set(server.tools.map((tool) => tool.name))]));
 
 /** The servers a pack's `mcp.json` declares, each with the tools its `toolActionClasses` names. */
 function packServers(pack: string): Map<string, Set<string>> {
@@ -60,16 +54,12 @@ describe("first-party packs and their MCP servers", () => {
 		for (const [pack, id] of Object.entries(SERVER_OF)) deepStrictEqual([...packServers(pack).keys()], [id], pack);
 	});
 
-	it("name only tools their mcp.json or the PanKit manifest lists, and their own server's tools", () => {
+	it("name only tools their mcp.json lists, and their own server's tools", () => {
 		for (const [pack, own] of Object.entries(SERVER_OF)) {
 			const servers = packServers(pack);
 			const tokens = capabilityTokens(pack);
 			for (const { file, id, tool } of tokens) {
-				const listed = servers.get(id) ?? toolsOf.get(id);
-				ok(
-					listed?.has(tool) === true,
-					`${file} names mcp_${id}__${tool}, which neither ${pack}/mcp.json nor servers.json lists`,
-				);
+				ok(servers.get(id)?.has(tool) === true, `${file} names mcp_${id}__${tool}, which ${pack}/mcp.json does not list`);
 			}
 			ok(
 				tokens.some((token) => token.id === own),

@@ -241,13 +241,28 @@ describe("task worktree restart recovery", () => {
 			mkdirSync(join(cwd, "__pycache__"));
 			writeFileSync(join(cwd, "__pycache__", "x.pyc"), `${cwd}\n`);
 		}
+		// Repository hooks never run in PanCode's commit; a signing program still does, so it creates the late file.
 		writeFileSync(
 			join(root, ".git", "hooks", "post-commit"),
+			`#!${process.execPath}\nrequire('node:fs').writeFileSync('hook.txt', 'hook ran\\n');\n`,
+			{ mode: 0o755 },
+		);
+		const signer = join(root, ".git", "fake-signer");
+		writeFileSync(
+			signer,
 			`#!${process.execPath}
 if (process.cwd() === ${JSON.stringify(task.path)}) require('node:fs').writeFileSync('late.txt', 'created during commit\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+	process.stderr.write('\\n[GNUPG:] SIG_CREATED D 1 8 00 0 X\\n');
+	process.stdout.write('-----BEGIN PGP SIGNATURE-----\\n\\nAA==\\n-----END PGP SIGNATURE-----\\n');
+});
 `,
 			{ mode: 0o755 },
 		);
+		git(root, "config", "gpg.format", "openpgp");
+		git(root, "config", "gpg.program", signer);
+		git(root, "config", "commit.gpgsign", "true");
 		const receipt = applyTaskWorktree({
 			worktree: task,
 			apply: "preserve",
@@ -258,6 +273,7 @@ if (process.cwd() === ${JSON.stringify(task.path)}) require('node:fs').writeFile
 		deepStrictEqual(receipt.changedPaths, ["a.txt", "staged.txt", "tool.txt"]);
 		deepStrictEqual(receipt.leftUncommitted, { count: 2, paths: ["__pycache__/x.pyc", "late.txt"] });
 		strictEqual(readFileSync(join(task.path, "late.txt"), "utf8"), "created during commit\n");
+		ok(!existsSync(join(task.path, "hook.txt")), "the repository's post-commit hook did not run");
 		ok(receipt.commit);
 		const applied = applyTaskWorktree({
 			worktree: task,
@@ -268,6 +284,7 @@ if (process.cwd() === ${JSON.stringify(task.path)}) require('node:fs').writeFile
 		strictEqual(applied.applied, true, applied.detail);
 		deepStrictEqual(applied.leftUncommitted, receipt.leftUncommitted);
 		strictEqual(existsSync(join(root, "late.txt")), false);
+		strictEqual(existsSync(join(root, "hook.txt")), false);
 		strictEqual(git(root, "ls-files", "__pycache__"), "");
 		strictEqual(readFileSync(join(root, "a.txt"), "utf8"), "fixed\n");
 	});

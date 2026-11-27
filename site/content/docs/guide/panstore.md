@@ -17,7 +17,7 @@ pancode store ls results
 pancode store stat results:summary.parquet
 ```
 
-`put` creates a missing tag as an input tag. `stat` shows the record and whether the bytes have drifted since: `none`, `changed`, `missing` or `unrecorded`. `get` prints the path of a read-only copy, or copies the blob elsewhere with `--to <path>`. Every command takes `--json`. `pancode store where` prints the store's folders and ends with the `pankit serve store` line that serves this store over MCP to another agent on this machine.
+`put` creates a missing tag as an input tag. `stat` shows the record and whether the bytes have drifted since: `none`, `changed`, `missing` or `unrecorded`. `get` prints the path of a read-only copy, or copies the blob elsewhere with `--to <path>`. Every command takes `--json`. `pancode store where` prints the store's folders.
 
 ## Ask PanCode to use it
 

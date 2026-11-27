@@ -912,7 +912,7 @@ describe("hub import of foreign plugin packages", () => {
 		writeFileSync(
 			path.join(tools, "git"),
 			// A stand-in git behind the internal-git hardening: the fetch resolves the tag with ls-remote, then inits, fetches, checks out and reads HEAD.
-			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const a=process.argv.slice(${2 + INTERNAL_GIT_BASE_OPTIONS.length});const c='1'.repeat(40);if(a[0]==='ls-remote'){process.stdout.write(c+'\\trefs/tags/v1\\n');process.exit(0)}if(a[0]==='init'){fs.mkdirSync(a.at(-1),{recursive:true});process.exit(0)}if(a.includes('fetch'))fs.cpSync(${JSON.stringify(source)},p.join(a[1],'plugins','remote-pack'),{recursive:true});if(a.includes('rev-parse'))process.stdout.write(c+'\\n');\n`,
+			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const a=process.argv.slice(${2 + INTERNAL_GIT_BASE_OPTIONS.length});const c='1'.repeat(40);if(a.includes('ls-remote')){process.stdout.write(c+'\\trefs/tags/v1\\n');process.exit(0)}if(a.includes('init')){fs.mkdirSync(a.at(-1),{recursive:true});process.exit(0)}if(a.includes('fetch'))fs.cpSync(${JSON.stringify(source)},p.join(a[1],'plugins','remote-pack'),{recursive:true});if(a.includes('rev-parse'))process.stdout.write(c+'\\n');\n`,
 			{ mode: 0o755 },
 		);
 		const previousPath = process.env.PATH;
