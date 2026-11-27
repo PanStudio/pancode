@@ -234,6 +234,7 @@ export function resolveDispatchAdmissionStage(
 		agentId: req.agentId,
 		projectCwd: req.taskWorktree?.root ?? req.protectedArtifactRemap?.sourceRoot ?? req.cwd ?? process.cwd(),
 		tools: allowedTools,
+		...(recipe.boundMcpSkills !== undefined && req.noSkills !== true ? { skills: recipe.boundMcpSkills } : {}),
 	};
 	let mcp = resolveWorkerMcpAdmission(mcpInput);
 	const requestedActions = deriveRequestedActions(allowedTools, safety, mcp);

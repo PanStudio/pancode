@@ -117,6 +117,12 @@ export interface AgentRecipe {
 	boundSkillPaths: ReadonlyArray<string>;
 	/** Each bound skill's own description, in `skills` order; never parsed from frontmatter. */
 	boundSkillDescriptions?: ReadonlyArray<string>;
+	/**
+	 * The `skills` no local skill answers that name an MCP server's skill as
+	 * `<id>:<name>`; dispatch admission attests their approved versions. Never
+	 * parsed from frontmatter.
+	 */
+	boundMcpSkills?: ReadonlyArray<string>;
 	audience: AgentAudience;
 	category: AgentCategory;
 	capabilityClass: AgentCapabilityClass;

@@ -259,6 +259,13 @@ export function permissionChoices(
 			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
 		];
 	}
+	if (view.artifact?.kind === "mcp-skill") {
+		return [
+			{ key: "Enter", verb: "allow", consequence: `records this skill version as approved and loads it${draftNote}` },
+			{ key: "Esc", verb: "deny", consequence: "skips it; the skill stays listed and unloaded" },
+			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
+		];
+	}
 	if (view.artifact?.kind === "settings-change") {
 		return [
 			{ key: "Enter", verb: "allow", consequence: `saves this change to your settings${draftNote}` },

@@ -21,7 +21,9 @@ import { afterEach, describe, it } from "node:test";
 import { withStateFileLock } from "../../src/core/state-file-lock.js";
 import { mcpToolActionClass } from "../../src/domains/gateway/mcp/action-classes.js";
 import {
+	approveMcpSkill,
 	canonicalProjectRoot,
+	currentMcpSkillApproval,
 	grantMcpBuiltinNetwork,
 	judgeMcpSurface,
 	loadMcpServerConfig,
@@ -663,6 +665,44 @@ describe("mcp server trust", () => {
 		deepStrictEqual(untrustMcpServer({ cwd: project, configDir, id: "s0" }), { ok: true, removed: true });
 		strictEqual(readMcpTrustState(configDir).state.records.length, MCP_TRUST_CAPS.records - 1);
 		ok(trustMcpServer({ cwd: project, configDir, id: "files" }).ok);
+	});
+
+	it("drops a server's project skill approvals when untrusting the server so re-trusting never revives them", () => {
+		const { project, configDir, builtin } = scratch();
+		const otherProject = realpathSync(mkdtempSync(join(tmpdir(), "pancode-mcp-other-")));
+		roots.push(otherProject);
+		mkdirSync(join(otherProject, ".pancode"), { recursive: true });
+		mkdirSync(join(otherProject, "tools"), { recursive: true });
+		writeProjectConfig(project, PROJECT_CONFIG);
+		writeProjectConfig(otherProject, PROJECT_CONFIG);
+		ok(trustMcpServer({ cwd: project, configDir, builtin, id: "files" }).ok);
+		ok(trustMcpServer({ cwd: otherProject, configDir, builtin, id: "files" }).ok);
+		const skill = {
+			uri: "skill://files/lint/SKILL.md",
+			name: "lint",
+			manifestDigest: `sha256:${"a".repeat(64)}`,
+			files: 1,
+			bytes: 42,
+		};
+		ok(approveMcpSkill({ cwd: project, configDir, builtin, id: "files", skill }).ok);
+		ok(approveMcpSkill({ cwd: otherProject, configDir, builtin, id: "files", skill }).ok);
+		const server = resolveMcpServers({ cwd: project, configDir, builtin }).servers.find((entry) => entry.id === "files");
+		const otherServer = resolveMcpServers({ cwd: otherProject, configDir, builtin }).servers.find(
+			(entry) => entry.id === "files",
+		);
+		ok(server !== undefined && otherServer !== undefined);
+		ok(currentMcpSkillApproval(server, skill.uri, { cwd: project, configDir }) !== undefined);
+
+		deepStrictEqual(untrustMcpServer({ cwd: project, configDir, id: "files" }), { ok: true, removed: true });
+		strictEqual(currentMcpSkillApproval(server, skill.uri, { cwd: project, configDir }), undefined);
+		ok(
+			currentMcpSkillApproval(otherServer, skill.uri, { cwd: otherProject, configDir }) !== undefined,
+			"another project's skill approval stays intact",
+		);
+
+		// Re-trusting the same declaration must not revive the dropped skill approval.
+		ok(trustMcpServer({ cwd: project, configDir, builtin, id: "files" }).ok);
+		strictEqual(currentMcpSkillApproval(server, skill.uri, { cwd: project, configDir }), undefined);
 	});
 
 	it("keeps trust records per project root", () => {

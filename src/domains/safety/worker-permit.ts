@@ -10,6 +10,7 @@ import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { workerPermitDigest } from "../../worker/protocol.js";
 import { capabilityClassExcludes } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
+import type { McpAttestedSkill } from "../gateway/mcp/skill-catalog.js";
 import type { RuntimeEnforcement } from "../providers/index.js";
 import { readOnlyWorkAdmitted } from "../providers/runtime-enforcement.js";
 import { classify } from "./action-classifier.js";
@@ -73,6 +74,12 @@ export interface WorkerMcpAttestation {
 	projectRoot: string;
 	/** Sorted by capability name. */
 	tools: ReadonlyArray<WorkerMcpToolAttestation>;
+	/**
+	 * The approved MCP skill versions the recipe binds, sorted by name. The
+	 * worker lists exactly these and loads one only while its server serves
+	 * this manifest. Absent when the recipe binds none.
+	 */
+	skills?: ReadonlyArray<McpAttestedSkill>;
 }
 
 /** The capability name an attestation admits. */
@@ -350,6 +357,8 @@ export function resolveWorkerPermit(input: WorkerPermitInput): WorkerPermit {
 		const name = attestedMcpToolName(entry);
 		return name !== null && ceilingTools.includes(name);
 	});
+	// Skills reach a run only through the context tool.
+	const mcpSkills = ceilingTools.includes(ToolNames.Context) ? (input.mcp?.skills ?? []) : [];
 	const unattested = ceilingTools.filter(
 		(tool) => isMcpToolName(tool) && !mcpTools.some((entry) => attestedMcpToolName(entry) === tool),
 	);
@@ -364,9 +373,15 @@ export function resolveWorkerPermit(input: WorkerPermitInput): WorkerPermit {
 		readOnly: input.readOnly,
 		writeRoots: [...input.writeRoots],
 		enforcement: { ...input.runtime.enforcement },
-		// Absent when no MCP capability is admitted, so every other permit keeps its digest.
-		...(mcpTools.length > 0 && input.mcp !== undefined
-			? { mcp: { projectRoot: input.mcp.projectRoot, tools: mcpTools.map((entry) => ({ ...entry })) } }
+		// Absent when no MCP capability or skill is admitted, so every other permit keeps its digest.
+		...((mcpTools.length > 0 || mcpSkills.length > 0) && input.mcp !== undefined
+			? {
+					mcp: {
+						projectRoot: input.mcp.projectRoot,
+						tools: mcpTools.map((entry) => ({ ...entry })),
+						...(mcpSkills.length > 0 ? { skills: mcpSkills.map((entry) => ({ ...entry })) } : {}),
+					},
+				}
 			: {}),
 	};
 	const executeAuthorized =
@@ -396,6 +411,9 @@ export function resolveWorkerPermit(input: WorkerPermitInput): WorkerPermit {
 						mcp: Object.freeze({
 							projectRoot: ceiling.mcp.projectRoot,
 							tools: Object.freeze(ceiling.mcp.tools.map((entry) => Object.freeze({ ...entry }))),
+							...(ceiling.mcp.skills !== undefined
+								? { skills: Object.freeze(ceiling.mcp.skills.map((entry) => Object.freeze({ ...entry }))) }
+								: {}),
 						}),
 					}
 				: {}),

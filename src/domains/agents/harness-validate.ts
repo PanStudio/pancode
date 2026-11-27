@@ -19,6 +19,7 @@ import { isRecord } from "../../core/type-guards.js";
 import { captureProjectSurface } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isWorkerSurfaceExcludedTool } from "../../tools/policy.js";
+import { mcpSkillReferenceServer } from "../gateway/mcp/skills.js";
 import { resolvePackageReferences } from "../resources/package-references.js";
 import { loadSkills, type Skill, type SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
@@ -315,6 +316,8 @@ function recipeIssues(file: HarnessRecipeFile, input: HarnessInput): HarnessIssu
 	const trustedSkills = new Map(input.skills.items.filter((skill) => skill.trusted).map((skill) => [skill.name, skill]));
 	for (const skillName of new Set(skillNames)) {
 		if (trustedSkills.has(skillName)) continue;
+		// An MCP server's skill, as `<id>:<name>`; dispatch admission checks its server and approval.
+		if (mcpSkillReferenceServer(skillName) !== null) continue;
 		const untrusted = input.skills.items.find((skill) => skill.name === skillName);
 		if (untrusted !== undefined) {
 			push(

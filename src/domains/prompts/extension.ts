@@ -31,7 +31,7 @@ import type { InteropAgentRecord } from "../interop/types.js";
 import { redactForMemoryRoute } from "../memory/secret-text.js";
 import { PANE_PEER_IDS } from "../mux/operations.js";
 import type { ResourcesContract } from "../resources/contract.js";
-import { modelVisibleSkills } from "../resources/skills/loader.js";
+import { suggestableSkills } from "../resources/skills/loader.js";
 import { isAutonomyLevel } from "../safety/autonomy.js";
 import { parseRigorOverride, rigorResolution } from "../safety/rigor.js";
 import { latestPriorSession } from "../session/history.js";
@@ -125,7 +125,7 @@ export function createPromptsBundle(
 		};
 		try {
 			const skills = resourcesDomain()?.skills(cwd).items ?? [];
-			snapshot.skills = modelVisibleSkills(skills).map((skill) => ({ name: skill.name, purpose: skill.description }));
+			snapshot.skills = suggestableSkills(skills).map((skill) => ({ name: skill.name, purpose: skill.description }));
 		} catch {
 			// A skill catalog that cannot load lists nothing; context(scope="skills") reports why.
 		}

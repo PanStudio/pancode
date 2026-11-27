@@ -216,7 +216,7 @@ The operator cap cannot be widened by a recipe. The admitted envelope (recipe po
 
 ### Skills
 Skills are knowledge attachments declared under `skills: [...]` in the YAML frontmatter.
-*   They are injected compactly into the prompt/catalog. A shipped recipe resolves each bound skill from the package's `hub/packs/skills/` tree. A user or project recipe resolves bound skills only from the operator's discovered skill roots, and a plugin recipe only from its own plugin's skill root. A skill name that does not resolve to a trusted skill rejects the recipe.
+*   They are injected compactly into the prompt/catalog. A shipped recipe resolves each bound skill from the package's `hub/packs/skills/` tree. A user or project recipe resolves bound skills only from the operator's discovered skill roots, and a plugin recipe only from its own plugin's skill root. A skill name that does not resolve to a trusted skill rejects the recipe, unless it names an MCP server's skill as `<id>:<name>`: dispatch then admits the run only when the operator approved the version that server last listed, and the worker loads only that version.
 *   They require the `context` tool to be accessible; a recipe that declares skills without requiring `context` fails spec validation. `context(scope=skills)` admits exactly the skills the recipe binds.
 *   They **never** expand the agent's tool authority; they act purely as static knowledge context. A dispatch with `noSkills` omits the skill block.
 

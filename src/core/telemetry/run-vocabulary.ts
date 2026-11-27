@@ -135,6 +135,8 @@ export const RUN_HASH_SUBJECTS = [
 	"mcp-server",
 	/** The tool surface an MCP server serves, as the operator approved it. */
 	"mcp-surface",
+	/** An MCP skill's uri, frontmatter and every file's uri, digest and size, as the operator approved it. */
+	"mcp-skill-manifest",
 	"checkout-tree",
 	"check-payload",
 	"task-diff",

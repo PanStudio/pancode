@@ -108,6 +108,15 @@ function refusalFact(refusal: SkillLoadRefusal): string {
 			return toolMeta("not declared for this run");
 		case "not-requested":
 			return toolMeta("not requested this turn");
+		case "unapproved": {
+			const server = refusal.source?.startsWith("mcp:") === true ? refusal.source.slice("mcp:".length) : "";
+			const argument = refusal.name.startsWith(`${server}:`) ? refusal.name.slice(server.length + 1) : refusal.name;
+			return `${toolMeta("not approved: ")}${command(`/mcp trust ${server} --skill ${argument}`)}`;
+		}
+		case "unverified":
+			return toolMeta("failed verification against its manifest");
+		case "unavailable":
+			return toolMeta("its MCP server is unavailable");
 		default:
 			return toolMeta("unknown skill");
 	}

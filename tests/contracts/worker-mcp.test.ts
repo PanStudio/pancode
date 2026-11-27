@@ -29,6 +29,7 @@ import {
 	workerMcpRuntimeRefusal,
 } from "../../src/domains/dispatch/worker-mcp.js";
 import {
+	approveMcpSkill,
 	approveMcpSurface,
 	canonicalProjectRoot,
 	createMcpClient,
@@ -40,8 +41,10 @@ import {
 	resolveMcpServers,
 	trustMcpServer,
 	writeMcpServerCatalog,
+	writeMcpSkillCatalog,
 } from "../../src/domains/gateway/mcp/index.js";
 import { mcpCatalogPath } from "../../src/domains/gateway/mcp/metadata-cache.js";
+import { parseMcpSkillEntry } from "../../src/domains/gateway/mcp/skills.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
@@ -262,6 +265,98 @@ describe("native worker MCP capabilities", () => {
 			workerMcpRuntimeRefusal("coder", TOOLS, { id: "claude-sdk", kind: "http" }) ?? "",
 			/the Claude SDK runtime runs its own tool loop/,
 		);
+		strictEqual(clients.length, 0, "admission launched nothing");
+	});
+
+	it("admits a bound MCP skill only as an approved version and attests that version into the permit", () => {
+		const admit = () =>
+			resolveWorkerMcpAdmission({
+				agentId: "coder",
+				projectCwd: project,
+				tools: [ToolNames.Context],
+				skills: ["fake:demo"],
+			});
+		throws(admit, /MCP server 'fake' is untrusted/);
+		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
+		throws(admit, /pancode mcp test fake/);
+		const body = "---\nname: demo\ndescription: Demo skill.\n---\nBody.\n";
+		const parsed = parseMcpSkillEntry({
+			uri: "skill://fake/demo/SKILL.md",
+			frontmatter: { name: "demo", description: "Demo skill." },
+			resources: [
+				{
+					uri: "skill://fake/demo/SKILL.md",
+					digest: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+					size: Buffer.byteLength(body),
+				},
+			],
+		});
+		ok(parsed.ok);
+		const server = resolveMcpServers({ cwd: project }).servers.find((entry) => entry.id === "fake");
+		ok(server);
+		ok(
+			writeMcpSkillCatalog(
+				{
+					projectRoot: canonicalProjectRoot(project),
+					scope: server.scope,
+					declarationPath: server.path,
+					serverId: "fake",
+					digest: server.digest,
+					cwd: server.cwd,
+				},
+				{ skills: [parsed.entry], refused: [], truncated: false, ttlMs: 0 },
+			),
+		);
+		throws(admit, /pancode mcp trust fake --skill demo/);
+		throws(
+			() =>
+				resolveWorkerMcpAdmission({
+					agentId: "coder",
+					projectCwd: project,
+					tools: [ToolNames.Context],
+					skills: ["fake:nope"],
+				}),
+			/serves no skill named nope; it serves fake:demo/,
+		);
+		const { entry } = parsed;
+		ok(
+			approveMcpSkill({
+				cwd: project,
+				id: "fake",
+				skill: {
+					uri: entry.uri,
+					name: entry.name,
+					manifestDigest: entry.manifestDigest,
+					files: entry.resources.length,
+					bytes: entry.totalBytes,
+				},
+			}).ok,
+		);
+		const attestation = admit();
+		ok(attestation);
+		deepStrictEqual(attestation.tools, []);
+		deepStrictEqual(
+			attestation.skills?.map(({ serverId, displayName, uri, manifestDigest }) => ({
+				serverId,
+				displayName,
+				uri,
+				manifestDigest,
+			})),
+			[{ serverId: "fake", displayName: "fake:demo", uri: entry.uri, manifestDigest: entry.manifestDigest }],
+		);
+		const permitFor = (tools: ToolName[]) =>
+			resolveWorkerPermit({
+				agentId: "coder",
+				capabilityClass: "read-only",
+				tools,
+				readOnly: true,
+				writeRoots: [],
+				mode: "deny",
+				runtime: { id: "openai", targetId: "t", enforcement, trustedUnmediated: false },
+				mcp: attestation,
+			});
+		deepStrictEqual(permitFor([ToolNames.Context]).ceiling.mcp?.skills, attestation.skills);
+		strictEqual(permitFor([ToolNames.Read]).ceiling.mcp, undefined, "a worker without context gets no MCP skill");
 		strictEqual(clients.length, 0, "admission launched nothing");
 	});
 

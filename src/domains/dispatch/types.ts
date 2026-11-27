@@ -772,6 +772,8 @@ export interface RunResultSafetySummary {
 				 * safety.sandbox off the server runs unconfined.
 				 */
 				networkWithheld?: ReadonlyArray<{ serverId: string; reason: string }>;
+				/** The approved MCP skill versions the run was admitted to load. */
+				skills?: ReadonlyArray<{ serverId: string; name: string; uri: string; manifestDigest: string }>;
 			};
 		};
 		/**

@@ -290,6 +290,13 @@ function wrapArtifactLine(value: string, max: number): string[] {
  */
 export const CARD_FACT_ROWS = { stack: "never" } as const;
 
+/** The section title over each approval artifact's text. */
+export const ARTIFACT_TITLES: Readonly<Record<NonNullable<ApprovalRequestView["artifact"]>["kind"], string>> = {
+	"dispatch-plan": "Resolved dispatch plan",
+	"settings-change": "Settings change",
+	"mcp-skill": "MCP skill",
+};
+
 /** The parts of the card view, each a block the layout pins or windows (7.4). */
 export interface PermissionCardParts {
 	/** Actor, tool, class of action, autonomy. */
@@ -532,8 +539,8 @@ export function permissionCardParts(
 					...planTaskRows(theme, plan, scope?.routesDiffer === true, content),
 				];
 	const artifactRows =
-		view.artifact?.kind === "settings-change"
-			? [sectionRule(theme, content, "Settings change"), ...planTextRows(view.artifact.text, content)]
+		view.artifact !== undefined && view.artifact.kind !== "dispatch-plan"
+			? [sectionRule(theme, content, ARTIFACT_TITLES[view.artifact.kind]), ...planTextRows(view.artifact.text, content)]
 			: view.artifact !== undefined && plan === null
 				? [sectionRule(theme, content, "Resolved dispatch plan"), ...planTextRows(view.artifact.text, content)]
 				: [];

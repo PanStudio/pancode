@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
-import { mcpCommandOutput } from "../../cli/mcp.js";
+import { mcpCommandOutput, mcpSkillApprovalOutput, mcpSkillRevokeOutput } from "../../cli/mcp.js";
 import { isHubKind } from "../../domains/resources/hub-types.js";
 import { type HubEntryKind, parseSkillCommand, SKILL_SURFACE_CLEAR_ARG } from "../../domains/resources/index.js";
 import type {
@@ -319,15 +319,19 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 						{ name: "id", required: true },
 						{ name: "class", required: false },
 					],
+					flags: [{ name: "--skill", takesValue: true, valueName: "name" }],
 				},
-				untrust: { positionals: [{ name: "id", required: true }] },
+				untrust: {
+					positionals: [{ name: "id", required: true }],
+					flags: [{ name: "--skill", takesValue: true, valueName: "name" }],
+				},
 				logout: { positionals: [{ name: "id", required: true }] },
 			},
 		},
 		subcommandDescriptions: {
 			list: "List MCP servers (the bare command does the same)",
-			trust: "Trust a server, optionally for one action class",
-			untrust: "Withdraw trust from a server",
+			trust: "Trust a server, optionally for one action class, or approve one skill it serves with --skill",
+			untrust: "Withdraw trust from a server, or the approval of one skill with --skill",
 			logout: "Remove the header credentials a remote server is sent",
 		},
 		fromArgs(parsed) {
@@ -336,10 +340,42 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				return usageError("mcp", `Unexpected argument: ${parsed.positionals[0]}`);
 			const action = parsed.subcommand ?? "list";
 			const [id, actionClass] = parsed.positionals;
-			return { kind: "mcp", argv: [action, ...(id ? [id] : []), ...(actionClass ? ["--action-class", actionClass] : [])] };
+			const skillFlag = parsed.flags.get("--skill");
+			const skill = typeof skillFlag === "string" ? skillFlag : undefined;
+			if (skill !== undefined && actionClass !== undefined)
+				return usageError("mcp", "--skill approves a skill; it takes no action class", action);
+			return {
+				kind: "mcp",
+				argv: [
+					action,
+					...(id ? [id] : []),
+					...(actionClass ? ["--action-class", actionClass] : []),
+					...(skill !== undefined ? ["--skill", skill] : []),
+				],
+			};
 		},
 		handle(command, ctx) {
 			if (command.kind !== "mcp") return;
+			const [action, id, flag, skill] = command.argv;
+			if (id !== undefined && flag === "--skill" && skill !== undefined) {
+				if (action === "untrust") {
+					const result = mcpSkillRevokeOutput({ cwd: process.cwd(), id, skill });
+					ctx.notice(result.code ? "error" : "info", result.text);
+					return;
+				}
+				// The operator typed it, so the version shown is the one recorded, as at a terminal.
+				ctx.notice("info", `mcp: listing the skills of ${id}`);
+				void (async () => {
+					try {
+						const result = await mcpSkillApprovalOutput({ cwd: process.cwd(), id, skill, record: true });
+						ctx.notice(result.code ? "error" : "info", result.text);
+					} catch (error) {
+						ctx.notice("error", `mcp trust ${id} --skill: ${error instanceof Error ? error.message : String(error)}`);
+					}
+					ctx.render?.();
+				})();
+				return;
+			}
 			const result = mcpCommandOutput(
 				command.argv,
 				undefined,

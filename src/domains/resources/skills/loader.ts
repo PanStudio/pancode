@@ -37,6 +37,7 @@ import { installedSkillNames } from "./availability.js";
 import { normalizedSkillHash } from "./content-hash.js";
 import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
 import { getMarketplaceSkills } from "./marketplace.js";
+import { type McpServedSkill, type McpSkillSourceInput, servedMcpSkills } from "./mcp-source.js";
 
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
@@ -81,7 +82,31 @@ export type SkillSource =
 	| "opencode"
 	| "plugin"
 	| "path"
-	| "cli";
+	| "cli"
+	| "mcp";
+
+/**
+ * Where a skill served over MCP comes from. Such a skill has no file on disk:
+ * `filePath` is its `SKILL.md` uri, `baseDir` the skill's root uri and
+ * `content` empty until the context tool fetches and verifies it.
+ */
+export interface SkillMcpOrigin {
+	serverId: string;
+	uri: string;
+	/** The skill's own name, which `<server id>:` prefixes in {@link Skill.name}. */
+	skillName: string;
+	/** sha256 over the canonical manifest: the uri, frontmatter and every file's uri, digest and size. */
+	manifestDigest: string;
+	files: number;
+	bytes: number;
+	approval: McpServedSkill["approval"]["status"];
+	/** Why a changed approval no longer holds, with its remedy. */
+	approvalReason?: string;
+	/** When the server last listed the skill. */
+	observedAt: string;
+	/** The entry's frontmatter as the server wrote it; server-written text. */
+	frontmatter: Record<string, unknown>;
+}
 
 /** Optional install provenance, captured from frontmatter when present. */
 export interface SkillProvenance {
@@ -138,6 +163,8 @@ export interface Skill {
 	diagnostics: ResourceDiagnostic[];
 	/** Install provenance when the frontmatter records it. */
 	provenance?: SkillProvenance;
+	/** Set for a skill an MCP server serves; see {@link SkillMcpOrigin}. */
+	mcp?: SkillMcpOrigin;
 }
 
 export interface SkillRoot {
@@ -204,6 +231,12 @@ export interface LoadSkillsInput {
 	 * a skill's body still goes through a verified read.
 	 */
 	verifyPluginTrees?: boolean;
+	/**
+	 * List the skills trusted MCP servers serve, from their recorded listings.
+	 * Only surfaces that activate through the context tool opt in: no other
+	 * consumer may read an MCP skill's uri as a path.
+	 */
+	mcp?: McpSkillSourceInput;
 }
 
 /** Collision precedence tiers; higher wins. */
@@ -854,10 +887,19 @@ function loadSkillFile(
 			path: filePath,
 		});
 	}
-	for (const message of validateNameFormat(name)) diagnostics.push({ type: "warning", message, path: filePath });
+	const hasReservedColon = name.includes(":");
+	if (hasReservedColon) {
+		diagnostics.push({
+			type: "warning",
+			message: `name "${name}" contains ":", which is reserved for MCP-served skills (<server>:<name>); local skill refused`,
+			path: filePath,
+		});
+	} else {
+		for (const message of validateNameFormat(name)) diagnostics.push({ type: "warning", message, path: filePath });
+	}
 
-	// Missing description is the only hard rejection; everything else loads with a warning.
-	if (!description) return { candidate: null, diagnostics };
+	// Missing description or a reserved ":" namespace separator is a hard rejection; other format warnings still load.
+	if (!description || hasReservedColon) return { candidate: null, diagnostics };
 
 	const baseDir = path.dirname(filePath);
 	const scope = root.scope;
@@ -1179,16 +1221,130 @@ function loadSkillsInPass(input: LoadSkillsInput): SkillList {
 	];
 	const deduped = dedupeCanonicalSkillPaths(candidates, diagnostics);
 	const resolved = resolveSkillCollisions(deduped);
-	const winners = [...resolved.winners].sort((a, b) => a.name.localeCompare(b.name));
+	const served =
+		input.mcp !== undefined && input.disableDiscovery !== true && input.roots === undefined
+			? mcpSkills(input, input.mcp, resolved.winners, diagnostics)
+			: [];
+	const winners = [...resolved.winners, ...served].sort((a, b) => a.name.localeCompare(b.name));
 	return {
 		items: winners,
 		diagnostics: [...diagnostics, ...resolved.diagnostics, ...requiresDiagnostics(winners)],
 	};
 }
 
+/**
+ * The tool surface an MCP skill's frontmatter declares, read as a foreign
+ * skill's is. The caller binds `allowedTools` only to an approved manifest.
+ */
+export function mcpSkillToolSurface(
+	frontmatter: Record<string, unknown>,
+	name: string,
+	uri: string,
+): { allowedTools?: ToolName[]; disallowedTools?: ToolName[]; diagnostics: ResourceDiagnostic[] } {
+	const diagnostics: ResourceDiagnostic[] = [];
+	const allowedTools = importedToolSurface(frontmatter, `skill ${name}`, uri, diagnostics);
+	const disallowedTools = declaredToolSurface(frontmatter, "disallowed-tools", uri, diagnostics);
+	return {
+		...(allowedTools ? { allowedTools } : {}),
+		...(disallowedTools ? { disallowedTools } : {}),
+		diagnostics,
+	};
+}
+
+/**
+ * The skills trusted MCP servers serve. Their names carry `<serverId>:<name>`,
+ * and local skill names containing `:` are refused so local skills never
+ * silently shadow MCP skills.
+ */
+function mcpSkills(
+	input: LoadSkillsInput,
+	source: McpSkillSourceInput,
+	local: ReadonlyArray<Skill>,
+	diagnostics: ResourceDiagnostic[],
+): Skill[] {
+	let served: ReturnType<typeof servedMcpSkills>;
+	try {
+		served = servedMcpSkills(input.cwd ?? process.cwd(), input.configDir, source);
+	} catch (error) {
+		diagnostics.push({
+			type: "warning",
+			message: `MCP skills could not be listed: ${error instanceof Error ? error.message : String(error)}`,
+		});
+		return [];
+	}
+	diagnostics.push(...served.diagnostics);
+	const taken = new Set(local.map((skill) => skill.name));
+	return served.skills.map((entry) => {
+		const { skill: recorded } = entry;
+		let name = entry.displayName;
+		if (taken.has(name)) {
+			const tagged = `${name}@${sha256Hex(recorded.uri).slice(0, 8)}`;
+			diagnostics.push({
+				type: "warning",
+				message: `a local skill is named ${name}, so the skill mcp server ${entry.serverId} serves as ${recorded.uri} is listed as ${tagged}`,
+				path: recorded.uri,
+			});
+			name = tagged;
+		}
+		taken.add(name);
+		const {
+			allowedTools,
+			disallowedTools,
+			diagnostics: skillDiagnostics,
+		} = mcpSkillToolSurface(recorded.frontmatter, name, recorded.uri);
+		diagnostics.push(...skillDiagnostics);
+		const scope: ResourceScope =
+			entry.serverScope === "user" ? "user" : entry.serverScope === "project" ? "project" : "package";
+		const approval = entry.approval;
+		return {
+			name,
+			description: recorded.description,
+			filePath: recorded.uri,
+			baseDir: recorded.uri.slice(0, -"/SKILL.md".length),
+			content: "",
+			sourceInfo: { path: recorded.uri, scope, source: `mcp:${entry.serverId}` },
+			disableModelInvocation: booleanField(recorded.frontmatter, "disable-model-invocation"),
+			// A skill's tool surface binds only once the operator approved this exact manifest.
+			...(allowedTools && approval.status === "approved" ? { allowedTools } : {}),
+			...(disallowedTools ? { disallowedTools } : {}),
+			source: "mcp",
+			scope,
+			hash: recorded.manifestDigest,
+			normalizedHash: recorded.manifestDigest,
+			pathSubject: recorded.skillPath,
+			trusted: true,
+			precedence: defaultPrecedenceForScope(scope),
+			metadata: extractMetadata(recorded.frontmatter),
+			diagnostics: skillDiagnostics,
+			mcp: {
+				serverId: entry.serverId,
+				uri: recorded.uri,
+				skillName: recorded.name,
+				manifestDigest: recorded.manifestDigest,
+				files: recorded.files,
+				bytes: recorded.bytes,
+				approval: approval.status,
+				...(approval.status === "changed" ? { approvalReason: approval.reason } : {}),
+				observedAt: entry.observedAt,
+				frontmatter: recorded.frontmatter,
+			},
+		} satisfies Skill;
+	});
+}
+
 /** Skills the model may see in context(scope=skills) listings and load by name. */
 export function modelVisibleSkills(skills: ReadonlyArray<Skill>): Skill[] {
 	return skills.filter((skill) => skill.trusted && !skill.disableModelInvocation);
+}
+
+/**
+ * Skills PanCode may put in front of the model unasked: the system prompt's
+ * catalog and the task-ranked reminder. An MCP skill qualifies only with a
+ * current approval, so server-written text the operator never reviewed is
+ * never advertised; the context listing still names it, marked unapproved.
+ */
+export function suggestableSkills(skills: ReadonlyArray<Skill>): Skill[] {
+	return modelVisibleSkills(skills).filter((skill) => skill.mcp === undefined || skill.mcp.approval === "approved");
 }
 
 /** Why a loaded skill catalog is not valid. Ordered by which failure to report first. */
