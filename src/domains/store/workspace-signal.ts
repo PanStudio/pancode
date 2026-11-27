@@ -8,6 +8,8 @@ import {
 	storeBackendKind,
 	storePlacement,
 	storeProjectDir,
+	storeProjectKeyFor,
+	storeProjectRoot,
 	storeRoot,
 	storeRootSpecs,
 	storeS3Settings,
@@ -41,34 +43,34 @@ export function workspaceStoreTags(cwd: string): ReadonlyArray<string> {
 	return workspaceStore(cwd).tags;
 }
 
-/** How long an s3 store's tag list is used before a turn starts listing it again. */
-const S3_LISTING_MS = 30_000;
-const s3Listings = new Map<string, { at: number | null; store: WorkspaceStore; listing: boolean }>();
+const s3Listings = new Map<string, { store: WorkspaceStore; retryAt: number }>();
 
-/**
- * An s3 store is listed over the network, so a turn never waits on it: it gets the last listing, none on the
- * session's first turn, and starts a new one when that is older than 30 s. A listing that fails keeps the old one.
- */
-function s3WorkspaceStore(cwd: string): WorkspaceStore {
+function s3ListingKey(cwd: string): string {
 	const s3 = storeS3Settings();
-	const key = `${s3?.endpoint ?? ""}\0${s3?.bucket ?? ""}\0${s3?.prefix ?? ""}\0${cwd}`;
-	const entry = s3Listings.get(key) ?? { at: null, store: NO_STORE, listing: false };
+	return `${s3?.endpoint ?? ""}\0${s3?.bucket ?? ""}\0${s3?.prefix ?? ""}\0${storeProjectKeyFor(storeProjectRoot(cwd))}`;
+}
+
+export function invalidateS3TagList(cwd: string): void {
+	s3Listings.delete(s3ListingKey(cwd));
+}
+
+/** Keep a successful listing until this process changes the project's tags. A turn never waits for S3. */
+function s3WorkspaceStore(cwd: string): WorkspaceStore {
+	const key = s3ListingKey(cwd);
+	const entry = s3Listings.get(key) ?? { store: NO_STORE, retryAt: 0 };
+	if (performance.now() < entry.retryAt) return entry.store;
+	entry.retryAt = Number.POSITIVE_INFINITY;
 	s3Listings.set(key, entry);
-	if (!entry.listing && (entry.at === null || performance.now() - entry.at >= S3_LISTING_MS)) {
-		entry.listing = true;
-		void import("./backends/s3.js")
-			.then(async ({ createS3StoreBackend }) => {
-				const tags = (await createS3StoreBackend(cwd).listTags()).filter(
-					(tag) => !isRecordsTag(tag) && validateTagName(tag) === null,
-				);
-				entry.store = tags.length > 0 ? { signals: [ToolNames.Store, ToolNames.Data], tags: tags.sort() } : NO_STORE;
-			})
-			.catch(() => undefined)
-			.finally(() => {
-				entry.at = performance.now();
-				entry.listing = false;
-			});
-	}
+	void import("./backends/s3.js")
+		.then(async ({ createS3StoreBackend }) => {
+			const tags = (await createS3StoreBackend(cwd).listTags()).filter(
+				(tag) => !isRecordsTag(tag) && validateTagName(tag) === null,
+			);
+			entry.store = tags.length > 0 ? { signals: [ToolNames.Store, ToolNames.Data], tags: tags.sort() } : NO_STORE;
+		})
+		.catch(() => {
+			entry.retryAt = performance.now() + 30_000;
+		});
 	return entry.store;
 }
 

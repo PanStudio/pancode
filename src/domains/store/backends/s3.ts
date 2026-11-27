@@ -5,6 +5,7 @@ import type { StoreS3Setting } from "../../../core/defaults.js";
 import { storeProjectIdFor, storeProjectKeyFor, storeProjectRoot, storeS3Settings } from "../../../core/store-paths.js";
 import { pancodeCachePath } from "../../../core/xdg.js";
 import { openAuthStorage } from "../../providers/auth/index.js";
+import { invalidateS3TagList } from "../workspace-signal.js";
 
 /** The credential store entry `pancode store login` keeps the bucket's secret key under. */
 export const STORE_S3_CREDENTIAL_ID = "store-s3";
@@ -17,7 +18,19 @@ export function createS3StoreBackend(cwd: string): StoreBackend {
 			"unavailable",
 			`No secret key is stored for the S3 access key ${configuredBucket().accessKeyId}; run pancode store login.`,
 		);
-	return s3BackendWithKey(cwd, credential.key);
+	const backend = s3BackendWithKey(cwd, credential.key);
+	return {
+		...backend,
+		async getOrCreateTag(tag, options) {
+			const result = await backend.getOrCreateTag(tag, options);
+			if (result.created) invalidateS3TagList(cwd);
+			return result;
+		},
+		async delTag(tag) {
+			await backend.delTag(tag);
+			invalidateS3TagList(cwd);
+		},
+	};
 }
 
 /** The bucket settings name; refused when they name none. */
