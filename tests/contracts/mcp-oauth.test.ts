@@ -156,6 +156,13 @@ describe("discovery", () => {
 			pointed.seen.map((entry) => entry.url),
 			[`${RS}/meta`],
 		);
+		const queried = fakeFetch([at(`${RS}/meta`, () => prm(`${ENDPOINT}?login`))]);
+		const pointer = { scheme: "Bearer", params: { resource_metadata: `${RS}/meta` } };
+		strictEqual(
+			(await discoverMcpProtectedResource(`${ENDPOINT}?login`, pointer, queried.fetch)).resource,
+			`${ENDPOINT}?login`,
+		);
+		await rejects(discoverMcpProtectedResource(`${ENDPOINT}?other`, pointer, queried.fetch), /PanCode does not use it/u);
 
 		const probed = fakeFetch([at(`${RS}/.well-known/oauth-protected-resource`, () => prm(RS))]);
 		await discoverMcpProtectedResource(ENDPOINT, null, probed.fetch);

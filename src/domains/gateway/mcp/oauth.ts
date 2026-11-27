@@ -110,8 +110,9 @@ export function mcpCanonicalResource(url: string | URL): string {
 
 /**
  * Whether a token for `resource` may go to `endpoint`: the same origin, and
- * the endpoint's path is the resource's path or lies under it. A grant is
- * only ever sent where this holds, so a token never reaches another resource.
+ * the endpoint's path is the resource's path or lies under it. A resource
+ * with a query covers only that exact URL. A grant is only ever sent where
+ * this holds, so a token never reaches another resource.
  */
 export function mcpResourceCovers(resource: string, endpoint: string): boolean {
 	let base: URL;
@@ -122,7 +123,8 @@ export function mcpResourceCovers(resource: string, endpoint: string): boolean {
 	} catch {
 		return false;
 	}
-	if (base.origin !== target.origin || base.search !== "") return false;
+	if (base.origin !== target.origin) return false;
+	if (base.search !== "") return mcpCanonicalResource(base) === mcpCanonicalResource(target);
 	const prefix = base.pathname.replace(/\/+$/u, "");
 	const path = target.pathname.replace(/\/+$/u, "");
 	return prefix === "" || path === prefix || path.startsWith(`${prefix}/`);
