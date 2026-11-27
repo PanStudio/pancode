@@ -15,7 +15,7 @@ import {
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverAgentRecipes } from "../../src/domains/agents/registry.js";
-import { OperatorExtensionRuntime } from "../../src/domains/extensions/operator-runtime.js";
+import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import {
 	disableExtension,
 	enableExtension,
@@ -194,7 +194,7 @@ describe("hub import of foreign plugin packages", () => {
 			frozenTools.map((tool) => tool.id),
 			["measurements"],
 		);
-		const runtime = new OperatorExtensionRuntime({
+		const runtime = new OperatorExtensions({
 			context: () => ({ workspace: cwd, sessionId: "joint-hub-session", mode: "interactive" }),
 			isIdle: () => true,
 			frozenTools,
@@ -243,7 +243,7 @@ describe("hub import of foreign plugin packages", () => {
 			};
 			const kitRoot = installSampleKit();
 			reloadRecipes();
-			strictEqual(runtime.activeGeneration, 0, "recipe installation/reload cannot activate an eligible runtime");
+			strictEqual(runtime.v2.activeGeneration, 0, "recipe installation/reload cannot activate an eligible runtime");
 			deepStrictEqual(runtime.entries(), []);
 			const recipes = kitResources();
 			for (const [kind, count] of [
@@ -264,7 +264,7 @@ describe("hub import of foreign plugin packages", () => {
 			const active = runtime.entries().find((entry) => entry.id === "lab-status");
 			strictEqual(active?.state, "ready");
 			strictEqual(active?.toolEvidence, "frozen-registry");
-			const generation = runtime.activeGeneration;
+			const generation = runtime.v2.activeGeneration;
 
 			// Reuse the vendor fixture with executable omissions. A foreign refusal
 			// retains prompt ownership without granting model or harness execution.
@@ -289,7 +289,7 @@ describe("hub import of foreign plugin packages", () => {
 					.sort(),
 				["lab-status", "measurements"],
 			);
-			strictEqual(runtime.activeGeneration, generation);
+			strictEqual(runtime.v2.activeGeneration, generation);
 			deepStrictEqual(
 				runtime.entries().find((entry) => entry.id === "lab-status"),
 				active,
@@ -326,7 +326,7 @@ describe("hub import of foreign plugin packages", () => {
 				reloadRecipes();
 				strictEqual(kitResources().length, operation === enablePlugin ? 6 : 0);
 				strictEqual(existsSync(kitRoot), operation !== removePlugin);
-				strictEqual(runtime.activeGeneration, generation);
+				strictEqual(runtime.v2.activeGeneration, generation);
 				deepStrictEqual(
 					runtime.entries().find((entry) => entry.id === "lab-status"),
 					active,

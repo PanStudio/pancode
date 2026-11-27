@@ -19,8 +19,8 @@ import {
 	readExtensionInstallRecord,
 	removeExtension,
 } from "../domains/extensions/index.js";
+import { extensionInvocation } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
-import { extensionInvocation } from "../domains/extensions/operator-runtime.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { formatColumns, printError, printOk } from "./shared.js";
 
@@ -287,10 +287,6 @@ export function runExtensionsCommand(argv: ReadonlyArray<string>): number | Prom
 						process.stdout.write(
 							"Project extensions are not approved for this workspace; review them with pancode config trust extensions.\n",
 						);
-					if (result.extension.runtime)
-						process.stderr.write(
-							"Operator runtime code starts on the next interactive startup/reload or explicit extensions run. Install only code you trust; it runs with your user account authority.\n",
-						);
 				}
 			}
 			return hasErrors(result.diagnostics) ? 1 : 0;
@@ -340,7 +336,7 @@ async function runOperatorCommand(parsed: Parsed): Promise<number> {
 	const selected = listInstalledExtensions(process.cwd(), { all: true }).find(
 		(entry) => entry.id === id && entry.loadable,
 	);
-	if (!(selected?.runtime ?? selected?.runtimeV2)?.commands.some((entry) => entry.name === command)) {
+	if (!selected?.runtimeV2?.commands.some((entry) => entry.name === command)) {
 		printError(`extension ${id} has no eligible operator command '${command}'`);
 		return 1;
 	}
@@ -364,12 +360,7 @@ async function runOperatorCommand(parsed: Parsed): Promise<number> {
 		const reload = await runtime.reload("startup");
 		if (reload.status !== "committed") throw new Error(reload.message);
 		const provenance = runtime.entries().find((entry) => entry.id === id && entry.state === "ready")?.provenance;
-		const { api: _api, ...output } = await runtime.invoke(
-			extensionInvocation(id, command),
-			args.join(" "),
-			[],
-			controller.signal,
-		);
+		const output = await runtime.invoke(extensionInvocation(id, command), args.join(" "), [], controller.signal);
 		if (!provenance) throw new Error("extension result has no activated provenance");
 		const generation = runtime.entries().find((entry) => entry.id === id)?.generation ?? reload.generation;
 		if (parsed.json)

@@ -87,7 +87,7 @@ test("an unknown key listed as ignorable passes with one warning per path, at ev
 	ok(!("cacheHint" in (result.manifest.runtimeV2?.tools[0] ?? {})));
 });
 
-test("command tools and an api 1 runtime follow the same rule", () => {
+test("command tools and runtime commands follow the same rule", () => {
 	const command = (extra: Record<string, unknown> = {}) => ({
 		name: "probe",
 		description: "Probe.",
@@ -97,15 +97,15 @@ test("command tools and an api 1 runtime follow the same rule", () => {
 		...extra,
 	});
 	const base = { id: "desk", version: "0.1.0", description: "A desk." };
-	const api1 = (extra: Record<string, unknown> = {}) => ({
-		api: 1,
+	const runtime = (extra: Record<string, unknown> = {}) => ({
+		api: 2,
 		entrypoint: "extension.mjs",
 		commands: [{ name: "go", description: "Go.", ...extra }],
 	});
 	const listed = parse({
 		...base,
 		capabilities: { tools: [command({ cacheHint: "a" })], quota: 1 },
-		runtime: { ...api1({ group: "x" }), futureKey: 1 },
+		runtime: { ...runtime({ group: "x" }), futureKey: 1 },
 		ignorable: ["capabilities.quota", "capabilities.tools.cacheHint", "runtime.commands.group", "runtime.futureKey"],
 	});
 	deepStrictEqual(errors(listed), []);
@@ -121,7 +121,9 @@ test("command tools and an api 1 runtime follow the same rule", () => {
 	deepStrictEqual(errors(parse({ ...base, capabilities: { tools: [command({ cacheHint: "a" })] } })), [
 		"unknown command tool key 'cacheHint'",
 	]);
-	deepStrictEqual(errors(parse({ ...base, runtime: api1({ group: "x" }) })), ["unknown runtime field 'group'"]);
+	deepStrictEqual(errors(parse({ ...base, runtime: runtime({ group: "x" }) })), [
+		"runtime.commands[0].group is not a known field",
+	]);
 	// A key is one path segment: a dotted or indexed key never passes as another field's path.
 	deepStrictEqual(errors(parse(manifest({ "tools.cacheHint": 1 }, { ignorable: ["runtime.tools.cacheHint"] }))), [
 		"runtime.tools.cacheHint is not a known field",

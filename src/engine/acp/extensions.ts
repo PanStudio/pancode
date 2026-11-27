@@ -73,7 +73,7 @@ export function projectExtensions(list: ReadonlyArray<AcpInstalledExtension>) {
 							? ("eligible" as const)
 							: ("shadowed" as const),
 			...(extension.overriddenBy !== undefined ? { overriddenBy: bounded(extension.overriddenBy) } : {}),
-			runtime: extension.runtime !== undefined,
+			runtime: extension.runtimeV2 !== undefined,
 			problems: extension.diagnostics.length,
 			diagnostics: extension.diagnostics.slice(0, MAX_DIAGNOSTICS).map((entry) => bounded(entry.message)),
 		})),

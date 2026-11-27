@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
+import type { ExtensionOutputV2 } from "@pancode/sdk/extension";
 import type { BundleRequest } from "../cli/report-bundle.js";
 import type { SettingsAreaId } from "../core/settings-areas.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
@@ -12,7 +13,7 @@ import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import type { JobThinkingLevel } from "../domains/dispatch/validation.js";
 import type { InstalledExtension } from "../domains/extensions/index.js";
-import type { OperatorCommandOutput, OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import type { InteropAgentId, InteropProposal, InteropReport } from "../domains/interop/index.js";
 import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import type { OperatorMemoryScope } from "../domains/memory/operator-statement.js";
@@ -364,7 +365,7 @@ export interface SessionCommandContext {
 	/** Open a transcript extension card whole in the panel: the one numbered, or the latest cut one. */
 	showExtensionCard?: (card: number | undefined) => "opened" | "missing" | "busy";
 	/** `extensionId` comes from the command row: an alias such as a prompt takeover carries no `ext:<id>:` prefix. */
-	showExtensionOutput?: (invocation: string, output: OperatorCommandOutput, extensionId: string) => void;
+	showExtensionOutput?: (invocation: string, output: ExtensionOutputV2, extensionId: string) => void;
 	io: RunIo;
 	notice: (level: NoticeLevel, text: string) => void;
 	dispatch: DispatchContract;

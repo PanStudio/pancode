@@ -277,7 +277,7 @@ async function waitForBashCommands(root: string, count: number): Promise<string[
 	}
 }
 
-/** A project-scoped operator extension that writes `marker` when a session opens. */
+/** A project-scoped operator extension that writes `marker`, inside the project's `.boot`, when a session opens. */
 function installSessionOpenExtension(scratch: Fixture, marker: string): void {
 	const source = mkdtempSync(join(tmpdir(), "pancode-boot-handoff-extension-"));
 	try {
@@ -288,7 +288,12 @@ function installSessionOpenExtension(scratch: Fixture, marker: string): void {
 				name: "Boot fixture",
 				version: "1.0.0",
 				description: "Marks session_open",
-				runtime: { api: 1, entrypoint: "extension.mjs", events: ["session_open"] },
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					events: ["session_open"],
+					permissions: { fs: { read: [], write: [".boot"] }, exec: false, net: false },
+				},
 			}),
 		);
 		writeFileSync(
@@ -501,7 +506,7 @@ describe("boot handoff through a real terminal", { concurrency: false, skip: pro
 			// The startup reload runs after the first committed frame. A shell path
 			// that never reports that frame would leave extensions unstarted.
 			const scratch = fixture({ PANCODE_INSTANT_SHELL: instantShell });
-			const marker = join(scratch.project, "session-open.txt");
+			const marker = join(scratch.project, ".boot", "session-open.txt");
 			installSessionOpenExtension(scratch, marker);
 			const terminal = launch(scratch.env, scratch.project);
 			try {

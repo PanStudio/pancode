@@ -58,11 +58,6 @@ export interface WorkspaceSurfaceDeps {
 	/** Open the board in the pressable panel; absent where no such panel exists. */
 	focusBoard?(extensionId: string, title: string, view: () => View | undefined): void;
 	leave(): void;
-	/**
-	 * Statuses from runtimes outside the surface model (api 1), so the footer is
-	 * the one place every running extension's status is read.
-	 */
-	otherStatuses?(): ReadonlyArray<{ id: string; status: ExtensionStatus }>;
 }
 
 /** The leader suffix that leaves an active workspace; built-in suffixes never use it. */
@@ -370,12 +365,7 @@ export function createWorkspaceSurfaces(deps: WorkspaceSurfaceDeps): WorkspaceSu
 			);
 		},
 		statusFacts(width) {
-			const modelIds = new Set(deps.model.ids());
-			const others = (deps.otherStatuses?.() ?? []).filter((entry) => !modelIds.has(entry.id));
-			const othersKey = others
-				.map((entry) => `${entry.id}\u0000${entry.status.tone ?? ""}\u0000${entry.status.text}`)
-				.join("\u0001");
-			return memo("status", `${width}:${othersKey}`, () => {
+			return memo("status", `${width}`, () => {
 				const theme = pancodeTheme();
 				// The footer gives its facts up to half the row when wide; one status may use all of it.
 				const room = Math.max(12, Math.floor(width * (width >= 100 ? 0.5 : 0.4)));
@@ -386,7 +376,6 @@ export function createWorkspaceSurfaces(deps: WorkspaceSurfaceDeps): WorkspaceSu
 						const entry = deps.model.entry(id);
 						return entry?.status && !entry.band ? [{ id, status: entry.status }] : [];
 					}),
-					...others,
 				];
 				return statuses.flatMap(({ id, status }) => {
 					const { owner, text } = ownedStatus(extensionOwnerLabel(id), status.text);
