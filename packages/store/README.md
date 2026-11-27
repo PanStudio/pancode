@@ -20,7 +20,7 @@ The guide is [PanStore](https://pancode.dev/docs/guide/panstore.html); the sourc
 
 | Import | What it gives you |
 | --- | --- |
-| `@pancode/store` | Everything below except `./cli`, plus `createLocalStoreBackend`, `createS3StoreBackend`, `registerStoreBackend`, `resolveStoreBackend`, `withStoreLock`, `recordedPut`, `recordedRemove`, `verifyStoreTag` and the records API (`appendRecord`, `readBlobHistory`, `currentState`, `summarizeRecords`, `driftOf`). |
+| `@pancode/store` | Everything below except `./cli`, plus `createLocalStoreBackend`, `createSharedStoreBackend`, `createS3StoreBackend`, `registerStoreBackend`, `resolveStoreBackend`, `withStoreLock`, `recordedPut`, `recordedRemove`, `verifyStoreTag` and the records API (`appendRecord`, `readBlobHistory`, `currentState`, `summarizeRecords`, `driftOf`). |
 | `@pancode/store/backend` | The `StoreBackend` interface, its fact and result types, `StoreRefusal`, and `compileBlobPattern`. |
 | `@pancode/store/paths` | Tag and blob name validation, tag segment encoding, records-tag helpers, `storeProjectKey`, `storeMainCheckout`, `storeProjectRootOf`, root and placement validation, `resolvePlacement`, and the on-disk layout functions, each taking the store root and project key (or the project directory) as arguments. |
 | `@pancode/store/cli` | The command line as a module: `runStoreCli(argv, context)` and one function per verb, for a host that supplies its own roots, actor and provenance. |
@@ -71,8 +71,9 @@ their state (`live`, `dead`, `remote`, `unreadable`); `locks break <id>` removes
 ## Limits
 
 - PanStore is exercised on Linux only until its conformance suite runs on the macOS and Windows runners.
-- A root on a network file system reports `sharedFs: unverified` and the backend reports `multiNode: false`; two
-  hosts writing one root are not supported.
+- A local root on a network file system reports `sharedFs: unverified` and the backend reports `multiNode: false`;
+  for several hosts writing one folder use `createSharedStoreBackend`, whose locks are leases that expire 60 s after
+  their last renewal.
 - No blob versions and no deduplication.
 - `createS3StoreBackend` keeps a store in one S3-compatible bucket; a blob is one PUT of at most 5 GiB, and `adopt`
   needs local roots.

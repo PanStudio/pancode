@@ -100,15 +100,32 @@ function s3StoreFinding(): DoctorFinding {
 			};
 }
 
+/** A shared store's folder: present and its free space, or missing on this host. */
+function sharedStoreFinding(root: StoreRoot): DoctorFinding {
+	if (statSync(root.path, { throwIfNoEntry: false })?.isDirectory() !== true)
+		return {
+			ok: false,
+			name: "store backend",
+			detail: `shared folder ${root.path} is missing or not a directory; mount it on this host`,
+		};
+	const stats = statfsSync(root.path);
+	return {
+		ok: true,
+		name: "store backend",
+		detail: `shared folder ${root.path} (${formatBytes(Number(stats.bavail) * Number(stats.bsize))} free)`,
+	};
+}
+
 /**
- * The store section: each root and its free space, then tags placed on a root no longer configured; for an s3
- * store, its bucket and credential.
+ * The store section: each root and its free space, then tags placed on a root no longer configured; for a
+ * shared store, its folder; for an s3 store, its bucket and credential.
  */
 export function storeFindings(cwd: string = process.cwd()): DoctorFinding[] {
 	let roots: StoreRoot[];
 	try {
 		if (storeBackendKind() === "s3") return [s3StoreFinding()];
 		roots = storeRootSpecs();
+		if (storeBackendKind() === "shared") return [sharedStoreFinding(roots[0] as StoreRoot)];
 	} catch (error) {
 		return [{ ok: false, name: "store root", detail: error instanceof Error ? error.message : String(error) }];
 	}

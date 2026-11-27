@@ -125,6 +125,8 @@ export interface McpBuiltinLaunchContext {
 	/** The session's store, for the `store` server: its roots (primary first), cache, project and writable tags. */
 	store?: {
 		roots: ReadonlyArray<{ name: string; path: string }>;
+		/** The one root is a folder several hosts share (`store.backend: shared`), whose locks are leases. */
+		shared?: boolean;
 		cache: string;
 		project: string;
 		/** The project's `store.projectId`, so the server keys the store as the session does. */
@@ -164,9 +166,10 @@ export function mcpBuiltinLaunchArgs(id: string, context: McpBuiltinLaunchContex
 	if (id === "catalog") return ["--file", mcpBuiltinCatalogFile()];
 	if (id === "scidata") return ["--cache", mcpBuiltinScidataCache()];
 	if (id !== "store" || context.store === undefined) return [];
-	const { roots, cache, project, projectId, writeTags } = context.store;
+	const { roots, shared, cache, project, projectId, writeTags } = context.store;
 	return [
 		...roots.flatMap((root, index) => ["--root", storeRootOption(root, index === 0)]),
+		...(shared === true ? ["--shared"] : []),
 		"--cache",
 		cache,
 		"--project",

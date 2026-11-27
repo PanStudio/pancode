@@ -515,8 +515,14 @@ interface StoreRootSetting {
 }
 
 /** The kinds of store `store.backend` selects. */
-export const STORE_BACKEND_KINDS = ["local", "s3"] as const;
+export const STORE_BACKEND_KINDS = ["local", "shared", "s3"] as const;
 export type StoreBackendSetting = (typeof STORE_BACKEND_KINDS)[number];
+
+/** The folder a `shared` store lives in: one directory every host sharing the store mounts at the same path. */
+export interface StoreSharedSetting {
+	/** Absolute. */
+	root: string;
+}
 
 /** The bucket an `s3` store lives in. Its secret key is in the credential store (`pancode store login`), never here. */
 export interface StoreS3Setting {
@@ -534,13 +540,14 @@ export interface StoreS3Setting {
 /**
  * Where PanStore keeps tags. `backend` local keeps them under `roots`; empty `roots` keeps the one store under the
  * data directory. The first root is the primary and holds records and locks. `placement` names the root a new tag
- * goes to; a tag never moves after. `backend` s3 keeps them in the bucket `s3` names, with no roots or placement.
- * User settings only.
+ * goes to; a tag never moves after. `backend` shared keeps them in the one folder `shared` names, which several
+ * hosts mount, and `backend` s3 in the bucket `s3` names; neither has roots or placement. User settings only.
  */
 interface StoreSettings {
 	/** The project's store identity, set only in its tracked `.pancode/settings.yaml`; unset keys the store by path. */
 	projectId?: string;
 	backend: StoreBackendSetting;
+	shared: StoreSharedSetting | null;
 	s3: StoreS3Setting | null;
 	roots: StoreRootSetting[];
 	placement: { byTag: Record<string, string>; byClass: Partial<Record<StoreTagClass, string>> };
@@ -1114,7 +1121,7 @@ export const DEFAULT_SETTINGS = {
 		profile: "v1" as "v1" | "v2",
 	},
 	models: {} as ModelSettings,
-	store: { backend: "local", s3: null, roots: [], placement: { byTag: {}, byClass: {} } } as StoreSettings,
+	store: { backend: "local", shared: null, s3: null, roots: [], placement: { byTag: {}, byClass: {} } } as StoreSettings,
 };
 
 /**

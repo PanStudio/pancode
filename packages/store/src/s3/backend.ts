@@ -12,7 +12,6 @@
  * Limits: a blob is one PUT of at most 5 GiB, a put copies (no reflink), blobs carry no versions and there is no
  * free-space figure.
  */
-import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir, realpath, rename, rm, stat } from "node:fs/promises";
@@ -33,6 +32,7 @@ import {
 	type StoreUsage,
 } from "../backend/types.js";
 import { hashStoreFile } from "../hash.js";
+import { fencedSignal, fenceHeldLeases, STORE_LEASE_EXPIRY_MS, withLease } from "../lease.js";
 import { storeLockId } from "../lock.js";
 import {
 	decodeTagSegment,
@@ -60,18 +60,6 @@ export interface S3StoreOptions extends S3ClientOptions {
 
 /** The largest object one S3 PUT stores. */
 export const S3_PUT_MAX_BYTES = 5 * 1024 ** 3;
-/** A lease not renewed for this long, by the object store's clock, is taken over. */
-export const S3_LEASE_EXPIRY_MS = 60 * 1000;
-const LEASE_RENEW_MS = 10 * 1000;
-
-/** A lease the current writer holds: renewed before each change it makes, its signal aborted once it is lost. */
-interface HeldLease {
-	signal: AbortSignal;
-	confirm(): Promise<void>;
-}
-
-/** The leases held by the writer running in this async context, outermost first. */
-const heldLeases = new AsyncLocalStorage<HeldLease[]>();
 const LOCK_WAIT_MS = 30 * 1000;
 const LOCK_POLL_MS = 200;
 /** How often a write racing another on one key (409, 503) is retried before it refuses. */
@@ -334,7 +322,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 	function leaseInfo(id: string, text: string | null, response: Response): StoreLockInfo {
 		const now = Date.parse(response.headers.get("date") ?? "");
 		const renewed = Date.parse(response.headers.get("last-modified") ?? "");
-		const expired = Number.isFinite(now) && Number.isFinite(renewed) && now - renewed > S3_LEASE_EXPIRY_MS;
+		const expired = Number.isFinite(now) && Number.isFinite(renewed) && now - renewed > STORE_LEASE_EXPIRY_MS;
 		let owner: Partial<LeaseOwner> | null = null;
 		if (text !== null) {
 			try {
@@ -372,7 +360,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			);
 		return new StoreRefusal(
 			"unavailable",
-			`Another writer holds the store lock for ${key}: pid ${info.pid} on ${info.host} since ${info.at}. Its lease expires ${S3_LEASE_EXPIRY_MS / 1000} s after its last renewal.`,
+			`Another writer holds the store lock for ${key}: pid ${info.pid} on ${info.host} since ${info.at}. Its lease expires ${STORE_LEASE_EXPIRY_MS / 1000} s after its last renewal.`,
 		);
 	}
 
@@ -403,25 +391,12 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 		}
 	}
 
-	function lostRefusal(key: string, lost: string): StoreRefusal {
-		return new StoreRefusal(
-			"io",
-			`The store lock for ${key} was lost while it was held (${lost}); look at the change it guarded before relying on it.`,
-		);
-	}
-
-	async function withLease<T>(key: string, fn: () => Promise<T>): Promise<T> {
+	async function takeLease<T>(key: string, fn: () => Promise<T>): Promise<T> {
 		const lease = await acquire(key);
-		let lost: string | null = null;
-		const controller = new AbortController();
-		let renewing: Promise<void> = Promise.resolve();
-		/** One renewal, after any already queued: two at once would race on one ETag. True while the lease is ours. */
-		const renew = (): Promise<boolean> => {
-			// A renewal that failed to reach the store does not stop the next one.
-			renewing = renewing
-				.catch(() => undefined)
-				.then(async () => {
-					if (lost !== null) return;
+		return withLease(
+			key,
+			{
+				renew: async () => {
 					// The same bytes under If-Match: the object is ours as long as the PUT is accepted.
 					const renewed = await putIf(
 						lockKey(lease.id),
@@ -429,56 +404,18 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 						{ ifMatch: lease.etag },
 						`renewing the store lock for ${key}`,
 					);
-					if (renewed !== null) {
-						lease.etag = renewed;
-						return;
-					}
-					lost = "it was taken over or broken";
-					controller.abort();
-				});
-			return renewing.then(() => lost === null);
-		};
-		const timer = setInterval(() => {
-			// A renewal that cannot reach the store is tried again; the lease lapses only by the store's clock.
-			renew().catch(() => undefined);
-		}, LEASE_RENEW_MS);
-		timer.unref();
-		const held: HeldLease = {
-			signal: controller.signal,
-			confirm: async () => {
-				if (!(await renew())) throw lostRefusal(key, lost ?? "it was taken over or broken");
+					if (renewed === null) return false;
+					lease.etag = renewed;
+					return true;
+				},
+				release: async () => {
+					const current = await readLease(lease.id);
+					if (current !== null && current.etag === lease.etag)
+						await del(lockKey(lease.id), `releasing the store lock for ${key}`, { "if-match": lease.etag });
+				},
 			},
-		};
-		let result: T;
-		try {
-			result = await heldLeases.run([...(heldLeases.getStore() ?? []), held], fn);
-		} finally {
-			clearInterval(timer);
-			await renewing.catch(() => undefined);
-			if (lost === null) {
-				const current = await readLease(lease.id).catch(() => null);
-				if (current !== null && current.etag === lease.etag)
-					await del(lockKey(lease.id), `releasing the store lock for ${key}`, { "if-match": lease.etag }).catch(
-						() => undefined,
-					);
-			}
-		}
-		if (lost !== null) throw lostRefusal(key, lost);
-		return result;
-	}
-
-	/** Renew every lease this writer holds, refused when one was taken over; nothing to do outside a lock. */
-	async function fence(): Promise<void> {
-		for (const held of heldLeases.getStore() ?? []) await held.confirm();
-	}
-
-	/** `signal`, also aborted when a lease this writer holds is taken over. */
-	function fencedSignal(signal: AbortSignal | undefined): AbortSignal | undefined {
-		const signals = [
-			...(signal !== undefined ? [signal] : []),
-			...(heldLeases.getStore() ?? []).map((held) => held.signal),
-		];
-		return signals.length === 0 ? undefined : AbortSignal.any(signals);
+			fn,
+		);
 	}
 
 	const backend: StoreBackend = {
@@ -498,7 +435,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 			links: "copy",
 		}),
 
-		withLock: (key, fn) => withLease(key, fn),
+		withLock: (key, fn) => takeLease(key, fn),
 
 		listLocks: () =>
 			guarded(async () => {
@@ -526,7 +463,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				if (lease.info.state === "live")
 					throw new StoreRefusal(
 						"unavailable",
-						`Store lock ${id} is held by pid ${lease.info.pid} on ${lease.info.host} and renewed within ${S3_LEASE_EXPIRY_MS / 1000} s; it is not broken while its writer runs.`,
+						`Store lock ${id} is held by pid ${lease.info.pid} on ${lease.info.host} and renewed within ${STORE_LEASE_EXPIRY_MS / 1000} s; it is not broken while its writer runs.`,
 					);
 				const again = await readLease(id);
 				if (again === null) return lease.info;
@@ -600,7 +537,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 		delTag: (tag) =>
 			guarded(async () => {
 				checkTag(tag);
-				await fence();
+				await fenceHeldLeases();
 				// The tag file goes first, so a half-deleted tag is not listed.
 				await del(tagKey(tag), `deleting tag ${tag}`);
 				const keys = (await listAll(tagBase(tag))).map((object) => object.key);
@@ -620,7 +557,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 					if (current === null) throw new StoreRefusal("not-found", `The store has no tag named ${tag}.`);
 					current.file.xattrs = { ...current.file.xattrs, [key]: value };
 					const body = Buffer.from(`${JSON.stringify(current.file)}\n`);
-					await fence();
+					await fenceHeldLeases();
 					if ((await putIf(tagKey(tag), body, { ifMatch: current.etag }, `updating tag ${tag}`)) !== null) return;
 				}
 				throw new StoreRefusal(
@@ -665,7 +602,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 					throw error;
 				}
 				const key = `${blobsBase(tag)}${blob}`;
-				await fence();
+				await fenceHeldLeases();
 				const modifiedMs = Date.now();
 				const fenced = fencedSignal(signal);
 				let response: Response;
@@ -679,7 +616,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				} catch (error) {
 					if (signal?.aborted) throw aborted();
 					// A lease taken over mid-upload aborted it; the confirmation names the lost lock.
-					if (fenced?.aborted) await fence();
+					if (fenced?.aborted) await fenceHeldLeases();
 					throw error;
 				}
 				if (response.status !== 200) {
@@ -738,7 +675,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				// A record in a tag nobody created would be invisible to listTags, so the tag comes first.
 				await getOrCreateTag(tag);
 				checkBlob(tag, blob);
-				await fence();
+				await fenceHeldLeases();
 				const made = await putIf(`${blobsBase(tag)}${blob}`, data, { ifNoneMatch: true }, `record ${tag}:${blob}`);
 				return made === null ? "exists" : "written";
 			}),
@@ -790,7 +727,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				checkBlob(tag, blob);
 				const key = `${blobsBase(tag)}${blob}`;
 				if ((await head(key, `${tag}:${blob}`)) === null) return false;
-				await fence();
+				await fenceHeldLeases();
 				await del(key, `deleting ${tag}:${blob}`);
 				return true;
 			}),

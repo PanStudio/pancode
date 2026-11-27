@@ -1427,6 +1427,8 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 function validateSharedStoreGrant(value: unknown): void {
 	const source = "WorkerSpec.storeGrant.shared";
 	const shared = readRecord(value, source);
+	if (shared.backend !== "local" && shared.backend !== "shared")
+		throw new Error(`${source}.backend must be local or shared`);
 	readString(shared.projectId, `${source}.projectId`);
 	if (typeof shared.projectKey !== "string" || !/^[0-9a-f]{16}$/u.test(shared.projectKey))
 		throw new Error(`${source}.projectKey must be 16 lowercase hex characters`);

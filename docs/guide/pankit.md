@@ -180,10 +180,10 @@ Network rules for a `ckan` source:
 ### `store` options
 
 ```bash
-pankit serve store --root [<name>=]<dir> [--root <name>=<dir> ...] [--cache <dir>] [--project <dir>] [--project-id <id>] [--write-tag <tag> ...]
+pankit serve store --root [<name>=]<dir> [--root <name>=<dir> ...] [--cache <dir>] [--shared] [--project <dir>] [--project-id <id>] [--write-tag <tag> ...]
 ```
 
-The first `--root` is the primary root, named `default` unless given as `<name>=<dir>`; each further root is `<name>=<dir>`. `--project` is any directory of the project and defaults to the directory the server starts in. `--project-id` is the project's `store.projectId`: it keys the store by that id, so every checkout of the project on every host reaches the same store; without it the store is keyed by the project's path. `--cache` is where `store_get` keeps its read-only copies and defaults to `~/.cache/panstore`; the server reads no variables, so it does not follow `XDG_CACHE_HOME`. `pancode store where` prints the `--root`, `--cache`, `--project` and `--project-id` options that reach the store PanCode uses for a project.
+The first `--root` is the primary root, named `default` unless given as `<name>=<dir>`; each further root is `<name>=<dir>`. `--shared` serves a store in a folder several hosts mount, given as the only `--root`, and takes its locks as leases ([Storing in a shared folder](panstore.md#storing-in-a-shared-folder)). `--project` is any directory of the project and defaults to the directory the server starts in. `--project-id` is the project's `store.projectId`: it keys the store by that id, so every checkout of the project on every host reaches the same store; without it the store is keyed by the project's path. `--cache` is where `store_get` keeps its read-only copies and defaults to `~/.cache/panstore`; the server reads no variables, so it does not follow `XDG_CACHE_HOME`. `pancode store where` prints the `--root`, `--shared`, `--cache`, `--project` and `--project-id` options that reach the store PanCode uses for a project.
 
 Each `--write-tag <tag>` lets `store_put` and `store_note` write that tag and the tags nested under it (`--write-tag results` allows `results` and `results/run1`). A write into any other tag is refused, naming the tags allowed, before the source file is opened. Without one the server writes nothing. Reads are not confined: every tag of the project can be read. A read also refuses when the primary root does not exist, so a mistyped `--root` is never read as an empty store.
 
@@ -204,7 +204,7 @@ PanCode adds launch options to three builtin servers. They name this PanCode hom
 
 - `scidata` gets `--cache <PanCode cache>/pankit/data-readers`.
 - `catalog` gets `--file <PanCode config>/pankit/catalog.json`, which is `~/.config/pancode/pankit/catalog.json` unless `PANCODE_CONFIG_DIR` or `PANCODE_HOME` moves it. An isolated PanCode home never reads the operator's own `~/.config/pankit/catalog.json`.
-- `store` gets the session's store: `--root` for each store root in settings order, primary first, `--cache` for PanCode's cache directory, `--project` for the directory it starts in, `--project-id` when the project's tracked settings set `store.projectId`, and one `--write-tag` per tag the session may write. The main session and `pancode mcp test` write every tag the project's store lists, a fleet worker exactly the tags its dispatch granted, and any other session none. See [MCP servers and store references](panstore.md#mcp-servers-and-store-references).
+- `store` gets the session's store: `--root` for each store root in settings order, primary first, `--shared` when `store.backend` is `shared`, `--cache` for PanCode's cache directory, `--project` for the directory it starts in, `--project-id` when the project's tracked settings set `store.projectId`, and one `--write-tag` per tag the session may write. The main session and `pancode mcp test` write every tag the project's store lists, a fleet worker exactly the tags its dispatch granted, and any other session none. See [MCP servers and store references](panstore.md#mcp-servers-and-store-references).
 
 The other four servers get no options. `pancode doctor` runs `pankit doctor` once with the same launch environment and prints one `pankit <id>` row per server, naming the catalog file and reader cache a session uses.
 

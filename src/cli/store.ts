@@ -24,6 +24,7 @@ import {
 import "../core/config.js";
 import { RUN_FILE_HASH_MAX_BYTES } from "../core/run-records.js";
 import {
+	storeBackendKind,
 	storePlacementRules,
 	storeProjectIdFor,
 	storeProjectKeyFor,
@@ -44,6 +45,7 @@ function storeCliContext(cwd: string, openBackend: (cwd: string) => Promise<Stor
 	const context: StoreCliContext = {
 		cwd,
 		roots: storeRootSpecs(),
+		...(storeBackendKind() === "shared" ? { shared: true } : {}),
 		placement: storePlacementRules(),
 		cacheDir: pancodeCachePath(),
 		projectRoot,

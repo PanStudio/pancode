@@ -64,8 +64,8 @@ pankit --version
 ```
 
 Exit codes: 0 success, 1 operational failure, 2 usage error. Options follow the server id: `scidata` takes
-`--cache <dir>`, `catalog` takes `--file <path>`, `store` takes `--root`, `--cache`, `--project`, `--project-id`
-and `--write-tag`, and the other servers take none. A server that reads variables from its caller's environment names
+`--cache <dir>`, `catalog` takes `--file <path>`, `store` takes `--root`, `--shared`, `--cache`, `--project`,
+`--project-id` and `--write-tag`, and the other servers take none. A server that reads variables from its caller's environment names
 them in the `environment` field of its manifest entry; pass those through.
 
 ## Policy belongs to the host

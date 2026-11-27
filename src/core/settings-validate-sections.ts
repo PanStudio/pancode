@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Routes, external agents, fleet nodes, keybindings, and the systemOne, telemetry, prompts, models, report and store sections. */
 
+import { isAbsolute } from "node:path";
 import {
 	STORE_DEFAULT_ROOT_NAME,
 	STORE_TAG_CLASSES,
@@ -11,7 +12,7 @@ import {
 } from "@pancode/store/paths";
 import { PROFILE_IDS } from "../domains/system-one/profiles.js";
 import type { PancodeSettings } from "./config.js";
-import { STORE_BACKEND_KINDS, type StoreS3Setting, THINKING_LEVELS } from "./defaults.js";
+import { STORE_BACKEND_KINDS, type StoreS3Setting, type StoreSharedSetting, THINKING_LEVELS } from "./defaults.js";
 import { MODEL_TIERS } from "./model-tier.js";
 import {
 	describe,
@@ -478,26 +479,45 @@ function validateStoreS3(issues: Issues, raw: unknown): StoreS3Setting | null {
 	return { endpoint: endpoint.replace(/\/$/u, ""), region, bucket, prefix, accessKeyId, pathStyle };
 }
 
+function validateStoreShared(issues: Issues, raw: unknown): StoreSharedSetting | null {
+	if (!isRecord(raw)) {
+		issues.add("store.shared", `expected a map, got ${describe(raw)}`);
+		return null;
+	}
+	issues.unknownKeys("store.shared", raw, ["root"]);
+	const root = expectString(issues, "store.shared.root", raw.root);
+	if (root === undefined) return null;
+	if (!isAbsolute(root)) {
+		issues.add("store.shared.root", `expected an absolute path, got ${root}`);
+		return null;
+	}
+	return { root };
+}
+
 export function validateStore(issues: Issues, raw: unknown, settings: PancodeSettings): void {
 	if (!isRecord(raw)) {
 		issues.add("store", `expected a map, got ${describe(raw)}`);
 		return;
 	}
-	issues.unknownKeys("store", raw, ["projectId", "backend", "s3", "roots", "placement"]);
+	issues.unknownKeys("store", raw, ["projectId", "backend", "shared", "s3", "roots", "placement"]);
 	if ("backend" in raw) {
 		const backend = expectEnum(issues, "store.backend", raw.backend, STORE_BACKEND_KINDS);
 		if (backend !== undefined) settings.store.backend = backend;
 	}
+	if ("shared" in raw && raw.shared !== null) settings.store.shared = validateStoreShared(issues, raw.shared);
 	if ("s3" in raw && raw.s3 !== null) settings.store.s3 = validateStoreS3(issues, raw.s3);
-	if (settings.store.backend === "s3") {
-		if (settings.store.s3 === null && !("s3" in raw && raw.s3 !== null))
-			issues.add("store.s3", "expected the bucket's endpoint, region, bucket and accessKeyId when store.backend is s3");
+	const backend = settings.store.backend;
+	if (backend === "shared" && settings.store.shared === null && !("shared" in raw && raw.shared !== null))
+		issues.add("store.shared", "expected the shared folder's root when store.backend is shared");
+	if (backend === "s3" && settings.store.s3 === null && !("s3" in raw && raw.s3 !== null))
+		issues.add("store.s3", "expected the bucket's endpoint, region, bucket and accessKeyId when store.backend is s3");
+	if (backend !== "local") {
 		const placement = raw.placement;
 		const placed =
 			isRecord(placement) && Object.values(placement).some((rules) => isRecord(rules) && Object.keys(rules).length > 0);
 		if (Array.isArray(raw.roots) && raw.roots.length > 0)
-			issues.add("store.roots", "local store roots do not apply when store.backend is s3");
-		if (placed) issues.add("store.placement", "store placement does not apply when store.backend is s3");
+			issues.add("store.roots", `local store roots do not apply when store.backend is ${backend}`);
+		if (placed) issues.add("store.placement", `store placement does not apply when store.backend is ${backend}`);
 	}
 	if ("projectId" in raw) {
 		const id = expectString(issues, "store.projectId", raw.projectId);

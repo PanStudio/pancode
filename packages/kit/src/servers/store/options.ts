@@ -20,16 +20,18 @@ import {
 } from "@pancode/store";
 import { ServerUsageError } from "../../registry.js";
 
-export const USAGE = `options: --root [<name>=]<dir> [--root <name>=<dir> ...] [--cache <dir>] [--project <dir>] [--project-id <id>] [--write-tag <tag> ...]
+export const USAGE = `options: --root [<name>=]<dir> [--root <name>=<dir> ...] [--shared] [--cache <dir>] [--project <dir>] [--project-id <id>] [--write-tag <tag> ...]
   --root       a store root; the first is the primary. Repeat with <name>=<dir> for each further root.
                The first is named default unless given as <name>=<dir> too.
+  --shared     the one root is a folder several hosts share (store.backend shared): its locks are leases
+               renewed while held and taken over from any host 60 s after the last renewal.
   --cache      where store_get keeps its read-only copies; default ~/.cache/panstore.
   --project    any directory of the project; default the directory the server starts in.
   --project-id the project's store.projectId, which keys its store wherever it is checked out;
                without one the store is keyed by the project's path.
   --write-tag  a tag store_put and store_note may write, with the tags nested under it; repeatable.
                Without one the server writes nothing.
-pancode store where prints the --root, --cache and --project options for a project.
+pancode store where prints the --root, --shared, --cache and --project options for a project.
 `;
 
 export const NO_ROOT_REASON =
@@ -46,6 +48,8 @@ export interface StoreServerConfig {
 	projectId?: string;
 	/** Tags the server may write, with the tags nested under each. */
 	writeTags: string[];
+	/** The one root is a folder several hosts share, whose locks are leases. */
+	shared: boolean;
 }
 
 const OPTIONS = new Set(["--root", "--cache", "--project", "--project-id", "--write-tag"]);
@@ -54,7 +58,8 @@ const OPTIONS = new Set(["--root", "--cache", "--project", "--project-id", "--wr
  * The configuration `argv` gives, or null when it names no `--root`.
  * Throws `ServerUsageError` for an unknown option, a missing value, a value
  * that begins with `-`, a further root without a name, a root set the store
- * refuses, an invalid project id or a write tag the store would not accept.
+ * refuses, `--shared` with more than one root, an invalid project id or a
+ * write tag the store would not accept.
  */
 export function parseStoreOptions(argv: ReadonlyArray<string>, cwd: string): StoreServerConfig | null {
 	const roots: StoreRootSpec[] = [];
@@ -62,8 +67,13 @@ export function parseStoreOptions(argv: ReadonlyArray<string>, cwd: string): Sto
 	let cacheDir: string | undefined;
 	let project: string | undefined;
 	let projectId: string | undefined;
+	let shared = false;
 	for (let i = 0; i < argv.length; i++) {
 		const option = argv[i] as string;
+		if (option === "--shared") {
+			shared = true;
+			continue;
+		}
 		if (!OPTIONS.has(option)) throw new ServerUsageError(`unknown option ${option}`);
 		const value = argv[i + 1];
 		if (value === undefined || value.length === 0) throw new ServerUsageError(`${option} needs a value`);
@@ -88,6 +98,7 @@ export function parseStoreOptions(argv: ReadonlyArray<string>, cwd: string): Sto
 	if (roots.length === 0) return null;
 	const problem = validateStoreRoots(roots);
 	if (problem !== null) throw new ServerUsageError(problem);
+	if (shared && roots.length > 1) throw new ServerUsageError("--shared serves one root, the shared folder");
 	const projectRoot = storeProjectRootOf(project ?? cwd);
 	return {
 		roots,
@@ -96,6 +107,7 @@ export function parseStoreOptions(argv: ReadonlyArray<string>, cwd: string): Sto
 		projectKey: projectId !== undefined ? storeProjectKeyForId(projectId) : storeProjectKey(projectRoot),
 		...(projectId !== undefined ? { projectId } : {}),
 		writeTags,
+		shared,
 	};
 }
 

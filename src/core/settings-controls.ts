@@ -582,6 +582,7 @@ const STRUCTURED = new Set([
 	"fleet.agentProfiles",
 	"fleet.nodes",
 	"fleet.adaptiveRouting.agentRoles",
+	"store.shared",
 	"store.s3",
 	"store.roots",
 	"store.placement.byTag",
@@ -900,7 +901,11 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"store.backend": [
 		"Store backend",
-		"Where PanStore keeps tags, user settings only: local keeps them in directories on this host (store.roots), s3 in the S3-compatible bucket store.s3 names. Applies on the next start.",
+		"Where PanStore keeps tags, user settings only: local keeps them in directories on this host (store.roots), shared in the folder store.shared names that several hosts mount, s3 in the S3-compatible bucket store.s3 names. Applies on the next start.",
+	],
+	"store.shared": [
+		"Shared store folder",
+		"The folder a shared store lives in, user settings only. Edit the JSON object { root }: an absolute directory every host sharing the store mounts at that path.",
 	],
 	"store.s3": [
 		"S3 store bucket",

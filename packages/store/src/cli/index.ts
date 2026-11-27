@@ -20,7 +20,7 @@ import {
 import { safeResourceWriteAsync } from "../durable-write.js";
 import { readStoreRootId } from "../identity.js";
 import { openStoreIndex, type StoreIndex } from "../index-db/index.js";
-import { createLocalStoreBackend } from "../local.js";
+import { createLocalStoreBackend, createSharedStoreBackend } from "../local.js";
 import {
 	recordsTag,
 	STORE_PUT_TAG_CLASS,
@@ -60,6 +60,8 @@ export interface StoreCliContext {
 	cwd: string;
 	/** The local roots, the first the primary; empty for a backend that keeps no store on a local path. */
 	roots: ReadonlyArray<StoreRootSpec>;
+	/** The one root is a folder several hosts share, whose locks are leases (`createSharedStoreBackend`). */
+	shared?: boolean;
 	placement?: StorePlacementRules;
 	cacheDir: string;
 	/** The project's main checkout. */
@@ -78,7 +80,7 @@ export interface StoreCliContext {
 	provenance?: (input: StoreCliPutInput) => StorePutRecordFields | Promise<StorePutRecordFields>;
 	/** Asked before `rm` and `rm-tag` without `--yes`; default ask on a terminal, else preview. */
 	confirm?: (question: string) => Promise<boolean>;
-	/** Default `createLocalStoreBackend` over the roots above. */
+	/** Default `createLocalStoreBackend` over the roots above, or `createSharedStoreBackend` when `shared`. */
 	openBackend?: () => Promise<StoreBackend>;
 }
 
@@ -145,8 +147,8 @@ adopt moves. On an s3 store where prints its location and there is no store
 server.
 locks lists the project's store locks with each holder's key, pid, host and
 time, and its state: live (this host, pid alive, same boot), dead (this host,
-pid gone or another boot), remote (another host) or unreadable. On an s3 store
-a lock is a lease: live while renewed within 60 s, dead after. A writer takes
+pid gone or another boot), remote (another host) or unreadable. On a shared or
+s3 store a lock is a lease: live while renewed within 60 s, dead after. A writer takes
 over only a dead lock; locks break removes any lock that is not live, and
 without --yes prints what it would remove and exits 0. It never touches a blob
 or a record.
@@ -156,14 +158,19 @@ Exit codes: 0 success; 1 operational failure or verify not ok; 2 invalid usage.
 
 function open(context: StoreCliContext): Promise<StoreBackend> {
 	if (context.openBackend !== undefined) return context.openBackend();
+	const project = {
+		cacheDir: context.cacheDir,
+		projectKey: context.projectKey,
+		...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
+		projectRoot: context.projectRoot,
+	};
+	if (context.shared === true)
+		return Promise.resolve(createSharedStoreBackend({ root: primaryRoot(context), ...project }));
 	return Promise.resolve(
 		createLocalStoreBackend({
 			roots: context.roots,
 			...(context.placement !== undefined ? { placement: context.placement } : {}),
-			cacheDir: context.cacheDir,
-			projectKey: context.projectKey,
-			...(context.projectId !== undefined ? { projectId: context.projectId } : {}),
-			projectRoot: context.projectRoot,
+			...project,
 		}),
 	);
 }
@@ -173,10 +180,10 @@ const NO_INDEX: StoreIndex = { tags: async () => null, blobs: async () => null, 
 /**
  * The host-local index over the store `context` names, for listing and history display only (N8). Each answer is
  * null when the index cannot give it, and the verb then scans the store as before. Its freshness is a stat of the
- * local roots, so another kind of backend is never indexed.
+ * local roots, so only a store kept in directories is indexed.
  */
 function storeIndex(context: StoreCliContext, backend: StoreBackend): StoreIndex {
-	if (backend.kind !== "local") return NO_INDEX;
+	if (backend.kind !== "local" && backend.kind !== "shared") return NO_INDEX;
 	return openStoreIndex({ backend, roots: context.roots, cacheDir: context.cacheDir, projectKey: context.projectKey });
 }
 
@@ -602,6 +609,7 @@ export function storeServerInvocation(context: StoreCliContext): string {
 	context.roots.forEach((root, index) => {
 		words.push("--root", storeRootOption(root, index === 0));
 	});
+	if (context.shared === true) words.push("--shared");
 	words.push("--cache", context.cacheDir, "--project", context.projectRoot);
 	if (context.projectId !== undefined) words.push("--project-id", context.projectId);
 	return words.map(shellWord).join(" ");

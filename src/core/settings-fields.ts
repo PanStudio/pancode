@@ -247,6 +247,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"semantic",
 	"sendSessionId",
 	"sessionCostUsd",
+	"shared",
 	"sideShare",
 	"signal",
 	"smoothStreaming",

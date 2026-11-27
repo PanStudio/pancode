@@ -2,7 +2,7 @@
 
 PanStore is PanCode's project store: it keeps files as blobs in named tags outside the working tree, with a record of who put each one, from where and with which hash.
 
-The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), or `createS3StoreBackend` in [s3/backend.ts](../../packages/store/src/s3/backend.ts) for a store in an S3 bucket ([Storing in an S3 bucket](#storing-in-an-s3-bucket)), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
+The engine is `createLocalStoreBackend` in [local.ts](../../packages/store/src/local.ts), `createSharedStoreBackend` in the same file for a store in a folder several hosts mount ([Storing in a shared folder](#storing-in-a-shared-folder)), or `createS3StoreBackend` in [s3/backend.ts](../../packages/store/src/s3/backend.ts) for a store in an S3 bucket ([Storing in an S3 bucket](#storing-in-an-s3-bucket)), the commands are `runStoreCli` in [cli/index.ts](../../packages/store/src/cli/index.ts), `pancode store` hosts them in [store.ts](../../src/cli/store.ts), and the model's `store` tool is in [store-tool.ts](../../src/tools/store/store-tool.ts).
 
 Its code is the private workspace package `@pancode/store`, bundled into PanCode. It reaches you three ways, all over the same files:
 
@@ -86,7 +86,7 @@ A writer holds one lock per blob, or per tag's metadata, in `locks/` of the proj
 | `remote` | Held on another host. |
 | `unreadable` | The lock file cannot be read, including a lock written by an older PanStore. |
 
-A writer waits up to 30 seconds for a lock and takes it over only when the lock is `dead`. An s3 store's locks are leases instead ([Storing in an S3 bucket](#storing-in-an-s3-bucket)). Locks never age out: a `remote` or `unreadable` lock stays until its holder releases it or an operator runs `locks break <id> --yes`, and the refused write names the holder and that command. `locks break` refuses a `live` lock. Check that a `remote` holder has really stopped before breaking its lock.
+A writer waits up to 30 seconds for a lock and takes it over only when the lock is `dead`. A shared or s3 store's locks are leases instead ([Storing in a shared folder](#storing-in-a-shared-folder), [Storing in an S3 bucket](#storing-in-an-s3-bucket)). On a local store locks never age out: a `remote` or `unreadable` lock stays until its holder releases it or an operator runs `locks break <id> --yes`, and the refused write names the holder and that command. `locks break` refuses a `live` lock. Check that a `remote` holder has really stopped before breaking its lock.
 
 ## Roots and placement
 
@@ -133,7 +133,24 @@ store:
 
 Each host lists the shared roots in its own `store.roots`; the mount paths may differ, since root ids match them. The primary must be shared as well, because it holds the records and the locks.
 
-A dispatch that grants tags to a worker on an SSH fleet node needs `store.projectId`; without one it is refused at admission, naming the setting. With one, the dispatcher refuses a root that is on a file system local to its host, and sends the worker the project key, the id of each root involved (the primary and the roots holding the granted tags) and each tag's directory relative to its root. Before it runs, the worker checks every name against its own configuration: its checkout must have the same project key, each root id must match exactly one of its roots, and each tag must resolve to the same directory. The first mismatch refuses the grant, so a worker whose store is not the dispatcher's writes nothing.
+A dispatch that grants tags to a worker on an SSH fleet node needs `store.projectId`; without one it is refused at admission, naming the setting. With one, the dispatcher refuses a root that is on a file system local to its host, and sends the worker the project key, the id of each root involved (the primary and the roots holding the granted tags) and each tag's directory relative to its root. Before it runs, the worker checks every name against its own configuration: its checkout must have the same project key, each root id must match exactly one of its roots, and each tag must resolve to the same directory. The grant also names the dispatcher's `store.backend`, and the worker refuses it unless its own is the same, because a `local` and a `shared` host take over locks by different rules. The first mismatch refuses the grant, so a worker whose store is not the dispatcher's writes nothing.
+
+## Storing in a shared folder
+
+The store can live in one folder that several hosts mount, such as an NFS export, with locks every host can take over. Set it in each host's user `settings.yaml` and restart PanCode:
+
+```yaml
+store:
+  backend: shared
+  shared:
+    root: /mnt/lab/pancode-store
+```
+
+With `shared`, `store.shared.root` is required (an absolute path; the mount path may differ between hosts) and `store.roots` and `store.placement` must be empty: the folder is the only root, laid out like a local root, and holds records, locks and every tag. The folder must exist; a host where it is missing refuses writes as `unavailable` instead of creating it locally, and `pancode doctor` shows it and its free space. Set `store.projectId` so checkouts at different paths reach one project directory ([Sharing a store across hosts](#sharing-a-store-across-hosts)). The backend reports `multiNode: true` and `sharedFs: true`.
+
+Locks are leases. A lock file is linked into place as on a local store, and its holder rewrites it every 10 seconds. A lease whose file was not modified for 60 seconds, by the file server's clock (a probe file's modification time, so host clocks need not agree), is `dead`, as is a lease whose holder process is gone on this host; a writer waits up to 30 seconds and takes a dead lease over from any host. A lease is broken only if its file is still the one judged dead, so a renewal made meanwhile keeps it. A writer checks it still holds its leases before each change it makes (renaming the blob into place, writing a record, tag metadata or placement, removing a blob or tag), so one that stalled past 60 seconds and lost its lease has its write refused instead of overwriting the next holder's change. `locks` lists leases as `live`, `dead` or `unreadable`, and `locks break` refuses a live one.
+
+Everything a local store does works on a shared one: `adopt`, `put --link`, the index, tag grants to a worker on an SSH node (whose host also sets `store.backend: shared`), store references and the PanKit `store` server, which PanCode launches with `--shared`.
 
 ## Storing in an S3 bucket
 
@@ -151,7 +168,7 @@ store:
     pathStyle: true
 ```
 
-`store.backend` is `local` (the default) or `s3`; with `s3`, `store.s3` is required and `store.roots` and `store.placement` must be empty. `pathStyle: true` puts the bucket in the URL path, as MinIO and most self-hosted services need. Then store the secret key:
+`store.backend` is `local` (the default), `shared` or `s3`; with `s3`, `store.s3` is required and `store.roots` and `store.placement` must be empty. `pathStyle: true` puts the bucket in the URL path, as MinIO and most self-hosted services need. Then store the secret key:
 
 ```bash
 pancode store login     # prompts, or reads the key from stdin
@@ -186,7 +203,7 @@ A dispatched worker reads the store but does not write it, unless its dispatch g
 
 A grant is a permission to write those tags through the store. It does not narrow what else the worker may write, with one exception: in a parallel batch that would otherwise be refused because several writers declare no write roots, each writer that holds a grant and declares no write roots is confined to its granted tags' directories. Declare `intent.write_roots` when such a writer must also edit the workspace.
 
-A worker on an SSH fleet node opens its own host's store. It can be granted tags only when the project sets `store.projectId` and both hosts mount the store's roots; see [Sharing a store across hosts](#sharing-a-store-across-hosts).
+A worker on an SSH fleet node opens its own host's store. It can be granted tags only when the project sets `store.projectId` and both hosts mount the store's roots, or its shared folder; see [Sharing a store across hosts](#sharing-a-store-across-hosts).
 
 To run several granted writers at once on the local node, check the worker limit first. `fleet.concurrency: auto` sizes the local node from free memory, and in a container from the cgroup headroom, so a small container can get one worker. A parallel dispatch reserves all its tasks before any of them starts, so such a node refuses the whole plan and no worker runs (`dispatch: reservation denied: node '<id>' capacity exceeded (3/1)`); a single dispatch past the limit is refused with `capacity reached (1/1)`. Set `fleet.concurrency` to the number of writers you dispatch, for example `3`, when the host has room for them ([Worker limits](fleet-dispatch.md#worker-limits-and-fleetconcurrency-auto)).
 
@@ -204,8 +221,8 @@ The builtin PanKit `store` server is launched by PanCode with this session's roo
 ## Limits
 
 - PanStore is exercised on Linux only until its conformance suite runs on the macOS and Windows runners.
-- A root on a network file system is reported as `sharedFs: unverified`, and the backend still reports `multiNode: false`. Two Linux hosts writing one root have been tested over NFS 4.2 (hard mounts) only; the store does not check which network file system a root is on. A worker on an SSH node gets a tag grant only as described in [Sharing a store across hosts](#sharing-a-store-across-hosts).
-- A `remote` or `unreadable` lock is never broken automatically: a host that crashed while writing blocks that blob or tag until an operator runs `locks break`.
+- On a local store, a root on a network file system is reported as `sharedFs: unverified`, and the backend still reports `multiNode: false`; a shared store reports `multiNode: true`. Two Linux hosts writing one root have been tested over NFS 4.2 (hard mounts) only; the store does not check which network file system a root is on. A worker on an SSH node gets a tag grant only as described in [Sharing a store across hosts](#sharing-a-store-across-hosts).
+- On a local store, a `remote` or `unreadable` lock is never broken automatically: a host that crashed while writing blocks that blob or tag until an operator runs `locks break`.
 - PanStore keeps no blob versions and does no deduplication. A put replaces the blob's bytes; its records remain.
 - An s3 store refuses puts over 5 GiB, `adopt`, SSH tag grants, write store references and the PanKit `store` server ([Storing in an S3 bucket](#storing-in-an-s3-bucket)).
 - A tag grant is a permission, not a confinement, outside the parallel-batch case in [Workers and tags](#workers-and-tags).

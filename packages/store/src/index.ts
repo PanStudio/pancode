@@ -5,12 +5,20 @@ export const PACKAGE = "@pancode/store" as const;
 export * from "./backend/index.js";
 export { hashStoreFile } from "./hash.js";
 export { ensureStoreRootId, readStoreRootId, STORE_ROOT_FILE } from "./identity.js";
-export { createLocalStoreBackend, type LocalStoreOptions, STORE_CLASS_XATTR } from "./local.js";
+export { STORE_LEASE_EXPIRY_MS } from "./lease.js";
+export {
+	createLocalStoreBackend,
+	createSharedStoreBackend,
+	type LocalStoreOptions,
+	type SharedStoreOptions,
+	STORE_CLASS_XATTR,
+} from "./local.js";
 export {
 	breakStoreLock,
 	listStoreLocks,
 	readStoreLock,
 	type StoreLockOptions,
+	type StoreLockReadOptions,
 	storeLockId,
 	withStoreLock,
 } from "./lock.js";
@@ -38,7 +46,7 @@ export {
 	type StoreRecordUse,
 	summarizeRecords,
 } from "./records.js";
-export { createS3StoreBackend, S3_LEASE_EXPIRY_MS, S3_PUT_MAX_BYTES, type S3StoreOptions } from "./s3/backend.js";
+export { createS3StoreBackend, S3_PUT_MAX_BYTES, type S3StoreOptions } from "./s3/backend.js";
 export {
 	allStoreBlobs,
 	recordedStoreBlobNames,

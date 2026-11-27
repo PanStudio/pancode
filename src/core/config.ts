@@ -159,8 +159,8 @@ provideStoreSettings(() => {
 			(issue.path.startsWith("store.") && issue.path !== "store.projectId"),
 	);
 	if (storeIssues.length > 0) throw new SettingsValidationError(storeIssues);
-	const { backend, s3, roots, placement } = result.settings.store;
-	return { backend, s3, roots, placement };
+	const { backend, shared, s3, roots, placement } = result.settings.store;
+	return { backend, shared, s3, roots, placement };
 });
 
 // The project id is the tracked project file's alone, read at the main checkout and only while the operator

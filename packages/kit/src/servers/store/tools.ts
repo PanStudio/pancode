@@ -13,6 +13,7 @@ import { defineTool, type ToolResult } from "@pancode/sdk/tool";
 import {
 	appendRecord,
 	createLocalStoreBackend,
+	createSharedStoreBackend,
 	currentState,
 	driftOf,
 	hashStoreFile,
@@ -26,6 +27,7 @@ import {
 	type StoreBackend,
 	type StoreRecord,
 	StoreRefusal,
+	type StoreRootSpec,
 	summarizeRecords,
 	validateBlobName,
 	validateTagName,
@@ -76,12 +78,14 @@ async function openStore(tool: string, forWrite: boolean): Promise<Opened> {
 		if (problem !== null) return { error: `${tool}: ${problem}` };
 	}
 	try {
-		const backend = createLocalStoreBackend({
-			roots: config.roots,
+		const project = {
 			cacheDir: config.cacheDir,
 			projectKey: config.projectKey,
 			projectRoot: config.projectRoot,
-		});
+		};
+		const backend = config.shared
+			? createSharedStoreBackend({ root: (config.roots[0] as StoreRootSpec).path, ...project })
+			: createLocalStoreBackend({ roots: config.roots, ...project });
 		return { config, backend };
 	} catch (error) {
 		return { error: `${tool}: ${message(error)}` };

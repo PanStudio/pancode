@@ -4,16 +4,28 @@
  * A store grant sent to a worker on another host. The dispatcher names the
  * project by its `store.projectId` key, each root by the id in its `root.json`
  * and each granted tag by its directory relative to that root; mount paths may
- * differ between hosts, so the ids decide. The receiving worker checks every
- * name against its own configuration before it starts and refuses on the first
- * mismatch, so a worker whose store is not the dispatcher's writes nothing.
+ * differ between hosts, so the ids decide. The grant also names the
+ * dispatcher's backend kind, whose lock rule both hosts must follow. The
+ * receiving worker checks every name against its own configuration before it
+ * starts and refuses on the first mismatch, so a worker whose store is not the
+ * dispatcher's writes nothing.
  */
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { ensureStoreRootId, readStoreRootId, recordsTag, type StoreRootSpec } from "@pancode/store";
-import { storeProjectIdFor, storeProjectKeyFor, storeProjectRoot, storeRootSpecs, storeTagDir } from "./store-paths.js";
+import type { StoreBackendSetting } from "./defaults.js";
+import {
+	storeBackendKind,
+	storeProjectIdFor,
+	storeProjectKeyFor,
+	storeProjectRoot,
+	storeRootSpecs,
+	storeTagDir,
+} from "./store-paths.js";
 
 export interface SharedStoreGrant {
+	/** local takes over only a lock whose holder died on its own host; shared takes over a lease left unrenewed. */
+	backend: StoreBackendSetting;
 	projectId: string;
 	projectKey: string;
 	roots: ReadonlyArray<{ id: string; name: string }>;
@@ -69,6 +81,7 @@ export async function prepareSharedStoreGrant(
 		ids.set(root, await ensureStoreRootId(root.path));
 	}
 	return {
+		backend: storeBackendKind(),
 		projectId,
 		projectKey: storeProjectKeyFor(projectRoot),
 		roots: used.map((root) => ({ id: ids.get(root) as string, name: root.name })),
@@ -94,6 +107,11 @@ function physical(target: string): string {
  * when every name matches, or throws one refusal naming what differed.
  */
 export async function verifySharedStoreGrant(cwd: string, grant: SharedStoreGrant): Promise<string[]> {
+	const backend = storeBackendKind();
+	if (backend !== grant.backend)
+		throw new Error(
+			`store grant refused: backend: this node's store.backend is ${backend}, the dispatcher's is ${grant.backend}; hosts writing one store follow one lock rule, so both set store.backend ${grant.backend}`,
+		);
 	const projectRoot = storeProjectRoot(cwd);
 	const projectKey = storeProjectKeyFor(projectRoot);
 	if (projectKey !== grant.projectKey) {

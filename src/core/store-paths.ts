@@ -12,8 +12,8 @@
  * (re-read only when it changed): the safety layer predicts where a store call
  * writes from its arguments alone, the way it predicts the `artifact` default
  * path (`src/core/artifact-paths.ts`). The backend kind, roots and placement
- * rules come from settings through `provideStoreSettings`. An s3 store has no
- * local roots: a store call writes no path on this host, so every prediction
+ * rules come from settings through `provideStoreSettings`. A shared store has
+ * one root, the folder several hosts mount. An s3 store has no local roots: a store call writes no path on this host, so every prediction
  * below is empty and the store's own paths refuse.
  */
 import { readFileSync, statSync } from "node:fs";
@@ -43,7 +43,7 @@ import {
 	validateBlobName,
 	validateTagName,
 } from "@pancode/store/paths";
-import type { StoreBackendSetting, StoreS3Setting } from "./defaults.js";
+import type { StoreBackendSetting, StoreS3Setting, StoreSharedSetting } from "./defaults.js";
 import { pancodeProjectRoot } from "./project-root.js";
 import { pancodeCachePath, pancodeDataPath } from "./xdg.js";
 
@@ -142,6 +142,8 @@ export function storeRoot(): string {
 export interface StoreHostSettings {
 	/** Default local. */
 	backend?: StoreBackendSetting;
+	/** The folder, when `backend` is shared. */
+	shared?: StoreSharedSetting | null;
 	/** The bucket, when `backend` is s3. */
 	s3?: StoreS3Setting | null;
 	roots: ReadonlyArray<StoreRootSpec>;
@@ -169,6 +171,13 @@ export function provideStoreSettings(provider: (() => StoreHostSettings | null) 
 	hostCache = null;
 }
 
+/** The shared folder; settings validation refuses a shared backend without one before this is asked. */
+function sharedRootOf(configured: StoreHostSettings | null): string {
+	const root = configured?.shared?.root;
+	if (root === undefined) throw new Error("store.backend is shared but store.shared names no root");
+	return root;
+}
+
 function hostStore(): HostStore {
 	const key = storeRoot();
 	if (hostCache?.key === key) return hostCache;
@@ -177,9 +186,11 @@ function hostStore(): HostStore {
 	const roots =
 		kind === "s3"
 			? []
-			: configured !== null && configured.roots.length > 0
-				? configured.roots.map((root) => ({ ...root }))
-				: [{ name: STORE_DEFAULT_ROOT_NAME, path: key, durable: true, purge: null }];
+			: kind === "shared"
+				? [{ name: STORE_DEFAULT_ROOT_NAME, path: sharedRootOf(configured), durable: true, purge: null }]
+				: configured !== null && configured.roots.length > 0
+					? configured.roots.map((root) => ({ ...root }))
+					: [{ name: STORE_DEFAULT_ROOT_NAME, path: key, durable: true, purge: null }];
 	hostCache = { key, kind, s3: configured?.s3 ?? null, roots, rules: configured?.placement ?? {} };
 	return hostCache;
 }

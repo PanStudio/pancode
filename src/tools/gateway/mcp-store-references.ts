@@ -510,6 +510,7 @@ export async function storeServerLaunchContext(input: {
 		context: {
 			store: {
 				roots: roots.map((root) => ({ name: root.name, path: root.path })),
+				...(storeBackendKind() === "shared" ? { shared: true } : {}),
 				cache: pancodeCachePath(),
 				project: input.launchCwd,
 				...(projectId !== undefined ? { projectId } : {}),
