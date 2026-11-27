@@ -270,7 +270,7 @@ const entries = {
 	"context/handbook-compile-worker": "src/domains/context/handbook-compile-worker.ts",
 	"context/sister-compile-worker": "src/domains/context/sister-compile-worker.ts",
 	"data/scientific-worker": "packages/scidata/src/worker/index.ts",
-	"kit/cli": "packages/kit/src/cli.ts",
+	"kit/cli": "src/cli/pankit.ts",
 	"browser/driver": "src/tools/browser/driver.ts",
 };
 

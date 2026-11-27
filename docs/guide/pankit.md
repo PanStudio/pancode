@@ -2,7 +2,7 @@
 
 PanKit is PanCode's agent toolkit: MCP tool servers for HPC and scientific work that PanCode runs in its sessions and shares with other agents, such as Claude Code and Codex, through one command, `pankit`.
 
-The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the commands are in [cli.ts](../../packages/kit/src/cli.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
+The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the commands are in [pankit.ts](../../packages/kit/src/pankit.ts), the added servers are kept by [kit-items.ts](../../src/domains/resources/kit-items.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
 
 PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@panstudio/pancode` npm package ships it as the `pankit` command, beside `pancode`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/PanStudio/pancode/blob/main/packages/kit/README.md).
 
@@ -98,7 +98,9 @@ A project's [PanStore](panstore.md): its tags, blobs, records and read-only copi
 ```bash
 pankit serve <server> [options...]  # serve one server over MCP stdio; stdout carries protocol frames only
 pankit serve <server> --help        # the options one server takes
-pankit list [--json]                # the servers, their titles and tool counts
+pankit add <name>                   # install the PanHub server pack <name> in user scope
+pankit remove <name>                # remove a server pack pankit add installed
+pankit list [--json]                # the servers, their titles and tool counts, then the added ones
 pankit doctor [--json]              # whether each server can run on this host, and why not
 pankit manifest                     # the policy manifest: every tool's class, path arguments and listed surface
 pankit catalog --example            # a valid catalog file for the catalog server
@@ -112,11 +114,15 @@ Exit codes are 0 for success, 1 for an operational failure and 2 for a usage err
 | `pankit` with no command | 2, with the help on stderr |
 | `pankit serve <server>` | 0 when the client closes the connection; 2 for an unknown server (stderr lists the registered ones), for an option the server refuses, or for any option to a server that takes none; 1 when the server cannot load or its options cannot be applied |
 | `pankit serve <server> --help`, or `--help` after `serve` with no server | 0, with the usage on stdout |
+| `pankit add <name>` | 0 when the copy is written, and for a server PanKit carries, which it names as built in; 1 when no PanHub row is named `server:<name>`, the row is revoked, or the install fails; 2 without exactly one name |
+| `pankit remove <name>` | 0 when the copy is removed; 1 for a server PanKit carries or a name `pankit add` did not add; 2 without exactly one name |
 | `pankit list` | 0; 1 when a server cannot load |
 | `pankit doctor` | 0 whether or not each server is available; 1 when a server's probe fails |
 | `pankit manifest` | 0; 1 when the manifest cannot be built |
 
 `pankit doctor` prints one line per server, `<id>: available` or `<id>: unavailable: <reason>`, followed by the sources it looked for and whether each was found. `pankit doctor --json` adds each source's detail, such as the path a missing `scidata` reader would be copied to. The probe starts no server.
+
+`pankit add <name>` installs the PanHub row `server:<name>` in user scope with the same plan and writer as `pancode hub install server:<name> --user`, so `pancode hub list --user` shows the copy. It prints the publisher, tier, licence, version, tree digest, source and commit, the command the pack's `mcp.json` launches, and the host entry to paste into another agent host. Adding a name again replaces the copy. `pankit list` names each added server after the seven with its version, publisher and tier, and says why a copy does not load; `pankit list --json` gives them as `added`.
 
 `pankit manifest` prints the same JSON as `packages/kit/servers.json`: for each server its id, version, title and declared `environment`, and for each tool its `actionClass`, `pathArguments`, input schema and annotations.
 
