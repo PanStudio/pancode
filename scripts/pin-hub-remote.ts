@@ -272,6 +272,8 @@ export function refreshCommunityRow(row: RegistryRow, deps: CommunityFetchDeps =
 			];
 			throw new Error(messages.join("; ") || "fetched package failed validation");
 		}
+		if (result.manifest.pancode.kind === "server" && existsSync(path.join(fetched.root, "server.json")))
+			throw new Error("a community server pack must declare its server in mcp.json, not server.json");
 		const manifestLicense = packLicense(fetched.root, result);
 		if (manifestLicense !== undefined && manifestLicense !== row.license)
 			throw new Error(`the pack declares license ${manifestLicense}, the row states ${String(row.license)}`);
