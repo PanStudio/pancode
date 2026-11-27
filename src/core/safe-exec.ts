@@ -118,6 +118,8 @@ export const SAFE_EXEC_PIPE_DRAIN_BOUND_MS = 1000;
 const GROUP_POLL_INTERVAL_MS = 25;
 
 export interface RunCommandVectorOptions {
+	/** A host-launched stdio server owns the three descriptors and receives the host's signals and plugin environment. */
+	stdio?: "inherit";
 	/** Input travels through a pipe, keeping credentials and payloads out of argv. */
 	input?: string | Uint8Array;
 	cwd?: string;
@@ -496,14 +498,16 @@ export function runCommandVector(
 		let stdoutBytes = 0;
 		let stderrBytes = 0;
 		let sinkError: string | null = null;
-		const attribution = withManagedGitCommitAttributionEnvironment(
-			buildSafeToolEnv(options.env, process.env, options.baseEnv),
-			{
+		const inherit = options.stdio === "inherit";
+		let env = buildSafeToolEnv(options.env, process.env, options.baseEnv);
+		if (!inherit) {
+			const attribution = withManagedGitCommitAttributionEnvironment(env, {
 				cwd,
 				enabled: gitCommitAttributionEnabled(process.env),
-			},
-		);
-		reportCommitAttributionDiagnostic(attribution.diagnostic);
+			});
+			env = attribution.env;
+			reportCommitAttributionDiagnostic(attribution.diagnostic);
+		}
 		let aborted = false;
 		let timedOut = false;
 		let outputCapped = false;
@@ -578,9 +582,9 @@ export function runCommandVector(
 			sandbox.kind === "sandboxed" ? sandbox.args : [...args],
 			{
 				cwd,
-				env: attribution.env,
+				env,
 				detached: process.platform !== "win32",
-				stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+				stdio: inherit ? "inherit" : [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			},
 		);
 		// A spawn that fails (ENOENT, EACCES) leaves no pid and reports through `error` later.
@@ -645,6 +649,12 @@ export function runCommandVector(
 			onDone: () => tryFinish(),
 		});
 
+		const signals: NodeJS.Signals[] = inherit ? ["SIGINT", "SIGTERM", "SIGHUP"] : [];
+		const forward = (signal: NodeJS.Signals): void => {
+			if (leaderExit === null && !cleanup.done && groupProbe()) groupSignal(signal);
+		};
+		for (const signal of signals) process.on(signal, forward);
+
 		const killChild = (): void => cleanup.kill();
 
 		const finish = (exitCode: number | null, signalName: NodeJS.Signals | null, spawnError?: Error): void => {
@@ -655,6 +665,7 @@ export function runCommandVector(
 			if (timeoutId) clearTimeout(timeoutId);
 			timeoutId = null;
 			cleanup.dispose();
+			for (const signal of signals) process.off(signal, forward);
 			options.signal?.removeEventListener("abort", onAbort);
 			// Descendants may retain the write ends indefinitely. Release our read
 			// ends and process handle even when settlement bypasses close.
@@ -692,7 +703,7 @@ export function runCommandVector(
 
 		const stopDraining = (): void => {
 			if (settled) return;
-			if (!child.stdout?.readableEnded || !child.stderr?.readableEnded) {
+			if (!inherit && (!child.stdout?.readableEnded || !child.stderr?.readableEnded)) {
 				pipeDrainIncomplete = true;
 				child.stdout?.destroy();
 				child.stderr?.destroy();
@@ -762,7 +773,7 @@ export function runCommandVector(
 			// settlement. Escaped descendants can retain pipes after group ESRCH.
 			if (timeoutId) clearTimeout(timeoutId);
 			timeoutId = null;
-			drainTimer = setTimeout(stopDraining, SAFE_EXEC_PIPE_DRAIN_BOUND_MS);
+			if (!inherit) drainTimer = setTimeout(stopDraining, SAFE_EXEC_PIPE_DRAIN_BOUND_MS);
 			cleanup.leaderExited();
 			if (aborted) stopDraining();
 		});

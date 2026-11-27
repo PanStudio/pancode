@@ -9,7 +9,7 @@
  * and commits; no captured upstream data.
  */
 import { deepStrictEqual, equal, match, ok } from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -141,6 +141,29 @@ describe("fetch by commit", () => {
 		const result = refreshCommunityRow(rowFor(location), deps(location));
 		ok(!result.ok);
 		match(result.error, /declares license Apache-2.0, the row states MIT/);
+	});
+
+	it("refuses a community server pack carrying a first-party server.json", () => {
+		const location = path.join(root, "fetched", "node");
+		mkdirSync(location, { recursive: true });
+		const bundled = path.resolve(import.meta.dirname, "../../hub/packs/servers/node");
+		writeFileSync(path.join(location, "plugin.json"), readFileSync(path.join(bundled, "plugin.json")));
+		writeFileSync(path.join(location, "server.json"), readFileSync(path.join(bundled, "server.json")));
+		const candidate = validateHubPackage(location);
+		ok(candidate.valid && candidate.manifest && candidate.contentDigest);
+		const result = refreshCommunityRow(
+			rowFor(location, {
+				kind: "server",
+				name: "node",
+				version: candidate.manifest.version,
+				description: candidate.manifest.description ?? "",
+				sha256: candidate.contentDigest,
+				license: "LicenseRef-PanCode-1.0",
+			}),
+			deps(location),
+		);
+		ok(!result.ok);
+		match(result.error, /mcp\.json, not server\.json/);
 	});
 });
 

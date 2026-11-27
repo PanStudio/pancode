@@ -183,6 +183,7 @@ export interface PluginInstallOptions extends PluginMutationOptions {
 	expectedKind?: HubEntryKind;
 	/** Who answers for the package; defaults to the GitHub owner of the origin, else local. */
 	publisher?: string;
+	tier?: HubTier;
 }
 
 /** One kind-aware publication seam for PanHub and interop adapters. */
@@ -205,8 +206,7 @@ export interface PluginMutationResult {
 
 export type PluginInstallResult = PluginMutationResult;
 
-export interface PluginInstallRecord {
-	kind?: HubEntryKind;
+interface PluginInstallFacts {
 	installedAt: string;
 	source: string;
 	origin?: PluginOrigin;
@@ -214,6 +214,9 @@ export interface PluginInstallRecord {
 	trust?: PackageTrust;
 	publisher: string;
 }
+
+export type PluginInstallRecord = PluginInstallFacts &
+	({ kind: "server"; tier: HubTier | null } | { kind?: Exclude<HubEntryKind, "server"> });
 
 export interface PluginState {
 	version: 1;
@@ -230,4 +233,4 @@ export interface PluginSnapshot {
 	resourceRoots: Readonly<Record<PluginResourceKind, ReadonlyArray<PluginResourceRoot>>>;
 }
 
-import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
+import type { HubEntryKind, HubRequirementRef, HubTier } from "../resources/hub-types.js";

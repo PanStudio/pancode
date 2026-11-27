@@ -3,25 +3,30 @@
 /**
  * PanHub distributes packs; kind describes the pack's public contents. A
  * `server` pack is one PanKit tool server; the seven PanCode carries are built
- * in and have no installed copy.
+ * in and have no installed copy, and a third party's server pack installs as a
+ * plugin whose `mcp.json` declares that one server.
  */
 export type HubEntryKind = "skill" | "agent" | "prompt" | "playbook" | "plugin" | "extension" | "server";
 export type HubRequirementRef = `${HubEntryKind}:${string}`;
 
-/** Existing plugin-backed package formats. A standalone extension has its own manifest and writer. */
-export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension" | "server">[] = [
+/**
+ * Plugin-backed package formats: they install through the plugin writer. A
+ * standalone extension has its own manifest and writer. A server pack in the
+ * builtin form is never installed; one in the launcher form installs as a plugin.
+ */
+export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension">[] = [
 	"plugin",
 	"skill",
 	"agent",
 	"prompt",
 	"playbook",
+	"server",
 ];
 
 export function isHubKind(value: unknown): value is HubEntryKind {
 	return (
 		value === "extension" ||
-		value === "server" ||
-		(typeof value === "string" && HUB_KINDS.includes(value as Exclude<HubEntryKind, "extension" | "server">))
+		(typeof value === "string" && HUB_KINDS.includes(value as Exclude<HubEntryKind, "extension">))
 	);
 }
 

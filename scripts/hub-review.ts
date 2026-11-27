@@ -7,8 +7,9 @@
  *
  * Each row's commit is fetched as untrusted data (hooks off, nothing in the
  * tree runs), validated, and its digests recomputed. Schema, path, digest,
- * licence and launcher-pin failures fail the review. Envelope growth and body
- * scan hits are findings a reviewer reads; they do not fail it. With
+ * licence and launcher-pin failures fail the review. Envelope growth, the
+ * command a server pack launches and body scan hits are findings a reviewer
+ * reads; they do not fail it. With
  * `--submission`, a change to more than one row file or to anything outside
  * `hub/community/` fails. Output goes to stdout and, when set, to
  * `$GITHUB_STEP_SUMMARY`.
@@ -35,7 +36,7 @@ export interface ReviewFailure {
 export interface ReviewFinding {
 	file: string;
 	row: string;
-	kind: "envelope-added" | "envelope-removed" | "body-scan";
+	kind: "envelope-added" | "envelope-removed" | "server-launch" | "body-scan";
 	message: string;
 }
 
@@ -105,6 +106,20 @@ export function unpinnedLaunches(root: string): string[] {
 		}
 	}
 	return problems;
+}
+
+/** The command line a server pack's one server runs, with its directory when it names one. */
+export function serverLaunch(root: string): string | undefined {
+	let parsed: { mcpServers?: Record<string, { command?: unknown; args?: unknown; cwd?: unknown }> };
+	try {
+		parsed = JSON.parse(readFileSync(path.join(root, "mcp.json"), "utf8")) as typeof parsed;
+	} catch {
+		return undefined;
+	}
+	const [server] = Object.values(parsed.mcpServers ?? {});
+	if (typeof server?.command !== "string") return undefined;
+	const args = Array.isArray(server.args) ? server.args.map(String) : [];
+	return [server.command, ...args].join(" ") + (typeof server.cwd === "string" ? ` (in ${server.cwd})` : "");
 }
 
 /** Text in a skill or prompt body that addresses the host rather than the task. */
@@ -233,6 +248,14 @@ export function reviewHubChanges(
 					failures.push({ file: item.file, row: ref, message: messages.join("; ") || "package failed validation" });
 					continue;
 				}
+				if (result.manifest.pancode.kind === "server" && existsSync(path.join(fetched.root, "server.json"))) {
+					failures.push({
+						file: item.file,
+						row: ref,
+						message: "a community server pack must declare its server in mcp.json, not server.json",
+					});
+					continue;
+				}
 				const regenerated = buildRegistryRow(
 					fetched.root,
 					result,
@@ -284,6 +307,13 @@ export function reviewHubChanges(
 							});
 					}
 				}
+				if (row.kind === "server")
+					findings.push({
+						file: item.file,
+						row: ref,
+						kind: "server-launch",
+						message: `runs ${serverLaunch(fetched.root) ?? "no command"}`,
+					});
 				for (const message of scanBodies(fetched.root))
 					findings.push({ file: item.file, row: ref, kind: "body-scan", message });
 			} catch (error) {

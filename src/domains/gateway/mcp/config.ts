@@ -840,7 +840,7 @@ function loadFile(filePath: string, scope: McpServerScope, root: string): McpCon
  * client speaks stdio only, so another transport is reported and skipped; a
  * malformed file contributes nothing (fail closed).
  */
-function loadPluginFile(plugin: {
+export function loadPluginMcpFile(plugin: {
 	id: string;
 	scope: "user" | "project";
 	rootPath: string;
@@ -984,7 +984,7 @@ function loadPluginServers(cwd: string): McpConfigLoadResult {
 				diagnostics.push({ scope: "plugin", path: filePath, message: foreignPluginMessage(item.id) });
 			continue;
 		}
-		const loaded = loadPluginFile({
+		const loaded = loadPluginMcpFile({
 			id: item.id,
 			scope: item.scope,
 			rootPath: item.provenance.canonicalRoot,
