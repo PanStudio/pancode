@@ -1298,6 +1298,21 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 		deepStrictEqual(outcome, { action: "accept", content: { note: "Leave unset" } });
 	});
 
+	it("checks a date field by year, month and day", () => {
+		const form = parseElicitationRequest(
+			{
+				message: "When",
+				requestedSchema: { type: "object", properties: { on: { type: "string", format: "date" } } },
+			},
+			false,
+		);
+		ok(form.kind === "ok" && form.request.mode === "form");
+		deepStrictEqual(formContentErrors(form.request, { on: "0099-01-01" }), []);
+		deepStrictEqual(formContentErrors(form.request, { on: "2024-02-29" }), []);
+		strictEqual(formContentErrors(form.request, { on: "2026-02-30" }).length, 1);
+		strictEqual(formContentErrors(form.request, { on: "1900-02-29" }).length, 1);
+	});
+
 	it("ignores bare list_changed on modern servers, keeps live clients alive on listResources abort, and omits empty getPrompt arguments", async () => {
 		let events: McpTransportEvents | null = null;
 		let started = false;

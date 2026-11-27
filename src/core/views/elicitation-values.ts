@@ -1,38 +1,78 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-// Kept free of typebox values so the browser bundle can check a form without the schema library.
-import type { ElicitationField } from "./elicitation.js";
+/**
+ * The fields of an MCP form elicitation and the check of a value against one. The runtime checks an answer with it
+ * before anything reaches the server, and the GUI checks the same answer as it is typed. Browser-safe: no imports.
+ */
+
+type McpStringFormat = "email" | "uri" | "date" | "date-time";
+
+export interface McpFieldOption {
+	value: string;
+	label: string;
+}
+
+export interface McpFieldBase {
+	key: string;
+	/** The schema's title, else the key. */
+	label: string;
+	description?: string;
+	required: boolean;
+}
+
+export type McpFormField =
+	| (McpFieldBase & {
+			kind: "string";
+			minLength?: number;
+			maxLength?: number;
+			format?: McpStringFormat;
+			default?: string;
+	  })
+	| (McpFieldBase & { kind: "number"; integer: boolean; minimum?: number; maximum?: number; default?: number })
+	| (McpFieldBase & { kind: "boolean"; default?: boolean })
+	| (McpFieldBase & { kind: "choice"; options: McpFieldOption[]; default?: string })
+	| (McpFieldBase & {
+			kind: "multi";
+			options: McpFieldOption[];
+			minItems?: number;
+			maxItems?: number;
+			default?: string[];
+	  });
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const DATE_TIME = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/u;
 
+// Read field by field: `Date.UTC` maps years 0-99 to 1900-1999, so a round trip refuses `0099-01-01`.
 function validDate(text: string): boolean {
 	const match = DATE.exec(text);
-	if (!match) return false;
+	if (match === null) return false;
 	const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-	const date = new Date(Date.UTC(year, month - 1, day));
-	return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+	if (month < 1 || month > 12 || day < 1) return false;
+	const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+	const days = month === 2 ? (leap ? 29 : 28) : month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
+	return day <= days;
 }
 
-function formatError(format: "email" | "uri" | "date" | "date-time", text: string): string | null {
-	if (format === "email") return EMAIL.test(text) ? null : "must be an email address";
-	if (format === "date") return validDate(text) ? null : "must be a date like 2026-07-28";
-	if (format === "date-time")
-		return DATE_TIME.test(text) && validDate(text.slice(0, 10)) && !Number.isNaN(Date.parse(text))
-			? null
-			: "must be a date and time like 2026-07-28T09:30:00Z";
-	if (!/^[a-z][a-z0-9+.-]*:/iu.test(text) || /[\s\p{Cc}]/u.test(text)) return "must be an absolute URI";
-	try {
-		new URL(text);
-		return null;
-	} catch {
-		return "must be an absolute URI";
+function formatError(format: McpStringFormat, text: string): string | null {
+	switch (format) {
+		case "email":
+			return EMAIL.test(text) ? null : "must be an email address";
+		case "uri":
+			return /^[a-z][a-z0-9+.-]*:/iu.test(text) && !/[\s\p{Cc}]/u.test(text) && URL.canParse(text)
+				? null
+				: "must be an absolute URI";
+		case "date":
+			return validDate(text) ? null : "must be a date like 2026-07-28";
+		case "date-time":
+			return DATE_TIME.test(text) && validDate(text.slice(0, 10)) && !Number.isNaN(Date.parse(text))
+				? null
+				: "must be a date and time like 2026-07-28T09:30:00Z";
 	}
 }
 
-/** Why a value does not fit its field, or null. The runtime checks again before anything reaches the server. */
-export function elicitationValueError(field: ElicitationField, value: unknown): string | null {
+/** Why one value does not fit its field, or null when it does. */
+export function elicitationValueError(field: McpFormField, value: unknown): string | null {
 	switch (field.kind) {
 		case "string": {
 			if (typeof value !== "string") return "must be text";
@@ -68,11 +108,11 @@ export function elicitationValueError(field: ElicitationField, value: unknown): 
 	}
 }
 
-/** Every reason a submitted form does not fit the fields it answers. */
-export function elicitationContentErrors(
-	fields: readonly ElicitationField[],
-	content: Record<string, unknown>,
-): string[] {
+/**
+ * Every reason submitted content does not fit the form's fields, one line each; empty when it fits
+ * (client/elicitation, Form Mode Security: clients SHOULD validate responses).
+ */
+export function elicitationContentErrors(fields: readonly McpFormField[], content: Record<string, unknown>): string[] {
 	const errors: string[] = [];
 	for (const key of Object.keys(content))
 		if (!fields.some((field) => field.key === key)) errors.push(`'${key}' is not a field of this form`);

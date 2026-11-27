@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ElicitationField, ElicitationValue } from "../../contracts/elicitation.js";
-import { elicitationValueError } from "../../contracts/elicitation-values.js";
+import { elicitationValueError } from "../../../../src/core/views/elicitation-values.js";
 
 /** What the operator has put in one field: typed text, a yes/no, one choice or several. null is left unset. */
 export type ElicitationDraft = Record<string, string | boolean | string[] | null>;

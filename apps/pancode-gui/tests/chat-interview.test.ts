@@ -6,7 +6,7 @@ import { test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Value } from "typebox/value";
-import { elicitationValueError } from "../contracts/elicitation-values.js";
+import { elicitationValueError } from "../contracts/elicitation.js";
 import { INTERVIEW_META_KEY, InterviewRound } from "../contracts/interviews.js";
 import { Interviews } from "../server/acp/interviews.js";
 

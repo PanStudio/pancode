@@ -11,6 +11,13 @@
 
 import { domainToUnicode } from "node:url";
 import { isRecord } from "../../../core/type-guards.js";
+import {
+	elicitationContentErrors,
+	elicitationValueError,
+	type McpFieldBase,
+	type McpFieldOption,
+	type McpFormField,
+} from "../../../core/views/elicitation-values.js";
 import { isSecretArgKey } from "../../safety/redaction.js";
 
 export type McpElicitAction = "accept" | "decline" | "cancel";
@@ -20,40 +27,6 @@ export type McpElicitValue = string | number | boolean | string[];
 export interface McpElicitResult {
 	action: McpElicitAction;
 	content?: Record<string, McpElicitValue>;
-}
-
-interface FieldBase {
-	key: string;
-	/** The schema's title, else the key. */
-	label: string;
-	description?: string;
-	required: boolean;
-}
-
-export type McpStringFormat = "email" | "uri" | "date" | "date-time";
-
-export type McpFormField =
-	| (FieldBase & {
-			kind: "string";
-			minLength?: number;
-			maxLength?: number;
-			format?: McpStringFormat;
-			default?: string;
-	  })
-	| (FieldBase & { kind: "number"; integer: boolean; minimum?: number; maximum?: number; default?: number })
-	| (FieldBase & { kind: "boolean"; default?: boolean })
-	| (FieldBase & { kind: "choice"; options: McpFieldOption[]; default?: string })
-	| (FieldBase & {
-			kind: "multi";
-			options: McpFieldOption[];
-			minItems?: number;
-			maxItems?: number;
-			default?: string[];
-	  });
-
-export interface McpFieldOption {
-	value: string;
-	label: string;
 }
 
 export interface McpFormElicitation {
@@ -198,7 +171,7 @@ function readField(key: string, schema: unknown, required: boolean): McpFormFiel
 	if (!isRecord(schema)) return `field '${key}' has no schema object`;
 	const title = typeof schema.title === "string" ? schema.title : undefined;
 	if (secretField(key, title)) return `field '${key}' asks for a secret, which an MCP form must not collect`;
-	const base: FieldBase = {
+	const base: McpFieldBase = {
 		key,
 		label: (title === undefined ? "" : elicitationText(title, LABEL_CHARS)) || key,
 		required,
@@ -238,7 +211,7 @@ function readField(key: string, schema: unknown, required: boolean): McpFormFiel
 				typeof schema.default === "string" &&
 				schema.default.length <= DEFAULT_STRING_CHARS &&
 				!hasUnsafeControl(schema.default) &&
-				fieldValueError(field, schema.default) === null
+				elicitationValueError(field, schema.default) === null
 			) {
 				field.default = schema.default;
 			}
@@ -265,7 +238,7 @@ function readField(key: string, schema: unknown, required: boolean): McpFormFiel
 				...(minimum !== undefined ? { minimum } : {}),
 				...(maximum !== undefined ? { maximum } : {}),
 			};
-			if (fallback !== undefined && fieldValueError(field, fallback) === null) field.default = fallback;
+			if (fallback !== undefined && elicitationValueError(field, fallback) === null) field.default = fallback;
 			return field;
 		}
 		case "boolean":
@@ -292,7 +265,7 @@ function readField(key: string, schema: unknown, required: boolean): McpFormFiel
 				...(minItems !== undefined ? { minItems } : {}),
 				...(maxItems !== undefined ? { maxItems } : {}),
 			};
-			if (fallback !== undefined && fieldValueError(field, fallback) === null) field.default = fallback;
+			if (fallback !== undefined && elicitationValueError(field, fallback) === null) field.default = fallback;
 			return field;
 		}
 		default:
@@ -451,99 +424,15 @@ export function parseElicitationRequest(params: unknown, legacy: boolean): McpEl
 	return { kind: "ok", request: { mode, message, fields } };
 }
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
-const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
-const DATE_TIME = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/u;
-
-function validDate(text: string): boolean {
-	const match = DATE.exec(text);
-	if (match === null) return false;
-	const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-	const date = new Date(Date.UTC(year, month - 1, day));
-	return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-function formatError(format: McpStringFormat, text: string): string | null {
-	switch (format) {
-		case "email":
-			return EMAIL.test(text) ? null : "is not an email address";
-		case "uri":
-			return /^[a-z][a-z0-9+.-]*:/iu.test(text) && !/[\s\p{Cc}]/u.test(text) && URL.canParse(text)
-				? null
-				: "is not an absolute URI";
-		case "date":
-			return validDate(text) ? null : "is not a date (YYYY-MM-DD)";
-		case "date-time":
-			return DATE_TIME.test(text) && validDate(text.slice(0, 10)) && !Number.isNaN(Date.parse(text))
-				? null
-				: "is not a date-time (YYYY-MM-DDThh:mm:ssZ)";
-	}
-}
-
-/** Why one value does not fit its field, or null when it does. */
-export function fieldValueError(field: McpFormField, value: unknown): string | null {
-	switch (field.kind) {
-		case "string": {
-			if (typeof value !== "string") return "must be text";
-			const length = Array.from(value).length;
-			if (field.minLength !== undefined && length < field.minLength)
-				return `must be at least ${field.minLength} characters`;
-			if (field.maxLength !== undefined && length > field.maxLength)
-				return `must be at most ${field.maxLength} characters`;
-			return field.format === undefined ? null : formatError(field.format, value);
-		}
-		case "number": {
-			if (typeof value !== "number" || !Number.isFinite(value)) return "must be a number";
-			if (field.integer && !Number.isInteger(value)) return "must be a whole number";
-			if (field.minimum !== undefined && value < field.minimum) return `must be at least ${field.minimum}`;
-			if (field.maximum !== undefined && value > field.maximum) return `must be at most ${field.maximum}`;
-			return null;
-		}
-		case "boolean":
-			return typeof value === "boolean" ? null : "must be true or false";
-		case "choice":
-			return typeof value === "string" && field.options.some((option) => option.value === value)
-				? null
-				: "must be one of the listed options";
-		case "multi": {
-			if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return "must be a list of options";
-			if (new Set(value).size !== value.length) return "lists an option twice";
-			if (value.some((item) => !field.options.some((option) => option.value === item)))
-				return "names an option the form does not offer";
-			if (field.minItems !== undefined && value.length < field.minItems)
-				return `needs at least ${field.minItems} selected`;
-			if (field.maxItems !== undefined && value.length > field.maxItems)
-				return `allows at most ${field.maxItems} selected`;
-			return null;
-		}
-	}
-}
-
-/**
- * Check submitted content against the form before it is sent (client/elicitation,
- * Form Mode Security: clients SHOULD validate responses). Returns one line per
- * problem, empty when the content fits.
- */
+/** Check submitted content against the form before it is sent; empty when the content fits. */
 export function formContentErrors(form: McpFormElicitation, content: unknown): string[] {
-	if (!isRecord(content)) return ["the answer is not an object"];
-	const errors: string[] = [];
-	for (const key of Object.keys(content))
-		if (!form.fields.some((field) => field.key === key)) errors.push(`'${key}' is not a field of this form`);
-	for (const field of form.fields) {
-		if (!Object.hasOwn(content, field.key)) {
-			if (field.required) errors.push(`${field.label} is required`);
-			continue;
-		}
-		const error = fieldValueError(field, content[field.key]);
-		if (error !== null) errors.push(`${field.label} ${error}`);
-	}
-	return errors;
+	return isRecord(content) ? elicitationContentErrors(form.fields, content) : ["the answer is not an object"];
 }
 
 /**
  * Read one typed answer into the field's JSON value: a number for a number
  * field, true or false for a boolean. Null with the reason when it does not
- * read; the value is then checked with `fieldValueError`.
+ * read; the value is then checked with `elicitationValueError`.
  */
 export function readTypedValue(field: McpFormField, text: string): { value: McpElicitValue } | { error: string } {
 	const trimmed = text.trim();
