@@ -35,7 +35,7 @@ const check = (id: string, command: string[], extra: Record<string, unknown> = {
 	...extra,
 });
 
-function project() {
+function project(launchArgs: string[] = ["-e", "process.exit(9)"]) {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "verify-service-")));
 	const repo = join(root, "repo");
 	const files: Record<string, string> = {
@@ -43,6 +43,7 @@ function project() {
 		"score.js": "process.stdout.write(JSON.stringify({score:Number(require('fs').readFileSync('value.txt','utf8'))}))\n",
 		"fail.js": "process.stdout.write('broken'); process.exit(3)\n",
 		"ref.json": '{"score":100}\n',
+		"package.json": '{"name":"fixture","scripts":{"test":"node fail.js"}}\n',
 		".pancode/verifiers.yaml": JSON.stringify({
 			version: 2,
 			checks: [
@@ -68,7 +69,7 @@ function project() {
 		settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "targets">,
 		resolvePlace: async () => ({ cwd: repo, root: repo }),
 		receipts,
-		launch: { file: process.execPath, args: ["-e", "process.exit(9)"], env: {} },
+		launch: { file: process.execPath, args: launchArgs, env: {} },
 		sourceEnv: {},
 		envPolicy: { targets: [], passEnv: [] },
 	});
@@ -107,6 +108,28 @@ describe("extension verify service", () => {
 			const unknown = await verify.check("nope/never");
 			assert.equal(unknown.ok, false);
 			assert.equal(unknown.execution, "not-run");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("reports the judgement the production verify path gives a package check", async () => {
+		const document = {
+			version: 1,
+			check: "test",
+			ok: false,
+			error: "verify: exited with code 1",
+			judgement: { execution: "failed", validation: "exit-code" },
+		};
+		const { verify, cleanup } = project([
+			"-e",
+			`console.log(${JSON.stringify(JSON.stringify(document))}); process.exit(1)`,
+		]);
+		try {
+			const failed = await verify.check("test");
+			assert.equal(failed.ok, false);
+			assert.equal(failed.execution, "failed");
+			assert.equal(failed.validation, "exit-code");
 		} finally {
 			cleanup();
 		}

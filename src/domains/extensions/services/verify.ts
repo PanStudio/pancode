@@ -101,6 +101,12 @@ export function pathsNamedByCheck(check: DeclaredCheck): string[] {
 	return [...named].sort();
 }
 
+/** The judgement `verifiers dry-run --json` reports for the check it ran. */
+function isJudgement(value: unknown): value is { execution: string; validation: string } {
+	const judgement = value as { execution?: unknown; validation?: unknown } | null;
+	return typeof judgement?.execution === "string" && typeof judgement.validation === "string";
+}
+
 function judgementOf(result: ToolResult): { execution: string; validation: string | null } {
 	const judgement = (result.details as { judgement?: { execution?: unknown; validation?: unknown } } | undefined)
 		?.judgement;
@@ -151,7 +157,7 @@ function objectiveFromOutput(
 	};
 }
 
-function lastJsonLine(stdout: string): { ok?: unknown; output?: unknown; error?: unknown } | null {
+function lastJsonLine(stdout: string): { ok?: unknown; output?: unknown; error?: unknown; judgement?: unknown } | null {
 	try {
 		const value: unknown = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
 		return typeof value === "object" && value !== null ? value : null;
@@ -172,8 +178,9 @@ export function createExtensionVerifyService(deps: ExtensionVerifyServiceDeps): 
 			...(signal !== undefined ? { signal } : {}),
 		});
 		const parsed = lastJsonLine(result.stdout);
+		const judgement = parsed !== null && isJudgement(parsed.judgement) ? { judgement: parsed.judgement } : {};
 		if (parsed?.ok === true && typeof parsed.output === "string")
-			return { kind: "ok", output: parsed.output, details: { exitCode: result.exitCode } };
+			return { kind: "ok", output: parsed.output, details: { exitCode: result.exitCode, ...judgement } };
 		const message =
 			typeof parsed?.error === "string"
 				? parsed.error
@@ -183,7 +190,7 @@ export function createExtensionVerifyService(deps: ExtensionVerifyServiceDeps): 
 			message,
 			details: {
 				exitCode: result.exitCode,
-				...(result.timedOut ? { judgement: { execution: "timed-out", validation: "not-run" } } : {}),
+				...(result.timedOut ? { judgement: { execution: "timed-out", validation: "not-run" } } : judgement),
 			},
 		};
 	};

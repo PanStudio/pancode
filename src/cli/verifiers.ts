@@ -516,7 +516,10 @@ function dryRunCheck(id: string): ReturnType<typeof verifyTool.run> {
 function printDryRun(id: string, result: Awaited<ReturnType<typeof verifyTool.run>>, json = false): number {
 	if (json) {
 		const outcome = result.kind === "error" ? { ok: false, error: result.message } : { ok: true, output: result.output };
-		process.stdout.write(`${JSON.stringify(jsonDocument({ check: id, ...outcome }))}\n`);
+		const judgement = (result.details as { judgement?: unknown } | undefined)?.judgement;
+		process.stdout.write(
+			`${JSON.stringify(jsonDocument({ check: id, ...outcome, ...(judgement !== undefined ? { judgement } : {}) }))}\n`,
+		);
 		return result.kind === "error" ? 1 : 0;
 	}
 	if (result.kind === "error") {
