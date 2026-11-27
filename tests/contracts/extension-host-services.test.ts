@@ -444,8 +444,11 @@ const runtimeSource = `export default (api) => {
 		void ctx.complete({ messages: [{ role: "user", text: "left behind" }] }).catch(() => {});
 		return { text: "left" };
 	});
-	api.handle("drop", (_args, ctx) => {
-		ctx.store.set("k", "v");
+	api.handle("drop", (args, ctx) => {
+		if (args === "null-proto") Promise.reject(Object.create(null));
+		else if (args === "ansi") Promise.reject("\\u001b[31m");
+		else if (args === "multiline") Promise.reject(new Error("line one\\nline two"));
+		else ctx.store.set("k", "v");
 		return { text: "dropped" };
 	});
 };
@@ -527,10 +530,18 @@ test("a refused call the handler never awaited is reported once and the runtime 
 	equal((await operator.reload("startup")).status, "committed");
 	equal((await invoke(operator, "drop")).text, "dropped");
 	equal((await invoke(operator, "drop")).text, "dropped");
-	for (let spin = 0; spin < 50 && diagnostics.length === 0; spin++)
+	equal((await invoke(operator, "drop", "null-proto")).text, "dropped");
+	equal((await invoke(operator, "drop", "ansi")).text, "dropped");
+	equal((await invoke(operator, "drop", "multiline")).text, "dropped");
+	for (let spin = 0; spin < 50 && diagnostics.length < 4; spin++)
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	equal((await invoke(operator, "members")).text, "undefined undefined");
-	deepStrictEqual(diagnostics, ["scribe left a rejected promise unhandled: runtime did not declare store"]);
+	deepStrictEqual(diagnostics, [
+		"scribe left a rejected promise unhandled: runtime did not declare store",
+		"scribe left a rejected promise unhandled: unprintable error",
+		"scribe left a rejected promise unhandled: unknown error",
+		"scribe left a rejected promise unhandled: line one line two",
+	]);
 });
 
 test("the runtime's ending request and its disposal both abort a model call in flight", async (t) => {

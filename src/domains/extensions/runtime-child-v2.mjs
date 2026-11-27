@@ -257,12 +257,26 @@ process.on("disconnect", () => {
 	setTimeout(() => process.exit(1), 250);
 	void dispose("parent-disconnected");
 });
+function errorText(error) {
+	try {
+		const raw =
+			error instanceof Error
+				? typeof error.message === "string" && error.message.length > 0
+					? error.message
+					: error.name
+				: String(error);
+		return (typeof raw === "string" && raw.length > 0 ? raw : "unknown error").slice(0, 512);
+	} catch {
+		return "unprintable error";
+	}
+}
+
 /** Reasons already reported, so a handler that drops the same refusal on every event sends one line. */
 const unhandled = new Set();
 // Node's default exits on a rejection nobody handled, such as a handler's unawaited `ctx.store.set` the host
 // refused; that cost every later command of the package. Once active the runtime reports it and keeps serving.
 process.on("unhandledRejection", (reason) => {
-	const error = (reason instanceof Error ? reason.message : String(reason)).slice(0, 512);
+	const error = errorText(reason);
 	if (!active) {
 		if (disposing) return;
 		send({ kind: "fatal", error });
@@ -293,6 +307,7 @@ async function initialize(message) {
 	const module = await import(pathToFileURL(message.entrypoint).href);
 	if (typeof module.default !== "function") throw new Error("runtime must export a default factory");
 	await module.default(registration.api);
+	if (disposing) return;
 	registering = false;
 	registration.finish();
 	send({
@@ -361,8 +376,7 @@ async function serve(message) {
 		// A cancelled request has no authority; its late answer is dropped here and again by the host.
 		if (!controller.signal.aborted && !disposing) send({ kind: "result", id: message.id, output: output ?? null });
 	} catch (error) {
-		if (!controller.signal.aborted && !disposing)
-			send({ kind: "error", id: message.id, error: String(error).slice(0, 512) });
+		if (!controller.signal.aborted && !disposing) send({ kind: "error", id: message.id, error: errorText(error) });
 	} finally {
 		requests.delete(message.id);
 	}
@@ -411,7 +425,7 @@ process.on("message", async (message) => {
 				throw new Error("unknown host message");
 		}
 	} catch (error) {
-		send({ kind: "fatal", error: String(error).slice(0, 512) });
+		send({ kind: "fatal", error: errorText(error) });
 		void dispose("protocol-or-startup-failure");
 	}
 });

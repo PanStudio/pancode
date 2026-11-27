@@ -277,6 +277,7 @@ export class ExtensionRuntimeProcessV2 {
 	private createdRoots: string[] = [];
 	private messageWindow = Date.now();
 	private messages = 0;
+	private unhandled = new Set<string>();
 
 	constructor(
 		readonly extension: LoadableExtension,
@@ -701,7 +702,9 @@ export class ExtensionRuntimeProcessV2 {
 			}
 			if (m.kind === "unhandled") {
 				if (typeof m.error !== "string") throw new Error("invalid runtime unhandled report");
-				const error = extensionPlainText(m.error).slice(0, 512);
+				const error = extensionPlainText(m.error).replace(/\s+/gu, " ").trim().slice(0, 512) || "unknown error";
+				if (this.unhandled.has(error) || this.unhandled.size >= 32) return;
+				this.unhandled.add(error);
 				try {
 					this.options.onUnhandled?.(error);
 				} catch {
