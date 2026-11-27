@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { parse, stringify } from "yaml";
 import { installRecordFindings } from "../../src/cli/doctor-install-records.js";
 import { readLifecycleReceipts } from "../../src/core/hub-receipts.js";
+import { INTERNAL_GIT_BASE_OPTIONS } from "../../src/core/internal-git.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
 import { extensionBaseDir, listInstalledExtensions } from "../../src/domains/extensions/index.js";
 import { applyHubImport, planHubImport } from "../../src/domains/interop/import.js";
@@ -538,8 +539,8 @@ describe("PanHub lifecycle plans", () => {
 		const clones = path.join(root, "clones.txt");
 		writeFileSync(
 			path.join(tools, "git"),
-			// The fetch resolves the tag with ls-remote, then inits the stage (logged), fetches, checks out and reads HEAD.
-			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const a=process.argv.slice(2);const c='1'.repeat(40);if(a[0]==='ls-remote'){process.stdout.write(c+'\\trefs/tags/v1\\n');process.exit(0)}if(a[0]==='init'){fs.mkdirSync(a.at(-1),{recursive:true});fs.appendFileSync(${JSON.stringify(clones)},a.at(-1)+"\\n");process.exit(0)}if(a.includes('fetch'))fs.cpSync(${JSON.stringify(bundle)},p.join(a[1],'plugins','remote'),{recursive:true});if(a.includes('rev-parse'))process.stdout.write(c+'\\n');\n`,
+			// A stand-in git behind the internal-git hardening: the fetch resolves the tag with ls-remote, then inits the stage (logged), fetches, checks out and reads HEAD.
+			`#!${process.execPath}\nconst fs=require('node:fs');const p=require('node:path');const a=process.argv.slice(${2 + INTERNAL_GIT_BASE_OPTIONS.length});const c='1'.repeat(40);if(a[0]==='ls-remote'){process.stdout.write(c+'\\trefs/tags/v1\\n');process.exit(0)}if(a[0]==='init'){fs.mkdirSync(a.at(-1),{recursive:true});fs.appendFileSync(${JSON.stringify(clones)},a.at(-1)+"\\n");process.exit(0)}if(a.includes('fetch'))fs.cpSync(${JSON.stringify(bundle)},p.join(a[1],'plugins','remote'),{recursive:true});if(a.includes('rev-parse'))process.stdout.write(c+'\\n');\n`,
 			{ mode: 0o755 },
 		);
 		const previousPath = process.env.PATH;
