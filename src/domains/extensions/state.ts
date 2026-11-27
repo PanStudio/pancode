@@ -1,17 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { randomBytes } from "node:crypto";
-import {
-	cpSync,
-	existsSync,
-	lstatSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	realpathSync,
-	renameSync,
-	rmSync,
-} from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionDiagnostic } from "@pancode/sdk/pack";
 import { capabilityEnvelope, envelopeDigest as envelopeDigestOf } from "@pancode/sdk/pack";
@@ -25,17 +14,26 @@ import { isRecord } from "../../core/type-guards.js";
 import { projectPackageTrust } from "../../core/workspace-trust.js";
 import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { type InstalledPlugin, listInstalledPlugins, pluginPromptNames } from "../plugins/index.js";
-import {
-	type DroppedInstallRecord,
-	type InstallRecordReport,
-	type InvalidInstallRecord,
-	warnInvalidInstallRecords,
-	withKeptInvalidRecords,
-} from "../plugins/install-records.js";
 import { derivedPublisher, publisherCollision, readPublisher } from "../plugins/publisher.js";
 import { packRevokedMessage, revokedHubDigests } from "../resources/hub-revocations.js";
 import { evaluatePancodeCompatibility } from "./compatibility.js";
 import { isExtensionId, loadManifestFromRoot, trimString } from "./discovery.js";
+import {
+	assertManagedBase,
+	assertUnchangedInstallState,
+	auditInstallRecords,
+	type DroppedInstallRecord,
+	emptyInstallState,
+	type InstallRecordReport,
+	type InstallStateLayout,
+	type InstallStateRead,
+	type InvalidInstallRecord,
+	installStatePath,
+	readInstallState,
+	retainRecovery,
+	uniqueSibling,
+	writeInstallState,
+} from "./install-store.js";
 import { extensionContentDigest, extensionContentDigestWithCapture } from "./integrity.js";
 import { extensionInvocation } from "./operator-commands.js";
 import type {
@@ -51,12 +49,8 @@ import type {
 	InstalledExtension,
 } from "./types.js";
 
-const DEFAULT_STATE: ExtensionState = { version: 1, disabled: [], installed: {} };
-
-type StateReadResult =
-	| { status: "absent"; state: ExtensionState }
-	| { status: "valid"; state: ExtensionState; invalid: InvalidInstallRecord[] }
-	| { status: "corrupt"; state: ExtensionState; message: string };
+type ExtensionInstallRecord = ExtensionState["installed"][string];
+type StateReadResult = InstallStateRead<ExtensionInstallRecord>;
 
 export interface InstalledExtensionRecord {
 	entry: InstalledExtension;
@@ -71,40 +65,35 @@ export function extensionBaseDir(scope: ExtensionScope, cwd = process.cwd()): st
 		: path.join(pancodeProjectRoot(cwd, path.join("extensions", "state.json")), ".pancode", "extensions");
 }
 
-function statePath(scope: ExtensionScope, cwd = process.cwd()): string {
-	return path.join(extensionBaseDir(scope, cwd), "state.json");
+const EXTENSION_STATE: InstallStateLayout<ExtensionInstallRecord> = {
+	noun: "extension",
+	dir: "extensions",
+	baseDir: extensionBaseDir,
+	readRecord: (_id, raw) => readInstallRecord(raw),
+	packRef: (id) => `extension:${id}`,
+};
+
+function statePath(scope: ExtensionScope, cwd: string): string {
+	return installStatePath(EXTENSION_STATE, scope, cwd);
 }
 
-/**
- * Reject redirects beneath the operator-selected config or project root, the
- * plugin writer's rule: a project link into user scope, or any link below the
- * boundary, would carry package bytes and install state to another trust domain.
- */
-function assertManagedBase(scope: ExtensionScope, cwd: string): void {
-	const boundary =
-		scope === "user" ? path.resolve(pancodeConfigPath()) : pancodeProjectRoot(cwd, path.join("extensions", "state.json"));
-	const base = extensionBaseDir(scope, cwd);
-	let cursor = boundary;
-	for (const part of path.relative(boundary, base).split(path.sep)) {
-		cursor = path.join(cursor, part);
-		try {
-			const stat = lstatSync(cursor);
-			if (stat.isSymbolicLink() || !stat.isDirectory())
-				throw new Error(`extension managed path must be a directory without symbolic links: ${cursor}`);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-	}
+function readState(scope: ExtensionScope, cwd: string): StateReadResult {
+	return readInstallState(EXTENSION_STATE, scope, cwd);
 }
 
-/** A writer creates the user config root as PanCode owns it (mode 0700) before its first write beneath it. */
-function ensureScopeRoot(scope: ExtensionScope): void {
-	if (scope === "user") pancodeConfigDir();
+function writeState(
+	scope: ExtensionScope,
+	cwd: string,
+	state: ExtensionState,
+	expected: string | undefined,
+	invalid: ReadonlyArray<InvalidInstallRecord>,
+): void {
+	writeInstallState(EXTENSION_STATE, scope, cwd, state, expected, invalid);
 }
 
 function managedBaseError(scope: ExtensionScope, cwd: string): string | undefined {
 	try {
-		assertManagedBase(scope, cwd);
+		assertManagedBase(EXTENSION_STATE, scope, cwd);
 		return undefined;
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
@@ -121,13 +110,6 @@ function lexists(candidate: string): boolean {
 	}
 }
 
-function uniqueSibling(target: string, purpose: string): string {
-	return path.join(
-		path.dirname(target),
-		`.${path.basename(target)}.${purpose}-${process.pid}-${randomBytes(8).toString("hex")}`,
-	);
-}
-
 function recoveryPath(filePath: string, label: string): string {
 	return `${filePath}.${label}-${process.pid}-${Date.now()}.bak`;
 }
@@ -136,10 +118,9 @@ function packageRecoveryPath(root: string, label: string): string {
 	return path.join(path.dirname(root), `.${path.basename(root)}.${label}-${process.pid}-${Date.now()}.bak`);
 }
 
-function preserveFile(filePath: string, label: string): string | undefined {
-	if (!existsSync(filePath)) return undefined;
-	const backupPath = recoveryPath(filePath, label);
-	safeResourceWrite(backupPath, readFileSync(filePath));
+function preserveCorruptState(filePath: string, bytes: string): string {
+	const backupPath = recoveryPath(filePath, "corrupt");
+	safeResourceWrite(backupPath, bytes, { mode: 0o600 });
 	return backupPath;
 }
 
@@ -183,7 +164,7 @@ function readModelAssignment(value: unknown): ExtensionModelAssignment | undefin
 }
 
 /** Throws the reason one stored record is refused. */
-function readInstallRecord(raw: unknown): ExtensionState["installed"][string] {
+function readInstallRecord(raw: unknown): ExtensionInstallRecord {
 	if (!isRecord(raw)) throw new Error("the record must be an object");
 	const installedAt = trimString(raw.installedAt);
 	if (!installedAt) throw new Error("installedAt must be a non-empty string");
@@ -210,42 +191,6 @@ function readInstallRecord(raw: unknown): ExtensionState["installed"][string] {
 	};
 }
 
-/** A file that cannot be read is corrupt; an invalid record is left out and named in `invalid`. */
-function readState(scope: ExtensionScope, cwd = process.cwd()): StateReadResult {
-	const filePath = statePath(scope, cwd);
-	const redirected = managedBaseError(scope, cwd);
-	if (redirected) return { status: "corrupt", state: structuredClone(DEFAULT_STATE), message: redirected };
-	if (!lexists(filePath)) return { status: "absent", state: structuredClone(DEFAULT_STATE) };
-	try {
-		const stat = lstatSync(filePath);
-		if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
-			throw new Error(`extension state must be a regular unlinked file: ${filePath}`);
-		const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
-		if (!isRecord(parsed) || parsed.version !== 1) throw new Error("state must be a version 1 object");
-		if (!Array.isArray(parsed.disabled) || !parsed.disabled.every((entry) => typeof entry === "string")) {
-			throw new Error("state.disabled must be an array of strings");
-		}
-		if (!isRecord(parsed.installed)) throw new Error("state.installed must be an object");
-		const installed: ExtensionState["installed"] = {};
-		const invalid: InvalidInstallRecord[] = [];
-		for (const [id, raw] of Object.entries(parsed.installed)) {
-			try {
-				installed[id] = readInstallRecord(raw);
-			} catch (error) {
-				invalid.push({ id, pack: `extension:${id}`, reason: error instanceof Error ? error.message : String(error), raw });
-			}
-		}
-		warnInvalidInstallRecords(filePath, invalid);
-		return { status: "valid", state: { version: 1, disabled: [...parsed.disabled], installed }, invalid };
-	} catch (error) {
-		return {
-			status: "corrupt",
-			state: structuredClone(DEFAULT_STATE),
-			message: error instanceof Error ? error.message : String(error),
-		};
-	}
-}
-
 export function readExtensionInstallRecord(
 	id: string,
 	options: ExtensionListOptions = {},
@@ -257,18 +202,6 @@ export function readExtensionInstallRecord(
 		return result.state.installed[id];
 	};
 	return options.scope ? read(options.scope) : (read("project") ?? read("user"));
-}
-
-function writeState(
-	scope: ExtensionScope,
-	state: ExtensionState,
-	cwd: string,
-	invalid: ReadonlyArray<InvalidInstallRecord>,
-): void {
-	const filePath = statePath(scope, cwd);
-	ensureScopeRoot(scope);
-	const written = { ...state, installed: withKeptInvalidRecords(state.installed, invalid) };
-	safeResourceWrite(filePath, `${JSON.stringify(written, null, 2)}\n`, { encoding: "utf8" });
 }
 
 function installedFromRoot(
@@ -588,18 +521,6 @@ function findInstalled(id: string, cwd: string, scope?: ExtensionScope): Install
 	return [...entries].sort((a, b) => scopeRank(a.scope) - scopeRank(b.scope)).at(-1) ?? null;
 }
 
-/** Whether held bytes still differ from the record. A retained backup is removed only when it matches what was recorded. */
-function retainRecovery(backup: string, recordedDigest: string | undefined): boolean {
-	try {
-		if (!recordedDigest || extensionContentDigest(backup) !== recordedDigest) return true;
-		rmSync(backup, { recursive: true, force: true });
-		return false;
-	} catch {
-		// Cleanup failure does not undo a committed lifecycle operation, and unreadable bytes are kept.
-		return true;
-	}
-}
-
 function refusal(message: string, at?: string): ExtensionInstallResult {
 	return { diagnostics: [{ type: "error", message, ...(at ? { path: at } : {}) }] };
 }
@@ -655,13 +576,16 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		}
 	}
 	const stateResult = readState(scope, cwd);
+	if (stateResult.status === "corrupt" && stateResult.bytes === undefined) {
+		return refusal(`extension install state is corrupt: ${stateResult.message}`, statePath(scope, cwd));
+	}
 	if (stateResult.status === "corrupt" && !options.force) {
 		return refusal(
 			`extension install state is corrupt: ${stateResult.message}; retry with --force to back it up and reinstall safely`,
 			statePath(scope, cwd),
 		);
 	}
-	const state = stateResult.status === "corrupt" ? structuredClone(DEFAULT_STATE) : stateResult.state;
+	const state = stateResult.state;
 	const origin = options.origin ?? { kind: "local" as const, source };
 	const publisher = options.publisher ?? derivedPublisher(origin.source);
 	const collision = publisherCollision(
@@ -692,9 +616,9 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 	let stateBackup: string | undefined;
 	let packageBackup: string | undefined;
 	try {
-		ensureScopeRoot(scope);
+		// A writer creates the user config root as PanCode owns it (mode 0700) before its first write beneath it.
+		if (scope === "user") pancodeConfigDir();
 		mkdirSync(parent, { recursive: true });
-		if (stateResult.status === "corrupt") stateBackup = preserveFile(statePath(scope, cwd), "corrupt");
 		cpSync(source, stagingRoot, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
 		const stagedCandidate = loadManifestFromRoot(stagingRoot);
 		if (!stagedCandidate.valid || !stagedCandidate.manifest) {
@@ -715,6 +639,10 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		)
 			throw new Error("staged extension differs from the verified source tree");
 		if (extensionContentDigest(source) !== sourceDigest) throw new Error("extension source changed while staging");
+		assertUnchangedInstallState(EXTENSION_STATE, scope, cwd, stateResult.bytes);
+		if (stateResult.status === "corrupt" && stateResult.bytes !== undefined) {
+			stateBackup = preserveCorruptState(statePath(scope, cwd), stateResult.bytes);
+		}
 		if (lexists(targetRoot)) {
 			renameSync(targetRoot, backupRoot);
 			movedExisting = true;
@@ -736,9 +664,13 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 			publisher,
 		};
 		state.disabled = state.disabled.filter((entry) => entry !== manifest.id);
-		writeState(scope, state, cwd, stateResult.status === "valid" ? stateResult.invalid : []);
+		writeState(scope, cwd, state, stateResult.bytes, stateResult.status === "valid" ? stateResult.invalid : []);
 	} catch (error) {
 		rmSync(stagingRoot, { recursive: true, force: true });
+		if (stateBackup) {
+			rmSync(stateBackup, { force: true });
+			stateBackup = undefined;
+		}
 		// Preserve concurrent changes instead of deleting someone else's work.
 		let changed = false;
 		if (installedReplacement && lexists(targetRoot)) {
@@ -840,7 +772,19 @@ function mutateEnabled(id: string, enabled: boolean, options: ExtensionListOptio
 	const state = stateResult.state;
 	if (enabled) state.disabled = state.disabled.filter((entry) => entry !== id);
 	else if (!state.disabled.includes(id)) state.disabled.push(id);
-	writeState(target.scope, state, cwd, stateResult.invalid);
+	try {
+		writeState(target.scope, cwd, state, stateResult.bytes, stateResult.invalid);
+	} catch (error) {
+		return {
+			diagnostics: [
+				{
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+					path: statePath(target.scope, cwd),
+				},
+			],
+		};
+	}
 	const extension = findInstalled(id, cwd, target.scope) ?? undefined;
 	recordLifecycleReceipt(
 		{
@@ -894,7 +838,19 @@ export function assignExtensionModel(
 		assignment === null
 			? rest
 			: { ...rest, services: { model: { ...assignment, assignedAt: new Date().toISOString() } } };
-	writeState(target.scope, stateResult.state, cwd, stateResult.invalid);
+	try {
+		writeState(target.scope, cwd, stateResult.state, stateResult.bytes, stateResult.invalid);
+	} catch (error) {
+		return {
+			diagnostics: [
+				{
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+					path: statePath(target.scope, cwd),
+				},
+			],
+		};
+	}
 	const extension = findInstalled(id, cwd, target.scope) ?? undefined;
 	return { ...(extension ? { extension } : {}), diagnostics: [] };
 }
@@ -932,14 +888,28 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 		source: stateResult.state.installed[id]?.source ?? target.rootPath,
 	};
 	if (stateResult.status !== "valid") {
+		if (stateResult.status === "corrupt" && stateResult.bytes === undefined) {
+			return {
+				diagnostics: [
+					{
+						type: "error",
+						message: `extension ${id} could not be removed safely: ${stateResult.message}`,
+						path: target.rootPath,
+					},
+				],
+			};
+		}
 		const filePath = statePath(target.scope, cwd);
 		const packageBackup = packageRecoveryPath(target.rootPath, "removed-unverifiable");
 		let stateBackup: string | undefined;
 		try {
-			if (stateResult.status === "corrupt") stateBackup = preserveFile(filePath, "corrupt");
+			assertUnchangedInstallState(EXTENSION_STATE, target.scope, cwd, stateResult.bytes);
+			if (stateResult.status === "corrupt" && stateResult.bytes !== undefined) {
+				stateBackup = preserveCorruptState(filePath, stateResult.bytes);
+			}
 			renameSync(target.rootPath, packageBackup);
 			try {
-				writeState(target.scope, structuredClone(DEFAULT_STATE), cwd, []);
+				writeState(target.scope, cwd, emptyInstallState(), stateResult.bytes, []);
 			} catch (error) {
 				renameSync(packageBackup, target.rootPath);
 				throw error;
@@ -961,6 +931,7 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 				diagnostics,
 			};
 		} catch (error) {
+			if (stateBackup) rmSync(stateBackup, { force: true });
 			return {
 				diagnostics: [
 					{
@@ -981,21 +952,23 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 	} catch {
 		preserve = true;
 	}
-	const packageBackup = preserve ? uniqueSibling(target.rootPath, "removed") : undefined;
+	const backup = uniqueSibling(target.rootPath, "removed");
+	let moved = false;
 	try {
-		if (packageBackup) renameSync(target.rootPath, packageBackup);
-		else rmSync(target.rootPath, { recursive: true, force: true });
+		assertUnchangedInstallState(EXTENSION_STATE, target.scope, cwd, stateResult.bytes);
+		renameSync(target.rootPath, backup);
+		moved = true;
 		Reflect.deleteProperty(state.installed, id);
 		state.disabled = state.disabled.filter((entry) => entry !== id);
 		writeState(
 			target.scope,
-			state,
 			cwd,
+			state,
+			stateResult.bytes,
 			stateResult.invalid.filter((entry) => entry.id !== id),
 		);
 	} catch (error) {
-		if (packageBackup && existsSync(packageBackup) && !lexists(target.rootPath))
-			renameSync(packageBackup, target.rootPath);
+		if (moved && lexists(backup) && !lexists(target.rootPath)) renameSync(backup, target.rootPath);
 		return {
 			diagnostics: [
 				{
@@ -1006,6 +979,8 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 			],
 		};
 	}
+	if (!preserve) preserve = retainRecovery(backup, recordedDigest);
+	const packageBackup = preserve ? backup : undefined;
 	recordLifecycleReceipt(receiptIdentity, options.lifecycle);
 	return {
 		removed: { id, scope: target.scope, path: target.rootPath },
@@ -1024,14 +999,7 @@ export function removeExtension(id: string, options: ExtensionListOptions = {}):
 
 /** Doctor's read of one scope's install records, or null when that scope has no state file. Throws when the file is unreadable. */
 export function auditExtensionInstallRecords(scope: ExtensionScope, cwd = process.cwd()): InstallRecordReport | null {
-	const result = readState(scope, cwd);
-	if (result.status === "absent") return null;
-	if (result.status === "corrupt") throw new Error(result.message);
-	return {
-		path: statePath(scope, cwd),
-		valid: Object.keys(result.state.installed).length,
-		invalid: result.invalid.map(({ id, pack, reason }) => ({ id, pack, reason })),
-	};
+	return auditInstallRecords(EXTENSION_STATE, scope, cwd);
 }
 
 /**
@@ -1066,7 +1034,7 @@ export function repairExtensionInstallRecords(scope: ExtensionScope, cwd = proce
 			for (const move of moves) renameSync(move.from, move.to);
 			const gone = new Set(dropped.flatMap((entry) => (entry.kept ? [] : [entry.id])));
 			result.state.disabled = result.state.disabled.filter((id) => !gone.has(id));
-			writeState(scope, result.state, cwd, []);
+			writeState(scope, cwd, result.state, result.bytes, []);
 		} catch (error) {
 			for (const move of moves) if (lexists(move.to)) renameSync(move.to, move.from);
 			throw error;
