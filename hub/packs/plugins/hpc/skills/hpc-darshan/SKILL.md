@@ -1,6 +1,6 @@
 ---
 name: hpc-darshan
-description: "Characterizes an application's I/O from a Darshan log through PanCode's darshan server (darshan-parser as the fallback): reads volumes, access sizes, sequentiality and collective use, and names the bottleneck the counters support. Not for instrumenting a build or for tuning without a log."
+description: "Characterizes an application's I/O from a Darshan log through the hpc plugin's MCP server (darshan-parser as the fallback): reads volumes, access sizes, sequentiality and collective use, and names the bottleneck the counters support. Not for instrumenting a build or for tuning without a log."
 triggers:
   - analyze a darshan log
   - darshan counters for this run
@@ -16,13 +16,13 @@ it before tuning I/O, and read it again after, so that every claim about I/O
 names the counter behind it. The analysis is local and read-only: it needs
 `darshan-util` on `PATH` and no network.
 
-The reads go through the `darshan` server PanCode ships. Call a tool by its
-capability name, such as `mcp_darshan__darshan_summary`; when it is not
+The reads go through the `hpc` server this plugin ships. Call a tool by its
+capability name, such as `mcp_hpc__darshan_summary`; when it is not
 attached to the session, call it through
-`gateway(op="call", capability="mcp_darshan__darshan_summary", args={...})`. A
-builtin server that cannot work on this host answers every call with the
+`gateway(op="call", capability="mcp_hpc__darshan_summary", args={...})`. A
+tool that cannot work on this host answers every call with the
 reason (for example, `darshan-parser` is not on `PATH`). On that answer, or
-when the tool does not exist (another harness without these servers), use the
+when the tool does not exist (a harness without this server), use the
 `bash` steps in "Fallback without the server".
 
 ## Phase 0: find the log
@@ -31,8 +31,8 @@ when the tool does not exist (another harness without these servers), use the
    directory, organized by date, and `DARSHAN_LOGFILE` names an exact path for
    one run. Ask for the path if it is not given.
 2. If the server says darshan-util is missing, look for a module
-   (`mcp_modules__modules_spider` with `name` = `darshan`, see hpc-modules) or
-   a Spack install (`mcp_spack__spack_find` with `spec` = `darshan-util`).
+   (`mcp_hpc__modules_spider` with `name` = `darshan`, see hpc-modules) or
+   a Spack install (`mcp_hpc__spack_find` with `spec` = `darshan-util`).
    Without it, stop and say that darshan-util is needed. Never guess counters.
 3. Capture with Darshan only when asked: link the runtime library, or preload
    it with `LD_PRELOAD=<darshan lib dir>/libdarshan.so` (`darshan-config --libdir`
@@ -44,10 +44,10 @@ Every tool takes the log as `path` and only reads it.
 
 | Question | Tool |
 | --- | --- |
-| The job, its modules, and bytes, seconds, opens and rate per module | `mcp_darshan__darshan_summary` |
-| Which files carried the I/O | `mcp_darshan__darshan_files`, `module` (`POSIX`, `MPIIO`, `STDIO`), `metric` (`bytesRead`, `bytesWritten`, `readTime`, `writeTime`, `metaTime`, `opens`), `limit` |
-| Every counter of one module | `mcp_darshan__darshan_modules`, `module` (`POSIX`, `MPIIO`, `STDIO`, `H5F`, `H5D` and so on) |
-| When the I/O happened | `mcp_darshan__darshan_timeline`, `module` |
+| The job, its modules, and bytes, seconds, opens and rate per module | `mcp_hpc__darshan_summary` |
+| Which files carried the I/O | `mcp_hpc__darshan_files`, `module` (`POSIX`, `MPIIO`, `STDIO`), `metric` (`bytesRead`, `bytesWritten`, `readTime`, `writeTime`, `metaTime`, `opens`), `limit` |
+| Every counter of one module | `mcp_hpc__darshan_modules`, `module` (`POSIX`, `MPIIO`, `STDIO`, `H5F`, `H5D` and so on) |
+| When the I/O happened | `mcp_hpc__darshan_timeline`, `module` |
 
 Start with `darshan_summary`, then `darshan_files` for the top files, then
 `darshan_modules` for the counter table below. A module that ran out of record

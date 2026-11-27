@@ -9,10 +9,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import type { AnyTool } from "@pancode/sdk/tool";
+import {
+	ckanSha256,
+	ckanTime,
+	MAX_SOURCES,
+	parseCatalogFile,
+} from "../../../hub/packs/plugins/science-data/src/parse.js";
+import {
+	type CatalogSettings,
+	catalogTools,
+	MAX_LIMIT,
+	MAX_RESOURCES,
+} from "../../../hub/packs/plugins/science-data/src/tools.js";
 import { ServerUsageError } from "../src/registry.js";
 import { catalogFilePath, configure, probe, server } from "../src/servers/catalog/index.js";
-import { ckanSha256, ckanTime, MAX_SOURCES, parseCatalogFile } from "../src/servers/catalog/parse.js";
-import { type CatalogSettings, catalogTools, MAX_LIMIT, MAX_RESOURCES } from "../src/servers/catalog/tools.js";
 
 /**
  * The catalog server against catalog files this test writes and an HTTP
@@ -359,7 +369,7 @@ test("without a catalog file the server is unavailable and every call names the 
 	process.env.XDG_CONFIG_HOME = config;
 	try {
 		configure([]);
-		const expected = join(config, "pankit", "catalog.json");
+		const expected = join(config, "science-data", "catalog.json");
 		assert.equal(catalogFilePath(), expected);
 		const probed = await probe();
 		assert.equal(probed.available, false);

@@ -10,7 +10,7 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { defineTool } from "@pancode/sdk/tool";
+import { defineTool } from "pancode/sdk/tool";
 import {
 	compilersOf,
 	INSTALLED_ROOT_STATUSES,

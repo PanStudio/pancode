@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { runCommand } from "../src/exec.js";
+import { runCommand } from "../../../hub/packs/plugins/hpc/src/exec.js";
 import {
 	configureServer,
 	loadServer,

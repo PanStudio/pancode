@@ -356,6 +356,11 @@ function launchLabel(server: {
 	return `url=${JSON.stringify(server.url)}${named.length > 0 ? ` headers=${named.join(",")}` : ""}`;
 }
 
+/** The variable names a builtin manifest or a plugin's envVars passes from PanCode's environment. */
+function environmentLabel(names: ReadonlyArray<string>): string {
+	return names.length > 0 ? ` environment=${names.join(",")}` : "";
+}
+
 function networkLabel(grant: ReturnType<typeof networkGrant>): string {
 	return grant.network
 		? `network=true (${grant.networkSource === "trust" ? "trust record" : "user declaration"})`
@@ -572,7 +577,7 @@ export function mcpCommandOutput(
 			// Each server's tools and surface sit under its own header line (CLI audit 7).
 			const lines = result.servers.flatMap((server) => {
 				const block = [
-					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${server.builtin !== undefined && server.builtin.environment.length > 0 ? ` environment=${server.builtin.environment.join(",")}` : ""} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
+					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${environmentLabel(server.builtin?.environment ?? ("envVars" in server ? server.envVars : undefined) ?? [])} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
 				];
 				if (server.status?.reason !== undefined) {
 					const remedy =

@@ -35,7 +35,6 @@ import {
 	McpError,
 	type McpFileArgument,
 	mcpBuiltinLaunchArgs,
-	mcpBuiltinLaunchEnvironment,
 	mcpCatalogDigest,
 	mcpCatalogStale,
 	mcpClientSkills,
@@ -43,6 +42,7 @@ import {
 	mcpFileSchema,
 	mcpOAuthGrantFor,
 	mcpOriginOf,
+	mcpPassedEnvironment,
 	mcpSurface,
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
@@ -1195,11 +1195,11 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							args: launchArgs.length > 0 ? [...declaration.args, ...launchArgs] : declaration.args,
 							cwd: placement.cwd,
 							...(declaration.plugin !== undefined ? { ownNodeFirst: true as const } : {}),
-							// A builtin server gets the variables its manifest names from this process; no other scope gains any.
-							env:
-								declaration.builtin !== undefined
-									? { ...mcpBuiltinLaunchEnvironment(declaration.builtin.environment), ...declaration.env }
-									: declaration.env,
+							// Builtin manifest or plugin envVars names pass from this process; no other scope gains any.
+							env: {
+								...mcpPassedEnvironment(declaration.builtin?.environment ?? declaration.envVars ?? []),
+								...declaration.env,
+							},
 						},
 						clientOptions,
 					);

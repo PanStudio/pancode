@@ -9,7 +9,7 @@
  */
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { defineTool, type Tool } from "@pancode/sdk/tool";
+import { defineTool, type Tool } from "pancode/sdk/tool";
 import { ckanAction, Deadline, discard, fetchChecked } from "./net.js";
 import {
 	type Catalog,
@@ -76,7 +76,7 @@ export async function loadCatalog(
 		if (errorCode(error) === "ENOENT")
 			return {
 				ok: false,
-				error: `no catalog file at ${file}: the catalog server needs one naming the sources to search. PanKit ships no sources; create ${file} (pankit catalog --example prints a valid file to start from), or start the server with --file <path>.`,
+				error: `no catalog file at ${file}: the catalog server needs one naming the sources to search. It ships no sources; create ${file} (the science-data plugin's README has a valid file to start from).`,
 				file: "missing",
 			};
 		return { ok: false, error: `the catalog file ${file} cannot be read: ${message(error)}`, file: "unreadable" };
@@ -85,7 +85,7 @@ export async function loadCatalog(
 	if (!parsed.ok)
 		return {
 			ok: false,
-			error: `the catalog file ${file} is not valid: ${parsed.error}. The server serves nothing until the file is fixed; pankit catalog --example prints a valid file.`,
+			error: `the catalog file ${file} is not valid: ${parsed.error}. The server serves nothing until the file is fixed; the science-data plugin's README has a valid file.`,
 			file: "invalid",
 		};
 	return { ok: true, catalog: parsed.value };

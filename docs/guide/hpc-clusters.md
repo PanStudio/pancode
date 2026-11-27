@@ -358,11 +358,10 @@ node can be inspected before a workspace validation contract names any of them
 
 ## The HPC skill pack
 
-The `hpc` pack in PanHub collects skills for cluster work. It is content
-only: installing it starts nothing and declares no MCP server. Its skills use
-the `modules`, `spack` and `darshan` servers PanCode ships ([PanKit](pankit.md)),
-and run the cluster's own programs over `bash` when a server cannot work on
-this host. `pancode doctor` shows which of those servers this host can serve.
+The `hpc` pack in PanHub collects skills for cluster work and ships one MCP
+server, `hpc`, with node, module, Spack and Darshan tools (its README lists
+them). Its skills use that server and run the cluster's own programs over
+`bash` when a tool cannot work on this host.
 
 ```bash
 pancode hub install plugin:hpc --project
@@ -372,9 +371,9 @@ Run `/reload hub` in a running session afterward.
 
 | Skill | What it covers |
 | --- | --- |
-| `hpc-modules` | Finding modules and Spack installs through the `modules` and `spack` servers, planning the loads a script needs, and loading them over `bash` in the shell that uses them |
+| `hpc-modules` | Finding modules and Spack installs through the `hpc` server's `modules_*` and `spack_*` tools, planning the loads a script needs, and loading them over `bash` in the shell that uses them |
 | `hpc-parallel-io` | Correctness rules and tuning for parallel HDF5 and MPI-IO, checked by readback and Darshan counters |
-| `hpc-darshan` | Summarizing a Darshan log through the `darshan` server (`darshan-parser` as the fallback) and naming the counters behind each I/O finding |
+| `hpc-darshan` | Summarizing a Darshan log through the `hpc` server's `darshan_*` tools (`darshan-parser` as the fallback) and naming the counters behind each I/O finding |
 
 Known limits for this release: the Lmod path was checked against fake Lmod
 binaries only, not on a live cluster, and the MPI-IO guidance in

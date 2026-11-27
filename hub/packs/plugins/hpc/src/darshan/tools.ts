@@ -9,8 +9,8 @@
  * did not record is null with its reason under `unavailable`, never -1 or 0.
  */
 import path from "node:path";
-import { defineTool } from "@pancode/sdk/tool";
-import { type RunCommandResult, runCommand } from "../../exec.js";
+import { defineTool } from "pancode/sdk/tool";
+import { type RunCommandResult, runCommand } from "../exec.js";
 import {
 	type Counter,
 	type DarshanHeader,

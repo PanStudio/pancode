@@ -458,26 +458,28 @@ entries:
     publisher: pancode
     name: hpc
     description: "HPC pack: Lmod and Spack software environments, parallel HDF5 and
-      MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack
-      and darshan servers with the cluster's own tools as the fallback."
-    version: 0.4.2
+      MPI-IO, and Darshan I/O analysis, through the pack's own hpc MCP server
+      (node, module, Spack and Darshan tools), with the cluster's own tools as
+      the fallback."
+    version: 0.5.0
     sourceUrl: packs/plugins/hpc
-    sha256: fd86ef3d52b0176b5678817ef4d3dd067d0af0376054ed7a235ee7e1d2d9f6a5
+    sha256: 033c10f3f8709f7ad50ff5dff6aaeb957c0680f7852981258b35ff94af024cdb
     license: LicenseRef-PanCode-1.0
     tier: core
+    mcpDigest: 8cd0261861bfc661f6d5dd46ec8ac26cc33272c699424fe44b2fb12eb6564686
     provides:
       - kind: skill
         name: hpc-darshan
-        description: "Characterizes an application's I/O from a Darshan log through
-          PanCode's darshan server (darshan-parser as the fallback): reads
+        description: "Characterizes an application's I/O from a Darshan log through the
+          hpc plugin's MCP server (darshan-parser as the fallback): reads
           volumes, access sizes, sequentiality and collective use, and names the
-          bottleneck the counters support. Not for instrumenting a…"
+          bottleneck the counters support. Not for instrumenting…"
       - kind: skill
         name: hpc-modules
-        description: Finds software on an HPC system through PanCode's modules and spack
-          servers (Lmod or Environment Modules, and Spack installs), plans the
-          module loads a script needs, and loads them from bash in the shell
-          that uses them. Not for installing software or for…
+        description: Finds software on an HPC system through the hpc plugin's MCP server
+          (Lmod or Environment Modules, and Spack installs), plans the module
+          loads a script needs, and loads them from bash in the shell that uses
+          them. Not for installing software or for writing…
       - kind: skill
         name: hpc-parallel-io
         description: Writes or reviews parallel HDF5 and MPI-IO code so many ranks share
@@ -820,14 +822,16 @@ entries:
     publisher: pancode
     name: science-data
     description: "Science data pack: a skill that finds datasets in the store and
-      through PanCode's catalog server, keeps results in the store, reads HDF5,
-      NetCDF, Parquet and CSV with PanCode's data tool first, and writes a
-      read-only Python script through run_script only for analysis beyond it."
-    version: 0.4.2
+      through the pack's own catalog MCP server, keeps results in the store,
+      reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and
+      writes a read-only Python script through run_script only for analysis
+      beyond it."
+    version: 0.5.0
     sourceUrl: packs/plugins/science-data
-    sha256: 138894071e64430388dddd8c6f646d433546405aa0edf1284f94bbd6d876aa1e
+    sha256: de699b4694109f76f18a77f5b75a6cbaecac30efb02d6f49b50a13f236c7ed0e
     license: LicenseRef-PanCode-1.0
     tier: core
+    mcpDigest: b7cb75acc7626cdd7339928f50cf948211b736106bb44b500cd7ccf840201968
     provides:
       - kind: skill
         name: science-data

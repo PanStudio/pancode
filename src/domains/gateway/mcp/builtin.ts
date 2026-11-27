@@ -20,7 +20,6 @@ import { sha256Hex } from "../../../core/hash.js";
 import { resolvePackageRoot } from "../../../core/package-root.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { resolvePancodeDirs } from "../../../core/xdg.js";
-import { isSecretArgKey } from "../../safety/redaction.js";
 import {
 	type McpConfigDiagnostic,
 	type McpConfigLoadResult,
@@ -32,6 +31,7 @@ import {
 	mcpWritePathOnReadTool,
 	readBoundedFileText,
 } from "./config.js";
+import { parsePassedVariables } from "./passed-environment.js";
 import { type McpSurface, mcpSurface } from "./surface.js";
 
 export const MCP_BUILTIN_MANIFEST_VERSION = 1;
@@ -41,12 +41,6 @@ const MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const ID_MAX_CHARS = 64;
 const TOOL_CLASSES = new Set(["read", "execute", "destructive"]);
-const ENVIRONMENT_MAX_ENTRIES = 32;
-const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const ENVIRONMENT_PREFIX_MIN_CHARS = 4;
-const RESERVED_PREFIX = "PANCODE_";
-/** Variables that change how a program or its runtime starts, never passed to a server. */
-const ENVIRONMENT_DENIED = ["NODE_OPTIONS", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_AUDIT"];
 
 /** Where the builtin servers come from: the policy manifest and the PanKit CLI that serves them. */
 export interface McpBuiltinSource {
@@ -140,12 +134,12 @@ export interface McpBuiltinLaunchContext {
 
 /**
  * The catalog file PanCode's builtin `catalog` server reads:
- * `<PanCode config dir>/pankit/catalog.json`. PanCode passes it as `--file`,
+ * `<PanCode config dir>/science-data/catalog.json`. PanCode passes it as `--file`,
  * so a server PanCode launches never falls back to the operator's own
- * `~/.config/pankit/catalog.json` and an isolated PanCode home stays isolated.
+ * `~/.config/science-data/catalog.json` and an isolated PanCode home stays isolated.
  */
 function mcpBuiltinCatalogFile(): string {
-	return path.join(resolvePancodeDirs().config, "pankit", "catalog.json");
+	return path.join(resolvePancodeDirs().config, "science-data", "catalog.json");
 }
 
 /**
@@ -241,72 +235,6 @@ interface ManifestServer {
 	tools: McpBuiltinTool[];
 }
 
-/** Why a variable name is never passed to a builtin server, or null when it may be. */
-function refusedVariable(name: string): string | null {
-	const upper = name.toUpperCase();
-	if (upper.startsWith(RESERVED_PREFIX)) return `${RESERVED_PREFIX} variables are PanCode's own`;
-	if (ENVIRONMENT_DENIED.includes(upper)) return "it changes how a program starts";
-	if (isSecretArgKey(name)) return "it reads as a credential";
-	return null;
-}
-
-/**
- * The problem with one `environment` entry, or null. A prefix is refused when
- * a name it would pass is: one that `PANCODE_` or a denied name starts with.
- */
-function environmentEntryProblem(entry: unknown, location: string): string | null {
-	if (typeof entry !== "string") return `${location} must be a string`;
-	const prefix = entry.endsWith("*");
-	const name = prefix ? entry.slice(0, -1) : entry;
-	if (!ENVIRONMENT_NAME.test(name) || (prefix && name.length < ENVIRONMENT_PREFIX_MIN_CHARS)) {
-		return `${location} must be a variable name, or a prefix of at least ${ENVIRONMENT_PREFIX_MIN_CHARS} characters followed by *`;
-	}
-	const refused = refusedVariable(name);
-	if (refused !== null) return `${location} names ${entry}, which is never passed: ${refused}`;
-	if (prefix) {
-		const upper = name.toUpperCase();
-		const covered = [RESERVED_PREFIX, ...ENVIRONMENT_DENIED].find((reserved) => reserved.startsWith(upper));
-		if (covered !== undefined) return `${location} names ${entry}, which would pass ${covered}`;
-	}
-	return null;
-}
-
-function parseEnvironment(value: unknown, location: string): string[] | string {
-	if (!Array.isArray(value)) return `${location} must be an array`;
-	if (value.length > ENVIRONMENT_MAX_ENTRIES) return `${location} lists more than ${ENVIRONMENT_MAX_ENTRIES} entries`;
-	for (const [index, entry] of value.entries()) {
-		const problem = environmentEntryProblem(entry, `${location}[${index}]`);
-		if (problem !== null) return problem;
-	}
-	if (new Set(value).size !== value.length) return `${location} lists an entry twice`;
-	return [...(value as string[])].sort();
-}
-
-/**
- * The values a builtin server is launched with: each declared name set in
- * `source`, and each variable a declared prefix matches. A matched name that
- * could not be declared (a credential, `PANCODE_*`) is not passed. These go
- * to `buildSafeToolEnv` as extras, so its controls still apply last.
- */
-export function mcpBuiltinLaunchEnvironment(
-	environment: ReadonlyArray<string>,
-	source: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-	const env: Record<string, string> = {};
-	for (const entry of environment) {
-		if (!entry.endsWith("*")) {
-			const value = source[entry];
-			if (value !== undefined && refusedVariable(entry) === null) env[entry] = value;
-			continue;
-		}
-		const prefix = entry.slice(0, -1);
-		for (const [name, value] of Object.entries(source)) {
-			if (value !== undefined && name.startsWith(prefix) && refusedVariable(name) === null) env[name] = value;
-		}
-	}
-	return env;
-}
-
 function parseServer(value: unknown, location: string): ManifestServer | string {
 	if (!isRecord(value)) return `${location} must be an object`;
 	const { instructions, ...required } = value;
@@ -321,7 +249,7 @@ function parseServer(value: unknown, location: string): ManifestServer | string 
 	if (instructions !== undefined && (typeof instructions !== "string" || instructions.length === 0)) {
 		return `${location}.instructions must be a non-empty string`;
 	}
-	const environment = parseEnvironment(value.environment, `${location}.environment`);
+	const environment = parsePassedVariables(value.environment, `${location}.environment`);
 	if (typeof environment === "string") return environment;
 	if (!Array.isArray(tools)) return `${location}.tools must be an array`;
 	const parsed: McpBuiltinTool[] = [];

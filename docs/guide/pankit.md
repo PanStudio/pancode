@@ -144,7 +144,7 @@ On a host without registry access, pre-seed the cache: copy each tarball to `<ca
 
 ### `catalog` options
 
-The server reads one catalog file: `$XDG_CONFIG_HOME/pankit/catalog.json`, or `~/.config/pankit/catalog.json` when `XDG_CONFIG_HOME` is not set, or the path given with `pankit serve catalog --file <path>` (relative to the working directory). The file is read on every call, so edits apply at once. `pankit catalog --example` prints this file, which is valid as is:
+The server reads one catalog file: `$XDG_CONFIG_HOME/science-data/catalog.json`, or `~/.config/science-data/catalog.json` when `XDG_CONFIG_HOME` is not set, or the path given with `pankit serve catalog --file <path>` (relative to the working directory). The file is read on every call, so edits apply at once. `pankit catalog --example` prints this file, which is valid as is:
 
 ```json
 {
@@ -213,7 +213,7 @@ pancode mcp untrust catalog              # remove that grant
 PanCode adds launch options to three builtin servers. They name this PanCode home and this project, so they stay out of the server's declaration and its digest:
 
 - `scidata` gets `--cache <PanCode cache>/pankit/data-readers`.
-- `catalog` gets `--file <PanCode config>/pankit/catalog.json`, which is `~/.config/pancode/pankit/catalog.json` unless `PANCODE_CONFIG_DIR` or `PANCODE_HOME` moves it. An isolated PanCode home never reads the operator's own `~/.config/pankit/catalog.json`.
+- `catalog` gets `--file <PanCode config>/science-data/catalog.json`, which is `~/.config/pancode/science-data/catalog.json` unless `PANCODE_CONFIG_DIR` or `PANCODE_HOME` moves it. An isolated PanCode home never reads the operator's own `~/.config/science-data/catalog.json`.
 - `store` gets the session's store: `--root` for each store root in settings order, primary first, `--shared` when `store.backend` is `shared`, `--cache` for PanCode's cache directory, `--project` for the directory it starts in, `--project-id` when the project's tracked settings set `store.projectId`, and one `--write-tag` per tag the session may write. The main session and `pancode mcp test` write every tag the project's store lists, a fleet worker exactly the tags its dispatch granted, and any other session none. See [MCP servers and store references](panstore.md#mcp-servers-and-store-references).
 
 The other four servers get no options. `pancode doctor` runs `pankit doctor` once with the same launch environment and prints one `pankit <id>` row per server, naming the catalog file and reader cache a session uses.

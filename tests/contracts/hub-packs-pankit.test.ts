@@ -1,25 +1,39 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * A first-party pack references a PanKit server by id and tool name in its
- * prose and never ships an `mcp.json` entry for a builtin id. Every input is
- * a tracked repository file: the packs under `hub/packs/plugins/` and the
- * generated manifest `packages/kit/servers.json`.
+ * A first-party pack references an MCP server by id and tool name in its
+ * prose. The hpc and science-data packs ship their own server in `mcp.json`,
+ * and every tool their text names is one that `mcp.json` classes; a server
+ * the pack does not ship (`scidata`, `store`) is checked against the PanKit
+ * manifest `packages/kit/servers.json`. Every input is a tracked repository file.
  */
 import { deepStrictEqual, ok } from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const PLUGINS = path.join(REPO, "hub/packs/plugins");
-const PACKS = ["hpc", "science-data"];
+const SERVER_OF: Record<string, string> = { hpc: "hpc", "science-data": "catalog" };
 
 const manifest = JSON.parse(readFileSync(path.join(REPO, "packages/kit/servers.json"), "utf8")) as {
 	servers: Array<{ id: string; tools: Array<{ name: string }> }>;
 };
 const toolsOf = new Map(manifest.servers.map((server) => [server.id, new Set(server.tools.map((tool) => tool.name))]));
+
+/** The servers a pack's `mcp.json` declares, each with the tools its `toolActionClasses` names. */
+function packServers(pack: string): Map<string, Set<string>> {
+	const declared =
+		(
+			JSON.parse(readFileSync(path.join(PLUGINS, pack, "mcp.json"), "utf8")) as {
+				mcpServers?: Record<string, { toolActionClasses?: Record<string, string> }>;
+			}
+		).mcpServers ?? {};
+	return new Map(
+		Object.entries(declared).map(([id, server]) => [id, new Set(Object.keys(server.toolActionClasses ?? {}))]),
+	);
+}
 
 function filesUnder(dir: string): string[] {
 	return readdirSync(dir).flatMap((name) => {
@@ -41,33 +55,26 @@ function capabilityTokens(pack: string): Array<{ file: string; id: string; tool:
 		);
 }
 
-describe("first-party packs and the builtin PanKit servers", () => {
-	it("ship no mcp.json in hpc or science-data, and no pack declares a builtin id", () => {
-		for (const pack of PACKS) ok(!existsSync(path.join(PLUGINS, pack, "mcp.json")), `${pack} ships mcp.json`);
-		for (const pack of readdirSync(PLUGINS)) {
-			const file = path.join(PLUGINS, pack, "mcp.json");
-			if (!existsSync(file)) continue;
-			const declared = Object.keys(
-				(JSON.parse(readFileSync(file, "utf8")) as { mcpServers?: Record<string, unknown> }).mcpServers ?? {},
-			);
-			deepStrictEqual(
-				declared.filter((id) => toolsOf.has(id)),
-				[],
-				`${pack}/mcp.json declares a builtin server id`,
-			);
-		}
+describe("first-party packs and their MCP servers", () => {
+	it("ship exactly their own server in mcp.json", () => {
+		for (const [pack, id] of Object.entries(SERVER_OF)) deepStrictEqual([...packServers(pack).keys()], [id], pack);
 	});
 
-	it("name only tools the manifest lists, and the servers each pack relies on", () => {
-		const named = new Map<string, Set<string>>();
-		for (const pack of PACKS) {
+	it("name only tools their mcp.json or the PanKit manifest lists, and their own server's tools", () => {
+		for (const [pack, own] of Object.entries(SERVER_OF)) {
+			const servers = packServers(pack);
 			const tokens = capabilityTokens(pack);
 			for (const { file, id, tool } of tokens) {
-				ok(toolsOf.get(id)?.has(tool) === true, `${file} names mcp_${id}__${tool}, which servers.json does not list`);
+				const listed = servers.get(id) ?? toolsOf.get(id);
+				ok(
+					listed?.has(tool) === true,
+					`${file} names mcp_${id}__${tool}, which neither ${pack}/mcp.json nor servers.json lists`,
+				);
 			}
-			named.set(pack, new Set(tokens.map((token) => token.id)));
+			ok(
+				tokens.some((token) => token.id === own),
+				`${pack} names no ${own} tool`,
+			);
 		}
-		for (const id of ["modules", "spack", "darshan"]) ok(named.get("hpc")?.has(id), `hpc names no ${id} tool`);
-		ok(named.get("science-data")?.has("catalog"), "science-data names no catalog tool");
 	});
 });

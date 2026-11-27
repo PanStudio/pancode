@@ -6,9 +6,9 @@
  * since no process can change the environment of the session that called it.
  */
 import { defineServer } from "@pancode/sdk/tool";
+import { findModuleTool, MODULES_ENVIRONMENT } from "../../../../../hub/packs/plugins/hpc/src/modules/locate.js";
+import { MODULES_TOOLS } from "../../../../../hub/packs/plugins/hpc/src/modules/tools.js";
 import type { ServerProbe } from "../../registry.js";
-import { findModuleTool, MODULES_ENVIRONMENT } from "./locate.js";
-import { MODULES_TOOLS } from "./tools.js";
 
 export const server = defineServer({
 	id: "modules",

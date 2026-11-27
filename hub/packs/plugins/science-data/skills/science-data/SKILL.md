@@ -54,8 +54,8 @@ Call it with `gateway(op="call", capability="store", args={...})`.
 ## Finding a dataset outside the project
 
 When neither the working tree nor a store tag holds the data, look in the
-dataset catalogs the operator named, through the `catalog` server PanCode
-ships. Call a tool by its capability name; when it is not attached to the
+dataset catalogs the operator named, through the `catalog` server this
+plugin ships. Call a tool by its capability name; when it is not attached to the
 session, call it through
 `gateway(op="call", capability="mcp_catalog__catalog_search", args={...})`.
 
@@ -71,7 +71,7 @@ session, call it through
    the tools below, or `op="put"` it into a store tag.
 
 With no catalog file the server is unavailable, and its reason names the path
-to create (`pankit catalog --example` prints a valid file): say so and stop.
+to create (the science-data README has a valid example): say so and stop.
 In a fleet worker the `catalog` server reaches a remote portal only after the
 operator runs `pancode mcp trust catalog --network`.
 

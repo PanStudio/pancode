@@ -1,0 +1,19 @@
+{
+	"mcpServers": {
+		"catalog": {
+			"type": "stdio",
+			"command": "node",
+			"args": ["${PLUGIN_ROOT}/server.mjs"],
+			"toolActionClasses": {
+				"catalog_describe": "read",
+				"catalog_search": "read",
+				"catalog_stage": "execute"
+			},
+			"toolPathArguments": {
+				"catalog_stage": {
+					"destination": "write"
+				}
+			}
+		}
+	}
+}

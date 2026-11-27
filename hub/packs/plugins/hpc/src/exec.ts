@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The one way a PanKit server runs a site command (`sbatch`, `module`,
+ * The one way an hpc tool runs a site command (`sbatch`, `module`,
  * `lfs`). No server may import `node:child_process` itself; every command goes
  * through `runCommand`, so each one is an argv array and never a shell
  * string, is bounded in time and output, sees only the environment it names,
@@ -27,6 +27,13 @@ export const BASE_ENV_ALLOWLIST: ReadonlyArray<string> = [
 	"TZ",
 	"TMPDIR",
 ];
+
+/** An optional program or file a tool group reads when the host has it: found where, or why not. */
+export interface ProbeSource {
+	name: string;
+	found: boolean;
+	detail?: string;
+}
 
 /** Captured output kept per stream when the caller names no cap. */
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;

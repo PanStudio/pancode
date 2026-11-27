@@ -6,8 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { AnyTool } from "@pancode/sdk/tool";
-import { BASE_ENV_ALLOWLIST } from "../src/exec.js";
-import { environment, probe, server } from "../src/servers/spack/index.js";
+import { BASE_ENV_ALLOWLIST } from "../../../hub/packs/plugins/hpc/src/exec.js";
 import {
 	compilersOf,
 	parseAmbiguousSpecError,
@@ -24,9 +23,10 @@ import {
 	parseSpackVersionFile,
 	parseSpecJson,
 	scanJsonDocuments,
-} from "../src/servers/spack/parse.js";
-import { SPACK_MISSING, SPACK_TIMEOUTS, specTokens } from "../src/servers/spack/program.js";
-import { MAX_NODES, MAX_SPECS } from "../src/servers/spack/tools.js";
+} from "../../../hub/packs/plugins/hpc/src/spack/parse.js";
+import { SPACK_MISSING, SPACK_TIMEOUTS, specTokens } from "../../../hub/packs/plugins/hpc/src/spack/program.js";
+import { MAX_NODES, MAX_SPECS } from "../../../hub/packs/plugins/hpc/src/spack/tools.js";
+import { environment, probe, server } from "../src/servers/spack/index.js";
 
 /**
  * The spack server: its parsers against Spack's output, and its tools against

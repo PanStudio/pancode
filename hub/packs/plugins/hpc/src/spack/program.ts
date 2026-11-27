@@ -7,7 +7,7 @@
  */
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { resolveProgram, runCommand } from "../../exec.js";
+import { resolveProgram, runCommand } from "../exec.js";
 import {
 	parseRepoListJson,
 	parseRepoListText,

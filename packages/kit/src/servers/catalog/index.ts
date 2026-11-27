@@ -3,38 +3,27 @@
 /**
  * The `catalog` server: search the dataset catalogs the operator named in a
  * catalog file, describe one dataset, and stage one of its files to a path.
- * The file is `<XDG_CONFIG_HOME or ~/.config>/pankit/catalog.json`, or the
- * path `--file` gives. PanKit ships no sources, so without the file the
+ * The file is `<XDG_CONFIG_HOME or ~/.config>/science-data/catalog.json`, or
+ * the path `--file` gives. It ships no sources, so without the file the
  * server is unavailable and says which path to create.
  */
-import os from "node:os";
 import path from "node:path";
-import { defineServer } from "@pancode/sdk/tool";
+import { catalogServer, defaultCatalogFile } from "../../../../../hub/packs/plugins/science-data/src/server.js";
+import { loadCatalog } from "../../../../../hub/packs/plugins/science-data/src/tools.js";
 import { type ServerProbe, ServerUsageError } from "../../registry.js";
-import { catalogTools, loadCatalog } from "./tools.js";
 
 let configuredFile: string | null = null;
 
 /** The catalog file this server reads: `--file` when given, else the default under the configuration directory. */
 export function catalogFilePath(): string {
-	if (configuredFile !== null) return configuredFile;
-	const xdg = process.env.XDG_CONFIG_HOME;
-	const base = xdg !== undefined && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), ".config");
-	return path.join(base, "pankit", "catalog.json");
+	return configuredFile ?? defaultCatalogFile();
 }
 
-export const server = defineServer({
-	id: "catalog",
-	version: "0.2.0",
-	title: "Dataset catalogs",
-	instructions:
-		"The datasets are the sources listed in one catalog file the operator writes; without that file every tool fails and names the path it looked for. A local source lists files on this host; a ckan source is a public CKAN portal reached over https, and downloads go only to its own host or the hosts its resourceHosts entry lists.",
-	tools: catalogTools({ catalogFile: catalogFilePath, requestTimeoutMs: 20_000, stallTimeoutMs: 60_000 }),
-});
+export const server = catalogServer(catalogFilePath);
 
 export const usage = `Options:
   --file <path>  the catalog file to read, instead of
-                 <XDG_CONFIG_HOME or ~/.config>/pankit/catalog.json
+                 <XDG_CONFIG_HOME or ~/.config>/science-data/catalog.json
 
 The catalog file is {"version": 1, "sources": [...]}. A "local" source needs
 id, type and datasets; each dataset needs id and title, and each resource needs

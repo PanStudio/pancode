@@ -273,7 +273,7 @@ describe("doctor PanKit rows", () => {
 			);
 			const byName = new Map(findings.map((finding) => [finding.name, finding]));
 			strictEqual(byName.get("pankit node")?.level, "ok");
-			const catalogFile = path.join(env.dir, "config", "pankit", "catalog.json");
+			const catalogFile = path.join(env.dir, "config", "science-data", "catalog.json");
 			const catalog = byName.get("pankit catalog")?.detail ?? "";
 			ok(catalog.includes(catalogFile), catalog);
 			const scidata = byName.get("pankit scidata")?.detail ?? "";

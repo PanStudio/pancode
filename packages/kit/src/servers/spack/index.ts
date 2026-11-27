@@ -7,9 +7,13 @@
  * `spack` on `PATH`, else `$SPACK_ROOT/bin/spack`.
  */
 import { defineServer } from "@pancode/sdk/tool";
+import {
+	locateSpack,
+	readSpackVersion,
+	SPACK_ENVIRONMENT,
+} from "../../../../../hub/packs/plugins/hpc/src/spack/program.js";
+import { SPACK_TOOLS } from "../../../../../hub/packs/plugins/hpc/src/spack/tools.js";
 import type { ServerProbe } from "../../registry.js";
-import { locateSpack, readSpackVersion, SPACK_ENVIRONMENT } from "./program.js";
-import { SPACK_TOOLS } from "./tools.js";
 
 export const server = defineServer({ id: "spack", version: "0.2.0", title: "Spack packages", tools: SPACK_TOOLS });
 
