@@ -1100,6 +1100,7 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 										capabilities: {
 											tools: {},
 											resources: {},
+											prompts: {},
 											extensions: { "io.modelcontextprotocol/skills": {} },
 										},
 										_meta: { "io.modelcontextprotocol/serverInfo": { name: "elicit-scope", version: "1.0" } },
@@ -1114,14 +1115,53 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 									result: { skills: [] },
 								}),
 							);
-						} else if (m.method === "resources/read") {
-							queueMicrotask(() =>
-								deliver({
-									jsonrpc: "2.0",
-									id: m.id ?? 2,
-									result: { contents: [{ uri: "skill://a", text: "ok" }] },
-								}),
-							);
+						} else if (m.method === "resources/read" || m.method === "prompts/get") {
+							const p = (m.params ?? {}) as Record<string, unknown>;
+							const responses = p.inputResponses as
+								| Record<string, { action?: string; content?: { note?: string } }>
+								| undefined;
+							if (responses === undefined) {
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id: m.id ?? 2,
+										result: {
+											resultType: "input_required",
+											requestState: `tok:${m.method}`,
+											inputRequests: {
+												q1: {
+													method: "elicitation/create",
+													params: {
+														mode: "form",
+														message: "Provide note",
+														requestedSchema: {
+															type: "object",
+															properties: { note: { type: "string" } },
+															required: ["note"],
+														},
+													},
+												},
+											},
+										},
+									}),
+								);
+							} else {
+								strictEqual(p.requestState, `tok:${m.method}`);
+								const note = responses.q1?.content?.note ?? "";
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id: m.id ?? 2,
+										result:
+											m.method === "resources/read"
+												? { resultType: "complete", contents: [{ uri: "skill://a", text: `read:${note}` }] }
+												: {
+														resultType: "complete",
+														messages: [{ role: "user", content: { type: "text", text: `prompt:${note}` } }],
+													},
+									}),
+								);
+							}
 						} else if (m.method === "tools/call") {
 							queueMicrotask(() =>
 								deliver({
@@ -1140,14 +1180,19 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 					teardown: () => ({ complete: true }),
 				};
 			},
-			{ elicitation: async () => ({ action: "decline" }) },
+			{ elicitation: async () => ({ action: "accept", content: { note: "ok-mrtr" } }) },
 		);
 		clients.push(c);
 		await c.initialize();
 		const skills = c.skills();
 		ok(skills !== null);
 		await skills.listSkills(undefined);
-		await skills.readResource("skill://a");
+		const readRes = await c.readResource("skill://a");
+		const firstRead = readRes.contents[0];
+		strictEqual(firstRead !== undefined && "text" in firstRead ? firstRead.text : "", "read:ok-mrtr");
+		const promptRes = await c.getPrompt("p1", {});
+		const firstPrompt = promptRes.messages[0]?.content;
+		strictEqual(firstPrompt?.type === "text" ? firstPrompt.text : "", "prompt:ok-mrtr");
 		await c.callTool("go", {});
 		const listCaps = (envelopes.find((e) => e.method === "skills/list")?.meta?.[
 			"io.modelcontextprotocol/clientCapabilities"
@@ -1155,11 +1200,15 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 		const readCaps = (envelopes.find((e) => e.method === "resources/read")?.meta?.[
 			"io.modelcontextprotocol/clientCapabilities"
 		] ?? {}) as Record<string, unknown>;
+		const promptCaps = (envelopes.find((e) => e.method === "prompts/get")?.meta?.[
+			"io.modelcontextprotocol/clientCapabilities"
+		] ?? {}) as Record<string, unknown>;
 		const callCaps = (envelopes.find((e) => e.method === "tools/call")?.meta?.[
 			"io.modelcontextprotocol/clientCapabilities"
 		] ?? {}) as Record<string, unknown>;
 		strictEqual(listCaps.elicitation, undefined, "non-MRTR skills/list must not advertise elicitation");
 		ok(readCaps.elicitation !== undefined, "MRTR resources/read advertises elicitation when wired");
+		ok(promptCaps.elicitation !== undefined, "MRTR prompts/get advertises elicitation when wired");
 		ok(callCaps.elicitation !== undefined, "MRTR tools/call advertises elicitation when wired");
 
 		// Encoded URL length > 2048 must be rejected; punycode warning stays bounded <= 512 chars.
