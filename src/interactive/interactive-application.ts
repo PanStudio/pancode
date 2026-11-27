@@ -62,7 +62,7 @@ import {
 	type InteractiveDeps,
 	type InteractiveSubmitExpansion,
 } from "./interactive-deps.js";
-import { type DockKeyOrigin, pressFilesKey, pressMusicKey } from "./interactive-dock-keys.js";
+import { type DockKeyOrigin, pressFilesKey } from "./interactive-dock-keys.js";
 import { createInteractiveEventProjection } from "./interactive-event-projection.js";
 import { explainProtectedExit } from "./interactive-exit-explanation.js";
 import { createInteractiveInputRuntime } from "./interactive-input-runtime.js";
@@ -507,9 +507,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			})
 		: undefined;
 	let lastSlashCommand: string | null = null;
-	const musicAvailable = (): boolean =>
-		deps.music !== undefined && deps.getSettings?.().integrations.music.enabled === true;
-	const commandHidden = (command: string): boolean => command === "music" && !musicAvailable();
 	// The in-session trust card: `/trust`, a `/reload` that finds new project configuration, and the header reminder.
 	const projectTrust = createProjectTrustSession({
 		cwd: () => process.cwd(),
@@ -527,7 +524,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		getProjectConfigReminder: () => projectTrust.reminder(),
 		commandUnavailable: (command) =>
 			command === "panes" && deps.panes === undefined ? "needs a pane host; this session has none" : undefined,
-		commandHidden,
 		...(deps.jobs ? { jobs: deps.jobs } : {}),
 		getParkedCallCount: () => deps.toolRegistry?.parkedCount() ?? 0,
 		workersDockAvailable: () =>
@@ -671,10 +667,9 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	};
 	// The dock keys. A first tap shows or hides at once and a second inside the
 	// window ends the process. A tap can also arrive from inside the dock (Alt+E in
-	// Yazi, Alt+A in cliamp), where PanCode's own key handler is not the one that hears
-	// it; those hide the pane and hand the keyboard back to PanCode.
+	// Yazi), where PanCode's own key handler is not the one that hears it; those
+	// hide the pane and hand the keyboard back to PanCode.
 	const dockKeys = createDockKeyGate();
-	const detachMusicDockKey = deps.music?.onDockKey(() => pressMusicKey(deps, notify, dockKeys, "dock"));
 	// The factory arrives only from an active `--with-panes` boot (or a test); a
 	// plain session has no deps.panes and no factory, and loads no yazi code.
 	const yaziBridge =
@@ -1111,7 +1106,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		openView: (filter) => openViewOverlayState(filter),
 		...(deps.panes ? { panes: deps.panes } : {}),
 		attach: attachController,
-		...(deps.music ? { music: deps.music } : {}),
 		...(loopJobs ? { jobs: loopJobs.jobs } : {}),
 		openModel: () => openModelOverlayState(),
 		applyModelSession: (ref) => applyModelSessionState(ref),
@@ -1312,7 +1306,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		onToolJudging: (toolCallId) => statusController.noteToolJudging(toolCallId),
 		onOverlayClosed: () => ambientSurfaces?.refresh(),
 		getDispatchRows: () => dispatchBoardStore.workerRows(),
-		commandHidden,
 		app: { ...deps, ...settingActions },
 		tui,
 		footer,
@@ -1545,7 +1538,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	watchPaneRef = watchPane;
 	const detachWatchPane = watchPane ? deps.attachWatchPane?.(watchPane) : undefined;
 	// The workers key. With a pane host it drives the workers dock the way the
-	// files and music keys drive theirs, and Alt+W or q pressed inside the
+	// files key drives its own, and Alt+W or q pressed inside the
 	// dashboard arrive through its tap file. Without one it opens the Fleet Runs
 	// board, which `/fleet` and the left arrow on an empty composer also reach.
 	const pressWorkersKey = (origin: DockKeyOrigin): void => {
@@ -1850,8 +1843,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			},
 			backgroundActiveDispatch,
 			toggleFilesPane: () => pressFilesKey(deps, notify, dockKeys, "composer"),
-			toggleMusic: () => pressMusicKey(deps, notify, dockKeys, "composer"),
-			musicAvailable,
 			toggleWorkersDock: () => pressWorkersKey("composer"),
 		},
 		overlay: overlayLifecycle,
@@ -1942,7 +1933,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				void ambientSurfaces?.dispose();
 				devSession?.dispose();
 				void operatorExtensions?.dispose();
-				detachMusicDockKey?.();
 				loopJobs?.dispose();
 				terminalColors.dispose();
 				detachYaziBridge?.();
@@ -2276,22 +2266,19 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				.catch(() => {});
 		});
 		// Docks are prepared hidden only now that the first frame is out: pane
-		// host traffic and a Yazi or cliamp boot never sit in front of the paint.
+		// host traffic and a Yazi boot never sit in front of the paint.
 		// A failure stays silent; the key that wants the dock finds it absent and
 		// reports the reason itself.
 		afterPaint(() => {
 			if (startupAbort.signal.aborted) return;
 			const settings = deps.getSettings?.();
 			void (async () => {
-				// Parked orphans first: a crashed session's hidden cliamp must not
-				// keep playing beside the pane this session is about to prepare.
+				// Parked orphans first: a crashed session's hidden pane must not keep
+				// running beside the pane this session is about to prepare.
 				await mux?.reapParkedOrphans().catch(() => 0);
 				if (startupAbort.signal.aborted) return;
 				if (yaziBridge && mux?.available() && settings?.interface.panes.files.enabled) {
 					void yaziBridge.open({ hidden: true }).catch(() => undefined);
-				}
-				if (deps.music && settings?.integrations.music.enabled) {
-					void deps.music.prepare().catch(() => undefined);
 				}
 			})();
 		});

@@ -29,7 +29,6 @@ export interface PancodeAppKeybindings {
 	"pancode.session.tree": true;
 	"pancode.dispatchBoard.toggle": true;
 	"pancode.files.toggle": true;
-	"pancode.music.toggle": true;
 	"pancode.tasks.open": true;
 	"pancode.decisions.open": true;
 	"pancode.dispatch.background": true;
@@ -143,16 +142,6 @@ export const PANCODE_APP_KEYBINDINGS = {
 		kind: "toggle",
 		repeat: false,
 		leader: "e",
-	},
-	"pancode.music.toggle": {
-		defaultKeys: "alt+a",
-		label: "Music",
-		description: "Music pane: show or hide (twice quickly closes)",
-		command: "/music",
-		scope: "composer",
-		kind: "toggle",
-		repeat: false,
-		leader: "a",
 	},
 	"pancode.message.interrupt": {
 		// Not alt+enter: in legacy terminal mode it is the same bytes as the

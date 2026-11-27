@@ -91,9 +91,6 @@ export const TOOL_PLANES: Readonly<Record<BuiltinToolName, PlaneExpectation>> = 
 	// panes. It mutates no workspace, so it stays read class; sequential because
 	// two pane operations in one batch would race the same pane registry.
 	[ToolNames.Panes]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
-	// music drives PanCode's own player in PanCode's own dock and touches no
-	// workspace. Sequential so open and close never race the dock slot.
-	[ToolNames.Music]: { plane: "orchestrate", actionClass: "read", executionMode: "sequential" },
 	// limitation records a typed receipt in the session ledger and nothing
 	// else: no filesystem, no shell. Read class so it never trips a safety
 	// gate; parallel because the call is pure and idempotent.
@@ -158,8 +155,6 @@ const INTERACTIVE_BOUND_TOOLS = new Set<ToolName>([
 ]);
 /** Registered only when a pane host answered detection and the mux is live. */
 const PANES_BOUND_TOOLS = new Set<ToolName>([ToolNames.Panes]);
-/** Registered only when the operator opted the model into the music pane. */
-const MUSIC_BOUND_TOOLS = new Set<ToolName>([ToolNames.Music]);
 /**
  * Registered with a worker port or an ownership-scoped session selector.
  */
@@ -187,7 +182,7 @@ const SELF_REPO_BOUND_TOOLS = new Set<ToolName>([ToolNames.RestartSession]);
 
 /**
  * Builtin tools a native worker registry never registers on any host: the
- * dispatch, interactive, pane, music, decision, vision and memory-recall planes
+ * dispatch, interactive, pane, decision, vision and memory-recall planes
  * plus the two continuity tools only an attended parent supplies (the same
  * exclusions `validateBuiltinToolPolicy` applies to a worker registration).
  * The harness validator reads this so a recipe naming one is told before
@@ -201,7 +196,6 @@ export function isWorkerSurfaceExcludedTool(name: ToolName): boolean {
 		DISPATCH_BOUND_TOOLS.has(name) ||
 		INTERACTIVE_BOUND_TOOLS.has(name) ||
 		PANES_BOUND_TOOLS.has(name) ||
-		MUSIC_BOUND_TOOLS.has(name) ||
 		DECISION_BOUND_TOOLS.has(name) ||
 		VISION_BOUND_TOOLS.has(name) ||
 		MEMORY_RECALL_BOUND_TOOLS.has(name) ||
@@ -212,11 +206,11 @@ export function isWorkerSurfaceExcludedTool(name: ToolName): boolean {
 	);
 }
 /**
- * Builtin tools a headless `pancode run` host never registers: it has no pane host, so no panes or music, and the
+ * Builtin tools a headless `pancode run` host never registers: it has no pane host, so no panes, and the
  * interactive plane exists only when an `--answers` file stands in for the operator.
  */
 export function isHeadlessHostExcludedTool(name: ToolName, answers: boolean): boolean {
-	return PANES_BOUND_TOOLS.has(name) || MUSIC_BOUND_TOOLS.has(name) || (!answers && INTERACTIVE_BOUND_TOOLS.has(name));
+	return PANES_BOUND_TOOLS.has(name) || (!answers && INTERACTIVE_BOUND_TOOLS.has(name));
 }
 /** The RETRIEVE plane, omitted wholesale by a hermetic run (tools/network-policy.ts). */
 const NETWORK_BOUND_TOOLS = new Set<ToolName>([ToolNames.WebRead, ToolNames.WebFetch]);
@@ -303,7 +297,6 @@ export function validateBuiltinToolPolicy(
 		if (!includeShellTool && SHELL_BOUND_TOOLS.has(tool)) required.delete(tool);
 		if (DECISION_BOUND_TOOLS.has(tool)) required.delete(tool);
 		if (VISION_BOUND_TOOLS.has(tool)) required.delete(tool);
-		if (MUSIC_BOUND_TOOLS.has(tool)) required.delete(tool);
 		if (MEMORY_RECALL_BOUND_TOOLS.has(tool)) required.delete(tool);
 		if (MEMORY_NOTE_BOUND_TOOLS.has(tool)) required.delete(tool);
 		if (REPORT_BOUND_TOOLS.has(tool)) required.delete(tool);

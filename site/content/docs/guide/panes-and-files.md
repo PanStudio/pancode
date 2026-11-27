@@ -4,7 +4,7 @@ Attach files and open companion terminal panes.
 
 ## Add a file browser or companion shell
 
-The terminal can open a files pane, a live workers dashboard, logs, a shell, music, or an installed coding peer beside the conversation.
+The terminal can open a files pane, a live workers dashboard, logs, a shell, an extension's pane, or an installed coding peer beside the conversation.
 
 Bare `pancode` in an interactive terminal opens its own private pane host with no question to answer. The host is a pinned copy of **Herdr** that the installer provisions. When the host is not installed, PanCode starts in the plain terminal without a notice, and `/panes`, `/files`, and Alt+E name `pancode panes install`.
 
@@ -38,9 +38,9 @@ Check `pancode doctor` if the host or files engine is unavailable.
 
 ## Docks hide instead of closing
 
-The files, workers, and music panes are docks with fixed places. **Alt+E**, **Alt+W**, and **Alt+A** show or hide them, and a second press within a moment closes one. Alt+W opens a dashboard with a card for each worker in the session; Enter follows one worker's live stream.
+The files and workers panes are docks with fixed places. **Alt+E** and **Alt+W** show or hide them, and a second press within a moment closes one. Alt+W opens a dashboard with a card for each worker in the session; Enter follows one worker's live stream.
 
-`/music` plays focus radio through cliamp in a thin dock once `integrations.music.enabled` is on and `pancode tools install cliamp` has run. `/music pause`, `/music next`, `/music station <name or url>`, and `/music off` control it.
+An installed extension can open its own pane below the conversation, in the `extension` dock. The music extension pack (`pancode hub install extension:music`) plays focus radio there with `/music` or **Alt+A**.
 
 | Command | Companion pane |
 | --- | --- |

@@ -446,18 +446,6 @@ const TOOL_METADATA: Readonly<Record<string, ToolMetadata>> = {
 			"Only handoff panes support send/read/wait; utility panes cannot be driven or reused through this tool. " +
 			"If asked to use an existing utility pane, explain that limit before opening a different handoff pane; do not claim it was reused.",
 	},
-	[ToolNames.Music]: {
-		// Empty on purpose: a non-empty objective lands in the prompt's capability
-		// map, and the tool description is meant to be the only music text the
-		// model reads.
-		objective: "",
-		uiLabel: "Music",
-		resultSizePolicy: {
-			kind: "exact",
-			maxBytes: 2_048,
-			followUpHint: 'Call music with action="status" to see what is playing.',
-		},
-	},
 	[ToolNames.Limitation]: {
 		objective: "Record a needed check that could not run here, and why.",
 		uiLabel: "Limitation",

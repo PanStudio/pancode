@@ -482,7 +482,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 		target: { kind: "pane", view: "session" },
 		available: (facts) => facts.paneAvailable,
 	},
-	...["restart", "upgrade", "panes", "music", "extensions dev"].map(terminalOnly),
+	...["restart", "upgrade", "panes", "extensions dev"].map(terminalOnly),
 ];
 
 const ALIAS_BY_NAME = new Map<string, SlashAliasSpec>(

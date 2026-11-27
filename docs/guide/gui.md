@@ -474,7 +474,7 @@ A line whose first word is not a catalog command or a prompt template is checked
 | `/view` | Open the task's artifacts beside the conversation. |
 | `/files` | Start an `@` file mention in the message box. |
 | `/quit`, `/exit` | Say where that is done instead; nothing else happens. |
-| `/restart`, `/upgrade`, `/panes`, `/music`, `/extensions dev` | Say `/<name> is a terminal command and has no equivalent in this app.` |
+| `/restart`, `/upgrade`, `/panes`, `/extensions dev` | Say `/<name> is a terminal command and has no equivalent in this app.` |
 | `/trust` | Points to the task pane's `Project trust` section, where each ignored surface has a `Review` button. |
 
 `/btw` and `/draft` read the conversation and answer in a panel. Neither becomes a turn or context for the next request. `/handoff` drafts a document for the person to read and edit, and starts a new conversation only after approval.

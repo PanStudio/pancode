@@ -20,8 +20,6 @@ export interface KeyBindingDeps {
 	toggleDispatchBoard: () => void;
 	/** `/files` as a key: open the files pane when closed, close it when open. */
 	toggleFilesPane: () => void;
-	/** `/music` as a key: open and play when closed, stop and close when open. */
-	toggleMusic?: () => void;
 	openTasks: () => void;
 	openDecisions: () => void;
 	backgroundDispatch: () => void;
@@ -101,10 +99,6 @@ export function dispatchInteractiveAction(id: PancodeKeybinding, deps: KeyBindin
 			return true;
 		case "pancode.files.toggle":
 			deps.toggleFilesPane();
-			return true;
-		case "pancode.music.toggle":
-			if (!deps.toggleMusic) return false;
-			deps.toggleMusic();
 			return true;
 		case "pancode.tasks.open":
 			deps.openTasks();

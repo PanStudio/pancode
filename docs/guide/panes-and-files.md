@@ -42,7 +42,7 @@ closes its docks and leaves utility panes open:
   Interoperability](interop.md).
 - **The workers dock.** `Alt+W` opens or shows the workers dashboard in a dock to the right of the session and leaves the keyboard in PanCode. The dashboard lists a card for every live run and for the newest 24 finished runs. When the session pane is too narrow for the dock, or the pane host refuses the split, `Alt+W` opens the Fleet Runs board instead and says why. The dashboard, its keys and the per-run
   takeover are documented with the fleet in [Fleet Dispatch](fleet-dispatch.md). This page covers the utility panes and the dock contract below.
-- **The music pane.** `/music` or `Alt+A` shows cliamp in a dock below the session for focus radio. It is off until `integrations.music.enabled` is `true` (default `false`, in `/settings workspace` under Panes), and it needs the Herdr pane layer and a cliamp at 1.63.2 or newer, either on `PATH` or vendored by `pancode tools install cliamp`. See [Music](music.md).
+- **Extension panes.** An installed extension can run its own program in a pane in the `extension` dock slot below the session. The [music pack](../../hub/packs/extensions/music/README.md) uses it for focus radio.
 - **Status and toasts.** In guest mode PanCode reports session state on the hosting pane as agent `pancode`: `working`, `blocked` while a tool call waits on an approval, and `idle`. A finished dispatch can raise a herdr toast per `interface.panes.notifications`, and a failed run also leaves a transcript notice.
 
 PanCode acts only on panes it created, which carry a `pancode_owner` metadata token. A pane you opened yourself in herdr is never closed, zoomed, or retargeted. The hosting pane is the one exception: PanCode reports status on it, returns keyboard focus to it, and leaves zoom on its tab.
@@ -66,7 +66,6 @@ clears the registry's minimum version.
 | --- | --- | --- | --- |
 | herdr | Pane host. PanCode hosts itself only on its own pinned copy; a herdr on `PATH` is never used for that. | 0.9.5 | not used for hosting |
 | yazi | Files pane engine; the install also provides its `ya` helper. | 26.8.15 | 26.8.15 |
-| cliamp | Music pane. See [Music](music.md). | 1.63.2 | 1.63.2 |
 
 The registry is `src/domains/toolchain/registry.ts`. herdr has pinned assets for Linux and macOS on x64 and arm64 and for Windows on x64. The Windows asset is a zip holding `herdr.exe` and the ConPTY runtime it loads from `conpty/`. On Windows the pane client talks to herdr over its named pipe, and PanCode's private host runs as a herdr `--session` named `pancode-<12 hex>`, so its socket and logs live under herdr's own config directory (`%APPDATA%\herdr\sessions\`, or `$XDG_CONFIG_HOME\herdr\sessions\` when that is set) while its managed config stays in the state directory. PanCode opened from PowerShell or Windows Terminal gets the same host, docks and keys as on Linux and macOS. New panes start herdr's PowerShell, and a shell, logs or files pane receives its command through the `PANCODE_PANE_RUN` variable, so the line PowerShell records in its history is the same inert runner each time. In the files pane, Yazi runs its keymap commands through `cmd.exe`, and the managed profile writes the Ctrl+Y and Alt+E bindings in that form. Windows on ARM has no herdr asset, so PanCode runs in the plain terminal there.
 
@@ -174,7 +173,6 @@ an outdated files engine, the diagnostics include:
 OK   external tool herdr    pane host 0.9.5 (PanCode's pinned copy) at /home/you/.local/share/pancode/tools/herdr/0.9.5/herdr
 WARN external tool yazi     PATH copy /home/you/.local/bin/yazi is 26.1.22, below the 26.8.15 floor, and nothing is vendored (install with `pancode tools install yazi`)
 INFO external tool croc     not found (install with `pancode tools install croc`)
-INFO external tool cliamp   not found (install with `pancode tools install cliamp`)
 INFO files pane profile     /home/you/.cache/pancode/yazi/profile (missing); user config /home/you/.config/yazi is separate and untouched
 OK   panes mode             PanCode's private pane host opens with bare `pancode`; this command is not running inside one
 OK   panes layout           off
@@ -183,7 +181,7 @@ OK   panes journal dir      /home/you/.local/state/pancode/telemetry/runs is wri
 
 A missing pinned herdr is a WARN that names `pancode panes install`; a bare launch installs it only in a home that already had panes, when the pinned version moved;
 on a platform with no pinned herdr the row is INFO. A missing yazi is a WARN only while the files pane is enabled;
-otherwise `files pane profile` reads `disabled by settings`. A missing croc or cliamp is always INFO. Outside a pane host,
+otherwise `files pane profile` reads `disabled by settings`. A missing croc is always INFO. Outside a pane host,
 doctor prints only `panes mode` and `panes layout` and does not probe a socket. Run inside a pane host, it adds
 `panes socket`, `panes protocol` and `panes binary`. `panes binary` names the pinned herdr the private host runs, as the `external tool herdr` row does; a herdr on PATH is never that binary.
 The `panes mode` row reports what a bare `pancode` would do from where doctor runs, by the same rule the launcher uses.
@@ -217,11 +215,9 @@ regeneration succeeds or the operator resets the profile.
 | `/panes zoom [target]` | Toggle zoom on a PanCode-owned pane (default: the watch pane). |
 | `/panes close [target\|all]` | Close one PanCode-owned pane, or all of them (the default). A target matches a pane id exactly, then a label substring, then a purpose, newest first. |
 | `/panes peer [--cwd <workspace>] <peer> [brief]` | Open `pancode`, `claude-code`, `codex`, `opencode`, `antigravity` or `pi` (binaries `pancode`, `claude`, `codex`, `opencode`, `agy`, `pi`) in an owned pane. `pancode` refuses a brief. |
-| `Alt+A` | The music pane's single tap (`pancode.music.toggle`; `Ctrl+G` then `a`). Two taps within 400 ms close it. See [Music](music.md). |
-| `/music [on\|off\|pause\|next\|status\|station <name or url>]` | Drive the music pane. Bare `/music` does what `Alt+A` does. The contract is in [Music](music.md). |
 
 The model has the same doors, with exceptions. Its `panes` tool exists only in a session whose pane host answered,
-and takes eight actions: `list`, `show`, `open`, `handoff`, `send`, `wait`, `read` and `close`. It opens only the three presets (`files`, `logs`, `shell`), and never opens arbitrary argv or zooms (zooming steals focus). `send`, `wait` and `read` work only on a handoff pane and replace driving the pane host's CLI through `bash`. `send` delivers a prompt of at most 8,192 bytes, or one interrupt key (`esc` or `ctrl+c`), and nothing else, so no field types raw text or presses a key that could accept an approval; a prompt to a second PanCode session becomes a turn on that session's own queue, labelled as coming from this one, and it refuses a peer that is blocked on its operator. `wait` waits up to 120 seconds by default (at most 600) for the peer to settle and reports `blocked` when the peer is asking its operator. `read` returns the last 120 lines by default (at most 400) under the untrusted-content banner, because what a peer prints is its unverified claim. A brief or a prompt leaving the session passes the same information-flow check as a handoff brief. Its `list` action reports each dock as `visible`, `hidden` or `closed`, and what the music pane is playing, whether or not the model may control music. Opening the `files` preset shows a hidden files pane. The model has no action that hides a dock. See
+and takes eight actions: `list`, `show`, `open`, `handoff`, `send`, `wait`, `read` and `close`. It opens only the three presets (`files`, `logs`, `shell`), and never opens arbitrary argv or zooms (zooming steals focus). `send`, `wait` and `read` work only on a handoff pane and replace driving the pane host's CLI through `bash`. `send` delivers a prompt of at most 8,192 bytes, or one interrupt key (`esc` or `ctrl+c`), and nothing else, so no field types raw text or presses a key that could accept an approval; a prompt to a second PanCode session becomes a turn on that session's own queue, labelled as coming from this one, and it refuses a peer that is blocked on its operator. `wait` waits up to 120 seconds by default (at most 600) for the peer to settle and reports `blocked` when the peer is asking its operator. `read` returns the last 120 lines by default (at most 400) under the untrusted-content banner, because what a peer prints is its unverified claim. A brief or a prompt leaving the session passes the same information-flow check as a handoff brief. Its `list` action reports the files, workers and extension docks as `visible`, `hidden` or `closed`. Opening the `files` preset shows a hidden files pane. The model has no action that hides a dock. See
 [Tool Usage](tool-usage.md).
 
 ### Picking a file
@@ -241,7 +237,7 @@ path.
 
 ### Showing, hiding and closing docks
 
-The files dock (`Alt+E`), the music dock (`Alt+A`) and the workers dock (`Alt+W`, covered in [Fleet Dispatch](fleet-dispatch.md)) share one key model. A dock is in one of three states:
+The files dock (`Alt+E`) and the workers dock (`Alt+W`, covered in [Fleet Dispatch](fleet-dispatch.md)) share one key model. A dock is in one of three states:
 
 | State | Meaning |
 | --- | --- |
@@ -251,28 +247,27 @@ The files dock (`Alt+E`), the music dock (`Alt+A`) and the workers dock (`Alt+W`
 
 The first tap acts at once, with no delay while PanCode waits to see whether a second tap follows:
 
-| State before | `Alt+E` (files) | `Alt+A` (music) |
-| --- | --- | --- |
-| `closed` | Opens the pane and moves the keyboard into Yazi. | Opens the pane and plays. The keyboard stays in PanCode. |
-| `hidden` | Shows the pane at its remembered share and moves the keyboard into Yazi. Yazi keeps its directory. | Shows the pane at its remembered share without moving the keyboard. Playback is unchanged. |
-| `visible` | Hides the pane. | Hides the pane. Playback is unchanged. |
+| State before | `Alt+E` (files) |
+| --- | --- |
+| `closed` | Opens the pane and moves the keyboard into Yazi. |
+| `hidden` | Shows the pane at its remembered share and moves the keyboard into Yazi. Yazi keeps its directory. |
+| `visible` | Hides the pane. |
 
-A second tap of the same key within 400 ms (`DOCK_DOUBLE_TAP_MS` in `src/domains/mux/dock-keys.ts`) closes that dock for real and ends its process. For music it stops the stream first. A double tap spends both taps, so a third quick tap starts a fresh pair. Taps for one dock run in order, so a double tap that lands while the first tap's move is still in flight closes the dock after the move settles. The bare commands `/files` and `/music` make the single tap, and `/files hide`, `/files close` and `/music off` are the explicit halves. None of them has a double-tap window.
+A second tap of the same key within 400 ms (`DOCK_DOUBLE_TAP_MS` in `src/domains/mux/dock-keys.ts`) closes that dock for real and ends its process. A double tap spends both taps, so a third quick tap starts a fresh pair. Taps for one dock run in order, so a double tap that lands while the first tap's move is still in flight closes the dock after the move settles. The bare command `/files` makes the single tap, and `/files hide` and `/files close` are the explicit halves. None of them has a double-tap window.
 
 **Parking.** Hiding moves the pane with Herdr's `pane.move` into one tab labelled `pancode parked` in the PanCode workspace. Every hidden dock of a session shares that tab, and Herdr removes the tab when its last pane leaves. Showing moves the pane back beside the session pane at the share the dock held before it was hidden, so a divider you dragged survives the round trip. Showing never focuses the pane; the files key focuses Yazi as a separate step. `pane.move` exists from Herdr protocol 14. The dock tier that calls it floors at protocol 17, so hiding needs protocol 17 or later in practice. A pane you move out of the parking tab yourself counts as visible from then on.
 
-When Herdr declines a move, the notice names the reason (`the files pane did not hide: …`, `the files pane stayed hidden: …`, `the music pane did not hide: …`, `the music pane stayed hidden: …`). A show is also refused, and the dock stays hidden, when the session pane is too small for the dock's floor (see Dock geometry).
+When Herdr declines a move, the notice names the reason (`the files pane did not hide: …`, `the files pane stayed hidden: …`). A show is also refused, and the dock stays hidden, when the session pane is too small for the dock's floor (see Dock geometry).
 
 **Zoomed tab.** Herdr refuses to move a pane into or out of a zoomed tab. PanCode does not leave zoom ahead of a move. After that refusal it runs `pane.zoom off` on the session pane, which focuses it, and retries the move once.
 
-**Keys inside the dock.** A program inside a dock pane receives keyboard input, so the session's key handler does not receive Alt+E or Alt+A there. The files and music docks forward the key to PanCode, which hides the pane and returns keyboard focus to the composer. The double-tap window stays PanCode's, so a quick second press closes the dock.
+**Keys inside the dock.** A program inside a dock pane receives keyboard input, so the session's key handler does not receive Alt+E there. The files dock forwards the key to PanCode, which hides the pane and returns keyboard focus to the composer. The double-tap window stays PanCode's, so a quick second press closes the dock.
 
 - Alt+E inside Yazi: the managed profile binds `<A-e>` to a `pancode-dock` event published with `ya pub-to`. The event carries the session's pick token, and PanCode ignores a line with another token (counted in the `dropped` figure of `/panes`). This applies to the companion pane on `interface.panes.files.profile: managed`. The `user` profile has no PanCode keymap.
-- Alt+A inside cliamp: a generated cliamp plugin appends a line to a tap file under PanCode's state directory. See [Music](music.md).
 
-**Hidden at boot.** After the first frame is committed, PanCode prepares the docks hidden so the first key press only shows them and boot never waits on the pane host. The files dock is prepared when `interface.panes.files.enabled` is `true` and a pane host is live, and the music dock when `integrations.music.enabled` is `true`. Neither changes the layout or moves the keyboard, and the music pane starts silent. A failure is silent. The key that wants the dock finds it absent, opens it as it would a closed dock and reports the reason if that fails too. A companion files pane that never reports back while still hidden is closed without a notice.
+**Hidden at boot.** After the first frame is committed, PanCode prepares the docks hidden so the first key press only shows them and boot never waits on the pane host. The files dock is prepared when `interface.panes.files.enabled` is `true` and a pane host is live. This changes neither the layout nor the keyboard. A failure is silent. The key that wants the dock finds it absent, opens it as it would a closed dock and reports the reason if that fails too. A companion files pane that never reports back while still hidden is closed without a notice.
 
-**Crash safety.** A parked dock is out of sight, so a crash could leave a hidden cliamp playing with nothing on screen. Each dock carries a `dock` and a `pid` token. Before preparing its own docks, a new session closes every pane in the `pancode parked` tab of its workspace that carries PanCode's ownership token, a `dock` token, and the `pid` of a process that no longer exists. Panes owned by a live process and docks visible in the layout are never touched.
+**Crash safety.** A parked dock is out of sight, so a crash could leave a hidden extension pane playing with nothing on screen. Each dock carries a `dock` and a `pid` token. Before preparing its own docks, a new session closes every pane in the `pancode parked` tab of its workspace that carries PanCode's ownership token, a `dock` token, and the `pid` of a process that no longer exists. Panes owned by a live process and docks visible in the layout are never touched.
 
 ### What closes what
 
@@ -286,7 +281,7 @@ When Herdr declines a move, the notice names the reason (`the files pane did not
   panes included, then stops the host, so nothing outlives the session and the next launch
   starts from a single session pane. The host never restores an earlier layout.
 - `/quit` as a guest in your own herdr (`pancode --with-panes`) closes the docks PanCode
-  manages, hidden ones included: the files pane, the workers dock and the music pane. It
+  manages, hidden ones included: the files pane, the workers dock and an extension pane. It
   preserves a shell or logs pane you opened. Utility panes there have their own lifetime and
   are not reclaimed by the next session, so `/quit` prints what it left, one line after the
   terminal is restored:
@@ -299,17 +294,17 @@ When Herdr declines a move, the notice names the reason (`the files pane did not
 
 ## Dock geometry
 
-The workers dock (right of the session), the files pane (below) and the music pane (below) are docks. Each has a fixed side, a default share of the session pane's width or height, and a floor in cells:
+The workers dock (right of the session), the files pane (below) and the extension pane (below) are docks. Each has a fixed side, a default share of the session pane's width or height, and a floor in cells:
 
 | Dock | Side | Default share | Floor | Session pane needs at least |
 | --- | --- | --- | --- | --- |
 | workers | right | `0.34` | 40 columns | 80 columns |
 | files | below | `0.3` | 12 rows | 24 rows |
-| music | below | `0.05` | 18 rows | 36 rows |
+| extension | below | `0.3` | 12 rows | 24 rows |
 
-The workers floor lets the dock open in an 80-column terminal. The music share is small on purpose, so the floor decides its height: cliamp draws its spectrum only from 16 inner rows and Herdr's border takes two. A share is capped at half the axis, and the floor wins over a smaller share. A dock whose floor exceeds half of the session pane's axis is refused with `the <slot> dock needs <n> columns and at most half of <m> is available; enlarge the anchor pane before trying again` (`rows` for a dock below). Showing a hidden dock plans the same way, with the share the dock held when it was hidden, and a refusal leaves it hidden.
+The workers floor lets the dock open in an 80-column terminal. An extension pane may ask for its own share and a higher floor of up to 24 rows when it opens. A share is capped at half the axis, and the floor wins over a smaller share. A dock whose floor exceeds half of the session pane's axis is refused with `the <slot> dock needs <n> columns and at most half of <m> is available; enlarge the anchor pane before trying again` (`rows` for a dock below). Showing a hidden dock plans the same way, with the share the dock held when it was hidden, and a refusal leaves it hidden.
 
-A divider you drag in herdr becomes the dock's new target share, and a dock you close stays closed. Opening or showing a dock never steals focus by itself. The explicit actions that move the keyboard into a pane are the ones that open or show the files pane (`/files`, `Alt+E`, `/files open`, `/panes open files`, the model's `panes` open of `files`, and the files pane that `interface.panes.layout: cockpit` opens at boot) and repeating `/panes open logs` or `shell`. Opening or showing the workers dock with `Alt+W` and showing the music pane leave the keyboard in PanCode.
+A divider you drag in herdr becomes the dock's new target share, and a dock you close stays closed. Opening or showing a dock never steals focus by itself. The explicit actions that move the keyboard into a pane are the ones that open or show the files pane (`/files`, `Alt+E`, `/files open`, `/panes open files`, the model's `panes` open of `files`, and the files pane that `interface.panes.layout: cockpit` opens at boot) and repeating `/panes open logs` or `shell`. Opening or showing the workers dock with `Alt+W` and opening or showing an extension pane leave the keyboard in PanCode.
 
 ## Settings
 
@@ -320,13 +315,11 @@ A divider you drag in herdr becomes the dock's new target share, and a dock you 
 | `interface.panes.files.profile` | `managed` | `managed` runs the engine on PanCode's generated, themed profile; `user` runs it on the operator's own configuration, in which case picks use the one-shot chooser. |
 | `interface.panes.files.followCwd` | `true` | Reopening an open or hidden pane pushes the conversation's working directory into it when that directory changed since Yazi last learned it. Showing a hidden pane otherwise leaves Yazi where it was. |
 | `interface.panes.files.ratio` | `0.3` | Share of the terminal height the files dock takes, `0.05` through `0.5`, floored at 12 rows. Also the share a files dock prepared hidden at boot starts with. |
-| `interface.panes.layout` | `off` | `workers` opens the workers dock at boot; `cockpit` opens the workers dock and, when `interface.panes.files.enabled` is `true`, the files pane, visible. Both close on `/quit`. Takes effect at the next start. Independent of the hidden-at-boot preparation of the files and music docks. |
+| `interface.panes.layout` | `off` | `workers` opens the workers dock at boot; `cockpit` opens the workers dock and, when `interface.panes.files.enabled` is `true`, the files pane, visible. Both close on `/quit`. Takes effect at the next start. Independent of the hidden-at-boot preparation of the files dock. |
 | `interface.panes.notifications` | `failures` | Which finished runs raise a herdr toast: `failures` (failed and timed-out runs), `all` or `off`. A failure also leaves a transcript notice unless this is `off`. |
 | `interface.panes.workers.ratio` | `0.34` | Share of the terminal width the workers dock takes, `0.05` through `0.5`, floored at 40 columns. Read when the pane opens. |
 | `fleet.history.journal` | `true` | Whether dispatched runs write their display feed to `<stateDir>/runs/<runId>/feed.jsonl`, which the logs pane, the workers dashboard and `fleet view` follow, and its structural projection to the run's telemetry journal. `/panes` prints it as `journal`. |
-| `integrations.music.enabled` | `false` | Allows `/music`. See [Music](music.md). |
 | `interface.keybindings."pancode.files.toggle"` | `alt+e` | Rebind the files key. The leader entry `Ctrl+G` then `e` is fixed. |
-| `interface.keybindings."pancode.music.toggle"` | `alt+a` | Rebind the music key. The leader entry `Ctrl+G` then `a` is fixed. |
 
 Every `interface.panes.*` key except `layout` applies without a restart. In `/settings`, the files keys are under Workspace, group Files pane,
 and the other pane keys are in the same area, group Panes (`/settings workspace`). The keys are also in the
@@ -398,12 +391,10 @@ open regenerates it. `tools reset-profile yazi` forces it.
 
 **A dock closed when I wanted it hidden**: two taps of the same key landed within 400 ms, which closes the dock and ends its process. Tap once and wait.
 
-**`the files pane did not hide: …` or `the files pane stayed hidden: …`** (and the `music` equivalents): Herdr declined the `pane.move`. The reason follows the colon. Hiding needs protocol 17 or later; `/panes` and `doctor` show the host's protocol.
+**`the files pane did not hide: …` or `the files pane stayed hidden: …`**: Herdr declined the `pane.move`. The reason follows the colon. Hiding needs protocol 17 or later; `/panes` and `doctor` show the host's protocol.
 
 **A pane survived `/quit`**: it was a shell or logs pane. See "What closes
 what" above.
-
-**`/music` says music is unavailable**: the message names which of `integrations.music.enabled`, the pane host, or cliamp is missing. See [Music](music.md).
 
 ## Where things live
 
@@ -415,6 +406,5 @@ what" above.
 | `<state>/runs/<runId>/feed.jsonl` | The run's display feed, which the logs pane follows. |
 | `<state>/telemetry/runs/<runId>/journal.jsonl` | The run's telemetry journal. |
 | `<state>/watch-selection`, `<state>/watch-dock-taps` | The request and tap files shared with the workers dashboard. See [Fleet Dispatch](fleet-dispatch.md). |
-| `<state>/cliamp/dock-taps` | Lines the music pane's `pancode-dock` plugin appends when Alt+A is pressed inside cliamp. See [Music](music.md). |
 
 Resolve `<data>`, `<cache>`, and `<state>` with `pancode paths`.

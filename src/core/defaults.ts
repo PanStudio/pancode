@@ -402,17 +402,6 @@ interface GitIntegrationSettings {
 
 export type GitCommitAuthorSetting = "auto" | "human";
 
-/** The music pane: cliamp in a herdr dock. Off until the operator turns it on. */
-export interface MusicIntegrationSettings {
-	enabled: boolean;
-	/** Station that `/music on` starts: a stream URL or a station name. */
-	station: string;
-	/** Registers the `music` tool at startup so the model can drive the pane. */
-	agentControl: boolean;
-}
-
-/** The focus station `/music on` plays when settings name none. */
-const DEFAULT_MUSIC_STATION = "http://radio.cliamp.stream/lofi/stream";
 /** The release the hub-index workflow publishes signing.json, index.envelope.json and index.yaml to. */
 const DEFAULT_HUB_INDEX_URL = "https://github.com/PanStudio/pancode/releases/download/hub-index/";
 
@@ -905,7 +894,6 @@ interface IntegrationsSettings {
 		index: string;
 	};
 	git: GitIntegrationSettings;
-	music: MusicIntegrationSettings;
 }
 
 export const DEFAULT_SETTINGS = {
@@ -1113,7 +1101,6 @@ export const DEFAULT_SETTINGS = {
 			index: DEFAULT_HUB_INDEX_URL,
 		},
 		git: { commitAttribution: true, commitAuthor: "auto" as GitCommitAuthorSetting },
-		music: { enabled: false, station: DEFAULT_MUSIC_STATION, agentControl: false },
 	} as IntegrationsSettings,
 	telemetry: {
 		mode: "standard",
