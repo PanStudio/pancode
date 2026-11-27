@@ -125,7 +125,8 @@ export function openHelpOverlay(
 	// skin change repaints the chip instead of showing the colors of the skin
 	// the help was built under.
 	const extensionItems = (): ListOverlayItem[] =>
-		displaySafe(extensionCommands).map((row): ListOverlayItem => {
+		displaySafe(extensionCommands.filter((row) => !(row.alias !== undefined && !row.available))).map(
+			(row): ListOverlayItem => {
 			// The row is one line; the pane's Does fact keeps the description's lines.
 			const summary = sanitizeCallTargetText(row.description);
 			picks.set(`extension:${row.invocation}`, `/${row.invocation}`);
@@ -165,7 +166,14 @@ export function openHelpOverlay(
 	// A plugin's prompts are commands the palette offers, so help finds them too
 	// (WTF-P F11). A name an extension command took over is listed once, as that command.
 	const promptItems = (): ListOverlayItem[] =>
-		displaySafe(prompts.filter((prompt) => !extensionCommands.some((row) => row.invocation === prompt.name))).map(
+		displaySafe(
+			prompts.filter(
+				(prompt) =>
+					!extensionCommands.some(
+						(row) => row.replaces === "prompt" && row.available && row.invocation === prompt.name,
+					),
+			),
+		).map(
 			(prompt): ListOverlayItem => {
 				const usage = prompt.argumentHint ? `/${prompt.name} ${prompt.argumentHint}` : `/${prompt.name}`;
 				picks.set(`prompt:${prompt.name}`, `/${prompt.name}${prompt.argumentHint ? " " : ""}`);

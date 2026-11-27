@@ -19,6 +19,7 @@ import {
 	subscribeExtensionObservations,
 } from "../domains/extensions/bus-observations.js";
 import { createExtensionHostServices } from "../domains/extensions/host-services.js";
+import { promptRefs } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import { bindExtensionOwnerNames, extensionOwnerLabel } from "../domains/extensions/owner-label.js";
 import { openDetachedBatchViews } from "../domains/middleware/index.js";
@@ -545,7 +546,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		bus: deps.bus,
 		getLifecycleHint: () => updateMonitor?.text() ?? null,
 		getLeaderArmed: () => leaderArmed,
-		extensionCommands: () => operatorExtensions?.commands() ?? [],
+		extensionCommands: () =>
+			operatorExtensions?.commands(promptRefs(deps.resources?.promptsForDisplay(process.cwd()).items ?? [])) ?? [],
 		...(workspaceSurfaces ? { workspaceSurfaces } : {}),
 		// Extension statuses reach the footer once, through the workspace surfaces' status facts, which
 		// also drop an owner name the text repeats. A second feed here printed each one twice (tui-verify 16).

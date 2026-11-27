@@ -41,7 +41,8 @@ export function resolveExtensionLine(
 			message: `/${token}: ${settling.reason ?? "extension runtime is restarting"}; send it again in a moment`,
 		};
 	// A loaded prompt of the same name keeps it; expansion answers that line.
-	if (prompts.some((ref) => ref.name === token)) return null;
+	const lower = token.toLowerCase();
+	if (prompts.some((ref) => ref.name.toLowerCase() === lower)) return null;
 	const alias = rows.find((candidate) => candidate.alias !== undefined && candidate.invocation === token);
 	if (alias)
 		return alias.available

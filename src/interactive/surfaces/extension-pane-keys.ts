@@ -7,12 +7,17 @@
  * as the pane's taps, so a double press means the same thing from either.
  */
 import type { ExtensionUiAction } from "@pancode/sdk/extension";
-import { PANCODE_KEYBINDINGS } from "../../domains/config/keybindings.js";
+import { PANCODE_APP_KEYBINDINGS, PANCODE_KEYBINDINGS } from "../../domains/config/keybindings.js";
 import type { OperatorExtensions } from "../../domains/extensions/operator-extensions.js";
 import { extensionOwnerLabel } from "../../domains/extensions/owner-label.js";
-import { type ExtensionKeyBinding, resolveExtensionKeys } from "../../domains/extensions/services/keys.js";
+import {
+	type ExtensionKeyBinding,
+	type ExtensionKeyClaims,
+	resolveExtensionKeys,
+} from "../../domains/extensions/services/keys.js";
 import { createExtensionPaneHost, type ExtensionPaneHost } from "../../domains/extensions/services/pane.js";
 import type { MuxContract } from "../../domains/mux/contract.js";
+import { createDockKeyGate } from "../../domains/mux/dock-keys.js";
 import { type Keybinding, type KeyId, matchesKey } from "../../engine/tui.js";
 import type { InteractiveNoticeLevel } from "../interactive-subscriptions.js";
 import type { PancodeKeybindingManager } from "../keybinding-manager.js";
@@ -44,9 +49,36 @@ export interface ExtensionPaneKeys {
 	};
 }
 
+/**
+ * Settle declared extension keys against every built-in default, every active
+ * operator keybinding (`interface.keybindings`), every built-in leader letter,
+ * and the workspace keys. Live dispatch and `/extensions` share this settlement
+ * so the bound keys and the displayed reasons never disagree.
+ */
+export function settleExtensionKeys(
+	claims: ReadonlyArray<ExtensionKeyClaims>,
+	keybindings: PancodeKeybindingManager,
+): ReturnType<typeof resolveExtensionKeys> {
+	const taken = new Map<string, string>();
+	for (const id of Object.keys(PANCODE_KEYBINDINGS) as Keybinding[]) {
+		const label = keybindings.getLabel(id);
+		const defaults = PANCODE_KEYBINDINGS[id].defaultKeys;
+		for (const key of Array.isArray(defaults) ? defaults : [defaults]) taken.set(key.toLowerCase(), label);
+		for (const key of keybindings.getKeys(id)) taken.set(key.toLowerCase(), label);
+	}
+	const letters = new Map<string, string>();
+	for (const descriptor of Object.values(PANCODE_APP_KEYBINDINGS))
+		if ("leader" in descriptor && descriptor.leader) letters.set(descriptor.leader, descriptor.label);
+	for (const target of keybindings.leaderTargets()) letters.set(target.key, keybindings.getLabel(target.id));
+	letters.set(WORKSPACE_LEAVE_KEY, "leave the workspace");
+	letters.set(WORKSPACE_FOCUS_KEY, "focus the workspace board");
+	return resolveExtensionKeys(claims, taken, letters);
+}
+
 export function createExtensionPaneKeys(deps: ExtensionPaneKeysDeps): ExtensionPaneKeys {
 	let viewDock: ExtensionDockHost | undefined;
 	const refused = new Set<string>();
+	const gate = createDockKeyGate();
 	const press = (extensionId: string, action: ExtensionUiAction): void => {
 		void deps
 			.operator()
@@ -70,19 +102,13 @@ export function createExtensionPaneKeys(deps: ExtensionPaneKeysDeps): ExtensionP
 					return !mux.docks().some((dock) => dock.slot === "extension");
 				},
 				log: (message) => deps.notify("warning", message, "operator-extensions:pane"),
+				gate,
 			})
 		: undefined;
 	const bindings = (): ExtensionKeyBinding[] => {
 		const claims = deps.operator()?.keyClaims() ?? [];
 		if (claims.length === 0) return [];
-		const keybindings = deps.keybindings();
-		const taken = new Map<string, string>();
-		for (const id of Object.keys(PANCODE_KEYBINDINGS) as Keybinding[])
-			for (const key of keybindings.getKeys(id)) taken.set(key.toLowerCase(), keybindings.getLabel(id));
-		const letters = new Map(keybindings.leaderTargets().map((target) => [target.key, keybindings.getLabel(target.id)]));
-		letters.set(WORKSPACE_LEAVE_KEY, "leave the workspace");
-		letters.set(WORKSPACE_FOCUS_KEY, "focus the workspace board");
-		const settled = resolveExtensionKeys(claims, taken, letters);
+		const settled = settleExtensionKeys(claims, deps.keybindings());
 		for (const refusal of settled.refused) {
 			const said = `${refusal.extensionId}\0${refusal.reason}`;
 			if (refused.has(said)) continue;
@@ -97,7 +123,11 @@ export function createExtensionPaneKeys(deps: ExtensionPaneKeysDeps): ExtensionP
 	};
 	const pressKey = (binding: ExtensionKeyBinding): void => {
 		if (pane) pane.key(binding.extensionId, binding.action);
-		else press(binding.extensionId, { id: binding.action, source: "key", key: "tap" });
+		else
+			void gate.press(`${binding.extensionId}\0${binding.action}`, {
+				single: () => press(binding.extensionId, { id: binding.action, source: "key", key: "tap" }),
+				double: () => press(binding.extensionId, { id: binding.action, source: "key", key: "double" }),
+			});
 	};
 	return {
 		pane,
