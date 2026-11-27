@@ -938,7 +938,11 @@ async function execute(
 			if (second === undefined) throw new StoreCliUsageError("locks break needs a lock id");
 			const found = await backend.readLock(second);
 			if (found === null) throw new StoreRefusal("not-found", `No store lock ${second} in this project.`);
-			if (found.state === "live") await backend.breakLock(second);
+			if (found.state === "live")
+				throw new StoreRefusal(
+					"unavailable",
+					`Store lock ${found.id} is held by pid ${found.pid} on ${found.host}, ${backend.kind === "local" ? "alive on this host" : "with a live lease"}; it is not broken while its writer runs.`,
+				);
 			const what = `lock ${found.id} (${found.state}): ${
 				found.state === "unreadable"
 					? "its file cannot be read"
