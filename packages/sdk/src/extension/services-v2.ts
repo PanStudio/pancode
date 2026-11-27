@@ -117,17 +117,26 @@ export interface ExtensionCheck {
 
 export interface ExtensionCheckResult {
 	ok: boolean;
+	/** `succeeded` when the check ran to a verdict; `failed`, `timed-out`, `unavailable` and the like when it did not. */
+	execution: string;
+	/** The verdict of a check that ran: `passed` or `failed`; null when there is none. */
+	validation: string | null;
 	exitCode: number | null;
+	/** The check's report, at most its last 64 KiB. */
 	text: string;
 	durationMs: number;
-	timedOut: boolean;
+	/** Names this result to `claims.finish`; the host keeps the result, so a claim is only ever PanCode's own. */
+	receipt: string;
 }
 
 export interface ExtensionVerify {
 	list(place?: ExtensionWorkPlace): Promise<ExtensionCheck[]>;
-	/** Run a declared check as `verify` would, under the host verification sandbox. */
+	/**
+	 * Run a check as `verify` would, under the host verification sandbox: a catalog check in this process, a derived
+	 * one (a package script, a toolchain check) through `pancode verifiers dry-run` in the place.
+	 */
 	check(id: string, place?: ExtensionWorkPlace): Promise<ExtensionCheckResult>;
-	/** Run a check and read one numeric `metric` from its output. */
+	/** Run a catalog check's command and read one finite number, `metric`, from its numeric payload. */
 	measure(
 		id: string,
 		metric: string,
@@ -136,6 +145,25 @@ export interface ExtensionVerify {
 }
 
 export interface ExtensionClaims {
-	append(record: Readonly<Record<string, unknown>>): Promise<{ id: string }>;
-	read(options?: { kind?: string; limit?: number }): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>>;
+	/**
+	 * Record the hypotheses of a slate this extension keeps under `name` (a `pancode.hypothesis-slate.v1` document).
+	 * Returns the ledger id each slate id got, null for one recorded unchanged before.
+	 */
+	hypotheses(name: string, slate: string): Promise<Record<string, string | null>>;
+	/** Start `checks` as one run, binding the proposed hypotheses that name them; the bound ids per check. */
+	begin(run: string, checks: ReadonlyArray<string>): Promise<Record<string, string[]>>;
+	/**
+	 * Record the claims the run's checks were judged into and test the hypotheses `begin` bound. A hypothesis in
+	 * `withoutClaim` is tested on the run alone, never with the claim as its evidence. The claim id per check.
+	 */
+	finish(
+		run: string,
+		outcomes: ReadonlyArray<{ check: string; receipt: string }>,
+		options?: { withoutClaim?: ReadonlyArray<string> },
+	): Promise<Record<string, string>>;
+	/** The project's latest ledger records, newest last. */
+	read(options?: {
+		types?: ReadonlyArray<"claim" | "hypothesis" | "hypothesis-test">;
+		limit?: number;
+	}): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>>;
 }
