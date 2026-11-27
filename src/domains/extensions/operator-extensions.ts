@@ -65,6 +65,7 @@ export class OperatorExtensions {
 	 * after work that never touched an extension. An operator's reload wins.
 	 */
 	private queuedReload: ReloadReason | null = null;
+	private disposed = false;
 
 	constructor(private readonly options: OperatorExtensionsOptions) {
 		this.v2 = new OperatorExtensionRuntimeV2(options);
@@ -81,10 +82,12 @@ export class OperatorExtensions {
 		return !this.busy && this.options.isIdle();
 	}
 	get maintenanceDelayMs(): number | null {
+		if (this.disposed) return null;
 		if (this.queuedReload) return 250;
 		return this.v2.maintenanceDelayMs;
 	}
 	maintenance(): void {
+		if (this.disposed) return;
 		if (this.queuedReload && !this.busy && this.options.isIdle()) {
 			void this.reload(this.queuedReload);
 			return;
@@ -97,6 +100,12 @@ export class OperatorExtensions {
 
 	/** The manager reports its own result through `onReload`; a deferred reload reports nothing until it runs. */
 	reload(reason: ReloadReason = "reload"): Promise<OperatorReloadResult> {
+		if (this.disposed)
+			return Promise.resolve({
+				status: "rejected",
+				generation: this.v2.activeGeneration,
+				message: "operator runtime is disposed",
+			});
 		// Do not commit hooks while an operator command still owns its generation.
 		if (!this.canReloadNow) {
 			this.queuedReload = this.queuedReload === "reload" || reason === "reload" ? "reload" : reason;
@@ -162,6 +171,8 @@ export class OperatorExtensions {
 		this.v2.cancel();
 	}
 	dispose(): Promise<void> {
+		this.disposed = true;
+		this.queuedReload = null;
 		return this.v2.dispose();
 	}
 }

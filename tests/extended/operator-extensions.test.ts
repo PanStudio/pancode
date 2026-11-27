@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, equal, match, ok, rejects, throws } from "node:assert/strict";
-import fs, { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import type { AddressInfo } from "node:net";
@@ -1321,4 +1321,98 @@ test("an undeclared extension cannot reach the host embedding callback", async (
 	equal((await runtime.reload("startup")).status, "committed");
 	const output = await runtime.invoke(extensionInvocation("lab_status.v1", "probe"), "");
 	equal(output.text, "true");
+});
+
+test("disposal clears queued reloads and rejects later reloads even while busy", async (t) => {
+	const f = await fixture(t);
+	let idle = false;
+	let changes = 0;
+	const runtime = new OperatorExtensions({
+		context: () => ({ workspace: f.cwd, sessionId: null, mode: "interactive" }),
+		isIdle: () => idle,
+		list: () => [],
+		onChange: () => {
+			changes++;
+		},
+		stateDir: () => path.join(f.env.dir, "state"),
+	});
+	const deferred = await runtime.reload("reload");
+	equal(deferred.status, "deferred");
+	equal(runtime.maintenanceDelayMs, 250);
+
+	await runtime.dispose();
+	equal(runtime.maintenanceDelayMs, null);
+
+	const before = changes;
+	const afterDispose = await runtime.reload("reload");
+	equal(afterDispose.status, "rejected");
+	match(afterDispose.message, /disposed/);
+	equal(runtime.maintenanceDelayMs, null);
+	equal(changes, before);
+
+	// Maintenance after becoming idle must remain a no-op once disposed.
+	idle = true;
+	runtime.maintenance();
+	equal(runtime.maintenanceDelayMs, null);
+});
+
+test("shadowed user copy keeps its own inactive reason and tool-drift state", async (t) => {
+	const f = await fixture(t, normal, {
+		api: 2,
+		commands: [{ name: "inspect", description: "Inspect", timeoutMs: 10_000 }],
+		events: [],
+		ui: [],
+	});
+	// Add a declared command tool so frozen-registry matching is also exercised.
+	writeFileSync(path.join(f.source, "probe.cjs"), "console.log(JSON.stringify({ ok: true }));\n");
+	const manifestPath = path.join(f.source, "pancode-extension.json");
+	const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+	manifest.id = "shadow-fixture";
+	manifest.capabilities = {
+		tools: [
+			{
+				name: "probe",
+				description: "Probe",
+				runtime: "node",
+				entrypoint: "probe.cjs",
+				inputSchema: { type: "object", properties: {}, additionalProperties: false },
+			},
+		],
+	};
+	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+	const userInstall = installExtension(f.source, { cwd: f.cwd, scope: "user", force: true });
+	ok(userInstall.extension, JSON.stringify(userInstall.diagnostics));
+	const projectInstall = installProject(f.source, f.cwd, { force: true });
+	const projectExt = projectInstall.extension;
+	ok(projectExt && isLoadableExtension(projectExt), JSON.stringify(projectInstall.diagnostics));
+
+	const runtime = new OperatorExtensions({
+		context: () => ({ workspace: f.cwd, sessionId: null, mode: "interactive" }),
+		isIdle: () => true,
+		list: (root) => listInstalledExtensions(root, { all: true }),
+		frozenTools: [projectExt.provenance],
+		stateDir: () => path.join(f.env.dir, "state"),
+	});
+	t.after(() => runtime.dispose());
+	equal((await runtime.reload("startup")).status, "committed");
+
+	const projectRow = runtime.entries().find((entry) => entry.id === "shadow-fixture" && entry.scope === "project");
+	const userRow = runtime.entries().find((entry) => entry.id === "shadow-fixture" && entry.scope === "user");
+	equal(projectRow?.reason, "starts on first command");
+	deepStrictEqual(projectRow?.newSessionReasons, []);
+	equal(userRow?.reason, "shadowed by the project copy");
+	deepStrictEqual(userRow?.newSessionReasons, []);
+
+	// If the effective project copy fails at startup, the shadowed user copy must still report shadowing.
+	writeFileSync(path.join(f.source, "extension.mjs"), 'throw new Error("project startup boom");\n');
+	manifest.runtime = { ...(manifest.runtime as Record<string, unknown>), events: ["session_open"] };
+	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+	installProject(f.source, f.cwd, { force: true });
+	equal((await runtime.reload()).status, "committed");
+
+	const failedProjectRow = runtime.entries().find((entry) => entry.id === "shadow-fixture" && entry.scope === "project");
+	const shadowedUserRow = runtime.entries().find((entry) => entry.id === "shadow-fixture" && entry.scope === "user");
+	match(failedProjectRow?.reason ?? "", /project startup boom/);
+	equal(shadowedUserRow?.reason, "shadowed by the project copy");
+	deepStrictEqual(shadowedUserRow?.newSessionReasons, []);
 });

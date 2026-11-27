@@ -882,16 +882,21 @@ export class OperatorExtensionRuntimeV2 {
 		return this.inventory.map((entry) => {
 			const process = this.processes.get(entry.id);
 			const current = process && identity(process.extension) === identity(entry) ? process : undefined;
+			const deferred = this.deferred.get(entry.id);
+			const isDeferred = deferred !== undefined && identity(deferred) === identity(entry);
 			const reason = !entry.runtimeV2
 				? undefined
-				: (this.failures.get(entry.id) ??
+				: ((entry.effective ? this.failures.get(entry.id) : undefined) ??
 					current?.failure ??
-					(!current && this.deferred.has(entry.id) ? "starts on first command" : undefined) ??
+					(!current && isDeferred ? "starts on first command" : undefined) ??
 					(current ? undefined : inactiveReason(entry)));
 			const status = current?.state === "ready" ? this.surface.entry(entry.id)?.status : undefined;
 			const initial = this.initialTools?.get(entry.id);
+			const tracksToolDrift =
+				entry.effective ||
+				(initial !== undefined && !this.inventory.some((other) => other.id === entry.id && other.effective));
 			const newSessionReasons =
-				(entry.capabilities?.tools.length || initial) && initial !== identity(entry)
+				tracksToolDrift && (entry.capabilities?.tools.length || initial) && initial !== identity(entry)
 					? [
 							this.options.frozenTools
 								? "installed package differs from the frozen tool registry (or was not admitted there); a new session is required for tool admission"
