@@ -20,7 +20,7 @@
 import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
 import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
 import { isRecord } from "../../../core/type-guards.js";
-import { mcpNameSource, mcpParamHeaderValues } from "./http-headers.js";
+import { encodeMcpHeaderValue, mcpNameSource, mcpParamHeaderValues } from "./http-headers.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
 import { MCP_META_PROTOCOL_VERSION, MCP_META_SUBSCRIPTION_ID, McpError, parseJsonRpcLine } from "./protocol.js";
 import { mcpOriginOf } from "./remote.js";
@@ -319,7 +319,7 @@ export function createMcpHttpTransport(
 			if (method !== null) {
 				headers.set("Mcp-Method", method);
 				const name = mcpNameSource(method, params);
-				if (name !== null) headers.set("Mcp-Name", name);
+				if (name !== null) headers.set("Mcp-Name", encodeMcpHeaderValue(name));
 			}
 			if (method === "tools/call" && exchange?.paramHeaders !== undefined) {
 				for (const [name, value] of mcpParamHeaderValues(params?.arguments, exchange.paramHeaders)) {
@@ -378,7 +378,22 @@ export function createMcpHttpTransport(
 						return null;
 					}
 					attempt++;
-					await new Promise<void>((resolve) => setTimeout(resolve, delay));
+					const waited = await new Promise<boolean>((resolve) => {
+						if (signal.aborted) {
+							resolve(false);
+							return;
+						}
+						const onAbort = (): void => {
+							clearTimeout(timer);
+							resolve(false);
+						};
+						const timer = setTimeout(() => {
+							signal.removeEventListener("abort", onAbort);
+							resolve(true);
+						}, delay);
+						signal.addEventListener("abort", onAbort, { once: true });
+					});
+					if (!waited) return null;
 					continue;
 				}
 				return { broken: failure.message };

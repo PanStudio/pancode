@@ -53,7 +53,7 @@ export function isHttpToken(name: string): boolean {
  * header-safe ASCII, else Base64 of its UTF-8 inside the `=?base64?...?=`
  * sentinel. A plain value that itself looks like the sentinel is encoded too.
  */
-function encodeMcpHeaderValue(value: string): string {
+export function encodeMcpHeaderValue(value: string): string {
 	const looksEncoded = value.startsWith(SENTINEL_PREFIX) && value.endsWith(SENTINEL_SUFFIX);
 	if (PLAIN_VALUE.test(value) && !looksEncoded) return value;
 	return `${SENTINEL_PREFIX}${Buffer.from(value, "utf8").toString("base64")}${SENTINEL_SUFFIX}`;
