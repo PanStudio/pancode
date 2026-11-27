@@ -494,7 +494,7 @@ function placementSandboxFacts(
 	const backend = applies && availability.available && availability.backend !== null ? availability.backend : "none";
 	return {
 		backend,
-		applies,
+		applies: applies && (backend !== "none" || mode === "required"),
 		networkSetting: !hoare && settings?.safety.sandboxNetwork === true,
 		networkOff: hoare,
 		confinesWrites: backend === "bwrap",

@@ -22,7 +22,7 @@ export interface WorkerSandboxPolicyInput {
 	/** Canonical dispatch write boundaries; exact files and trailing-slash subtrees. */
 	writeBoundaries: ReadonlyArray<string>;
 	taskWorktree?: { path: string; branch: string };
-	/** The envelope's `network.shell`: whether the worker's commands reach the network (fleet M7). */
+	/** Whether a sandboxed worker command may reach the network. */
 	network: boolean;
 	/** Parent checkouts supplying shared task dependencies; also visible when under /tmp. */
 	dependencyRoots?: ReadonlyArray<string>;
@@ -110,21 +110,20 @@ export interface WorkerSandboxReceipt {
 }
 
 export function workerSandboxReceipt(
-	mode: SandboxMode,
 	spec: WorkerSandboxSpec | undefined,
-	availability: SandboxAvailability | null,
+	availability: SandboxAvailability,
 ): WorkerSandboxReceipt {
 	if (spec === undefined) {
 		return { mode: "off", backend: null, available: null, writableRoots: [], gitWritablePaths: [], network: true };
 	}
 	return {
-		mode,
-		backend: availability?.available === true ? availability.backend : null,
-		available: availability === null ? null : availability.available,
-		...(availability?.reason ? { reason: availability.reason } : {}),
+		mode: spec.mode,
+		backend: availability.available ? availability.backend : null,
+		available: availability.available,
+		...(availability.reason ? { reason: availability.reason } : {}),
 		writableRoots: [...spec.writableRoots],
 		gitWritablePaths: [...spec.gitWritablePaths],
-		network: spec.network,
+		network: spec.network || (spec.mode === "auto" && !availability.available),
 	};
 }
 

@@ -1032,7 +1032,8 @@ export async function runDoctorFleetChecks(
 			record.sandbox?.available === true && (settings.safety.sandboxNetwork === true || record.sandbox.network === null);
 		const unsandboxedRefused =
 			!sandboxUsable && mode !== "off" && (mode === "required" || node?.allowUnsandboxed !== true);
-		const sandbox = `${fleetNodeSandboxSummary(record.sandbox)}${unsandboxedRefused ? ", native workers refused (allowUnsandboxed admits them unless safety.sandbox is required)" : ""}`;
+		const refusedWorkers = record.sandbox?.available ? "native workers needing network isolation" : "native workers";
+		const sandbox = `${fleetNodeSandboxSummary(record.sandbox)}${unsandboxedRefused ? `, ${refusedWorkers} refused (allowUnsandboxed admits them unless safety.sandbox is required)` : ""}`;
 		return {
 			ok: true,
 			level: record.ok && !unsandboxedRefused ? ("ok" as const) : ("warn" as const),

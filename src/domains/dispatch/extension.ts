@@ -6987,11 +6987,7 @@ export function createDispatchBundle(
 					// be a claim about the wrong machine.
 					...(lifecycle.target.runtime.kind === "http"
 						? {
-								sandbox: workerSandboxReceipt(
-									lifecycle.settings?.safety.sandbox ?? "auto",
-									spec.sandbox,
-									lifecycle.placedSandbox,
-								),
+								sandbox: workerSandboxReceipt(spec.sandbox, lifecycle.placedSandbox),
 							}
 						: {}),
 				},

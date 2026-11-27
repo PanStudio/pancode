@@ -112,7 +112,7 @@ export function workerSandboxWritesNothing(): boolean {
 
 /** True when this process is a worker whose children, MCP servers included, start under an OS sandbox. */
 export function workerSandboxApplies(): boolean {
-	return active !== null && sandboxAvailability().available;
+	return active !== null && withNetworkIsolation(sandboxAvailability(), active.network).available;
 }
 
 /**

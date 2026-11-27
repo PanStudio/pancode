@@ -1412,9 +1412,11 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 	if (spec.sandbox !== undefined) {
 		validateWorkerSandbox(spec.sandbox);
 		// The sandbox policy is built from the envelope; one that disagrees was edited after admission.
-		const sandbox = spec.sandbox as { network?: unknown; readableRoots?: ReadonlyArray<string> };
+		const sandbox = spec.sandbox as WorkerSandboxSpec;
 		const envelope = spec.envelope as WorkerEnvelope;
-		if (sandbox.network !== envelope.network.shell)
+		const restrictIfRecovered =
+			sandbox.mode === "auto" && envelope.sandbox.backend === "none" && !sandbox.network && envelope.network.shell;
+		if (sandbox.network !== envelope.network.shell && !restrictIfRecovered)
 			throw new Error("WorkerSpec.sandbox.network disagrees with the envelope's network.shell");
 		const unreadable = envelope.read.outside.filter((root) => !(sandbox.readableRoots ?? []).includes(root));
 		if (unreadable.length > 0)

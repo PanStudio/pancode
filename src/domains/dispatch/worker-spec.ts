@@ -221,7 +221,12 @@ export function workerSandboxFor(input: {
 		...(input.req.taskWorktree !== undefined
 			? { taskWorktree: { path: input.req.taskWorktree.path, branch: input.req.taskWorktree.branch } }
 			: {}),
-		network: input.envelope.network.shell,
+		// An auto fallback has host egress. If the worker recovers its backend, keep the original network restriction.
+		network:
+			input.envelope.network.shell &&
+			(input.envelope.sandbox.backend !== "none" ||
+				input.settings?.safety.sandboxNetwork === true ||
+				input.envelope.network.tools.length > 0),
 		// The envelope's approved outside read roots ride with the dependency roots: readable, never writable.
 		dependencyRoots: [...dependencyRoots, ...input.envelope.read.outside],
 		...(input.settings !== undefined && !hoare

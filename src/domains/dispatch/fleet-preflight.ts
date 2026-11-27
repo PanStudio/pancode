@@ -301,7 +301,7 @@ export function fleetNodeSandboxAvailability(sandbox: FleetNodeSandbox | null, n
 export function fleetNodeSandboxSummary(sandbox: FleetNodeSandbox | null): string {
 	if (sandbox === null) return "sandbox=unknown";
 	if (!sandbox.available || sandbox.backend === null) return `sandbox=none (${sandbox.reason ?? "no backend"})`;
-	return `sandbox=${sandbox.backend}${sandbox.network !== null ? ` (network-off commands refused: ${sandbox.network})` : ""}`;
+	return `sandbox=${sandbox.backend}${sandbox.network !== null ? ` (no network isolation: ${sandbox.network})` : ""}`;
 }
 
 /** The build this client would install on a node: the completed build on disk. */
