@@ -108,6 +108,11 @@ function checkLockId(id: string): void {
 		throw new StoreRefusal("invalid-name", `'${id}' is not a lock id: it is 32 hex characters.`);
 }
 
+/** A lock key as a message shows it: `blob<NUL>tag<NUL>name` reads as `blob tag name`. */
+function keyText(key: string): string {
+	return key.replaceAll("\0", " ");
+}
+
 function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -299,7 +304,7 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 	function holderRefusal(key: string, lease: LogLease): StoreRefusal {
 		return new StoreRefusal(
 			"unavailable",
-			`The store lock for ${key} is held by pid ${lease.owner.pid} on ${lease.owner.host} since ${lease.at}, renewed within ${LOCK_WAIT_MS / 1000} s; try again once it is released.`,
+			`The store lock for ${keyText(key)} is held by pid ${lease.owner.pid} on ${lease.owner.host} since ${lease.at} and was still renewed after ${LOCK_WAIT_MS / 1000} s of waiting; try again once it is released.`,
 		);
 	}
 
@@ -660,12 +665,13 @@ export function createLogStoreBackend(options: LogStoreOptions): StoreBackend & 
 		reclaim: (apply) =>
 			guarded(async () => {
 				const tip = await machine.tip();
-				const leases = Object.values(tip.root.leases);
+				const leases = Object.entries(tip.root.leases);
 				if (leases.length > 0) {
-					const lease = leases[0] as LogLease;
+					const [name, lease] = leases[0] as [string, LogLease];
+					const id = name.slice(lease.project.length + 1);
 					throw new StoreRefusal(
 						"unavailable",
-						`${leases.length} store lock(s) are held (one by pid ${lease.owner.pid} on ${lease.owner.host} for ${lease.key}); reclaim runs only when none is. Break dead ones with locks break.`,
+						`${leases.length} store lock(s) are held; reclaim runs only when none is. Lock ${id} of project ${lease.project} is held by pid ${lease.owner.pid} on ${lease.owner.host} for ${keyText(lease.key)} since ${lease.at}; once that writer is gone, break it with pancode store locks break ${id} --yes from that project, or adopt that project's store if its checkout is gone.`,
 					);
 				}
 				const { pages, payloads } = await reachable(tip.root);

@@ -249,6 +249,7 @@ export class LogMachine {
 			});
 			await this.qualified;
 			const started = Date.now();
+			let late = false;
 			for (let attempt = 0; ; attempt++) {
 				const tip = await this.tip();
 				const plan = await build(tip);
@@ -265,11 +266,15 @@ export class LogMachine {
 				};
 				const claim = await this.medium.claimProposal(slot, proposal.id, JSON.stringify(proposal));
 				if (!claim.won) {
-					if (Date.now() - started > COMMIT_WAIT_MS)
-						throw new StoreRefusal(
-							"unavailable",
-							`Other writers kept taking the store's next log slot for ${COMMIT_WAIT_MS / 1000} s; try again.`,
-						);
+					// Past the wait the plan is still rebuilt once, so a writer that stalled meets the new tip's own refusal.
+					if (Date.now() - started > COMMIT_WAIT_MS) {
+						if (late)
+							throw new StoreRefusal(
+								"unavailable",
+								`Other writers kept taking the store's next log slot for ${COMMIT_WAIT_MS / 1000} s; try again.`,
+							);
+						late = true;
+					}
 					await delay(Math.min(500, 10 * 2 ** Math.min(attempt, 6)) * Math.random());
 					continue;
 				}
