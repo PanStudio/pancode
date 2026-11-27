@@ -52,8 +52,15 @@ export async function acquireLaunch(input: LaunchAcquisitionInput): Promise<Laun
 	const lease = await input.admit();
 	const slot = createLeaseSlotGuard(input.controller, lease.leaseId, !input.ownsAssignment);
 	let adoptedAs: string | null = null;
+	let failed = false;
 	const fail = async (error: unknown): Promise<void> => {
-		slot.release();
+		if (failed) return;
+		failed = true;
+		try {
+			slot.release();
+		} catch (releaseError) {
+			reportDispatchDiagnostic(`release capacity for lease ${lease.leaseId}`, releaseError);
+		}
 		if (!input.ownsAssignment) return;
 		const assignmentId = adoptedAs ?? lease.assignmentId;
 		try {
@@ -61,7 +68,13 @@ export async function acquireLaunch(input: LaunchAcquisitionInput): Promise<Laun
 		} catch (settleError) {
 			reportDispatchDiagnostic(`persist assignment ${assignmentId}:launch`, settleError);
 		}
-		if (adoptedAs !== null) input.controller.releaseAssignment(adoptedAs);
+		if (adoptedAs !== null) {
+			try {
+				input.controller.releaseAssignment(adoptedAs);
+			} catch (releaseError) {
+				reportDispatchDiagnostic(`release capacity for assignment ${adoptedAs}`, releaseError);
+			}
+		}
 	};
 	let ledger: Ledger;
 	try {

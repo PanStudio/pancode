@@ -98,13 +98,14 @@ describe("dispatch assignment lifecycle", () => {
 	it("settles the stored assignment when a launch fails between admission and the ledger", async () => {
 		scratch = await newScratchPancodeHome("pancode-dispatch-lifecycle-");
 		const released: string[] = [];
-		const launchFor = async (assignmentId: string, signal?: AbortSignal) => {
+		const launchFor = async (assignmentId: string, signal?: AbortSignal, throwOnRelease = false) => {
 			await registerAssignment(assignmentId);
 			return acquireLaunch({
 				admit: async () => ({ leaseId: `lease-${assignmentId}`, assignmentId }) as CapacityLease,
 				controller: {
 					release: (leaseId) => {
 						released.push(leaseId);
+						if (throwOnRelease) throw new Error("capacity lock busy");
 						return true;
 					},
 					releaseAssignment: () => false,
@@ -118,11 +119,35 @@ describe("dispatch assignment lifecycle", () => {
 		};
 		await rejects(launchFor("no-ledger"), /ledger unavailable/);
 		strictEqual(getStoredAssignment("no-ledger")?.status, "failed");
+		await rejects(launchFor("release-throws", undefined, true), /ledger unavailable/);
+		strictEqual(getStoredAssignment("release-throws")?.status, "failed");
 		const aborted = new AbortController();
 		aborted.abort();
 		await rejects(launchFor("aborted", aborted.signal));
 		strictEqual(getStoredAssignment("aborted")?.status, "canceled");
-		deepStrictEqual(released, ["lease-no-ledger", "lease-aborted"]);
+		deepStrictEqual(released, ["lease-no-ledger", "lease-release-throws", "lease-aborted"]);
+
+		await registerAssignment("adopted-run");
+		const releasedAssignments: string[] = [];
+		const adopted = await acquireLaunch({
+			admit: async () => ({ leaseId: "lease-adopted", assignmentId: "pending-adopted" }) as CapacityLease,
+			controller: {
+				release: () => {
+					throw new Error("slot guard should be owned after adopt");
+				},
+				releaseAssignment: (assignmentId) => {
+					releasedAssignments.push(assignmentId);
+					throw new Error("capacity lock busy");
+				},
+			},
+			requireLedger: () => ({}) as never,
+			ownsAssignment: true,
+		});
+		adopted.adopt("adopted-run");
+		await adopted.fail(new Error("envelope failed"));
+		await adopted.fail(new Error("duplicate fail"));
+		strictEqual(getStoredAssignment("adopted-run")?.status, "failed");
+		deepStrictEqual(releasedAssignments, ["adopted-run"]);
 	});
 
 	it("recovers an orphan from durable attempts and fails one without evidence", async () => {

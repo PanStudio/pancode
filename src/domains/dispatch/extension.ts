@@ -2286,13 +2286,14 @@ export function createDispatchBundle(
 	function publishCapacityAdmissionFailure(
 		identity: DispatchRunIdentity & { requestOrigin: DispatchRequestOrigin },
 		error: unknown,
+		signal?: AbortSignal,
 	): void {
 		const detail = error instanceof Error ? error.message : String(error);
 		const outcome: RunOutcome =
-			error instanceof AdmissionCanceledError
-				? "canceled"
-				: error instanceof AdmissionTimedOutError
-					? "timed_out"
+			error instanceof AdmissionTimedOutError
+				? "timed_out"
+				: error instanceof AdmissionCanceledError || signal?.aborted === true
+					? "canceled"
 					: "denied_by_policy";
 		context.bus.emit("run.failed", {
 			...identity,
@@ -2350,7 +2351,13 @@ export function createDispatchBundle(
 			timing.admittedAt = new Date(admitted.admittedAt).toISOString();
 			return admitted.lease;
 		} catch (error) {
-			if (req.lineage === undefined) await settleUnstartedAssignment(assignmentId, error, signal);
+			if (req.lineage === undefined) {
+				try {
+					await settleUnstartedAssignment(assignmentId, error, signal);
+				} catch (settleError) {
+					reportDispatchDiagnostic(`persist assignment ${assignmentId}:admission`, settleError);
+				}
+			}
 			throw error;
 		}
 	}
@@ -2370,7 +2377,7 @@ export function createDispatchBundle(
 				try {
 					return await admitAssignmentCapacity(req, node?.id ?? "local", timing, endpoint, signal);
 				} catch (error) {
-					if (queuedIdentity !== null) publishCapacityAdmissionFailure(queuedIdentity, error);
+					if (queuedIdentity !== null) publishCapacityAdmissionFailure(queuedIdentity, error, signal);
 					throw error;
 				} finally {
 					if (queuedIdentity !== null) pendingCapacity.delete(queuedIdentity.runId);
