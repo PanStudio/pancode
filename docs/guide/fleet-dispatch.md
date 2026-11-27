@@ -490,7 +490,8 @@ unsandboxed, and `required` ignores the opt-in. The envelope reports host shell 
 and host networking for those unsandboxed commands. A node that has a backend but
 cannot isolate the network can still sandbox workers granted network access. A verifier
 with an assurance level always requires isolation and its receipt records `required`.
-If placement or the native worker's
+Hooks directories inside writable roots stay read-only whether the dispatcher's Git
+configuration names them or the node's does. If placement or the native worker's
 node sandbox record changes during admission, dispatch refuses launch
 ([safety-model.md](../architecture/safety-model.md#worker-os-sandbox)).
 

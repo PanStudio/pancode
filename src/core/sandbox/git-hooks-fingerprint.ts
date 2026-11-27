@@ -16,7 +16,9 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 import { sha256Hex } from "../hash.js";
+import { isStrictDescendant } from "../path-containment.js";
 import { gitConfigScopeFiles, mainSandboxGitLayout } from "./main-session.js";
+import type { WorkerSandboxSpec } from "./types.js";
 
 /**
  * What git would run outside PanCode's sandbox. A hook runs with the full
@@ -519,16 +521,19 @@ function executableConfigOf(scope: RepositoryScope, cached: ConfigListing | unde
 	};
 }
 
-/** Walkers kept for {@link gitHookDirectories}, so a dispatch's repeat calls re-stat instead of re-reading. */
+/** Walkers kept for repeat dispatches into the same tree. */
 const DIRECTORY_WALKERS_KEPT = 16;
 const directoryWalkers = new Map<string, () => { tops: string[]; capped: boolean }>();
 
 /**
- * Impure: every hooks directory of the repository holding `root` and of the
- * repositories nested under it, present or not. The worker sandbox keeps the
- * ones inside its writable roots read-only.
+ * Both hosts can have Git hooks in a shared checkout. The worker adds the ones its Git
+ * configuration names without dropping any read-only paths admitted by the dispatcher.
  */
-export function gitHookDirectories(root: string): { directories: string[]; capped: boolean } {
+export function withWorkerGitHookPaths(
+	spec: WorkerSandboxSpec | undefined,
+	root: string,
+): WorkerSandboxSpec | undefined {
+	if (spec === undefined || spec.writableRoots.length === 0) return spec;
 	const base = path.resolve(root);
 	let walk = directoryWalkers.get(base);
 	if (walk === undefined) {
@@ -539,8 +544,10 @@ export function gitHookDirectories(root: string): { directories: string[]; cappe
 		}
 		directoryWalkers.set(base, walk);
 	}
-	const { tops, capped } = walk();
-	return { directories: hooksDirectoriesOf(repositoryScopes(base, tops)), capped };
+	const hooks = hooksDirectoriesOf(repositoryScopes(base, walk().tops)).filter((dir) =>
+		spec.writableRoots.some((writable) => isStrictDescendant(dir, writable)),
+	);
+	return { ...spec, readOnlyPaths: [...new Set([...spec.readOnlyPaths, ...hooks])] };
 }
 
 export interface GitHooksFingerprinter {
