@@ -9,7 +9,7 @@
  */
 
 import type { JobRecord, JobRunner } from "../core/job-types.js";
-import { neutralizeFraming } from "../core/reminder-framing.js";
+import { neutralizeFraming, neutralizeFramingValue } from "../core/reminder-framing.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import {
 	type McpClient,
@@ -22,6 +22,7 @@ import {
 } from "../domains/gateway/mcp/index.js";
 import {
 	JOB_EVENT_IDS_LIMIT,
+	JOB_JSON_BYTES,
 	type JobRunResult,
 	matchesJobPredicate,
 	projectJobPredicate,
@@ -38,10 +39,9 @@ const POLL_BATCH = 100;
 const CURSOR_WRITE_MS = 10_000;
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 300_000;
-/** Bytes of one occurrence's `data` a start records whole; larger data keeps only what until reads. */
+/** Bytes of one occurrence's recorded envelope kept whole; larger payloads project only what until reads. */
 const DATA_BYTES = 8192;
 const SUMMARY_DATA_CHARS = 600;
-const NEST_LIMIT = 32;
 
 export interface JobEventArrival {
 	eventId: string;
@@ -107,16 +107,6 @@ interface Subscription {
 	chain: Promise<void>;
 }
 
-/** Server-written text cannot open or close a host frame, at any depth of an occurrence's data. */
-function neutralizeValue(value: unknown, depth = 0): unknown {
-	if (typeof value === "string") return neutralizeFraming(value);
-	if (depth >= NEST_LIMIT || value === null || typeof value !== "object") return value;
-	if (Array.isArray(value)) return value.map((entry) => neutralizeValue(entry, depth + 1));
-	const out: Record<string, unknown> = {};
-	for (const [key, entry] of Object.entries(value)) out[neutralizeFraming(key)] = neutralizeValue(entry, depth + 1);
-	return out;
-}
-
 const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
 	new Promise((resolve) => {
 		if (signal.aborted) return resolve();
@@ -131,22 +121,33 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
 	});
 
 /**
- * Whether a job may subscribe to its event: the server is declared, trusted,
- * approved and offers the event by poll or push, the arguments match the
- * event's inputSchema, and the task's tool scope admits the server. Null when
- * it may; the refusal otherwise. Checked at create, resume and every start.
+ * Whether a job may subscribe to its event: on create and resume the server is
+ * declared, trusted, approved and offers the event by poll or push, the
+ * arguments match the event's inputSchema, and the task's tool scope admits the
+ * server; on run (draining buffered arrivals or subscription failures) only
+ * authority and scope are rechecked so a server outage or event removal settles
+ * through the job's own failure lifecycle instead of pausing admission.
  */
 export async function mcpEventJobRefusal(
 	source: McpCapabilitySource | null,
 	runner: EventRunner,
 	constraints: TurnConstraints | undefined,
 	signal?: AbortSignal,
+	phase: "create" | "resume" | "run" = "create",
 ): Promise<string | null> {
 	if (source === null) return "This host has no MCP gateway, so an mcp_event job has no server to subscribe to.";
 	const allowed = constraints?.allowedTools;
 	if (allowed !== undefined && !allowed.some((name) => source.ownerIdOf(name) === runner.server))
 		return `MCP server '${runner.server}' is outside the creating or current task's admitted tool scope.`;
-	const server = await source.eventServer(runner.server, signal === undefined ? {} : { signal });
+	const launch = {
+		...(signal === undefined ? {} : { signal }),
+		...(constraints?.readOnly === true ? { readOnly: true } : {}),
+	};
+	if (phase === "run") {
+		const refusal = source.eventAuthorityRefusal?.(runner.server, launch) ?? null;
+		return refusal === null ? null : neutralizeFraming(refusal);
+	}
+	const server = await source.eventServer(runner.server, launch);
 	if ("refusal" in server) return neutralizeFraming(server.refusal);
 	const descriptor = server.events.find((event) => event.name === runner.event);
 	if (descriptor === undefined) {
@@ -156,7 +157,9 @@ export async function mcpEventJobRefusal(
 		);
 	}
 	if (mcpEventDeliveryMode(descriptor) === null)
-		return `Event '${runner.event}' on MCP server '${runner.server}' is delivered only by webhook, which PanCode does not receive.`;
+		return descriptor.delivery.includes("webhook")
+			? `Event '${runner.event}' on MCP server '${runner.server}' is delivered only by webhook, which PanCode does not receive.`
+			: `Event '${runner.event}' on MCP server '${runner.server}' does not offer poll or push delivery.`;
 	const mismatch = await outputSchemaMismatch(descriptor.inputSchema, runner.arguments, undefined, {
 		value: "arguments",
 		schema: "inputSchema",
@@ -174,7 +177,15 @@ export function jobEventRunResult(job: JobRecord, drained: JobEventDrain | null)
 		eventIds: drained.eventIds,
 	};
 	const failure = drained.failure;
-	if (failure !== null && failure.errorClass !== "infrastructure")
+	const until = job.spec.until;
+	const matching =
+		drained.arrivals.length === 0
+			? -1
+			: until === null
+				? 0
+				: drained.arrivals.findIndex((arrival) => matchesJobPredicate(until, arrival.data));
+	// A matching arrival delivered before stream termination still satisfies the wait; otherwise a permanent refusal ends the job.
+	if (matching === -1 && failure !== null && failure.errorClass !== "infrastructure")
 		return {
 			outcome: "failed",
 			summary: failure.summary,
@@ -200,25 +211,33 @@ export function jobEventRunResult(job: JobRecord, drained: JobEventDrain | null)
 			...persisted,
 		};
 	}
-	const until = job.spec.until;
-	const matching =
-		until === null ? 0 : drained.arrivals.findIndex((arrival) => matchesJobPredicate(until, arrival.data));
 	const chosen = drained.arrivals[matching === -1 ? drained.arrivals.length - 1 : matching] as JobEventArrival;
 	const encoded = JSON.stringify(chosen.data);
-	const whole = Buffer.byteLength(encoded) <= DATA_BYTES;
-	const data = whole ? chosen.data : until === null ? {} : projectJobPredicate(until, chosen.data);
-	const json = {
+	const baseJson = {
 		server: runner.server,
 		event: runner.event,
 		eventId: chosen.eventId,
 		timestamp: chosen.timestamp,
-		data,
 		arrivals: drained.arrivals.length,
-		...(whole ? {} : { dataTruncated: true }),
 		...(drained.gap ? { gap: true } : {}),
 		...(drained.dropped > 0 ? { dropped: drained.dropped } : {}),
 		...(drained.rejected > 0 ? { rejected: drained.rejected } : {}),
 	};
+	const fullJson = { ...baseJson, data: chosen.data };
+	let json: Record<string, unknown> = fullJson;
+	if (Buffer.byteLength(JSON.stringify(fullJson)) > Math.min(DATA_BYTES, JOB_JSON_BYTES)) {
+		const projected = until === null ? {} : projectJobPredicate(until, chosen.data);
+		const compact = { ...baseJson, data: projected, dataTruncated: true };
+		if (Buffer.byteLength(JSON.stringify(compact)) <= JOB_JSON_BYTES) {
+			json = compact;
+		} else {
+			const minimal =
+				until !== null && matching !== -1
+					? until.path.reduceRight<unknown>((inner, segment) => ({ [segment]: inner }), until.op === "eq" ? until.value : {})
+					: {};
+			json = { ...baseJson, data: minimal, dataTruncated: true };
+		}
+	}
 	const shown = encoded.length > SUMMARY_DATA_CHARS ? `${encoded.slice(0, SUMMARY_DATA_CHARS)}…` : encoded;
 	const count = drained.arrivals.length === 1 ? "1 arrival" : `${drained.arrivals.length} arrivals`;
 	const verdict = until === null ? "" : matching === -1 ? "; until not met by any" : "; until met";
@@ -297,7 +316,7 @@ export function createJobEventHub(deps: JobEventHubDeps): JobEventHub {
 		sub.buffer.push({
 			eventId: neutralizeFraming(occurrence.eventId),
 			timestamp: neutralizeFraming(occurrence.timestamp),
-			data: neutralizeValue(occurrence.data) as Record<string, unknown>,
+			data: neutralizeFramingValue(occurrence.data) as Record<string, unknown>,
 		});
 		if (sub.buffer.length > BUFFER_LIMIT) {
 			sub.buffer.splice(0, sub.buffer.length - BUFFER_LIMIT);
@@ -330,7 +349,8 @@ export function createJobEventHub(deps: JobEventHubDeps): JobEventHub {
 			);
 			if (!live(sub)) return;
 			healthy(sub);
-			if (result.truncated) markGap(sub);
+			// Non-replayable types always carry cursor: null; there is no position to have advanced past (SEP-3415).
+			if (result.truncated && result.cursor !== null) markGap(sub);
 			for (const occurrence of result.events) enqueue(sub, () => accept(sub, occurrence, descriptor));
 			enqueue(sub, () => setCursor(sub, result.cursor));
 			await sub.chain;
@@ -343,8 +363,8 @@ export function createJobEventHub(deps: JobEventHubDeps): JobEventHub {
 			{
 				onActive(cursor, truncated) {
 					healthy(sub);
-					// Every active after the first that reports truncation is a gap in the stream.
-					if (truncated) markGap(sub);
+					// Non-replayable types always carry cursor: null; there is no position to have advanced past (SEP-3415).
+					if (truncated && cursor !== null) markGap(sub);
 					enqueue(sub, () => setCursor(sub, cursor));
 				},
 				onEvent(occurrence) {

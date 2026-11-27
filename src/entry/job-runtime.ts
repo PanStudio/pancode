@@ -43,6 +43,7 @@ export interface JobRuntimeDeps {
 		runner: Extract<JobRunner, { kind: "mcp_event" }>,
 		constraints: TurnConstraints | undefined,
 		signal: AbortSignal,
+		phase: Exclude<JobAdmissionContext["phase"], "delivery">,
 	): Promise<string | null>;
 	/** Take an mcp_event job's buffered arrivals as one start's result. */
 	drainEvents?(job: JobRecord): JobRunResult;
@@ -267,7 +268,7 @@ export function createJobRuntime(deps: JobRuntimeDeps): JobRunnerPorts {
 			const refusal =
 				deps.eventRefusal === undefined
 					? "This host cannot subscribe to MCP events."
-					: await deps.eventRefusal(runner, constraints, context.signal);
+					: await deps.eventRefusal(runner, constraints, context.signal, context.phase);
 			return refusal === null ? admission : { status: "denied", reason: refusal };
 		},
 		async run(context) {

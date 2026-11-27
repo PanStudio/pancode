@@ -815,19 +815,31 @@ export function createMcpProtocolClient(
 	 * is added on the legacy path, where initialize declared the skills
 	 * extension once.
 	 */
+	const tasksRevisionUnknown = (): boolean => {
+		const extensions = isRecord(info?.capabilities?.extensions) ? info.capabilities.extensions : null;
+		if (extensions === null || !Object.hasOwn(extensions, MCP_TASKS_EXTENSION)) return false;
+		const declared = extensions[MCP_TASKS_EXTENSION];
+		return !isRecord(declared) || declared.revision !== undefined;
+	};
+
 	const withEnvelope = (method: string, params: unknown): unknown => {
 		if (era !== "modern" && method !== "server/discover") return params;
 		const base = isRecord(params) ? params : {};
 		const meta = isRecord(base._meta) ? base._meta : {};
 		const extensions: Record<string, Record<string, never>> = {};
-		if (method === "tools/call" || method.startsWith("tasks/")) extensions[MCP_TASKS_EXTENSION] = {};
+		if ((method === "tools/call" || method.startsWith("tasks/")) && !tasksRevisionUnknown()) {
+			extensions[MCP_TASKS_EXTENSION] = {};
+		}
 		if ((method.startsWith("skills/") || method.startsWith("resources/")) && skillsSettings() !== null) {
 			extensions[MCP_SKILLS_EXTENSION] = {};
 		}
 		// MCP Events is declared on events/* and on the listen stream that opts into its list changes.
 		if (
-			method.startsWith("events/") ||
-			(method === "subscriptions/listen" && isRecord(base.notifications) && base.notifications.eventsListChanged === true)
+			eventsOffered() !== null &&
+			(method.startsWith("events/") ||
+				(method === "subscriptions/listen" &&
+					isRecord(base.notifications) &&
+					base.notifications.eventsListChanged === true))
 		) {
 			extensions[MCP_EVENTS_EXTENSION] = {};
 		}
@@ -1585,7 +1597,7 @@ export function createMcpProtocolClient(
 			watchdog.unref?.();
 		};
 		const ended = (async (): Promise<McpError | null> => {
-			await ensureReady();
+			await ensureReady(controller.signal);
 			const refused = eventsRefusal("events/stream");
 			if (refused !== null) throw refused;
 			const params = {
@@ -1618,6 +1630,7 @@ export function createMcpProtocolClient(
 			cancel: () => {
 				if (cancelled) return;
 				cancelled = true;
+				if (watchdog !== null) clearTimeout(watchdog);
 				if (streamId !== null && eventStreams.delete(streamId)) sendCancel(streamId, "subscription closed by the client");
 				controller.abort();
 			},

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
 import type { TSchema } from "typebox";
-import { neutralizeFraming } from "../../core/reminder-framing.js";
+import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
 import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import { mcpToolName } from "../../core/tool-names.js";
@@ -1001,7 +1001,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				name: neutralizeFraming(event.name),
 				description: neutralizeFraming(event.description),
 				delivery: [...event.delivery],
-				arguments: event.inputSchema,
+				arguments: neutralizeFramingValue(event.inputSchema) as Record<string, unknown>,
 			}));
 		if (state.client !== null) {
 			const live = state.events;
@@ -1017,7 +1017,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				...surfaced,
 				...(live !== undefined && live.events.length > 0 ? { events: eventsOf(live.events) } : {}),
 				...(live?.truncated === true ? { eventsTruncated: true as const } : {}),
-				...(state.eventsFailure !== undefined ? { eventsFailure: state.eventsFailure } : {}),
+				...(state.eventsFailure !== undefined ? { eventsFailure: neutralizeFraming(state.eventsFailure) } : {}),
 			};
 		}
 		// A trusted server that was never launched is still only trusted. Its
@@ -1083,6 +1083,31 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			});
 		}
 		return entries;
+	};
+
+	const checkEventAuthority = (id: string, launch?: { readOnly?: boolean }): string | null => {
+		const state = resolveStates().get(id);
+		if (state === undefined) {
+			const declared = [...resolveStates().keys()].sort();
+			return `no MCP server named '${id}' is declared${declared.length > 0 ? `; declared servers: ${declared.join(", ")}` : ""}`;
+		}
+		const { declaration } = state;
+		if (declaration.scope === "client") {
+			return `MCP server '${id}' was supplied by the ACP client for this session only; an event job subscribes only to a server declared in PanCode's MCP config`;
+		}
+		if (declaration.trust.status !== "trusted") {
+			const remedy = mcpTrustRemedy(id);
+			return `MCP server '${id}' is ${declaration.trust.status} (${declaration.trust.reason}); run ${remedy.remedy} (${remedy.interactiveRemedy} in an interactive session)`;
+		}
+		const revoked = declaration.plugin !== undefined ? pluginServerRevocation(declaration.plugin, options.cwd) : null;
+		if (revoked !== null) return revoked;
+		const readOnly = readOnlyLaunchRefusal(declaration, launch?.readOnly);
+		if (readOnly !== null && state.client === null) return readOnly;
+		if (state.surface !== undefined) {
+			const surface = surfaceRefusal(state, `MCP server '${id}'`);
+			if (surface !== null) return surface;
+		}
+		return null;
 	};
 
 	return {
@@ -1368,28 +1393,14 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		servedSurface(id) {
 			return resolveStates().get(id)?.surface?.served ?? null;
 		},
+		eventAuthorityRefusal(id, launch) {
+			return checkEventAuthority(id, launch);
+		},
 		async eventServer(id, launch) {
+			const authorityRefusal = checkEventAuthority(id, launch);
+			if (authorityRefusal !== null) return { refusal: authorityRefusal };
 			const state = resolveStates().get(id);
-			if (state === undefined) {
-				const declared = [...resolveStates().keys()].sort();
-				return {
-					refusal: `no MCP server named '${id}' is declared${declared.length > 0 ? `; declared servers: ${declared.join(", ")}` : ""}`,
-				};
-			}
-			const { declaration } = state;
-			if (declaration.scope === "client") {
-				return {
-					refusal: `MCP server '${id}' was supplied by the ACP client for this session only; an event job subscribes only to a server declared in PanCode's MCP config`,
-				};
-			}
-			if (declaration.trust.status !== "trusted") {
-				const remedy = mcpTrustRemedy(id);
-				return {
-					refusal: `MCP server '${id}' is ${declaration.trust.status} (${declaration.trust.reason}); run ${remedy.remedy} (${remedy.interactiveRemedy} in an interactive session)`,
-				};
-			}
-			const readOnly = readOnlyLaunchRefusal(declaration, launch?.readOnly);
-			if (readOnly !== null && state.client === null) return { refusal: readOnly };
+			if (state === undefined) return { refusal: `no MCP server named '${id}' is declared` };
 			// A subscriber reconnecting after the server exited gets a relaunch, the way a failed tool call's next call does.
 			const exited = state.client?.state().status;
 			if (state.failure === null && (exited === "failed" || exited === "closed")) {

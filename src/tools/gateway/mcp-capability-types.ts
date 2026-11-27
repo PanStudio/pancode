@@ -307,6 +307,13 @@ export interface McpCapabilitySource {
 	/** Ids of the servers launched this session and still open. */
 	connectedIds(options?: { readyOnly?: boolean }): string[];
 	/**
+	 * Synchronous policy/authority check for an `mcp_event` job without
+	 * launching or reconnecting the server: declared, not client-scoped,
+	 * trusted, plugin not revoked, read-only launch allowed if unstarted, and
+	 * approved surface if already listed. Null when authorized.
+	 */
+	eventAuthorityRefusal?(id: string, options?: { readOnly?: boolean }): string | null;
+	/**
 	 * A declared, trusted server with an approved surface that offers MCP
 	 * Events, launched when needed, with its current event types; an ACP
 	 * client's server, an untrusted or failed one, or one offering no events is

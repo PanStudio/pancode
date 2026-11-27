@@ -703,10 +703,12 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
 			...(listing?.events ?? []).map(
 				(event) =>
-					`  event ${event.name} delivery=${event.delivery.join(",")} arguments=${boundedCallText(JSON.stringify(event.arguments))}${event.description.length > 0 ? ` ${boundedCallText(event.description.replace(/\s+/g, " "))}` : ""}`,
+					`  event ${escapeTerminalControls(event.name)} delivery=${event.delivery.join(",")} arguments=${boundedCallText(JSON.stringify(event.arguments))}${event.description.length > 0 ? ` ${boundedCallText(escapeTerminalControls(event.description.replace(/\s+/g, " ")))}` : ""}`,
 			),
 			...(listing?.eventsTruncated === true ? ["  events truncated at the client cap"] : []),
-			...(listing?.eventsFailure !== undefined ? [`  events unavailable: ${listing.eventsFailure}`] : []),
+			...(listing?.eventsFailure !== undefined
+				? [`  events unavailable: ${escapeTerminalControls(listing.eventsFailure)}`]
+				: []),
 			...(latestInfo.instructions !== null ? instructionsLines(latestInfo.instructions) : []),
 			...(skills?.lines ?? []),
 			...results.map(

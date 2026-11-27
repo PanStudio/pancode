@@ -159,7 +159,8 @@ export function createJobHost(deps: JobHostDeps): JobHost {
 			runner: Parameters<typeof mcpEventJobRefusal>[1],
 			constraints: Parameters<typeof mcpEventJobRefusal>[2],
 			signal: AbortSignal,
-		) => mcpEventJobRefusal(mcpEvents(), runner, constraints, signal),
+			phase: Parameters<typeof mcpEventJobRefusal>[4],
+		) => mcpEventJobRefusal(mcpEvents(), runner, constraints, signal, phase),
 		drainEvents: (job: JobRecord) => jobEventRunResult(job, events.drain(job.id)),
 		notice: deps.notice,
 	};

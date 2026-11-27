@@ -117,7 +117,10 @@ export function mcpEventErrorName(value: unknown): McpEventErrorName | null {
 /** Bounded, one-line text of an extension error for a job reason. */
 export function mcpEventErrorText(value: unknown): string {
 	const error = mcpEventErrorObject(value);
-	if (error === null) return value instanceof Error ? value.message : String(value);
+	if (error === null) {
+		const raw = value instanceof Error ? value.message : String(value);
+		return boundedExternalDiagnostic(raw.replace(/\s+/g, " "), 512);
+	}
 	const data = isRecord(error.data) ? error.data : null;
 	const detail = data === null ? "" : Object.keys(data).length > 0 ? ` ${JSON.stringify(data)}` : "";
 	return boundedExternalDiagnostic(`${error.message} (code ${error.code})${detail}`.replace(/\s+/g, " "), 512);
@@ -125,15 +128,17 @@ export function mcpEventErrorText(value: unknown): string {
 
 /**
  * The server's events settings from its `server/discover` capabilities, or
- * null when it does not offer the extension. Settings must be an object (the
- * versioning spec maps each extension id to a settings object); `true`, an
- * array or any other value is read as a revision this client does not know,
- * and the extension is not enabled. Unknown members are additive and ignored.
+ * null when it does not offer the initial revision of the extension. Settings
+ * must be an object with no `revision` field (SEP-3392: an absent `revision`
+ * means the initial revision, and an unknown `revision` MUST NOT enable the
+ * extension); `true`, an array, any other non-object value, or any `revision`
+ * reads as a revision this client does not know. Other unknown members are
+ * additive and ignored.
  */
 export function mcpEventsOffered(capabilities: Record<string, unknown>): { listChanged: boolean } | null {
 	const extensions = isRecord(capabilities.extensions) ? capabilities.extensions : null;
 	const settings = extensions === null ? undefined : extensions[MCP_EVENTS_EXTENSION];
-	if (!isRecord(settings)) return null;
+	if (!isRecord(settings) || settings.revision !== undefined) return null;
 	return { listChanged: settings.listChanged === true };
 }
 
