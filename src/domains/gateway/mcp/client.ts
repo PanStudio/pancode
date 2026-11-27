@@ -20,10 +20,13 @@ import { readPancodeVersion } from "../../../core/package-root.js";
 import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { clampTimerDelayMs, sleep } from "../../../core/timers.js";
 import { isRecord } from "../../../core/type-guards.js";
+import { mcpParamHeaders } from "./http-headers.js";
+import { createMcpHttpTransport, type McpHttpServerSpec } from "./http-transport.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
 import {
 	DEFAULT_MAX_LINE_BYTES,
 	JSON_RPC_METHOD_NOT_FOUND,
+	MCP_HEADER_MISMATCH,
 	MCP_META_CLIENT_CAPABILITIES,
 	MCP_META_CLIENT_INFO,
 	MCP_META_PROTOCOL_VERSION,
@@ -49,6 +52,7 @@ import {
 } from "./tool-results.js";
 import type {
 	McpOutboundMessage,
+	McpParamHeader,
 	McpSendOptions,
 	McpSendOutcome,
 	McpTeardownOutcome,
@@ -98,7 +102,8 @@ const PROGRESS_MESSAGE_BYTES = 512;
 /** Retries of one request that the server keeps answering with input_required and only a requestState. */
 export const MCP_INPUT_REQUIRED_ROUNDS = 8;
 
-export type McpServerSpec = McpStdioServerSpec;
+export type { McpHttpServerSpec } from "./http-transport.js";
+export type McpServerSpec = McpStdioServerSpec | McpHttpServerSpec;
 
 export interface McpClientOptions {
 	/** Containment root for the server's cwd; a cwd outside it, by path or by symlink, is refused before spawn. */
@@ -125,6 +130,8 @@ export interface McpClientOptions {
 	signal?: AbortSignal;
 	/** The worker attested the operator's network grant for this server, so its sandboxed process gets network. */
 	sandboxNetwork?: boolean;
+	/** The fetch a remote server is reached with; tests replace it. */
+	fetch?: typeof fetch;
 }
 
 /** The options that belong to the protocol, whatever transport carries it. */
@@ -166,6 +173,8 @@ export interface McpToolListing {
 	truncated: boolean;
 	/** Modern era: the shortest freshness hint of the discover result and every page; absent or negative reads as 0. */
 	ttlMs?: number;
+	/** Tools left out because their `x-mcp-header` annotations break the Streamable HTTP rules, with why. */
+	dropped?: Array<{ name: string; reason: string }>;
 }
 
 export interface McpProgressUpdate {
@@ -414,7 +423,30 @@ function serverErrorFrom(method: string, error: unknown, fallback: string): McpE
 	return new McpError("server", `${method}: ${fallback}`);
 }
 
-export function createMcpStdioClient(spec: McpServerSpec, options: McpClientOptions): McpClient {
+/** The client for a declaration: Streamable HTTP when it names a url, stdio otherwise. */
+export function createMcpClient(spec: McpServerSpec, options: McpClientOptions): McpClient {
+	return "url" in spec ? createMcpHttpClient(spec, options) : createMcpStdioClient(spec, options);
+}
+
+export function createMcpHttpClient(spec: McpHttpServerSpec, options: McpClientOptions): McpClient {
+	return createMcpProtocolClient(
+		spec.id,
+		(events) =>
+			createMcpHttpTransport(
+				spec,
+				{
+					maxMessageBytes: options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES,
+					maxOutboundBytes: Math.max(MIN_OUTBOUND_BYTES, options.maxOutboundBytes ?? DEFAULT_MAX_OUTBOUND_BYTES),
+					teardownBoundMs: clampTimerDelayMs(options.teardownBoundMs ?? DEFAULT_TEARDOWN_BOUND_MS),
+					...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
+				},
+				events,
+			),
+		options,
+	);
+}
+
+export function createMcpStdioClient(spec: McpStdioServerSpec, options: McpClientOptions): McpClient {
 	const initialCwd = containedCwd(spec, options.workspaceRoot);
 	if (initialCwd instanceof Error) throw new McpError("spawn", `mcp server ${spec.id}: ${initialCwd.message}`);
 	return createMcpProtocolClient(
@@ -471,6 +503,8 @@ export function createMcpProtocolClient(
 	const notificationHandlers = new Map<string, Set<(params: unknown) => void>>();
 	/** The outputSchema of each tool in the latest listing, which its structuredContent is checked against. */
 	let outputSchemas = new Map<string, Record<string, unknown>>();
+	/** The `x-mcp-header` parameters of each tool in the latest listing, mirrored into an HTTP call's headers. */
+	let paramHeaders = new Map<string, McpParamHeader[]>();
 	let notifications = 0;
 	let toolsChangedFlag = false;
 
@@ -763,10 +797,15 @@ export function createMcpProtocolClient(
 				timer = setTimeout(() => cancel(new McpError("timeout", `${method} timed out after ${timeoutMs}ms`)), timeoutMs);
 			}
 			signal?.addEventListener("abort", onAbort, { once: true });
+			const mirrored =
+				method === "tools/call" && isRecord(params) && typeof params.name === "string"
+					? paramHeaders.get(params.name)
+					: undefined;
 			const outcome = send(
 				{ jsonrpc: "2.0", id: requestId, method, ...(params === undefined ? {} : { params }) },
 				{
 					requestId,
+					...(mirrored !== undefined ? { paramHeaders: mirrored } : {}),
 					onSent: () => {
 						const entry = pending.get(requestId);
 						if (entry !== undefined) entry.sent = true;
@@ -843,6 +882,18 @@ export function createMcpProtocolClient(
 				await close();
 				throw closedError();
 			}
+			// basic/versioning: these two are modern answers too, so a fallback to initialize is forbidden.
+			if (answered?.code === MCP_MISSING_REQUIRED_CLIENT_CAPABILITY || answered?.code === MCP_HEADER_MISMATCH) {
+				fail(
+					new McpError(
+						"protocol",
+						`initialize failed: mcp server ${id} speaks MCP ${MCP_MODERN_PROTOCOL_VERSION} but refused server/discover: ${cause.message}`,
+						answered,
+					),
+				);
+				await close();
+				throw closedError();
+			}
 			if (answered !== null || cause.code === "timeout") return null;
 			fail(new McpError(cause.code, `initialize failed: ${cause.message}`, cause.data));
 			await close();
@@ -879,6 +930,15 @@ export function createMcpProtocolClient(
 			}
 			let probeId: number | null = null;
 			let handshakeId: number | null = null;
+			const http = transport.http;
+			const becomeModern = (discovered: McpServerInfo): McpServerInfo => {
+				era = "modern";
+				http?.settleEra("modern", MCP_MODERN_PROTOCOL_VERSION);
+				info = discovered;
+				if (status === "starting") status = "ready";
+				listenForToolChanges(discovered.capabilities);
+				return discovered;
+			};
 			const handshake = (): Promise<unknown> =>
 				request(
 					"initialize",
@@ -893,6 +953,38 @@ export function createMcpProtocolClient(
 						handshakeId = assigned;
 					},
 				);
+			if (http !== undefined) {
+				// basic/transports/streamable-http, Backward Compatibility: the modern
+				// request is answered before anything else is sent, and only an answer
+				// that is not a recognized modern one sends the client to initialize.
+				// An origin already found legacy in this process is not probed again.
+				const cachedLegacy = http.cachedEra() === "legacy";
+				const discovered = cachedLegacy ? null : await discoverEra(signal);
+				if (discovered !== null) return becomeModern(discovered);
+				let result: unknown;
+				try {
+					result = await handshake();
+				} catch (error) {
+					if (cachedLegacy) http.forgetEra();
+					const cause = error instanceof McpError ? error : new McpError("protocol", errorMessage(error));
+					fail(new McpError(cause.code, `initialize failed: ${cause.message}`, cause.data));
+					await close();
+					throw closedError();
+				}
+				const parsed = parseServerInfo(result, id);
+				if (parsed instanceof McpError) {
+					if (cachedLegacy) http.forgetEra();
+					fail(new McpError("protocol", `initialize failed: ${parsed.message}`));
+					await close();
+					throw closedError();
+				}
+				info = parsed;
+				// Every later POST carries the negotiated revision and the session, the initialized notification included.
+				http.settleEra("legacy", parsed.protocolVersion);
+				send({ jsonrpc: "2.0", method: "notifications/initialized" });
+				if (status === "starting") status = "ready";
+				return parsed;
+			}
 			// Many legacy servers drop an unknown method without answering, and
 			// waiting out the whole initialize timeout for each of them would slow
 			// every start. After a short grace the handshake goes out beside the
@@ -932,11 +1024,7 @@ export function createMcpProtocolClient(
 			}
 			if (discovered !== null) {
 				if (handshakeId !== null) pending.get(handshakeId)?.abandon();
-				era = "modern";
-				info = discovered;
-				if (status === "starting") status = "ready";
-				listenForToolChanges(discovered.capabilities);
-				return discovered;
+				return becomeModern(discovered);
 			}
 			if (probeId !== null) pending.get(probeId)?.abandon();
 			let result: unknown;
@@ -967,37 +1055,62 @@ export function createMcpProtocolClient(
 		await initialize(signal);
 	};
 
-	const listTools = (signal?: AbortSignal): Promise<McpToolListing> =>
-		withDiscoverySignal(signal, async () => {
-			await ensureReady(signal);
-			const tools: McpToolDescriptor[] = [];
-			let cursor: string | undefined;
-			let pages = 0;
-			// Each page carries its own freshness; the listing is as fresh as its stalest part.
-			let ttlMs = era === "modern" ? (info?.ttlMs ?? 0) : undefined;
-			const finish = (truncated: boolean): McpToolListing => {
-				outputSchemas = new Map(tools.flatMap((tool) => (tool.outputSchema ? [[tool.name, tool.outputSchema]] : [])));
-				return { tools, truncated, ...(ttlMs !== undefined ? { ttlMs } : {}) };
+	/**
+	 * Over Streamable HTTP in the modern era, a tool whose `x-mcp-header`
+	 * annotations break the Schema Extension rules is left out of the listing
+	 * (basic/transports/streamable-http, Custom Headers from Tool Parameters).
+	 */
+	const mirrorsHeaders = (): boolean => transport.http !== undefined && era === "modern";
+
+	const listToolsOnce = async (signal?: AbortSignal): Promise<McpToolListing> => {
+		await ensureReady(signal);
+		const tools: McpToolDescriptor[] = [];
+		const dropped: Array<{ name: string; reason: string }> = [];
+		const mirrored = new Map<string, McpParamHeader[]>();
+		let cursor: string | undefined;
+		let pages = 0;
+		// Each page carries its own freshness; the listing is as fresh as its stalest part.
+		let ttlMs = era === "modern" ? (info?.ttlMs ?? 0) : undefined;
+		const finish = (truncated: boolean): McpToolListing => {
+			outputSchemas = new Map(tools.flatMap((tool) => (tool.outputSchema ? [[tool.name, tool.outputSchema]] : [])));
+			paramHeaders = mirrored;
+			return {
+				tools,
+				truncated,
+				...(ttlMs !== undefined ? { ttlMs } : {}),
+				...(dropped.length > 0 ? { dropped } : {}),
 			};
-			for (;;) {
-				pages += 1;
-				const result = await request("tools/list", cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal);
-				if (!isRecord(result) || !Array.isArray(result.tools)) {
-					throw new McpError("protocol", "tools/list result lacks a tools array");
-				}
-				if (ttlMs !== undefined) ttlMs = Math.min(ttlMs, freshnessOf(result.ttlMs));
-				for (const entry of result.tools) {
-					if (tools.length >= MCP_TOOL_LIST_CAP) return finish(true);
-					const descriptor = parseToolDescriptor(entry);
-					if (descriptor instanceof McpError) throw descriptor;
-					tools.push(descriptor);
-				}
-				const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
-				if (next === undefined) return finish(false);
-				if (tools.length >= MCP_TOOL_LIST_CAP || pages >= MCP_TOOL_LIST_PAGE_CAP) return finish(true);
-				cursor = next;
+		};
+		for (;;) {
+			pages += 1;
+			const result = await request("tools/list", cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal);
+			if (!isRecord(result) || !Array.isArray(result.tools)) {
+				throw new McpError("protocol", "tools/list result lacks a tools array");
 			}
-		});
+			if (ttlMs !== undefined) ttlMs = Math.min(ttlMs, freshnessOf(result.ttlMs));
+			for (const entry of result.tools) {
+				if (tools.length >= MCP_TOOL_LIST_CAP) return finish(true);
+				const descriptor = parseToolDescriptor(entry);
+				if (descriptor instanceof McpError) throw descriptor;
+				if (mirrorsHeaders()) {
+					const headers = mcpParamHeaders(descriptor.inputSchema);
+					if (typeof headers === "string") {
+						dropped.push({ name: descriptor.name, reason: serverText(headers) });
+						continue;
+					}
+					if (headers.length > 0) mirrored.set(descriptor.name, headers);
+				}
+				tools.push(descriptor);
+			}
+			const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
+			if (next === undefined) return finish(false);
+			if (tools.length >= MCP_TOOL_LIST_CAP || pages >= MCP_TOOL_LIST_PAGE_CAP) return finish(true);
+			cursor = next;
+		}
+	};
+
+	const listTools = (signal?: AbortSignal): Promise<McpToolListing> =>
+		withDiscoverySignal(signal, () => listToolsOnce(signal));
 
 	/** Route this call's progress notifications to its caller while the call runs (basic/utilities/progress). */
 	const trackProgress = (onProgress: (update: McpProgressUpdate) => void): { token: string; release(): void } => {
@@ -1067,6 +1180,7 @@ export function createMcpProtocolClient(
 		const timeoutMs = clampTimerDelayMs(callOptions.timeoutMs ?? requestTimeoutMs);
 		const startedAt = performance.now();
 		let params: Record<string, unknown> = { name, arguments: args };
+		let relisted = false;
 		for (let round = 1; ; round += 1) {
 			let budget = timeoutMs;
 			if (round > 1 && timeoutMs > 0) {
@@ -1077,7 +1191,20 @@ export function createMcpProtocolClient(
 			const progress = callOptions.onProgress === undefined ? null : trackProgress(callOptions.onProgress);
 			try {
 				const sent = progress === null ? params : { ...params, _meta: { progressToken: progress.token } };
-				const result = await request("tools/call", sent, budget, signal);
+				let result: unknown;
+				try {
+					result = await request("tools/call", sent, budget, signal);
+				} catch (error) {
+					// A HeaderMismatch means the listing PanCode mirrored from is stale:
+					// list again and send the call once more (streamable-http, Server Behavior).
+					const answered = error instanceof McpError && error.code === "server" && isRecord(error.data);
+					if (!answered || relisted || !mirrorsHeaders() || error.data.code !== MCP_HEADER_MISMATCH) throw error;
+					relisted = true;
+					toolsChangedFlag = true;
+					await listToolsOnce(signal);
+					round -= 1;
+					continue;
+				}
 				if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
 					if (result.resultType === "task") return await awaitTask(name, result, startedAt, timeoutMs, signal);
 					if (result.resultType === "input_required") {

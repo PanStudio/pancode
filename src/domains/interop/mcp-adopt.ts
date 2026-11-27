@@ -3,9 +3,11 @@
 /**
  * Another agent's MCP server declaration mapped onto PanCode's strict `mcp.yaml`
  * (domains/gateway/mcp/config.ts). A server whose launch cannot be stated
- * exactly in that schema (a remote transport, `${VAR}` expansion, a shell
- * string, an env pass-through list) is never guessed at: the plan skips it
- * and says why. A user-scope source lands in the user's `<config>/mcp.yaml`;
+ * exactly in that schema (the 2024 HTTP+SSE transport, `${VAR}` expansion, a
+ * shell string, an env pass-through list) is never guessed at: the plan skips
+ * it and says why. A Streamable HTTP server's literal header values move into
+ * PanCode's credential store, bound to its url's origin, and its declaration
+ * names them by key. A user-scope source lands in the user's `<config>/mcp.yaml`;
  * a project source lands in the project's `.pancode/mcp.yaml`, which keeps
  * its own trust record before anything in it launches.
  */
@@ -21,21 +23,44 @@ import { pancodeConfigDir } from "../../core/xdg.js";
 import {
 	MCP_CONFIG_CAPS,
 	MCP_CONFIG_VERSION,
+	MCP_CREDENTIAL_KEY_CHARS,
 	type McpConfigLoadResult,
+	type McpHeaderCredentialStore,
 	mcpConfigPaths,
+	mcpHeaderCredentialRef,
+	mcpHeaderValueRefusal,
+	mcpOriginOf,
+	openMcpHeaderCredentialStore,
 	parseMcpConfigText,
 } from "../gateway/mcp/index.js";
 import { inventoryText } from "./inventory.js";
 import type { InteropInventoryItem } from "./types.js";
 
 /** One server in the shape PanCode's `mcp.yaml` declares it. Env values stay host-side; plans show keys only. */
-export interface AdoptedMcpServer {
+export type AdoptedMcpServer = AdoptedStdioServer | AdoptedRemoteServer;
+
+interface AdoptedStdioServer {
 	id: string;
 	command: string;
 	args: string[];
 	env: Record<string, string>;
 	cwd?: string;
 	timeoutMs?: number;
+	url?: never;
+}
+
+interface AdoptedRemoteServer {
+	id: string;
+	url: string;
+	/** Header name to the full value the source declares; stored, never written to mcp.yaml. */
+	headerValues: Record<string, string>;
+	timeoutMs?: number;
+	command?: never;
+}
+
+/** The credential key an adopted header value is stored under: `<id>-<header>`, within the key pattern. */
+function adoptedHeaderKey(id: string, header: string): string {
+	return `${id}-${header.toLowerCase().replace(/[^a-z0-9_.-]+/gu, "-")}`.slice(0, MCP_CREDENTIAL_KEY_CHARS);
 }
 
 export type McpAdoptionMapping =
@@ -80,6 +105,9 @@ function serverId(name: string): string {
 /** Fields each host may set that change nothing about how PanCode launches the server. */
 const IGNORED_FIELDS = new Set([
 	"type",
+	"url",
+	"headers",
+	"http_headers",
 	"command",
 	"args",
 	"env",
@@ -91,11 +119,43 @@ const IGNORED_FIELDS = new Set([
 	"startup_timeout_ms",
 ]);
 
+const REMOTE_TYPES = new Set([undefined, "http", "streamable-http", "streamableHttp", "remote"]);
+
+function mapRemoteDeclaration(raw: Record<string, unknown>, name: string): AdoptedMcpServer | string {
+	const type = raw.type;
+	if (type === "sse") return "uses the 2024 HTTP+SSE transport, which PanCode does not speak; it speaks Streamable HTTP";
+	if (!REMOTE_TYPES.has(type as string | undefined))
+		return `uses the ${String(type)} transport, which PanCode does not speak`;
+	if (raw.bearer_token_env_var !== undefined || raw.env_http_headers !== undefined)
+		return "reads its credentials from host environment variables, which PanCode's mcp.yaml cannot state; store them with pancode mcp login";
+	const url = raw.url as string;
+	const source = raw.headers ?? raw.http_headers;
+	const headerValues: Record<string, string> = {};
+	if (source !== undefined) {
+		if (!isRecord(source)) return "headers is not a mapping";
+		for (const [header, value] of Object.entries(source)) {
+			if (typeof value !== "string") return `header ${header} is not a string`;
+			const refused = mcpHeaderValueRefusal(value);
+			if (refused !== null) return `header ${header}'s value ${refused}`;
+			headerValues[header] = value;
+		}
+	}
+	const keys = Object.keys(headerValues).map((header) => adoptedHeaderKey(serverId(name), header));
+	if (new Set(keys).size !== keys.length) return "names headers that would share one credential key";
+	if ([url, ...Object.values(headerValues)].some((value) => /\$\{[^}]*\}/.test(value)))
+		return "expands environment variables in its url or headers, which PanCode's mcp.yaml does not do; declare it with pancode mcp add and store its credentials with pancode mcp login";
+	const server: AdoptedMcpServer = { id: serverId(name), url, headerValues };
+	if (typeof raw.tool_timeout_sec === "number" && raw.tool_timeout_sec > 0)
+		server.timeoutMs = Math.min(MCP_CONFIG_CAPS.timeoutMs, Math.round(raw.tool_timeout_sec * 1000));
+	return server;
+}
+
 function mapDeclaration(raw: Record<string, unknown>, name: string): AdoptedMcpServer | string {
 	if (raw.enabled === false) return "disabled in the source configuration";
 	const type = raw.type;
-	if (typeof raw.url === "string" || (type !== undefined && type !== "stdio" && type !== "local"))
-		return `uses the ${typeof type === "string" ? type : "remote"} transport; PanCode runs stdio servers only`;
+	if (typeof raw.url === "string") return mapRemoteDeclaration(raw, name);
+	if (type !== undefined && type !== "stdio" && type !== "local")
+		return `uses the ${typeof type === "string" ? type : "remote"} transport without a url`;
 	if (raw.env_vars !== undefined)
 		return "passes host environment variables through by name (env_vars), which PanCode's mcp.yaml cannot state";
 	// OpenCode's local servers spell argv as one `command` array.
@@ -124,6 +184,19 @@ function mapDeclaration(raw: Record<string, unknown>, name: string): AdoptedMcpS
 }
 
 function serverNode(server: AdoptedMcpServer): Record<string, unknown> {
+	if (server.url !== undefined) {
+		const headers = Object.fromEntries(
+			Object.keys(server.headerValues)
+				.sort()
+				.map((header) => [header, adoptedHeaderKey(server.id, header)]),
+		);
+		return {
+			id: server.id,
+			url: server.url,
+			...(Object.keys(headers).length > 0 ? { headers } : {}),
+			...(server.timeoutMs !== undefined ? { timeoutMs: server.timeoutMs } : {}),
+		};
+	}
 	return {
 		id: server.id,
 		command: server.command,
@@ -135,6 +208,11 @@ function serverNode(server: AdoptedMcpServer): Record<string, unknown> {
 }
 
 function serverDigest(server: AdoptedMcpServer): string {
+	if (server.url !== undefined) {
+		// The values are hashed, so a review binds them without the plan showing them.
+		const headers = Object.entries(server.headerValues).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+		return sha256Hex(JSON.stringify([server.id, server.url, headers, server.timeoutMs ?? null]));
+	}
 	const canonical = [
 		server.id,
 		server.command,
@@ -221,6 +299,7 @@ export function applyMcpAdoption(
 	item: InteropInventoryItem,
 	cwd: string,
 	reviewedDigest: string,
+	credentials: () => McpHeaderCredentialStore = openMcpHeaderCredentialStore,
 ): { ok: true; destination: string; id: string } | { ok: false; reason: string } {
 	const current = mapForeignMcpServer(item, cwd);
 	if (!current.ok) return current;
@@ -238,6 +317,19 @@ export function applyMcpAdoption(
 	const destination = destinationOf(item.scope, cwd);
 	const problems = errorsOf(strictCheck(text, item.scope, destination));
 	if (problems.length > 0) return { ok: false, reason: `Merged config would be invalid: ${problems.join("; ")}.` };
+	const adopted = current.server;
+	if (adopted.url !== undefined && Object.keys(adopted.headerValues).length > 0) {
+		// Stored before the declaration that names them, so the server never loads without its credentials.
+		try {
+			const store = credentials();
+			const origin = mcpOriginOf(adopted.url);
+			for (const [header, value] of Object.entries(adopted.headerValues)) {
+				store.set(mcpHeaderCredentialRef(adoptedHeaderKey(adopted.id, header), origin), value);
+			}
+		} catch (error) {
+			return { ok: false, reason: `Credentials not stored: ${error instanceof Error ? error.message : String(error)}.` };
+		}
+	}
 	// Env values can be credentials: the file is the operator's own and readable only by them.
 	safeResourceWrite(current.destination, text, { mode: 0o600 });
 	return { ok: true, destination: current.destination, id: current.server.id };

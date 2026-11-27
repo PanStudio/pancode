@@ -13,6 +13,7 @@ export type McpClassifiedServer = Pick<
 	"id" | "actionClassExplicit" | "trust" | "toolActionClasses"
 > & {
 	scope: ResolvedMcpServer["scope"] | "client";
+	url?: string | undefined;
 };
 
 /**
@@ -82,6 +83,8 @@ export function mcpToolActionClass(
 		server.trust.actionClass !== "unknown"
 	)
 		return server.trust.actionClass;
+	// A remote server's hints are another origin's claim about itself; only the operator classes its tools.
+	if (server.url !== undefined) return "unknown";
 	if (tool.annotations?.readOnlyHint === true) return options?.readOnly === true ? "unknown" : "read";
 	if (tool.annotations?.destructiveHint === true) return "destructive";
 	return "unknown";

@@ -12,7 +12,7 @@ import { pancodeCachePath } from "../../src/core/xdg.js";
 import { resolveWorkerMcpAdmission } from "../../src/domains/dispatch/worker-mcp.js";
 import {
 	approveMcpSurface,
-	createMcpStdioClient,
+	createMcpClient,
 	type McpBuiltinSource,
 	type McpClient,
 	mcpBuiltinLaunchArgs,
@@ -140,8 +140,8 @@ describe("store references in MCP path arguments", () => {
 			...(store !== undefined ? { store } : {}),
 			...(options.openBackend !== undefined ? { openStoreBackend: options.openBackend } : {}),
 			clientFactory: (spec, clientOptions) => {
-				launches.push({ id: spec.id, args: spec.args ?? [] });
-				const client: McpClient = createMcpStdioClient(spec, {
+				launches.push({ id: spec.id, args: "args" in spec ? (spec.args ?? []) : [] });
+				const client: McpClient = createMcpClient(spec, {
 					...clientOptions,
 					initializeTimeoutMs: 10_000,
 					killGraceMs: 200,

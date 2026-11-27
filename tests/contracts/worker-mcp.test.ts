@@ -31,7 +31,7 @@ import {
 import {
 	approveMcpSurface,
 	canonicalProjectRoot,
-	createMcpStdioClient,
+	createMcpClient,
 	grantMcpBuiltinNetwork,
 	type McpBuiltinSource,
 	type McpClient,
@@ -92,7 +92,7 @@ describe("native worker MCP capabilities", () => {
 	let fixtureSurface: McpSurface;
 
 	before(async () => {
-		const probe = createMcpStdioClient(
+		const probe = createMcpClient(
 			{ id: "probe", command: process.execPath, args: [FIXTURE] },
 			{ workspaceRoot: process.cwd(), initializeTimeoutMs: 5_000, killGraceMs: 200 },
 		);
@@ -181,7 +181,7 @@ describe("native worker MCP capabilities", () => {
 					...(builtin !== undefined ? { builtin } : {}),
 					clientFactory: (spec, options) => {
 						launches?.push(options);
-						const client = createMcpStdioClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
+						const client = createMcpClient(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
 						clients.push(client);
 						return client;
 					},
@@ -934,7 +934,7 @@ describe("native worker MCP capabilities", () => {
 		match(scoped([project]).withheld[0]?.reason ?? "", /overlaps its launch cwd /u);
 		// Its entry file is the kit CLI this PanCode runs, inside the checkout here and the install elsewhere.
 		const node = resolveMcpServers({ cwd: project }).servers.find((server) => server.id === "node");
-		const entry = node?.args.find((arg) => existsSync(arg) && statSync(arg).isFile());
+		const entry = node?.args?.find((arg) => existsSync(arg) && statSync(arg).isFile());
 		ok(entry !== undefined, JSON.stringify(node?.args));
 		const inEntry = scoped([dirname(entry)]);
 		strictEqual(inEntry.attestation.tools[0]?.network, undefined);
@@ -1063,7 +1063,7 @@ describe("native worker MCP capabilities", () => {
 			readableRoots: [tree],
 			network: false,
 		});
-		const client = createMcpStdioClient(
+		const client = createMcpClient(
 			{
 				id: "shell",
 				command: "/bin/sh",
@@ -1110,7 +1110,7 @@ describe("native worker MCP capabilities", () => {
 			readableRoots: [tree],
 			network: false,
 		});
-		const client = createMcpStdioClient(
+		const client = createMcpClient(
 			{ id: "graceful", command: process.execPath, args: [server] },
 			{ workspaceRoot: tree, initializeTimeoutMs: 5_000, killGraceMs: 2_000 },
 		);

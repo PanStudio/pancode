@@ -14,7 +14,7 @@ import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import {
 	approveMcpSurface,
 	canonicalProjectRoot,
-	createMcpStdioClient,
+	createMcpClient,
 	DEFAULT_KILL_GRACE_MS,
 	DEFAULT_TEARDOWN_BOUND_MS,
 	defaultMcpBuiltinSource,
@@ -132,7 +132,7 @@ function wire(
 		registry,
 		requestTimeoutMs: 5_000,
 		clientFactory: (spec, options) => {
-			const client = createMcpStdioClient(spec, {
+			const client = createMcpClient(spec, {
 				...options,
 				initializeTimeoutMs: 5_000,
 				killGraceMs: 200,
@@ -295,6 +295,13 @@ describe("gateway MCP capabilities", () => {
 		);
 		strictEqual(mcpToolConfirmationRule(trusted, "submit_slurm_job"), "slurm-allocation");
 		strictEqual(mcpToolActionClass({ ...trusted, scope: "client" }, { name: "tail", annotations: null }), "unknown");
+		// A remote server's own hints never class its tools; the operator does.
+		const local = { ...operator, id: "docs", toolActionClasses: {} };
+		strictEqual(mcpToolActionClass(local, { name: "search", ...hinted }), "read");
+		strictEqual(
+			mcpToolActionClass({ ...local, url: "https://example.invalid/mcp" }, { name: "search", ...hinted }),
+			"unknown",
+		);
 		const owner = mcpToolOwner([{ id: "a" }, { id: "a__b" }], "mcp_a__b__tool");
 		deepStrictEqual(owner, { declaration: { id: "a__b" }, tool: "tool" });
 		strictEqual(mcpToolOwner([{ id: "a" }], "mcp_b__tool"), null);
@@ -506,7 +513,7 @@ describe("gateway MCP capabilities", () => {
 					// User-scope servers: an attended session records each surface on first sight.
 					attended: true,
 					clientFactory: (spec, options) => {
-						const client = createMcpStdioClient(spec, { ...options, killGraceMs: 50 });
+						const client = createMcpClient(spec, { ...options, killGraceMs: 50 });
 						if (spec.id === "a") {
 							const listTools = client.listTools.bind(client);
 							client.listTools = async () => {
@@ -689,10 +696,10 @@ describe("gateway MCP capabilities", () => {
 			import { createRegistry } from ${moduleUrl("src/tools/registry.ts")};
 			import { registerAllTools } from ${moduleUrl("src/tools/bootstrap.ts")};
 			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/index.ts")};
-			import { createMcpStdioClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
+			import { createMcpClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
 			const registry = createRegistry({ safety: createWorkerSafety({cwd: ${JSON.stringify(scene.project)}}), autonomy: () => "yolo" });
 			let client;
-			const source = createMcpCapabilitySource({cwd: ${JSON.stringify(scene.project)}, configDir: ${JSON.stringify(scene.configDir)}, registry, clientFactory: (spec, opts) => client = createMcpStdioClient(spec, opts)});
+			const source = createMcpCapabilitySource({cwd: ${JSON.stringify(scene.project)}, configDir: ${JSON.stringify(scene.configDir)}, registry, clientFactory: (spec, opts) => client = createMcpClient(spec, opts)});
 			const termination = getTerminationCoordinator();
 			registerAllTools(registry, {mcpCapabilities: source, bus: telemetryHub(), termination});
 			await source.list();
@@ -1687,7 +1694,7 @@ describe("builtin MCP servers", () => {
 			requestTimeoutMs: 10_000,
 			clientFactory: (spec, options) => {
 				launches.push(spec.id);
-				return createMcpStdioClient(spec, { ...options, initializeTimeoutMs: 10_000, killGraceMs: 200 });
+				return createMcpClient(spec, { ...options, initializeTimeoutMs: 10_000, killGraceMs: 200 });
 			},
 		});
 		registerCoreTools(registry, { mcpCapabilities: source });

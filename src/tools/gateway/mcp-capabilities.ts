@@ -10,6 +10,7 @@ import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../..
 import type {
 	McpCatalogIdentity,
 	McpClient,
+	McpClientOptions,
 	McpServerCatalog,
 	McpSurface,
 	McpSurfaceStatus,
@@ -22,24 +23,28 @@ import type {
 import {
 	approveMcpSurface,
 	canonicalProjectRoot,
-	createMcpStdioClient,
+	createMcpClient,
 	currentMcpSurfaceApproval,
 	judgeMcpSurface,
 	McpError,
 	mcpBuiltinLaunchArgs,
 	mcpBuiltinLaunchEnvironment,
+	mcpCatalogDigest,
 	mcpCatalogStale,
+	mcpOriginOf,
 	mcpSurface,
 	mcpSurfaceRemedy,
 	mcpSurfaceRemedyFor,
+	openMcpHeaderCredentialStore,
 	pluginServerRevocation,
 	readMcpServerCatalog,
+	resolveMcpHeaders,
 	resolveMcpServers,
 	writeMcpServerCatalog,
 } from "../../domains/gateway/mcp/index.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
-import { mcpTransportIdentity } from "../../domains/safety/information-flow.js";
+import { mcpRemoteTransportIdentity, mcpTransportIdentity } from "../../domains/safety/information-flow.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
 import { readMaxBytes } from "../read.js";
@@ -85,6 +90,10 @@ import {
 	storeReferencesRefusal,
 	storeServerLaunchContext,
 } from "./mcp-store-references.js";
+
+/** How long a remote server's client stays open with no call, and how often that is checked. */
+const MCP_REMOTE_IDLE_MS = 5 * 60_000;
+const MCP_REMOTE_IDLE_SWEEP_MS = 30_000;
 
 function actionClassFor(declaration: GatewayMcpServer, tool: NamedTool): McpTrustActionClass {
 	return mcpToolActionClass(declaration, { name: tool.name, annotations: tool.annotations ?? null });
@@ -143,6 +152,11 @@ function objectiveOf(tool: NamedTool): string {
  * off disk and a caller can never tell the two apart by shape alone.
  */
 function describeTool(declaration: GatewayMcpServer, tool: NamedTool): string {
+	if (declaration.url !== undefined) {
+		const where =
+			declaration.scope === "client" ? "supplied by the ACP client for this session" : `${declaration.scope} scope`;
+		return `${objectiveOf(tool)}\nRemote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)} (${where}), trusted with action class ${actionClassFor(declaration, tool)}; it runs off this machine, and what a call sends leaves it.`;
+	}
 	if (declaration.scope === "client") {
 		return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id}, supplied by the ACP client for this session. Its calls use the gateway's unknown action class and session autonomy.`;
 	}
@@ -161,7 +175,8 @@ function quoted(value: string): string {
 
 export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): McpCapabilitySource {
 	const registry = options.registry;
-	const clientFactory = options.clientFactory ?? createMcpStdioClient;
+	const clientFactory = options.clientFactory ?? createMcpClient;
+	const headerCredentials = options.headerCredentials ?? openMcpHeaderCredentialStore;
 	const openStoreBackend = options.openStoreBackend ?? defaultOpenStoreBackend;
 	/** The project's store backend, opened once for whoever asks first. */
 	const storeBackend = (): (() => Promise<StoreBackend>) => {
@@ -190,6 +205,34 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	};
 
 	const closeClient = (state: ServerState): Promise<McpTeardownOutcome> | undefined => state.connection?.close();
+
+	/** Record why a server stopped; the first reason stands, and a credential refusal reads as needs-auth. */
+	const failWith = (state: ServerState, error: unknown): void => {
+		if (state.failure !== null) return;
+		state.failure = errorMessage(error);
+		if (error instanceof McpError && error.code === "auth") state.needsAuth = true;
+	};
+
+	/**
+	 * A remote server holds no process, but a legacy one holds a session the
+	 * server may expire. One left idle closes, and the next discovery
+	 * connects afresh, reading its credentials again.
+	 */
+	let idleSweep: ReturnType<typeof setInterval> | null = null;
+	const watchIdle = (state: ServerState): void => {
+		state.lastUsed = Date.now();
+		if (idleSweep !== null) return;
+		idleSweep = setInterval(() => {
+			const now = Date.now();
+			for (const each of states?.values() ?? []) {
+				if (each.declaration.url === undefined || each.client === null || (each.inflight ?? 0) > 0) continue;
+				if (now - (each.lastUsed ?? now) < MCP_REMOTE_IDLE_MS) continue;
+				each.relaunch = true;
+				void closeClient(each);
+			}
+		}, MCP_REMOTE_IDLE_SWEEP_MS);
+		idleSweep.unref();
+	};
 
 	const trustOptions = {
 		cwd: options.cwd,
@@ -365,7 +408,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			scope: declaration.scope === "client" ? "user" : declaration.scope,
 			declarationPath: declaration.path,
 			serverId: declaration.id,
-			digest: declaration.digest,
+			digest: mcpCatalogDigest(declaration, headerCredentials),
 			cwd: declaration.cwd,
 		};
 	};
@@ -537,6 +580,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					prepared = resolved;
 				}
 				const progress = invokeOptions?.onUpdate === undefined ? null : mcpProgressReporter(name, invokeOptions.onUpdate);
+				state.inflight = (state.inflight ?? 0) + 1;
+				state.lastUsed = Date.now();
 				try {
 					const result = await callClient.callTool(tool.name, prepared?.args ?? args, {
 						...(invokeOptions?.signal ? { signal: invokeOptions.signal } : {}),
@@ -621,7 +666,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				} catch (error) {
 					const stopped = callClient.state().status === "failed" || callClient.state().status === "closed";
 					if (stopped) {
-						state.failure = errorMessage(error);
+						state.failure = null;
+						failWith(state, error);
 						await closeClient(state);
 					}
 					// Server-written text (an error answer's detail, a crashed server's stderr) cannot open or close a host frame.
@@ -637,6 +683,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						});
 					return { kind: "error", message };
 				} finally {
+					state.inflight = (state.inflight ?? 1) - 1;
+					state.lastUsed = Date.now();
 					progress?.stop();
 					if (prepared !== null) await removeTemporaries(prepared);
 				}
@@ -657,7 +705,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				return [...pathArgumentEffects(named), ...storeReferenceEffects(references, write, options.cwd, options.store)];
 			};
 		}
-		if (trustClass === "execute") {
+		if (trustClass === "execute" && declaration.url === undefined) {
 			const launchCall: ClassifierCall = {
 				tool: "bash",
 				args: { command: [declaration.command, ...declaration.args].map(quoted).join(" ") },
@@ -678,6 +726,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		for (const name of state.registered) registry.unregister?.(name);
 		state.registered = [];
 		state.unregistrable = [];
+		state.dropped = listing.dropped ?? [];
 		// Only the first listing is compared with the recording; a later change
 		// on a live server already fails the stale spec's call with its own reason.
 		if (state.listed !== true) {
@@ -763,6 +812,29 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 					}
 					if (launchRefusal !== null) throw new Error(launchRefusal);
+					const clientOptions: McpClientOptions = {
+						workspaceRoot: placement.workspaceRoot,
+						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
+						onFailure: (error) => {
+							failWith(state, error);
+							void closeClient(state);
+						},
+						...(declaration.timeoutMs !== null
+							? { requestTimeoutMs: declaration.timeoutMs }
+							: options.requestTimeoutMs !== undefined
+								? { requestTimeoutMs: options.requestTimeoutMs }
+								: {}),
+					};
+					if (declaration.url !== undefined) {
+						// Read at acquire, for this server's own origin only; nothing is cached across launches.
+						// An ACP client's server carries the values the client sent for it.
+						const resolved =
+							declaration.scope === "client"
+								? { headers: state.clientHeaders ?? {} }
+								: resolveMcpHeaders(declaration, headerCredentials());
+						if ("missing" in resolved) throw new McpError("auth", resolved.missing);
+						return clientFactory({ id: declaration.id, url: declaration.url, headers: resolved.headers }, clientOptions);
+					}
 					return clientFactory(
 						{
 							id: declaration.id,
@@ -775,24 +847,13 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 									? { ...mcpBuiltinLaunchEnvironment(declaration.builtin.environment), ...declaration.env }
 									: declaration.env,
 						},
-						{
-							workspaceRoot: placement.workspaceRoot,
-							...(sandboxNetwork ? { sandboxNetwork: true } : {}),
-							onFailure: (error) => {
-								state.failure ??= errorMessage(error);
-								void closeClient(state);
-							},
-							...(declaration.timeoutMs !== null
-								? { requestTimeoutMs: declaration.timeoutMs }
-								: options.requestTimeoutMs !== undefined
-									? { requestTimeoutMs: options.requestTimeoutMs }
-									: {}),
-						},
+						clientOptions,
 					);
 				},
 				onAcquired: (client) => {
 					state.client = client;
 					installExitHook();
+					if (declaration.url !== undefined) watchIdle(state);
 				},
 			});
 		})();
@@ -820,7 +881,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				if (closed || controller.signal.aborted || state.client !== client || state.failure !== null) return;
 				installListing(state, listing);
 			} catch (error) {
-				state.failure ??= errorMessage(error);
+				failWith(state, error);
 				await close();
 			}
 		})();
@@ -845,6 +906,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				state.client = null;
 				state.listed = false;
 				state.failure = null;
+				delete state.needsAuth;
 				for (const name of state.registered) registry.unregister?.(name);
 				state.registered = [];
 				state.unregistrable = [];
@@ -913,6 +975,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			};
 		}
 		if (state.failure !== null) {
+			if (state.needsAuth === true) {
+				return { ...base, status: "needs-auth", reason: state.failure, remedy: `pancode mcp login ${declaration.id}` };
+			}
 			return { ...base, status: "failed", reason: state.failure };
 		}
 		const surface = surfaceOf(state);
@@ -929,6 +994,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				tools: [...state.registered],
 				...(state.truncated ? { truncated: true } : {}),
 				...(state.unregistrable.length > 0 ? { unregistrable: [...state.unregistrable] } : {}),
+				...(state.dropped !== undefined && state.dropped.length > 0 ? { dropped: [...state.dropped] } : {}),
 				...guided(state.client.serverInfo()?.instructions),
 				...surfaced,
 			};
@@ -1014,21 +1080,22 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const base = `acp_${slug || "server"}`;
 				let id = base;
 				for (let suffix = 2; all.has(id); suffix += 1) id = `${base.slice(0, 28)}_${suffix}`;
-				const declaration: GatewayMcpServer = {
+				const common = {
 					id,
-					scope: "client",
+					scope: "client" as const,
 					path: "ACP client session",
-					command: server.command,
-					args: [...server.args],
 					cwd: options.cwd,
 					cwdRoot: options.cwd,
-					env: { ...server.env },
 					timeoutMs: null,
-					actionClass: "unknown",
+					actionClass: "unknown" as const,
 					toolActionClasses: {},
 					digest: "session-only",
-					trust: { status: "trusted", actionClass: "unknown" },
+					trust: { status: "trusted" as const, actionClass: "unknown" as const },
 				};
+				const declaration: GatewayMcpServer =
+					"url" in server
+						? { ...common, url: server.url, headers: {} }
+						: { ...common, command: server.command, args: [...server.args], env: { ...server.env } };
 				const state: ServerState = {
 					declaration,
 					client: null,
@@ -1040,6 +1107,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					refused: new Map(),
 					failure: null,
 					catalog: null,
+					...("url" in server ? { clientHeaders: { ...server.headers } } : {}),
 				};
 				all.set(id, state);
 				added.push(state);
@@ -1272,6 +1340,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		transportOf(name) {
 			const declaration = ownerOf(name)?.declaration;
 			if (declaration === undefined) return null;
+			if (declaration.url !== undefined) return mcpRemoteTransportIdentity(declaration.id, declaration.url);
 			return mcpTransportIdentity(declaration.id, declaration.command, declaration.args, declaration.cwd, declaration.env);
 		},
 		servedSurface(id) {
@@ -1288,6 +1357,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		close() {
 			if (closePromise !== null) return closePromise;
 			closed = true;
+			if (idleSweep !== null) clearInterval(idleSweep);
 			closePromise = (async () => {
 				const all = [...(states?.values() ?? [])];
 				await Promise.all(all.map(closeClient));

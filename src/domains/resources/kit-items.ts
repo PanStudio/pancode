@@ -120,6 +120,8 @@ export function addKitServer(name: string, cwd: string): KitChangeResult<KitAddF
 		});
 		const server = loaded.servers[0];
 		if (!server) return { ok: false, message: loaded.diagnostics[0]?.message ?? `${refOf(name)} declares no server` };
+		if (server.url !== undefined)
+			return { ok: false, message: `${refOf(name)} declares a remote server, which a kit does not install` };
 		const license = step.source.license ?? installed.manifest?.license;
 		return {
 			ok: true,
@@ -206,6 +208,7 @@ export function kitServeLaunch(name: string, cwd: string): KitChangeResult<KitSe
 	const failure = loaded.diagnostics.find((item) => item.severity !== "warning");
 	if (server === undefined || failure)
 		return refuse(`${name} does not load: ${failure?.message ?? `its mcp.json declares no server ${name}`}`);
+	if (server.url !== undefined) return refuse(`${name} declares a remote server, which a kit does not run`);
 	let launchCwd: string;
 	try {
 		launchCwd = realpathSync(server.cwd);

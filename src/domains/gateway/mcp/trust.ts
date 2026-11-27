@@ -134,9 +134,9 @@ export type McpTrustStatus =
 	| { status: "untrusted"; actionClass: "unknown"; reason: string }
 	| { status: "stale"; actionClass: "unknown"; reason: string };
 
-export interface ResolvedMcpServer extends McpServerDeclaration {
+export type ResolvedMcpServer = McpServerDeclaration & {
 	trust: McpTrustStatus;
-}
+};
 
 export interface McpTrustOptions {
 	cwd: string;
@@ -416,7 +416,7 @@ function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state
 		return {
 			status: "stale",
 			actionClass: "unknown",
-			reason: `declaration of '${server.id}'${origin} changed (command, args, env, cwd, timeout, ${server.plugin !== undefined ? "tool action classes, or the plugin's content" : entries.length > 0 ? "tool action classes, or entry scripts" : "or tool action classes"}) since it was trusted; review it and run pancode mcp trust ${server.id} again`,
+			reason: `declaration of '${server.id}'${origin} changed (${server.url !== undefined ? "url, headers" : "command, args, env, cwd"}, timeout, ${server.plugin !== undefined ? "tool action classes, or the plugin's content" : entries.length > 0 ? "tool action classes, or entry scripts" : "or tool action classes"}) since it was trusted; review it and run pancode mcp trust ${server.id} again`,
 		};
 	}
 	return {

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import type { ToolName } from "../../src/core/tool-names.js";
 import {
 	approveMcpSurface,
-	createMcpStdioClient,
+	createMcpClient,
 	type McpBuiltinSource,
 	type McpClient,
 	type McpClientOptions,
@@ -85,7 +85,7 @@ function wire(scene: Scenario, factory?: (spec: McpServerSpec, options: McpClien
 		registry,
 		requestTimeoutMs: 5_000,
 		clientFactory: (spec, options) => {
-			const client = (factory ?? createMcpStdioClient)(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
+			const client = (factory ?? createMcpClient)(spec, { ...options, initializeTimeoutMs: 5_000, killGraceMs: 200 });
 			clients.push(client);
 			return client;
 		},
@@ -204,7 +204,7 @@ describe("MCP catalog source", () => {
 		let lists = 0;
 		let calls = 0;
 		const { source, registry, clients } = wire(scene, (spec, options) => {
-			const client = createMcpStdioClient(spec, options);
+			const client = createMcpClient(spec, options);
 			return {
 				...client,
 				callTool: (...args) => {
@@ -423,7 +423,7 @@ describe("MCP catalog source", () => {
 
 		// The same declaration now runs an upgraded server whose echo takes one more parameter.
 		const upgraded = (spec: McpServerSpec, clientOptions: McpClientOptions): McpClient => {
-			const client = createMcpStdioClient(spec, clientOptions);
+			const client = createMcpClient(spec, clientOptions);
 			const listTools = client.listTools.bind(client);
 			client.listTools = async (signal) => {
 				const listing = await listTools(signal);
@@ -496,7 +496,7 @@ describe("MCP catalog source", () => {
 		// Server `a` also offers a tool literally named `b__echo`, so both
 		// declarations compose the name mcp_a__b__echo.
 		const collide = (spec: McpServerSpec, clientOptions: McpClientOptions): McpClient => {
-			const client = createMcpStdioClient(spec, { ...clientOptions, killGraceMs: 50 });
+			const client = createMcpClient(spec, { ...clientOptions, killGraceMs: 50 });
 			if (spec.id !== "a") return client;
 			const listTools = client.listTools.bind(client);
 			client.listTools = async () => {

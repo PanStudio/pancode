@@ -40,6 +40,7 @@ import {
 	type McpBuiltinPolicy,
 	type McpBuiltinSource,
 } from "./builtin.js";
+import { mcpCredentialKeyRefusal, mcpDeclaredHeaderRefusal, mcpRemoteEndpoint } from "./remote.js";
 
 export const MCP_CONFIG_VERSION = 1;
 export const MCP_USER_CONFIG_FILENAME = "mcp.yaml";
@@ -56,6 +57,8 @@ export const MCP_CONFIG_CAPS = Object.freeze({
 	envEntries: 64,
 	envValueBytes: 4096,
 	cwdBytes: 512,
+	urlBytes: 2048,
+	headers: 16,
 	timeoutMs: 900_000,
 	toolActionClasses: 128,
 	toolPathArguments: 128,
@@ -71,6 +74,8 @@ const SERVER_FIELDS = new Set([
 	"args",
 	"cwd",
 	"env",
+	"url",
+	"headers",
 	"timeoutMs",
 	"actionClass",
 	"toolActionClasses",
@@ -86,6 +91,8 @@ const PLUGIN_SERVER_FIELDS = new Set([
 	"args",
 	"cwd",
 	"env",
+	"url",
+	"headers",
 	"timeoutMs",
 	"toolActionClasses",
 	"toolPathArguments",
@@ -144,18 +151,15 @@ export interface McpServerPlugin {
 	contentDigest: string;
 }
 
-export interface McpServerDeclaration {
+interface McpServerDeclarationBase {
 	id: string;
 	scope: McpServerScope;
 	/** The config file that declares the server. */
 	path: string;
-	command: string;
-	args: string[];
-	/** Absolute working directory the server starts in. */
+	/** Absolute working directory the server starts in; a remote server's path arguments resolve against it. */
 	cwd: string;
 	/** Containment root for `cwd`; the client refuses a cwd outside it. */
 	cwdRoot: string;
-	env: Record<string, string>;
 	timeoutMs: number | null;
 	/** Operator-declared effect class; project servers use the separate trust record. */
 	actionClass: "read" | "execute" | "destructive" | "unknown";
@@ -182,6 +186,31 @@ export interface McpServerDeclaration {
 	/** Set for a builtin-scope declaration: the policy this PanCode ships for the server. */
 	builtin?: McpBuiltinPolicy;
 }
+
+/** A server PanCode starts as a local process and speaks to over its stdio. */
+export interface McpStdioServerDeclaration extends McpServerDeclarationBase {
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+	url?: never;
+	headers?: never;
+}
+
+/** A server PanCode reaches over Streamable HTTP at `url`. */
+export interface McpRemoteServerDeclaration extends McpServerDeclarationBase {
+	url: string;
+	/**
+	 * Header name to the key of a credential PanCode stores for this url's
+	 * origin; the value itself never appears in a config file.
+	 */
+	headers: Record<string, string>;
+	command?: never;
+	args?: never;
+	env?: never;
+	entryScripts?: never;
+}
+
+export type McpServerDeclaration = McpStdioServerDeclaration | McpRemoteServerDeclaration;
 
 /**
  * A project file a project server runs, with its content hash, or the
@@ -219,17 +248,16 @@ export interface McpConfigLoadOptions {
 	builtin?: McpBuiltinSource;
 }
 
-interface DeclaredServerFields {
+type DeclaredServerFields = (
+	| { command: string; args: string[]; env: Record<string, string>; cwd: string | null }
+	| { url: string; headers: Record<string, string> }
+) & {
 	id: string;
-	command: string;
-	args: string[];
-	cwd: string | null;
-	env: Record<string, string>;
 	timeoutMs: number | null;
 	actionClass: "read" | "execute" | "destructive" | "unknown";
 	toolActionClasses: Record<string, "read" | "execute" | "destructive" | "unknown">;
 	toolPathArguments: McpToolPathArguments;
-}
+};
 
 /** A declaration cannot grant its own server network; only the operator's trust record can. */
 function networkIgnoredMessage(location: string, id: string): string {
@@ -246,31 +274,42 @@ function unknownFields(record: Record<string, unknown>, allowed: ReadonlySet<str
 		.sort();
 }
 
-/** The digest a trust record binds to: every field that changes what runs, in canonical order. */
-export function mcpServerDigest(fields: {
-	id: string;
-	command: string;
-	args: ReadonlyArray<string>;
-	cwd: string | null;
-	env: Readonly<Record<string, string>>;
-	timeoutMs: number | null;
-	toolActionClasses?: Readonly<Record<string, "read" | "execute" | "destructive" | "unknown">>;
-	toolPathArguments?: Readonly<McpToolPathArguments>;
-	/** A plugin server's plugin tree digest, so any change to the plugin needs a new trust decision. */
-	pluginContentDigest?: string;
-	/** A project server's bound entry files, so a pulled commit cannot swap the code that runs under trust. */
-	entryScripts?: ReadonlyArray<McpServerEntryScript>;
-}): string {
+/**
+ * The digest a trust record binds to: every field that changes what runs, in
+ * canonical order. A remote server's digest covers its url and the credential
+ * keys it sends, so trust is bound to the endpoint the credentials go to.
+ */
+export function mcpServerDigest(
+	fields: (
+		| {
+				command: string;
+				args: ReadonlyArray<string>;
+				cwd: string | null;
+				env: Readonly<Record<string, string>>;
+		  }
+		| { url: string; headers: Readonly<Record<string, string>> }
+	) & {
+		id: string;
+		timeoutMs: number | null;
+		toolActionClasses?: Readonly<Record<string, "read" | "execute" | "destructive" | "unknown">>;
+		toolPathArguments?: Readonly<McpToolPathArguments>;
+		/** A plugin server's plugin tree digest, so any change to the plugin needs a new trust decision. */
+		pluginContentDigest?: string;
+		/** A project server's bound entry files, so a pulled commit cannot swap the code that runs under trust. */
+		entryScripts?: ReadonlyArray<McpServerEntryScript>;
+	},
+): string {
+	const sorted = (record: Readonly<Record<string, string>>): Record<string, string | undefined> =>
+		Object.fromEntries(
+			Object.keys(record)
+				.sort()
+				.map((key) => [key, record[key]]),
+		);
 	const canonical = JSON.stringify({
 		id: fields.id,
-		command: fields.command,
-		args: [...fields.args],
-		cwd: fields.cwd,
-		env: Object.fromEntries(
-			Object.keys(fields.env)
-				.sort()
-				.map((key) => [key, fields.env[key]]),
-		),
+		...("url" in fields
+			? { url: fields.url, headers: sorted(fields.headers) }
+			: { command: fields.command, args: [...fields.args], cwd: fields.cwd, env: sorted(fields.env) }),
 		timeoutMs: fields.timeoutMs,
 		...(fields.toolActionClasses !== undefined && Object.keys(fields.toolActionClasses).length > 0
 			? {
@@ -610,6 +649,46 @@ function validateToolPathArguments(value: unknown, location: string): McpToolPat
 	return declared;
 }
 
+/** A remote server's endpoint and the credential each header it sends is read from. */
+function validateEndpoint(
+	url: unknown,
+	headers: unknown,
+	location: string,
+): { url: string; headers: Record<string, string> } | Error {
+	if (typeof url !== "string" || url.length === 0) return new Error(`${location}.url must be a non-empty string`);
+	if (utf8Bytes(url) > MCP_CONFIG_CAPS.urlBytes) {
+		return new Error(`${location}.url exceeds the ${MCP_CONFIG_CAPS.urlBytes}-byte cap`);
+	}
+	const endpoint = mcpRemoteEndpoint(url);
+	if (typeof endpoint === "string") return new Error(`${location}.url ${endpoint}`);
+	const declared = Object.create(null) as Record<string, string>;
+	if (headers !== undefined) {
+		if (!isRecord(headers)) return new Error(`${location}.headers must map header names to credential keys`);
+		const entries = Object.entries(headers);
+		if (entries.length > MCP_CONFIG_CAPS.headers) {
+			return new Error(`${location}.headers exceeds the ${MCP_CONFIG_CAPS.headers}-entry cap`);
+		}
+		const seen = new Set<string>();
+		for (const [name, key] of entries) {
+			const refused = mcpDeclaredHeaderRefusal(name);
+			if (refused !== null) return new Error(`${location}.headers: '${name}' ${refused}`);
+			if (seen.has(name.toLowerCase())) return new Error(`${location}.headers names '${name}' twice`);
+			seen.add(name.toLowerCase());
+			if (typeof key !== "string") {
+				return new Error(`${location}.headers.${name} must name a stored credential key`);
+			}
+			const keyRefused = mcpCredentialKeyRefusal(key);
+			if (keyRefused !== null) {
+				return new Error(
+					`${location}.headers.${name} names a credential key, which ${keyRefused}; the value itself is stored with pancode mcp login, never written here`,
+				);
+			}
+			declared[name] = key;
+		}
+	}
+	return { url: endpoint.href, headers: declared };
+}
+
 function validateServer(
 	value: unknown,
 	location: string,
@@ -618,17 +697,31 @@ function validateServer(
 	if (!isRecord(value)) return new Error(`${location} must be an object`);
 	const unknown = unknownFields(value, SERVER_FIELDS);
 	if (unknown.length > 0) return new Error(`${location} has unknown field(s): ${unknown.join(", ")}`);
-	for (const field of ["id", "command"]) {
-		if (!Object.hasOwn(value, field)) return new Error(`${location}.${field} is required`);
-	}
+	const remote = Object.hasOwn(value, "url");
+	if (!Object.hasOwn(value, "id")) return new Error(`${location}.id is required`);
+	if (!remote && !Object.hasOwn(value, "command")) return new Error(`${location} needs a command or a url`);
 	const id = validateId(value.id, `${location}.id`);
 	if (id instanceof Error) return id;
-	const command = validateCommand(value.command, `${location}.command`);
-	if (command instanceof Error) return command;
-	const args = validateArgs(value.args, `${location}.args`);
-	if (args instanceof Error) return args;
-	const env = validateEnv(value.env, `${location}.env`);
-	if (env instanceof Error) return env;
+	let launch: { command: string; args: string[]; env: Record<string, string> } | null = null;
+	let endpoint: { url: string; headers: Record<string, string> } | null = null;
+	if (remote) {
+		const local = ["command", "args", "cwd", "env"].filter((field) => Object.hasOwn(value, field));
+		if (local.length > 0) {
+			return new Error(`${location} names a url, so ${local.join(", ")} cannot apply; a remote server is not started`);
+		}
+		const validated = validateEndpoint(value.url, value.headers, location);
+		if (validated instanceof Error) return validated;
+		endpoint = validated;
+	} else {
+		if (Object.hasOwn(value, "headers")) return new Error(`${location}.headers applies only to a server with a url`);
+		const command = validateCommand(value.command, `${location}.command`);
+		if (command instanceof Error) return command;
+		const args = validateArgs(value.args, `${location}.args`);
+		if (args instanceof Error) return args;
+		const env = validateEnv(value.env, `${location}.env`);
+		if (env instanceof Error) return env;
+		launch = { command, args, env };
+	}
 	const timeoutMs = validateTimeout(value.timeoutMs, `${location}.timeoutMs`);
 	if (timeoutMs instanceof Error) return timeoutMs;
 	if (scope !== "user" && value.actionClass !== undefined) {
@@ -680,8 +773,12 @@ function validateServer(
 	if (value.network !== undefined && typeof value.network !== "boolean") {
 		return new Error(`${location}.network must be true or false`);
 	}
+	const shared = { id, timeoutMs, actionClass, toolActionClasses, toolPathArguments };
 	return {
-		fields: { id, command, args, cwd: declaredCwd, env, timeoutMs, actionClass, toolActionClasses, toolPathArguments },
+		fields:
+			endpoint !== null
+				? { ...endpoint, ...shared }
+				: { ...(launch as NonNullable<typeof launch>), cwd: declaredCwd, ...shared },
 		declaredCwd,
 		network: scope === "user" && value.network === true,
 		networkIgnored: scope !== "user" && value.network !== undefined,
@@ -752,25 +849,32 @@ export function parseMcpConfigText(text: string, input: McpConfigTextInput): Mcp
 		const resolved = resolveCwd(declaredCwd, input.scope, input.root, `${location}.cwd`);
 		if (resolved instanceof Error) return diagnostic(resolved.message);
 		ids.set(fields.id, index);
-		const entryScripts =
-			input.scope === "project" ? projectEntryScripts(fields.command, fields.args, resolved.cwd, resolved.cwdRoot) : [];
-		servers.push({
+		const shared = {
 			id: fields.id,
 			scope: input.scope,
 			path: input.path,
-			command: fields.command,
-			args: fields.args,
 			cwd: resolved.cwd,
 			cwdRoot: resolved.cwdRoot,
-			env: fields.env,
 			timeoutMs: fields.timeoutMs,
 			actionClass: fields.actionClass,
 			actionClassExplicit: Object.hasOwn(value, "actionClass"),
 			toolActionClasses: fields.toolActionClasses,
 			...(Object.keys(fields.toolPathArguments).length > 0 ? { toolPathArguments: fields.toolPathArguments } : {}),
+			...(validated.network ? { network: true as const } : {}),
+		};
+		if ("url" in fields) {
+			servers.push({ ...shared, url: fields.url, headers: fields.headers, digest: mcpServerDigest(fields) });
+			continue;
+		}
+		const entryScripts =
+			input.scope === "project" ? projectEntryScripts(fields.command, fields.args, resolved.cwd, resolved.cwdRoot) : [];
+		servers.push({
+			...shared,
+			command: fields.command,
+			args: fields.args,
+			env: fields.env,
 			digest: mcpServerDigest({ ...fields, entryScripts }),
 			...(entryScripts.length > 0 ? { digestWithoutEntryScript: mcpServerDigest(fields) } : {}),
-			...(validated.network ? { network: true as const } : {}),
 			...(entryScripts.length > 0 ? { entryScripts } : {}),
 		});
 	}
@@ -836,9 +940,11 @@ function loadFile(filePath: string, scope: McpServerScope, root: string): McpCon
  * `{"mcpServers": {"<id>": {"type": "stdio", "command", "args", "env"}}}`.
  * A server may add PanCode's `toolActionClasses` and `toolPathArguments`; the
  * declaration digest covers them, so the operator's trust names what it approved.
- * Each server keeps the id it declares and runs in the plugin root. PanCode's
- * client speaks stdio only, so another transport is reported and skipped; a
- * malformed file contributes nothing (fail closed).
+ * Each server keeps the id it declares and runs in the plugin root. A server
+ * of type `http` (or `streamable-http`) is reached at its `url`, and its
+ * `headers` name stored credential keys as in mcp.yaml. The 2024 HTTP+SSE
+ * transport (`sse`) and any other type are reported and skipped; a malformed
+ * file contributes nothing (fail closed).
  */
 export function loadPluginMcpFile(plugin: {
 	id: string;
@@ -872,11 +978,30 @@ export function loadPluginMcpFile(plugin: {
 	for (const [id, value] of entries) {
 		const location = `mcpServers.${id}`;
 		if (!isRecord(value)) return { servers: [], diagnostics: [diagnostic(`${location} must be an object`)] };
-		if (value.type !== undefined && value.type !== "stdio") {
+		if (value.type === "sse") {
 			diagnostics.push(
-				diagnostic(`${location} uses transport ${JSON.stringify(value.type)}; PanCode runs stdio servers only`),
+				diagnostic(
+					`${location} uses transport "sse", the 2024 HTTP+SSE transport PanCode does not speak; a remote server must offer Streamable HTTP (type "http")`,
+				),
 			);
 			continue;
+		}
+		const httpType = value.type === "http" || value.type === "streamable-http";
+		if (value.type !== undefined && value.type !== "stdio" && !httpType) {
+			diagnostics.push(
+				diagnostic(
+					`${location} uses transport ${JSON.stringify(value.type)}; PanCode speaks stdio and Streamable HTTP (type "http")`,
+				),
+			);
+			continue;
+		}
+		if (httpType !== Object.hasOwn(value, "url")) {
+			return {
+				servers: [],
+				diagnostics: [
+					diagnostic(httpType ? `${location} is type ${value.type} but names no url` : `${location}.url needs type "http"`),
+				],
+			};
 		}
 		const unknown = unknownFields(value, PLUGIN_SERVER_FIELDS);
 		if (unknown.length > 0)
@@ -890,15 +1015,12 @@ export function loadPluginMcpFile(plugin: {
 		}
 		const resolved = resolveCwd(declaredCwd, "plugin", plugin.rootPath, `${location}.cwd`);
 		if (resolved instanceof Error) return { servers: [], diagnostics: [diagnostic(resolved.message)] };
-		servers.push({
+		const shared = {
 			id: fields.id,
-			scope: "plugin",
+			scope: "plugin" as const,
 			path: filePath,
-			command: fields.command,
-			args: fields.args,
 			cwd: resolved.cwd,
 			cwdRoot: resolved.cwdRoot,
-			env: fields.env,
 			timeoutMs: fields.timeoutMs,
 			actionClass: fields.actionClass,
 			actionClassExplicit: false,
@@ -906,7 +1028,12 @@ export function loadPluginMcpFile(plugin: {
 			...(Object.keys(fields.toolPathArguments).length > 0 ? { toolPathArguments: fields.toolPathArguments } : {}),
 			digest: mcpServerDigest({ ...fields, pluginContentDigest: plugin.contentDigest }),
 			plugin: { id: plugin.id, scope: plugin.scope, contentDigest: plugin.contentDigest },
-		});
+		};
+		servers.push(
+			"url" in fields
+				? { ...shared, url: fields.url, headers: fields.headers }
+				: { ...shared, command: fields.command, args: fields.args, env: fields.env },
+		);
 	}
 	return { servers, diagnostics };
 }

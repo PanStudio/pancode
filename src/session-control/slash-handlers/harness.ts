@@ -308,7 +308,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "mcp",
 		rank: 3,
 		acp: { reads: ["", "list"] },
-		description: "List MCP servers, or trust or untrust one by id",
+		description: "List MCP servers, trust or untrust one by id, or log one out",
 		group: "PanCode",
 		kinds: ["mcp"],
 		args: {
@@ -321,12 +321,14 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					],
 				},
 				untrust: { positionals: [{ name: "id", required: true }] },
+				logout: { positionals: [{ name: "id", required: true }] },
 			},
 		},
 		subcommandDescriptions: {
 			list: "List MCP servers (the bare command does the same)",
 			trust: "Trust a server, optionally for one action class",
 			untrust: "Withdraw trust from a server",
+			logout: "Remove the header credentials a remote server is sent",
 		},
 		fromArgs(parsed) {
 			if (parsed.error) return usageError("mcp", parsed.error, parsed.subcommand);
@@ -338,7 +340,12 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		},
 		handle(command, ctx) {
 			if (command.kind !== "mcp") return;
-			const result = mcpCommandOutput(command.argv);
+			const result = mcpCommandOutput(
+				command.argv,
+				undefined,
+				undefined,
+				command.argv[0] === "list" ? ctx.mcpStatuses?.() : undefined,
+			);
 			ctx.notice(result.code ? "error" : "info", result.text);
 		},
 	},

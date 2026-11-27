@@ -257,7 +257,7 @@ export function createGatewayTool(deps: GatewayToolDeps): ToolSpec {
 	/** A server listing projected onto the capabilities a restricted surface admits. */
 	const admittedListing = (entry: McpServerListing, allowed: ReadonlySet<string> | null): McpServerListing => {
 		if (allowed === null) return entry;
-		const { tools, unregistrable: _unregistrable, catalogCount: _catalogCount, ...rest } = entry;
+		const { tools, unregistrable: _unregistrable, dropped: _dropped, catalogCount: _catalogCount, ...rest } = entry;
 		const admitted = tools?.filter((name) => allowed.has(name));
 		return { ...rest, ...(admitted !== undefined ? { tools: admitted } : {}) };
 	};

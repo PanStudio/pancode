@@ -89,7 +89,10 @@ test("ACP client stdio MCP server is callable through gateway and closes with it
 	try {
 		await call("initialize", { protocolVersion: 1 });
 		await rejects(
-			call("session/new", { cwd, mcpServers: [{ type: "http", name: "remote", url: "https://example.invalid" }] }),
+			call("session/new", {
+				cwd,
+				mcpServers: [{ type: "sse", name: "remote", url: "https://example.invalid", headers: [] }],
+			}),
 			(error: unknown) => error instanceof AcpRequestError && error.rpcCode === -32602,
 		);
 		const mcpServers = [{ name: "fixture", command: process.execPath, args: [fixture], env: [] }];

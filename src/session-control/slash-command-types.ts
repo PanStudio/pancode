@@ -393,6 +393,8 @@ export interface SessionCommandContext {
 	submitOperatorNote?: (text: string) => void;
 	/** Worker blocks this session folded, oldest first. `/share` picks from these. */
 	listWorkerRuns?: () => ReadonlyArray<WorkerEntryState>;
+	/** The session gateway's state of each MCP server it reached: connected, failed or needs-auth. */
+	mcpStatuses?: () => ReadonlyMap<string, { status: string; reason?: string; remedy?: string }>;
 	/** Fire-and-forget shutdown. Handler must not await. */
 	shutdown?: () => void;
 	reloadClasses?: (target: ReloadTarget) => void;

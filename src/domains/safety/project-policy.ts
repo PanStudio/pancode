@@ -75,6 +75,7 @@ const ROOT_KEYS = new Set([
 const INFORMATION_FLOW_KEYS = new Set(["recipients", "targets", "mcp", "sources"]);
 const FLOW_TARGET_KEYS = new Set(["runtime", "endpoint"]);
 const FLOW_MCP_KEYS = new Set(["command", "args", "cwd", "env"]);
+const FLOW_MCP_REMOTE_KEYS = new Set(["url"]);
 const FLOW_SOURCE_KEYS = new Set(["id", "paths", "tools", "recipients"]);
 const COMMAND_KEYS = new Set([
 	"id",
@@ -263,7 +264,7 @@ function parseInformationFlow(value: unknown, errors: string[]): InformationFlow
 	const mcp: Record<string, FlowMcpBinding> = {};
 	if (value.mcp !== undefined) {
 		if (!isRecord(value.mcp)) {
-			errors.push("informationFlow.mcp must be a mapping of server id to { command, args }");
+			errors.push("informationFlow.mcp must be a mapping of server id to { command, args } or { url }");
 		} else {
 			for (const [id, raw] of Object.entries(value.mcp)) {
 				const label = `informationFlow.mcp.${id}`;
@@ -273,6 +274,16 @@ function parseInformationFlow(value: unknown, errors: string[]): InformationFlow
 				}
 				if (!isRecord(raw)) {
 					errors.push(`${label} must be a mapping`);
+					continue;
+				}
+				if (raw.url !== undefined) {
+					for (const key of Object.keys(raw)) {
+						if (!FLOW_MCP_REMOTE_KEYS.has(key)) errors.push(`${label}: a url binding takes no '${key}'`);
+					}
+					const url = stringField(raw, "url", label, errors);
+					if (url !== undefined && flowEndpointIdentity(url) === null) {
+						errors.push(`${label}.url must be an absolute http(s) URL`);
+					} else if (url !== undefined) mcp[id] = { url };
 					continue;
 				}
 				for (const key of Object.keys(raw)) {

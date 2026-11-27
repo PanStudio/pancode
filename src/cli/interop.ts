@@ -21,19 +21,22 @@ import type { ErrorSlug } from "./kit/slugs.js";
 
 const ADOPT_PATH = ["interop", "adopt"] as const;
 
-/** A plan entry as the CLI prints it: no reviewed bytes, and an MCP server's env as keys only. */
+/** A plan entry as the CLI prints it: no reviewed bytes, and an MCP server's env and header values as names only. */
 function publicEntry({ files: _files, server, ...entry }: InteropAdoptionPlan["entries"][number]) {
 	return {
 		...entry,
 		...(server
 			? {
-					server: {
-						id: server.id,
-						command: server.command,
-						args: server.args,
-						envKeys: Object.keys(server.env).sort(),
-						...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
-					},
+					server:
+						server.url !== undefined
+							? { id: server.id, url: server.url, headerNames: Object.keys(server.headerValues).sort() }
+							: {
+									id: server.id,
+									command: server.command,
+									args: server.args,
+									envKeys: Object.keys(server.env).sort(),
+									...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
+								},
 				}
 			: {}),
 	};

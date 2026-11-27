@@ -177,7 +177,7 @@ home secrets can leave through a granted server.
 The grant is withheld when a worker write root overlaps the server's launch
 cwd, an entry file's directory, or a project server's project root. Read-only
 workers retain it. Admission and the dispatch result name each withheld grant
-and its reason. See [MCP trust](configuration-reference.md#local-stdio-mcp-configuration-and-trust),
+and its reason. See [MCP trust](configuration-reference.md#mcp-configuration-and-trust),
 `src/domains/dispatch/worker-mcp.ts` and `src/domains/safety/worker-permit.ts`.
 
 ## Worker routing: profiles, agent bindings, and per-call pins
