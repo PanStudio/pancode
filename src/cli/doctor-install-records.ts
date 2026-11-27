@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { auditExtensionInstallRecords, repairExtensionInstallRecords } from "../domains/extensions/index.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import {
-	auditPluginInstallRecords,
+	auditExtensionInstallRecords,
 	type DroppedInstallRecord,
 	type InstallRecordReport,
-	repairPluginInstallRecords,
-} from "../domains/plugins/index.js";
+	repairExtensionInstallRecords,
+} from "../domains/extensions/index.js";
+import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import { auditPluginInstallRecords, repairPluginInstallRecords } from "../domains/plugins/index.js";
 
 const STORES = [
 	{ kind: "plugin", audit: auditPluginInstallRecords, repair: repairPluginInstallRecords },
