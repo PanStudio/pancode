@@ -36,7 +36,7 @@ import { MAX_BLOBS, MAX_HISTORY, MAX_TAGS } from "../src/servers/store/tools.js"
 const base = mkdtempSync(join(tmpdir(), "kit-store-"));
 after(() => configure([]));
 
-const context = { signal: new AbortController().signal, log: () => {} };
+const context = { signal: new AbortController().signal, log: () => {}, progress: () => {} };
 
 function tool(name: string): AnyTool {
 	const found = server.tools.find((entry) => entry.name === name);

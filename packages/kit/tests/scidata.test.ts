@@ -40,7 +40,7 @@ function tool(name: string): AnyTool {
 }
 
 async function call(name: string, args: Record<string, unknown>, signal = new AbortController().signal) {
-	return tool(name).run(args as never, { signal, log: () => undefined });
+	return tool(name).run(args as never, { signal, log: () => undefined, progress: () => undefined });
 }
 
 function refusalText(operation: string, refusal: DataRefusal): string {
@@ -157,9 +157,9 @@ writeTree(zarr, {
 	"field/0.0": float64le([1, 2, 3, 4, 5, -1]),
 });
 
-test("the server is scidata 0.1.0 with three read tools that each read path", () => {
+test("the server is scidata 0.2.0 with three read tools that each read path", () => {
 	assert.equal(server.id, "scidata");
-	assert.equal(server.version, "0.1.0");
+	assert.equal(server.version, "0.2.0");
 	assert.equal(server.title, "Scientific data");
 	assert.deepEqual(
 		server.tools.map((entry) => [entry.name, entry.actionClass, entry.pathArguments]),

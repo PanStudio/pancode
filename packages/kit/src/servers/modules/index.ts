@@ -12,8 +12,10 @@ import { MODULES_TOOLS } from "./tools.js";
 
 export const server = defineServer({
 	id: "modules",
-	version: "0.1.0",
+	version: "0.2.0",
 	title: "Software modules",
+	instructions:
+		"The module tool and MODULEPATH come from the login shell the host was started from; where `module avail` does not work in that shell, every tool reports the module tool missing. No tool loads a module into the caller's environment: modules_plan writes the `module load` lines for a script.",
 	tools: MODULES_TOOLS,
 });
 

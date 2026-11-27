@@ -1,11 +1,13 @@
 {
 	"id": "store",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Project store",
+	"instructions": "The store holds one project's files as blobs under tags, such as results/run1. Reads reach every tag of the project. store_put and store_note write only into a tag the server was started with --write-tag for, or a tag nested under one: --write-tag results allows results and results/run1. A server started with no --write-tag writes nothing.",
 	"environment": [],
 	"tools": [
 		{
 			"name": "store_get",
+			"title": "Get a store blob",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -29,13 +31,16 @@
 				"required": ["tag", "blob"]
 			},
 			"annotations": {
+				"title": "Get a store blob",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "store_history",
+			"title": "Store tag history",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -59,13 +64,16 @@
 				"required": ["tag"]
 			},
 			"annotations": {
+				"title": "Store tag history",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "store_list",
+			"title": "List a store tag",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -89,13 +97,16 @@
 				"required": ["tag"]
 			},
 			"annotations": {
+				"title": "List a store tag",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "store_note",
+			"title": "Add a store note",
 			"actionClass": "execute",
 			"pathArguments": {},
 			"inputSchema": {
@@ -125,13 +136,16 @@
 				"required": ["tag", "blob", "note"]
 			},
 			"annotations": {
+				"title": "Add a store note",
 				"readOnlyHint": false,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": false,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "store_put",
+			"title": "Put a file in the store",
 			"actionClass": "execute",
 			"pathArguments": {
 				"source": "read"
@@ -168,13 +182,16 @@
 				"required": ["tag", "source"]
 			},
 			"annotations": {
+				"title": "Put a file in the store",
 				"readOnlyHint": false,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": false,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "store_stat",
+			"title": "Store blob details",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -198,13 +215,16 @@
 				"required": ["tag", "blob"]
 			},
 			"annotations": {
+				"title": "Store blob details",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "store_tags",
+			"title": "Store tags",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -212,9 +232,11 @@
 				"properties": {}
 			},
 			"annotations": {
+				"title": "Store tags",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		}
 	]

@@ -9,9 +9,15 @@
  * runs on the process's own stdout, the global `console` writes to stderr too,
  * so a stray `console.log` in a tool cannot corrupt the stream.
  *
- * The server answers `initialize`, `ping`, `tools/list` and `tools/call`, and
- * reads the `notifications/initialized` and `notifications/cancelled`
- * notifications. It offers no resources, prompts, sampling or logging.
+ * The server is dual era (MCP 2026-07-28, basic/versioning). A request whose
+ * `params._meta` names a protocol version is served statelessly by that
+ * revision: `server/discover`, `tools/list` and `tools/call`, with no
+ * handshake. An `initialize` request selects a legacy revision for the
+ * process, after which `ping`, `tools/list` and `tools/call` are served by
+ * it. Both eras can be served on one process. The server reads the
+ * `notifications/cancelled` notification in both eras, sends
+ * `notifications/progress` for a call that asked for it, and never sends a
+ * request. It offers no resources, prompts, sampling or logging.
  *
  * The annotations and `_meta` policy each listed tool carries are hints to the
  * host. PanCode decides a tool's class from the operator's approval or from
@@ -19,10 +25,23 @@
  */
 import { Console } from "node:console";
 import type { Readable, Writable } from "node:stream";
-import type { AnyTool, JsonSchema, ToolInputSchema, ToolServer } from "../tool/index.js";
+import type { AnyTool, JsonSchema, ToolContext, ToolInputSchema, ToolServer } from "../tool/index.js";
 
-/** MCP revisions this server speaks, newest first. A client asking for another gets the newest. */
-export const MCP_PROTOCOL_VERSIONS: ReadonlyArray<string> = ["2025-06-18", "2025-03-26", "2024-11-05"];
+/** The stateless MCP revisions this server serves through per-request `_meta`, newest first. */
+export const MCP_MODERN_PROTOCOL_VERSIONS: ReadonlyArray<string> = ["2026-07-28"];
+
+/** The legacy MCP revisions this server negotiates in `initialize`, newest first. A client asking for another gets the newest. */
+export const MCP_PROTOCOL_VERSIONS: ReadonlyArray<string> = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+
+/** How long a client may cache a modern `server/discover` or `tools/list` result: the tools never change while the process runs. */
+export const MCP_LIST_TTL_MS = 3_600_000;
+
+/** The shortest gap between two progress notifications of one call, except the one that reaches its total. */
+export const PROGRESS_INTERVAL_MS = 50;
+
+const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
+const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
 
 /** The largest inbound line the server reads; a longer one is refused with a parse error. */
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
@@ -30,14 +49,14 @@ export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 /** The `_meta` key under which each listed tool carries its declared policy. */
 export const POLICY_META_KEY = "dev.pancode/policy";
 
-/** JSON-RPC error codes the server answers with. `serverNotInitialized` is implementation-defined. */
+/** JSON-RPC error codes the server answers with. */
 export const JSON_RPC_ERROR = Object.freeze({
 	parseError: -32700,
 	invalidRequest: -32600,
 	methodNotFound: -32601,
 	invalidParams: -32602,
 	internalError: -32603,
-	serverNotInitialized: -32002,
+	unsupportedProtocolVersion: -32022,
 });
 
 export interface ServeStdioOptions {
@@ -55,19 +74,23 @@ interface ResponseFrame {
 	jsonrpc: "2.0";
 	id: RequestId | null;
 	result?: unknown;
-	error?: { code: number; message: string };
+	error?: { code: number; message: string; data?: unknown };
 }
 
 interface CallResult {
 	content: Array<{ type: "text"; text: string }>;
-	structuredContent?: Record<string, unknown>;
+	structuredContent?: unknown;
 	isError?: true;
 }
 
 interface InFlightCall {
 	controller: AbortController;
 	cancelled: boolean;
+	answered: boolean;
 }
+
+/** The revision a request is served by: a stateless modern one, or the legacy one `initialize` negotiated. */
+type Era = "modern" | "legacy";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -139,24 +162,37 @@ function checkArguments(input: ToolInputSchema, args: Record<string, unknown>): 
 	return null;
 }
 
-function describeTool(tool: AnyTool): Record<string, unknown> {
+/** Legacy revisions take only an object `structuredContent`, so only an object-typed output schema is listed to them. */
+function legacyOutputSchema(output: JsonSchema): boolean {
+	const types = schemaTypes(output);
+	return types.length === 1 && types[0] === "object";
+}
+
+function describeTool(tool: AnyTool, era: Era = "modern"): Record<string, unknown> {
+	const title = tool.title !== undefined ? { title: tool.title } : {};
+	const output = tool.output !== undefined && (era === "modern" || legacyOutputSchema(tool.output));
 	return {
 		name: tool.name,
+		...title,
 		description: tool.description,
 		inputSchema: tool.input,
+		...(output ? { outputSchema: tool.output } : {}),
 		annotations: {
+			...title,
 			readOnlyHint: tool.readOnly,
 			destructiveHint: tool.actionClass === "destructive",
 			idempotentHint: tool.idempotent,
+			openWorldHint: tool.openWorld,
 		},
 		_meta: { [POLICY_META_KEY]: { actionClass: tool.actionClass, pathArguments: { ...tool.pathArguments } } },
 	};
 }
 
 /**
- * The `tools/list` entry `serveStdio` serves for `tool`. A host that ships a
- * server's policy reads `inputSchema` and `annotations` from here, so what it
- * pins is exactly what the running server lists.
+ * The `tools/list` entry `serveStdio` serves for `tool` in the modern
+ * revision. A host that ships a server's policy reads `inputSchema` and
+ * `annotations` from here, so what it pins is exactly what the running server
+ * lists.
  */
 export { describeTool as listedTool };
 
@@ -164,17 +200,70 @@ function errorResult(message: string): CallResult {
 	return { content: [{ type: "text", text: message }], isError: true };
 }
 
-function toCallResult(result: unknown): CallResult {
+function toCallResult(tool: AnyTool, result: unknown, era: Era): CallResult {
 	if (isRecord(result)) {
 		if (typeof result.error === "string") return errorResult(result.error);
-		if (typeof result.text === "string") return { content: [{ type: "text", text: result.text }] };
+		if (typeof result.text === "string" && tool.output === undefined) {
+			return { content: [{ type: "text", text: result.text }] };
+		}
 		if (Object.hasOwn(result, "json")) {
 			const text = JSON.stringify(result.json) ?? "null";
 			const parsed: unknown = JSON.parse(text);
-			return { content: [{ type: "text", text }], ...(isRecord(parsed) ? { structuredContent: parsed } : {}) };
+			const types = schemaTypes(tool.output);
+			if (types.length > 0 && !types.some((type) => matchesType(type, parsed))) {
+				return errorResult(`${tool.name} returned ${jsonTypeOf(parsed)}, which its output schema does not allow`);
+			}
+			const structured = era === "modern" || isRecord(parsed);
+			return { content: [{ type: "text", text }], ...(structured ? { structuredContent: parsed } : {}) };
 		}
+		if (tool.output !== undefined) return errorResult(`${tool.name} declares an output schema and must return { json }`);
 	}
 	return errorResult("tool returned an invalid result; run must return { text }, { json } or { error }");
+}
+
+function isProgressToken(value: unknown): value is string | number {
+	return typeof value === "string" || (typeof value === "number" && Number.isInteger(value));
+}
+
+/**
+ * Whether `params` opens the modern era, and if so whether its `_meta` is
+ * complete. Null for a request without either reserved key, which only a
+ * legacy session serves.
+ */
+function modernMeta(
+	params: unknown,
+): { ok: true } | { ok: false; code: number; message: string; data?: unknown } | null {
+	const meta = isRecord(params) && isRecord(params._meta) ? params._meta : undefined;
+	if (
+		meta === undefined ||
+		(!Object.hasOwn(meta, META_PROTOCOL_VERSION) && !Object.hasOwn(meta, META_CLIENT_CAPABILITIES))
+	) {
+		return null;
+	}
+	const requested = meta[META_PROTOCOL_VERSION];
+	if (typeof requested !== "string") {
+		return {
+			ok: false,
+			code: JSON_RPC_ERROR.invalidParams,
+			message: `params._meta lacks the string ${META_PROTOCOL_VERSION}`,
+		};
+	}
+	if (!isRecord(meta[META_CLIENT_CAPABILITIES])) {
+		return {
+			ok: false,
+			code: JSON_RPC_ERROR.invalidParams,
+			message: `params._meta lacks the object ${META_CLIENT_CAPABILITIES}`,
+		};
+	}
+	if (!MCP_MODERN_PROTOCOL_VERSIONS.includes(requested)) {
+		return {
+			ok: false,
+			code: JSON_RPC_ERROR.unsupportedProtocolVersion,
+			message: "Unsupported protocol version",
+			data: { supported: [...MCP_MODERN_PROTOCOL_VERSIONS], requested },
+		};
+	}
+	return { ok: true };
 }
 
 /**
@@ -186,7 +275,16 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 	const stdout = options.stdout ?? process.stdout;
 	const stderr = options.stderr ?? process.stderr;
 	const tools = new Map<string, AnyTool>(server.tools.map((tool) => [tool.name, tool]));
-	const listed = server.tools.map(describeTool);
+	const listed: Record<Era, Record<string, unknown>[]> = {
+		modern: server.tools.map((tool) => describeTool(tool, "modern")),
+		legacy: server.tools.map((tool) => describeTool(tool, "legacy")),
+	};
+	const serverInfo = {
+		name: server.id,
+		version: server.version,
+		...(server.title !== undefined ? { title: server.title } : {}),
+	};
+	const instructions = server.instructions !== undefined ? { instructions: server.instructions } : {};
 	const inFlight = new Map<string, InFlightCall>();
 	let initialized = false;
 	let inputEnded = false;
@@ -203,8 +301,16 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 		}
 	};
 
-	const send = (frame: ResponseFrame): void => {
+	const write = (line: string): void => {
 		if (stdoutBroken) return;
+		try {
+			stdout.write(line);
+		} catch (err) {
+			stdoutBroken = true;
+			diagnose(`stdout write failed: ${messageOf(err)}`);
+		}
+	};
+	const send = (frame: ResponseFrame): void => {
 		let line: string;
 		try {
 			line = `${JSON.stringify(frame)}\n`;
@@ -215,23 +321,55 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 				error: { code: JSON_RPC_ERROR.internalError, message: `response not serializable: ${messageOf(err)}` },
 			})}\n`;
 		}
-		try {
-			stdout.write(line);
-		} catch (err) {
-			stdoutBroken = true;
-			diagnose(`stdout write failed: ${messageOf(err)}`);
-		}
+		write(line);
 	};
-	const reply = (id: RequestId, result: unknown): void => send({ jsonrpc: "2.0", id, result });
-	const refuse = (id: RequestId | null, code: number, message: string): void =>
-		send({ jsonrpc: "2.0", id, error: { code, message } });
+	/** A modern result carries `resultType` and the server's identity in `_meta` (basic/index, Result). */
+	const answer = (id: RequestId, era: Era, result: Record<string, unknown>): void =>
+		send({
+			jsonrpc: "2.0",
+			id,
+			result: era === "modern" ? { resultType: "complete", ...result, _meta: { [META_SERVER_INFO]: serverInfo } } : result,
+		});
+	const refuse = (id: RequestId | null, code: number, message: string, data?: unknown): void =>
+		send({ jsonrpc: "2.0", id, error: { code, message, ...(data !== undefined ? { data } : {}) } });
+	const notify = (method: string, params: Record<string, unknown>): void =>
+		write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
 
-	const runCall = async (tool: AnyTool, args: Record<string, unknown>, signal: AbortSignal): Promise<CallResult> => {
+	/** The progress reporter of one call: strictly increasing values, rate limited, silent once the call is over. */
+	const progressReporter = (entry: InFlightCall, token: string | number | undefined): ToolContext["progress"] => {
+		let last = Number.NEGATIVE_INFINITY;
+		let sentAt = Number.NEGATIVE_INFINITY;
+		return (progress, total, message) => {
+			if (token === undefined || entry.answered || entry.cancelled) return;
+			if (typeof progress !== "number" || !Number.isFinite(progress) || progress <= last) return;
+			const knownTotal = typeof total === "number" && Number.isFinite(total) && total >= 0 ? total : undefined;
+			const now = performance.now();
+			const reachesTotal = knownTotal !== undefined && progress >= knownTotal && last < knownTotal;
+			if (!reachesTotal && now - sentAt < PROGRESS_INTERVAL_MS) return;
+			last = progress;
+			sentAt = now;
+			notify("notifications/progress", {
+				progressToken: token,
+				progress,
+				...(knownTotal !== undefined ? { total: knownTotal } : {}),
+				...(typeof message === "string" && message.length > 0 ? { message } : {}),
+			});
+		};
+	};
+
+	const runCall = async (
+		tool: AnyTool,
+		args: Record<string, unknown>,
+		entry: InFlightCall,
+		token: string | number | undefined,
+		era: Era,
+	): Promise<CallResult> => {
 		const log = (message: string): void => {
 			diagnose(`${tool.name}: ${String(message)}`);
 		};
+		const context: ToolContext = { signal: entry.controller.signal, log, progress: progressReporter(entry, token) };
 		try {
-			return toCallResult(await tool.run(args as never, { signal, log }));
+			return toCallResult(tool, await tool.run(args as never, context), era);
 		} catch (err) {
 			const message = messageOf(err);
 			diagnose(`${tool.name} failed: ${message}`);
@@ -239,7 +377,7 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 		}
 	};
 
-	const call = (id: RequestId, params: unknown) => {
+	const call = (id: RequestId, era: Era, params: unknown) => {
 		if (!isRecord(params) || typeof params.name !== "string") {
 			return refuse(id, JSON_RPC_ERROR.invalidParams, "tools/call params must name a tool");
 		}
@@ -247,16 +385,20 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 		if (tool === undefined) return refuse(id, JSON_RPC_ERROR.invalidParams, `unknown tool: ${params.name}`);
 		const args = params.arguments === undefined ? {} : params.arguments;
 		if (!isRecord(args)) return refuse(id, JSON_RPC_ERROR.invalidParams, `${tool.name}: arguments must be an object`);
+		// Input validation errors are tool execution errors, so the model can correct the call (server/tools, Error Handling).
 		const problem = checkArguments(tool.input, args);
-		if (problem !== null) return refuse(id, JSON_RPC_ERROR.invalidParams, `${tool.name}: ${problem}`);
+		if (problem !== null) return answer(id, era, { ...errorResult(`${tool.name}: ${problem}`) });
 		const key = idKey(id);
 		if (inFlight.has(key)) {
 			return refuse(id, JSON_RPC_ERROR.invalidRequest, `request id ${JSON.stringify(id)} is already in flight`);
 		}
-		const entry: InFlightCall = { controller: new AbortController(), cancelled: false };
+		const meta = isRecord(params._meta) ? params._meta : {};
+		const token = isProgressToken(meta.progressToken) ? meta.progressToken : undefined;
+		const entry: InFlightCall = { controller: new AbortController(), cancelled: false, answered: false };
 		inFlight.set(key, entry);
-		void runCall(tool, args, entry.controller.signal).then((result) => {
-			if (!entry.cancelled) reply(id, result);
+		void runCall(tool, args, entry, token, era).then((result) => {
+			entry.answered = true;
+			if (!entry.cancelled) answer(id, era, { ...result });
 			if (inFlight.get(key) === entry) inFlight.delete(key);
 			maybeFinish();
 		});
@@ -266,30 +408,61 @@ export function serveStdio(server: ToolServer, options: ServeStdioOptions = {}):
 		const requested = isRecord(params) ? params.protocolVersion : undefined;
 		const protocolVersion =
 			typeof requested === "string" && MCP_PROTOCOL_VERSIONS.includes(requested) ? requested : MCP_PROTOCOL_VERSIONS[0];
-		return {
-			protocolVersion,
-			capabilities: { tools: {} },
-			serverInfo: {
-				name: server.id,
-				version: server.version,
-				...(server.title !== undefined ? { title: server.title } : {}),
-			},
-		};
+		return { protocolVersion, capabilities: { tools: {} }, serverInfo, ...instructions };
+	};
+
+	const listTools = (id: RequestId, era: Era, params: unknown) => {
+		if (era === "legacy") return answer(id, era, { tools: listed.legacy });
+		// The server never hands out a cursor, so any cursor is one it did not issue (server/utilities/pagination).
+		if (isRecord(params) && params.cursor !== undefined) {
+			return refuse(id, JSON_RPC_ERROR.invalidParams, "invalid cursor: this server lists every tool in one page");
+		}
+		return answer(id, era, { tools: listed.modern, ttlMs: MCP_LIST_TTL_MS, cacheScope: "public" });
+	};
+
+	const handleModern = (id: RequestId, method: string, params: unknown) => {
+		switch (method) {
+			case "server/discover":
+				return answer(id, "modern", {
+					supportedVersions: [...MCP_MODERN_PROTOCOL_VERSIONS],
+					capabilities: { tools: {} },
+					...instructions,
+					ttlMs: MCP_LIST_TTL_MS,
+					cacheScope: "public",
+				});
+			case "tools/list":
+				return listTools(id, "modern", params);
+			case "tools/call":
+				return call(id, "modern", params);
+			default:
+				return refuse(id, JSON_RPC_ERROR.methodNotFound, `method not found: ${method}`);
+		}
 	};
 
 	const handleRequest = (id: RequestId, method: string, params: unknown) => {
+		if (method === "initialize") {
+			initialized = true;
+			return answer(id, "legacy", initializeResult(params));
+		}
+		const modern = modernMeta(params);
+		if (modern !== null) {
+			if (!modern.ok) return refuse(id, modern.code, modern.message, modern.data);
+			return handleModern(id, method, params);
+		}
 		switch (method) {
-			case "initialize":
-				initialized = true;
-				return reply(id, initializeResult(params));
 			case "ping":
-				return reply(id, {});
+				return answer(id, "legacy", {});
+			case "server/discover":
 			case "tools/list":
 			case "tools/call":
-				if (!initialized) {
-					return refuse(id, JSON_RPC_ERROR.serverNotInitialized, `${method} before initialize`);
+				if (method === "server/discover" || !initialized) {
+					return refuse(
+						id,
+						JSON_RPC_ERROR.invalidParams,
+						`${method} needs params._meta with ${META_PROTOCOL_VERSION} and ${META_CLIENT_CAPABILITIES}${method === "server/discover" ? "" : ", or initialize first"}`,
+					);
 				}
-				return method === "tools/list" ? reply(id, { tools: listed }) : call(id, params);
+				return method === "tools/list" ? listTools(id, "legacy", params) : call(id, "legacy", params);
 			default:
 				return refuse(id, JSON_RPC_ERROR.methodNotFound, `method not found: ${method}`);
 		}

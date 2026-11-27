@@ -111,13 +111,15 @@ const save = defineTool({
 await serveStdio(defineServer({ id: "notes", version: "1.0.0", tools: [echo, save] }));
 ```
 
-- `actionClass` is `read`, `execute` or `destructive`. There is no `write` class: a tool that writes files is `execute` or `destructive` and names its write paths in `pathArguments`. `readOnly` defaults to true for a `read` tool and may not be true for another class; `idempotent` defaults to false.
+- `actionClass` is `read`, `execute` or `destructive`. There is no `write` class: a tool that writes files is `execute` or `destructive` and names its write paths in `pathArguments`. `readOnly` defaults to true for a `read` tool and may not be true for another class; `idempotent` and `openWorld` default to false.
+- `title` is the name a host shows a person, listed as the tool's `title` and `annotations.title`. `output` is a JSON Schema listed as the tool's `outputSchema`; a tool that declares it must return `{ json }` of the declared top-level type, or the call fails as a tool error. `defineServer` takes `instructions`, which the server returns from `initialize` and `server/discover`.
 - `run` returns `{ text }`, `{ json }` or `{ error }`. A returned `error` or a thrown exception reaches the client as a tool result with `isError: true`.
 - `defineTool` and `defineServer` throw when a definition is wrong, so a broken server fails as it starts. `actionClass: "write"` throws `actionClass "write" does not exist`.
 - Stdout carries only protocol frames. Log through `context.log`, which writes to stderr. While the server owns the process's stdout it also points the global `console` at stderr, but a tool that writes to `process.stdout` directly still corrupts the stream.
 - `context.signal` aborts when the client cancels the call; a cancelled call sends no response.
+- `context.progress(progress, total?, message?)` sends `notifications/progress` when the request carried a `progressToken`, and otherwise does nothing. A value that does not increase is dropped, and updates are sent at most every 50 ms except the one that reaches `total`.
 - `tools/list` carries each tool's declared policy under `_meta["dev.pancode/policy"]`, and `policyManifest(server)` returns the server's tools, classes and path arguments as stable JSON.
-- The server answers `initialize`, `ping`, `tools/list` and `tools/call` for protocol versions `2025-06-18`, `2025-03-26` and `2024-11-05`, and exits when stdin closes.
+- A request whose `_meta` carries `io.modelcontextprotocol/protocolVersion` is served in MCP `2026-07-28` without a handshake: the server answers `server/discover`, `tools/list` and `tools/call`, and each result carries `resultType` and the server's identity in `_meta`. A request naming another version gets error `-32022` with the supported versions in its data. `initialize` serves the earlier revisions `2025-11-25`, `2025-06-18`, `2025-03-26` and `2024-11-05` with `ping`, `tools/list` and `tools/call`, and both may be used on one connection. Invalid arguments are a tool result with `isError: true` in both. The server exits when stdin closes.
 
 To use the server from PanCode, declare it in `<config>/mcp.yaml`. PanCode does not take a server's classes from what it reports, so the declaration sets them:
 

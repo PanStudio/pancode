@@ -11,7 +11,7 @@ import type { ServerProbe } from "../../registry.js";
 import { locateSpack, readSpackVersion, SPACK_ENVIRONMENT } from "./program.js";
 import { SPACK_TOOLS } from "./tools.js";
 
-export const server = defineServer({ id: "spack", version: "0.1.0", title: "Spack packages", tools: SPACK_TOOLS });
+export const server = defineServer({ id: "spack", version: "0.2.0", title: "Spack packages", tools: SPACK_TOOLS });
 
 export const environment = SPACK_ENVIRONMENT;
 

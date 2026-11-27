@@ -721,7 +721,7 @@ const VERSION: Record<string, Response> = {
 	"darshan-dxt-parser --version": { stdout: "3.6.0\n" },
 };
 
-const context = { signal: new AbortController().signal, log: () => {} };
+const context = { signal: new AbortController().signal, log: () => {}, progress: () => {} };
 
 /** Run `body` with `PATH` set to `dir` alone. */
 async function withPath<T>(dir: string, body: () => Promise<T>): Promise<T> {

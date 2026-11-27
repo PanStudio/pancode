@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "node",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "This machine's CPU topology and load, memory and swap, mounted file systems, network interfaces, NVIDIA GPUs and top processes.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {

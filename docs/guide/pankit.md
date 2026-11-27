@@ -4,7 +4,7 @@ PanKit is PanCode's agent toolkit: MCP tool servers for HPC and scientific work 
 
 The servers are registered in `SERVERS` in [registry.ts](../../packages/kit/src/registry.ts), the commands are in [pankit.ts](../../packages/kit/src/pankit.ts), the added servers are kept by [kit-items.ts](../../src/domains/resources/kit-items.ts), the policy manifest is built by `kitManifest` in [manifest.ts](../../packages/kit/src/manifest.ts), and PanCode loads the servers as its `builtin` MCP scope with `loadMcpBuiltinServers` in [builtin.ts](../../src/domains/gateway/mcp/builtin.ts).
 
-PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@panstudio/pancode` npm package ships it as the `pankit` command, beside `pancode`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/PanStudio/pancode/blob/main/packages/kit/README.md).
+PanKit is the workspace package `@pancode/kit`. It is private and never published on its own: the `@panstudio/pancode` npm package ships it as the `pankit` command, beside `pancode`, together with the policy manifest `packages/kit/servers.json`. Every server speaks the Model Context Protocol over stdio, in revision `2026-07-28` without a handshake and in `2025-11-25` to `2024-11-05` after `initialize`, and is built on the [extension API](sdk.md)'s `pancode/sdk/tool` and `pancode/sdk/mcp-server`. The package page is the [PanKit README](https://github.com/PanStudio/pancode/blob/main/packages/kit/README.md).
 
 ## Servers
 
@@ -128,7 +128,7 @@ Exit codes are 0 for success, 1 for an operational failure and 2 for a usage err
 
 `pankit serve <added>` checks the copy against its install record, then runs the command and arguments the pack's `mcp.json` declares, without a shell, in the declared working directory and with the environment PanCode gives a plugin server. The server inherits stdin, stdout and stderr. On POSIX, PanKit forwards SIGINT, SIGTERM and SIGHUP to the server's process group and cleans up remaining group members when the launcher exits. It returns the server's code and reports a cleanup failure. It does not read the `pancode mcp trust` records, which govern PanCode's own sessions.
 
-`pankit manifest` prints the same JSON as `packages/kit/servers.json`: for each server its id, version, title and declared `environment`, and for each tool its `actionClass`, `pathArguments`, input schema and annotations.
+`pankit manifest` prints the same JSON as `packages/kit/servers.json`: for each server its id, version, title, `instructions` when it has them and declared `environment`, and for each tool its title, `actionClass`, `pathArguments`, input schema and annotations.
 
 ## Server configuration
 
@@ -247,9 +247,11 @@ servers:
 
 A user server is trusted by the operator who wrote it, and its tools are callable once its surface is recorded: an attended session records it on its first listing, or review it with `pancode mcp trust kit-store --surface` and approve it with the `--hash` that command prints. PanCode does not take a user server's classes from the server, so set `actionClass` or `toolActionClasses`; `store_put` and `store_note` are `execute`.
 
+A tool's title and open-world hint are part of its surface, and the servers list both from version 0.2.0. A user server such as `kit-store`, or an added server pack rebuilt on this `pancode/sdk/mcp-server`, therefore reports its surface changed after that update, and no tool of it runs until one `pancode mcp trust <id> --surface` approves the new surface. Builtin servers need nothing: their surface is the shipped policy.
+
 ## Policy belongs to the host
 
-A server's own description of its tools (the read-only, destructive and idempotent hints, and the action class it reports) is a hint, and each host decides the policy it enforces. `pankit manifest` prints the policy PanCode ships for these servers, generated from the tool definitions, so another host can review and adopt it. PanCode applies that shipped policy to its builtin servers, never the classes a running server reports.
+A server's own description of its tools (the read-only, destructive, idempotent and open-world hints, and the action class it reports) is a hint, and each host decides the policy it enforces. `pankit manifest` prints the policy PanCode ships for these servers, generated from the tool definitions, so another host can review and adopt it. PanCode applies that shipped policy to its builtin servers, never the classes a running server reports.
 
 ## Limits
 

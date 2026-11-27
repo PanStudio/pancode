@@ -43,6 +43,10 @@ export interface ScientificRequest {
 export type ScientificResult = Record<string, unknown> & { format: ScientificFormat; view: DataViewFlags };
 
 export type ScientificReply = { ok: true; result: ScientificResult } | { ok: false; refusal: DataRefusal };
+/** What the worker posts before its reply while a stats pass runs, when the caller asked for progress. */
+export interface ScientificProgress {
+	progress: number;
+}
 
 /** Elements returned by op=select when count is omitted. */
 export const DEFAULT_SELECT_ELEMENTS = 200;
@@ -389,6 +393,13 @@ function sentinelMatch(value: number | bigint, sentinel: Sentinel | null): boole
 	return value == sentinel;
 }
 
+/** Where a stats pass reports the values it has taken in so far; set by the worker only when the caller asked. */
+let statsProgress: ((values: number) => void) | null = null;
+
+export function setStatsProgress(sink: ((values: number) => void) | null): void {
+	statsProgress = sink;
+}
+
 /**
  * Streaming summary over numeric blocks: min, max, mean and population
  * standard deviation over valid values, with NaN, infinities, fill values,
@@ -425,11 +436,16 @@ export class StatsAccumulator {
 		private readonly missingValues: ReadonlyArray<Sentinel>,
 	) {}
 
+	/** Values of every block added so far, valid or not. */
+	private taken = 0;
+
 	/** Valid values of the current block, reused across blocks so a pass allocates once. */
 	private scratch = new Float64Array(0);
 
 	/** `place` is the block's hyperslab in dataset coordinates; the block is its row-major flattening. */
 	add(block: NumericBlock, place: Hyperslab): void {
+		this.taken += block.length;
+		statsProgress?.(this.taken);
 		if (this.scratch.length < block.length) this.scratch = new Float64Array(block.length);
 		const valid = this.scratch;
 		let kept = 0;

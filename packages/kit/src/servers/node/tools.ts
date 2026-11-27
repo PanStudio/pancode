@@ -117,11 +117,12 @@ function cpuTopology(
 
 const nodeCpu = defineTool({
 	name: "node_cpu",
+	title: "CPU facts",
 	description:
 		"Returns this machine's CPU model, architecture, socket, core and thread counts, the threads this process may use, and the 1, 5 and 15 minute load averages. Prefer it over running lscpu, nproc or uptime: one call answers in structured fields, and a count the platform does not report is null with its reason.",
 	input: { type: "object", properties: {} },
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(_args, context) {
 		const unavailable: Record<string, string> = {};
 		const sources = ["node:os"];
@@ -180,11 +181,12 @@ const nodeCpu = defineTool({
 
 const nodeMemory = defineTool({
 	name: "node_memory",
+	title: "Memory facts",
 	description:
 		"Returns this machine's physical memory (total, available, used, free) and swap (total, free, used), all in bytes. Prefer it over running free or reading /proc/meminfo: the fields are bytes, and a figure the platform does not report is null with its reason.",
 	input: { type: "object", properties: {} },
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(_args, context) {
 		const unavailable: Record<string, string> = {};
 		const text = await readProc("/proc/meminfo", context.signal);
@@ -289,6 +291,7 @@ function owningMount(mounts: ReadonlyArray<MountEntry>, target: string): MountEn
 
 const nodeDisks = defineTool({
 	name: "node_disks",
+	title: "File systems",
 	description: `Returns each mounted file system (at most ${MAX_MOUNTS}, pseudo file systems such as proc and sysfs left out unless includePseudo is true), or the one that holds path, with its type, size, free and available bytes and inode counts. Prefer it over running df or mount: sizes are bytes, a hung network mount is reported instead of blocking, and the result says when the list was cut.`,
 	input: {
 		type: "object",
@@ -304,7 +307,7 @@ const nodeDisks = defineTool({
 		},
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { path?: string; includePseudo?: boolean }, context) {
 		const mountsText = await readProc("/proc/mounts", context.signal);
 		const mounts = mountsText.ok ? parseMounts(mountsText.value) : [];
@@ -381,10 +384,11 @@ const nodeDisks = defineTool({
 
 const nodeNetwork = defineTool({
 	name: "node_network",
+	title: "Network interfaces",
 	description: `Returns this machine's hostname and its network interfaces (at most ${MAX_INTERFACES}, each with at most ${MAX_ADDRESSES_PER_INTERFACE} addresses) with each address's family, CIDR and whether it is internal; no hardware addresses. Prefer it over running ip addr or ifconfig: the result is structured, and it says when a list was cut.`,
 	input: { type: "object", properties: {} },
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	run() {
 		const all = Object.entries(os.networkInterfaces());
 		const interfaces = all.slice(0, MAX_INTERFACES).map(([name, entries = []]) => ({
@@ -414,10 +418,11 @@ const nodeNetwork = defineTool({
 
 const nodeGpus = defineTool({
 	name: "node_gpus",
+	title: "NVIDIA GPUs",
 	description: `Returns each NVIDIA GPU on this machine (at most ${MAX_GPUS}) with its index, name, total and used memory in bytes and utilization percent, read through nvidia-smi; without nvidia-smi it returns available false and the reason. Prefer it over running nvidia-smi: memory comes as bytes, values the driver does not report are null, and the result says when the list was cut.`,
 	input: { type: "object", properties: {} },
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(_args, context) {
 		const output = await commandOutput(
 			"nvidia-smi",
@@ -446,6 +451,7 @@ const nodeGpus = defineTool({
 
 const nodeProcesses = defineTool({
 	name: "node_processes",
+	title: "Top processes",
 	description: `Returns the top processes on this machine by CPU or memory (limit, at most ${MAX_PROCESSES}, default ${DEFAULT_PROCESSES}) with pid, user, CPU and memory percent, resident bytes, elapsed seconds and the command name, never its arguments. Prefer it over running ps or top: arguments that can carry tokens are never returned, and the result says how many processes there were.`,
 	input: {
 		type: "object",
@@ -460,7 +466,7 @@ const nodeProcesses = defineTool({
 		},
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { sort?: string; limit?: number }, context) {
 		const sort = args.sort ?? "cpu";
 		if (sort !== "cpu" && sort !== "memory") return { error: "node_processes: sort must be cpu or memory" };

@@ -58,6 +58,7 @@ export interface McpBuiltinSource {
 /** One tool as the manifest ships it. */
 export interface McpBuiltinTool {
 	name: string;
+	title: string;
 	actionClass: "read" | "execute" | "destructive";
 	pathArguments: Record<string, McpPathArgumentAccess>;
 	inputSchema: Record<string, unknown>;
@@ -69,6 +70,8 @@ export interface McpBuiltinPolicy {
 	/** The PanKit server version the manifest was generated from. */
 	version: string;
 	title: string;
+	/** What the server serves as `instructions`, when it has any. */
+	instructions?: string;
 	/**
 	 * The variables the server reads from the environment PanCode runs in: a
 	 * name, or a prefix ending in `*`. The launch passes exactly these; the
@@ -199,10 +202,15 @@ function fieldProblem(record: Record<string, unknown>, fields: ReadonlyArray<str
 
 function parseTool(value: unknown, location: string): McpBuiltinTool | string {
 	if (!isRecord(value)) return `${location} must be an object`;
-	const problem = fieldProblem(value, ["name", "actionClass", "pathArguments", "inputSchema", "annotations"], location);
+	const problem = fieldProblem(
+		value,
+		["name", "title", "actionClass", "pathArguments", "inputSchema", "annotations"],
+		location,
+	);
 	if (problem !== null) return problem;
-	const { name, actionClass, pathArguments, inputSchema, annotations } = value;
+	const { name, title, actionClass, pathArguments, inputSchema, annotations } = value;
 	if (typeof name !== "string" || name.length === 0) return `${location}.name must be a non-empty string`;
+	if (typeof title !== "string" || title.length === 0) return `${location}.title must be a non-empty string`;
 	if (typeof actionClass !== "string" || !TOOL_CLASSES.has(actionClass)) {
 		return `${location}.actionClass must be one of read, execute, destructive`;
 	}
@@ -216,6 +224,7 @@ function parseTool(value: unknown, location: string): McpBuiltinTool | string {
 	if (!isRecord(annotations)) return `${location}.annotations must be an object`;
 	return {
 		name,
+		title,
 		actionClass: actionClass as McpBuiltinTool["actionClass"],
 		pathArguments: pathArguments as Record<string, McpPathArgumentAccess>,
 		inputSchema,
@@ -227,6 +236,7 @@ interface ManifestServer {
 	id: string;
 	version: string;
 	title: string;
+	instructions?: string;
 	environment: string[];
 	tools: McpBuiltinTool[];
 }
@@ -299,7 +309,8 @@ export function mcpBuiltinLaunchEnvironment(
 
 function parseServer(value: unknown, location: string): ManifestServer | string {
 	if (!isRecord(value)) return `${location} must be an object`;
-	const problem = fieldProblem(value, ["id", "version", "title", "environment", "tools"], location);
+	const { instructions, ...required } = value;
+	const problem = fieldProblem(required, ["id", "version", "title", "environment", "tools"], location);
 	if (problem !== null) return problem;
 	const { id, version, title, tools } = value;
 	if (typeof id !== "string" || id.length > ID_MAX_CHARS || !ID_PATTERN.test(id)) {
@@ -307,6 +318,9 @@ function parseServer(value: unknown, location: string): ManifestServer | string 
 	}
 	if (typeof version !== "string" || version.length === 0) return `${location}.version must be a non-empty string`;
 	if (typeof title !== "string" || title.length === 0) return `${location}.title must be a non-empty string`;
+	if (instructions !== undefined && (typeof instructions !== "string" || instructions.length === 0)) {
+		return `${location}.instructions must be a non-empty string`;
+	}
 	const environment = parseEnvironment(value.environment, `${location}.environment`);
 	if (typeof environment === "string") return environment;
 	if (!Array.isArray(tools)) return `${location}.tools must be an array`;
@@ -319,7 +333,7 @@ function parseServer(value: unknown, location: string): ManifestServer | string 
 		names.add(tool.name);
 		parsed.push(tool);
 	}
-	return { id, version, title, environment, tools: parsed };
+	return { id, version, title, ...(instructions !== undefined ? { instructions } : {}), environment, tools: parsed };
 }
 
 function declarationOf(server: ManifestServer, source: McpBuiltinSource, root: string): McpServerDeclaration | string {
@@ -353,6 +367,7 @@ function declarationOf(server: ManifestServer, source: McpBuiltinSource, root: s
 			declared,
 			version: server.version,
 			title: server.title,
+			...(server.instructions !== undefined ? { instructions: server.instructions } : {}),
 			environment: server.environment,
 			surface: surface.digest,
 		}),
@@ -375,6 +390,7 @@ function declarationOf(server: ManifestServer, source: McpBuiltinSource, root: s
 		builtin: {
 			version: server.version,
 			title: server.title,
+			...(server.instructions !== undefined ? { instructions: server.instructions } : {}),
 			environment: server.environment,
 			tools: server.tools,
 			surface,

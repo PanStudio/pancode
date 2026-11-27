@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "modules",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "The site's software modules through Lmod or Environment Modules, and the module load lines a batch script needs.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {

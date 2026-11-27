@@ -156,9 +156,9 @@ entries:
     name: catalog
     description: The dataset catalogs the operator names in a catalog file, local
       and public CKAN, and staging one resource.
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/catalog
-    sha256: 774c1b16ac8d73f19cf048a445bba082af9b9d8308e83a815f05c38f5592b1fc
+    sha256: 5f9ae33349b56dad7cfa6ae0990dd52dd93056ad7be22f10df035373eecfb7aa
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: plugin
@@ -289,9 +289,9 @@ entries:
     publisher: pancode
     name: darshan
     description: What one Darshan log says about a job's I/O, through darshan-parser.
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/darshan
-    sha256: 298f3f72d08233ed99bee120a1817194c58f993f250e9fb5a5d1d5ec66b71d79
+    sha256: fc3681239e45c37b11e0f5689d0fc7210ce2ff28151c3f6231be98160c25f8d1
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: skill
@@ -590,9 +590,9 @@ entries:
     name: modules
     description: The site's software modules through Lmod or Environment Modules,
       and the module load lines a batch script needs.
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/modules
-    sha256: 138d4e40b5de02ee9c2863149b6e5e05cedfd74523f18e729c0de9417b0d8e16
+    sha256: 41f2d164f336028435cfcf150b643975e96363765557d970e1b176f4a0999620
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: server
@@ -600,9 +600,9 @@ entries:
     name: node
     description: This machine's CPU topology and load, memory and swap, mounted file
       systems, network interfaces, NVIDIA GPUs and top processes.
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/node
-    sha256: 30cfa184eab737a837bd86057367844ac8686d12eb4d3e6676747e61fa34961e
+    sha256: c43f90b2009b154292670c909d506785eb1a25fdccc4e48b674a60cadb2a4384
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: skill
@@ -811,9 +811,9 @@ entries:
     name: scidata
     description: The structure, a bounded slice and statistics of CSV, TSV, JSON,
       HDF5, NetCDF, Zarr and Parquet files.
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/scidata
-    sha256: e99f9333680140a6deec8bd47f5d9993f65e6898029bffcd7823ce8913f40c4e
+    sha256: b1f7c44d76a5bc01dab87a51c2f359f78d7c7f6b0ea59bb881baa3db9ef26a0e
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: plugin
@@ -952,9 +952,9 @@ entries:
     name: spack
     description: "The Spack instance on PATH or SPACK_ROOT: installed specs, package
       recipes, prefixes, concretization and environments."
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/spack
-    sha256: d42f1f5d544c1a4f6b4a64f0e5128d1b6afa54babab910f4d34f13a5e452984d
+    sha256: 1f4586471780d2ea0f5b498950117d69bd6625c61e92d09065ba56d81797b5a5
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: skill
@@ -989,9 +989,9 @@ entries:
     name: store
     description: "A project's PanStore: tags, blobs, records and read-only copies,
       with writes only into allowed tags."
-    version: 0.1.0
+    version: 0.2.0
     sourceUrl: packs/servers/store
-    sha256: 874b699b59c2109802a75ee9f7a7c9a1257865a9b3459ebf50b2e6642a4d5ac3
+    sha256: ebdf593f671fb6858ca475fdad783f62c48520921a5da587bd14174d5d5cd61d
     license: LicenseRef-PanCode-1.0
     tier: core
   - kind: skill

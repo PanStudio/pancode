@@ -228,6 +228,7 @@ export function createDarshanTools(limits: Partial<DarshanLimits> = {}) {
 
 	const darshanSummary = defineTool({
 		name: "darshan_summary",
+		title: "Darshan log summary",
 		description: `Returns what one Darshan log says about a job's I/O: log format version, executable path (never its arguments), uid, job id, start and end time in epoch seconds, process count and run time; the mounted file systems (at most ${MAX_MOUNTS}); the modules present and which ran out of record memory; and per module the bytes read and written, read, write and metadata seconds, opens, files accessed and the aggregate rate darshan-parser --perf estimates in bytes per second. Prefer it over running darshan-parser in a shell: it reads only the parser's small summary modes, never the full record output, and every figure is a number with its unit in the field name.`,
 		input: { type: "object", properties: { path: pathSchema }, required: ["path"] },
 		actionClass: "read",
@@ -335,6 +336,7 @@ export function createDarshanTools(limits: Partial<DarshanLimits> = {}) {
 
 	const darshanFiles = defineTool({
 		name: "darshan_files",
+		title: "Darshan per-file I/O",
 		description: `Returns the top files of one Darshan module (POSIX by default, MPIIO or STDIO) in one log, ranked by bytes read, bytes written, read, write or metadata seconds, or opens (limit, default ${DEFAULT_FILES}, at most ${MAX_FILES}), each with its path, mount point, file system type and those counters summed over ranks. Prefer it over running darshan-parser --base in a shell: that output can be hundreds of megabytes, while this reads only the module's lines, caps what it keeps, and says when the figures cover only part of the log.`,
 		input: {
 			type: "object",
@@ -435,6 +437,7 @@ export function createDarshanTools(limits: Partial<DarshanLimits> = {}) {
 
 	const darshanModules = defineTool({
 		name: "darshan_modules",
+		title: "Darshan module counters",
 		description: `Returns every counter of one Darshan module in one log as darshan-parser --total prints it, summed over files and ranks: the counter's own name and its number, null where Darshan did not record it (at most ${MAX_COUNTERS} counters). Prefer it over running darshan-parser --total in a shell: it reads only the totals, returns numbers instead of text, and says when the module ran out of record memory.`,
 		input: {
 			type: "object",
@@ -515,6 +518,7 @@ export function createDarshanTools(limits: Partial<DarshanLimits> = {}) {
 
 	const darshanTimeline = defineTool({
 		name: "darshan_timeline",
+		title: "Darshan I/O timeline",
 		description: `Returns the bytes one Darshan module (POSIX by default, MPIIO or STDIO) read and wrote in each time bin of a job (at most ${MAX_BINS} bins, with the bin width in seconds and each bin's offset from the job start), from the log's heatmap records when it has them and otherwise from its DXT trace through darshan-dxt-parser; a log with neither returns available false and the reason. Prefer it over reading darshan-parser or darshan-dxt-parser output in a shell: it keeps only the lines it needs, merges bins to fit the cap, and says when the output was cut.`,
 		input: {
 			type: "object",
@@ -582,6 +586,7 @@ export function createDarshanTools(limits: Partial<DarshanLimits> = {}) {
 					},
 				};
 			}
+			context.progress(1, 2, `no heatmap for ${name}; reading the DXT trace with ${DXT_PARSER}`);
 			const dxtVersion = await version(DXT_PARSER, context.signal);
 			if (!dxtVersion.ok)
 				return {

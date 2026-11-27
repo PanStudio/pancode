@@ -101,10 +101,11 @@ const unreadable = (toolName: string, session: Session, what: string): ToolResul
 
 const modulesList = defineTool({
 	name: "modules_list",
+	title: "Loaded modules",
 	description: `Returns the software modules loaded in the environment this server was started from, in load order (at most ${MAX_LISTED}), each with its name and version: that is the session's starting environment, not the state after some later shell command, and no tool can load or unload a module for the session. Prefer it over running module list in a shell: it answers in the same fields from Lmod and Environment Modules, and says when the list was cut.`,
 	input: { type: "object", properties: {} },
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(_args, context) {
 		const session = await begin("modules_list", context.signal);
 		if ("error" in session) return session;
@@ -134,6 +135,7 @@ const modulesList = defineTool({
 
 const modulesAvail = defineTool({
 	name: "modules_avail",
+	title: "Available modules",
 	description: `Returns the modules this site offers on the current MODULEPATH (at most ${MAX_LISTED}), optionally only those whose full name starts with or contains name, each with its name, version, the MODULEPATH directory it comes from and whether it is the default that module load <name> picks. Prefer it over running module avail in a shell: the answer has the same fields from Lmod and Environment Modules and says when the list was cut; it lists modules and cannot load one for the session.`,
 	input: {
 		type: "object",
@@ -147,7 +149,7 @@ const modulesAvail = defineTool({
 		},
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { name?: string; match?: string }, context) {
 		if (args.name !== undefined) {
 			const problem = checkName("modules_avail", args.name, "name");
@@ -260,6 +262,7 @@ async function showModule(
 
 const modulesShow = defineTool({
 	name: "modules_show",
+	title: "Show a module",
 	description: `Returns one module's modulefile path, its text (at most ${MAX_MODULEFILE_BYTES / 1024} KiB), and the directives the module tool displays for it (variables it sets, path prepends and appends, modules it loads or requires, conflicts, family, what-is text), with a count of lines the server could not read. Prefer it over running module show in a shell: the directives come back as fields from Lmod and Environment Modules alike, and nothing is loaded, since no tool can change the session's environment.`,
 	input: {
 		type: "object",
@@ -267,7 +270,7 @@ const modulesShow = defineTool({
 		required: ["name"],
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { name: string }, context) {
 		const problem = checkName("modules_show", args.name, "name");
 		if (problem !== null) return { error: problem };
@@ -303,6 +306,7 @@ const modulesShow = defineTool({
 
 const modulesSpider = defineTool({
 	name: "modules_spider",
+	title: "Search all modules",
 	description: `Lmod only: returns every module in the whole module hierarchy whose name matches name, with its versions (at most ${MAX_LISTED} names), and for a name/version the modules that must be loaded first to make it available. Prefer it over running module spider in a shell when a module is missing from modules_avail because it sits behind a compiler or MPI module; on Environment Modules it is unavailable, so use modules_avail there.`,
 	input: {
 		type: "object",
@@ -315,7 +319,7 @@ const modulesSpider = defineTool({
 		required: ["name"],
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { name: string }, context) {
 		const problem = checkName("modules_spider", args.name, "name");
 		if (problem !== null) return { error: problem };
@@ -398,6 +402,7 @@ function covers(emitted: ReadonlyArray<string>, wanted: string): boolean {
 
 const modulesPlan = defineTool({
 	name: "modules_plan",
+	title: "Plan module loads",
 	description: `For an ordered list of 1 to ${MAX_PLAN_MODULES} modules, returns each one's declared changes from module show, the modules it declares it needs to a depth of ${PLAN_DEPTH} (at most ${MAX_PLAN_SHOWS} modules read in all), and commands, the module load lines to put in a batch script; declaredOnly is always true because it never runs module load. Use it to write correct module load lines into a script: neither this server nor a later shell command can load modules into the session, and conflicts, family swaps and conditionals are decided only when a module is really loaded.`,
 	input: {
 		type: "object",
@@ -413,7 +418,7 @@ const modulesPlan = defineTool({
 		required: ["modules"],
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { modules: string[] }, context) {
 		if (!Array.isArray(args.modules) || args.modules.length < 1 || args.modules.length > MAX_PLAN_MODULES)
 			return { error: `modules_plan: modules must be a list of 1 to ${MAX_PLAN_MODULES} module names` };
@@ -558,13 +563,14 @@ const modulesPlan = defineTool({
 
 const modulesCollections = defineTool({
 	name: "modules_collections",
+	title: "Module collections",
 	description: `Returns the names of the user's saved module collections (at most ${MAX_LISTED}), or with name the modules one collection loads, in order. Prefer it over running module savelist or module describe in a shell: the answer has the same fields from Lmod and Environment Modules; it does not restore a collection, which no tool can do for the session.`,
 	input: {
 		type: "object",
 		properties: { name: { ...NAME_SCHEMA, description: "A collection to list the modules of." } },
 	},
 	actionClass: "read",
-	idempotent: false,
+	idempotent: true,
 	async run(args: { name?: string }, context) {
 		if (args.name !== undefined) {
 			const problem = checkName("modules_collections", args.name, "name");

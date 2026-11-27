@@ -13,7 +13,14 @@ import type { ServerProbe } from "../../registry.js";
 import { NO_ROOT_REASON, parseStoreOptions, setStoreConfig, storeConfig, USAGE } from "./options.js";
 import { primaryRootProblem, STORE_TOOLS } from "./tools.js";
 
-export const server = defineServer({ id: "store", version: "0.1.0", title: "Project store", tools: STORE_TOOLS });
+export const server = defineServer({
+	id: "store",
+	version: "0.2.0",
+	title: "Project store",
+	instructions:
+		"The store holds one project's files as blobs under tags, such as results/run1. Reads reach every tag of the project. store_put and store_note write only into a tag the server was started with --write-tag for, or a tag nested under one: --write-tag results allows results and results/run1. A server started with no --write-tag writes nothing.",
+	tools: STORE_TOOLS,
+});
 
 export const usage = USAGE;
 

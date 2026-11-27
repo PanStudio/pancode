@@ -73,7 +73,7 @@ them in the `environment` field of its manifest entry; pass those through.
 
 ## Policy belongs to the host
 
-A server's own description of its tools (the read-only, destructive and idempotent hints, and the action class
+A server's own description of its tools (the read-only, destructive, idempotent and open-world hints, and the action class
 it reports) is a hint, and each host decides the policy it enforces. `pankit manifest` prints the policy PanCode
 ships for these servers, generated from the tool definitions, so another host can review and adopt it.
 

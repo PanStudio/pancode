@@ -1,6 +1,6 @@
 {
 	"id": "spack",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Spack packages",
 	"environment": [
 		"SPACK_DISABLE_LOCAL_CONFIG",
@@ -14,6 +14,7 @@
 	"tools": [
 		{
 			"name": "spack_env",
+			"title": "Spack environment",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -28,13 +29,16 @@
 				}
 			},
 			"annotations": {
+				"title": "Spack environment",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "spack_find",
+			"title": "Installed Spack packages",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -55,13 +59,16 @@
 				}
 			},
 			"annotations": {
+				"title": "Installed Spack packages",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "spack_info",
+			"title": "Spack package info",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -77,13 +84,16 @@
 				"required": ["package"]
 			},
 			"annotations": {
+				"title": "Spack package info",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "spack_locate",
+			"title": "Locate a Spack install",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -104,13 +114,16 @@
 				}
 			},
 			"annotations": {
+				"title": "Locate a Spack install",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "spack_spec",
+			"title": "Concretize a Spack spec",
 			"actionClass": "execute",
 			"pathArguments": {},
 			"inputSchema": {
@@ -126,9 +139,11 @@
 				"required": ["spec"]
 			},
 			"annotations": {
+				"title": "Concretize a Spack spec",
 				"readOnlyHint": false,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": false,
+				"openWorldHint": false
 			}
 		}
 	]

@@ -1,11 +1,12 @@
 {
 	"id": "node",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Node facts",
 	"environment": [],
 	"tools": [
 		{
 			"name": "node_cpu",
+			"title": "CPU facts",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -13,13 +14,16 @@
 				"properties": {}
 			},
 			"annotations": {
+				"title": "CPU facts",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "node_disks",
+			"title": "File systems",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -36,13 +40,16 @@
 				}
 			},
 			"annotations": {
+				"title": "File systems",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "node_gpus",
+			"title": "NVIDIA GPUs",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -50,13 +57,16 @@
 				"properties": {}
 			},
 			"annotations": {
+				"title": "NVIDIA GPUs",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "node_memory",
+			"title": "Memory facts",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -64,13 +74,16 @@
 				"properties": {}
 			},
 			"annotations": {
+				"title": "Memory facts",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "node_network",
+			"title": "Network interfaces",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -78,13 +91,16 @@
 				"properties": {}
 			},
 			"annotations": {
+				"title": "Network interfaces",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "node_processes",
+			"title": "Top processes",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -104,9 +120,11 @@
 				}
 			},
 			"annotations": {
+				"title": "Top processes",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		}
 	]
