@@ -10,6 +10,7 @@ import {
 	storeProjectDir,
 	storeRoot,
 	storeRootSpecs,
+	storeS3Settings,
 	validateTagName,
 } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
@@ -42,16 +43,18 @@ export function workspaceStoreTags(cwd: string): ReadonlyArray<string> {
 
 /** How long an s3 store's tag list is used before a turn starts listing it again. */
 const S3_LISTING_MS = 30_000;
-const s3Listings = new Map<string, { at: number; store: WorkspaceStore; listing: boolean }>();
+const s3Listings = new Map<string, { at: number | null; store: WorkspaceStore; listing: boolean }>();
 
 /**
  * An s3 store is listed over the network, so a turn never waits on it: it gets the last listing, none on the
  * session's first turn, and starts a new one when that is older than 30 s. A listing that fails keeps the old one.
  */
 function s3WorkspaceStore(cwd: string): WorkspaceStore {
-	const entry = s3Listings.get(cwd) ?? { at: 0, store: NO_STORE, listing: false };
-	s3Listings.set(cwd, entry);
-	if (!entry.listing && Date.now() - entry.at >= S3_LISTING_MS) {
+	const s3 = storeS3Settings();
+	const key = `${s3?.endpoint ?? ""}\0${s3?.bucket ?? ""}\0${s3?.prefix ?? ""}\0${cwd}`;
+	const entry = s3Listings.get(key) ?? { at: null, store: NO_STORE, listing: false };
+	s3Listings.set(key, entry);
+	if (!entry.listing && (entry.at === null || performance.now() - entry.at >= S3_LISTING_MS)) {
 		entry.listing = true;
 		void import("./backends/s3.js")
 			.then(async ({ createS3StoreBackend }) => {
@@ -62,7 +65,7 @@ function s3WorkspaceStore(cwd: string): WorkspaceStore {
 			})
 			.catch(() => undefined)
 			.finally(() => {
-				entry.at = Date.now();
+				entry.at = performance.now();
 				entry.listing = false;
 			});
 	}
@@ -77,7 +80,7 @@ function s3WorkspaceStore(cwd: string): WorkspaceStore {
  */
 function workspaceStore(cwd: string): WorkspaceStore {
 	if (storeBackendKind() === "s3") return s3WorkspaceStore(cwd);
-	const root = storeRoot();
+	const root = storeRootSpecs()[0]?.path ?? storeRoot();
 	const project = `${root}\0${cwd}`;
 	let tags = tagDirs.get(project);
 	if (tags === undefined) {

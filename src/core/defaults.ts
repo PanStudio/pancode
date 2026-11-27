@@ -523,7 +523,7 @@ interface StoreRootSetting {
 export const STORE_BACKEND_KINDS = ["local", "shared", "s3"] as const;
 export type StoreBackendSetting = (typeof STORE_BACKEND_KINDS)[number];
 
-/** The folder a `shared` store lives in: one directory every host sharing the store mounts at the same path. */
+/** The folder a `shared` store lives in: one directory every host sharing the store mounts (its path may differ per host; `root.json` identifies it). */
 export interface StoreSharedSetting {
 	/** Absolute. */
 	root: string;

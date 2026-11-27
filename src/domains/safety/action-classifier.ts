@@ -7,7 +7,7 @@ import { artifactDefaultPath } from "../../core/artifact-paths.js";
 import { canonicalizeExistingPath, canonicalizePath, canonicalizeRawPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant, isStrictDescendant } from "../../core/path-containment.js";
 import { shellQuote } from "../../core/shell-quote.js";
-import { storeReadRoots, storeReplacedBytes, storeWriteTarget } from "../../core/store-paths.js";
+import { storeReadRoots, storeReplacedBytes, storeS3WriteTarget, storeWriteTarget } from "../../core/store-paths.js";
 import { isHarnessExtensionToolName, ToolNames } from "../../core/tool-names.js";
 import { resolvePancodeDirs } from "../../core/xdg.js";
 import { expandPath, normalizeToolPath, runScriptCwd } from "../../tools/path-utils.js";
@@ -1278,8 +1278,10 @@ function classifyStore(args: Record<string, unknown> | undefined): Classificatio
 		}
 	}
 	let target: string | null = null;
+	let reasonTarget: string | null = null;
 	try {
 		target = storeWriteTarget(process.cwd(), args);
+		reasonTarget = target ?? storeS3WriteTarget(process.cwd(), args);
 	} catch {
 		// An unresolvable PanCode home names no target; the tool refuses the call too.
 	}
@@ -1290,7 +1292,7 @@ function classifyStore(args: Record<string, unknown> | undefined): Classificatio
 		const blob = typeof args?.blob === "string" && args.blob.length > 0 ? args.blob : path.basename(String(sourceArg));
 		return { actionClass: "destructive", reasons: [`store-replace: ${String(args?.tag)}:${blob}`] };
 	}
-	return { actionClass: "write", reasons: target === null ? [] : [`store-write: ${target}`] };
+	return { actionClass: "write", reasons: reasonTarget === null ? [] : [`store-write: ${reasonTarget}`] };
 }
 
 export function classify(rawCall: ClassifierCall): Classification {

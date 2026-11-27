@@ -4,7 +4,15 @@ import { deepStrictEqual, doesNotMatch, match, notStrictEqual, ok, strictEqual }
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { storeBlobPath, storeGrantBoundaries, storeProjectDir } from "../../src/core/store-paths.js";
+import {
+	provideStoreSettings,
+	storeBlobPath,
+	storeGrantBoundaries,
+	storeProjectDir,
+	storeProjectKeyFor,
+	storeProjectRoot,
+	storeWriteSet,
+} from "../../src/core/store-paths.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
@@ -131,5 +139,40 @@ describe("store safety admission", () => {
 		match(authority, /create, put and note are write class/u);
 		match(authority, /remove[^.;]*destructive/u);
 		match(authority, /otherwise its store is read-only/u);
+	});
+
+	it("names the s3:// target in classifier reasons for s3 store writes while keeping write-set empty", () => {
+		provideStoreSettings(() => ({
+			backend: "s3",
+			s3: {
+				endpoint: "http://127.0.0.1:9000",
+				region: "us-east-1",
+				bucket: "lab-store",
+				prefix: "team/",
+				accessKeyId: "key",
+				pathStyle: true,
+			},
+			roots: [],
+			placement: {},
+		}));
+		try {
+			const key = storeProjectKeyFor(storeProjectRoot(cwd));
+			const base = `s3://lab-store/team/projects/${key}/tags`;
+			deepStrictEqual(classify({ tool: ToolNames.Store, args: { op: "put", tag: "sim", path: "out/a.txt" } }), {
+				actionClass: "write",
+				reasons: [`store-write: ${base}/sim/blobs/a.txt`],
+			});
+			deepStrictEqual(classify({ tool: ToolNames.Store, args: { op: "create", tag: "sim" } }), {
+				actionClass: "write",
+				reasons: [`store-write: ${base}/sim`],
+			});
+			deepStrictEqual(classify({ tool: ToolNames.Store, args: { op: "note", tag: "sim", blob: "a.txt", note: "ok" } }), {
+				actionClass: "write",
+				reasons: [`store-write: ${base}/sim%2F.records`],
+			});
+			deepStrictEqual(storeWriteSet(cwd, { op: "put", tag: "sim", path: "out/a.txt" }), []);
+		} finally {
+			provideStoreSettings(null);
+		}
 	});
 });

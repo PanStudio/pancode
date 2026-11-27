@@ -24,6 +24,7 @@ import {
 	storeBookkeepingPaths as bookkeepingPathsIn,
 	storeCacheDir as cacheDirIn,
 	emptyStorePlacement,
+	encodeTagSegment,
 	isRecordsTag,
 	parseStorePlacement,
 	storeProjectDir as projectDirIn,
@@ -200,7 +201,7 @@ export function storeBackendKind(): StoreBackendSetting {
 	return hostStore().kind;
 }
 
-/** The bucket an s3 store lives in; null for any other kind. */
+/** The bucket `store.s3` names, or null when user settings configure none. */
 export function storeS3Settings(): StoreS3Setting | null {
 	return hostStore().s3;
 }
@@ -430,6 +431,39 @@ export function storeWriteTarget(cwd: string, args: Record<string, unknown> | un
 			return blobTarget(args.blob);
 		case "put":
 			// The tool treats an empty blob as absent and stores under the source's basename, so the target does too.
+			return blobTarget(
+				typeof args.blob === "string" && args.blob.length > 0
+					? args.blob
+					: typeof args.path === "string"
+						? basename(args.path)
+						: undefined,
+			);
+		default:
+			return null;
+	}
+}
+
+/**
+ * The `s3://` URI a store write targets when `store.backend` is `s3`, from tool arguments alone; null
+ * for any other backend, read ops, malformed calls, or an unconfigured bucket.
+ */
+export function storeS3WriteTarget(cwd: string, args: Record<string, unknown> | undefined): string | null {
+	if (args === undefined || storeBackendKind() !== "s3") return null;
+	const s3 = storeS3Settings();
+	if (s3 === null) return null;
+	const tag = args.tag;
+	if (typeof tag !== "string" || validateTagName(tag) !== null) return null;
+	const base = `s3://${s3.bucket}/${s3.prefix}projects/${projectKeyOf(cwd)}/tags/`;
+	const blobTarget = (blob: unknown): string | null =>
+		typeof blob === "string" && validateBlobName(blob) === null ? `${base}${encodeTagSegment(tag)}/blobs/${blob}` : null;
+	switch (args.op) {
+		case "create":
+			return `${base}${encodeTagSegment(tag)}`;
+		case "note":
+			return `${base}${encodeTagSegment(recordsTag(tag))}`;
+		case "remove":
+			return blobTarget(args.blob);
+		case "put":
 			return blobTarget(
 				typeof args.blob === "string" && args.blob.length > 0
 					? args.blob

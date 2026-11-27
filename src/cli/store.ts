@@ -203,7 +203,12 @@ export async function runStoreCommand(argv: ReadonlyArray<string>): Promise<numb
 		stream.write(`${storeCliHelp("pancode store")}${CREDENTIAL_HELP}`);
 		return argv.length === 0 ? 2 : 0;
 	}
-	if (argv.length === 1 && argv[0] === "login") return storeLogin(cwd);
-	if (argv.length === 1 && argv[0] === "logout") return storeLogout();
+	if (argv[0] === "login" || argv[0] === "logout") {
+		if (argv.length > 1) {
+			process.stderr.write(`usage: pancode store ${argv[0]}\n`);
+			return 2;
+		}
+		return argv[0] === "login" ? storeLogin(cwd) : storeLogout();
+	}
 	return runStoreCli(argv, storeCliContext(cwd));
 }

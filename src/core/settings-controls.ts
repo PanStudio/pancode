@@ -905,7 +905,7 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"store.shared": [
 		"Shared store folder",
-		"The folder a shared store lives in, user settings only. Edit the JSON object { root }: an absolute directory every host sharing the store mounts at that path.",
+		"The folder a shared store lives in, user settings only. Edit the JSON object { root }: an absolute directory that every host sharing the store mounts (the mount path may differ per host).",
 	],
 	"store.s3": [
 		"S3 store bucket",

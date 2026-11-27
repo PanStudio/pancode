@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { storeProjectKey, storeProjectKeyForId } from "@pancode/store";
 import { storePut } from "../../src/cli/store.js";
 import "../../src/core/config.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
 import {
 	decodeTagSegment,
 	encodeTagSegment,
@@ -163,5 +164,27 @@ test("a tracked store.projectId gives checkouts at different paths one key, and 
 		notStrictEqual(storeProjectKeyFor(plain), storeProjectKeyFor(first));
 	} finally {
 		env.restore();
+	}
+});
+
+test("validateSettings rejects credentials/fragments in store.s3.endpoint and path characters in store.s3.bucket", () => {
+	const check = (s3: Record<string, unknown>) => validateSettings({ store: { backend: "s3", s3 } }).issues;
+	ok(
+		check({ endpoint: "http://user:pass@127.0.0.1:9000", bucket: "ok", accessKeyId: "k" }).some(
+			(issue) => issue.path === "store.s3.endpoint",
+		),
+	);
+	ok(
+		check({ endpoint: "https://s3.example.com#frag", bucket: "ok", accessKeyId: "k" }).some(
+			(issue) => issue.path === "store.s3.endpoint",
+		),
+	);
+	for (const bad of ["bad/bucket", "..", "has space", "a?b"]) {
+		ok(
+			check({ endpoint: "https://s3.example.com", bucket: bad, accessKeyId: "k" }).some(
+				(issue) => issue.path === "store.s3.bucket",
+			),
+			bad,
+		);
 	}
 });

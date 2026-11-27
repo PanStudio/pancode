@@ -452,14 +452,21 @@ function validateStoreS3(issues: Issues, raw: unknown): StoreS3Setting | null {
 			url === null ||
 			(url.protocol !== "http:" && url.protocol !== "https:") ||
 			url.pathname !== "/" ||
-			url.search !== ""
+			url.search !== "" ||
+			url.hash !== "" ||
+			url.username !== "" ||
+			url.password !== ""
 		) {
-			issues.add("store.s3.endpoint", "expected http(s)://host[:port] with no path or query");
+			issues.add("store.s3.endpoint", "expected http(s)://host[:port] with no credentials, path, query, or fragment");
 			endpoint = undefined;
 		}
 	}
 	const region = "region" in raw ? expectString(issues, "store.s3.region", raw.region) : "us-east-1";
-	const bucket = expectString(issues, "store.s3.bucket", raw.bucket);
+	let bucket = expectString(issues, "store.s3.bucket", raw.bucket);
+	if (bucket !== undefined && (!/^[A-Za-z0-9._-]+$/u.test(bucket) || bucket === "." || bucket === "..")) {
+		issues.add("store.s3.bucket", "expected a bucket name of letters, digits, '.', '_' and '-'");
+		bucket = undefined;
+	}
 	const accessKeyId = expectString(issues, "store.s3.accessKeyId", raw.accessKeyId);
 	let prefix: string | undefined = "";
 	if ("prefix" in raw) {
