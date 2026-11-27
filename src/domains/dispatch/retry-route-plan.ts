@@ -7,9 +7,9 @@
  */
 import type { AgentsContract } from "../agents/contract.js";
 import type { ProvidersContract } from "../providers/index.js";
+import type { ActiveRun } from "./bundle-types.js";
 import type { DispatchRequest } from "./contract.js";
 import type { EffectiveSettings } from "./envelope-stage.js";
-import type { ActiveRun } from "./extension.js";
 import { failureClassWords, type RetryDecision } from "./failure-classification.js";
 import { configuredJointTargets } from "./joint-route-resolver.js";
 import type { Obligation } from "./obligation.js";

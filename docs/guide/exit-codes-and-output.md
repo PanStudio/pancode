@@ -24,12 +24,12 @@ Interactive sessions, headless main-agent `run`, and `run --agent` exit `128 + s
 
 | Code | Preserved artifact & meaning |
 | --- | --- |
-| `merge_withheld` | Task worktree branch kept unmerged (e.g., worker self-validation failed, unverified check asked, or diff removed tests); inspect and merge manually ([extension.ts](../../src/domains/dispatch/extension.ts), [backoff.ts](../../src/domains/dispatch/backoff.ts)). |
+| `merge_withheld` | Task worktree branch kept unmerged (e.g., worker self-validation failed, unverified check asked, or diff removed tests); inspect and merge manually ([attempt-land.ts](../../src/domains/dispatch/attempt-land.ts), [backoff.ts](../../src/domains/dispatch/backoff.ts)). |
 | `obligation_unmet` | The run left its evidence obligation unmet: a builder executed no tools, or its state-changing calls were refused or denied, or its asks went unanswered, and nothing changed; an explorer reported without reading; a checker claimed a check it never ran; a gate verdict cited none of its evidence packet ([grading.ts](../../src/domains/dispatch/grading.ts)). An empty task worktree is discarded. |
 | `worker_not_done` | A builder declared its assignment `partly_done` or `not_done`, recorded a limitation, or asked for wider write roots, and changed nothing. |
 | `assurance_compromised` | A builder's own report lists a failing validation, or it claimed a check it never ran; the merge is withheld and the run fails. A check whose latest `verify` receipt says it could not run is not a failing validation. A failing validation's outcome detail reads `failed validation: <checks>, in the worker's own report` (or `, on its final tree`); a claimed check that never ran reads `assurance compromised: <cause>`. |
 | `worker_partial_work` | Edit worker modified files but opened its report saying work could not finish; task worktree changes committed unmerged under `partial: <task>` ([merge-gate.ts](../../src/domains/dispatch/merge-gate.ts)). |
-| `worker_removed_tests` | Edit directly on checkout (no task worktree) removed existing tests; edits remain on checkout for review ([extension.ts](../../src/domains/dispatch/extension.ts)). |
+| `worker_removed_tests` | Edit directly on checkout (no task worktree) removed existing tests; edits remain on checkout for review ([attempt-verify.ts](../../src/domains/dispatch/attempt-verify.ts)). |
 | `information_flow_blocked` | Policy blocked restricted context from reaching the requested destination; change rule/destination and start a new session ([backoff.ts](../../src/domains/dispatch/backoff.ts)). |
 
 A run that left its evidence obligation unmet is the one exception to "no automatic retry": a builder that settles `obligation_unmet` with no tool call over an unchanged tree is retried once on another model, and its idle task worktree is kept for that attempt ([Evidence obligations and the one retry](fleet-dispatch.md#evidence-obligations-and-the-one-retry)).
