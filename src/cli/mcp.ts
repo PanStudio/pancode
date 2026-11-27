@@ -1204,11 +1204,14 @@ function parseSurfaceArgs(argv: ReadonlyArray<string>): { id: string; hash?: str
 }
 
 export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number> {
-	if (argv.includes("--help") || argv.includes("-h")) {
+	const separator = argv.indexOf("--");
+	const head = separator === -1 ? argv : argv.slice(0, separator);
+	const tail = separator === -1 ? [] : argv.slice(separator);
+	if (head.includes("--help") || head.includes("-h")) {
 		process.stdout.write(HELP);
 		return 0;
 	}
-	const json = argv.includes("--json");
+	const json = head.includes("--json");
 	if (argv[0] === "test") {
 		const parsed = parseMcpTestArgs(argv.filter((arg) => arg !== "--json"));
 		const result =
@@ -1284,7 +1287,7 @@ export async function runMcpCommand(argv: ReadonlyArray<string>): Promise<number
 		}
 	}
 	const result = mcpCommandOutput(
-		argv.filter((arg) => arg !== "--json" && (!refresh || arg !== "--refresh")),
+		[...head.filter((arg) => arg !== "--json" && (!refresh || arg !== "--refresh")), ...tail],
 		{ cwd: process.cwd() },
 		served,
 		live,

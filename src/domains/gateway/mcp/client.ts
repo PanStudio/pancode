@@ -207,6 +207,12 @@ export interface McpCallToolOptions {
 	timeoutMs?: number;
 	/** Receives the server's `notifications/progress` for this call, in increasing order, until it settles. */
 	onProgress?: (update: McpProgressUpdate) => void;
+	/**
+	 * Called after a `-32020 HeaderMismatch` re-list before retrying `tools/call`.
+	 * Returning a non-null refusal message aborts the retry without sending the
+	 * second call (used by the gateway to preserve surface-approval boundaries).
+	 */
+	onHeaderMismatchRelist?: (listing: McpToolListing) => string | null;
 }
 
 /** What one `subscriptions/listen` stream asks for (MCP 2026-07-28 basic/patterns/subscriptions). */
@@ -1418,7 +1424,19 @@ export function createMcpProtocolClient(
 					if (!answered || relisted || !mirrorsHeaders() || error.data.code !== MCP_HEADER_MISMATCH) throw error;
 					relisted = true;
 					toolsChangedFlag = true;
-					await listToolsOnce(signal);
+					const listing = await listToolsOnce(signal);
+					if (!listing.tools.some((entry) => entry.name === name)) {
+						const dropped = listing.dropped?.find((entry) => entry.name === name);
+						throw new McpError(
+							"server",
+							dropped !== undefined
+								? `tools/call (${name}) refused after HeaderMismatch relist: tool dropped (${dropped.reason})`
+								: `tools/call (${name}) refused after HeaderMismatch relist: server no longer lists tool ${name}`,
+							error.data,
+						);
+					}
+					const refusal = callOptions.onHeaderMismatchRelist?.(listing) ?? null;
+					if (refusal !== null) throw new McpError("server", refusal, error.data);
 					round -= 1;
 					continue;
 				}

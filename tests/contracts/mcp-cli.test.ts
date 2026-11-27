@@ -527,3 +527,71 @@ it("records, lists and removes a builtin server's network grant and refuses any 
 		scratch.cleanup();
 	}
 });
+
+it("clears a removed server's trust record while keeping credentials, and preserves flags after -- on mcp add", () => {
+	const scratch = makeScratchHome("pancode-mcp-cli-remove-flags-");
+	try {
+		const project = join(scratch.dir, "project");
+		mkdirSync(project, { recursive: true });
+		const run = (args: string[], input?: string) =>
+			spawnSync(process.execPath, [CLI, "mcp", ...args], {
+				cwd: project,
+				env: { ...process.env, ...scratch.env },
+				encoding: "utf8",
+				timeout: 10_000,
+				...(input !== undefined ? { input } : {}),
+			});
+
+		// 1. Flags after `--` belong to the server command, not pancode mcp itself.
+		const addedStdio = run(["add", "withflags", "--", process.execPath, "server.mjs", "--json", "--help"]);
+		strictEqual(addedStdio.status, 0, addedStdio.stderr);
+		match(addedStdio.stdout, /mcp: added withflags/u);
+		const listedStdio = run(["list", "--json"]);
+		strictEqual(listedStdio.status, 0, listedStdio.stderr);
+		const withFlags = JSON.parse(listedStdio.stdout).servers.find((server: { id: string }) => server.id === "withflags");
+		deepStrictEqual(withFlags?.args, ["server.mjs", "--json", "--help"]);
+
+		// 2. Removing a trusted project remote server drops its trust record and keeps its stored credentials.
+		const addedRemote = run([
+			"add",
+			"rem",
+			"--scope",
+			"project",
+			"--url",
+			"http://127.0.0.1:49998/mcp",
+			"--header",
+			"Authorization=rem-tok",
+		]);
+		strictEqual(addedRemote.status, 0, addedRemote.stderr);
+		const loggedIn = run(["login", "rem"], "Bearer secret-1\n");
+		strictEqual(loggedIn.status, 0, loggedIn.stderr);
+		const trusted = run(["trust", "rem", "--action-class", "read"]);
+		strictEqual(trusted.status, 0, trusted.stderr);
+		strictEqual(readMcpTrustState(join(scratch.dir, "config")).state.records.length, 1);
+
+		const removed = run(["remove", "rem", "--scope", "project"]);
+		strictEqual(removed.status, 0, removed.stderr);
+		deepStrictEqual(readMcpTrustState(join(scratch.dir, "config")).state.records, []);
+
+		// Re-adding the same remote server stays untrusted (trust was cleared) while its stored credential remains.
+		const readded = run([
+			"add",
+			"rem",
+			"--scope",
+			"project",
+			"--url",
+			"http://127.0.0.1:49998/mcp",
+			"--header",
+			"Authorization=rem-tok",
+		]);
+		strictEqual(readded.status, 0, readded.stderr);
+		const recheck = run(["list", "--json"]);
+		const rem = JSON.parse(recheck.stdout).servers.find((server: { id: string }) => server.id === "rem");
+		strictEqual(rem?.trust?.status, "untrusted");
+		const loggedOut = run(["logout", "rem", "--json"]);
+		strictEqual(loggedOut.status, 0, loggedOut.stderr);
+		deepStrictEqual(JSON.parse(loggedOut.stdout).removed, ["rem-tok"]);
+	} finally {
+		scratch.cleanup();
+	}
+});

@@ -26,7 +26,9 @@ import {
 	openMcpHeaderCredentialStore,
 	removeMcpOAuthGrants,
 	resolveMcpServers,
+	revokeMcpUserTrust,
 	storeMcpOAuthClientSecret,
+	untrustMcpServer,
 } from "../domains/gateway/mcp/index.js";
 import { type McpOAuthLoginResult, mcpOAuthLogin } from "../domains/gateway/mcp/oauth-login.js";
 import type { McpCommandOutput } from "./mcp.js";
@@ -80,14 +82,17 @@ export function mcpEditOutput(argv: ReadonlyArray<string>, options: McpTrustOpti
 	};
 	if (command === "remove") {
 		const declared = resolveMcpServers(options).servers.find((entry) => entry.id === id);
-		const removed = removeMcpServerDeclaration(
-			{
-				...editOptions,
-				scope: scope ?? (declared?.scope === "project" ? "project" : "user"),
-			},
-			id,
-		);
+		const targetScope: McpEditScope = scope ?? (declared?.scope === "project" ? "project" : "user");
+		const removed = removeMcpServerDeclaration({ ...editOptions, scope: targetScope }, id);
 		if (!removed.ok) return fail(1, removed.message);
+		const untrusted =
+			targetScope === "project" ? untrustMcpServer({ ...options, id }) : revokeMcpUserTrust({ ...options, id });
+		if (!untrusted.ok) {
+			return fail(
+				1,
+				`mcp: removed ${id} from ${removed.path}, but could not remove its trust record: ${untrusted.message}`,
+			);
+		}
 		const kept =
 			declared?.url !== undefined && Object.keys(declared.headers).length > 0
 				? ` (the credentials it named stay stored for ${mcpOriginOf(declared.url)}; a server declared again with the same keys and origin uses them)`
@@ -126,13 +131,18 @@ export function mcpLogoutOutput(
 	if (server.url === undefined) return fail(1, `server '${id}' is a local server; it holds no stored credentials`);
 	const store = openMcpHeaderCredentialStore();
 	const removed: string[] = [];
-	for (const binding of mcpHeaderBindings(server, store)) {
-		if (!binding.stored) continue;
-		store.remove(mcpHeaderCredentialRef(binding.key, binding.origin));
-		removed.push(binding.key);
+	let signedOut: boolean;
+	try {
+		for (const binding of mcpHeaderBindings(server, store)) {
+			if (!binding.stored) continue;
+			store.remove(mcpHeaderCredentialRef(binding.key, binding.origin));
+			removed.push(binding.key);
+		}
+		signedOut = removeMcpOAuthGrants(id, undefined, true) > 0;
+	} catch (error) {
+		return fail(1, `could not remove credentials: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	const origin = mcpOriginOf(server.url);
-	const signedOut = removeMcpOAuthGrants(id, undefined, true) > 0;
 	const lines = [
 		...(removed.length > 0 ? [`mcp: removed ${removed.join(", ")} for ${origin}`] : []),
 		...(signedOut ? [`mcp: signed ${id} out; the next pancode mcp login ${id} signs in again`] : []),

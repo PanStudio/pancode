@@ -143,6 +143,11 @@ function attestMcpSkill(
 			`MCP server '${serverId}' is ${declaration.trust.status} for ${projectRoot} (${declaration.trust.reason}); review its declaration and run \`pancode mcp trust ${serverId}\``,
 		);
 	}
+	if (declaration.url !== undefined && declaration.trust.network !== true) {
+		throw denied(
+			`MCP server '${declaration.id}' is remote and the operator has not granted it network in fleet workers; ${declaration.scope === "user" ? "set network: true on it in the user mcp.yaml" : `run \`pancode mcp trust ${declaration.id} --network\``}`,
+		);
+	}
 	// Admission launches nothing: the version a worker may load is the one the
 	// server's last live listing recorded, and only if the operator approved it.
 	const catalog = readMcpSkillCatalog({

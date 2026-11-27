@@ -228,10 +228,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	 */
 	let idleSweep: ReturnType<typeof setInterval> | null = null;
 	const watchIdle = (state: ServerState): void => {
-		state.lastUsed = Date.now();
+		state.lastUsed = performance.now();
 		if (idleSweep !== null) return;
 		idleSweep = setInterval(() => {
-			const now = Date.now();
+			const now = performance.now();
 			for (const each of states?.values() ?? []) {
 				if (each.declaration.url === undefined || each.client === null || (each.inflight ?? 0) > 0) continue;
 				if (now - (each.lastUsed ?? now) < MCP_REMOTE_IDLE_MS) continue;
@@ -593,12 +593,32 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				}
 				const progress = invokeOptions?.onUpdate === undefined ? null : mcpProgressReporter(name, invokeOptions.onUpdate);
 				state.inflight = (state.inflight ?? 0) + 1;
-				state.lastUsed = Date.now();
+				state.lastUsed = performance.now();
+				let headerMismatchResult: ToolResult | null = null;
 				try {
 					const result = await callClient.callTool(tool.name, prepared?.args ?? args, {
 						...(invokeOptions?.signal ? { signal: invokeOptions.signal } : {}),
 						...(timeoutMs !== undefined ? { timeoutMs } : {}),
 						...(progress !== null ? { onProgress: progress.onProgress } : {}),
+						onHeaderMismatchRelist(listing) {
+							installListing(state, listing);
+							const unapprovedAfter = surfaceRefusal(state, name);
+							if (unapprovedAfter !== null) {
+								headerMismatchResult = {
+									kind: "error",
+									message: unapprovedAfter,
+									details: { refusal: { kind: "mcp_surface_unapproved" } },
+								};
+								return unapprovedAfter;
+							}
+							const updatedTool = state.tools.find((entry) => entry.name === tool.name);
+							if (updatedTool === undefined || JSON.stringify(updatedTool) !== JSON.stringify(tool)) {
+								const message = `${name}: live tool metadata changed; describe the capability and retry under its current schema and authority`;
+								headerMismatchResult = withCatalogChange(state, { kind: "error", message });
+								return message;
+							}
+							return null;
+						},
 					});
 					progress?.stop();
 					const contentTypes = result.content.map((block) => block.type);
@@ -676,6 +696,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						...(images.length > 0 ? { images } : {}),
 					};
 				} catch (error) {
+					if (headerMismatchResult !== null) return headerMismatchResult;
 					const stopped = callClient.state().status === "failed" || callClient.state().status === "closed";
 					if (stopped) {
 						state.failure = null;
@@ -696,7 +717,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					return { kind: "error", message };
 				} finally {
 					state.inflight = (state.inflight ?? 1) - 1;
-					state.lastUsed = Date.now();
+					state.lastUsed = performance.now();
 					progress?.stop();
 					if (prepared !== null) await removeTemporaries(prepared);
 				}
@@ -1421,7 +1442,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			if (owner === null) return null;
 			const { declaration } = owner;
 			if (declaration.scope === "client") {
-				return `Local stdio MCP server ${declaration.id}, supplied by the ACP client for this session. Calls use the unknown action class, ask at default autonomy, and run at yolo. The server closes with the session.`;
+				return declaration.url !== undefined
+					? `Remote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)}, supplied by the ACP client for this session. Calls use the unknown action class, ask at default autonomy, and run at yolo. What a call sends leaves this machine, and the connection closes with the session.`
+					: `Local stdio MCP server ${declaration.id}, supplied by the ACP client for this session. Calls use the unknown action class, ask at default autonomy, and run at yolo. The server closes with the session.`;
 			}
 			// The server's trust class is only its default: toolActionClasses and
 			// the Slurm defaults class tools one by one (K5), so the note names the
@@ -1433,13 +1456,16 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const actionClass =
 				shownClass ?? mcpToolActionClass(declaration, { name: toolName, annotations: listed?.annotations ?? null });
 			const serverClass = declaration.trust.actionClass;
+			const remote = declaration.url !== undefined;
 			const effect =
 				actionClass === "execute" && isBuiltinStoreWriteTool(declaration.id, declaration.scope, toolName)
 					? "calls are admitted as the store tool's own put or note into the named tag, which the session must be allowed to write"
 					: actionClass === "read"
 						? "calls run as reads at every autonomy level"
 						: actionClass === "execute"
-							? "calls are admitted like an unrecognized shell command"
+							? remote
+								? "calls run as executing actions (ask at default, run at yolo, and read-only denies them)"
+								: "calls are admitted like an unrecognized shell command"
 							: actionClass === "destructive"
 								? "every call asks at default, runs at yolo, and read-only denies it"
 								: "every call asks for approval and read-only denies it";
@@ -1451,9 +1477,13 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const surface = surfaceOf(owner);
 			const unapproved =
 				surface === null || surface.status === "approved" ? "" : ` Calls are refused for now: ${surface.reason}.`;
-			return `Local stdio MCP server ${declaration.id} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${serverClass}${
+			const serverLabel = remote
+				? `Remote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)}`
+				: `Local stdio MCP server ${declaration.id}`;
+			const confinement = remote ? "it runs off this machine, and what a call sends leaves it" : launchConfinement();
+			return `${serverLabel} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${serverClass}${
 				actionClass === serverClass ? "" : `; this tool runs as ${actionClass}`
-			}: ${effect}${confirmation}; ${launchConfinement()}.${unapproved}`;
+			}: ${effect}${confirmation}; ${confinement}.${unapproved}`;
 		},
 		ownerIdOf(name) {
 			return ownerOf(name)?.declaration.id ?? null;

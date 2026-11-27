@@ -397,10 +397,6 @@ export interface ServerState {
 	dropped?: Array<{ name: string; reason: string }>;
 	/** Set to close the server and start it again at the next discovery, with its options computed afresh. */
 	relaunch?: boolean;
-	/** The event types of the last listing, for a server that offers MCP Events. */
-	events?: McpEventListing;
-	/** Why the last events/list failed; the server's tools still serve. */
-	eventsFailure?: string;
 	/** Header values an ACP client sent with its remote server; held for the session, never stored. */
 	clientHeaders?: Record<string, string>;
 	/** The failure is a remote server's missing or refused credentials. */
@@ -408,6 +404,10 @@ export interface ServerState {
 	/** Calls running on the client now, and when the last one started or ended; a remote server closes when idle. */
 	inflight?: number;
 	lastUsed?: number;
+	/** The event types of the last listing, for a server that offers MCP Events. */
+	events?: McpEventListing;
+	/** Why the last events/list failed; the server's tools still serve. */
+	eventsFailure?: string;
 	/** This session's skills listing of a server that serves the skills extension; absent until listed. */
 	skills?: { listing: McpSkillListing; listedAtMs: number } | { failure: string; listedAtMs: number };
 	/** The skills listing in flight, shared by everyone waiting on it. */

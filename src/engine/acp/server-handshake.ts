@@ -143,7 +143,7 @@ function parseClientHttpServer(raw: Record<string, unknown>): McpClientServerSpe
 		}
 		headers[entry.name] = entry.value;
 	}
-	return { name: raw.name, url: raw.url as string, headers };
+	return { name: raw.name, url: endpoint.href, headers };
 }
 
 /** ACP stdio and http declarations are client authority for one session, never saved settings. */
