@@ -49,6 +49,8 @@ import {
 	imageBlocks,
 	MCP_RESULT_CONTEXT_BYTES,
 	mcpCallFailureText,
+	mcpProgressReporter,
+	offloadedBinaryText,
 	serverHintOf,
 	serverPolicyRefusalResult,
 } from "./mcp-call-results.js";
@@ -389,7 +391,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	 */
 	const publishCatalog = (state: ServerState, listing: McpToolListing): void => {
 		if (state.declaration.scope === "client" || options.persistCatalog === false) return;
-		writeMcpServerCatalog(catalogIdentity(state.declaration), listing);
+		writeMcpServerCatalog(catalogIdentity(state.declaration), {
+			...listing,
+			instructions: state.client?.serverInfo()?.instructions ?? null,
+		});
 		// Drop the memo of whatever the file said before this listing replaced it.
 		state.catalog = undefined;
 	};
@@ -530,31 +535,50 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					if (typeof resolved === "string") return refusedReference(resolved);
 					prepared = resolved;
 				}
+				const progress = invokeOptions?.onUpdate === undefined ? null : mcpProgressReporter(name, invokeOptions.onUpdate);
 				try {
 					const result = await callClient.callTool(tool.name, prepared?.args ?? args, {
 						...(invokeOptions?.signal ? { signal: invokeOptions.signal } : {}),
 						...(timeoutMs !== undefined ? { timeoutMs } : {}),
+						...(progress !== null ? { onProgress: progress.onProgress } : {}),
 					});
+					progress?.stop();
+					const rendered = offloadedBinaryText(result, invokeOptions) ?? {
+						text: result.text,
+						truncated: result.textTruncated,
+					};
 					const details: Record<string, unknown> = {
 						server: declaration.id,
 						tool: tool.name,
 						contentTypes: result.content.map((block) => block.type),
-						textTruncated: result.textTruncated,
+						textTruncated: rendered.truncated,
 						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
 						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
 					};
+					if (result.outputSchemaMismatch !== undefined) {
+						return withCatalogChange(state, {
+							kind: "error",
+							message: `${name}: ${neutralizeFraming(result.outputSchemaMismatch)}; the result is withheld because the server broke its own declared outputSchema, so report it rather than relying on it`,
+							details: {
+								server: declaration.id,
+								tool: tool.name,
+								contentTypes: details.contentTypes,
+								outputSchemaMismatch: true,
+							},
+						});
+					}
 					if (result.isError) {
 						const refusal = serverPolicyRefusalResult(state, tool, name, trustClass, result);
 						if (refusal !== null) return refusal;
 						return withCatalogChange(state, {
 							kind: "error",
-							message: `${name}: ${neutralizeFraming(result.text) || "tool error"}`,
+							message: `${name}: ${neutralizeFraming(rendered.text) || "tool error"}`,
 							details,
 						});
 					}
 					const images = imageBlocks(result);
 					// Server text cannot open or close a host frame (a reminder block or a middleware note), as bash and web_fetch output cannot.
-					let output = neutralizeFraming(result.text);
+					let output = neutralizeFraming(rendered.text);
 					if (prepared !== null && prepared.writes.length > 0) {
 						// An interrupted call commits nothing, whatever the server answered.
 						if (invokeOptions?.signal?.aborted === true) {
@@ -611,6 +635,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						});
 					return { kind: "error", message };
 				} finally {
+					progress?.stop();
 					if (prepared !== null) await removeTemporaries(prepared);
 				}
 			},
@@ -890,6 +915,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		}
 		const surface = surfaceOf(state);
 		const surfaced = surface !== null ? { surface } : {};
+		// Server-written guidance, shown beside its tools and never in the system prompt.
+		const guided = (instructions: string | null | undefined): { instructions?: string } =>
+			typeof instructions === "string" && instructions.length > 0 ? { instructions: neutralizeFraming(instructions) } : {};
 		if (state.client !== null) {
 			return {
 				...base,
@@ -899,6 +927,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				tools: [...state.registered],
 				...(state.truncated ? { truncated: true } : {}),
 				...(state.unregistrable.length > 0 ? { unregistrable: [...state.unregistrable] } : {}),
+				...guided(state.client.serverInfo()?.instructions),
 				...surfaced,
 			};
 		}
@@ -915,6 +944,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			catalog: "cached",
 			catalogCount: catalog.tools.length,
 			...(catalog.truncated ? { truncated: true } : {}),
+			...guided(catalog.instructions),
 			...surfaced,
 		};
 	};
@@ -1163,6 +1193,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						? `mcp server ${owner.declaration.id} failed: ${owner.failure}`
 						: `mcp server ${owner.declaration.id} offers no tool named ${name.slice(`mcp_${owner.declaration.id}__`.length)}`,
 			};
+		},
+		serverInstructions(name) {
+			const owner = ownerOf(name);
+			return owner === null ? null : (listingFor(owner).instructions ?? null);
 		},
 		takeCatalogChange(name) {
 			const owner = ownerOf(name);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { escapeTerminalControls } from "../core/terminal-controls.js";
 import { mcpToolName } from "../core/tool-names.js";
 import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
 import type { McpClient, McpServerInfo } from "../domains/gateway/mcp/client.js";
@@ -58,7 +59,8 @@ JSON responses (--json):
   list: {servers: [...], diagnostics: [...], trustDiagnostics: [...]}
     Each server includes its declaration, trust {status, actionClass, reason?},
     entry (project servers: the project files its trust binds, [] when none),
-    network, networkSource?, and cached tools with per-tool actionClass.
+    network, networkSource?, cached tools with per-tool actionClass, and
+    instructions? the server wrote, from its catalog (at most 2 KiB).
     network is true when the server holds the worker network grant
     described under trust; networkSource says whether the trust file (project,
     plugin and builtin servers) or the user declaration granted it. --refresh lists
@@ -79,7 +81,7 @@ JSON responses (--json):
     null and status says only whether an approval is recorded; with it a
     changed surface reads as changed.
   test: {ok, server: {id, scope, trust, network, networkSource?}, protocolVersion, serverInfo,
-    tools: [{name, capability, actionClass, serverHint?}], truncated, surface,
+    instructions?, tools: [{name, capability, actionClass, serverHint?}], truncated, surface,
     calls: [{tool, isError, text, structuredContent?, refused?, denial?,
       serverPolicyRefusal?} | {tool, error}]}
     Launches one trusted server through the same client the gateway uses,
@@ -183,6 +185,16 @@ function entryLabel(entries: ReadonlyArray<McpServerEntryScript>): string {
 const CALL_TEXT_MAX_CHARS = 2_000;
 
 /** A call's result, cut with a marker that says so; `--json` carries all of it (dogfood F6). */
+/** A server's instructions as terminal rows under a label that says who wrote them. */
+function instructionsLines(instructions: string): string[] {
+	return [
+		"  instructions (written by the server):",
+		...escapeTerminalControls(instructions)
+			.split(/\r?\n/u)
+			.map((line) => `    ${line}`),
+	];
+}
+
 function boundedCallText(text: string): string {
 	if (text.length <= CALL_TEXT_MAX_CHARS) return text;
 	return `${text.slice(0, CALL_TEXT_MAX_CHARS)}… (${text.length - CALL_TEXT_MAX_CHARS} more characters; --json prints the whole result)`;
@@ -264,6 +276,7 @@ function offlineTools(
 ): {
 	tools: Array<{ name: string; annotations: Record<string, unknown> | null }>;
 	catalog: "shipped" | "cached" | "missing";
+	instructions?: string;
 } {
 	if (server.builtin !== undefined) {
 		return { tools: server.builtin.tools.map(({ name, annotations }) => ({ name, annotations })), catalog: "shipped" };
@@ -283,6 +296,7 @@ function offlineTools(
 	return {
 		tools: catalog.tools.map((tool) => ({ name: tool.name, annotations: tool.annotations ?? null })),
 		catalog: "cached",
+		...(catalog.instructions !== undefined ? { instructions: catalog.instructions } : {}),
 	};
 }
 
@@ -335,6 +349,7 @@ export function mcpCommandOutput(
 								: [{ name: tool.name, capability, actionClass: mcpToolActionClass(server, tool) }];
 						}),
 						catalog: offline.catalog,
+						...(offline.instructions !== undefined ? { instructions: offline.instructions } : {}),
 						...(surface !== null ? { surface } : {}),
 					};
 				}),
@@ -348,6 +363,7 @@ export function mcpCommandOutput(
 				if (server.trust.status === "trusted" && server.catalog === "missing")
 					block.push("  no recorded tool catalog; use pancode mcp list --refresh");
 				if (server.surface !== undefined) block.push(`  ${surfaceLabel(server.surface)}`);
+				if (server.instructions !== undefined) block.push(...instructionsLines(server.instructions));
 				return block;
 			});
 			lines.push(
@@ -621,6 +637,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			server: described,
 			protocolVersion: info.protocolVersion,
 			serverInfo: info.serverInfo,
+			...(info.instructions !== null ? { instructions: info.instructions } : {}),
 			tools,
 			truncated: listing?.truncated === true,
 			...(surface !== null ? { surface } : {}),
@@ -630,6 +647,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			mcpTestHeadline(id, info, tools.length, described),
 			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
+			...(info.instructions !== null ? instructionsLines(info.instructions) : []),
 			...results.map(
 				(result) =>
 					`call ${String(result.tool)}: ${"error" in result ? "failed" : result.refused === true ? "refused" : result.isError === true ? "error" : "ok"} ${boundedCallText(String(result.error ?? result.text))}`,

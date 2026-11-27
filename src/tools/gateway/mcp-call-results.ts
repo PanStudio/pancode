@@ -3,8 +3,22 @@
 
 import { prepareBoundedImage } from "../../core/file-references.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
-import type { McpToolCallResult, McpToolDescriptor, McpTrustActionClass } from "../../domains/gateway/mcp/index.js";
-import { JSON_RPC_INVALID_PARAMS, JSON_RPC_METHOD_NOT_FOUND, McpError } from "../../domains/gateway/mcp/index.js";
+import type {
+	McpContentBlock,
+	McpProgressUpdate,
+	McpToolCallResult,
+	McpToolDescriptor,
+	McpTrustActionClass,
+} from "../../domains/gateway/mcp/index.js";
+import {
+	DEFAULT_RESULT_TEXT_BYTES,
+	JSON_RPC_INVALID_PARAMS,
+	JSON_RPC_METHOD_NOT_FOUND,
+	MCP_MISSING_REQUIRED_CLIENT_CAPABILITY,
+	MCP_RESOURCE_NOT_FOUND,
+	McpError,
+	renderMcpContent,
+} from "../../domains/gateway/mcp/index.js";
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import { mcpServerPolicyRefusal } from "../../domains/safety/denial.js";
 import type { ImageContent } from "../../engine/types.js";
@@ -17,7 +31,7 @@ import {
 import { readMaxBytes } from "../read.js";
 import type { ToolInvokeOptions } from "../registry-contract.js";
 import { nestedBlockedResult } from "../registry-nested-calls.js";
-import { imageOmissionNotice } from "../result-shaping.js";
+import { imageOmissionNotice, offloadPointer, writeToolOffload } from "../result-shaping.js";
 import type { ToolResult } from "../tool-spec.js";
 import { byteLength } from "../truncate-utf8.js";
 import type { GatewayMcpServer, ServerState } from "./mcp-capability-types.js";
@@ -25,6 +39,12 @@ import { catalogRemedy } from "./mcp-catalog-change.js";
 
 /** Model-visible bytes of one MCP result before the rest is offloaded. */
 export const MCP_RESULT_CONTEXT_BYTES = 16 * 1024;
+
+/** Shortest gap between two progress redraws of one call, however often its server reports. */
+const MCP_PROGRESS_INTERVAL_MS = 250;
+
+/** Base64 of one audio or binary resource block written whole to the offload directory; a larger one is only described. */
+const MCP_BINARY_OFFLOAD_BYTES = 10 * 1024 * 1024;
 
 /** The server's own read-only or destructive annotation, which PanCode reports but never enforces. */
 export function serverHintOf(
@@ -92,6 +112,58 @@ function jsonObjectText(text: string): unknown {
 	}
 }
 
+function progressLine(name: string, update: McpProgressUpdate): string {
+	const { progress, total } = update;
+	const amount =
+		total !== undefined && total > 0
+			? `${progress}/${total} (${Math.min(100, Math.round((progress / total) * 100))}%)`
+			: `${progress}`;
+	return `${name}: progress ${amount}${update.message !== undefined ? `: ${update.message}` : ""}`;
+}
+
+/**
+ * A call's progress notifications as display-only partial results. The
+ * latest update wins and redraws come at most every MCP_PROGRESS_INTERVAL_MS,
+ * so a server reporting every byte cannot flood the operator's card. Nothing
+ * here touches the call's own timeout.
+ */
+export function mcpProgressReporter(
+	name: string,
+	onUpdate: (partial: ToolResult) => void,
+): { onProgress(update: McpProgressUpdate): void; stop(): void } {
+	let lastAt = Number.NEGATIVE_INFINITY;
+	let latest: McpProgressUpdate | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	let stopped = false;
+	const emit = (): void => {
+		timer = null;
+		if (stopped || latest === null) return;
+		const update = latest;
+		latest = null;
+		lastAt = Date.now();
+		try {
+			onUpdate({ kind: "ok", output: progressLine(name, update) });
+		} catch {
+			// A display failure never fails the call.
+		}
+	};
+	return {
+		onProgress(update) {
+			if (stopped) return;
+			latest = update;
+			if (timer !== null) return;
+			const wait = lastAt + MCP_PROGRESS_INTERVAL_MS - Date.now();
+			if (wait <= 0) emit();
+			else timer = setTimeout(emit, wait);
+		},
+		stop() {
+			stopped = true;
+			if (timer !== null) clearTimeout(timer);
+			timer = null;
+		},
+	};
+}
+
 export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -108,12 +180,21 @@ export function mcpCallFailureText(declaration: GatewayMcpServer, error: unknown
 	const restart = stopped ? "; PanCode stopped the server and the next call starts it again" : "";
 	switch (error.code) {
 		case "server": {
-			const rpc = (error.data as { code?: unknown } | undefined)?.code;
-			const next =
-				rpc === JSON_RPC_INVALID_PARAMS
-					? "correct the arguments it names (describe the capability for its schema) before calling again"
-					: rpc === JSON_RPC_METHOD_NOT_FOUND
-						? `it does not serve this; list its tools again with ${catalogRemedy(id)}`
+			const answer = error.data as { code?: unknown; message?: unknown } | undefined;
+			const rpc = answer?.code;
+			// Not-found is -32002 in the legacy revisions and -32602 naming the tool in 2026-07-28 (server/tools).
+			const notFound =
+				rpc === JSON_RPC_METHOD_NOT_FOUND ||
+				rpc === MCP_RESOURCE_NOT_FOUND ||
+				(rpc === JSON_RPC_INVALID_PARAMS &&
+					typeof answer?.message === "string" &&
+					/unknown tool|not found/iu.test(answer.message));
+			const next = notFound
+				? `it does not serve this; list its tools again with ${catalogRemedy(id)}`
+				: rpc === MCP_MISSING_REQUIRED_CLIENT_CAPABILITY
+					? "the same call needs the same capability, so report it rather than retrying"
+					: rpc === JSON_RPC_INVALID_PARAMS
+						? "correct the arguments it names (describe the capability for its schema) before calling again"
 						: "the same call gets the same answer, so change it or report the answer";
 			return `mcp server ${id} refused ${error.message}; ${next}`;
 		}
@@ -134,6 +215,27 @@ export function mcpCallFailureText(declaration: GatewayMcpServer, error: unknown
 		case "aborted":
 			return error.message;
 	}
+}
+
+/**
+ * The result text with every audio block and binary resource offloaded: the
+ * base64 is written to the session's offload directory and the block's line
+ * names its type, size and that file. Null when nothing was offloaded, so the
+ * client's own rendering stands.
+ */
+export function offloadedBinaryText(
+	result: McpToolCallResult,
+	context: ToolInvokeOptions | undefined,
+): { text: string; truncated: boolean } | null {
+	const pointers = new Map<McpContentBlock, string>();
+	for (const block of result.content) {
+		const base64 = block.type === "audio" ? block.data : block.type === "resource" ? block.blob : undefined;
+		if (base64 === undefined || byteLength(base64) > MCP_BINARY_OFFLOAD_BYTES) continue;
+		const written = writeToolOffload(base64, context, MCP_BINARY_OFFLOAD_BYTES);
+		if (written !== null) pointers.set(block, offloadPointer(written));
+	}
+	if (pointers.size === 0) return null;
+	return renderMcpContent(result.content, DEFAULT_RESULT_TEXT_BYTES, (block) => pointers.get(block) ?? null);
 }
 
 export function imageBlocks(result: McpToolCallResult): ImageContent[] {

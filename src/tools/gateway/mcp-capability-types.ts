@@ -64,6 +64,8 @@ export interface McpServerListing {
 	catalogCount?: number;
 	/** The command that lists this server's tools when its catalog is missing. */
 	catalogRemedy?: string;
+	/** The server's own instructions, live or cached: server-written, at most 2 KiB, never in the system prompt. */
+	instructions?: string;
 	/**
 	 * The second approval of a trusted server, separate from `status` as the
 	 * catalog is: `status` says whether a process runs, `surface` whether the
@@ -227,6 +229,11 @@ export interface McpCapabilitySource {
 	 * its recorded catalog, handed out once, or null.
 	 */
 	takeCatalogChange(name: string): string | null;
+	/**
+	 * The instructions of the declared server that owns `name`, live or from its
+	 * catalog, already unable to open a host frame; null when it gave none.
+	 */
+	serverInstructions(name: string): string | null;
 	/**
 	 * One sentence of provenance and authority for describe, or null for a name this source does not own.
 	 * `actionClass` is the class describe shows for the tool (a worker's sealed class); absent, the
