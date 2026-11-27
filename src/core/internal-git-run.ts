@@ -24,8 +24,9 @@ import { internalGitArgv } from "./internal-git.js";
 /**
  * The one place PanCode starts git on its own (`tests/boundaries/check-boundaries.ts` rule 24). Each function is
  * its `node:child_process` namesake with the program fixed to git and `args` passed through {@link internalGitArgv},
- * resolved against `options.cwd`. A refused read throws {@link InternalGitRefusedError} before anything runs, from the
- * sync forms and {@link gitExecFile} and {@link gitSpawn} synchronously, as a rejection from the promise forms.
+ * resolved against `options.cwd`. A refused read throws {@link InternalGitRefusedError} before anything runs:
+ * synchronously from the sync forms, {@link gitExecFile}, {@link gitSpawn} and {@link gitVia}, and as a rejection
+ * from {@link gitExecFileAsync}.
  *
  * The typed git tool (`src/tools/safe-exec.ts`) is the agent's git and stays outside: it carries its own host config,
  * and its add and commit run the repository's hooks on purpose.
@@ -96,7 +97,7 @@ export function gitSpawn(args: ReadonlyArray<string>, options: At<SpawnOptions> 
  * `runStagingCommandSync` (`src/core/safe-exec.ts`): the runner keeps its own sandbox, env and output limits, and this
  * module never loads it.
  */
-export function gitVia<O extends { cwd?: string } | undefined, R>(
+export function gitVia<O extends { cwd?: string | undefined } | undefined, R>(
 	run: (file: string, args: ReadonlyArray<string>, options: O) => R,
 	args: ReadonlyArray<string>,
 	options: NoInfer<O>,

@@ -36,7 +36,7 @@ import path from "node:path";
  * off and neutralize the changed configuration.
  */
 
-/** Global options every internal git call carries. */
+/** Global options every internal git call but `git config` carries. */
 export const INTERNAL_GIT_BASE_OPTIONS: ReadonlyArray<string> = Object.freeze([
 	"--no-optional-locks",
 	"-c",
