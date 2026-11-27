@@ -41,7 +41,13 @@ export function resolveExtensionLine(
 			message: `/${token}: ${settling.reason ?? "extension runtime is restarting"}; send it again in a moment`,
 		};
 	// A loaded prompt of the same name keeps it; expansion answers that line.
-	if (!isExtensionCommandToken(token) || prompts.some((ref) => ref.name === token)) return null;
+	if (prompts.some((ref) => ref.name === token)) return null;
+	const alias = rows.find((candidate) => candidate.alias !== undefined && candidate.invocation === token);
+	if (alias)
+		return alias.available
+			? { kind: "run", token, args, extensionId: alias.extensionId, takeover: false }
+			: { kind: "refuse", settling: alias.transient === true, message: alias.reason ?? `/${token} is not available` };
+	if (!isExtensionCommandToken(token)) return null;
 	const row = rows.find((candidate) => candidate.invocation === token);
 	if (!row?.available)
 		return { kind: "refuse", settling: false, message: row?.reason ?? `/${token} is not an available extension command` };
