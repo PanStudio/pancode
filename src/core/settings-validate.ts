@@ -18,10 +18,13 @@ import {
 	ACTIVE_ROUTING_ROLES,
 	COUNCIL_MEMBER_LABEL_PATTERN,
 	DEFAULT_SETTINGS,
+	MEMORY_DELIVERY_MODES,
+	MEMORY_LESSONS_MODES,
 	normalizeExitSummaryStyle,
 	normalizeOutputStyle,
 	THEME_NAMED_COLORS,
 	THINKING_LEVELS,
+	WORKER_PERMISSION_MODES,
 	WORKING_SET_PROFILE_IDS,
 	WORKSPACE_SNAPSHOT_MODES,
 } from "./defaults.js";
@@ -535,13 +538,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 			else {
 				issues.unknownKeys("fleet.permissions", rawFleet.permissions, ["mode", "escalation"]);
 				if ("mode" in rawFleet.permissions) {
-					const parsed = expectEnum(issues, "fleet.permissions.mode", rawFleet.permissions.mode, [
-						"deny",
-						"fail",
-						"escalate",
-						"main",
-						"judge",
-					] as const);
+					const parsed = expectEnum(issues, "fleet.permissions.mode", rawFleet.permissions.mode, WORKER_PERMISSION_MODES);
 					if (parsed !== undefined) settings.fleet.permissions.mode = parsed;
 				}
 				if ("escalation" in rawFleet.permissions) {
@@ -788,21 +785,21 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 								if (parsed !== undefined) settings.context.memory.surfaces.observe = parsed;
 							}
 							if ("delivery" in memory.surfaces) {
-								const parsed = expectEnum(issues, "context.memory.surfaces.delivery", memory.surfaces.delivery, [
-									"off",
-									"section",
-									"decision",
-									"broadcast",
-								] as const);
+								const parsed = expectEnum(
+									issues,
+									"context.memory.surfaces.delivery",
+									memory.surfaces.delivery,
+									MEMORY_DELIVERY_MODES,
+								);
 								if (parsed !== undefined) settings.context.memory.surfaces.delivery = parsed;
 							}
 							if ("lessons" in memory.surfaces) {
-								const parsed = expectEnum(issues, "context.memory.surfaces.lessons", memory.surfaces.lessons, [
-									"off",
-									"rules",
-									"agent",
-									"side",
-								] as const);
+								const parsed = expectEnum(
+									issues,
+									"context.memory.surfaces.lessons",
+									memory.surfaces.lessons,
+									MEMORY_LESSONS_MODES,
+								);
 								if (parsed !== undefined) settings.context.memory.surfaces.lessons = parsed;
 							}
 							for (const key of ["correct", "bank"] as const) {

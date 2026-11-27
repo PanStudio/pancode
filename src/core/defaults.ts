@@ -119,9 +119,10 @@ interface SystemOneSettings {
  * a block or no verdict denies it. It behaves as "deny" at yolo, when
  * safety.judge is off, and where no judge can answer.
  * Operator-authority asks always go to the operator, and an ask no one can
- * answer is denied.
+ * answer is denied. Listed in the order /settings and configure offer them.
  */
-export type WorkerPermissionMode = "deny" | "fail" | "escalate" | "main" | "judge";
+export const WORKER_PERMISSION_MODES = ["judge", "deny", "escalate", "fail", "main"] as const;
+export type WorkerPermissionMode = (typeof WORKER_PERMISSION_MODES)[number];
 
 /** Bounds for the escalate posture; the timeout fallback keeps runs non-stall. */
 export interface WorkerEscalationSettings {
@@ -686,9 +687,13 @@ export interface MemorySurfaceSettings {
 	history: "off" | "on";
 }
 
-export type MemoryDeliveryMode = "off" | "section" | "decision" | "broadcast";
+/** Lesson delivery modes, each opening every channel the one before it opens. */
+export const MEMORY_DELIVERY_MODES = ["off", "section", "decision", "broadcast"] as const;
+export type MemoryDeliveryMode = (typeof MEMORY_DELIVERY_MODES)[number];
 
-export type MemoryLessonsMode = "off" | "rules" | "agent" | "side";
+/** Note authorship modes in the order /settings offers them. */
+export const MEMORY_LESSONS_MODES = ["agent", "rules", "side", "off"] as const;
+export type MemoryLessonsMode = (typeof MEMORY_LESSONS_MODES)[number];
 
 interface MemorySettings {
 	enabled: boolean;
