@@ -5,7 +5,7 @@
  * once, and one `setImmediate` writes every queued path with async file I/O, one write in flight per path.
  *
  * Two kinds of path. An append path (a run feed, a fleet's event journal) batches its lines into one append under
- * `O_APPEND | O_NOFOLLOW`. A record path (a run's owner or grant record) keeps only its latest value, written whole
+ * `O_APPEND | O_NOFOLLOW`, through a handle kept open until its owner flushes it, so a row costs no open or close. A record path (a run's owner or grant record) keeps only its latest value, written whole
  * through temp file, fsync and rename, so a reader never sees a torn record and a superseded value is never written.
  *
  * Flush points: a run's end awaits its own paths before its terminal event, shutdown awaits
@@ -15,11 +15,13 @@
  */
 
 import { closeSync, constants, openSync, writeSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import { safeResourceWrite, safeResourceWriteAsync } from "../../core/safe-resource-write.js";
 
 const APPEND_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW;
 const FILE_MODE = 0o600;
+/** Append handles held open at once; past this, the least recently opened idle one closes. */
+const MAX_OPEN_APPENDS = 64;
 
 type Pending =
 	| { kind: "append"; lines: string[]; onError?: (error: unknown) => void }
@@ -27,6 +29,7 @@ type Pending =
 
 const queued = new Map<string, Pending>();
 const inFlight = new Map<string, Promise<void>>();
+const handles = new Map<string, FileHandle>();
 let scheduled: NodeJS.Immediate | undefined;
 let exitHooked = false;
 
@@ -37,7 +40,7 @@ function schedule(): void {
 	}
 	scheduled ??= setImmediate(() => {
 		scheduled = undefined;
-		void flushDeferredWrites();
+		void landAll();
 	});
 }
 
@@ -65,6 +68,29 @@ export function deferredWritePending(path: string): boolean {
 /** Forget what `path` still has queued, for a file that is being removed. */
 export function dropDeferredWrite(path: string): void {
 	queued.delete(path);
+	void closeHandle(path);
+}
+
+/** Close `path`'s append handle once no write to it is in flight. */
+function closeHandle(path: string): Promise<void> {
+	const running = inFlight.get(path);
+	if (running !== undefined) return running.then(() => closeHandle(path));
+	const handle = handles.get(path);
+	if (handle === undefined) return Promise.resolve();
+	handles.delete(path);
+	return handle.close().catch(() => undefined);
+}
+
+async function appendHandle(path: string): Promise<FileHandle> {
+	const held = handles.get(path);
+	if (held !== undefined) return held;
+	const handle = await open(path, APPEND_FLAGS, FILE_MODE);
+	handles.set(path, handle);
+	if (handles.size > MAX_OPEN_APPENDS) {
+		const idle = [...handles.keys()].find((candidate) => candidate !== path && !inFlight.has(candidate));
+		if (idle !== undefined) void closeHandle(idle);
+	}
+	return handle;
 }
 
 async function writePending(path: string, pending: Pending): Promise<void> {
@@ -72,11 +98,13 @@ async function writePending(path: string, pending: Pending): Promise<void> {
 		await safeResourceWriteAsync(path, pending.contents, { encoding: "utf8", mode: FILE_MODE });
 		return;
 	}
-	const handle = await open(path, APPEND_FLAGS, FILE_MODE);
+	const handle = await appendHandle(path);
 	try {
 		await handle.writeFile(pending.lines.join(""));
-	} finally {
-		await handle.close();
+	} catch (error) {
+		handles.delete(path);
+		await handle.close().catch(() => undefined);
+		throw error;
 	}
 }
 
@@ -93,10 +121,17 @@ function writePendingSync(path: string, pending: Pending): void {
 	}
 }
 
-/** Land what `path` has queued, after any write already in flight. Never rejects: a failed write is the writer's to report. */
+/**
+ * Land what `path` has queued, after any write already in flight, and close its handle: its owner is done with it
+ * until it appends again. Never rejects: a failed write is the writer's to report.
+ */
 export function flushDeferredWrite(path: string): Promise<void> {
+	return land(path).then(() => closeHandle(path));
+}
+
+function land(path: string): Promise<void> {
 	const running = inFlight.get(path);
-	if (running !== undefined) return running.then(() => flushDeferredWrite(path));
+	if (running !== undefined) return running.then(() => land(path));
 	const pending = queued.get(path);
 	if (pending === undefined) return Promise.resolve();
 	queued.delete(path);
@@ -111,10 +146,15 @@ export function flushDeferredWrite(path: string): Promise<void> {
 	return write;
 }
 
-/** Land every queued write, including any queued while this waits. */
-export async function flushDeferredWrites(): Promise<void> {
+async function landAll(): Promise<void> {
 	while (queued.size > 0 || inFlight.size > 0)
-		await Promise.all([...new Set([...queued.keys(), ...inFlight.keys()])].map(flushDeferredWrite));
+		await Promise.all([...new Set([...queued.keys(), ...inFlight.keys()])].map(land));
+}
+
+/** Land every queued write, including any queued while this waits, and close every append handle. */
+export async function flushDeferredWrites(): Promise<void> {
+	await landAll();
+	await Promise.all([...handles.keys()].map(closeHandle));
 }
 
 /**
