@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { crc32, deflateSync } from "node:zlib";
 import { mcpCommandOutput } from "../../src/cli/mcp.js";
 import type { FlowRestrictionSet } from "../../src/core/flow-restrictions.js";
+import { withModelSkillActivation } from "../../src/core/skill-activation.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import {
 	approveMcpSurface,
@@ -31,6 +32,7 @@ import {
 import { mcpCatalogPath, writeMcpServerCatalog } from "../../src/domains/gateway/mcp/metadata-cache.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
 import type { MiddlewareHookRegistration } from "../../src/domains/middleware/runtime.js";
+import type { ActionClass } from "../../src/domains/safety/action-classifier.js";
 import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
@@ -1648,6 +1650,116 @@ describe("gateway MCP capabilities", () => {
 		const refreshed = await source.refresh("fake", { readOnly: true });
 		strictEqual(refreshed.reason, undefined);
 		strictEqual(refreshed.listing?.status, "connected");
+	});
+
+	it("asks once for an MCP skill, then loads only the version the server's files match", async () => {
+		const scene = scenario();
+		// The activation reads trust from the session's own config directory, as a host does.
+		scene.configDir = join(env.dir, "config");
+		mkdirSync(scene.configDir, { recursive: true });
+		rmSync(join(scene.project, ".pancode", "mcp.yaml"));
+		const control = join(scene.project, "..", "skill-control");
+		writeFileSync(control, "normal");
+		writeFileSync(
+			join(scene.configDir, "mcp.yaml"),
+			[
+				"version: 1",
+				"servers:",
+				"  - id: fake",
+				`    command: ${JSON.stringify(process.execPath)}`,
+				`    args: [${JSON.stringify(FIXTURE)}, "skills", ${JSON.stringify(control)}]`,
+				"",
+			].join("\n"),
+		);
+		const previousCwd = process.cwd();
+		process.chdir(scene.project);
+		const session = () => {
+			const registry = createRegistry({
+				safety: createWorkerSafety({ cwd: scene.project }),
+				middleware: createMiddlewareBundle({ registrations: [] }).contract,
+				autonomy: () => "default",
+			});
+			const source = createMcpCapabilitySource({
+				cwd: scene.project,
+				configDir: scene.configDir,
+				builtin: scene.builtin,
+				registry,
+				requestTimeoutMs: 5_000,
+			});
+			open.push(source);
+			// An attended session: an operator answers the approval card.
+			registerCoreTools(registry, {
+				mcpCapabilities: source,
+				askUser: async () => ({ answers: [] }),
+				getAutonomy: () => "default",
+			});
+			const asked: { actionClass: ActionClass; requestId: string; detail: string }[] = [];
+			registry.onPermissionRequired((_call, decision, meta) => {
+				asked.push({
+					actionClass: decision.classification.actionClass,
+					requestId: meta.requestId,
+					detail: decision.kind === "ask" ? decision.rejection.detail : "",
+				});
+			});
+			// Model activation is on, as at autonomy default with no recipe narrowing.
+			const pendingSkillPolicy = withModelSkillActivation(undefined, true);
+			const load = (args: Record<string, unknown> = {}) =>
+				registry.invoke(
+					{ tool: ToolNames.Context, args: { scope: "skills", name: "fake:lint", ...args } },
+					pendingSkillPolicy ? { pendingSkillPolicy } : {},
+				);
+			return { registry, source, asked, load };
+		};
+		const textOf = (verdict: Awaited<ReturnType<ToolRegistry["invoke"]>>): string =>
+			verdict.kind === "ok" ? (verdict.result.kind === "ok" ? verdict.result.output : verdict.result.message) : "";
+		try {
+			const first = session();
+			const access = await first.source.skillAccess("fake");
+			strictEqual(access.transport !== null, true, JSON.stringify(access));
+			// The card sits on the lazily registered context tool, so the load waits for the operator.
+			const pending = first.load();
+			await waitFor(() => first.asked.length === 1);
+			match(first.asked[0]?.detail ?? "", /manifest: sha256:[0-9a-f]{64} \(2 files/);
+			match(first.asked[0]?.detail ?? "", /description: Lint the fixture\./);
+			const card = first.asked[0] as { actionClass: ActionClass; requestId: string };
+			await first.registry.resumeParkedCalls({
+				actionClass: card.actionClass,
+				requestId: card.requestId,
+				requestedBy: "contract-operator",
+			});
+			const loaded = textOf(await pending);
+			match(loaded, /<skill name="fake:lint" [^>]*source="mcp"/);
+			match(loaded, /LINT-ORIGINAL-1/);
+			const nested = textOf(await first.load({ file: "extras/inner/SKILL.md" }));
+			match(nested, /nested inside the skill\. It is shown as a file and is not activated/);
+
+			// Approved: a new session loads it without asking.
+			const second = session();
+			match(textOf(await second.load()), /LINT-ORIGINAL-1/);
+			strictEqual(second.asked.length, 0);
+
+			// A served file whose bytes do not match its manifest digest is refused, unread.
+			writeFileSync(control, "tamper");
+			const tampered = textOf(await session().load());
+			doesNotMatch(tampered, /TAMPER-6666|LINT-ORIGINAL-1/);
+			match(tampered, /did not load: .*sha256/);
+
+			// skills/get now answers a version nobody approved: refused, and the server is listed again.
+			writeFileSync(control, "changed");
+			const third = session();
+			const changed = textOf(await third.load());
+			doesNotMatch(changed, /LINT-CHANGED-2/);
+			match(changed, /changed since it was approved: it serves manifest sha256:/);
+			strictEqual(third.asked.length, 0);
+			// The new listing asks again, naming the change; a decline loads nothing.
+			const again = third.load();
+			await waitFor(() => third.asked.length === 1);
+			match(third.asked[0]?.detail ?? "", /An earlier version was approved/);
+			third.registry.cancelParkedCall(third.asked[0]?.requestId as string, "declined", { denied: true });
+			doesNotMatch(JSON.stringify(await again), /LINT-CHANGED-2/);
+		} finally {
+			process.chdir(previousCwd);
+		}
 	});
 });
 

@@ -147,7 +147,10 @@ export type SkillRefusalKind =
 	| "operator-only"
 	| "recipe-bound"
 	| "not-requested"
-	| "already-loaded";
+	| "already-loaded"
+	| "unapproved"
+	| "unverified"
+	| "unavailable";
 
 export interface SkillLoadRefusal {
 	subject: "skill";

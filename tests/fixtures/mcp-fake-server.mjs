@@ -2,6 +2,8 @@
 // message per line. Plain Node, no dependencies. The first argument selects a
 // behavior mode; every mode that answers initialize serves the same tools.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const mode = process.argv[2] ?? "normal";
@@ -244,6 +246,37 @@ function handleToolList(id, params) {
 const META_VERSION = "io.modelcontextprotocol/protocolVersion";
 const META_CAPS = "io.modelcontextprotocol/clientCapabilities";
 const TASKS = "io.modelcontextprotocol/tasks";
+const SKILLS = "io.modelcontextprotocol/skills";
+
+// Mode "skills" serves one skill over io.modelcontextprotocol/skills. Its
+// control file (argv[3]) reads "normal", "tamper" (SKILL.md is served with
+// other bytes of the size its manifest lists) or "changed" (a new version is listed).
+function skillControl() {
+	const control = process.argv[3];
+	return control !== undefined && existsSync(control) ? readFileSync(control, "utf8").trim() : "normal";
+}
+
+function skillFiles() {
+	const token = skillControl() === "changed" ? "LINT-CHANGED-2" : "LINT-ORIGINAL-1";
+	return {
+		"skill://fake/lint/SKILL.md": `---\nname: lint\ndescription: Lint the fixture.\n---\nLint it. Token: ${token}.\n`,
+		"skill://fake/lint/extras/inner/SKILL.md":
+			"---\nname: inner\ndescription: Nested.\n---\nNested. Token: NESTED-0099.\n",
+	};
+}
+
+function skillEntry() {
+	const resources = Object.entries(skillFiles()).map(([uri, text]) => ({
+		uri,
+		digest: `sha256:${createHash("sha256").update(text).digest("hex")}`,
+		size: Buffer.byteLength(text),
+	}));
+	return {
+		uri: "skill://fake/lint/SKILL.md",
+		frontmatter: { name: "lint", description: "Lint the fixture." },
+		resources,
+	};
+}
 const tasks = new Map();
 let taskCounter = 0;
 
@@ -270,12 +303,21 @@ function handleModern(message) {
 		return;
 	}
 	const declared = meta?.[META_CAPS]?.extensions?.[TASKS] !== undefined;
+	const skillsRequest = message.method.startsWith("skills/") || message.method.startsWith("resources/");
+	if (skillsRequest && meta?.[META_CAPS]?.extensions?.[SKILLS] === undefined) {
+		replyError(message.id, -32021, "skills extension required");
+		return;
+	}
 	switch (message.method) {
 		case "server/discover":
 			reply(message.id, {
 				resultType: "complete",
 				supportedVersions: ["2026-07-28"],
-				capabilities: { tools: {}, extensions: { [TASKS]: {} } },
+				capabilities: {
+					tools: {},
+					...(mode === "skills" ? { resources: {} } : {}),
+					extensions: { [TASKS]: {}, ...(mode === "skills" ? { [SKILLS]: {} } : {}) },
+				},
 				instructions: "modern fixture",
 				_meta: { "io.modelcontextprotocol/serverInfo": { name: "fake-modern", version: "2.0" } },
 			});
@@ -359,13 +401,31 @@ function handleModern(message) {
 			reply(message.id, { resultType: "complete" });
 			return;
 		}
+		case "skills/list":
+			reply(message.id, { resultType: "complete", skills: mode === "skills" ? [skillEntry()] : [] });
+			return;
+		case "skills/get":
+			reply(message.id, { resultType: "complete", skill: skillEntry() });
+			return;
+		case "resources/read": {
+			const uri = message.params?.uri;
+			const text = skillFiles()[uri];
+			if (text === undefined) {
+				replyError(message.id, -32002, `Resource not found: ${uri}`);
+				return;
+			}
+			// Same size, other bytes: only the sha256 tells them apart.
+			const served = skillControl() === "tamper" ? text.replace("LINT-ORIGINAL-1", "TAMPER-6666-XYZ") : text;
+			reply(message.id, { resultType: "complete", contents: [{ uri, mimeType: "text/markdown", text: served }] });
+			return;
+		}
 		default:
 			replyError(message.id, -32601, `method not found: ${message.method}`);
 	}
 }
 
 function handleMessage(message) {
-	if (mode === "modern" && typeof message.method === "string" && message.id !== undefined) {
+	if ((mode === "modern" || mode === "skills") && typeof message.method === "string" && message.id !== undefined) {
 		handleModern(message);
 		return;
 	}

@@ -47,9 +47,10 @@ export interface ApprovalRequestView {
 	consequence?: ReadonlyArray<string>;
 	/**
 	 * Typed, sanitized multi-line artifact that this one approval authorizes: a
-	 * dispatch plan, or the exact settings diff a `configure_pancode` apply saves.
+	 * dispatch plan, the exact settings diff a `configure_pancode` apply saves,
+	 * or the MCP skill version (manifest, files, frontmatter) a load approves.
 	 */
-	artifact?: { kind: "dispatch-plan" | "settings-change"; text: string };
+	artifact?: { kind: "dispatch-plan" | "settings-change" | "mcp-skill"; text: string };
 	/**
 	 * One-line preview of the call's allowlisted object fields, so the operator
 	 * sees what this exact call will touch. Unlisted fields appear only as

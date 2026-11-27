@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type PrecomputedRanking, rankByPrecomputedScore } from "../../../core/precomputed-rank.js";
+import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import {
 	SKILL_INSTALL_OFFER_OPTION_NEVER,
 	SKILL_INSTALL_OFFER_OPTION_NOT_NOW,
@@ -9,7 +10,7 @@ import {
 	SKILL_SUGGESTION_ANCHOR,
 } from "../../../core/skill-activation.js";
 import { type LexicalMatchMode, lexicalMatches, normalize } from "./lexical-match.js";
-import type { Skill } from "./loader.js";
+import type { Skill, SkillMcpOrigin } from "./loader.js";
 import type { MarketplaceSkill } from "./marketplace.js";
 
 /**
@@ -214,6 +215,17 @@ function haystackForSkill(skill: Skill): string {
 	return `${skill.name.replace(/-/g, " ")} ${skill.description} ${triggerText}`;
 }
 
+/** An MCP skill names the server that serves it and whether this version is approved; its text is the server's. */
+function mcpSkillLine(skill: Skill, origin: SkillMcpOrigin): string {
+	const approval =
+		origin.approval === "approved"
+			? "approved"
+			: origin.approval === "changed"
+				? "changed since approved; the operator approves it again before it loads"
+				: "unapproved; the operator approves it before it loads";
+	return `- ${skill.name} (source: mcp server ${origin.serverId}; ${approval}; ${origin.files} files, ${origin.bytes} bytes): ${neutralizeFraming(skill.description)}`;
+}
+
 function haystackForMarketplace(entry: MarketplaceSkill): string {
 	return `${entry.name.replace(/-/g, " ")} ${entry.description} ${entry.category ?? ""} ${(entry.triggers ?? []).join(" ")}`;
 }
@@ -246,7 +258,10 @@ function buildRows(input: SkillCatalogViewInput): CandidateRow[] {
 			name: skill.name,
 			key: `session:${skill.filePath}`,
 			drifted: false,
-			line: `- ${skill.name} (source: ${skill.source}; scope: ${skill.scope}; file: ${skill.filePath}): ${skill.description}`,
+			line:
+				skill.mcp !== undefined
+					? mcpSkillLine(skill, skill.mcp)
+					: `- ${skill.name} (source: ${skill.source}; scope: ${skill.scope}; file: ${skill.filePath}): ${skill.description}`,
 			haystack: haystackForSkill(skill),
 		});
 	}

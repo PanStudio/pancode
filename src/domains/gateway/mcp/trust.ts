@@ -56,7 +56,7 @@ export const MCP_TRUST_VERSION = 1;
 
 /**
  * Bounds on the trust file, read on every resolve; a file past either is unusable until repaired. The record
- * cap counts launch records, user-scope surface records and builtin network grants together.
+ * cap counts launch records, user-scope surface records, builtin network grants and skill approvals together.
  */
 export const MCP_TRUST_CAPS = Object.freeze({
 	fileBytes: 1024 * 1024,
@@ -110,6 +110,27 @@ export interface McpBuiltinGrant {
 	grantedAt: string;
 }
 
+/**
+ * The operator's approval of one version of a skill an MCP server serves. It
+ * binds the server's identity (its id and declaration digest, and the project
+ * for a project or plugin server), the skill's uri, and the sha256 over the
+ * skill's whole manifest; a changed manifest or declaration no longer matches.
+ */
+export interface McpSkillApproval {
+	/** Canonical project root for a project or plugin server; absent for a user-scope server. */
+	projectRoot?: string;
+	id: string;
+	/** The server's declaration digest when approved. */
+	digest: string;
+	uri: string;
+	name: string;
+	/** `sha256:<hex>` over the uri, frontmatter and every file's uri, digest and size. */
+	manifestDigest: string;
+	files: number;
+	bytes: number;
+	approvedAt: string;
+}
+
 export interface McpTrustState {
 	version: typeof MCP_TRUST_VERSION;
 	records: McpTrustRecord[];
@@ -117,6 +138,8 @@ export interface McpTrustState {
 	surfaces?: McpUserSurfaceRecord[];
 	/** Absent when empty, so a file without builtin grants keeps its earlier shape. */
 	builtins?: McpBuiltinGrant[];
+	/** Absent when empty, so a file without skill approvals keeps its earlier shape. */
+	skills?: McpSkillApproval[];
 }
 
 export type McpTrustStatus =
@@ -211,9 +234,13 @@ function parseTrustState(text: string): McpTrustState | Error {
 	if (parsed.builtins !== undefined && !Array.isArray(parsed.builtins)) {
 		return new Error("trust state builtins must be an array");
 	}
+	if (parsed.skills !== undefined && !Array.isArray(parsed.skills)) {
+		return new Error("trust state skills must be an array");
+	}
 	const rawSurfaces: unknown[] = parsed.surfaces ?? [];
 	const rawBuiltins: unknown[] = parsed.builtins ?? [];
-	if (parsed.records.length + rawSurfaces.length + rawBuiltins.length > MCP_TRUST_CAPS.records) {
+	const rawSkills: unknown[] = parsed.skills ?? [];
+	if (parsed.records.length + rawSurfaces.length + rawBuiltins.length + rawSkills.length > MCP_TRUST_CAPS.records) {
 		return new Error(`trust state exceeds the ${MCP_TRUST_CAPS.records}-record cap`);
 	}
 	const records: McpTrustRecord[] = [];
@@ -275,11 +302,44 @@ function parseTrustState(text: string): McpTrustState | Error {
 		if (builtins.some((entry) => entry.id === raw.id)) return new Error(`builtins[${index}] repeats id ${raw.id}`);
 		builtins.push({ id: raw.id as string, network: true, grantedAt: raw.grantedAt as string });
 	}
+	const skills: McpSkillApproval[] = [];
+	for (const [index, raw] of rawSkills.entries()) {
+		if (!isRecord(raw)) return new Error(`skills[${index}] must be an object`);
+		for (const field of ["id", "digest", "uri", "name", "approvedAt"] as const) {
+			if (typeof raw[field] !== "string" || raw[field].length === 0) {
+				return new Error(`skills[${index}].${field} must be a non-empty string`);
+			}
+		}
+		if (raw.projectRoot !== undefined && (typeof raw.projectRoot !== "string" || raw.projectRoot.length === 0)) {
+			return new Error(`skills[${index}].projectRoot must be a non-empty string`);
+		}
+		if (typeof raw.manifestDigest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(raw.manifestDigest)) {
+			return new Error(`skills[${index}].manifestDigest must be sha256:<64 lowercase hex>`);
+		}
+		for (const field of ["files", "bytes"] as const) {
+			const value = raw[field];
+			if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+				return new Error(`skills[${index}].${field} must be a non-negative integer`);
+			}
+		}
+		skills.push({
+			...(typeof raw.projectRoot === "string" ? { projectRoot: raw.projectRoot } : {}),
+			id: raw.id as string,
+			digest: raw.digest as string,
+			uri: raw.uri as string,
+			name: raw.name as string,
+			manifestDigest: raw.manifestDigest,
+			files: raw.files as number,
+			bytes: raw.bytes as number,
+			approvedAt: raw.approvedAt as string,
+		});
+	}
 	return {
 		version: MCP_TRUST_VERSION,
 		records,
 		...(surfaces.length > 0 ? { surfaces } : {}),
 		...(builtins.length > 0 ? { builtins } : {}),
+		...(skills.length > 0 ? { skills } : {}),
 	};
 }
 
@@ -302,13 +362,12 @@ export function readMcpTrustState(configDir?: string): McpTrustReadResult {
 }
 
 /** Persist the state, or name why it would not be readable again under the caps. */
-function writeTrustState(
-	records: ReadonlyArray<McpTrustRecord>,
-	surfaces: ReadonlyArray<McpUserSurfaceRecord> | undefined,
-	builtins: ReadonlyArray<McpBuiltinGrant> | undefined,
-	configDir?: string,
-): string | null {
-	if (records.length + (surfaces?.length ?? 0) + (builtins?.length ?? 0) > MCP_TRUST_CAPS.records) {
+function writeTrustState(state: Omit<McpTrustState, "version">, configDir?: string): string | null {
+	const { records, surfaces, builtins, skills } = state;
+	if (
+		records.length + (surfaces?.length ?? 0) + (builtins?.length ?? 0) + (skills?.length ?? 0) >
+		MCP_TRUST_CAPS.records
+	) {
 		return `trust state would exceed the ${MCP_TRUST_CAPS.records}-record cap; untrust servers you no longer use first`;
 	}
 	const sorted = [...records].sort(
@@ -318,12 +377,19 @@ function writeTrustState(
 		(left, right) => left.id.localeCompare(right.id) || left.digest.localeCompare(right.digest),
 	);
 	const sortedBuiltins = [...(builtins ?? [])].sort((left, right) => left.id.localeCompare(right.id));
+	const sortedSkills = [...(skills ?? [])].sort(
+		(left, right) =>
+			(left.projectRoot ?? "").localeCompare(right.projectRoot ?? "") ||
+			left.id.localeCompare(right.id) ||
+			left.uri.localeCompare(right.uri),
+	);
 	const text = `${JSON.stringify(
 		{
 			version: MCP_TRUST_VERSION,
 			records: sorted,
 			...(sortedSurfaces.length > 0 ? { surfaces: sortedSurfaces } : {}),
 			...(sortedBuiltins.length > 0 ? { builtins: sortedBuiltins } : {}),
+			...(sortedSkills.length > 0 ? { skills: sortedSkills } : {}),
 		},
 		null,
 		2,
@@ -541,7 +607,7 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 	};
 	const records = trust.state.records.filter((entry) => !(entry.projectRoot === projectRoot && entry.id === server.id));
 	records.push(record);
-	const refused = writeTrustState(records, trust.state.surfaces, trust.state.builtins, options.configDir);
+	const refused = writeTrustState({ ...trust.state, records }, options.configDir);
 	if (refused !== null) return { ok: false, message: refused };
 	return {
 		ok: true,
@@ -569,7 +635,7 @@ function untrustMcpServerLocked(options: McpTrustOptions & { id: string }): Untr
 	const records = trust.state.records.filter((entry) => !(entry.projectRoot === projectRoot && entry.id === options.id));
 	const removed = records.length !== trust.state.records.length;
 	if (removed) {
-		const refused = writeTrustState(records, trust.state.surfaces, trust.state.builtins, options.configDir);
+		const refused = writeTrustState({ ...trust.state, records }, options.configDir);
 		if (refused !== null) return { ok: false, message: refused };
 	}
 	return { ok: true, removed };
@@ -602,7 +668,7 @@ function grantMcpBuiltinNetworkLocked(
 		grantedAt: (options.now?.() ?? new Date()).toISOString(),
 	};
 	const builtins = [...(trust.state.builtins ?? []).filter((entry) => entry.id !== server.id), grant];
-	const refused = writeTrustState(trust.state.records, trust.state.surfaces, builtins, options.configDir);
+	const refused = writeTrustState({ ...trust.state, builtins }, options.configDir);
 	if (refused !== null) return { ok: false, message: refused };
 	return { ok: true, grant };
 }
@@ -621,7 +687,7 @@ export function revokeMcpBuiltinNetwork(options: McpTrustOptions & { id: string 
 		const builtins = before.filter((entry) => entry.id !== options.id);
 		const removed = builtins.length !== before.length;
 		if (removed) {
-			const refused = writeTrustState(trust.state.records, trust.state.surfaces, builtins, options.configDir);
+			const refused = writeTrustState({ ...trust.state, builtins }, options.configDir);
 			if (refused !== null) return { ok: false, message: refused };
 		}
 		return { ok: true, removed };
@@ -689,7 +755,160 @@ function approveMcpSurfaceLocked(options: ApproveMcpSurfaceOptions): ApproveMcpS
 			entry.projectRoot === projectRoot && entry.id === server.id ? { ...entry, surface: approved } : entry,
 		);
 	}
-	const refused = writeTrustState(records, surfaces, trust.state.builtins, options.configDir);
+	const refused = writeTrustState({ ...trust.state, records, surfaces }, options.configDir);
 	if (refused !== null) return { ok: false, message: refused };
 	return { ok: true, surface: approved };
+}
+
+/** Whether one served version of a skill is the version the operator approved. */
+export type McpSkillApprovalStatus =
+	| { status: "approved"; approval: McpSkillApproval }
+	| { status: "unapproved" }
+	| { status: "changed"; approval: McpSkillApproval; reason: string };
+
+/** The project a skill approval binds to: a project or plugin server's checkout, none for a user-scope server. */
+function skillApprovalRoot(server: McpServerDeclaration, projectRoot: string): string | undefined {
+	return server.scope === "project" || server.scope === "plugin" ? projectRoot : undefined;
+}
+
+function findSkillApproval(
+	state: McpTrustState,
+	server: McpServerDeclaration,
+	projectRoot: string,
+	uri: string,
+): McpSkillApproval | undefined {
+	const root = skillApprovalRoot(server, projectRoot);
+	return state.skills?.find((entry) => entry.id === server.id && entry.uri === uri && entry.projectRoot === root);
+}
+
+/**
+ * Judge a served skill version against an approval. The approval holds only
+ * for the declaration it was given under and the exact manifest it bound.
+ */
+export function judgeMcpSkillApproval(
+	approval: McpSkillApproval | undefined,
+	server: Pick<McpServerDeclaration, "id" | "digest">,
+	served: { uri: string; name: string; manifestDigest: string },
+): McpSkillApprovalStatus {
+	if (approval === undefined) return { status: "unapproved" };
+	const remedy = `pancode mcp trust ${server.id} --skill ${served.name}`;
+	if (approval.digest !== server.digest) {
+		return {
+			status: "changed",
+			approval,
+			reason: `the declaration of MCP server '${server.id}' changed since skill ${served.name} was approved; review it and run ${remedy}`,
+		};
+	}
+	if (approval.manifestDigest !== served.manifestDigest) {
+		return {
+			status: "changed",
+			approval,
+			reason: `skill ${served.name} of MCP server '${server.id}' changed since it was approved: it serves manifest ${served.manifestDigest}, not the approved ${approval.manifestDigest}; review it and run ${remedy}`,
+		};
+	}
+	return { status: "approved", approval };
+}
+
+/** The approval the trust state holds now for one skill of `server`, read fresh so a mid-session approval counts. */
+export function currentMcpSkillApproval(
+	server: McpServerDeclaration,
+	uri: string,
+	options: McpTrustOptions,
+): McpSkillApproval | undefined {
+	const trust = readMcpTrustState(options.configDir);
+	return findSkillApproval(trust.state, server, canonicalProjectRoot(options.cwd), uri);
+}
+
+/** Every skill approval recorded for `server` in this project, whichever version it binds. */
+export function mcpSkillApprovalsFor(server: McpServerDeclaration, options: McpTrustOptions): McpSkillApproval[] {
+	const trust = readMcpTrustState(options.configDir);
+	const root = skillApprovalRoot(server, canonicalProjectRoot(options.cwd));
+	return (trust.state.skills ?? []).filter((entry) => entry.id === server.id && entry.projectRoot === root);
+}
+
+export interface ApproveMcpSkillOptions extends McpTrustOptions {
+	id: string;
+	/** The skill version the operator reviewed. */
+	skill: { uri: string; name: string; manifestDigest: string; files: number; bytes: number };
+	now?: () => Date;
+}
+
+export type ApproveMcpSkillResult = { ok: true; approval: McpSkillApproval } | { ok: false; message: string };
+
+/**
+ * Record the operator's approval of one skill version a launch-trusted server
+ * serves, replacing any approval of an earlier version of the same skill.
+ */
+export function approveMcpSkill(options: ApproveMcpSkillOptions): ApproveMcpSkillResult {
+	return withStateFileLockSync(mcpTrustPath(options.configDir), () => approveMcpSkillLocked(options));
+}
+
+function approveMcpSkillLocked(options: ApproveMcpSkillOptions): ApproveMcpSkillResult {
+	const trust = readMcpTrustState(options.configDir);
+	if (trust.diagnostics.length > 0) {
+		return { ok: false, message: `trust state is unusable; repair or remove it first: ${trust.diagnostics.join("; ")}` };
+	}
+	const server = loadMcpServerConfig(options).servers.find((entry) => entry.id === options.id);
+	if (server === undefined) return { ok: false, message: `no declared MCP server with id '${options.id}'` };
+	if (server.scope === "builtin") return { ok: false, message: mcpBuiltinTrustRefusal(server.id) };
+	const projectRoot = canonicalProjectRoot(options.cwd);
+	const status = trustStatusFor(server, projectRoot, trust.state);
+	if (status.status !== "trusted") {
+		return {
+			ok: false,
+			message: `server '${options.id}' is ${status.status} (${status.reason}); approve its launch first`,
+		};
+	}
+	const root = skillApprovalRoot(server, projectRoot);
+	const approval: McpSkillApproval = {
+		...(root !== undefined ? { projectRoot: root } : {}),
+		id: server.id,
+		digest: server.digest,
+		uri: options.skill.uri,
+		name: options.skill.name,
+		manifestDigest: options.skill.manifestDigest,
+		files: options.skill.files,
+		bytes: options.skill.bytes,
+		approvedAt: (options.now?.() ?? new Date()).toISOString(),
+	};
+	const skills = [
+		...(trust.state.skills ?? []).filter(
+			(entry) => !(entry.id === server.id && entry.uri === approval.uri && entry.projectRoot === root),
+		),
+		approval,
+	];
+	const refused = writeTrustState({ ...trust.state, skills }, options.configDir);
+	if (refused !== null) return { ok: false, message: refused };
+	return { ok: true, approval };
+}
+
+/** Withdraw the approval of one skill of server `id` in this project, whether or not the server is still declared. */
+export function revokeMcpSkill(options: McpTrustOptions & { id: string; uri: string }): UntrustMcpServerResult {
+	return withStateFileLockSync(mcpTrustPath(options.configDir), () => {
+		const trust = readMcpTrustState(options.configDir);
+		if (trust.diagnostics.length > 0) {
+			return {
+				ok: false,
+				message: `trust state is unusable; repair or remove it first: ${trust.diagnostics.join("; ")}`,
+			};
+		}
+		const server = loadMcpServerConfig(options).servers.find((entry) => entry.id === options.id);
+		const projectRoot = canonicalProjectRoot(options.cwd);
+		const before = trust.state.skills ?? [];
+		const skills = before.filter(
+			(entry) =>
+				!(
+					entry.id === options.id &&
+					entry.uri === options.uri &&
+					(server === undefined || entry.projectRoot === skillApprovalRoot(server, projectRoot)) &&
+					(entry.projectRoot === undefined || entry.projectRoot === projectRoot)
+				),
+		);
+		const removed = skills.length !== before.length;
+		if (removed) {
+			const refused = writeTrustState({ ...trust.state, skills }, options.configDir);
+			if (refused !== null) return { ok: false, message: refused };
+		}
+		return { ok: true, removed };
+	});
 }

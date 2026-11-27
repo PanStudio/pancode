@@ -895,6 +895,22 @@ observations without changing the eviction marker, including results evicted as
 [superseded](#repeated-calls-the-loop-guard-and-superseded-results). Workspace, settings, and
 skills use a 50KB cap.
 
+A trusted MCP server's skills are listed as `<id>:<name>`, with the server's
+description and its approval state; listing reads no skill file. Loading one
+fetches it again with `skills/get` and loads it only when the served manifest
+digest equals the version the operator approved and the frontmatter of
+`SKILL.md` matches the served entry field by field. An unapproved or changed version asks the
+operator on an approval card in an attended `default` session and is refused
+everywhere else, naming `pancode mcp trust <id> --skill <name>`. The body is
+marked as written by the server. Its files stay on the server:
+`context(scope="skills", name="<id>:<name>", file="<path in the skill>")` reads
+one, checked against the size and SHA-256 its manifest lists, and `include_tree=true` lists them.
+PanCode never runs a skill's file, and a nested `SKILL.md` is shown as a file,
+never activated. A recipe binds an MCP skill as `<id>:<name>`; dispatch admits
+the run only when that version is approved, and the worker loads it only while
+the server still serves that manifest. Approval is described under
+[MCP trust](configuration-reference.md#why-is-my-mcp-server-untrusted).
+
 `context(scope="semantic", query="…")` searches the optional semantic index.
 `query` is required and at most 2000 characters; `limit` defaults to 5 and is
 bounded at 20. Optional filters are `kinds`, `run_id`, `media_type`, `after` and
@@ -918,6 +934,7 @@ error rather than guessed defaults.
 ```text
 context(scope="workspace")
 context(scope="skills", name="context-prime", include_tree=true)
+context(scope="skills", name="papers:literature-review", file="references/sources.md")
 context(scope="recall", ref="<turnId>", offset=0)
 context(scope="recall", path="src/solver.ts")
 ```

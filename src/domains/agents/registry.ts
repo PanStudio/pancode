@@ -9,6 +9,7 @@ import { detectPancodeRepo } from "../../core/pancode-repo.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
+import { mcpSkillReferenceServer } from "../gateway/mcp/skills.js";
 import { enabledPluginResourceRoots, withPluginDiscoveryPass } from "../plugins/index.js";
 import { resolvePackageReferences } from "../resources/package-references.js";
 import { cachedFrontmatterParser, withFrontmatterCache } from "../resources/skills/frontmatter-cache.js";
@@ -114,22 +115,27 @@ function resolveBoundSkills(recipe: AgentRecipe, source: RecipeSource): AgentRec
 	const trusted = skills.items.filter((skill) => skill.trusted);
 	const byName = new Map(trusted.map((skill) => [skill.name, skill.filePath]));
 	const descriptions = new Map(trusted.map((skill) => [skill.name, skill.description]));
-	const missing = recipe.skills.filter((skill) => !byName.has(skill));
+	// An MCP server's skill is resolved and attested at dispatch, against the
+	// server's recorded listing and the operator's approval, not here.
+	const mcp = recipe.skills.filter((skill) => !byName.has(skill) && mcpSkillReferenceServer(skill) !== null);
+	const missing = recipe.skills.filter((skill) => !byName.has(skill) && !mcp.includes(skill));
 	if (missing.length > 0) {
 		throw new Error(`agent recipe: ${recipe.filepath}: bound skill(s) unavailable: ${missing.join(", ")}`);
 	}
 	// Optional: a disabled or missing self-development skill never fails discovery.
 	const bound = [...recipe.skills, ...selfSkills.filter((skill) => byName.has(skill))];
-	const boundSkillPaths = bound.map((skill) => {
+	const boundSkillPaths = bound.flatMap((skill) => {
+		if (mcp.includes(skill)) return [];
 		const filePath = byName.get(skill);
 		if (filePath === undefined) throw new Error(`agent recipe: ${recipe.filepath}: bound skill unavailable: ${skill}`);
-		return filePath;
+		return [filePath];
 	});
 	return {
 		...recipe,
 		boundSkillPaths,
 		...(selfSkills.length > 0 ? { skills: bound } : {}),
 		boundSkillDescriptions: bound.map((skill) => descriptions.get(skill) ?? ""),
+		...(mcp.length > 0 ? { boundMcpSkills: mcp } : {}),
 	};
 }
 

@@ -187,7 +187,8 @@ import {
 	discoverMarketplaceSkills,
 	installedSkillNames,
 	installSkill,
-	modelVisibleSkills,
+	type modelVisibleSkills,
+	suggestableSkills,
 } from "../domains/resources/index.js";
 import { expandSubmitText, submitDisplay } from "../domains/resources/submit-expansion.js";
 import { admissionAutonomy, containedYolo, effectiveYoloConfinement } from "../domains/safety/autonomy.js";
@@ -1529,7 +1530,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// Descriptions from here reach models through the [Skills] reminder and the
 		// relevance ranker, so this reads verified trees, never the display listing.
 		if (!prompts) {
-			const skills = modelVisibleSkills(resources.skills(cwd).items);
+			const skills = suggestableSkills(resources.skills(cwd).items);
 			readySkillSnapshot = { key: cwd, count: skills.length, skills };
 			return skills.length;
 		}
@@ -1541,7 +1542,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			options.skillPaths ?? options.headless?.skillPaths ?? [],
 		]);
 		if (readySkillSnapshot?.key === key) return readySkillSnapshot.count;
-		const skills = modelVisibleSkills(resources.skills(cwd).items);
+		const skills = suggestableSkills(resources.skills(cwd).items);
 		const count = skills.length;
 		readySkillSnapshot = { key, count, skills };
 		return count;

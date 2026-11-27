@@ -110,6 +110,10 @@ const DECLARATIONS: ReadonlyArray<DeclarationRow> = [
 	{ path: /^safety\.permit\..*\.digest$/u, declaration: commitment("mcp-server", "json-insertion-order") },
 	{ path: /^safety\.permit\..*\.surfaceDigest$/u, declaration: commitment("mcp-surface", "json-sorted-v1") },
 	{
+		path: /^safety\.permit\..*\.manifestDigest$/u,
+		declaration: commitment("mcp-skill-manifest", "json-sorted-v1"),
+	},
+	{
 		path: /^hostVerification\.checks\[\]\.tree\.fingerprint$/u,
 		declaration: commitment("checkout-tree", "json-insertion-order"),
 	},
