@@ -734,20 +734,17 @@ export function createMcpProtocolClient(
 	 * The modern per-request envelope. The tasks extension is declared only on
 	 * requests whose task this client drives to a terminal state (`tools/call`
 	 * and the `tasks/*` methods), so a server never hands a task to a request
-	 * that cannot follow it. The skills extension is declared on `skills/*` and
-	 * `resources/*` requests to a server whose capabilities enable it. Nothing
-	 * is added on the legacy path, where initialize declared the skills
-	 * extension once.
+	 * that cannot follow it. Other extensions come from the one request that
+	 * declares them, such as the skills extension on a skill's `skills/*` and
+	 * resource reads, never on a generic read. Nothing is added on the legacy
+	 * path, where initialize declared the skills extension once.
 	 */
 	const withEnvelope = (method: string, params: unknown, declared?: Record<string, unknown>): unknown => {
 		if (era !== "modern" && method !== "server/discover") return params;
 		const base = isRecord(params) ? params : {};
 		const meta = isRecord(base._meta) ? base._meta : {};
-		const extensions: Record<string, unknown> = { ...declared };
-		if (method === "tools/call" || method.startsWith("tasks/")) extensions[MCP_TASKS_EXTENSION] = {};
-		if ((method.startsWith("skills/") || method.startsWith("resources/")) && skillsSettings() !== null) {
-			extensions[MCP_SKILLS_EXTENSION] = {};
-		}
+		const drivesTasks = method === "tools/call" || method.startsWith("tasks/");
+		const extensions = { ...(drivesTasks ? { [MCP_TASKS_EXTENSION]: {} } : {}), ...declared };
 		return {
 			...base,
 			_meta: {
@@ -1106,6 +1103,7 @@ export function createMcpProtocolClient(
 		}
 	};
 
+	const SKILLS_DECLARED = { [MCP_SKILLS_EXTENSION]: {} };
 	const skillsSettings = () => (info === null ? null : mcpSkillsSettings(info.capabilities).settings);
 
 	/** One skills-extension request; a modern answer must be complete, since nothing here follows a task or input round. */
@@ -1115,7 +1113,7 @@ export function createMcpProtocolClient(
 		signal?: AbortSignal,
 	): Promise<unknown> => {
 		await ensureReady(signal);
-		const result = await request(method, params, requestTimeoutMs, signal);
+		const result = await request(method, params, requestTimeoutMs, signal, undefined, SKILLS_DECLARED);
 		if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
 			throw new McpError(
 				"protocol",
@@ -1132,7 +1130,7 @@ export function createMcpProtocolClient(
 			settings,
 			listSkills: (cursor, signal) => skillsRequest("skills/list", cursor === undefined ? {} : { cursor }, signal),
 			getSkill: (uri, signal) => skillsRequest("skills/get", { uri }, signal),
-			readResource: (uri, signal) => skillsRequest("resources/read", { uri }, signal),
+			readResource: (uri, signal) => readResource(uri, { ...(signal ? { signal } : {}), extensions: SKILLS_DECLARED }),
 			readDirectory: (uri, cursor, signal) =>
 				settings.directoryRead
 					? skillsRequest("resources/directory/read", cursor === undefined ? { uri } : { uri, cursor }, signal)
