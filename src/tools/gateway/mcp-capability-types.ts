@@ -17,6 +17,7 @@ import type {
 	McpTrustActionClass,
 	ResolvedMcpServer,
 } from "../../domains/gateway/mcp/index.js";
+import type { AuthStorage } from "../../domains/providers/auth/index.js";
 import type { ActionClass } from "../../domains/safety/action-classifier.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
@@ -183,6 +184,8 @@ export interface McpCapabilitySourceOptions {
 	clientFactory?: (spec: McpServerSpec, options: McpClientOptions) => McpClient;
 	/** Test seam: where a remote server's header credentials are read; defaults to PanCode's credential store. */
 	headerCredentials?: () => McpHeaderCredentialStore;
+	/** Test seam: where a remote server's OAuth grants are read and renewed, and how it renews them. */
+	oauth?: { storage: () => AuthStorage; fetch?: typeof fetch };
 	/** False for a worker: it may read recorded catalogs but never writes operator-owned state. */
 	persistCatalog?: boolean;
 	/**

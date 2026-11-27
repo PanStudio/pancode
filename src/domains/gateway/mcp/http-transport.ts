@@ -10,17 +10,19 @@
  * unsolicited notifications are not heard and a changed tool list is seen at the
  * next listing.
  *
- * Credentials ride in the static headers the declaration names. They go to the
- * declared endpoint only: a redirect is followed only within the same origin
- * and only when it keeps the POST (307, 308), every value is registered with
- * the report scrub, and no value reaches an error message this transport makes
- * or relays from the server.
+ * Credentials ride in the static headers the declaration names, or as the
+ * Bearer token of an OAuth grant. They go to the declared endpoint only: a
+ * redirect is followed only within the same origin and only when it keeps the
+ * POST (307, 308), a token never follows one out of the resource it was issued
+ * for, every value is registered with the report scrub, and no value reaches
+ * an error message this transport makes or relays from the server.
  */
 
 import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
 import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { mcpNameSource, mcpParamHeaderValues } from "./http-headers.js";
+import { mcpScopeList, parseWwwAuthenticate } from "./oauth.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
 import { MCP_META_PROTOCOL_VERSION, MCP_META_SUBSCRIPTION_ID, McpError, parseJsonRpcLine } from "./protocol.js";
 import { mcpOriginOf } from "./remote.js";
@@ -40,6 +42,26 @@ export interface McpHttpServerSpec {
 	url: string;
 	/** Header name to the resolved credential value; never logged, never sent to another origin. */
 	headers?: Readonly<Record<string, string>>;
+	/** The OAuth grant a server without headers is signed in with. */
+	authorizer?: McpHttpAuthorizer;
+}
+
+/** What the transport needs from an OAuth grant (basic/authorization, Access Token Usage). */
+export interface McpHttpAuthorizer {
+	/** The access token to send as `Authorization: Bearer`. */
+	token(): string;
+	/** Whether the token is past its recorded expiry, so it is renewed before it is sent. */
+	stale(): boolean;
+	/** Whether `url` lies inside the resource the token was issued for. */
+	covers(url: URL): boolean;
+	/** After a 401 for `rejected`: adopt a newer stored token or refresh once; true when another token is ready. */
+	renew(rejected: string, signal: AbortSignal): Promise<boolean>;
+	/**
+	 * A 403 insufficient_scope for `scopes`: record them for the next sign-in.
+	 * Permanent when the last sign-in already requested them all, so PanCode
+	 * never asks for the same scopes in a loop.
+	 */
+	insufficientScope(scopes: ReadonlyArray<string>): Promise<{ permanent: boolean }>;
 }
 
 export interface McpHttpTransportOptions {
@@ -104,20 +126,6 @@ function fetchFailure(error: unknown): { code: string; message: string } {
 	const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
 	const code = isRecord(cause) && typeof cause.code === "string" ? cause.code : "";
 	return { code, message: errorText(cause) };
-}
-
-/** `key=value` and `key="value"` parameters of a WWW-Authenticate challenge (RFC 9110 11.6.1). */
-function parseWwwAuthenticate(header: string | null): { scheme: string; params: Record<string, string> } | null {
-	if (header === null) return null;
-	const scheme = /^\s*([!#$%&'*+\-.^_`|~0-9A-Za-z]+)/u.exec(header)?.[1];
-	if (scheme === undefined) return null;
-	const params: Record<string, string> = {};
-	const pattern = /([!#$%&'*+\-.^_`|~0-9A-Za-z]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))/gu;
-	for (const match of header.slice(header.indexOf(scheme) + scheme.length).matchAll(pattern)) {
-		const key = (match[1] as string).toLowerCase();
-		if (!Object.hasOwn(params, key)) params[key] = match[2]?.replace(/\\(.)/gu, "$1") ?? match[3] ?? "";
-	}
-	return { scheme, params };
 }
 
 /** Read a body up to `cap` bytes; null when it is longer. */
@@ -212,12 +220,24 @@ export function createMcpHttpTransport(
 	const doFetch = options.fetch ?? globalThis.fetch;
 	const retryDelays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
 	const credentialHeaders = Object.entries(spec.headers ?? {});
+	const authorizer = spec.authorizer;
 	/** Each credential, and the token after an auth scheme, as text a server could echo back. */
 	const secrets = credentialHeaders
 		.flatMap(([, value]) => [value.trim(), value.trim().split(/\s+/u).at(-1) ?? ""])
 		.filter((value) => value.length >= 4)
 		.sort((a, b) => b.length - a.length);
 	for (const value of secrets) rememberResolvedSecret(value);
+	/** The current Bearer token, scrubbed like a header credential from the first time it is sent. */
+	const bearer = (): string | null => {
+		if (authorizer === undefined) return null;
+		const token = authorizer.token();
+		if (token.length >= 4 && !secrets.includes(token)) {
+			secrets.push(token);
+			secrets.sort((a, b) => b.length - a.length);
+			rememberResolvedSecret(token);
+		}
+		return token;
+	};
 
 	const exchanges = new Map<JsonRpcId, Exchange>();
 	let isStarted = false;
@@ -348,13 +368,21 @@ export function createMcpHttpTransport(
 		let target = endpoint;
 		let redirects = 0;
 		let attempt = 0;
+		let renewed = false;
+		if (authorizer?.stale() === true) {
+			renewed = true;
+			await authorizer.renew(authorizer.token(), signal).catch(() => false);
+		}
 		for (;;) {
 			if (stopped || signal.aborted) return null;
 			let response: Response;
+			const token = bearer();
+			const headers = headersFor(body, modern, exchange);
+			if (token !== null) headers.set("Authorization", `Bearer ${token}`);
 			try {
 				response = await doFetch(target, {
 					method: "POST",
-					headers: headersFor(body, modern, exchange),
+					headers,
 					body: payload,
 					redirect: "manual",
 					signal,
@@ -401,6 +429,15 @@ export function createMcpHttpTransport(
 					);
 					return null;
 				}
+				if (authorizer !== undefined && !authorizer.covers(next)) {
+					fatal(
+						new McpError(
+							"closed",
+							`mcp server ${spec.id} redirected to ${next.origin}${next.pathname}, outside the resource its sign-in is for; PanCode does not send the token there`,
+						),
+					);
+					return null;
+				}
 				if (response.status !== 307 && response.status !== 308) {
 					fatal(
 						new McpError(
@@ -417,15 +454,67 @@ export function createMcpHttpTransport(
 				target = next;
 				continue;
 			}
+			// basic/authorization, Token Refresh: one renewal per request, then the 401 stands.
+			if (response.status === 401 && authorizer !== undefined && token !== null && !renewed) {
+				renewed = true;
+				await response.body?.cancel().catch(() => {});
+				let ready = false;
+				try {
+					ready = await authorizer.renew(token, signal);
+				} catch {
+					ready = false;
+				}
+				if (ready) continue;
+				if (stopped || signal.aborted) return null;
+				fatal(
+					new McpError(
+						"auth",
+						`mcp server ${spec.id} at ${origin} no longer accepts PanCode's sign-in (HTTP 401) and it could not be renewed; sign in again with pancode mcp login ${spec.id}`,
+						{ status: 401 },
+					),
+				);
+				return null;
+			}
 			return response;
 		}
 	};
 
-	/** Handle a status PanCode cannot carry on from; true when it ended the transport. */
-	const refuseStatus = async (response: Response): Promise<boolean> => {
+	/**
+	 * Handle a status PanCode cannot carry on from; true when it ended the
+	 * exchange. A server without header credentials is told to sign in; a
+	 * 403 for scopes the last sign-in already asked for fails only the call.
+	 */
+	const refuseStatus = async (response: Response, exchange: Exchange | null): Promise<boolean> => {
 		if (response.status === 401 || response.status === 403) {
 			await response.body?.cancel().catch(() => {});
 			const challenge = parseWwwAuthenticate(response.headers.get("www-authenticate"));
+			const bearerChallenge = challenge?.scheme.toLowerCase() === "bearer" ? challenge : null;
+			if (credentialHeaders.length === 0) {
+				const scopes = mcpScopeList(bearerChallenge?.params.scope);
+				const stepUp = response.status === 403 && bearerChallenge?.params.error === "insufficient_scope";
+				if (stepUp && authorizer !== undefined) {
+					const { permanent } = await authorizer.insufficientScope(scopes);
+					if (permanent && exchange !== null) {
+						failExchange(
+							exchange,
+							`mcp server ${spec.id} needs scope ${scopes.join(" ") || "(unnamed)"} for ${exchange.method}, which the last sign-in already asked for and was not granted; PanCode does not ask again`,
+						);
+						return true;
+					}
+				}
+				const reason = stepUp
+					? `needs more access${scopes.length > 0 ? ` (scope ${scopes.join(" ")})` : ""} than PanCode's sign-in grants (HTTP 403); sign in again with pancode mcp login ${spec.id}, which asks for it`
+					: authorizer !== undefined
+						? `refused PanCode's sign-in (HTTP ${response.status}); sign in again with pancode mcp login ${spec.id}`
+						: `needs sign-in (HTTP ${response.status}); sign in with pancode mcp login ${spec.id}`;
+				fatal(
+					new McpError("auth", `mcp server ${spec.id} at ${origin} ${reason}`, {
+						status: response.status,
+						...(challenge !== null ? { challenge } : {}),
+					}),
+				);
+				return true;
+			}
 			const why = response.status === 401 ? "refused PanCode's credentials" : "refused access with its credentials";
 			fatal(
 				new McpError(
@@ -550,7 +639,7 @@ export function createMcpHttpTransport(
 				sessionId = id;
 			}
 		}
-		if (await refuseStatus(response)) return;
+		if (await refuseStatus(response, exchange)) return;
 		if (!response.ok) {
 			await answerFromStatus(exchange, response);
 			return;
@@ -591,7 +680,7 @@ export function createMcpHttpTransport(
 			sendOptions.onError?.(new Error(scrub(response.broken)));
 			return;
 		}
-		if (await refuseStatus(response)) return;
+		if (await refuseStatus(response, null)) return;
 		sendOptions.onSent?.();
 		if (response.ok && response.status !== 202 && response.status !== 204) {
 			await readAnswer(null, response).catch(() => {});
@@ -667,6 +756,8 @@ export function createMcpHttpTransport(
 		if (sessionId === null) return;
 		const headers = new Headers();
 		for (const [name, value] of credentialHeaders) headers.set(name, value);
+		const token = bearer();
+		if (token !== null) headers.set("Authorization", `Bearer ${token}`);
 		headers.set("Mcp-Session-Id", sessionId);
 		if (settled?.era === "legacy") headers.set("MCP-Protocol-Version", settled.protocolVersion);
 		sessionId = null;

@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * `pancode mcp add|remove|login|logout`: declare a server without editing
- * YAML, and keep a remote server's header credentials in PanCode's
- * credential store, each bound to the origin it was entered for.
+ * YAML, keep a remote server's header credentials in PanCode's credential
+ * store, each bound to the origin it was entered for, and sign in to a
+ * remote server that declares no headers with OAuth.
  */
 
 import { createInterface } from "node:readline";
@@ -15,6 +16,7 @@ import {
 	removeMcpServerDeclaration,
 } from "../domains/gateway/mcp/config-edit.js";
 import {
+	McpOAuthError,
 	type McpTrustOptions,
 	mcpCredentialRoutes,
 	mcpHeaderBindings,
@@ -22,8 +24,11 @@ import {
 	mcpHeaderValueRefusal,
 	mcpOriginOf,
 	openMcpHeaderCredentialStore,
+	removeMcpOAuthGrants,
 	resolveMcpServers,
+	storeMcpOAuthClientSecret,
 } from "../domains/gateway/mcp/index.js";
+import { type McpOAuthLoginResult, mcpOAuthLogin } from "../domains/gateway/mcp/oauth-login.js";
 import type { McpCommandOutput } from "./mcp.js";
 
 type Fail = (code: number, message: string) => McpCommandOutput;
@@ -108,7 +113,7 @@ export function mcpEditOutput(argv: ReadonlyArray<string>, options: McpTrustOpti
 	return { code: 0, text: lines.join("\n"), data: { ok: true, path: added.path, id } };
 }
 
-/** `logout <id>`: remove each header credential the server sends, for its own origin only. */
+/** `logout <id>`: remove each header credential the server sends, for its own origin only, and its OAuth sign-in. */
 export function mcpLogoutOutput(
 	id: string | undefined,
 	rest: ReadonlyArray<string>,
@@ -127,13 +132,15 @@ export function mcpLogoutOutput(
 		removed.push(binding.key);
 	}
 	const origin = mcpOriginOf(server.url);
+	const signedOut = removeMcpOAuthGrants(id, undefined, true) > 0;
+	const lines = [
+		...(removed.length > 0 ? [`mcp: removed ${removed.join(", ")} for ${origin}`] : []),
+		...(signedOut ? [`mcp: signed ${id} out; the next pancode mcp login ${id} signs in again`] : []),
+	];
 	return {
 		code: 0,
-		text:
-			removed.length > 0
-				? `mcp: removed ${removed.join(", ")} for ${origin}`
-				: `mcp: no credential of ${id} is stored for ${origin}`,
-		data: { ok: true, removed, origin },
+		text: lines.length > 0 ? lines.join("\n") : `mcp: no credential of ${id} is stored for ${origin}`,
+		data: { ok: true, removed, origin, signedOut },
 	};
 }
 
@@ -153,14 +160,16 @@ async function stdinLines(): Promise<string[]> {
 export async function mcpLoginOutput(argv: ReadonlyArray<string>): Promise<McpCommandOutput> {
 	const fail: Fail = (code, message) => ({ code, text: message, data: { ok: false, message } });
 	const [, id, ...rest] = argv;
-	if (id === undefined || id.startsWith("-") || rest.length > 0) return fail(2, "usage: pancode mcp login <id>");
+	const clientSecret = rest.length === 1 && rest[0] === "--client-secret";
+	if (id === undefined || id.startsWith("-") || (rest.length > 0 && !clientSecret))
+		return fail(2, "usage: pancode mcp login <id> [--client-secret]");
 	const server = resolveMcpServers({ cwd: process.cwd() }).servers.find((entry) => entry.id === id);
 	if (server === undefined) return fail(1, `no declared MCP server with id '${id}'`);
 	if (server.url === undefined) return fail(1, `server '${id}' is a local server; it takes no credentials`);
 	const store = openMcpHeaderCredentialStore();
 	const bindings = mcpHeaderBindings(server, store);
-	if (bindings.length === 0)
-		return fail(1, `server '${id}' declares no headers; add one with --header <Name>=<key> when declaring it`);
+	if (bindings.length === 0) return mcpOAuthLoginOutput(server, clientSecret, fail);
+	if (clientSecret) return fail(2, `server '${id}' sends header credentials; --client-secret applies to OAuth sign-in`);
 	const values: string[] = [];
 	if (process.stdin.isTTY === true) {
 		const { readApiKey } = await import("./auth.js");
@@ -199,4 +208,92 @@ export async function mcpLoginOutput(argv: ReadonlyArray<string>): Promise<McpCo
 		].join("\n"),
 		data: { ok: true, stored: bindings.map(({ header, key, origin }) => ({ header, key, origin })) },
 	};
+}
+
+/** One line typed at the terminal, given up when `signal` aborts. */
+function promptLine(question: string, signal: AbortSignal): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
+		const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+		const stop = (): void => {
+			rl.close();
+			reject(new Error("prompt closed"));
+		};
+		signal.addEventListener("abort", stop, { once: true });
+		rl.question(question, (answer) => {
+			signal.removeEventListener("abort", stop);
+			rl.close();
+			resolve(answer);
+		});
+	});
+}
+
+function signedInText(id: string, result: Extract<McpOAuthLoginResult, { kind: "signed-in" }>): string {
+	const scopes = result.granted ?? result.requested;
+	return [
+		`mcp: signed in to ${id} at ${result.issuer}`,
+		`  its token is sent only as Authorization: Bearer within ${result.resource}`,
+		`  scope: ${scopes.length > 0 ? scopes.join(" ") : "(none named)"}`,
+		`  client: ${result.client}; ${result.refreshable ? "renewed automatically when it expires" : "no refresh token, so sign in again when it expires"}`,
+	].join("\n");
+}
+
+/**
+ * OAuth sign-in for a server without headers. `--client-secret` first stores
+ * the secret of the client the declaration registered with its issuer.
+ */
+async function mcpOAuthLoginOutput(
+	server: {
+		id: string;
+		url: string;
+		oauth?: { issuer?: string; clientId?: string; scopes?: string[]; redirectPort?: number };
+	},
+	clientSecret: boolean,
+	fail: Fail,
+): Promise<McpCommandOutput> {
+	const terminal = process.stdin.isTTY === true;
+	if (clientSecret) {
+		const { issuer, clientId } = server.oauth ?? {};
+		if (issuer === undefined || clientId === undefined)
+			return fail(1, `server '${server.id}' declares no oauth.issuer and oauth.clientId, so it has no client secret`);
+		let secret: string | null;
+		if (terminal) {
+			const { readApiKey } = await import("./auth.js");
+			secret = await readApiKey(`Client secret of ${clientId} at ${issuer} (sent only to that authorization server)`);
+		} else secret = (await stdinLines())[0]?.trim() ?? null;
+		if (secret === null || secret.length === 0) return fail(1, "no client secret was given; nothing was stored");
+		try {
+			storeMcpOAuthClientSecret(issuer, clientId, secret);
+		} catch (error) {
+			return fail(1, escapeTerminalControls(error instanceof Error ? error.message : String(error)));
+		}
+	}
+	const paste = new AbortController();
+	try {
+		const result = await mcpOAuthLogin(server, {
+			notice: (line) => process.stderr.write(`${escapeTerminalControls(line)}\n`),
+			...(terminal
+				? {
+						pasted: () => promptLine("Or paste the URL the browser landed on, then press Enter: ", paste.signal),
+					}
+				: {}),
+		});
+		if (result.kind === "not-needed")
+			return { code: 0, text: `mcp: ${result.detail}`, data: { ok: true, signedIn: false } };
+		return {
+			code: 0,
+			text: signedInText(server.id, result),
+			data: {
+				ok: true,
+				signedIn: true,
+				issuer: result.issuer,
+				resource: result.resource,
+				scopes: result.granted ?? result.requested,
+			},
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return fail(1, escapeTerminalControls(error instanceof McpOAuthError ? `sign-in failed: ${message}` : message));
+	} finally {
+		paste.abort();
+	}
 }

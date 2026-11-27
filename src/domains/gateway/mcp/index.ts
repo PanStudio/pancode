@@ -67,6 +67,8 @@ export {
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "./metadata-cache.js";
+export * from "./oauth.js";
+export * from "./oauth-grants.js";
 export {
 	classifyJsonRpcMessage,
 	createLineFramer,

@@ -296,7 +296,7 @@ User-level model profile overrides live at `<configDir>/model-profiles.yaml`, no
 
 To add an MCP server, run `pancode mcp add <id> -- <command> [args...]` for a local server or `pancode mcp add <id> --url <url>` for a remote one, or put its declaration in user `<config>/mcp.yaml` or project `.pancode/mcp.yaml` by hand. Inspect it with `pancode mcp list` and test it with `pancode mcp test <id>`. A project or plugin server needs operator trust before it launches.
 
-User MCP declarations are stored at `<config>/mcp.yaml`; project declarations are stored at `.pancode/mcp.yaml`. The declaration contract is implemented in [`src/domains/gateway/mcp/config.ts`](../../src/domains/gateway/mcp/config.ts). A local server entry accepts `id`, `command`, `args`, `cwd`, `env`, `timeoutMs`, `actionClass`, `toolActionClasses`, `toolPathArguments` and `network`; a remote server entry names `url` and optional `headers` in place of `command`, `args`, `cwd` and `env`; `toolActionClasses` maps individual tool names to `read`, `execute`, `destructive` or `unknown` and overrides the server class for those tools. `network` takes effect only in a user declaration.
+User MCP declarations are stored at `<config>/mcp.yaml`; project declarations are stored at `.pancode/mcp.yaml`. The declaration contract is implemented in [`src/domains/gateway/mcp/config.ts`](../../src/domains/gateway/mcp/config.ts). A local server entry accepts `id`, `command`, `args`, `cwd`, `env`, `timeoutMs`, `actionClass`, `toolActionClasses`, `toolPathArguments` and `network`; a remote server entry names `url` and optional `headers` or `oauth` in place of `command`, `args`, `cwd` and `env`; `toolActionClasses` maps individual tool names to `read`, `execute`, `destructive` or `unknown` and overrides the server class for those tools. `network` takes effect only in a user declaration.
 
 `toolPathArguments` maps a tool name to its top-level path arguments, each `read` or `write`. A call's value for each is resolved against the server's launch `cwd` and judged as a builtin read or write of that path would be: by the path policy and, in a worker, by the run's read scope and write roots. A declared argument the call leaves out passes, a value that is not a string is refused, and an undeclared argument is never read. A `write` argument on a tool classed `read` is a declaration error. This judges the paths a call names; it does not confine what a server running outside a sandbox then reads or writes. A declared path argument may also name a PanStore blob as `store:<tag>:<blob>`: a read gets a read-only copy, a write is committed as the blob only when the call succeeds, and a worker writes only the tags its dispatch granted ([MCP servers and store references](panstore.md#mcp-servers-and-store-references); limits in [PanStore limits](panstore.md#limits)).
 
@@ -313,9 +313,37 @@ servers:
       Authorization: docs-token
 ```
 
-`pancode mcp add docs --url https://mcp.example.com/mcp --header Authorization=docs-token` writes that entry. `pancode mcp login docs` then reads each header's full value, such as `Bearer <token>`, hidden at a terminal or one line per header from stdin in header-name order, and stores it in PanCode's credential store bound to the url's origin. PanCode sends a stored value only to the origin it was entered for: a declaration naming the same key on another origin, even a trusted one, gets no value, and the server lists as `needs-auth` until `pancode mcp login <id>` stores one for its own origin. A redirect is followed only within the same origin, and a server that answers `401` or `403` lists as `needs-auth` too. `pancode mcp list --refresh` and `/mcp` mark each server they reached `connected`, `failed` or `needs-auth`, with the reason and the command to run. `pancode mcp logout <id>` removes the server's values for its origin, and `pancode mcp remove <id>` removes the declaration and leaves stored values in place.
+`pancode mcp add docs --url https://mcp.example.com/mcp --header Authorization=docs-token` writes that entry. `pancode mcp login docs` then reads each header's full value, such as `Bearer <token>`, hidden at a terminal or one line per header from stdin in header-name order, and stores it in PanCode's credential store bound to the url's origin. PanCode sends a stored value only to the origin it was entered for: a declaration naming the same key on another origin, even a trusted one, gets no value, and the server lists as `needs-auth` until `pancode mcp login <id>` stores one for its own origin. A redirect is followed only within the same origin, and a server that answers `401` or `403` lists as `needs-auth` too. A remote server without `headers` is reached without credentials until you sign in to it with OAuth, below. `pancode mcp list --refresh` and `/mcp` mark each server they reached `connected`, `failed` or `needs-auth`, with the reason and the command to run. `pancode mcp logout <id>` removes the server's values for its origin, and `pancode mcp remove <id>` removes the declaration and leaves stored values in place.
 
 A project or plugin remote server needs `pancode mcp trust <id>` like a local one, and the trust output lists each route as `sends credential <key> as <Header> to <origin>`, so a repository cannot route a stored credential to an origin the operator did not review. Changing the url or headers makes trust stale. An idle remote connection closes after five minutes without a call and reconnects on the next one. A fleet worker reaches a remote server only with the network grant below.
+
+### Sign in to a remote MCP server with OAuth
+
+A remote server without `headers` that answers `401` with a Bearer challenge lists as `needs-auth` and names `pancode mcp login <id>`. That command, or `/mcp login <id>` in a session, signs in with OAuth 2.1 in your browser:
+
+1. PanCode reads the server's protected resource metadata from the `resource_metadata` the `401` names, else from `/.well-known/oauth-protected-resource` at the url's path and then at its root. A document found by probing must name exactly the resource it was probed for. One the server pointed to may name the url or a same-origin path above it.
+2. It reads the authorization server's metadata, by RFC 8414 and then OpenID Connect discovery, and uses it only when its `issuer` is the one asked for and it lists PKCE `S256`. The url, the issuer and every endpoint are `https`, or `http` on loopback.
+3. It opens the sign-in in your browser, or prints the URL when there is no local browser. The request carries a PKCE `S256` challenge, a fresh `state` and the server's `resource`. The browser returns to `http://127.0.0.1:33418/callback`. At a terminal you can paste the URL the browser landed on instead, for a browser on another machine. PanCode discards a response with another sign-in's `state`, or one whose `iss` names another issuer. It also discards a response without `iss` when the issuer advertises it. The sign-in times out after five minutes.
+4. It exchanges the code, with the same `resource`, and stores the tokens in PanCode's credential store. The tokens are bound to the server id, the issuer and the resource.
+
+PanCode sends the access token only to urls inside that resource, never through a redirect outside it, and never to another server. An expired token, or one the server refuses with `401`, is refreshed once. Several processes share the refresh, so one rotation does not sign the others out. A token that cannot be refreshed needs `pancode mcp login <id>` again. A `403` with `insufficient_scope` fails the call and records the scopes the server asked for. The next `pancode mcp login <id>` requests those scopes together with the earlier ones. A refusal for scopes the last sign-in already requested only fails that call, so PanCode never loops on the same scopes. `pancode mcp logout <id>` removes the sign-in, and the dynamic registration it used unless another server's sign-in still uses it, so the next sign-in registers again.
+
+PanCode always requests the scopes in the server's challenge, together with the scopes in `oauth.scopes` when they are set. With neither, it requests every scope the server's metadata lists, else none. It adds `offline_access` only when the authorization server lists it. Without a configured client, PanCode registers itself with the authorization server by dynamic client registration and reuses that registration. An authorization server that refuses registration needs a client you register with it, declared in an optional `oauth` block:
+
+```yaml
+version: 1
+servers:
+  - id: tracker
+    url: https://mcp.example.com/mcp
+    oauth:
+      issuer: https://auth.example.com
+      clientId: pancode-local
+      scopes: [read, write]
+      redirectPort: 33418
+```
+
+`issuer` picks one of the authorization servers the resource names. `clientId` needs `issuer` and is used as a public client. For a confidential client, `pancode mcp login <id> --client-secret` reads the secret, hidden at a terminal or as the first line of stdin, and stores it in the credential store for that issuer and client, never in `mcp.yaml`. `redirectPort` moves the loopback redirect, from 1024 to 65535, to match the redirect registered for the client. `oauth` and `headers` are exclusive, and a local server takes neither. The `oauth` block is part of the declaration digest, so changing it makes trust stale. A private catalog of a signed-in server is bound to the sign-in, so a new sign-in lists its tools afresh.
+
 
 ### Why is my MCP server untrusted?
 

@@ -10,6 +10,7 @@
 
 import { sha256Hex } from "../../../core/hash.js";
 import { type AuthStorage, openAuthStorage } from "../../providers/auth/index.js";
+import { mcpOAuthCatalogBinding } from "./oauth-grants.js";
 import { mcpHeaderCredentialRef, mcpOriginOf, parseMcpHeaderCredentialRef } from "./remote.js";
 
 /** Cap on one stored header value. */
@@ -119,14 +120,28 @@ export function resolveMcpHeaders(
  * listing may be private to the credentials that fetched it (MCP 2026-07-28
  * server/utilities/caching, `cacheScope`), so its catalog also binds the header
  * values in use: another credential, or none, reads no catalog and the next
- * live listing replaces it. A stdio server's catalog binds its declaration only.
+ * live listing replaces it. A signed-in server's binds its OAuth grant, which
+ * a refresh keeps and another sign-in replaces. A stdio server's catalog, and
+ * an anonymous remote one's, binds its declaration only.
  */
 export function mcpCatalogDigest(
-	server: { id: string; digest: string; url?: string; headers?: Readonly<Record<string, string>> },
+	server: {
+		id: string;
+		digest: string;
+		url?: string;
+		headers?: Readonly<Record<string, string>>;
+		oauth?: { issuer?: string };
+	},
 	store: () => McpHeaderCredentialStore = openMcpHeaderCredentialStore,
+	grants: () => AuthStorage = openAuthStorage,
 ): string {
-	if (server.url === undefined || server.headers === undefined || Object.keys(server.headers).length === 0) {
-		return server.digest;
+	if (server.url === undefined || server.headers === undefined) return server.digest;
+	if (Object.keys(server.headers).length === 0) {
+		const binding = mcpOAuthCatalogBinding(
+			{ id: server.id, url: server.url, ...(server.oauth !== undefined ? { oauth: server.oauth } : {}) },
+			grants(),
+		);
+		return binding === null ? server.digest : sha256Hex(JSON.stringify([server.digest, binding]));
 	}
 	const resolved = resolveMcpHeaders({ id: server.id, url: server.url, headers: server.headers }, store());
 	const values =

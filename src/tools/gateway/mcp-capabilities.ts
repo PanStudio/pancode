@@ -24,6 +24,7 @@ import {
 	approveMcpSurface,
 	canonicalProjectRoot,
 	createMcpClient,
+	createMcpOAuthAuthorizer,
 	currentMcpSurfaceApproval,
 	judgeMcpSurface,
 	listMcpSkills,
@@ -33,6 +34,7 @@ import {
 	mcpCatalogDigest,
 	mcpCatalogStale,
 	mcpClientSkills,
+	mcpOAuthGrantFor,
 	mcpOriginOf,
 	mcpSurface,
 	mcpSurfaceRemedy,
@@ -45,6 +47,7 @@ import {
 	writeMcpServerCatalog,
 	writeMcpSkillCatalog,
 } from "../../domains/gateway/mcp/index.js";
+import { openAuthStorage } from "../../domains/providers/auth/index.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import { mcpRemoteTransportIdentity, mcpTransportIdentity } from "../../domains/safety/information-flow.js";
@@ -180,6 +183,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	const registry = options.registry;
 	const clientFactory = options.clientFactory ?? createMcpClient;
 	const headerCredentials = options.headerCredentials ?? openMcpHeaderCredentialStore;
+	const oauthStorage = options.oauth?.storage ?? openAuthStorage;
 	const openStoreBackend = options.openStoreBackend ?? defaultOpenStoreBackend;
 	/** The project's store backend, opened once for whoever asks first. */
 	const storeBackend = (): (() => Promise<StoreBackend>) => {
@@ -414,7 +418,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			scope: declaration.scope === "client" ? "user" : declaration.scope,
 			declarationPath: declaration.path,
 			serverId: declaration.id,
-			digest: mcpCatalogDigest(declaration, headerCredentials),
+			digest: mcpCatalogDigest(declaration, headerCredentials, oauthStorage),
 			cwd: declaration.cwd,
 		};
 	};
@@ -867,7 +871,24 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 								? { headers: state.clientHeaders ?? {} }
 								: resolveMcpHeaders(declaration, headerCredentials());
 						if ("missing" in resolved) throw new McpError("auth", resolved.missing);
-						return clientFactory({ id: declaration.id, url: declaration.url, headers: resolved.headers }, clientOptions);
+						// A server that sends no headers is sent its OAuth grant, if the operator signed in to it.
+						const signedIn =
+							declaration.scope !== "client" && Object.keys(declaration.headers).length === 0
+								? mcpOAuthGrantFor(declaration, oauthStorage())
+								: null;
+						return clientFactory(
+							{
+								id: declaration.id,
+								url: declaration.url,
+								headers: resolved.headers,
+								...(signedIn !== null
+									? {
+											authorizer: createMcpOAuthAuthorizer(signedIn.ref, signedIn.grant, options.oauth?.fetch, oauthStorage()),
+										}
+									: {}),
+							},
+							clientOptions,
+						);
 					}
 					return clientFactory(
 						{

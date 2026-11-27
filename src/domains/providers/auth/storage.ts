@@ -501,6 +501,39 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Decide one entry's next value from what disk holds now, under the store's
+	 * lock, so two processes never both spend a credential only one may use
+	 * (a rotating refresh token). `decide` returning null leaves it as it is.
+	 * Returns the entry as it stands afterwards.
+	 */
+	async modifyLocked(
+		providerId: string,
+		decide: (current: AuthCredential | undefined) => Promise<AuthCredential | null>,
+		signal?: AbortSignal,
+	): Promise<AuthCredential | undefined> {
+		let latest: AuthStorageData | undefined;
+		const result = await this.backend.withLockAsync(
+			async (current) => {
+				const read = readStorageData(current);
+				if (read.damage !== null) {
+					this.damage = read.damage;
+					throw new AuthStorageDamagedError(read.damage, this.backend.describe?.());
+				}
+				latest = read.data;
+				const next = await decide(read.data[providerId]);
+				if (next === null) return { result: read.data[providerId] };
+				latest = { ...read.data, [providerId]: next };
+				return { result: next, next: serializeStorageData(latest) };
+			},
+			signal !== undefined ? { signal } : undefined,
+		);
+		if (latest !== undefined) this.data = latest;
+		this.damage = null;
+		this.writeDamage = null;
+		return result;
+	}
+
+	/**
 	 * Store a copy of the key variable the target names, for the desktop app. Returns the entry written, or null
 	 * when the target names no variable of its own (its key is then the provider id's and is left alone).
 	 */

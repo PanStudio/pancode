@@ -57,7 +57,7 @@ Commands:
   pancode mcp add <id> [--scope user|project] --url <url> [--header <Name>=<key>]... [--json]
   pancode mcp add <id> [--scope user|project] -- <command> [args...]
   pancode mcp remove <id> [--scope user|project] [--json]
-  pancode mcp login <id> [--json]
+  pancode mcp login <id> [--client-secret] [--json]
   pancode mcp logout <id> [--json]
   pancode mcp test <id> [--call <tool> [--args <json>]]... [--json]
   pancode mcp trust <id> [--action-class <class>] [--network] [--json]
@@ -82,6 +82,28 @@ Remote servers:
   network: true on a user declaration). logout removes the server's stored
   values for its origin. add writes the user mcp.yaml by default, or the
   project's with --scope project, and refuses a file that would not load.
+
+OAuth sign-in:
+  A remote server that declares no headers and answers 401 with a Bearer
+  challenge reads as needs-auth until login signs in to it with OAuth 2.1:
+  PanCode reads its protected resource metadata and authorization server
+  metadata, registers itself with that server when it allows (or uses the
+  client an oauth block names), and opens the sign-in in a browser with PKCE
+  S256 and the server's resource indicator. The browser returns to
+  http://127.0.0.1:33418/callback (oauth.redirectPort moves it); without a
+  local browser login prints the URL and takes the URL the browser landed on,
+  pasted at the terminal. A response from another issuer is refused before
+  its code is used. The token is stored in the credential store for that
+  server, issuer and resource, sent only as Authorization: Bearer within the
+  resource, and renewed with its refresh token when it expires; a session or
+  worker never starts a sign-in. A server that asks for more scope (403
+  insufficient_scope) reads as needs-auth, and the next login asks for it too;
+  scope the last login already asked for is not asked for again. An optional
+  oauth block on the declaration sets issuer and clientId for a client
+  registered with that authorization server (login --client-secret stores its
+  secret for that issuer), scopes to request with the server's challenge, and
+  redirectPort. logout removes the server's sign-in and the dynamic client
+  registration it used, unless another server's sign-in still uses it.
 
 Path arguments:
   A declaration may add toolPathArguments: per tool, a map from a top-level
@@ -205,8 +227,10 @@ JSON responses (--json):
     recorded as test records it.
   untrust: {ok: true, removed: boolean}
   add: {ok: true, path, id}; remove: {ok: true, path}
-  login: {ok: true, stored: [{header, key, origin}]}
-  logout: {ok: true, removed: [key], origin}
+  login: {ok: true, stored: [{header, key, origin}]}, or for OAuth
+    {ok: true, signedIn: true, issuer, resource, scopes} or
+    {ok: true, signedIn: false} when the server asks for no sign-in
+  logout: {ok: true, removed: [key], origin, signedOut: boolean}
   untrust --skill: {ok: true, removed: boolean, uri}
     Removes this project's approval of one skill, matched by uri or name
     among the recorded approvals. Nothing is launched.
@@ -512,7 +536,7 @@ export function mcpCommandOutput(
 		if ((command !== "trust" && command !== "untrust") || !id)
 			return fail(
 				2,
-				"usage: pancode mcp list | add <id> [--scope user|project] (--url <url> [--header <Name>=<key>]... | -- <command> [args...]) | remove <id> [--scope user|project] | login <id> | logout <id> | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
+				"usage: pancode mcp list | add <id> [--scope user|project] (--url <url> [--header <Name>=<key>]... | -- <command> [args...]) | remove <id> [--scope user|project] | login <id> [--client-secret] | logout <id> | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
 			);
 		// A flag where the id belongs is named as a flag, never looked up as a server id (C5); exit 1 stays (NIGHT-DECISIONS 2).
 		if (id.startsWith("-")) return fail(1, `unknown flag: ${id}`);

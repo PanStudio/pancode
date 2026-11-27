@@ -194,7 +194,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"mcp add <id> [--scope user|project] (--url <url> [--header <Name>=<key>]... | -- <command> [args...]) [--json]",
 	],
 	["mcp list", "", "mcp list [--refresh] [--json]"],
-	["mcp login", "", "mcp login <id> [--json]"],
+	["mcp login", "", "mcp login <id> [--client-secret] [--json]"],
 	["mcp logout", "", "mcp logout <id> [--json]"],
 	["mcp remove", "", "mcp remove <id> [--scope user|project] [--json]"],
 	["mcp test", "", "mcp test <id> [--call <tool> [--args <json>]]... [--json]"],

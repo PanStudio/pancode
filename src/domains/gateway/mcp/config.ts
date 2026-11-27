@@ -76,6 +76,7 @@ const SERVER_FIELDS = new Set([
 	"env",
 	"url",
 	"headers",
+	"oauth",
 	"timeoutMs",
 	"actionClass",
 	"toolActionClasses",
@@ -113,6 +114,22 @@ const SHELL_EXECUTABLES = new Set([
 ]);
 
 export type McpServerScope = "user" | "project" | "plugin" | "builtin";
+
+/**
+ * How PanCode signs in to a remote server that declares no headers, all
+ * optional: a client the operator registered with one authorization server
+ * (its secret, if any, kept in the credential store for that issuer), the
+ * scopes to request along with the server's challenge, and the loopback port the
+ * browser returns to.
+ */
+export interface McpOAuthSettings {
+	issuer?: string;
+	clientId?: string;
+	scopes?: string[];
+	redirectPort?: number;
+}
+
+const OAUTH_FIELDS = new Set(["issuer", "clientId", "scopes", "redirectPort"]);
 
 /**
  * How a tool uses a top-level call argument that names a path. PanCode
@@ -204,6 +221,8 @@ export interface McpRemoteServerDeclaration extends McpServerDeclarationBase {
 	 * origin; the value itself never appears in a config file.
 	 */
 	headers: Record<string, string>;
+	/** Set only when declared; a server with headers never has it. */
+	oauth?: McpOAuthSettings;
 	command?: never;
 	args?: never;
 	env?: never;
@@ -250,7 +269,7 @@ export interface McpConfigLoadOptions {
 
 type DeclaredServerFields = (
 	| { command: string; args: string[]; env: Record<string, string>; cwd: string | null }
-	| { url: string; headers: Record<string, string> }
+	| { url: string; headers: Record<string, string>; oauth?: McpOAuthSettings }
 ) & {
 	id: string;
 	timeoutMs: number | null;
@@ -287,7 +306,7 @@ export function mcpServerDigest(
 				cwd: string | null;
 				env: Readonly<Record<string, string>>;
 		  }
-		| { url: string; headers: Readonly<Record<string, string>> }
+		| { url: string; headers: Readonly<Record<string, string>>; oauth?: Readonly<McpOAuthSettings> }
 	) & {
 		id: string;
 		timeoutMs: number | null;
@@ -308,7 +327,21 @@ export function mcpServerDigest(
 	const canonical = JSON.stringify({
 		id: fields.id,
 		...("url" in fields
-			? { url: fields.url, headers: sorted(fields.headers) }
+			? {
+					url: fields.url,
+					headers: sorted(fields.headers),
+					// Absent when undeclared, so a remote server trusted before OAuth keeps its digest.
+					...(fields.oauth !== undefined
+						? {
+								oauth: {
+									issuer: fields.oauth.issuer ?? null,
+									clientId: fields.oauth.clientId ?? null,
+									scopes: fields.oauth.scopes ?? null,
+									redirectPort: fields.oauth.redirectPort ?? null,
+								},
+							}
+						: {}),
+				}
 			: { command: fields.command, args: [...fields.args], cwd: fields.cwd, env: sorted(fields.env) }),
 		timeoutMs: fields.timeoutMs,
 		...(fields.toolActionClasses !== undefined && Object.keys(fields.toolActionClasses).length > 0
@@ -649,12 +682,64 @@ function validateToolPathArguments(value: unknown, location: string): McpToolPat
 	return declared;
 }
 
+/** A remote server's sign-in settings; see McpOAuthSettings. */
+function validateOAuth(value: unknown, location: string): McpOAuthSettings | Error {
+	if (!isRecord(value)) return new Error(`${location} must be a mapping`);
+	const unknown = unknownFields(value, OAUTH_FIELDS);
+	if (unknown.length > 0) return new Error(`${location} has unknown field(s): ${unknown.join(", ")}`);
+	const settings: McpOAuthSettings = {};
+	if (value.issuer !== undefined) {
+		if (typeof value.issuer !== "string" || utf8Bytes(value.issuer) > MCP_CONFIG_CAPS.urlBytes) {
+			return new Error(`${location}.issuer must be the authorization server's issuer URL`);
+		}
+		const endpoint = mcpRemoteEndpoint(value.issuer);
+		if (typeof endpoint === "string" || endpoint.search !== "") {
+			return new Error(`${location}.issuer ${typeof endpoint === "string" ? endpoint : "must not carry a query"}`);
+		}
+		settings.issuer = value.issuer;
+	}
+	if (value.clientId !== undefined) {
+		if (typeof value.clientId !== "string" || !/^[\x21-\x7e]{1,256}$/u.test(value.clientId)) {
+			return new Error(`${location}.clientId must be 1 to 256 visible ASCII characters`);
+		}
+		if (settings.issuer === undefined) {
+			return new Error(
+				`${location}.clientId needs ${location}.issuer: a registered client belongs to one authorization server`,
+			);
+		}
+		settings.clientId = value.clientId;
+	}
+	if (value.scopes !== undefined) {
+		if (
+			!Array.isArray(value.scopes) ||
+			value.scopes.length > 64 ||
+			!value.scopes.every((scope) => typeof scope === "string" && /^[\x21\x23-\x5b\x5d-\x7e]{1,128}$/u.test(scope))
+		) {
+			return new Error(`${location}.scopes must be a list of at most 64 OAuth scope tokens`);
+		}
+		settings.scopes = [...new Set(value.scopes as string[])];
+	}
+	if (value.redirectPort !== undefined) {
+		if (
+			typeof value.redirectPort !== "number" ||
+			!Number.isInteger(value.redirectPort) ||
+			value.redirectPort < 1024 ||
+			value.redirectPort > 65535
+		) {
+			return new Error(`${location}.redirectPort must be a port from 1024 to 65535`);
+		}
+		settings.redirectPort = value.redirectPort;
+	}
+	return settings;
+}
+
 /** A remote server's endpoint and the credential each header it sends is read from. */
 function validateEndpoint(
 	url: unknown,
 	headers: unknown,
 	location: string,
-): { url: string; headers: Record<string, string> } | Error {
+	oauth?: unknown,
+): { url: string; headers: Record<string, string>; oauth?: McpOAuthSettings } | Error {
 	if (typeof url !== "string" || url.length === 0) return new Error(`${location}.url must be a non-empty string`);
 	if (utf8Bytes(url) > MCP_CONFIG_CAPS.urlBytes) {
 		return new Error(`${location}.url exceeds the ${MCP_CONFIG_CAPS.urlBytes}-byte cap`);
@@ -686,7 +771,13 @@ function validateEndpoint(
 			declared[name] = key;
 		}
 	}
-	return { url: endpoint.href, headers: declared };
+	if (oauth === undefined) return { url: endpoint.href, headers: declared };
+	if (Object.keys(declared).length > 0) {
+		return new Error(`${location}.oauth cannot apply: a server that sends headers never signs in with OAuth`);
+	}
+	const settings = validateOAuth(oauth, `${location}.oauth`);
+	if (settings instanceof Error) return settings;
+	return { url: endpoint.href, headers: declared, oauth: settings };
 }
 
 function validateServer(
@@ -703,17 +794,18 @@ function validateServer(
 	const id = validateId(value.id, `${location}.id`);
 	if (id instanceof Error) return id;
 	let launch: { command: string; args: string[]; env: Record<string, string> } | null = null;
-	let endpoint: { url: string; headers: Record<string, string> } | null = null;
+	let endpoint: { url: string; headers: Record<string, string>; oauth?: McpOAuthSettings } | null = null;
 	if (remote) {
 		const local = ["command", "args", "cwd", "env"].filter((field) => Object.hasOwn(value, field));
 		if (local.length > 0) {
 			return new Error(`${location} names a url, so ${local.join(", ")} cannot apply; a remote server is not started`);
 		}
-		const validated = validateEndpoint(value.url, value.headers, location);
+		const validated = validateEndpoint(value.url, value.headers, location, value.oauth);
 		if (validated instanceof Error) return validated;
 		endpoint = validated;
 	} else {
 		if (Object.hasOwn(value, "headers")) return new Error(`${location}.headers applies only to a server with a url`);
+		if (Object.hasOwn(value, "oauth")) return new Error(`${location}.oauth applies only to a server with a url`);
 		const command = validateCommand(value.command, `${location}.command`);
 		if (command instanceof Error) return command;
 		const args = validateArgs(value.args, `${location}.args`);
@@ -863,7 +955,13 @@ export function parseMcpConfigText(text: string, input: McpConfigTextInput): Mcp
 			...(validated.network ? { network: true as const } : {}),
 		};
 		if ("url" in fields) {
-			servers.push({ ...shared, url: fields.url, headers: fields.headers, digest: mcpServerDigest(fields) });
+			servers.push({
+				...shared,
+				url: fields.url,
+				headers: fields.headers,
+				...(fields.oauth !== undefined ? { oauth: fields.oauth } : {}),
+				digest: mcpServerDigest(fields),
+			});
 			continue;
 		}
 		const entryScripts =

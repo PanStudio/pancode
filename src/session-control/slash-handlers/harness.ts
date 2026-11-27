@@ -308,7 +308,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "mcp",
 		rank: 3,
 		acp: { reads: ["", "list"] },
-		description: "List MCP servers, trust or untrust one by id, or log one out",
+		description: "List MCP servers, trust or untrust one by id, or sign one in or out",
 		group: "PanCode",
 		kinds: ["mcp"],
 		args: {
@@ -325,6 +325,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					positionals: [{ name: "id", required: true }],
 					flags: [{ name: "--skill", takesValue: true, valueName: "name" }],
 				},
+				login: { positionals: [{ name: "id", required: true }] },
 				logout: { positionals: [{ name: "id", required: true }] },
 			},
 		},
@@ -332,7 +333,8 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			list: "List MCP servers (the bare command does the same)",
 			trust: "Trust a server, optionally for one action class, or approve one skill it serves with --skill",
 			untrust: "Withdraw trust from a server, or the approval of one skill with --skill",
-			logout: "Remove the header credentials a remote server is sent",
+			login: "Sign in to a remote server with OAuth in your browser; again while it waits cancels it",
+			logout: "Remove the header credentials or OAuth sign-in a remote server is sent",
 		},
 		fromArgs(parsed) {
 			if (parsed.error) return usageError("mcp", parsed.error, parsed.subcommand);
@@ -357,6 +359,10 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		handle(command, ctx) {
 			if (command.kind !== "mcp") return;
 			const [action, id, flag, skill] = command.argv;
+			if (action === "login" && id !== undefined) {
+				mcpSlashLogin(id, ctx);
+				return;
+			}
 			if (id !== undefined && flag === "--skill" && skill !== undefined) {
 				if (action === "untrust") {
 					const result = mcpSkillRevokeOutput({ cwd: process.cwd(), id, skill });
@@ -554,6 +560,55 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		},
 	},
 ];
+
+/** Sign-ins `/mcp login` started in this process, by server id; repeating the command cancels one. */
+const pendingMcpSignIns = new Map<string, AbortController>();
+
+/**
+ * `/mcp login <id>`: OAuth sign-in in this process. The URL is shown and,
+ * with a local browser, opened; the session waits for the browser's return
+ * without blocking the prompt. A server with header credentials takes them at
+ * a terminal, where typing can be hidden.
+ */
+function mcpSlashLogin(id: string, ctx: SlashCommandContext): void {
+	const pending = pendingMcpSignIns.get(id);
+	if (pending !== undefined) {
+		pending.abort(new Error("the sign-in was cancelled"));
+		return;
+	}
+	const controller = new AbortController();
+	pendingMcpSignIns.set(id, controller);
+	void (async () => {
+		try {
+			const mcp = await import("../../domains/gateway/mcp/index.js");
+			const { mcpOAuthLogin } = await import("../../domains/gateway/mcp/oauth-login.js");
+			const server = mcp.resolveMcpServers({ cwd: process.cwd() }).servers.find((entry) => entry.id === id);
+			if (server === undefined) throw new Error(`no declared MCP server with id '${id}'`);
+			if (server.url === undefined) throw new Error(`server '${id}' is a local server; it takes no credentials`);
+			if (Object.keys(server.headers).length > 0) {
+				throw new Error(`server '${id}' sends header credentials; store them with pancode mcp login ${id} in a shell`);
+			}
+			const result = await mcpOAuthLogin(server, {
+				signal: controller.signal,
+				notice: (line) => {
+					ctx.notice("info", `mcp: ${line} (/mcp login ${id} again cancels)`);
+					ctx.render?.();
+				},
+			});
+			ctx.notice(
+				"info",
+				result.kind === "not-needed"
+					? `mcp: ${result.detail}`
+					: `mcp: signed in to ${id} at ${result.issuer}; its next call connects with the sign-in`,
+			);
+		} catch (error) {
+			ctx.notice("error", `mcp login ${id}: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			pendingMcpSignIns.delete(id);
+			ctx.render?.();
+		}
+	})();
+}
 
 function extensionsCommand(command: Extract<SlashCommand, { kind: "resources" }>, ctx: SlashCommandContext): void {
 	if (command.action === "leave") {
