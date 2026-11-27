@@ -62,6 +62,8 @@ export interface EditorSubmitExpansion {
 	constraints?: TurnConstraints;
 	/** See `SubmitExpansion.template`. */
 	template?: string;
+	/** See `SubmitExpansion.mcpPrompt`. */
+	mcpPrompt?: string;
 	/** See `SubmitExpansion.promptRefusal`. */
 	promptRefusal?: string;
 }
@@ -660,7 +662,8 @@ export function createEditorSubmitController(deps: EditorSubmitDeps): EditorSubm
 	/** A `/name` send-now line that expanded to nothing, with what Enter would have said about it. */
 	const unresolvedSlashCommand = (text: string, submitted: EditorSubmitExpansion): string | null => {
 		const command = parseSlashCommand(text);
-		if (command.kind !== "unknown-command" || submitted.template !== undefined) return null;
+		if (command.kind !== "unknown-command" || submitted.template !== undefined || submitted.mcpPrompt !== undefined)
+			return null;
 		return (
 			submitted.promptRefusal ??
 			`/${command.token} is not a prompt template, so a send-now cannot send it; press Enter to run it as a command`

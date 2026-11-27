@@ -58,6 +58,15 @@ export const ACP_INTERVIEWS_META_KEY = "pancode/interviews";
 export const ACP_INTERVIEW_REQUEST_METHOD = "_pancode/interview/request";
 export const ACP_INTERVIEW_CANCEL_METHOD = "_pancode/interview/cancel";
 /**
+ * MCP elicitation for a client that opted in with `pancode/elicitation`: an
+ * MCP server's form or link, put to the person at the client. The interviews
+ * opt-in alone does not carry it, because what is typed here goes to a server
+ * and not to PanCode.
+ */
+export const ACP_ELICITATION_META_KEY = "pancode/elicitation";
+export const ACP_ELICITATION_REQUEST_METHOD = "_pancode/elicitation/request";
+export const ACP_ELICITATION_CANCEL_METHOD = "_pancode/elicitation/cancel";
+/**
  * `_meta` of every interview request: `{version: 1, operatorOnly, recommended?}`. An
  * `operator_only` round is the operator's own choice, which no agent or policy
  * may answer for them and which closes unanswered when its window passes, so a

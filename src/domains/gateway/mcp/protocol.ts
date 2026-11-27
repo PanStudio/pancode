@@ -47,6 +47,8 @@ export const MCP_RESOURCE_NOT_FOUND = -32002;
 export const MCP_HEADER_MISMATCH = -32020;
 /** Modern-era error: the request needs a client capability it did not declare, named in `data.requiredCapabilities`. */
 export const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+/** Legacy-era error: the request can be retried once the URL elicitations in `data.elicitations` are done. */
+export const MCP_URL_ELICITATION_REQUIRED = -32042;
 /** Modern-era error: the server does not serve the requested revision, and names the ones it does. */
 export const MCP_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 

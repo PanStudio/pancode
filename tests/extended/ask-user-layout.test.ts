@@ -852,3 +852,35 @@ test("only an ask_user round gets the unattended window, and 0 waits forever (#4
 	off.sessions[0]?.answer("A");
 	await offRound;
 });
+
+test("fixedChoices lets the user select options literally named Other or Custom without opening free text", async () => {
+	const single = createAskUserViewForTesting({ rows: 40 });
+	const singlePending = single.ask([
+		{
+			question: "Category?",
+			fixedChoices: true,
+			options: [{ label: "Primary" }, { label: "Other" }, { label: "Custom" }],
+		},
+	]);
+	single.handleInput(DOWN);
+	single.handleInput(ENTER);
+	const singleRes = await singlePending;
+	strictEqual(singleRes.answers[0]?.answer, "Other");
+	deepStrictEqual(singleRes.answers[0]?.options, ["Other"]);
+
+	const multi = createAskUserViewForTesting({ rows: 40 });
+	const multiPending = multi.ask([
+		{
+			question: "Tags?",
+			fixedChoices: true,
+			multi_select: true,
+			options: [{ label: "Other" }, { label: "Custom" }],
+		},
+	]);
+	multi.handleInput(" ");
+	multi.handleInput(DOWN);
+	multi.handleInput(" ");
+	multi.handleInput(ENTER);
+	const multiRes = await multiPending;
+	deepStrictEqual(multiRes.answers[0]?.options, ["Other", "Custom"]);
+});

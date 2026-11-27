@@ -33,6 +33,7 @@ import { AsideCapability } from "./aside.js";
 import { BoardCapability } from "./board.js";
 import { BranchesCapability } from "./branches.js";
 import { ContextCapability } from "./context-ledger.js";
+import { ElicitationCapability } from "./elicitation.js";
 import { ExtensionsCapability, HubCapability } from "./extensions.js";
 import { FleetCapability } from "./fleet-run.js";
 import { HandoffCapability } from "./handoff.js";
@@ -103,6 +104,8 @@ export const AgentCapabilities = Type.Object(
 		/** The telemetry read model over ACP and its coalesced update notification (#434). */
 		telemetry: Type.Optional(TelemetryCapability),
 		interviews: Type.Optional(InterviewCapability),
+		/** MCP servers' forms and links, put to the person at this GUI. */
+		elicitation: Type.Optional(ElicitationCapability),
 		/** Plugin reload, so a PanHub change reaches an open session. */
 		hub: Type.Optional(HubCapability),
 		/** ACP promptCapabilities.image: the agent accepts image blocks with a request. */

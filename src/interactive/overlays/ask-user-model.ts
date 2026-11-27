@@ -83,8 +83,12 @@ export function createQuestionState(
 		inputValue: initial?.text ?? "",
 		answer: "",
 		rawValue: "",
-		// defaultOption sets focus; harness drafts still need the operator's submission.
-		...(focusable ? { focusedValue: `option:${preferred}` } : {}),
+		// defaultOption sets focus, and a drafted text focuses the Other row holding it; drafts still need the operator's submission.
+		...(focusable
+			? { focusedValue: `option:${preferred}` }
+			: (initial?.text ?? "").length > 0 && (initial?.selected?.length ?? 0) === 0
+				? { focusedValue: "other" }
+				: {}),
 	};
 }
 
@@ -124,7 +128,8 @@ export function optionAsksForText(label: string): boolean {
 
 export function optionItems(question: AskUserQuestion, selected: ReadonlySet<number>, draft = ""): SelectItem[] {
 	const options = question.options ?? [];
-	const explicitOtherIndex = options.findIndex((option) => isOtherOption(option.label));
+	const fixed = question.fixedChoices === true;
+	const explicitOtherIndex = fixed ? -1 : options.findIndex((option) => isOtherOption(option.label));
 	const items: SelectItem[] = [];
 	for (let index = 0; index < options.length; index += 1) {
 		const option = options[index];
@@ -139,10 +144,10 @@ export function optionItems(question: AskUserQuestion, selected: ReadonlySet<num
 			label,
 		};
 		if (option.description) item.description = option.description;
-		else if (optionAsksForText(option.label)) item.description = TEXT_ASKING_DESCRIPTION;
+		else if (!fixed && optionAsksForText(option.label)) item.description = TEXT_ASKING_DESCRIPTION;
 		items.push(item);
 	}
-	if (explicitOtherIndex === -1 && question.fixedChoices !== true) {
+	if (explicitOtherIndex === -1 && !fixed) {
 		// The implicit choice is one word on screen; its description says what it
 		// does, and the tool's longer label is what the answer records.
 		items.push({

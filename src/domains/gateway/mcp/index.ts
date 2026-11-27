@@ -28,12 +28,15 @@ export {
 	type McpClient,
 	type McpClientOptions,
 	type McpContentBlock,
+	type McpElicitationHandler,
+	type McpElicitationOutcome,
 	type McpEventStream,
 	type McpEventStreamHandlers,
 	type McpEventStreamOptions,
 	type McpHttpServerSpec,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
+	type McpRequestOptions,
 	type McpServerInfo,
 	type McpServerSpec,
 	type McpSubscription,
@@ -46,6 +49,7 @@ export {
 	type McpTransportEvents,
 	mcpRequiredCapabilities,
 	renderMcpContent,
+	resourceLinkLine,
 } from "./client.js";
 export {
 	loadMcpServerConfig,
@@ -64,6 +68,22 @@ export {
 	pluginServerRevocation,
 } from "./config.js";
 export {
+	describeValue,
+	fieldValueError,
+	formContentErrors,
+	type McpElicitAction,
+	type McpElicitationContext,
+	type McpElicitationHost,
+	type McpElicitationRequest,
+	type McpElicitResult,
+	type McpElicitValue,
+	type McpFieldOption,
+	type McpFormElicitation,
+	type McpFormField,
+	type McpUrlElicitation,
+	readTypedValue,
+} from "./elicitation.js";
+export {
 	MCP_EVENT_ERRORS,
 	MCP_EVENT_MIN_POLL_MS,
 	type McpEventDelivery,
@@ -80,9 +100,12 @@ export {
 } from "./events.js";
 export {
 	type McpCachedEvent,
+	type McpCachedPrompt,
 	type McpCatalogIdentity,
+	type McpResourceCount,
 	type McpServerCatalog,
 	mcpCatalogStale,
+	mcpPromptsStale,
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "./metadata-cache.js";
@@ -130,6 +153,24 @@ export {
 	openMcpHeaderCredentialStore,
 	resolveMcpHeaders,
 } from "./remote-credentials.js";
+export {
+	isMcpAppResource,
+	isMcpResourceNotFound,
+	MCP_PROMPT_LIST_CAP,
+	MCP_RESOURCE_LIST_CAP,
+	type McpCompletion,
+	type McpCompletionReference,
+	type McpPromptArgument,
+	type McpPromptDescriptor,
+	type McpPromptListing,
+	type McpPromptMessage,
+	type McpPromptResult,
+	type McpResourceContents,
+	type McpResourceDescriptor,
+	type McpResourceListing,
+	type McpResourceRead,
+	type McpResourceTemplateDescriptor,
+} from "./resources.js";
 export {
 	type McpAttestedSkill,
 	type McpRecordedSkill,

@@ -11,6 +11,7 @@ import type { SandboxMode } from "../../core/sandbox/types.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import type { StartupHint } from "../../domains/context/contract.js";
+import type { McpElicitationHost } from "../../domains/gateway/mcp/index.js";
 import type { ProvidersContract } from "../../domains/providers/contract.js";
 import type { AutonomyLevel } from "../../domains/safety/autonomy.js";
 import type { AutonomyStatus } from "../../domains/safety/autonomy-window.js";
@@ -92,6 +93,14 @@ export interface AcpInterviewBinding {
 	/** The round's request window; a function when the client negotiates it after the binding attaches. */
 	timeoutMs?: number | (() => number);
 	diagnostics?: (line: string) => void;
+}
+
+/** MCP elicitations for a client that advertised `pancode/elicitation`, bound like the interview channel. */
+export interface AcpElicitationChannel {
+	/** The host the MCP capability source puts every server's elicitation to. */
+	elicit: McpElicitationHost;
+	cancel(): void;
+	attach(binding: AcpInterviewBinding): () => void;
 }
 
 export interface AcpInterviewChannel {
@@ -358,6 +367,8 @@ export interface PancodeAcpServerOptions {
 	 * `pancode/interviews`. Absent means the host asks nobody.
 	 */
 	interviews?: AcpInterviewChannel;
+	/** Carries MCP elicitations to a client that advertised `pancode/elicitation`. Absent means servers are told nobody answers. */
+	elicitation?: AcpElicitationChannel;
 	/**
 	 * Answers a dispatched worker's permission ask on the operator's behalf. Absent
 	 * means worker asks are never forwarded, whatever the client advertises.
@@ -524,6 +535,8 @@ export interface AcpHandshakeFeatures {
 	images?: boolean;
 	/** Whether the host can ask `ask_user` rounds over `_pancode/interview/request`; absent reads as false. */
 	interviews?: boolean;
+	/** Whether the host can ask MCP elicitations over `_pancode/elicitation/request`; absent reads as false. */
+	elicitation?: boolean;
 	/** Whether the host can forward worker permission asks over `session/request_permission`; absent reads as false. */
 	workerPermissions?: boolean;
 	/**
@@ -547,6 +560,10 @@ export interface AcpHandshake {
 	readonly workerPermissionsEnabled: boolean;
 	/** The applied interview window when the client negotiated one at initialize, else null. */
 	readonly interviewTimeoutMs: number | null;
+	/** The client advertised `pancode/elicitation` and this host can ask over it. */
+	readonly elicitationEnabled: boolean;
+	/** The applied elicitation window when the client negotiated one at initialize, else null. */
+	readonly elicitationTimeoutMs: number | null;
 	/** The applied `session/request_permission` window when the client negotiated one at initialize, else null. */
 	readonly permissionRequestTimeoutMs: number | null;
 	/** The client advertised `pancode/queue` and is sent `_pancode/session/queue_changed`. */

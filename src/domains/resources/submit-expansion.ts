@@ -3,10 +3,13 @@
 /**
  * Operator syntax in a submitted request, expanded the same way on every surface that submits one:
  * `/skill` requests become pending skill loads, a prompt template's name becomes its body, and
- * `@path` references inline the file, or attach it when it is an image. The terminal and the ACP
- * server both call this, so a request typed in the graphical app means what it means in the TUI.
+ * `@path` references inline the file, or attach it when it is an image. With an MCP reader,
+ * `/<id>:<prompt>` becomes the server's prompt and `@<id>:<uri>` inlines the server's resource.
+ * The terminal and the ACP server both call this, so a request typed in the graphical app means
+ * what it means in the TUI.
  */
 
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { expandInlineFileReferencesAsync } from "../../core/file-references.js";
@@ -38,6 +41,8 @@ export interface SubmitExpansion {
 	constraints?: TurnConstraints;
 	/** The prompt template `text` expanded from, when one did. */
 	template?: string;
+	/** The MCP prompt `text` expanded from, as `<id>:<name>`, when one did. */
+	mcpPrompt?: string;
 	/**
 	 * Why a `/name` line that names a template did not expand, such as a plugin
 	 * changed on disk under the session. `text` is then the literal line, which
@@ -115,8 +120,20 @@ export function submitDisplay(input: {
 	referencedPaths: ReadonlyArray<string>;
 	diagnostics: ReadonlyArray<{ type: string; message: string; path?: string }>;
 	cwd: string;
+	/** What MCP prompt or mention expansion did, one clause each. */
+	mcpNotes?: ReadonlyArray<string>;
 }): { text: string; note?: string } | undefined {
-	const attached = attachmentNote(input.referencedPaths, input.diagnostics, input.cwd);
+	const files = attachmentNote(input.referencedPaths, input.diagnostics, input.cwd);
+	const clauses = [
+		...(input.mcpNotes ?? []),
+		...(files ? [files.replace(/\.$/u, "").replace(/^./u, (first) => first.toLowerCase())] : []),
+	];
+	const attached =
+		clauses.length === 0
+			? undefined
+			: input.mcpNotes?.length
+				? `${clauses.join("; ").replace(/^./u, (first) => first.toUpperCase())}.`
+				: files;
 	if (input.template)
 		return {
 			text: input.parsedText.trim(),
@@ -128,12 +145,210 @@ export function submitDisplay(input: {
 	return attached ? { text: input.typed.trim(), note: attached } : undefined;
 }
 
+/** Server text as one origin-tagged turn part; the reader renders it, this module never reads it for syntax. */
+export type McpSubmitAnswer =
+	| { ok: true; text: string; images: ImageContent[]; note: string }
+	| { ok: false; error: string };
+
+/** An MCP prompt as a slash command `/<serverId>:<name>`; its text is the server's, neutralized and bounded. */
+export interface McpPromptCommandRow {
+	serverId: string;
+	name: string;
+	title: string | null;
+	description: string;
+	arguments: ReadonlyArray<{ name: string; description: string; required: boolean }>;
+	/** The recorded list outlived the server's freshness hint; shown, but it may have changed. */
+	stale?: true;
+}
+
+/** A resource or template a `@<id>:` completion offers. */
+export interface McpResourceCandidate {
+	/** A uri, or a uri template whose `{variables}` the operator fills. */
+	uri: string;
+	template: boolean;
+	label: string;
+	description: string;
+}
+
+/**
+ * MCP prompts and resources as operator syntax, injected by the composition
+ * root so this domain never reaches the gateway. Server text it returns is
+ * never searched for `@path`, mentions or slash commands.
+ */
+export interface McpSubmitReader {
+	/** The prompts of trusted servers, live once listed, else as recorded; never launches a server. */
+	promptCommands(): ReadonlyArray<McpPromptCommandRow>;
+	/** A server's resources and templates for `@<id>:` completion; may start a trusted server. */
+	resourceCandidates(serverId: string, signal?: AbortSignal): Promise<ReadonlyArray<McpResourceCandidate>>;
+	/** Values for one prompt argument from a connected server that offers completion; empty otherwise. */
+	completeArgument(
+		serverId: string,
+		prompt: string,
+		argument: { name: string; value: string },
+		context: Readonly<Record<string, string>>,
+		signal?: AbortSignal,
+	): Promise<ReadonlyArray<string>>;
+	/** Values for one variable of a resource template, the same way. */
+	completeTemplate(
+		serverId: string,
+		template: string,
+		variable: { name: string; value: string },
+		context: Readonly<Record<string, string>>,
+		signal?: AbortSignal,
+	): Promise<ReadonlyArray<string>>;
+	/** The expansion of a `/<id>:<prompt> args` request; null when it names no MCP prompt. */
+	expandPrompt(text: string, signal?: AbortSignal): Promise<McpSubmitAnswer | null>;
+	/** Ids of the servers a `@<id>:<uri>` mention may read. */
+	mentionServers(): ReadonlySet<string>;
+	/** One mentioned resource. */
+	readMention(serverId: string, uri: string, signal?: AbortSignal): Promise<McpSubmitAnswer>;
+}
+
 export interface SubmitExpansionOptions {
 	/** Aborts a slow attachment read; the expansion then rejects with the signal's reason. */
 	signal?: AbortSignal;
 	/** Names an attachment, by its short path, as its slow extraction starts. */
 	onExtract?: (shortPath: string) => void;
+	mcp?: McpSubmitReader;
 }
+
+/**
+ * MCP prompts as the rows a command palette lists, after the templates: a
+ * template of the same name keeps its row and wins on submit.
+ */
+export function mcpPromptSlashRows(
+	reader: Pick<McpSubmitReader, "promptCommands">,
+	templates: ReadonlyArray<{ name: string }>,
+): Array<{ name: string; description: string; argumentHint?: string; mcpServer: string }> {
+	const taken = new Set(templates.map((template) => template.name.toLowerCase()));
+	return reader.promptCommands().flatMap((row) => {
+		const name = `${row.serverId}:${row.name}`;
+		if (taken.has(name.toLowerCase())) return [];
+		const hint = row.arguments.map((entry) => (entry.required ? `<${entry.name}>` : `[${entry.name}]`)).join(" ");
+		const about = [row.title, row.description].filter((text) => text !== null && text.length > 0).join(": ");
+		return [
+			{
+				name,
+				description: `MCP ${row.serverId}: ${about || `prompt ${row.name}`}${row.stale ? " (recorded list, may be out of date)" : ""}`,
+				...(hint ? { argumentHint: hint } : {}),
+				mcpServer: row.serverId,
+			},
+		];
+	});
+}
+
+/** A request reads at most this many distinct resources; further mentions stay as typed. */
+const MCP_MENTION_LIMIT = 8;
+
+/**
+ * `@<id>:<uri>` where the uri carries its own scheme, so `@notes:todo` or an
+ * email address is never read as a mention. Ids are the declaration charset.
+ */
+const MCP_MENTION = /(^|\s)@([a-z0-9][a-z0-9_-]*):([A-Za-z][A-Za-z0-9+.-]*:\S+)/gu;
+
+interface McpMention {
+	start: number;
+	end: number;
+	serverId: string;
+	uri: string;
+}
+
+/** Sentence punctuation after a mention is not part of its uri; a `)` is only when unbalanced. */
+function trimMentionUri(uri: string): string {
+	let trimmed = uri.replace(/[.,;!?'"]+$/u, "");
+	while (trimmed.endsWith(")") && (trimmed.match(/\(/gu)?.length ?? 0) < (trimmed.match(/\)/gu)?.length ?? 0))
+		trimmed = trimmed.slice(0, -1).replace(/[.,;!?'"]+$/u, "");
+	return trimmed;
+}
+
+function mcpMentions(text: string, servers: ReadonlySet<string>): McpMention[] {
+	if (servers.size === 0 || !text.includes("@")) return [];
+	const mentions: McpMention[] = [];
+	for (const match of text.matchAll(MCP_MENTION)) {
+		const [, lead = "", serverId = "", raw = ""] = match;
+		if (!servers.has(serverId)) continue;
+		const uri = trimMentionUri(raw);
+		const start = (match.index ?? 0) + lead.length;
+		mentions.push({ start, end: start + 1 + serverId.length + 1 + uri.length, serverId, uri });
+	}
+	return mentions;
+}
+
+/**
+ * File references expand over the operator's text only: each mention stands
+ * as a placeholder the file pass cannot match, and the resource is put in
+ * after, so a server's text never names a file PanCode then reads.
+ */
+async function expandMcpMentions(
+	text: string,
+	reader: McpSubmitReader | undefined,
+	signal: AbortSignal | undefined,
+	expandFiles: (text: string) => Promise<FileExpansion>,
+): Promise<FileExpansion & { notes: string[] }> {
+	const mentions = reader === undefined ? [] : mcpMentions(text, reader.mentionServers());
+	if (reader === undefined || mentions.length === 0) return { ...(await expandFiles(text)), notes: [] };
+	const nonce = randomUUID();
+	const placeholder = (index: number): string => `\u0000mcp-mention-${nonce}-${index}\u0000`;
+	const duplicatePlaceholder = (index: number): string => `\u0000mcp-mention-dup-${nonce}-${index}\u0000`;
+	const reads = new Map<string, { index: number; answer: Promise<McpSubmitAnswer> | null }>();
+	const duplicates: Array<{ token: string; raw: string }> = [];
+	let masked = "";
+	let last = 0;
+	for (const mention of mentions) {
+		const key = `${mention.serverId}\u0000${mention.uri}`;
+		masked += text.slice(last, mention.start);
+		last = mention.end;
+		if (reads.has(key)) {
+			// Mask repeated mentions during file expansion so `@id:uri` is never read as `@path`.
+			const token = duplicatePlaceholder(duplicates.length);
+			duplicates.push({ token, raw: text.slice(mention.start, mention.end) });
+			masked += token;
+			continue;
+		}
+		const index = reads.size;
+		reads.set(key, {
+			index,
+			answer:
+				index < MCP_MENTION_LIMIT
+					? reader.readMention(mention.serverId, mention.uri, signal).catch((error: unknown) => ({
+							ok: false as const,
+							error: error instanceof Error ? error.message : String(error),
+						}))
+					: null,
+		});
+		masked += placeholder(index);
+	}
+	masked += text.slice(last);
+	const files = await expandFiles(masked);
+	await Promise.all([...reads.values()].map((read) => read.answer));
+	signal?.throwIfAborted();
+	const notes: string[] = [];
+	const images: ImageContent[] = [...files.images];
+	let expanded = files.text;
+	let skipped = 0;
+	for (const [key, read] of reads) {
+		const [serverId = "", uri = ""] = key.split("\u0000");
+		const typed = `@${serverId}:${uri}`;
+		let replacement = typed;
+		if (read.answer === null) skipped += 1;
+		else {
+			const answer = await read.answer;
+			if (answer.ok) {
+				replacement = answer.text;
+				images.push(...answer.images);
+				notes.push(answer.note);
+			} else notes.push(`could not read ${typed}: ${answer.error}`);
+		}
+		expanded = expanded.split(placeholder(read.index)).join(replacement);
+	}
+	for (const duplicate of duplicates) {
+		expanded = expanded.split(duplicate.token).join(duplicate.raw);
+	}
+	if (skipped > 0) notes.push(`left ${skipped} more MCP mentions unread; a request reads at most ${MCP_MENTION_LIMIT}`);
+	return { ...files, text: expanded, images, notes };
+}
+
+type FileExpansion = Awaited<ReturnType<typeof expandInlineFileReferencesAsync>>;
 
 /**
  * A plugin template's turn names the resources its plugin declares, so the
@@ -152,18 +367,60 @@ function withPluginResources(text: string, template: { name: string; packageRoot
 	].join("\n");
 }
 
+/** `@path` references and `@<id>:<uri>` mentions in operator text; headless `run` calls it after its own template step. */
+export function expandSubmitReferences(
+	text: string,
+	cwd: string,
+	options: SubmitExpansionOptions = {},
+): Promise<FileExpansion & { notes: string[] }> {
+	const { signal, onExtract, mcp } = options;
+	return expandMcpMentions(text, mcp, signal, (masked) =>
+		expandInlineFileReferencesAsync(masked, {
+			cwd,
+			includeImages: true,
+			missing: "leave",
+			...(signal ? { signal } : {}),
+			...(onExtract ? { onExtract: (filePath: string) => onExtract(shortAttachmentPath(filePath, cwd)) } : {}),
+		}),
+	);
+}
+
 export async function expandSubmitText(
 	text: string,
 	resources: ResourcesContract | undefined,
 	cwd = process.cwd(),
 	options: SubmitExpansionOptions = {},
 ): Promise<SubmitExpansion> {
-	const { signal, onExtract } = options;
+	const { signal, mcp } = options;
 	const parsed = resources?.parsePendingSkillRequests(text, cwd) ?? {
 		text,
 		pendingSkillRequests: [],
 	};
 	const promptExpansion = resources?.expandPromptTemplate(parsed.text, cwd);
+	// A template of the same name wins; an MCP prompt's text is the server's, so nothing below reads it for syntax.
+	const mcpPrompt = promptExpansion?.expanded || mcp === undefined ? null : await mcp.expandPrompt(parsed.text, signal);
+	if (mcpPrompt !== null) {
+		signal?.throwIfAborted();
+		return {
+			text: mcpPrompt.ok ? mcpPrompt.text : parsed.text,
+			images: mcpPrompt.ok ? mcpPrompt.images : [],
+			workingContextPaths: [],
+			pendingSkillRequests: parsed.pendingSkillRequests,
+			...(mcpPrompt.ok
+				? {
+						display: submitDisplay({
+							typed: text,
+							parsedText: parsed.text,
+							referencedPaths: [],
+							diagnostics: [],
+							cwd,
+							mcpNotes: [mcpPrompt.note],
+						}) ?? { text: text.trim() },
+						mcpPrompt: parsed.text.trim().split(/\s/u)[0]?.slice(1) ?? "",
+					}
+				: { promptRefusal: mcpPrompt.error }),
+		};
+	}
 	const promptOwner = promptExpansion?.expanded ? promptExpansion.template.sourceInfo?.owner : undefined;
 	if (promptExpansion?.expanded && promptOwner)
 		recordPackageActivity({
@@ -177,13 +434,7 @@ export async function expandSubmitText(
 		? withPluginResources(promptExpansion.text, promptExpansion.template)
 		: parsed.text;
 	const constraints = promptExpansion?.expanded ? templateTurnConstraints(promptExpansion.template) : undefined;
-	const fileExpansion = await expandInlineFileReferencesAsync(promptText, {
-		cwd,
-		includeImages: true,
-		missing: "leave",
-		...(signal ? { signal } : {}),
-		...(onExtract ? { onExtract: (filePath: string) => onExtract(shortAttachmentPath(filePath, cwd)) } : {}),
-	});
+	const fileExpansion = await expandSubmitReferences(promptText, cwd, options);
 	const display = submitDisplay({
 		typed: text,
 		parsedText: parsed.text,
@@ -193,6 +444,7 @@ export async function expandSubmitText(
 		referencedPaths: fileExpansion.referencedPaths,
 		diagnostics: fileExpansion.diagnostics,
 		cwd,
+		mcpNotes: fileExpansion.notes,
 	});
 	return {
 		text: fileExpansion.text,

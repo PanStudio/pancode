@@ -21,6 +21,7 @@ export const SESSION_CACHES = [
 	"session-artifact",
 	"session-extensions",
 	"session-interview",
+	"session-elicitation",
 ] as const;
 
 const buffers = new Map<string, SessionBuffer>();

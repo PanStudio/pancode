@@ -444,6 +444,11 @@ export interface SessionCommandContext {
 	 * builtin is simply not a command.
 	 */
 	expandPromptTemplate?: (text: string) => PromptTemplateExpansion;
+	/**
+	 * Whether `<id>:<prompt>` names a trusted MCP server's prompt. The line then
+	 * goes to chat submission, whose expansion asks the server for the prompt.
+	 */
+	mcpPromptClaims?: (token: string) => boolean;
 	listExtensions?: () => ReadonlyArray<InstalledExtension>;
 	/**
 	 * `/extensions reload`: build, validate, and commit the next

@@ -6,6 +6,7 @@ import type { CommandResult } from "../../contracts/steering.js";
 import type { AcpJob, AcpReadoutsNotification } from "../../contracts/wire.js";
 import type { ChildRow } from "./children-file.js";
 import type { AcpClient } from "./client.js";
+import type { Elicitations } from "./elicitations.js";
 import type { Interviews } from "./interviews.js";
 import type { Permissions } from "./permissions.js";
 import type { SessionWorkers } from "./session-overview.js";
@@ -28,6 +29,7 @@ export type Entry = {
 	bound: boolean;
 	permissions?: Permissions;
 	interviews?: Interviews;
+	elicitations?: Elicitations;
 	eventSequence: number;
 	/** The newest readouts frame applied. The sequence is per connection, and each child gets a new entry. */
 	readoutsSequence?: number;

@@ -286,6 +286,7 @@ export function subscribe(
 						void queries.invalidateQueries({ queryKey: ["session"] });
 						void queries.invalidateQueries({ queryKey: ["sessions"] });
 						void queries.invalidateQueries({ queryKey: ["session-interview"] });
+						void queries.invalidateQueries({ queryKey: ["session-elicitation"] });
 						void queries.invalidateQueries({ queryKey: ["meta"] });
 						refreshAutonomy();
 					}
@@ -303,6 +304,10 @@ export function subscribe(
 				invalidate.add("session-overview");
 				void queries.cancelQueries({ queryKey: ["session-interview", event.payload.resource], exact: true });
 				queries.setQueryData(["session-interview", event.payload.resource], event.payload.round);
+			}
+			if (event.type === "elicitation.changed") {
+				void queries.cancelQueries({ queryKey: ["session-elicitation", event.payload.resource], exact: true });
+				queries.setQueryData(["session-elicitation", event.payload.resource], event.payload.prompt);
 			}
 			if (event.type === "queue.changed") {
 				invalidate.add("session-overview");
@@ -469,6 +474,7 @@ export function subscribe(
 			"toolchain.changed",
 			"machine.attach",
 			"interview.changed",
+			"elicitation.changed",
 			"queue.changed",
 			"telemetry.updated",
 			"app.launch",

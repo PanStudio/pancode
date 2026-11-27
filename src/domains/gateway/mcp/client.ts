@@ -21,6 +21,13 @@ import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { clampTimerDelayMs, sleep } from "../../../core/timers.js";
 import { isRecord } from "../../../core/type-guards.js";
 import {
+	formContentErrors,
+	type McpElicitationContext,
+	type McpElicitationRequest,
+	type McpElicitResult,
+	parseElicitationRequest,
+} from "./elicitation.js";
+import {
 	MCP_EVENT_LIST_CAP,
 	MCP_EVENT_LIST_PAGE_CAP,
 	type McpEventErrorObject,
@@ -40,6 +47,7 @@ import { createMcpHttpTransport, type McpHttpServerSpec } from "./http-transport
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";
 import {
 	DEFAULT_MAX_LINE_BYTES,
+	JSON_RPC_INVALID_PARAMS,
 	JSON_RPC_METHOD_NOT_FOUND,
 	MCP_EVENTS_EXTENSION,
 	MCP_HEADER_MISMATCH,
@@ -54,13 +62,34 @@ import {
 	MCP_PROTOCOL_VERSION,
 	MCP_TASKS_EXTENSION,
 	MCP_UNSUPPORTED_PROTOCOL_VERSION,
+	MCP_URL_ELICITATION_REQUIRED,
 	McpError,
 } from "./protocol.js";
+import {
+	MCP_PROMPT_LIST_CAP,
+	MCP_RESOURCE_LIST_CAP,
+	type McpCompletion,
+	type McpCompletionReference,
+	type McpPromptDescriptor,
+	type McpPromptListing,
+	type McpPromptResult,
+	type McpResourceDescriptor,
+	type McpResourceListing,
+	type McpResourceRead,
+	type McpResourceTemplateDescriptor,
+	parseCompletion,
+	parsePromptDescriptor,
+	parsePromptResult,
+	parseResourceDescriptor,
+	parseResourceRead,
+	parseResourceTemplate,
+} from "./resources.js";
 import { MCP_SKILLS_EXTENSION, type McpSkillsTransport, mcpSkillsSettings } from "./skills.js";
 import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "./stdio-transport.js";
 import {
 	cutUtf8,
 	DEFAULT_RESULT_TEXT_BYTES,
+	type McpElicitationOutcome,
 	type McpToolCallResult,
 	type McpToolDescriptor,
 	outputSchemaMismatch,
@@ -80,9 +109,11 @@ import type {
 export {
 	DEFAULT_RESULT_TEXT_BYTES,
 	type McpContentBlock,
+	type McpElicitationOutcome,
 	type McpToolCallResult,
 	type McpToolDescriptor,
 	renderMcpContent,
+	resourceLinkLine,
 } from "./tool-results.js";
 export type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
@@ -116,11 +147,24 @@ const SERVER_TEXT_BYTES = 2048;
 export const MCP_INSTRUCTIONS_BYTES = 2048;
 /** Bytes of one progress message passed on to the caller. */
 const PROGRESS_MESSAGE_BYTES = 512;
-/** Retries of one request that the server keeps answering with input_required and only a requestState. */
+/** Retries of one request that the server keeps answering with input_required (basic/patterns/mrtr). */
 export const MCP_INPUT_REQUIRED_ROUNDS = 8;
 
 export type { McpHttpServerSpec } from "./http-transport.js";
 export type McpServerSpec = McpStdioServerSpec | McpHttpServerSpec;
+
+/**
+ * Puts one server elicitation in front of the operator and returns their
+ * answer. The context's signal fires when the call that asked is aborted, the
+ * server withdraws the request, or the client closes.
+ */
+export type McpElicitationHandler = (
+	request: McpElicitationRequest,
+	context: McpElicitationContext,
+) => Promise<McpElicitResult>;
+
+/** The elicitation capability PanCode declares when an operator can answer: both modes (client/elicitation, Capabilities). */
+const ELICITATION_CAPABILITY = { form: {}, url: {} };
 
 export interface McpClientOptions {
 	/** Containment root for the server's cwd; a cwd outside it, by path or by symlink, is refused before spawn. */
@@ -147,6 +191,12 @@ export interface McpClientOptions {
 	signal?: AbortSignal;
 	/** The worker attested the operator's network grant for this server, so its sandboxed process gets network. */
 	sandboxNetwork?: boolean;
+	/**
+	 * Answers the server's elicitations. Only its presence declares the
+	 * `elicitation` capability; without it the client declares none, so a
+	 * session nobody attends is never asked.
+	 */
+	elicitation?: McpElicitationHandler;
 	/** The fetch a remote server is reached with; tests replace it. */
 	fetch?: typeof fetch;
 }
@@ -161,6 +211,7 @@ export type McpProtocolClientOptions = Pick<
 	| "cancelGraceMs"
 	| "onFailure"
 	| "signal"
+	| "elicitation"
 >;
 
 export type McpClientStatus = "idle" | "starting" | "ready" | "closed" | "failed";
@@ -278,6 +329,22 @@ export interface McpClient {
 	initialize(signal?: AbortSignal): Promise<McpServerInfo>;
 	listTools(signal?: AbortSignal): Promise<McpToolListing>;
 	callTool(name: string, args: Record<string, unknown>, options?: McpCallToolOptions): Promise<McpToolCallResult>;
+	/** `resources/list` and `resources/templates/list`, paged, sharing MCP_RESOURCE_LIST_CAP. */
+	listResources(signal?: AbortSignal): Promise<McpResourceListing>;
+	/**
+	 * `resources/read` for one uri. `extensions` names the client extensions
+	 * this one read declares in its envelope (modern era); a plain read declares none.
+	 */
+	readResource(uri: string, options?: McpRequestOptions): Promise<McpResourceRead>;
+	listPrompts(signal?: AbortSignal): Promise<McpPromptListing>;
+	getPrompt(name: string, args: Record<string, string>, options?: McpRequestOptions): Promise<McpPromptResult>;
+	/** `completion/complete`; `context` carries the arguments already chosen. */
+	complete(
+		ref: McpCompletionReference,
+		argument: { name: string; value: string },
+		context?: Record<string, string>,
+		signal?: AbortSignal,
+	): Promise<McpCompletion>;
 	/** Resolves with the teardown outcome; an incomplete teardown is flagged there and in state(), not thrown. */
 	close(): Promise<McpTeardownOutcome>;
 	/** Synchronous exit backstop. Signals only a currently owned group; use close() for awaited teardown. */
@@ -287,6 +354,11 @@ export interface McpClient {
 	/** Set by `notifications/tools/list_changed`, legacy or on a listen stream; cleared by acknowledgeToolsChanged. */
 	toolsChanged(): boolean;
 	acknowledgeToolsChanged(): void;
+	/** Set by a prompts or resources list_changed, legacy or on the listen stream; cleared by acknowledgeListChanged. */
+	listChanged(primitive: McpListedPrimitive): boolean;
+	acknowledgeListChanged(primitive: McpListedPrimitive): void;
+	/** Called on each prompts or resources list_changed, in either era. Returns the unregister. */
+	onListChanged(handler: (primitive: McpListedPrimitive) => void): () => void;
 	notificationCount(): number;
 	/**
 	 * Receive every notification of one method that no listen stream claims,
@@ -319,12 +391,31 @@ export interface McpClient {
 	skills(): McpSkillsTransport | null;
 }
 
+export type McpListedPrimitive = "prompts" | "resources";
+
+export interface McpRequestOptions {
+	signal?: AbortSignal;
+	/** Client extensions declared on this one request (modern era), such as a skills read. */
+	extensions?: Record<string, unknown>;
+}
+
 interface PendingRequest {
 	method: string;
 	sent: boolean;
 	resolve(value: unknown): void;
 	reject(error: McpError): void;
 	abandon(): void;
+	/** Stop the request's timeout clock while the operator answers; the returned release starts it again. */
+	hold(): () => void;
+}
+
+/** A tools/call in flight: the elicitations it went through and the operator time its timeout does not count. */
+interface ActiveCall {
+	signal?: AbortSignal;
+	outcomes: McpElicitationOutcome[];
+	pausedMs: number;
+	/** URLs the operator consented to open during this call; asking again shows only the waiting card. */
+	consentedUrls: Set<string>;
 }
 
 interface ActiveSubscription {
@@ -425,6 +516,8 @@ interface McpTaskState {
 	pollIntervalMs: number | null;
 	result: unknown;
 	error: unknown;
+	/** The outstanding server-to-client requests of an input_required task. */
+	inputRequests: Record<string, unknown> | null;
 }
 
 const TASK_STATUSES: ReadonlySet<string> = new Set(["working", "input_required", "completed", "failed", "cancelled"]);
@@ -450,6 +543,7 @@ function parseTaskState(value: unknown, method: string, expectedId: string | nul
 		pollIntervalMs: finite(value.pollIntervalMs),
 		result: value.result,
 		error: value.error,
+		inputRequests: isRecord(value.inputRequests) ? value.inputRequests : null,
 	};
 }
 
@@ -598,6 +692,46 @@ export function createMcpProtocolClient(
 	let notifications = 0;
 	let toolsChangedFlag = false;
 	let eventsChangedFlag = false;
+	const elicitationHandler = options.elicitation;
+	/** Aborted when the client closes or fails, which ends every prompt still open for this server. */
+	const lifetime = new AbortController();
+	const activeCalls = new Set<ActiveCall>();
+	/** Legacy `elicitation/create` requests being answered, by request id, so `notifications/cancelled` can withdraw one. */
+	const serverElicitations = new Map<JsonRpcId, AbortController>();
+	/** URL elicitations of a -32042 error being waited on, by elicitationId, which `notifications/elicitation/complete` finishes. */
+	const urlCompletions = new Map<string, AbortController>();
+	/** Prompts or resources the server said changed since the gateway last acknowledged them. */
+	const primitivesChanged = new Set<McpListedPrimitive>();
+	const listChangedHandlers = new Set<(primitive: McpListedPrimitive) => void>();
+
+	const declaresListChanged = (key: "tools" | "prompts" | "resources"): boolean =>
+		info !== null && isRecord(info.capabilities[key]) && info.capabilities[key].listChanged === true;
+
+	const noteListChanged = (method: string): void => {
+		if (method === "notifications/tools/list_changed") {
+			if (declaresListChanged("tools")) toolsChangedFlag = true;
+			return;
+		}
+		if (method === "notifications/events/list_changed") {
+			if (info !== null && mcpEventsOffered(info.capabilities)?.listChanged === true) eventsChangedFlag = true;
+			return;
+		}
+		const primitive: McpListedPrimitive | null =
+			method === "notifications/prompts/list_changed"
+				? "prompts"
+				: method === "notifications/resources/list_changed"
+					? "resources"
+					: null;
+		if (primitive === null || !declaresListChanged(primitive)) return;
+		primitivesChanged.add(primitive);
+		for (const handler of listChangedHandlers) {
+			try {
+				handler(primitive);
+			} catch {
+				// A listener's failure never reaches the protocol.
+			}
+		}
+	};
 
 	/** The error every later request gets once the client cannot serve it. */
 	const closedError = (): McpError => failure ?? new McpError("closed", `mcp server ${id} is closed`);
@@ -612,6 +746,7 @@ export function createMcpProtocolClient(
 		status = "failed";
 		options.signal?.removeEventListener("abort", onParentAbort);
 		failure = error;
+		lifetime.abort();
 		rejectAllPending(error);
 		options.onFailure?.(error);
 	};
@@ -776,25 +911,34 @@ export function createMcpProtocolClient(
 		}
 		if (frame.kind === "request") {
 			const request = frame.message;
-			const outcome = send({
+			// A legacy server asks for input with a request of its own (2025-11-25 client/elicitation);
+			// a modern one asks through input_required, so its requests stay unknown.
+			if (request.method === "elicitation/create" && elicitationHandler !== undefined && era === "legacy") {
+				void answerServerElicitation(request.id as JsonRpcId, request.params);
+				return;
+			}
+			reply({
 				jsonrpc: "2.0",
 				id: request.id as JsonRpcId,
 				error: { code: JSON_RPC_METHOD_NOT_FOUND, message: `method not found: ${request.method}` },
 			});
-			if (outcome.kind === "oversized") {
-				fail(
-					new McpError(
-						"overload",
-						`mcp server ${id} sent a request whose ${outcome.bytes}-byte reply exceeds the ${outcome.cap}-byte outbound cap`,
-					),
-				);
-				void close();
-			}
 			return;
 		}
 		notifications += 1;
 		const { method, params } = frame.message;
 		const meta = isRecord(params) && isRecord(params._meta) ? params._meta : null;
+		if (method === "notifications/cancelled" && isRecord(params)) {
+			const withdrawn = serverElicitations.get(params.requestId as JsonRpcId);
+			if (withdrawn !== undefined) {
+				withdrawn.abort();
+				return;
+			}
+		}
+		if (method === "notifications/elicitation/complete") {
+			// An unknown or already finished id is ignored (2025-11-25 client/elicitation, Completion Notifications).
+			if (isRecord(params) && typeof params.elicitationId === "string") urlCompletions.get(params.elicitationId)?.abort();
+			return;
+		}
 		// On stdio, a server terminates a subscriptions/listen stream with
 		// notifications/cancelled referencing the listen request's id (2026-07-28 basic/patterns/cancellation).
 		if (method === "notifications/cancelled") {
@@ -835,7 +979,8 @@ export function createMcpProtocolClient(
 			routeSubscription(tagged, method, params);
 			return;
 		}
-		if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+		// Modern list_changed arrives only on an acknowledged subscriptions/listen stream (MCP 2026-07-28).
+		if (era === "legacy") noteListChanged(method);
 		if (method === "notifications/progress") routeProgress(params);
 		for (const handler of notificationHandlers.get(method) ?? []) {
 			try {
@@ -850,10 +995,10 @@ export function createMcpProtocolClient(
 	 * The modern per-request envelope. The tasks extension is declared only on
 	 * requests whose task this client drives to a terminal state (`tools/call`
 	 * and the `tasks/*` methods), so a server never hands a task to a request
-	 * that cannot follow it. The skills extension is declared on `skills/*` and
-	 * `resources/*` requests to a server whose capabilities enable it. Nothing
-	 * is added on the legacy path, where initialize declared the skills
-	 * extension once.
+	 * that cannot follow it. Other extensions come from the one request that
+	 * declares them, such as the skills extension on a skill's `skills/*` and
+	 * resource reads, never on a generic read. Nothing is added on the legacy
+	 * path, where initialize declared the skills extension once.
 	 */
 	const tasksRevisionUnknown = (): boolean => {
 		const extensions = isRecord(info?.capabilities?.extensions) ? info.capabilities.extensions : null;
@@ -862,16 +1007,14 @@ export function createMcpProtocolClient(
 		return !isRecord(declared) || declared.revision !== undefined;
 	};
 
-	const withEnvelope = (method: string, params: unknown): unknown => {
+	const withEnvelope = (method: string, params: unknown, declared?: Record<string, unknown>): unknown => {
 		if (era !== "modern" && method !== "server/discover") return params;
 		const base = isRecord(params) ? params : {};
 		const meta = isRecord(base._meta) ? base._meta : {};
-		const extensions: Record<string, Record<string, never>> = {};
-		if ((method === "tools/call" || method.startsWith("tasks/")) && !tasksRevisionUnknown()) {
+		const extensions: Record<string, unknown> = { ...declared };
+		const drivesTasks = method === "tools/call" || method.startsWith("tasks/");
+		if (drivesTasks && !tasksRevisionUnknown()) {
 			extensions[MCP_TASKS_EXTENSION] = {};
-		}
-		if ((method.startsWith("skills/") || method.startsWith("resources/")) && skillsSettings() !== null) {
-			extensions[MCP_SKILLS_EXTENSION] = {};
 		}
 		// MCP Events is declared on events/* and on the listen stream that opts into its list changes.
 		if (
@@ -883,15 +1026,35 @@ export function createMcpProtocolClient(
 		) {
 			extensions[MCP_EVENTS_EXTENSION] = {};
 		}
+		// Elicitation is declared only on requests that actually handle input_required (basic/patterns/mrtr).
+		const asksInput =
+			elicitationHandler !== undefined && (drivesTasks || method === "resources/read" || method === "prompts/get");
 		return {
 			...base,
 			_meta: {
 				...meta,
 				[MCP_META_PROTOCOL_VERSION]: MCP_MODERN_PROTOCOL_VERSION,
 				[MCP_META_CLIENT_INFO]: { name: MCP_CLIENT_NAME, version: clientVersion },
-				[MCP_META_CLIENT_CAPABILITIES]: Object.keys(extensions).length > 0 ? { extensions } : {},
+				[MCP_META_CLIENT_CAPABILITIES]: {
+					...(Object.keys(extensions).length > 0 ? { extensions } : {}),
+					...(asksInput ? { elicitation: ELICITATION_CAPABILITY } : {}),
+				},
 			},
 		};
+	};
+
+	/** Answer a server's request, failing the client when the answer cannot be queued. */
+	const reply = (message: McpOutboundMessage): void => {
+		const outcome = send(message);
+		if (outcome.kind === "oversized") {
+			fail(
+				new McpError(
+					"overload",
+					`mcp server ${id} sent a request whose ${outcome.bytes}-byte reply exceeds the ${outcome.cap}-byte outbound cap`,
+				),
+			);
+			void close();
+		}
 	};
 
 	const request = (
@@ -900,9 +1063,10 @@ export function createMcpProtocolClient(
 		timeoutMs: number,
 		signal?: AbortSignal,
 		onId?: (requestId: number) => void,
+		extensions?: Record<string, unknown>,
 	): Promise<unknown> =>
 		new Promise<unknown>((resolve, reject) => {
-			const params = withEnvelope(method, rawParams);
+			const params = withEnvelope(method, rawParams, extensions);
 			if (signal?.aborted) {
 				reject(new McpError("aborted", `${method} aborted before it was sent`));
 				return;
@@ -919,6 +1083,9 @@ export function createMcpProtocolClient(
 			}
 			const requestId = nextId++;
 			let timer: ReturnType<typeof setTimeout> | null = null;
+			let remainingMs = timeoutMs;
+			let armedAt = 0;
+			let holds = 0;
 			const settle = (finish: () => void): void => {
 				if (!pending.has(requestId)) return;
 				pending.delete(requestId);
@@ -970,17 +1137,36 @@ export function createMcpProtocolClient(
 				);
 			};
 			const onAbort = (): void => cancel(new McpError("aborted", `${method} aborted`));
+			const arm = (): void => {
+				armedAt = performance.now();
+				timer = setTimeout(
+					() => cancel(new McpError("timeout", `${method} timed out after ${timeoutMs}ms`)),
+					Math.max(1, Math.ceil(remainingMs)),
+				);
+			};
 			pending.set(requestId, {
 				method,
 				sent: false,
 				resolve: (value) => settle(() => resolve(value)),
 				reject: (error) => settle(() => reject(error)),
 				abandon: () => settle(() => {}),
+				hold: () => {
+					if (timeoutMs <= 0 || cancelling || !pending.has(requestId)) return () => {};
+					if (holds++ === 0 && timer !== null) {
+						clearTimeout(timer);
+						timer = null;
+						remainingMs -= performance.now() - armedAt;
+					}
+					let released = false;
+					return () => {
+						if (released) return;
+						released = true;
+						if (--holds === 0 && !cancelling && pending.has(requestId)) arm();
+					};
+				},
 			});
 			onId?.(requestId);
-			if (timeoutMs > 0) {
-				timer = setTimeout(() => cancel(new McpError("timeout", `${method} timed out after ${timeoutMs}ms`)), timeoutMs);
-			}
+			if (timeoutMs > 0) arm();
 			signal?.addEventListener("abort", onAbort, { once: true });
 			const mirrored =
 				method === "tools/call" && isRecord(params) && typeof params.name === "string"
@@ -1088,20 +1274,21 @@ export function createMcpProtocolClient(
 	};
 
 	/**
-	 * A modern server that announces tools.listChanged is asked for the change
-	 * stream at once (MCP 2026-07-28 basic/patterns/subscriptions). The stream
-	 * lives as long as this client; a restarted server gets a new client, which
-	 * listens again.
+	 * A modern server is asked for the change stream at once, for each of
+	 * tools, prompts and resources whose capability announces listChanged
+	 * (MCP 2026-07-28 basic/patterns/subscriptions). The stream lives as long
+	 * as this client; a restarted server gets a new client, which listens again.
 	 */
-	const listenForToolChanges = (capabilities: Record<string, unknown>): void => {
-		const filter: McpSubscriptionFilter = {};
-		if (isRecord(capabilities.tools) && capabilities.tools.listChanged === true) filter.toolsListChanged = true;
-		if (mcpEventsOffered(capabilities)?.listChanged === true) filter.eventsListChanged = true;
+	const listenForListChanges = (capabilities: Record<string, unknown>): void => {
+		const announces = (key: string): boolean => isRecord(capabilities[key]) && capabilities[key].listChanged === true;
+		const filter: McpSubscriptionFilter = {
+			...(announces("tools") ? { toolsListChanged: true } : {}),
+			...(announces("prompts") ? { promptsListChanged: true } : {}),
+			...(announces("resources") ? { resourcesListChanged: true } : {}),
+			...(mcpEventsOffered(capabilities)?.listChanged === true ? { eventsListChanged: true } : {}),
+		};
 		if (Object.keys(filter).length === 0) return;
-		const stream = subscribe(filter, (method) => {
-			if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
-			if (method === "notifications/events/list_changed") eventsChangedFlag = true;
-		});
+		const stream = subscribe(filter, noteListChanged);
 		stream.acknowledged.catch(() => {
 			// A server that refuses or ends the stream still serves calls; the next discovery lists again.
 		});
@@ -1125,7 +1312,7 @@ export function createMcpProtocolClient(
 				http?.settleEra("modern", MCP_MODERN_PROTOCOL_VERSION);
 				info = discovered;
 				if (status === "starting") status = "ready";
-				listenForToolChanges(discovered.capabilities);
+				listenForListChanges(discovered.capabilities);
 				return discovered;
 			};
 			const handshake = (): Promise<unknown> =>
@@ -1133,7 +1320,10 @@ export function createMcpProtocolClient(
 					"initialize",
 					{
 						protocolVersion: MCP_PROTOCOL_VERSION,
-						capabilities: { extensions: { [MCP_SKILLS_EXTENSION]: {} } },
+						capabilities: {
+							extensions: { [MCP_SKILLS_EXTENSION]: {} },
+							...(elicitationHandler !== undefined ? { elicitation: ELICITATION_CAPABILITY } : {}),
+						},
 						clientInfo: { name: MCP_CLIENT_NAME, version: clientVersion },
 					},
 					initializeTimeoutMs,
@@ -1244,6 +1434,57 @@ export function createMcpProtocolClient(
 		await initialize(signal);
 	};
 
+	/**
+	 * Page through one list method, keeping at most `cap` entries; each page
+	 * carries its own freshness and the listing is as fresh as its stalest
+	 * part. A legacy server's method-not-found reads as an empty list when `optional`.
+	 */
+	const pagedList = async <T>(
+		method: string,
+		key: string,
+		parse: (value: unknown) => T | McpError,
+		cap: number,
+		signal: AbortSignal | undefined,
+		optional = false,
+	): Promise<{ items: T[]; truncated: boolean; ttlMs?: number }> => {
+		const items: T[] = [];
+		let cursor: string | undefined;
+		let pages = 0;
+		let ttlMs = era === "modern" ? (info?.ttlMs ?? 0) : undefined;
+		const finish = (truncated: boolean) => ({ items, truncated, ...(ttlMs !== undefined ? { ttlMs } : {}) });
+		for (;;) {
+			pages += 1;
+			let result: unknown;
+			try {
+				result = await request(method, cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal);
+			} catch (error) {
+				const missing =
+					error instanceof McpError &&
+					error.code === "server" &&
+					isRecord(error.data) &&
+					error.data.code === JSON_RPC_METHOD_NOT_FOUND;
+				if (optional && pages === 1 && missing) return finish(false);
+				throw error;
+			}
+			const page = isRecord(result) ? result[key] : undefined;
+			if (!isRecord(result) || !Array.isArray(page)) {
+				throw new McpError("protocol", `${method} result lacks a ${key} array`);
+			}
+			if (ttlMs !== undefined) ttlMs = Math.min(ttlMs, freshnessOf(result.ttlMs));
+			for (const entry of page) {
+				if (items.length >= cap) return finish(true);
+				const parsed = parse(entry);
+				if (parsed instanceof McpError) throw parsed;
+				items.push(parsed);
+			}
+			const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
+			if (next === undefined) return finish(false);
+			if (items.length >= cap || pages >= MCP_TOOL_LIST_PAGE_CAP) return finish(true);
+			cursor = next;
+		}
+	};
+
+	const SKILLS_DECLARED = { [MCP_SKILLS_EXTENSION]: {} };
 	const skillsSettings = () => (info === null ? null : mcpSkillsSettings(info.capabilities).settings);
 
 	/** One skills-extension request; a modern answer must be complete, since nothing here follows a task or input round. */
@@ -1253,7 +1494,7 @@ export function createMcpProtocolClient(
 		signal?: AbortSignal,
 	): Promise<unknown> => {
 		await ensureReady(signal);
-		const result = await request(method, params, requestTimeoutMs, signal);
+		const result = await request(method, params, requestTimeoutMs, signal, undefined, SKILLS_DECLARED);
 		if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
 			throw new McpError(
 				"protocol",
@@ -1270,7 +1511,7 @@ export function createMcpProtocolClient(
 			settings,
 			listSkills: (cursor, signal) => skillsRequest("skills/list", cursor === undefined ? {} : { cursor }, signal),
 			getSkill: (uri, signal) => skillsRequest("skills/get", { uri }, signal),
-			readResource: (uri, signal) => skillsRequest("resources/read", { uri }, signal),
+			readResource: (uri, signal) => readResource(uri, { ...(signal ? { signal } : {}), extensions: SKILLS_DECLARED }),
 			readDirectory: (uri, cursor, signal) =>
 				settings.directoryRead
 					? skillsRequest("resources/directory/read", cursor === undefined ? { uri } : { uri, cursor }, signal)
@@ -1335,6 +1576,137 @@ export function createMcpProtocolClient(
 	const listTools = (signal?: AbortSignal): Promise<McpToolListing> =>
 		withDiscoverySignal(signal, () => listToolsOnce(signal));
 
+	const listResources = async (signal?: AbortSignal): Promise<McpResourceListing> => {
+		if (signal?.aborted) throw new McpError("aborted", "resources/list aborted before it was sent");
+		await ensureReady(signal);
+		const resources = await pagedList<McpResourceDescriptor>(
+			"resources/list",
+			"resources",
+			parseResourceDescriptor,
+			MCP_RESOURCE_LIST_CAP,
+			signal,
+		);
+		const templates = await pagedList<McpResourceTemplateDescriptor>(
+			"resources/templates/list",
+			"resourceTemplates",
+			parseResourceTemplate,
+			MCP_RESOURCE_LIST_CAP - resources.items.length,
+			signal,
+			true,
+		);
+		const ttls = [resources.ttlMs, templates.ttlMs].filter((ttl): ttl is number => ttl !== undefined);
+		return {
+			resources: resources.items,
+			templates: templates.items,
+			truncated: resources.truncated || templates.truncated,
+			...(ttls.length > 0 ? { ttlMs: Math.min(...ttls) } : {}),
+		};
+	};
+
+	const listPrompts = async (signal?: AbortSignal): Promise<McpPromptListing> => {
+		if (signal?.aborted) throw new McpError("aborted", "prompts/list aborted before it was sent");
+		await ensureReady(signal);
+		const prompts = await pagedList<McpPromptDescriptor>(
+			"prompts/list",
+			"prompts",
+			parsePromptDescriptor,
+			MCP_PROMPT_LIST_CAP,
+			signal,
+		);
+		return {
+			prompts: prompts.items,
+			truncated: prompts.truncated,
+			...(prompts.ttlMs !== undefined ? { ttlMs: prompts.ttlMs } : {}),
+		};
+	};
+
+	/**
+	 * One request that may answer `input_required` (resources/read, prompts/get):
+	 * retried with the server's requestState until it completes, inside one
+	 * timeout measured from the first send.
+	 */
+	const requestWithRetries = async (
+		method: string,
+		first: Record<string, unknown>,
+		options: McpRequestOptions,
+	): Promise<unknown> => {
+		const { signal, extensions } = options;
+		if (signal?.aborted) throw new McpError("aborted", `${method} aborted before it was sent`);
+		await ensureReady(signal);
+		const timeoutMs = clampTimerDelayMs(requestTimeoutMs);
+		const startedAt = performance.now();
+		const call: ActiveCall = {
+			...(signal !== undefined ? { signal } : {}),
+			outcomes: [],
+			pausedMs: 0,
+			consentedUrls: new Set(),
+		};
+		const promptSignal = signal === undefined ? lifetime.signal : AbortSignal.any([signal, lifetime.signal]);
+		let params = first;
+		activeCalls.add(call);
+		try {
+			for (let round = 1; ; round += 1) {
+				let budget = timeoutMs;
+				if (round > 1 && timeoutMs > 0) {
+					budget = Math.ceil(startedAt + call.pausedMs + timeoutMs - performance.now());
+					if (budget <= 0) throw new McpError("timeout", `${method} timed out after ${timeoutMs}ms`);
+				}
+				const result = await request(method, params, budget, signal, undefined, extensions);
+				if (era !== "modern" || !isRecord(result) || result.resultType === undefined || result.resultType === "complete") {
+					return result;
+				}
+				if (result.resultType !== "input_required") {
+					throw new McpError(
+						"protocol",
+						`${method} returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
+					);
+				}
+				params = await answerInputRequired(method, params, result, round, promptSignal, call);
+			}
+		} finally {
+			activeCalls.delete(call);
+		}
+	};
+
+	const readResource = async (uri: string, options: McpRequestOptions = {}): Promise<McpResourceRead> => {
+		const result = await requestWithRetries("resources/read", { uri }, options);
+		const contents = parseResourceRead(result);
+		if (contents instanceof McpError) throw contents;
+		return {
+			contents,
+			...(era === "modern" && isRecord(result) ? { ttlMs: freshnessOf(result.ttlMs) } : {}),
+		};
+	};
+
+	const getPrompt = async (
+		name: string,
+		args: Record<string, string>,
+		options: McpRequestOptions = {},
+	): Promise<McpPromptResult> => {
+		const params = Object.keys(args).length > 0 ? { name, arguments: args } : { name };
+		const result = await requestWithRetries("prompts/get", params, options);
+		const parsed = parsePromptResult(result);
+		if (parsed instanceof McpError) throw parsed;
+		return parsed;
+	};
+
+	const complete = async (
+		ref: McpCompletionReference,
+		argument: { name: string; value: string },
+		context?: Record<string, string>,
+		signal?: AbortSignal,
+	): Promise<McpCompletion> => {
+		await ensureReady(signal);
+		const params = {
+			ref,
+			argument,
+			...(context !== undefined && Object.keys(context).length > 0 ? { context: { arguments: context } } : {}),
+		};
+		const parsed = parseCompletion(await request("completion/complete", params, requestTimeoutMs, signal));
+		if (parsed instanceof McpError) throw parsed;
+		return parsed;
+	};
+
 	/** Route this call's progress notifications to its caller while the call runs (basic/utilities/progress). */
 	const trackProgress = (onProgress: (update: McpProgressUpdate) => void): { token: string; release(): void } => {
 		const token = `pancode-${nextProgressToken++}`;
@@ -1343,29 +1715,133 @@ export function createMcpProtocolClient(
 	};
 
 	/**
-	 * The one place an `input_required` answer (MCP 2026-07-28
-	 * basic/patterns/mrtr) is handled; it returns the params of the retry.
-	 * PanCode declares no client capability a server could ask for through
-	 * `inputRequests`, so a server that asks anyway breaks the protocol, and
-	 * a bare `requestState` is echoed back verbatim under a new request id.
+	 * Put one elicitation in front of the operator and read the answer into the
+	 * ElicitResult the server is sent. A request PanCode will not show (a field
+	 * asking for a secret, a schema richer than a flat form, a link it would not
+	 * open) is declined for the operator with the reason, and an accepted form
+	 * is checked against its schema before it leaves (client/elicitation, Form
+	 * Mode Security). `paused` receives the time the operator took, which no
+	 * timeout counts. `invalid` is a request that breaks the protocol.
 	 */
-	const answerInputRequired = (
+	const elicit = async (
+		params: unknown,
+		legacy: boolean,
+		signal: AbortSignal,
+		calls: readonly ActiveCall[],
+		awaitCompletion: boolean,
+	): Promise<{ result: McpElicitResult; outcome: McpElicitationOutcome } | { invalid: string }> => {
+		const parsed = parseElicitationRequest(params, legacy);
+		if (parsed.kind === "invalid") return { invalid: parsed.reason };
+		if (parsed.kind === "declined")
+			return { result: { action: "decline" }, outcome: { mode: parsed.mode, action: "decline", reason: parsed.reason } };
+		if (elicitationHandler === undefined) return { invalid: "PanCode declared no elicitation capability" };
+		const asked = parsed.request;
+		const url = asked.mode === "url" ? asked.url : null;
+		const completion =
+			awaitCompletion && asked.mode === "url" && asked.elicitationId !== undefined ? new AbortController() : null;
+		if (completion !== null && asked.mode === "url" && asked.elicitationId !== undefined)
+			urlCompletions.set(asked.elicitationId, completion);
+		const context: McpElicitationContext = {
+			signal,
+			awaitCompletion,
+			consented: awaitCompletion && url !== null && calls.some((call) => call.consentedUrls.has(url)),
+			...(completion !== null ? { completed: completion.signal } : {}),
+		};
+		const cancelled = (reason: string) => ({
+			result: { action: "cancel" as const },
+			outcome: { mode: asked.mode, action: "cancel" as const, reason },
+		});
+		const began = performance.now();
+		let answer: McpElicitResult;
+		try {
+			answer = await elicitationHandler(asked, context);
+		} catch (error) {
+			if (signal.aborted) throw new McpError("aborted", "elicitation aborted");
+			return cancelled(`the prompt failed: ${errorMessage(error)}`);
+		} finally {
+			const pausedMs = performance.now() - began;
+			for (const call of calls) call.pausedMs += pausedMs;
+			if (asked.mode === "url" && asked.elicitationId !== undefined) urlCompletions.delete(asked.elicitationId);
+		}
+		if (signal.aborted) throw new McpError("aborted", "elicitation aborted");
+		if (answer.action === "decline" || answer.action === "cancel")
+			return { result: { action: answer.action }, outcome: { mode: asked.mode, action: answer.action } };
+		if (answer.action !== "accept") return cancelled("the prompt returned no action");
+		if (asked.mode === "url") {
+			for (const call of calls) call.consentedUrls.add(asked.url);
+			return { result: { action: "accept" }, outcome: { mode: "url", action: "accept" } };
+		}
+		const content = answer.content ?? {};
+		const errors = formContentErrors(asked, content);
+		if (errors.length > 0) return cancelled(`the answer did not fit the form: ${errors.join("; ")}`);
+		return { result: { action: "accept", content }, outcome: { mode: "form", action: "accept" } };
+	};
+
+	/**
+	 * Fulfil the `inputRequests` of an input_required result or task
+	 * (basic/patterns/mrtr), each in turn. Elicitation is the only capability
+	 * PanCode declares, so a request for anything else (sampling, roots) breaks
+	 * the protocol and fails the call before the operator is asked anything.
+	 */
+	const fulfilInputRequests = async (
 		method: string,
-		params: Record<string, unknown>,
-		result: Record<string, unknown>,
-		round: number,
-	): Record<string, unknown> => {
-		const asked = isRecord(result.inputRequests) ? Object.values(result.inputRequests) : [];
-		if (asked.length > 0) {
-			const methods = [
-				...new Set(asked.map((entry) => (isRecord(entry) && typeof entry.method === "string" ? entry.method : "?"))),
-			];
+		entries: ReadonlyArray<[string, unknown]>,
+		signal: AbortSignal,
+		call: ActiveCall,
+	): Promise<Record<string, McpElicitResult>> => {
+		const methods = [
+			...new Set(entries.map(([, entry]) => (isRecord(entry) && typeof entry.method === "string" ? entry.method : "?"))),
+		];
+		if (elicitationHandler === undefined) {
 			throw new McpError(
 				"protocol",
 				`mcp server ${id} answered ${method} with input_required asking for ${serverText(methods.join(", "))}, but PanCode declared no client capabilities, so a server must not ask it for input`,
 			);
 		}
-		if (typeof result.requestState !== "string") {
+		const foreign = methods.filter((name) => name !== "elicitation/create");
+		if (foreign.length > 0) {
+			throw new McpError(
+				"protocol",
+				`mcp server ${id} answered ${method} with input_required asking for ${serverText(foreign.join(", "))}, but PanCode declared only elicitation, so a server must not ask it for that`,
+			);
+		}
+		const responses: Record<string, McpElicitResult> = {};
+		for (const [key, entry] of entries) {
+			const answered = await elicit(isRecord(entry) ? entry.params : undefined, false, signal, [call], true);
+			if ("invalid" in answered) {
+				throw new McpError(
+					"protocol",
+					`mcp server ${id} answered ${method} with an elicitation PanCode cannot read: ${serverText(answered.invalid)}`,
+				);
+			}
+			responses[key] = answered.result;
+			call.outcomes.push(answered.outcome);
+		}
+		return responses;
+	};
+
+	/**
+	 * The one place an `input_required` answer (MCP 2026-07-28
+	 * basic/patterns/mrtr) is handled; it returns the params of the retry: the
+	 * original params with `inputResponses` keyed exactly as the server asked,
+	 * and its `requestState` echoed verbatim, or none when it sent none.
+	 */
+	const answerInputRequired = async (
+		method: string,
+		params: Record<string, unknown>,
+		result: Record<string, unknown>,
+		round: number,
+		signal: AbortSignal,
+		call: ActiveCall,
+	): Promise<Record<string, unknown>> => {
+		if (result.inputRequests !== undefined && !isRecord(result.inputRequests)) {
+			throw new McpError(
+				"protocol",
+				`mcp server ${id} answered ${method} with input_required whose inputRequests is not an object`,
+			);
+		}
+		const asked = isRecord(result.inputRequests) ? Object.entries(result.inputRequests) : [];
+		if (asked.length === 0 && typeof result.requestState !== "string") {
 			throw new McpError(
 				"protocol",
 				`mcp server ${id} answered ${method} with input_required carrying neither inputRequests nor a requestState`,
@@ -1377,8 +1853,94 @@ export function createMcpProtocolClient(
 				`mcp server ${id} answered ${method} with input_required ${round} times in a row; PanCode stops retrying after ${MCP_INPUT_REQUIRED_ROUNDS}`,
 			);
 		}
-		const { requestState: _previous, ...base } = params;
-		return { ...base, requestState: result.requestState };
+		const inputResponses = asked.length > 0 ? await fulfilInputRequests(method, asked, signal, call) : null;
+		const { requestState: _previous, inputResponses: _answered, ...base } = params;
+		return {
+			...base,
+			...(inputResponses !== null ? { inputResponses } : {}),
+			...(typeof result.requestState === "string" ? { requestState: result.requestState } : {}),
+		};
+	};
+
+	/** The URL elicitations a legacy server's -32042 error asks for before its request is retried, or null. */
+	const urlElicitationsRequired = (error: unknown): unknown[] | null => {
+		if (elicitationHandler === undefined || era !== "legacy") return null;
+		if (!(error instanceof McpError) || error.code !== "server" || !isRecord(error.data)) return null;
+		const { code, data } = error.data;
+		if (code !== MCP_URL_ELICITATION_REQUIRED || !isRecord(data) || !Array.isArray(data.elicitations)) return null;
+		return data.elicitations.length > 0 ? data.elicitations : null;
+	};
+
+	/**
+	 * Put each URL of a -32042 error in front of the operator (2025-11-25
+	 * client/elicitation, URL Elicitation Required Error); null means every one
+	 * is done and the request is retried. A URL the operator turns down ends
+	 * the call with the server's error, there being no request to answer.
+	 */
+	const answerUrlElicitationsRequired = async (
+		error: McpError,
+		elicitations: unknown[],
+		signal: AbortSignal,
+		call: ActiveCall,
+	): Promise<McpToolCallResult | null> => {
+		for (const entry of elicitations) {
+			const answered =
+				isRecord(entry) && entry.mode === "url"
+					? await elicit(entry, true, signal, [call], true)
+					: { invalid: "an elicitation it lists is not URL mode" };
+			if ("invalid" in answered) {
+				throw new McpError(
+					"protocol",
+					`mcp server ${id} answered tools/call with a URL-elicitation-required error PanCode cannot read: ${serverText(answered.invalid)}`,
+				);
+			}
+			call.outcomes.push(answered.outcome);
+			if (answered.result.action !== "accept") {
+				const text = cutUtf8(error.message, DEFAULT_RESULT_TEXT_BYTES);
+				return { content: [{ type: "text", text }], isError: true, text, textTruncated: false };
+			}
+		}
+		return null;
+	};
+
+	/**
+	 * A legacy server's own `elicitation/create` request (2025-11-25
+	 * client/elicitation). It belongs to the tools/call in flight, whose
+	 * timeout stops while the operator answers; with none in flight nobody
+	 * can tell what asked, so it is cancelled unseen. A malformed request or
+	 * an undeclared mode gets -32602.
+	 */
+	const answerServerElicitation = async (requestId: JsonRpcId, params: unknown): Promise<void> => {
+		const calls = [...activeCalls];
+		if (calls.length === 0) {
+			reply({ jsonrpc: "2.0", id: requestId, result: { action: "cancel" } });
+			return;
+		}
+		const withdrawn = new AbortController();
+		serverElicitations.set(requestId, withdrawn);
+		const signal = AbortSignal.any([
+			withdrawn.signal,
+			lifetime.signal,
+			...calls.flatMap((call) => (call.signal ? [call.signal] : [])),
+		]);
+		const releases = [...pending.values()].filter((entry) => entry.method === "tools/call").map((entry) => entry.hold());
+		try {
+			const answered = await elicit(params, true, signal, calls, false);
+			if ("invalid" in answered) {
+				reply({ jsonrpc: "2.0", id: requestId, error: { code: JSON_RPC_INVALID_PARAMS, message: answered.invalid } });
+				return;
+			}
+			for (const call of calls) call.outcomes.push(answered.outcome);
+			reply({ jsonrpc: "2.0", id: requestId, result: answered.result });
+		} catch {
+			// The asking call was aborted: it is told the operator dismissed the prompt. A
+			// withdrawn request or a closed client is owed nothing.
+			if (!withdrawn.signal.aborted && !lifetime.signal.aborted)
+				reply({ jsonrpc: "2.0", id: requestId, result: { action: "cancel" } });
+		} finally {
+			serverElicitations.delete(requestId);
+			for (const release of releases) release();
+		}
 	};
 
 	/** Read a final tools/call answer and check its structuredContent against the tool's outputSchema. */
@@ -1402,59 +1964,84 @@ export function createMcpProtocolClient(
 		await ensureReady(signal);
 		const timeoutMs = clampTimerDelayMs(callOptions.timeoutMs ?? requestTimeoutMs);
 		const startedAt = performance.now();
+		const call: ActiveCall = {
+			...(signal !== undefined ? { signal } : {}),
+			outcomes: [],
+			pausedMs: 0,
+			consentedUrls: new Set(),
+		};
+		const promptSignal = signal === undefined ? lifetime.signal : AbortSignal.any([signal, lifetime.signal]);
+		const finished = (result: McpToolCallResult): McpToolCallResult =>
+			call.outcomes.length > 0 ? { ...result, elicitations: [...call.outcomes] } : result;
 		let params: Record<string, unknown> = { name, arguments: args };
 		let relisted = false;
-		for (let round = 1; ; round += 1) {
-			let budget = timeoutMs;
-			if (round > 1 && timeoutMs > 0) {
-				budget = Math.ceil(startedAt + timeoutMs - performance.now());
-				if (budget <= 0) throw new McpError("timeout", `tools/call timed out after ${timeoutMs}ms`);
-			}
-			// Each request round gets its own progressToken so a retry under MRTR starts with a fresh counter.
-			const progress = callOptions.onProgress === undefined ? null : trackProgress(callOptions.onProgress);
-			try {
-				const sent = progress === null ? params : { ...params, _meta: { progressToken: progress.token } };
-				let result: unknown;
-				try {
-					result = await request("tools/call", sent, budget, signal);
-				} catch (error) {
-					// A HeaderMismatch means the listing PanCode mirrored from is stale:
-					// list again and send the call once more (streamable-http, Server Behavior).
-					const answered = error instanceof McpError && error.code === "server" && isRecord(error.data);
-					if (!answered || relisted || !mirrorsHeaders() || error.data.code !== MCP_HEADER_MISMATCH) throw error;
-					relisted = true;
-					toolsChangedFlag = true;
-					const listing = await listToolsOnce(signal);
-					if (!listing.tools.some((entry) => entry.name === name)) {
-						const dropped = listing.dropped?.find((entry) => entry.name === name);
-						throw new McpError(
-							"server",
-							dropped !== undefined
-								? `tools/call (${name}) refused after HeaderMismatch relist: tool dropped (${dropped.reason})`
-								: `tools/call (${name}) refused after HeaderMismatch relist: server no longer lists tool ${name}`,
-							error.data,
-						);
-					}
-					const refusal = callOptions.onHeaderMismatchRelist?.(listing) ?? null;
-					if (refusal !== null) throw new McpError("server", refusal, error.data);
-					round -= 1;
-					continue;
+		let urlRetried = false;
+		activeCalls.add(call);
+		try {
+			for (let round = 1; ; round += 1) {
+				let budget = timeoutMs;
+				if (round > 1 && timeoutMs > 0) {
+					// The operator's time answering an elicitation is not the server's time.
+					budget = Math.ceil(startedAt + call.pausedMs + timeoutMs - performance.now());
+					if (budget <= 0) throw new McpError("timeout", `tools/call timed out after ${timeoutMs}ms`);
 				}
-				if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
-					if (result.resultType === "task") return await awaitTask(name, result, startedAt, timeoutMs, signal);
-					if (result.resultType === "input_required") {
-						params = answerInputRequired("tools/call", params, result, round);
+				// Each request round gets its own progressToken so a retry under MRTR starts with a fresh counter.
+				const progress = callOptions.onProgress === undefined ? null : trackProgress(callOptions.onProgress);
+				try {
+					const sent = progress === null ? params : { ...params, _meta: { progressToken: progress.token } };
+					let result: unknown;
+					try {
+						result = await request("tools/call", sent, budget, signal);
+					} catch (error) {
+						// A HeaderMismatch means the listing PanCode mirrored from is stale:
+						// list again and send the call once more (streamable-http, Server Behavior).
+						const answered = error instanceof McpError && error.code === "server" && isRecord(error.data);
+						if (answered && !relisted && mirrorsHeaders() && error.data.code === MCP_HEADER_MISMATCH) {
+							relisted = true;
+							toolsChangedFlag = true;
+							const listing = await listToolsOnce(signal);
+							if (!listing.tools.some((entry) => entry.name === name)) {
+								const dropped = listing.dropped?.find((entry) => entry.name === name);
+								throw new McpError(
+									"server",
+									dropped !== undefined
+										? `tools/call (${name}) refused after HeaderMismatch relist: tool dropped (${dropped.reason})`
+										: `tools/call (${name}) refused after HeaderMismatch relist: server no longer lists tool ${name}`,
+									error.data,
+								);
+							}
+							const refusal = callOptions.onHeaderMismatchRelist?.(listing) ?? null;
+							if (refusal !== null) throw new McpError("server", refusal, error.data);
+							round -= 1;
+							continue;
+						}
+						const elicitations = urlElicitationsRequired(error);
+						if (elicitations === null || urlRetried) throw error;
+						const declined = await answerUrlElicitationsRequired(error as McpError, elicitations, promptSignal, call);
+						if (declined !== null) return finished(declined);
+						// One retry once every URL is done; a second -32042 for the call is its error.
+						urlRetried = true;
 						continue;
 					}
-					throw new McpError(
-						"protocol",
-						`tools/call returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
-					);
+					if (era === "modern" && isRecord(result) && result.resultType !== undefined && result.resultType !== "complete") {
+						if (result.resultType === "task")
+							return finished(await awaitTask(name, result, startedAt, timeoutMs, signal, call, promptSignal));
+						if (result.resultType === "input_required") {
+							params = await answerInputRequired("tools/call", params, result, round, promptSignal, call);
+							continue;
+						}
+						throw new McpError(
+							"protocol",
+							`tools/call returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
+						);
+					}
+					return finished(await finishToolResult(name, result));
+				} finally {
+					progress?.release();
 				}
-				return await finishToolResult(name, result);
-			} finally {
-				progress?.release();
 			}
+		} finally {
+			activeCalls.delete(call);
 		}
 	};
 
@@ -1483,7 +2070,9 @@ export function createMcpProtocolClient(
 	 * MIN_TASK_POLL_INTERVAL_MS and MAX_TASK_POLL_INTERVAL_MS, between tasks/get
 	 * requests, stops at a terminal status, and sends tasks/cancel when the turn
 	 * aborts, the call times out, the task outlives its ttlMs, or the server
-	 * asks for input this client cannot give.
+	 * asks for input this client cannot give. An input_required task's
+	 * elicitations are put to the operator once per key and answered with
+	 * tasks/update; the operator's time does not count against the call.
 	 */
 	const awaitTask = async (
 		name: string,
@@ -1491,16 +2080,32 @@ export function createMcpProtocolClient(
 		startedAt: number,
 		timeoutMs: number,
 		signal: AbortSignal | undefined,
+		call: ActiveCall,
+		promptSignal: AbortSignal,
 	): Promise<McpToolCallResult> => {
 		const first = parseTaskState(created, "tools/call", null);
 		if (first instanceof McpError) throw first;
 		const taskId = first.taskId;
-		const deadline = timeoutMs > 0 ? startedAt + timeoutMs : Number.POSITIVE_INFINITY;
+		const deadlineAt = (): number => (timeoutMs > 0 ? startedAt + call.pausedMs + timeoutMs : Number.POSITIVE_INFINITY);
+		/** Keys answered over the task's lifetime, which the server never reuses (Tasks, Input Requests). */
+		const answered = new Set<string>();
 		// The ttl counts from the server's creation; the local receipt time is a
 		// conservative stand-in that no clock skew between the two can stretch.
 		const expiresAt = first.ttlMs === null ? Number.POSITIVE_INFINITY : performance.now() + first.ttlMs;
 		const timedOut = (): McpError => new McpError("timeout", `tools/call timed out after ${timeoutMs}ms`);
 		const aborted = (): McpError => new McpError("aborted", "tools/call aborted");
+		/** A tasks/* request within what is left of the call's time, failing as the call would. */
+		const taskRequest = async (method: string, taskParams: Record<string, unknown>): Promise<unknown> => {
+			const left = deadlineAt() - performance.now();
+			if (left <= 0) throw timedOut();
+			try {
+				return await request(method, taskParams, Number.isFinite(left) ? Math.max(1, Math.ceil(left)) : 0, signal);
+			} catch (error) {
+				if (error instanceof McpError && error.code === "timeout") throw timedOut();
+				if (error instanceof McpError && error.code === "aborted") throw aborted();
+				throw error;
+			}
+		};
 		let task = first;
 		try {
 			for (;;) {
@@ -1518,12 +2123,28 @@ export function createMcpProtocolClient(
 							"server",
 							`tools/call: task ${taskId} was cancelled by the server${task.statusMessage ? `: ${task.statusMessage}` : ""}`,
 						);
-					case "input_required":
-						await cancelTask(taskId, new McpError("server", `tools/call: task ${taskId} required input`));
-						throw new McpError(
-							"server",
-							`tools/call: task ${taskId} asked for client input (elicitation or sampling), which this client does not provide; the task was cancelled`,
-						);
+					case "input_required": {
+						if (elicitationHandler === undefined) {
+							await cancelTask(taskId, new McpError("server", `tools/call: task ${taskId} required input`));
+							throw new McpError(
+								"server",
+								`tools/call: task ${taskId} asked for client input (elicitation or sampling), which this client does not provide; the task was cancelled`,
+							);
+						}
+						// A poll repeats every outstanding request; each key is put to the operator once.
+						const fresh = Object.entries(task.inputRequests ?? {}).filter(([key]) => !answered.has(key));
+						if (fresh.length === 0) break;
+						let inputResponses: Record<string, McpElicitResult>;
+						try {
+							inputResponses = await fulfilInputRequests("tasks/get", fresh, promptSignal, call);
+						} catch (error) {
+							if (error instanceof McpError && error.code === "protocol") await cancelTask(taskId, error);
+							throw error;
+						}
+						for (const [key] of fresh) answered.add(key);
+						await taskRequest("tasks/update", { taskId, inputResponses });
+						break;
+					}
 					case "working":
 						break;
 				}
@@ -1536,7 +2157,7 @@ export function createMcpProtocolClient(
 					await cancelTask(taskId, expired);
 					throw expired;
 				}
-				const remaining = deadline - now;
+				const remaining = deadlineAt() - now;
 				if (remaining <= 0) throw timedOut();
 				const interval = Math.min(
 					MAX_TASK_POLL_INTERVAL_MS,
@@ -1547,16 +2168,7 @@ export function createMcpProtocolClient(
 				} catch {
 					throw aborted();
 				}
-				const left = deadline - performance.now();
-				if (left <= 0) throw timedOut();
-				let polled: unknown;
-				try {
-					polled = await request("tasks/get", { taskId }, Number.isFinite(left) ? Math.max(1, Math.ceil(left)) : 0, signal);
-				} catch (error) {
-					if (error instanceof McpError && error.code === "timeout") throw timedOut();
-					if (error instanceof McpError && error.code === "aborted") throw aborted();
-					throw error;
-				}
+				const polled = await taskRequest("tasks/get", { taskId });
 				const next = parseTaskState(polled, "tasks/get", taskId);
 				if (next instanceof McpError) throw next;
 				task = next;
@@ -1792,6 +2404,7 @@ export function createMcpProtocolClient(
 		closePromise = (async () => {
 			options.signal?.removeEventListener("abort", onParentAbort);
 			if (status !== "failed") status = "closed";
+			lifetime.abort();
 			if (transport.started() && transport.endReported() === null) {
 				for (const streamId of [...subscriptions.keys(), ...eventStreams.keys()]) {
 					send({
@@ -1826,6 +2439,11 @@ export function createMcpProtocolClient(
 		initialize,
 		listTools,
 		callTool,
+		listResources,
+		readResource,
+		listPrompts,
+		getPrompt,
+		complete,
 		close,
 		killOwnedOnExit: () => transport.killOwnedOnExit(),
 		state: () => {
@@ -1840,8 +2458,18 @@ export function createMcpProtocolClient(
 		acknowledgeToolsChanged: () => {
 			toolsChangedFlag = false;
 		},
+		listChanged: (primitive) => primitivesChanged.has(primitive),
+		acknowledgeListChanged: (primitive) => {
+			primitivesChanged.delete(primitive);
+		},
 		notificationCount: () => notifications,
 		onNotification,
+		onListChanged: (handler) => {
+			listChangedHandlers.add(handler);
+			return () => {
+				listChangedHandlers.delete(handler);
+			};
+		},
 		subscribe,
 		stderrTail: () => transport.stderrTail(),
 		eventsOffered,

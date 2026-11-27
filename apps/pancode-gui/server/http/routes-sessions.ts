@@ -24,6 +24,12 @@ export function sessionRoutes(
 			supervisor.answerInterview(params.id, params.roundId, body),
 		),
 	);
+	register(app, hub, routes.sessionElicitation, ({ params }) => supervisor.elicitation(params.id));
+	register(app, hub, routes.answerElicitation, ({ params, body }, context) =>
+		commands.run(`elicitation:${params.id}:${params.promptId}`, idempotencyKey(context), body, async () =>
+			supervisor.answerElicitation(params.id, params.promptId, body),
+		),
+	);
 	register(app, hub, routes.permission, ({ params, body }, context) =>
 		commands.run(`permission:${params.id}:${params.permissionId}`, idempotencyKey(context), body, async () =>
 			supervisor.decide(params.id, params.permissionId, body.decision),

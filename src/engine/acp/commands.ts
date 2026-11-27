@@ -410,6 +410,11 @@ export type AcpCommandHost = Pick<SlashCommandContext, "dispatch" | "bus" | "pro
 		}>;
 		/** The session's extension runtimes; read per call because the host starts and restarts them. */
 		operatorExtensions?: () => OperatorExtensions | undefined;
+		/**
+		 * Trusted MCP servers' prompts as `/<id>:<prompt>` rows, a template's name
+		 * left out; a line naming one is sent, and submit expansion asks the server.
+		 */
+		mcpPrompts?: () => ReadonlyArray<{ name: string; description: string; argumentHint?: string }>;
 	};
 
 /** The fields of `PromptTemplateExpansion` the prompt screen reads. */
@@ -964,6 +969,9 @@ function screenAcpPromptLine(text: string, host: AcpCommandHost): AcpPromptLineV
 	if (extension?.kind === "run") return { kind: "extension", run: extension.run };
 	const template = host.expandPromptTemplate?.(trimmed, host.cwd);
 	if (template?.expanded === true) return { kind: "send", text };
+	if (template?.expanded !== false || (!template.refusal && !template.display)) {
+		if (host.mcpPrompts?.().some((prompt) => prompt.name === parsed.token)) return { kind: "send", text };
+	}
 	if (template?.display) {
 		return {
 			kind: "reference",
@@ -1032,12 +1040,13 @@ export function acpCommandControl(host: AcpCommandHost): AcpCommandControl {
 			? { jobs: () => host.jobs?.list() ?? [], jobSpend: (id: string) => host.jobs?.spend?.(id) ?? null }
 			: {}),
 		// The announcement and the command list read the same prompt listing, so a client sees one set of rows.
-		...(host.listPromptsForDisplay || host.operatorExtensions
+		...(host.listPromptsForDisplay || host.operatorExtensions || host.mcpPrompts
 			? {
-					typedCommands: () =>
-						typedLineCommands(host.operatorExtensions?.(), host.listPromptsForDisplay?.() ?? [])
-							.slice(0, MAX_PROMPT_NAMES)
-							.map(typedCommand),
+					typedCommands: () => {
+						const typed = typedLineCommands(host.operatorExtensions?.(), host.listPromptsForDisplay?.() ?? []);
+						const mcp = (host.mcpPrompts?.() ?? []).filter((row) => !typed.some((entry) => entry.name === row.name));
+						return [...typed, ...mcp].slice(0, MAX_PROMPT_NAMES).map(typedCommand);
+					},
 				}
 			: {}),
 		...(host.listPromptsForDisplay

@@ -27,6 +27,7 @@ import { DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS } from "../../core/defaults.js
 import { ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
+import type { McpElicitationHost, McpElicitResult, McpElicitValue } from "../../domains/gateway/mcp/index.js";
 import { proposeTaskBankPromotion, type TaskMemorySnapshot } from "../../domains/memory/index.js";
 import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
@@ -41,8 +42,19 @@ import {
 } from "../../tools/ask-user.js";
 import type { ToolRegistry } from "../../tools/registry-contract.js";
 import { AcpTimeoutError } from "./errors.js";
-import type { AcpBoardActions, AcpInterviewBinding, AcpInterviewChannel } from "./server-options.js";
-import { ACP_INTERVIEW_CANCEL_METHOD, ACP_INTERVIEW_META_KEY, ACP_INTERVIEW_REQUEST_METHOD } from "./types.js";
+import type {
+	AcpBoardActions,
+	AcpElicitationChannel,
+	AcpInterviewBinding,
+	AcpInterviewChannel,
+} from "./server-options.js";
+import {
+	ACP_ELICITATION_CANCEL_METHOD,
+	ACP_ELICITATION_REQUEST_METHOD,
+	ACP_INTERVIEW_CANCEL_METHOD,
+	ACP_INTERVIEW_META_KEY,
+	ACP_INTERVIEW_REQUEST_METHOD,
+} from "./types.js";
 
 export { oracleBriefingFromEntries } from "../../session-control/oracle.js";
 export { followWorkerRuns } from "../../session-control/worker-run-ledger.js";
@@ -418,6 +430,143 @@ export function createAcpInterviewChannel(
 	};
 	return {
 		ask,
+		cancel,
+		attach(next) {
+			cancel();
+			binding = next;
+			return () => {
+				if (binding === next) {
+					cancel();
+					binding = null;
+				}
+			};
+		},
+	};
+}
+
+/** The most form values a client reply may carry, past the 24 fields a form shows. */
+const MAX_ELICIT_KEYS = 32;
+
+/** A client's ElicitResult, or null when it does not carry that shape. The form is checked against its schema later. */
+function readElicitReply(value: unknown, mode: "form" | "url"): McpElicitResult | null {
+	if (!isRecord(value)) return null;
+	const { action } = value;
+	if (action === "decline" || action === "cancel") return { action };
+	if (action !== "accept") return null;
+	if (mode === "url") return { action };
+	if (!isRecord(value.content)) return null;
+	const entries = Object.entries(value.content);
+	if (entries.length > MAX_ELICIT_KEYS) return null;
+	const content: Record<string, McpElicitValue> = {};
+	for (const [key, item] of entries) {
+		const fits =
+			typeof item === "string" ||
+			typeof item === "boolean" ||
+			(typeof item === "number" && Number.isFinite(item)) ||
+			(Array.isArray(item) && item.every((entry) => typeof entry === "string"));
+		if (!fits || key.length > MAX_LABEL_CHARS) return null;
+		content[key] = item as McpElicitValue;
+	}
+	return { action, content };
+}
+
+/**
+ * MCP elicitations for an ACP client that advertised `pancode/elicitation`,
+ * bound like the interview channel. The wire carries the request PanCode
+ * already read (fields bounded, the link inspected), never the server's raw
+ * schema. With no binding, no opt-in or no session, every elicitation reads as
+ * the operator's cancel. A link the server reports finished ends the client's
+ * card as its Retry would.
+ */
+export function createAcpElicitationChannel(): AcpElicitationChannel {
+	let binding: AcpInterviewBinding | null = null;
+	const pending = new Set<() => void>();
+	const cancel = (): void => {
+		for (const abort of [...pending]) abort();
+	};
+	const elicit: McpElicitationHost = async (serverId, request, context) => {
+		const bound = binding;
+		if (bound === null || !bound.enabled()) return { action: "cancel" };
+		const sessionId = bound.sessionId();
+		if (sessionId === null || context.signal.aborted) return { action: "cancel" };
+		if (context.completed?.aborted === true) return { action: "accept" };
+		const elicitationId = `elicitation-${randomUUID()}`;
+		const timeoutMs =
+			(typeof bound.timeoutMs === "function" ? bound.timeoutMs() : bound.timeoutMs) ??
+			DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS;
+		const asked =
+			request.mode === "form"
+				? { mode: "form", message: request.message, fields: request.fields }
+				: {
+						mode: "url",
+						message: request.message,
+						url: request.url,
+						host: request.host,
+						domain: request.domain,
+						warnings: request.warnings,
+						awaitCompletion: context.awaitCompletion,
+						consented: context.consented,
+					};
+		let stopped: "aborted" | "completed" | null = null;
+		let wake = (): void => {};
+		const woken = new Promise<null>((resolve) => {
+			wake = () => resolve(null);
+		});
+		const onAbort = (): void => {
+			stopped ??= "aborted";
+			wake();
+		};
+		const onComplete = (): void => {
+			stopped ??= "completed";
+			wake();
+		};
+		context.signal.addEventListener("abort", onAbort, { once: true });
+		context.completed?.addEventListener("abort", onComplete, { once: true });
+		pending.add(onAbort);
+		try {
+			const reply = Promise.resolve()
+				.then(() =>
+					bound.transport.request<unknown>(
+						ACP_ELICITATION_REQUEST_METHOD,
+						{ sessionId, elicitationId, server: serverId, ...asked },
+						timeoutMs,
+					),
+				)
+				.then(
+					(value) => ({ kind: "reply" as const, value }),
+					(err: unknown) => ({ kind: "failed" as const, err }),
+				);
+			const outcome = await Promise.race([reply, woken]);
+			if (outcome === null || stopped !== null) {
+				bound.transport.notify(ACP_ELICITATION_CANCEL_METHOD, {
+					sessionId,
+					elicitationId,
+					...(stopped === "completed" ? { completed: true } : {}),
+				});
+				return { action: stopped === "completed" ? "accept" : "cancel" };
+			}
+			if (outcome.kind === "failed") {
+				bound.transport.notify(ACP_ELICITATION_CANCEL_METHOD, { sessionId, elicitationId });
+				if (!(outcome.err instanceof AcpTimeoutError))
+					bound.diagnostics?.(
+						`elicitation request failed: ${outcome.err instanceof Error ? outcome.err.message : String(outcome.err)}`,
+					);
+				return { action: "cancel" };
+			}
+			const result = readElicitReply(outcome.value, request.mode);
+			if (result === null) {
+				bound.diagnostics?.("elicitation reply did not match the ElicitResult contract");
+				return { action: "cancel" };
+			}
+			return result;
+		} finally {
+			context.signal.removeEventListener("abort", onAbort);
+			context.completed?.removeEventListener("abort", onComplete);
+			pending.delete(onAbort);
+		}
+	};
+	return {
+		elicit,
 		cancel,
 		attach(next) {
 			cancel();

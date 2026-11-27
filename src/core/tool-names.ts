@@ -98,10 +98,23 @@ export function isHarnessExtensionToolName(name: string): name is DynamicToolNam
  * Reserved MCP capability namespace: `mcp_<serverId>__<tool>`. The server id
  * follows the mcp.yaml id charset; the tool segment keeps the server's own
  * spelling (letters, digits, `_`, `-`, `.`). Syntax conveys origin, never trust
- * or availability: the gateway launches only trusted servers.
+ * or availability: the gateway launches only trusted servers. The segments
+ * `:list_resources` and `:read_resource` are the server's resource
+ * capabilities; `:` is outside every tool name, so no server tool can take them.
  */
 export function isMcpToolName(name: string): name is DynamicToolName {
-	return name.length <= 96 && /^mcp_[a-z0-9][a-z0-9_-]*__[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name);
+	return (
+		name.length <= 96 &&
+		/^mcp_[a-z0-9][a-z0-9_-]*__(?:[A-Za-z0-9][A-Za-z0-9_.-]*|:list_resources|:read_resource)$/.test(name)
+	);
+}
+
+/** The reserved tool segments of an MCP server's resource capabilities. */
+export const MCP_RESOURCE_CAPABILITIES = Object.freeze({ list: ":list_resources", read: ":read_resource" } as const);
+
+/** Whether `tool`, the part after `mcp_<id>__`, is one of the reserved resource capabilities. */
+export function isMcpResourceCapability(tool: string): boolean {
+	return tool === MCP_RESOURCE_CAPABILITIES.list || tool === MCP_RESOURCE_CAPABILITIES.read;
 }
 
 /** Compose the registry name of one MCP server tool; null when the tool's name cannot be carried. */

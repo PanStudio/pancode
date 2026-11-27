@@ -96,6 +96,10 @@ export interface InteractiveSlashSubmitExpansion {
 	display?: { text: string; note?: string };
 	/** A prompt template's `allowed-tools`; see `SubmitExpansion.constraints`. */
 	constraints?: TurnConstraints;
+	/** See `SubmitExpansion.template`. */
+	template?: string;
+	/** See `SubmitExpansion.promptRefusal`. */
+	promptRefusal?: string;
 }
 
 type SlashChat = Pick<
@@ -136,6 +140,7 @@ export interface InteractiveSlashRuntimeDeps {
 	chat: SlashChat;
 	chatPanel: SlashChatPanel;
 	resources?: SlashResources;
+	mcpPromptClaims?: SlashCommandContext["mcpPromptClaims"];
 	extensions?: SlashExtensions;
 	reloadExtensions?: SlashCommandContext["reloadExtensions"];
 	reloadPlugins?: SlashCommandContext["reloadPlugins"];
@@ -524,6 +529,14 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 				deps.requestRender();
 				return;
 			}
+			// An MCP prompt the server refused or failed to give: the line stays for the operator to correct.
+			if (expanded.promptRefusal !== undefined && expanded.template === undefined && !captured) {
+				draftSettled = true;
+				draft?.cancelled();
+				context.notice("error", expanded.promptRefusal);
+				deps.requestRender();
+				return;
+			}
 			admitDraft();
 			const submitted = typedSkillLine(expanded, text);
 			signal?.throwIfAborted();
@@ -657,6 +670,7 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 		listPrompts: () => deps.resources?.prompts(cwd()) ?? { items: [], diagnostics: [] },
 		listPromptsForDisplay: () => deps.resources?.promptsForDisplay(cwd()) ?? { items: [], diagnostics: [] },
 		...(resources ? { expandPromptTemplate: (text: string) => resources.expandPromptTemplate(text, cwd()) } : {}),
+		...(deps.mcpPromptClaims ? { mcpPromptClaims: deps.mcpPromptClaims } : {}),
 		openSkillsHub: deps.openSkillsHub,
 		clearSkillSurface: () => deps.chat.clearSkillSurface(),
 		eggsCommand: (action, id) => deps.chat.eggsCommand?.(action, id) ?? "No active eggs.",

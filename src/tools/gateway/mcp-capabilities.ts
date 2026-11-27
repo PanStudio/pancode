@@ -5,12 +5,15 @@ import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
 import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
-import { mcpToolName } from "../../core/tool-names.js";
+import { isMcpResourceCapability, mcpToolName } from "../../core/tool-names.js";
 import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../../domains/gateway/mcp/action-classes.js";
 import type {
 	McpCatalogIdentity,
 	McpClient,
 	McpClientOptions,
+	McpElicitationContext,
+	McpElicitationRequest,
+	McpResourceCount,
 	McpServerCatalog,
 	McpSurface,
 	McpSurfaceStatus,
@@ -57,6 +60,7 @@ import { readMaxBytes } from "../read.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import {
 	boundedImageResult,
+	elicitationNote,
 	errorMessage,
 	imageBlocks,
 	MCP_RESULT_CONTEXT_BYTES,
@@ -81,6 +85,20 @@ import type {
 } from "./mcp-capability-types.js";
 import { catalogChangeLine, catalogRemedy, withCatalogChange } from "./mcp-catalog-change.js";
 import { namedPathArguments, pathArgumentEffects, pathArgumentRefusal } from "./mcp-path-arguments.js";
+import {
+	declares,
+	getPromptFor,
+	listResourcesFor,
+	type McpResourceHost,
+	promptCommandsOf,
+	readResourceFor,
+	refreshPrompts,
+	refreshResources,
+	resourceCapabilityShape,
+	resourceCapabilitySpecs,
+	resourceLinkFollower,
+	visibleResources,
+} from "./mcp-resources.js";
 import {
 	builtinStoreWrite,
 	builtinStoreWriteCall,
@@ -183,6 +201,7 @@ function quoted(value: string): string {
 export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): McpCapabilitySource {
 	const registry = options.registry;
 	const clientFactory = options.clientFactory ?? createMcpClient;
+	const elicitationHost = options.elicitation;
 	const headerCredentials = options.headerCredentials ?? openMcpHeaderCredentialStore;
 	const oauthStorage = options.oauth?.storage ?? openAuthStorage;
 	const openStoreBackend = options.openStoreBackend ?? defaultOpenStoreBackend;
@@ -444,13 +463,46 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	 * launching this server. Best effort by design: a cache that cannot be
 	 * written must never fail the connection that produced it.
 	 */
-	const publishCatalog = (state: ServerState, listing: McpToolListing): void => {
-		if (state.declaration.scope === "client" || options.persistCatalog === false) return;
-		writeMcpServerCatalog(catalogIdentity(state.declaration), {
-			...listing,
-			instructions: state.client?.serverInfo()?.instructions ?? null,
-			...(state.events !== undefined ? { events: state.events.events } : {}),
-		});
+	const resourceCountOf = (state: ServerState): McpResourceCount | undefined => {
+		if (state.resourceList === undefined) return undefined;
+		const listed = visibleResources(state.resourceList.listing);
+		return {
+			resources: listed.resources.length,
+			templates: listed.templates.length,
+			...(listed.truncated ? { truncated: true as const } : {}),
+		};
+	};
+
+	const publishCatalog = (state: ServerState): void => {
+		const listing = state.listing;
+		if (listing === undefined || state.declaration.scope === "client" || options.persistCatalog === false) return;
+		const client = state.client;
+		const prior = cachedCatalog(state);
+		// Until this connection lists its prompts, the recorded list stands with its own observation time.
+		const prompts = !declares(client, "prompts")
+			? null
+			: state.prompts !== undefined
+				? {
+						...state.prompts,
+						...(state.promptsObservedAt !== undefined ? { observedAt: new Date(state.promptsObservedAt).toISOString() } : {}),
+					}
+				: prior?.prompts !== undefined
+					? { ...prior.prompts, observedAt: prior.prompts.observedAt ?? prior.observedAt }
+					: null;
+		const resourceCount = resourceCountOf(state) ?? prior?.resourceCount ?? null;
+		writeMcpServerCatalog(
+			catalogIdentity(state.declaration),
+			{
+				...listing,
+				instructions: client?.serverInfo()?.instructions ?? null,
+				resources: declares(client, "resources"),
+				resourceCount,
+				completions: declares(client, "completions"),
+				prompts,
+				...(state.events !== undefined ? { events: state.events.events } : {}),
+			},
+			state.listingObservedAt === undefined ? {} : { nowMs: state.listingObservedAt },
+		);
 		// Drop the memo of whatever the file said before this listing replaced it.
 		state.catalog = undefined;
 	};
@@ -634,7 +686,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 							},
 						});
 					}
-					const rendered = offloadedBinaryText(result, invokeOptions) ?? {
+					const rendered = offloadedBinaryText(result, invokeOptions, resourceLinkFollower(state)) ?? {
 						text: result.text,
 						truncated: result.textTruncated,
 					};
@@ -645,19 +697,23 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						textTruncated: rendered.truncated,
 						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
 						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
+						...(result.elicitations !== undefined ? { elicitations: result.elicitations } : {}),
 					};
+					const note = neutralizeFraming(elicitationNote(declaration.id, result.elicitations));
 					if (result.isError) {
 						const refusal = serverPolicyRefusalResult(state, tool, name, trustClass, result);
 						if (refusal !== null) return refusal;
+						const text = neutralizeFraming(rendered.text) || "tool error";
 						return withCatalogChange(state, {
 							kind: "error",
-							message: `${name}: ${neutralizeFraming(rendered.text) || "tool error"}`,
+							message: `${name}: ${note.length > 0 ? `${note}\n${text}` : text}`,
 							details,
 						});
 					}
 					const images = imageBlocks(result);
 					// Server text cannot open or close a host frame (a reminder block or a middleware note), as bash and web_fetch output cannot.
 					let output = neutralizeFraming(rendered.text);
+					if (note.length > 0) output = output.length > 0 ? `${note}\n${output}` : note;
 					if (prepared !== null && prepared.writes.length > 0) {
 						// An interrupted call commits nothing, whatever the server answered.
 						if (invokeOptions?.signal?.aborted === true) {
@@ -795,13 +851,17 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		}
 		state.tools = listing.tools;
 		state.truncated = listing.truncated;
+		state.listing = listing;
+		state.listingObservedAt = Date.now();
 		state.listed = true;
 		const { declaration } = state;
 		if (declaration.scope !== "client") {
 			const served = mcpSurface(listing.tools);
 			state.surface = { served, status: judgeServedSurface(declaration, served) };
 		}
-		publishCatalog(state, listing);
+		// The memo is read before the write replaces it, so a recorded prompt list carries over.
+		if (declaration.scope !== "client") cachedCatalog(state);
+		publishCatalog(state);
 		for (const tool of listing.tools) {
 			if (closed || state.client === null || state.failure !== null) return;
 			const name = mcpToolName(state.declaration.id, tool.name);
@@ -812,6 +872,14 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			registry.register(makeSpec(state, tool, name));
 			state.registered.push(name);
 		}
+		for (const spec of resourceCapabilitySpecs(resourceHost, state)) {
+			const name = spec.name as DynamicToolName;
+			if (ownerOf(name) !== state || registry.get(name) !== undefined) continue;
+			registry.register(spec);
+			state.registered.push(name);
+		}
+		void refreshPrompts(resourceHost, state);
+		void refreshResources(resourceHost, state);
 	};
 
 	/**
@@ -898,6 +966,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
+						...(elicitationHost !== undefined
+							? {
+									elicitation: (request: McpElicitationRequest, context: McpElicitationContext) =>
+										elicitationHost(declaration.id, request, context),
+								}
+							: {}),
 						onFailure: (error) => {
 							failWith(state, error);
 							void closeClient(state);
@@ -953,6 +1027,14 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				onAcquired: (client) => {
 					state.client = client;
 					installExitHook();
+					// The slash menu reads prompts synchronously, so a change is listed when it is announced;
+					// one announced during a listing is listed again after it.
+					client.onListChanged((primitive) => {
+						if (primitive !== "prompts") return;
+						void (state.promptsListing ?? Promise.resolve()).then(() => {
+							if (state.client === client && client.listChanged("prompts")) return refreshPrompts(resourceHost, state);
+						});
+					});
 					if (declaration.url !== undefined) watchIdle(state);
 				},
 			});
@@ -1016,6 +1098,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				state.registered = [];
 				state.unregistrable = [];
 				state.refused.clear();
+				delete state.prompts;
+				delete state.promptsObservedAt;
+				delete state.listingObservedAt;
+				delete state.resourceList;
 				delete state.events;
 				delete state.eventsFailure;
 			})();
@@ -1111,13 +1197,21 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				arguments: neutralizeFramingValue(event.inputSchema) as Record<string, unknown>,
 			}));
 		if (state.client !== null) {
+			const tools = state.registered.filter(
+				(name) => !isMcpResourceCapability(name.slice(`mcp_${declaration.id}__`.length)),
+			);
+			const prompts = state.prompts?.prompts.length ?? cachedCatalog(state)?.prompts?.prompts.length;
+			const resourceCount = resourceCountOf(state) ?? cachedCatalog(state)?.resourceCount;
 			const live = state.events;
 			return {
 				...base,
 				status: "connected",
 				catalog: "live",
-				catalogCount: state.registered.length,
-				tools: [...state.registered],
+				catalogCount: tools.length,
+				tools,
+				...(declares(state.client, "resources") ? { resources: true as const } : {}),
+				...(declares(state.client, "resources") && resourceCount !== undefined ? { resourceCount } : {}),
+				...(declares(state.client, "prompts") && prompts !== undefined ? { prompts } : {}),
 				...(state.truncated ? { truncated: true } : {}),
 				...(state.unregistrable.length > 0 ? { unregistrable: [...state.unregistrable] } : {}),
 				...(state.dropped !== undefined && state.dropped.length > 0 ? { dropped: [...state.dropped] } : {}),
@@ -1142,6 +1236,11 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			catalogCount: catalog.tools.length,
 			...(catalog.truncated ? { truncated: true } : {}),
 			...(mcpCatalogStale(catalog) ? { catalogStale: true, catalogRemedy: catalogRemedy(declaration.id) } : {}),
+			...(catalog.resources === true ? { resources: true as const } : {}),
+			...(catalog.resources === true && catalog.resourceCount !== undefined
+				? { resourceCount: catalog.resourceCount }
+				: {}),
+			...(catalog.prompts !== undefined ? { prompts: catalog.prompts.prompts.length } : {}),
 			...guided(catalog.instructions),
 			...surfaced,
 			...(catalog.events !== undefined && catalog.events.length > 0 ? { events: eventsOf(catalog.events) } : {}),
@@ -1190,7 +1289,32 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				actionClass: actionClassFor(declaration, tool),
 			});
 		}
+		if (catalog.resources === true) {
+			for (const which of ["list", "read"] as const) {
+				const tool = which === "list" ? ":list_resources" : ":read_resource";
+				const name = mcpToolName(declaration.id, tool);
+				if (name === null || ownerOf(name) !== state || registry.get(name) !== undefined) continue;
+				const shape = resourceCapabilityShape(declaration.id, which);
+				entries.push({
+					name,
+					description: shape.description,
+					actionClass: actionClassFor(declaration, { ...shape, name: tool }),
+				});
+			}
+		}
 		return entries;
+	};
+
+	const resourceHost: McpResourceHost = {
+		admitted: options.admitted,
+		discover: (state, signal) => discover(state, signal),
+		surfaceRefusal: (state, name) => surfaceRefusal(state, name),
+		launchRefusal: (state, launch) => readOnlyLaunchRefusal(state.declaration, launch?.readOnly),
+		closeClient: (state) => closeClient(state),
+		publish: (state) => {
+			cachedCatalog(state);
+			publishCatalog(state);
+		},
 	};
 
 	const checkEventAuthority = (id: string, launch?: { readOnly?: boolean }): string | null => {
@@ -1217,7 +1341,6 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		}
 		return null;
 	};
-
 	return {
 		async attachClientServers(servers, attachOptions) {
 			if (closed) throw new Error("MCP capability source is closed");
@@ -1288,6 +1411,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			for (const result of results) {
 				if (result.status === "rejected") throw result.reason;
 			}
+			// Wait for initial prompt and resource listings so `mcp list --refresh` records them before closing.
+			if (!invokeOptions?.signal?.aborted) {
+				await Promise.allSettled(
+					all.flatMap((state) => [state.promptsListing, state.resourcesListing].filter((p) => p !== undefined)),
+				);
+			}
 			return { servers: all.map(listingFor), diagnostics: [...diagnostics] };
 		},
 		catalog() {
@@ -1352,6 +1481,21 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					reason: `no recorded catalog for mcp server ${declaration.id}; list its tools with ${catalogRemedy(declaration.id)}`,
 				};
 			}
+			if (isMcpResourceCapability(toolName) && catalog.resources === true) {
+				const shape = resourceCapabilityShape(declaration.id, toolName === ":list_resources" ? "list" : "read");
+				return {
+					metadata: {
+						name,
+						serverId: declaration.id,
+						description: shape.description,
+						parameters: shape.parameters,
+						actionClass: actionClassFor(declaration, { ...shape, name: toolName }),
+						provenance: "cached",
+						truncated: false,
+						...(mcpCatalogStale(catalog) ? { catalogStale: true } : {}),
+					},
+				};
+			}
 			const tool = catalog.tools.find((entry) => entry.name === toolName);
 			if (tool === undefined) {
 				return {
@@ -1388,7 +1532,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const refusal = state.client !== null ? null : readOnlyLaunchRefusal(state.declaration, invokeOptions?.readOnly);
 			if (refusal !== null) return { listing: listingFor(state), reason: refusal };
 			await discover(state, invokeOptions?.signal, true);
-			if (state.skillsListing !== undefined) await state.skillsListing;
+			await Promise.allSettled(
+				[state.skillsListing, state.promptsListing, state.resourcesListing].filter((p) => p !== undefined),
+			);
 			return {
 				listing: listingFor(state),
 				...(state.failure !== null ? { reason: `mcp server ${id} failed: ${state.failure}` } : {}),
@@ -1409,10 +1555,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					reason: `mcp server ${owner.declaration.id} is ${trust.status} (${trust.reason}); it is never launched until trusted: run ${remedy.remedy} (${remedy.interactiveRemedy} in an interactive session)`,
 				};
 			}
+			// Resource capabilities are read by PanCode's rule, not the operator's, so they never start a server read-only.
+			const toolName = name.slice(`mcp_${owner.declaration.id}__`.length);
 			const refusal = readOnlyLaunchRefusal(
 				owner.declaration,
 				invokeOptions?.readOnly,
-				name.slice(`mcp_${owner.declaration.id}__`.length),
+				isMcpResourceCapability(toolName) ? undefined : toolName,
 			);
 			if (refusal !== null) return { spec: null, reason: refusal };
 			await discover(owner, invokeOptions?.signal);
@@ -1423,7 +1571,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				reason:
 					owner.failure !== null
 						? `mcp server ${owner.declaration.id} failed: ${owner.failure}`
-						: `mcp server ${owner.declaration.id} offers no tool named ${name.slice(`mcp_${owner.declaration.id}__`.length)}`,
+						: isMcpResourceCapability(toolName)
+							? `mcp server ${owner.declaration.id} declares no resources`
+							: `mcp server ${owner.declaration.id} offers no tool named ${toolName}`,
 			};
 		},
 		serverInstructions(name) {
@@ -1455,6 +1605,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				cachedCatalog(owner)?.tools.find((entry) => entry.name === toolName);
 			const actionClass =
 				shownClass ?? mcpToolActionClass(declaration, { name: toolName, annotations: listed?.annotations ?? null });
+			if (isMcpResourceCapability(toolName)) {
+				const surface = surfaceOf(owner);
+				const unapproved =
+					surface === null || surface.status === "approved" ? "" : ` Reads are refused for now: ${surface.reason}.`;
+				return `Resources of local stdio MCP server ${declaration.id} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${declaration.trust.actionClass}; listing and reading resources runs as ${actionClass}, and needs the server's tool surface approved; ${launchConfinement()}.${unapproved}`;
+			}
 			const serverClass = declaration.trust.actionClass;
 			const remote = declaration.url !== undefined;
 			const effect =
@@ -1512,6 +1668,47 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		},
 		servedSurface(id) {
 			return resolveStates().get(id)?.surface?.served ?? null;
+		},
+		promptCommands() {
+			return [...resolveStates().values()].flatMap((state) =>
+				promptCommandsOf(resourceHost, state, state.declaration.trust.status === "trusted" ? cachedCatalog(state) : null),
+			);
+		},
+		resourceServerIds() {
+			return [...resolveStates().values()]
+				.filter(
+					(state) =>
+						state.declaration.trust.status === "trusted" &&
+						(state.client !== null ? declares(state.client, "resources") : cachedCatalog(state)?.resources === true),
+				)
+				.map((state) => state.declaration.id);
+		},
+		async listResources(id, launch) {
+			const state = resolveStates().get(id);
+			if (state === undefined) return { ok: false, error: `no MCP server named '${id}' is declared` };
+			return listResourcesFor(resourceHost, state, launch);
+		},
+		async readResource(id, uri, launch) {
+			const state = resolveStates().get(id);
+			if (state === undefined) return { ok: false, error: `no MCP server named '${id}' is declared` };
+			return readResourceFor(resourceHost, state, uri, launch);
+		},
+		async getPrompt(id, name, args, launch) {
+			const state = resolveStates().get(id);
+			if (state === undefined) return { ok: false, error: `no MCP server named '${id}' is declared` };
+			return getPromptFor(resourceHost, state, name, args, launch);
+		},
+		async complete(id, ref, argument, context, signal) {
+			const state = states?.get(id);
+			const client = state?.client ?? null;
+			if (state === undefined || client === null || !declares(client, "completions")) return null;
+			if (state.surface?.status.status !== "approved" && state.declaration.scope !== "client") return null;
+			try {
+				return await client.complete(ref, argument, context, signal);
+			} catch {
+				// Completion is a hint; a server that cannot give one leaves the operator typing.
+				return null;
+			}
 		},
 		eventAuthorityRefusal(id, launch) {
 			return checkEventAuthority(id, launch);

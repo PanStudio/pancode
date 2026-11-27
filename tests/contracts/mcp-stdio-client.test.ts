@@ -6,12 +6,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { parseElicitationRequest } from "../../src/domains/gateway/mcp/elicitation.js";
 import {
 	classifyJsonRpcMessage,
 	createLineFramer,
 	createMcpProtocolClient,
 	createMcpStdioClient,
 	encodeJsonRpcMessage,
+	formContentErrors,
 	MCP_PROTOCOL_VERSION,
 	MCP_TOOL_LIST_CAP,
 	type McpClient,
@@ -20,6 +22,7 @@ import {
 	parseJsonRpcLine,
 	renderMcpContent,
 } from "../../src/domains/gateway/mcp/index.js";
+import { askUserElicitationHost } from "../../src/tools/gateway/mcp-elicitation-prompt.js";
 
 const FIXTURE = resolve("tests/fixtures/mcp-fake-server.mjs");
 const roots: string[] = [];
@@ -293,7 +296,7 @@ describe("mcp stdio client", () => {
 		const media = await c.callTool("media", {});
 		deepStrictEqual(
 			media.content.map((block) => block.type),
-			["text", "image", "audio", "resource", "resource", "other"],
+			["text", "image", "audio", "resource", "resource_link", "other"],
 		);
 		strictEqual(
 			media.text,
@@ -302,7 +305,7 @@ describe("mcp stdio client", () => {
 				"[image image/png, 3 bytes]",
 				"[audio audio/wav, 4 bytes]",
 				"[resource file:///a.txt]\nalpha",
-				"[resource file:///b.txt]",
+				'[resource link file:///b.txt ("b")]',
 				"[unsupported content type hologram]",
 			].join("\n"),
 		);
@@ -1060,5 +1063,357 @@ describe("mcp stdio client, modern protocol and tasks extension", () => {
 			big: { $literal: "9007199254740993" },
 			inexact: { $literal: "1.0000000000000001" },
 		});
+	});
+
+	it("scopes per-request elicitation capability to MRTR requests, enforces elicitation safety bounds, and preserves literal 'Leave unset'", async () => {
+		const envelopes: Array<{ method: string; meta: Record<string, unknown> | undefined }> = [];
+		let started = false;
+		let events: McpTransportEvents | null = null;
+		const deliver = (msg: Record<string, unknown>) => {
+			const parsed = parseJsonRpcLine(Buffer.from(JSON.stringify(msg), "utf8"));
+			if (!(parsed instanceof McpError)) events?.message(parsed);
+		};
+		const c = createMcpProtocolClient(
+			"elicit-scope",
+			(e) => {
+				events = e;
+				return {
+					pid: undefined,
+					start: async () => {
+						started = true;
+						return true;
+					},
+					started: () => started,
+					endReported: () => null,
+					send: (msg, opts) => {
+						opts?.onSent?.();
+						const m = msg as { id?: number; method?: string; params?: { _meta?: Record<string, unknown> } };
+						if (m.method) envelopes.push({ method: m.method, meta: m.params?._meta });
+						if (m.method === "server/discover") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id: m.id ?? 1,
+									result: {
+										resultType: "complete",
+										supportedVersions: ["2026-07-28"],
+										capabilities: {
+											tools: {},
+											resources: {},
+											prompts: {},
+											extensions: { "io.modelcontextprotocol/skills": {} },
+										},
+										_meta: { "io.modelcontextprotocol/serverInfo": { name: "elicit-scope", version: "1.0" } },
+									},
+								}),
+							);
+						} else if (m.method === "skills/list") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id: m.id ?? 2,
+									result: { skills: [] },
+								}),
+							);
+						} else if (m.method === "resources/read" || m.method === "prompts/get") {
+							const p = (m.params ?? {}) as Record<string, unknown>;
+							const responses = p.inputResponses as
+								| Record<string, { action?: string; content?: { note?: string } }>
+								| undefined;
+							if (responses === undefined) {
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id: m.id ?? 2,
+										result: {
+											resultType: "input_required",
+											requestState: `tok:${m.method}`,
+											inputRequests: {
+												q1: {
+													method: "elicitation/create",
+													params: {
+														mode: "form",
+														message: "Provide note",
+														requestedSchema: {
+															type: "object",
+															properties: { note: { type: "string" } },
+															required: ["note"],
+														},
+													},
+												},
+											},
+										},
+									}),
+								);
+							} else {
+								strictEqual(p.requestState, `tok:${m.method}`);
+								const note = responses.q1?.content?.note ?? "";
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id: m.id ?? 2,
+										result:
+											m.method === "resources/read"
+												? { resultType: "complete", contents: [{ uri: "skill://a", text: `read:${note}` }] }
+												: {
+														resultType: "complete",
+														messages: [{ role: "user", content: { type: "text", text: `prompt:${note}` } }],
+													},
+									}),
+								);
+							}
+						} else if (m.method === "tools/call") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id: m.id ?? 3,
+									result: { resultType: "complete", content: [{ type: "text", text: "ok" }] },
+								}),
+							);
+						}
+						return { kind: "queued" };
+					},
+					withdraw: () => {},
+					close: async () => ({ complete: true }),
+					killOwnedOnExit: () => {},
+					stderrTail: () => "",
+					teardown: () => ({ complete: true }),
+				};
+			},
+			{ elicitation: async () => ({ action: "accept", content: { note: "ok-mrtr" } }) },
+		);
+		clients.push(c);
+		await c.initialize();
+		const skills = c.skills();
+		ok(skills !== null);
+		await skills.listSkills(undefined);
+		const readRes = await c.readResource("skill://a");
+		const firstRead = readRes.contents[0];
+		strictEqual(firstRead !== undefined && "text" in firstRead ? firstRead.text : "", "read:ok-mrtr");
+		const promptRes = await c.getPrompt("p1", {});
+		const firstPrompt = promptRes.messages[0]?.content;
+		strictEqual(firstPrompt?.type === "text" ? firstPrompt.text : "", "prompt:ok-mrtr");
+		await c.callTool("go", {});
+		const listCaps = (envelopes.find((e) => e.method === "skills/list")?.meta?.[
+			"io.modelcontextprotocol/clientCapabilities"
+		] ?? {}) as Record<string, unknown>;
+		const readCaps = (envelopes.find((e) => e.method === "resources/read")?.meta?.[
+			"io.modelcontextprotocol/clientCapabilities"
+		] ?? {}) as Record<string, unknown>;
+		const promptCaps = (envelopes.find((e) => e.method === "prompts/get")?.meta?.[
+			"io.modelcontextprotocol/clientCapabilities"
+		] ?? {}) as Record<string, unknown>;
+		const callCaps = (envelopes.find((e) => e.method === "tools/call")?.meta?.[
+			"io.modelcontextprotocol/clientCapabilities"
+		] ?? {}) as Record<string, unknown>;
+		strictEqual(listCaps.elicitation, undefined, "non-MRTR skills/list must not advertise elicitation");
+		ok(readCaps.elicitation !== undefined, "MRTR resources/read advertises elicitation when wired");
+		ok(promptCaps.elicitation !== undefined, "MRTR prompts/get advertises elicitation when wired");
+		ok(callCaps.elicitation !== undefined, "MRTR tools/call advertises elicitation when wired");
+
+		// Encoded URL length > 2048 must be rejected; punycode warning stays bounded <= 512 chars.
+		const wideUrl = parseElicitationRequest(
+			{
+				mode: "url",
+				message: "Sign in",
+				elicitationId: "e-wide",
+				url: `https://example.com/${"é".repeat(400)}`,
+			},
+			false,
+		);
+		strictEqual(wideUrl.kind, "declined");
+		const longPunycodeHost = `${Array.from({ length: 40 }, () => "xn--bcher-kva").join(".")}.example`;
+		const punyUrl = parseElicitationRequest(
+			{
+				mode: "url",
+				message: "Sign in",
+				elicitationId: "e-puny",
+				url: `https://${longPunycodeHost}/login`,
+			},
+			false,
+		);
+		ok(punyUrl.kind === "ok" && punyUrl.request.mode === "url");
+		ok(punyUrl.request.warnings.length > 0);
+		ok(punyUrl.request.warnings.every((w) => w.length <= 512));
+
+		// Contradictory bounds are rejected; invalid/control defaults are ignored; whitespace URIs fail validation.
+		for (const badProp of [
+			{ type: "string", minLength: 5, maxLength: 3 },
+			{ type: "number", minimum: 10, maximum: 5 },
+			{ type: "integer", minimum: 0.2, maximum: 0.8 },
+			{ type: "array", items: { enum: ["a", "b"] }, minItems: 3, maxItems: 2 },
+			{ type: "array", items: { enum: ["a", "b"] }, minItems: 3 },
+		]) {
+			const bad = parseElicitationRequest(
+				{
+					message: "Provide",
+					requestedSchema: { type: "object", properties: { x: badProp } },
+				},
+				false,
+			);
+			strictEqual(bad.kind, "declined", `contradictory schema must be rejected: ${JSON.stringify(badProp)}`);
+		}
+		const form = parseElicitationRequest(
+			{
+				message: "Provide",
+				requestedSchema: {
+					type: "object",
+					properties: {
+						note: { type: "string", default: "ok\u202ebad" },
+						link: { type: "string", format: "uri", default: "not a uri" },
+					},
+				},
+			},
+			false,
+		);
+		ok(form.kind === "ok" && form.request.mode === "form");
+		strictEqual(form.request.fields[0]?.default, undefined);
+		strictEqual(form.request.fields[1]?.default, undefined);
+		strictEqual(formContentErrors(form.request, { link: " https://example.com" }).length, 1);
+
+		// Typing literal "Leave unset" into an optional string field (where ask_user sets value) must keep the text.
+		const optForm = parseElicitationRequest(
+			{
+				message: "Optional note",
+				requestedSchema: { type: "object", properties: { note: { type: "string" } } },
+			},
+			false,
+		);
+		ok(optForm.kind === "ok" && optForm.request.mode === "form");
+		let step = 0;
+		const host = askUserElicitationHost(async (questions) => {
+			step += 1;
+			if (step === 1) {
+				return {
+					answers: [{ question: questions[0]?.question ?? "", answer: "Leave unset", value: "Leave unset" }],
+				};
+			}
+			return { answers: [{ question: questions[0]?.question ?? "", answer: "Accept", options: ["Accept"] }] };
+		});
+		const outcome = await host("s", optForm.request, {
+			signal: new AbortController().signal,
+			awaitCompletion: false,
+			consented: false,
+		});
+		deepStrictEqual(outcome, { action: "accept", content: { note: "Leave unset" } });
+	});
+
+	it("ignores bare list_changed on modern servers, keeps live clients alive on listResources abort, and omits empty getPrompt arguments", async () => {
+		let events: McpTransportEvents | null = null;
+		let started = false;
+		const sent: Array<Record<string, unknown>> = [];
+		const deliver = (payload: Record<string, unknown>): void => {
+			const frame = parseJsonRpcLine(Buffer.from(JSON.stringify(payload), "utf8"));
+			ok(!(frame instanceof McpError));
+			events?.message(frame);
+		};
+		let holdResources = false;
+		const c = createMcpProtocolClient(
+			"inmem-r4",
+			(e) => {
+				events = e;
+				return {
+					pid: undefined,
+					start: async () => {
+						started = true;
+						return true;
+					},
+					started: () => started,
+					endReported: () => null,
+					send: (message, opts) => {
+						const record = message as unknown as Record<string, unknown>;
+						sent.push(record);
+						opts?.onSent?.();
+						const method = "method" in message ? message.method : undefined;
+						const id = "id" in message ? message.id : undefined;
+						if (method === "server/discover") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										supportedVersions: ["2026-07-28"],
+										capabilities: {
+											tools: { listChanged: true },
+											resources: { listChanged: true },
+											prompts: { listChanged: true },
+										},
+										_meta: { "io.modelcontextprotocol/serverInfo": { name: "modern-r4", version: "1.0" } },
+									},
+								}),
+							);
+						} else if (method === "ping") {
+							queueMicrotask(() => deliver({ jsonrpc: "2.0", id, result: {} }));
+						} else if (method === "resources/list") {
+							if (!holdResources) {
+								queueMicrotask(() =>
+									deliver({
+										jsonrpc: "2.0",
+										id,
+										result: { resultType: "complete", resources: [{ uri: "file:///a", name: "a" }] },
+									}),
+								);
+							}
+						} else if (method === "resources/templates/list") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: { resultType: "complete", resourceTemplates: [] },
+								}),
+							);
+						} else if (method === "prompts/get") {
+							queueMicrotask(() =>
+								deliver({
+									jsonrpc: "2.0",
+									id,
+									result: {
+										resultType: "complete",
+										messages: [{ role: "user", content: { type: "text", text: "ok" } }],
+									},
+								}),
+							);
+						}
+						return { kind: "queued" };
+					},
+					withdraw: () => {},
+					close: async () => ({ complete: true }),
+					killOwnedOnExit: () => {},
+					stderrTail: () => "",
+					teardown: () => ({ complete: true }),
+				};
+			},
+			{},
+		);
+		clients.push(c);
+		await c.initialize();
+		const notified: string[] = [];
+		c.onListChanged((kind) => notified.push(kind));
+
+		// Bare (unsubscribed) list_changed notifications on a 2026-07-28 server must be ignored.
+		deliver({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+		deliver({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+		deliver({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
+		strictEqual(c.toolsChanged(), false);
+		strictEqual(c.listChanged("resources"), false);
+		strictEqual(c.listChanged("prompts"), false);
+		deepStrictEqual(notified, []);
+
+		// Aborting a single listResources call cancels only that request and leaves the client ready.
+		holdResources = true;
+		const controller = new AbortController();
+		const pending = c.listResources(controller.signal);
+		setTimeout(() => controller.abort(), 15);
+		await rejectsWithCode(pending, "aborted");
+		strictEqual(c.state().status, "ready");
+		holdResources = false;
+		strictEqual((await c.listResources()).resources[0]?.uri, "file:///a");
+
+		// getPrompt with empty arguments omits the arguments property on the wire.
+		await c.getPrompt("brief", {});
+		const promptReq = sent.find((m) => m.method === "prompts/get");
+		ok(promptReq);
+		strictEqual("arguments" in (promptReq.params as Record<string, unknown>), false);
 	});
 });

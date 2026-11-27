@@ -590,6 +590,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		...(deps.getSettings ? { getSettings: deps.getSettings } : {}),
 		...(deps.getConnections ? { getConnections: deps.getConnections } : {}),
 		...(deps.resources ? { resources: deps.resources } : {}),
+		...(deps.mcpSubmit ? { mcpSubmit: deps.mcpSubmit } : {}),
 		...(deps.agents ? { agents: deps.agents } : {}),
 		...(deps.session ? { session: deps.session } : {}),
 		...(deps.getSessionId ? { getSessionId: deps.getSessionId } : {}),
@@ -862,6 +863,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		try {
 			const expansion = await expandInteractiveSubmitAsync(text, deps.resources, process.cwd(), {
 				signal: controller.signal,
+				...(deps.mcpSubmit ? { mcp: deps.mcpSubmit } : {}),
 				onExtract: (shortPath) =>
 					notifications.add({
 						level: "info",
@@ -1013,6 +1015,12 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		},
 		settleVisibleFrame: (reason) => chatRenderer.flushAndCommit(reason),
 		...(deps.resources ? { resources: deps.resources } : {}),
+		...(deps.mcpSubmit
+			? {
+					mcpPromptClaims: (token: string) =>
+						deps.mcpSubmit?.promptCommands().some((row) => `${row.serverId}:${row.name}` === token) === true,
+				}
+			: {}),
 		...(deps.extensions ? { extensions: deps.extensions } : {}),
 		...(deps.reloadExtensions ? { reloadExtensions: deps.reloadExtensions } : {}),
 		...(deps.reloadPlugins ? { reloadPlugins: deps.reloadPlugins } : {}),

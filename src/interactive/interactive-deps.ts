@@ -19,7 +19,7 @@ import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanesOperations, PanesWatchController } from "../domains/mux/operations.js";
 import type { ProvidersContract, ThinkingLevel } from "../domains/providers/index.js";
 import type { ResourcesContract } from "../domains/resources/index.js";
-import { expandSubmitText, type SubmitExpansion } from "../domains/resources/submit-expansion.js";
+import { expandSubmitText, type McpSubmitReader, type SubmitExpansion } from "../domains/resources/submit-expansion.js";
 import type { AutonomyReport } from "../domains/safety/autonomy-window.js";
 import type { FleetNodeSnapshot } from "../domains/scheduling/cluster.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
@@ -49,6 +49,8 @@ import type { createYaziBridge, YaziBridge } from "./yazi-bridge.js";
 
 export interface InteractiveDeps {
 	getConnections?: () => { mcp: string[]; plugins: string[] };
+	/** MCP prompts and resource mentions in a submitted request; see `expandSubmitText`. */
+	mcpSubmit?: McpSubmitReader;
 	bus: TelemetryHub;
 	providers: ProvidersContract;
 	dispatch: DispatchContract;

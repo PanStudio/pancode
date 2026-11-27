@@ -9,7 +9,11 @@ import type { WorkerContextSnapshot } from "../domains/context/worker/contract.j
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import { FLEET_PLACEMENT_HEADER, rememberSessionFleetNode } from "../domains/dispatch/fleet-placement-preference.js";
-import { DEFAULT_KILL_GRACE_MS, DEFAULT_TEARDOWN_BOUND_MS } from "../domains/gateway/mcp/index.js";
+import {
+	DEFAULT_KILL_GRACE_MS,
+	DEFAULT_TEARDOWN_BOUND_MS,
+	type McpElicitationHost,
+} from "../domains/gateway/mcp/index.js";
 import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import type { AutonomyLevel } from "../domains/safety/autonomy.js";
@@ -26,6 +30,7 @@ import type { DispatchSchemaComposition } from "./dispatch-schema.js";
 import { COORDINATOR_DISPATCH_ARGUMENTS, coordinatorDispatchParameters } from "./dispatch-schema.js";
 import { finishTool } from "./finish.js";
 import { createMcpCapabilitySource, type McpCapabilitySource } from "./gateway/index.js";
+import { askUserElicitationHost } from "./gateway/mcp-elicitation-prompt.js";
 import { registerHarnessExtensionTools } from "./harness-extensions.js";
 import type { JobOperations } from "./job-types.js";
 import { lazyTool } from "./lazy-tool.js";
@@ -95,6 +100,12 @@ export interface ToolBootstrapDeps extends Omit<CoreToolBootstrapDeps, "mcpCapab
 	 * child process, such as a test's).
 	 */
 	mcpCapabilities?: McpCapabilitySource | false;
+	/**
+	 * Where MCP servers' elicitations go when the source is built here:
+	 * `ask_user` puts them on the terminal's ask_user card through `askUser`, a
+	 * host is an ACP client's channel. Absent, no server is told anyone can answer.
+	 */
+	mcpElicitation?: "ask_user" | McpElicitationHost;
 	/** The agent's PanCode report tool. Orchestrator-only: workers never draft or offer a report. */
 	report?: ReportToolDeps;
 }
@@ -114,11 +125,14 @@ export interface ToolBootstrapHandle {
 export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps = {}): ToolBootstrapHandle {
 	const askUser = deps.askUser;
 	const cwd = deps.session?.current()?.cwd ?? process.cwd();
-	const { mcpCapabilities: requestedMcp, ...coreDeps } = deps;
+	const { mcpCapabilities: requestedMcp, mcpElicitation, ...coreDeps } = deps;
+	const elicitation =
+		mcpElicitation === "ask_user" ? (askUser ? askUserElicitationHost(askUser) : undefined) : mcpElicitation;
 	const mcpCapabilities =
 		requestedMcp === false
 			? null
-			: (requestedMcp ?? createMcpCapabilitySource({ cwd, registry, store: { writable: true } }));
+			: (requestedMcp ??
+				createMcpCapabilitySource({ cwd, registry, store: { writable: true }, ...(elicitation ? { elicitation } : {}) }));
 	const registration = registerCoreTools(registry, {
 		...coreDeps,
 		storeWritable: true,

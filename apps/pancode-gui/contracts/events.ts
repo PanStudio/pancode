@@ -3,6 +3,7 @@
 import { type Static, Type } from "typebox";
 import { ClientIdentity } from "./auth.js";
 import { Id } from "./common.js";
+import { ElicitationPrompt } from "./elicitation.js";
 import { InterviewRound } from "./interviews.js";
 import { MachineAttachment } from "./machines.js";
 import { Operation, Progress } from "./operations.js";
@@ -21,6 +22,11 @@ export const Event = Type.Union([
 		...base,
 		type: Type.Literal("interview.changed"),
 		payload: Type.Object({ resource: Id, round: Type.Union([InterviewRound, Type.Null()]) }),
+	}),
+	Type.Object({
+		...base,
+		type: Type.Literal("elicitation.changed"),
+		payload: Type.Object({ resource: Id, prompt: Type.Union([ElicitationPrompt, Type.Null()]) }),
 	}),
 	Type.Object({
 		...base,

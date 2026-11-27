@@ -67,6 +67,9 @@ import {
 	ACP_DECISION_META_KEY,
 	ACP_DECISION_SUPERSEDE_METHOD,
 	ACP_DISPATCH_STEER_METHOD,
+	ACP_ELICITATION_CANCEL_METHOD,
+	ACP_ELICITATION_META_KEY,
+	ACP_ELICITATION_REQUEST_METHOD,
 	ACP_EVENT_NOTIFICATION,
 	ACP_EVENTS_META_KEY,
 	ACP_HANDOFF_CANCEL_METHOD,
@@ -221,6 +224,8 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 	let interviewsEnabled = false;
 	let workerPermissionsEnabled = false;
 	let interviewTimeoutMs: number | null = null;
+	let elicitationEnabled = false;
+	let elicitationTimeoutMs: number | null = null;
 	let permissionRequestTimeoutMs: number | null = null;
 	let queueEventsEnabled = false;
 	let readoutsEnabled = false;
@@ -256,6 +261,12 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 		},
 		get interviewTimeoutMs() {
 			return interviewTimeoutMs;
+		},
+		get elicitationEnabled() {
+			return elicitationEnabled;
+		},
+		get elicitationTimeoutMs() {
+			return elicitationTimeoutMs;
 		},
 		get permissionRequestTimeoutMs() {
 			return permissionRequestTimeoutMs;
@@ -335,6 +346,18 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 			interviewTimeoutMs =
 				interviewsEnabled && interviewRequest?.timeoutMs !== undefined
 					? (features.pinnedTimeoutMs ?? (interviewRequest.timeoutMs as number))
+					: null;
+			const elicitationRequest =
+				clientMeta !== null && isRecord(clientMeta[ACP_ELICITATION_META_KEY]) ? clientMeta[ACP_ELICITATION_META_KEY] : null;
+			elicitationEnabled =
+				features.elicitation === true &&
+				elicitationRequest !== null &&
+				elicitationRequest.version === 1 &&
+				elicitationRequest.request === ACP_ELICITATION_REQUEST_METHOD &&
+				negotiableTimeout(elicitationRequest.timeoutMs);
+			elicitationTimeoutMs =
+				elicitationEnabled && elicitationRequest?.timeoutMs !== undefined
+					? (features.pinnedTimeoutMs ?? (elicitationRequest.timeoutMs as number))
 					: null;
 			const workerPermissionsRequest =
 				clientMeta !== null && isRecord(clientMeta[ACP_WORKER_PERMISSIONS_META_KEY])
@@ -550,6 +573,16 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 										request: ACP_INTERVIEW_REQUEST_METHOD,
 										cancel: ACP_INTERVIEW_CANCEL_METHOD,
 										...(interviewTimeoutMs !== null ? { timeoutMs: interviewTimeoutMs } : {}),
+									},
+								}
+							: {}),
+						...(elicitationEnabled
+							? {
+									[ACP_ELICITATION_META_KEY]: {
+										version: 1,
+										request: ACP_ELICITATION_REQUEST_METHOD,
+										cancel: ACP_ELICITATION_CANCEL_METHOD,
+										...(elicitationTimeoutMs !== null ? { timeoutMs: elicitationTimeoutMs } : {}),
 									},
 								}
 							: {}),

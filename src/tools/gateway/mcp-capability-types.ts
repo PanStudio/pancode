@@ -5,9 +5,17 @@ import type {
 	McpBuiltinSource,
 	McpClient,
 	McpClientOptions,
+	McpCompletion,
+	McpCompletionReference,
+	McpElicitationHost,
 	McpEventDescriptor,
 	McpEventListing,
 	McpHeaderCredentialStore,
+	McpPromptListing,
+	McpPromptResult,
+	McpResourceCount,
+	McpResourceListing,
+	McpResourceRead,
 	McpServerCatalog,
 	McpServerSpec,
 	McpSkillListing,
@@ -16,6 +24,7 @@ import type {
 	McpSurfaceStatus,
 	McpTeardownOutcome,
 	McpToolDescriptor,
+	McpToolListing,
 	McpTrustActionClass,
 	ResolvedMcpServer,
 } from "../../domains/gateway/mcp/index.js";
@@ -78,6 +87,12 @@ export interface McpServerListing {
 	catalogRemedy?: string;
 	/** The cached catalog outlived the server's own `ttlMs`; its tools are shown but may have changed. */
 	catalogStale?: true;
+	/** The server declares resources, so `mcp_<id>__:list_resources` and `:read_resource` serve it. */
+	resources?: true;
+	/** What the server's last resources/list gave, live or recorded. */
+	resourceCount?: McpResourceCount;
+	/** Prompts the server lists, live or recorded; each is the slash command `/<id>:<prompt>`. */
+	prompts?: number;
 	/** The server's own instructions, live or cached: server-written, at most 2 KiB, never in the system prompt. */
 	instructions?: string;
 	/**
@@ -174,6 +189,21 @@ interface McpRefreshResult {
 	reason?: string;
 }
 
+/** One MCP prompt as a slash command `/<serverId>:<name>`, from a live listing or the recorded catalog. */
+export interface McpPromptCommand {
+	serverId: string;
+	name: string;
+	/** Server-written and neutralized, bounded for one menu line. */
+	title: string | null;
+	description: string;
+	arguments: Array<{ name: string; description: string; required: boolean }>;
+	/** The recorded list outlived the server's `prompts/list` ttlMs; shown, but it may have changed. */
+	stale?: true;
+}
+
+/** The answer of a source request that may be refused; `error` reads as one line for the operator or the model. */
+export type McpSourceAnswer<T> = { ok: true; value: T } | { ok: false; error: string };
+
 export interface McpLaunchOptions {
 	signal?: AbortSignal;
 	/**
@@ -241,6 +271,12 @@ export interface McpCapabilitySourceOptions {
 	store?: McpStoreAccess;
 	/** Test seam: the store backend references resolve and commit through. */
 	openStoreBackend?: (cwd: string) => Promise<StoreBackend>;
+	/**
+	 * Where a server's elicitations go: an operator who can answer them (the
+	 * TUI, or an ACP client that opted in). Absent, no server is told PanCode
+	 * can ask anyone, as on a headless run, a worker or `pancode mcp`.
+	 */
+	elicitation?: McpElicitationHost;
 }
 
 export interface McpCapabilitySource {
@@ -308,6 +344,33 @@ export interface McpCapabilitySource {
 	/** The surface server `id` served at its last listing this session, or null when it has not been listed. */
 	servedSurface(id: string): McpSurface | null;
 	/**
+	 * Every launch-trusted server's prompts, live or from its catalog, without
+	 * launching anything. A running server that announced a prompt change lists
+	 * them again in the background.
+	 */
+	promptCommands(): McpPromptCommand[];
+	/** Ids of launch-trusted servers that declare resources, live or as recorded, for `@<id>:<uri>` mentions. */
+	resourceServerIds(): string[];
+	/** The server's resources and templates, for completion; launches a trusted server, cached per its ttlMs. */
+	listResources(id: string, options?: McpLaunchOptions): Promise<McpSourceAnswer<McpResourceListing>>;
+	/** Read one resource for a mention; the same gates as `mcp_<id>__:read_resource`. */
+	readResource(id: string, uri: string, options?: McpLaunchOptions): Promise<McpSourceAnswer<McpResourceRead>>;
+	/** `prompts/get` for a slash command; launches a trusted server and needs its approved surface. */
+	getPrompt(
+		id: string,
+		name: string,
+		args: Record<string, string>,
+		options?: McpLaunchOptions,
+	): Promise<McpSourceAnswer<McpPromptResult>>;
+	/** `completion/complete` against a connected server that declares completions; never launches. */
+	complete(
+		id: string,
+		ref: McpCompletionReference,
+		argument: { name: string; value: string },
+		context?: Record<string, string>,
+		signal?: AbortSignal,
+	): Promise<McpCompletion | null>;
+	/**
 	 * Skills over MCP on declared server `id`: launch it when trusted, under the
 	 * same read-only rule `ensure` applies, list its skills again once the last
 	 * listing's `ttlMs` has passed, and return the transport its skill requests
@@ -368,6 +431,20 @@ export interface ServerState {
 	connection: OwnedConnection | null;
 	tools: McpToolDescriptor[];
 	truncated: boolean;
+	/** The last tool listing, kept so a later prompt listing republishes the catalog whole. */
+	listing?: McpToolListing;
+	/** When `listing` was observed, so later prompt/resource writes never reset tool-catalog staleness. */
+	listingObservedAt?: number;
+	/** The live prompt list; absent until listed, or when the server declares no prompts. */
+	prompts?: McpPromptListing;
+	/** When `prompts` was observed, so tool-catalog refreshes never reset prompt staleness. */
+	promptsObservedAt?: number;
+	/** The prompt listing in flight, shared by everyone who asks. */
+	promptsListing?: Promise<void>;
+	/** The initial resource listing in flight, shared by refresh/list callers. */
+	resourcesListing?: Promise<void>;
+	/** The last resource listing and when it was taken, for completion within its ttlMs. */
+	resourceList?: { listing: McpResourceListing; atMs: number };
 	registered: DynamicToolName[];
 	unregistrable: string[];
 	failure: string | null;
