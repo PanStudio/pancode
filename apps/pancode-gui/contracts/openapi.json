@@ -14694,6 +14694,551 @@
 				}
 			}
 		},
+		"/api/sessions/{id}/elicitation": {
+			"get": {
+				"operationId": "sessionElicitation",
+				"summary": "The oldest MCP server form or link waiting for the operator, when the ACP peer advertises support",
+				"security": [
+					{
+						"bearer": []
+					}
+				],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"anyOf": [
+										{
+											"anyOf": [
+												{
+													"type": "object",
+													"required": ["id", "turnId", "requestedAt", "server", "mode", "message", "fields"],
+													"properties": {
+														"id": {
+															"type": "string",
+															"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+														},
+														"turnId": {
+															"type": "string",
+															"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+														},
+														"requestedAt": {
+															"type": "string"
+														},
+														"server": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 256
+														},
+														"mode": {
+															"type": "string",
+															"const": "form"
+														},
+														"message": {
+															"type": "string",
+															"maxLength": 4096
+														},
+														"fields": {
+															"type": "array",
+															"items": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"required": ["key", "label", "required", "kind"],
+																		"properties": {
+																			"key": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 128
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 256
+																			},
+																			"description": {
+																				"type": "string",
+																				"maxLength": 1024
+																			},
+																			"required": {
+																				"type": "boolean"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "string"
+																			},
+																			"minLength": {
+																				"type": "integer",
+																				"minimum": 0
+																			},
+																			"maxLength": {
+																				"type": "integer",
+																				"minimum": 0
+																			},
+																			"format": {
+																				"anyOf": [
+																					{
+																						"type": "string",
+																						"const": "email"
+																					},
+																					{
+																						"type": "string",
+																						"const": "uri"
+																					},
+																					{
+																						"type": "string",
+																						"const": "date"
+																					},
+																					{
+																						"type": "string",
+																						"const": "date-time"
+																					}
+																				]
+																			},
+																			"default": {
+																				"type": "string"
+																			}
+																		},
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"required": ["key", "label", "required", "kind", "integer"],
+																		"properties": {
+																			"key": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 128
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 256
+																			},
+																			"description": {
+																				"type": "string",
+																				"maxLength": 1024
+																			},
+																			"required": {
+																				"type": "boolean"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "number"
+																			},
+																			"integer": {
+																				"type": "boolean"
+																			},
+																			"minimum": {
+																				"type": "number"
+																			},
+																			"maximum": {
+																				"type": "number"
+																			},
+																			"default": {
+																				"type": "number"
+																			}
+																		},
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"required": ["key", "label", "required", "kind"],
+																		"properties": {
+																			"key": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 128
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 256
+																			},
+																			"description": {
+																				"type": "string",
+																				"maxLength": 1024
+																			},
+																			"required": {
+																				"type": "boolean"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "boolean"
+																			},
+																			"default": {
+																				"type": "boolean"
+																			}
+																		},
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"required": ["key", "label", "required", "kind", "options"],
+																		"properties": {
+																			"key": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 128
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 256
+																			},
+																			"description": {
+																				"type": "string",
+																				"maxLength": 1024
+																			},
+																			"required": {
+																				"type": "boolean"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "choice"
+																			},
+																			"options": {
+																				"$ref": "#/components/schemas/Array_597557d6"
+																			},
+																			"default": {
+																				"type": "string"
+																			}
+																		},
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"required": ["key", "label", "required", "kind", "options"],
+																		"properties": {
+																			"key": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 128
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 256
+																			},
+																			"description": {
+																				"type": "string",
+																				"maxLength": 1024
+																			},
+																			"required": {
+																				"type": "boolean"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "multi"
+																			},
+																			"options": {
+																				"$ref": "#/components/schemas/Array_597557d6"
+																			},
+																			"minItems": {
+																				"type": "integer",
+																				"minimum": 0
+																			},
+																			"maxItems": {
+																				"type": "integer",
+																				"minimum": 0
+																			},
+																			"default": {
+																				"type": "array",
+																				"items": {
+																					"type": "string"
+																				}
+																			}
+																		},
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"minItems": 1,
+															"maxItems": 24
+														}
+													},
+													"additionalProperties": false
+												},
+												{
+													"type": "object",
+													"required": [
+														"id",
+														"turnId",
+														"requestedAt",
+														"server",
+														"mode",
+														"message",
+														"url",
+														"host",
+														"domain",
+														"warnings",
+														"awaitCompletion",
+														"consented"
+													],
+													"properties": {
+														"id": {
+															"type": "string",
+															"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+														},
+														"turnId": {
+															"type": "string",
+															"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+														},
+														"requestedAt": {
+															"type": "string"
+														},
+														"server": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 256
+														},
+														"mode": {
+															"type": "string",
+															"const": "url"
+														},
+														"message": {
+															"type": "string",
+															"maxLength": 4096
+														},
+														"url": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 2048
+														},
+														"host": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 2048
+														},
+														"domain": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 2048
+														},
+														"warnings": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"maxLength": 512
+															},
+															"maxItems": 8
+														},
+														"awaitCompletion": {
+															"type": "boolean"
+														},
+														"consented": {
+															"type": "boolean"
+														}
+													},
+													"additionalProperties": false
+												}
+											]
+										},
+										{
+											"type": "null"
+										}
+									]
+								}
+							}
+						},
+						"headers": {
+							"X-Pancode-Epoch": {
+								"schema": {
+									"type": "string"
+								},
+								"description": "Server epoch"
+							},
+							"X-Pancode-Seq": {
+								"schema": {
+									"type": "integer"
+								},
+								"description": "Sequence before assembling the snapshot"
+							}
+						}
+					},
+					"default": {
+						"description": "Problem",
+						"content": {
+							"application/problem+json": {
+								"schema": {
+									"$ref": "#/components/schemas/Problem"
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/elicitation/{promptId}": {
+			"post": {
+				"operationId": "answerElicitation",
+				"summary": "Accept this MCP request with the form's values, decline it, or cancel it",
+				"security": [
+					{
+						"bearer": []
+					}
+				],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+						}
+					},
+					{
+						"name": "promptId",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+						}
+					},
+					{
+						"name": "Idempotency-Key",
+						"in": "header",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 128
+						}
+					},
+					{
+						"name": "X-Pancode-Epoch",
+						"in": "header",
+						"required": false,
+						"schema": {
+							"type": "string"
+						},
+						"description": "Expected server epoch. A mismatch refuses the command before admission; refresh server state before retrying."
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"anyOf": [
+									{
+										"type": "object",
+										"required": ["action"],
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "accept"
+											},
+											"content": {
+												"type": "object",
+												"patternProperties": {
+													"^.*$": {
+														"anyOf": [
+															{
+																"type": "string",
+																"maxLength": 65536
+															},
+															{
+																"type": "number"
+															},
+															{
+																"type": "boolean"
+															},
+															{
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"maxLength": 1024
+																},
+																"maxItems": 64
+															}
+														]
+													}
+												},
+												"maxProperties": 24
+											}
+										},
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"required": ["action"],
+										"properties": {
+											"action": {
+												"anyOf": [
+													{
+														"type": "string",
+														"const": "decline"
+													},
+													{
+														"type": "string",
+														"const": "cancel"
+													}
+												]
+											}
+										},
+										"additionalProperties": false
+									}
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						},
+						"headers": {
+							"X-Pancode-Epoch": {
+								"schema": {
+									"type": "string"
+								},
+								"description": "Server epoch"
+							},
+							"X-Pancode-Seq": {
+								"schema": {
+									"type": "integer"
+								},
+								"description": "Sequence before assembling the snapshot"
+							}
+						}
+					},
+					"default": {
+						"description": "Problem",
+						"content": {
+							"application/problem+json": {
+								"schema": {
+									"$ref": "#/components/schemas/Problem"
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions/{id}/permissions/{permissionId}": {
 			"post": {
 				"operationId": "permission",
@@ -15514,6 +16059,30 @@
 												"cancel": {
 													"type": "string",
 													"const": "_pancode/interview/cancel"
+												},
+												"timeoutMs": {
+													"type": "integer",
+													"minimum": 1,
+													"maximum": 2147483647
+												}
+											},
+											"additionalProperties": false
+										},
+										"elicitation": {
+											"type": "object",
+											"required": ["version", "request"],
+											"properties": {
+												"version": {
+													"type": "number",
+													"const": 1
+												},
+												"request": {
+													"type": "string",
+													"const": "_pancode/elicitation/request"
+												},
+												"cancel": {
+													"type": "string",
+													"const": "_pancode/elicitation/cancel"
 												},
 												"timeoutMs": {
 													"type": "integer",
@@ -27927,6 +28496,14 @@
 					"$ref": "#/components/schemas/Object_asOf_basis_contributions_a1f0dea5"
 				}
 			},
+			"Array_597557d6": {
+				"type": "array",
+				"items": {
+					"$ref": "#/components/schemas/Object_label_value_fd285b6c"
+				},
+				"minItems": 1,
+				"maxItems": 64
+			},
 			"Array_5fed751e": {
 				"type": "array",
 				"items": {
@@ -29243,6 +29820,374 @@
 													}
 												},
 												"additionalProperties": false
+											},
+											{
+												"type": "null"
+											}
+										]
+									}
+								}
+							}
+						}
+					},
+					{
+						"type": "object",
+						"required": ["v", "epoch", "seq", "at", "type", "payload"],
+						"properties": {
+							"v": {
+								"type": "number",
+								"const": 1
+							},
+							"epoch": {
+								"type": "string",
+								"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+							},
+							"seq": {
+								"type": "integer",
+								"minimum": 0
+							},
+							"at": {
+								"type": "string"
+							},
+							"type": {
+								"type": "string",
+								"const": "elicitation.changed"
+							},
+							"payload": {
+								"type": "object",
+								"required": ["resource", "prompt"],
+								"properties": {
+									"resource": {
+										"type": "string",
+										"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+									},
+									"prompt": {
+										"anyOf": [
+											{
+												"anyOf": [
+													{
+														"type": "object",
+														"required": ["id", "turnId", "requestedAt", "server", "mode", "message", "fields"],
+														"properties": {
+															"id": {
+																"type": "string",
+																"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+															},
+															"turnId": {
+																"type": "string",
+																"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+															},
+															"requestedAt": {
+																"type": "string"
+															},
+															"server": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"mode": {
+																"type": "string",
+																"const": "form"
+															},
+															"message": {
+																"type": "string",
+																"maxLength": 4096
+															},
+															"fields": {
+																"type": "array",
+																"items": {
+																	"anyOf": [
+																		{
+																			"type": "object",
+																			"required": ["key", "label", "required", "kind"],
+																			"properties": {
+																				"key": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 128
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 256
+																				},
+																				"description": {
+																					"type": "string",
+																					"maxLength": 1024
+																				},
+																				"required": {
+																					"type": "boolean"
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "string"
+																				},
+																				"minLength": {
+																					"type": "integer",
+																					"minimum": 0
+																				},
+																				"maxLength": {
+																					"type": "integer",
+																					"minimum": 0
+																				},
+																				"format": {
+																					"anyOf": [
+																						{
+																							"type": "string",
+																							"const": "email"
+																						},
+																						{
+																							"type": "string",
+																							"const": "uri"
+																						},
+																						{
+																							"type": "string",
+																							"const": "date"
+																						},
+																						{
+																							"type": "string",
+																							"const": "date-time"
+																						}
+																					]
+																				},
+																				"default": {
+																					"type": "string"
+																				}
+																			},
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"required": ["key", "label", "required", "kind", "integer"],
+																			"properties": {
+																				"key": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 128
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 256
+																				},
+																				"description": {
+																					"type": "string",
+																					"maxLength": 1024
+																				},
+																				"required": {
+																					"type": "boolean"
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "number"
+																				},
+																				"integer": {
+																					"type": "boolean"
+																				},
+																				"minimum": {
+																					"type": "number"
+																				},
+																				"maximum": {
+																					"type": "number"
+																				},
+																				"default": {
+																					"type": "number"
+																				}
+																			},
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"required": ["key", "label", "required", "kind"],
+																			"properties": {
+																				"key": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 128
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 256
+																				},
+																				"description": {
+																					"type": "string",
+																					"maxLength": 1024
+																				},
+																				"required": {
+																					"type": "boolean"
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "boolean"
+																				},
+																				"default": {
+																					"type": "boolean"
+																				}
+																			},
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"required": ["key", "label", "required", "kind", "options"],
+																			"properties": {
+																				"key": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 128
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 256
+																				},
+																				"description": {
+																					"type": "string",
+																					"maxLength": 1024
+																				},
+																				"required": {
+																					"type": "boolean"
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "choice"
+																				},
+																				"options": {
+																					"$ref": "#/components/schemas/Array_597557d6"
+																				},
+																				"default": {
+																					"type": "string"
+																				}
+																			},
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"required": ["key", "label", "required", "kind", "options"],
+																			"properties": {
+																				"key": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 128
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 256
+																				},
+																				"description": {
+																					"type": "string",
+																					"maxLength": 1024
+																				},
+																				"required": {
+																					"type": "boolean"
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "multi"
+																				},
+																				"options": {
+																					"$ref": "#/components/schemas/Array_597557d6"
+																				},
+																				"minItems": {
+																					"type": "integer",
+																					"minimum": 0
+																				},
+																				"maxItems": {
+																					"type": "integer",
+																					"minimum": 0
+																				},
+																				"default": {
+																					"type": "array",
+																					"items": {
+																						"type": "string"
+																					}
+																				}
+																			},
+																			"additionalProperties": false
+																		}
+																	]
+																},
+																"minItems": 1,
+																"maxItems": 24
+															}
+														},
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"required": [
+															"id",
+															"turnId",
+															"requestedAt",
+															"server",
+															"mode",
+															"message",
+															"url",
+															"host",
+															"domain",
+															"warnings",
+															"awaitCompletion",
+															"consented"
+														],
+														"properties": {
+															"id": {
+																"type": "string",
+																"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+															},
+															"turnId": {
+																"type": "string",
+																"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+															},
+															"requestedAt": {
+																"type": "string"
+															},
+															"server": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"mode": {
+																"type": "string",
+																"const": "url"
+															},
+															"message": {
+																"type": "string",
+																"maxLength": 4096
+															},
+															"url": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 2048
+															},
+															"host": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 2048
+															},
+															"domain": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 2048
+															},
+															"warnings": {
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"maxLength": 512
+																},
+																"maxItems": 8
+															},
+															"awaitCompletion": {
+																"type": "boolean"
+															},
+															"consented": {
+																"type": "boolean"
+															}
+														},
+														"additionalProperties": false
+													}
+												]
 											},
 											{
 												"type": "null"
@@ -35781,6 +36726,22 @@
 					},
 					"state": {
 						"$ref": "#/components/schemas/Union_e0fbba61"
+					}
+				},
+				"additionalProperties": false
+			},
+			"Object_label_value_fd285b6c": {
+				"type": "object",
+				"required": ["value", "label"],
+				"properties": {
+					"value": {
+						"type": "string",
+						"maxLength": 1024
+					},
+					"label": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 256
 					}
 				},
 				"additionalProperties": false

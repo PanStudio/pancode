@@ -83,8 +83,12 @@ export function createQuestionState(
 		inputValue: initial?.text ?? "",
 		answer: "",
 		rawValue: "",
-		// defaultOption sets focus; harness drafts still need the operator's submission.
-		...(focusable ? { focusedValue: `option:${preferred}` } : {}),
+		// defaultOption sets focus, and a drafted text focuses the Other row holding it; drafts still need the operator's submission.
+		...(focusable
+			? { focusedValue: `option:${preferred}` }
+			: (initial?.text ?? "").length > 0 && (initial?.selected?.length ?? 0) === 0
+				? { focusedValue: "other" }
+				: {}),
 	};
 }
 

@@ -5,6 +5,7 @@ import type {
 	McpBuiltinSource,
 	McpClient,
 	McpClientOptions,
+	McpElicitationHost,
 	McpServerCatalog,
 	McpServerSpec,
 	McpSurface,
@@ -198,6 +199,12 @@ export interface McpCapabilitySourceOptions {
 	store?: McpStoreAccess;
 	/** Test seam: the store backend references resolve and commit through. */
 	openStoreBackend?: (cwd: string) => Promise<StoreBackend>;
+	/**
+	 * Where a server's elicitations go: an operator who can answer them (the
+	 * TUI, or an ACP client that opted in). Absent, no server is told PanCode
+	 * can ask anyone, as on a headless run, a worker or `pancode mcp`.
+	 */
+	elicitation?: McpElicitationHost;
 }
 
 export interface McpCapabilitySource {

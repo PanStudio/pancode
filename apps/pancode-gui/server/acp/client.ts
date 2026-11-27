@@ -23,6 +23,11 @@ import {
 	ToolProgressCapability,
 } from "../../contracts/capabilities.js";
 import { ContextCapability } from "../../contracts/context-ledger.js";
+import {
+	ELICITATION_CANCEL_METHOD,
+	ELICITATION_REQUEST_METHOD,
+	ElicitationCapability,
+} from "../../contracts/elicitation.js";
 import { ExtensionsCapability, HubCapability } from "../../contracts/extensions.js";
 import { FleetCapability } from "../../contracts/fleet-run.js";
 import { HandoffCapability } from "../../contracts/handoff.js";
@@ -41,6 +46,7 @@ import {
 	ACP_COMMANDS_META_KEY,
 	ACP_CONTEXT_META_KEY,
 	ACP_DECISION_META_KEY,
+	ACP_ELICITATION_META_KEY,
 	ACP_ERROR_META_KEY,
 	ACP_EVENTS_META_KEY,
 	ACP_EXTENSIONS_META_KEY,
@@ -137,6 +143,7 @@ function readCapabilities(result: unknown): AgentCapabilities {
 		...maybe("extensions", optional(ExtensionsCapability, meta[ACP_EXTENSIONS_META_KEY])),
 		...maybe("aside", optional(AsideCapability, meta[ACP_ASIDE_META_KEY])),
 		...maybe("interviews", optional(InterviewCapability, meta[ACP_INTERVIEWS_META_KEY])),
+		...maybe("elicitation", optional(ElicitationCapability, meta[ACP_ELICITATION_META_KEY])),
 		...maybe("telemetry", optional(TelemetryCapability, meta[ACP_TELEMETRY_META_KEY])),
 		...maybe("hub", optional(HubCapability, meta[ACP_HUB_META_KEY])),
 	};
@@ -266,6 +273,12 @@ export class AcpClient {
 					// The session and turn usage as read-model quantities, each with its fact and ref, not only its display.
 					[ACP_USAGE_META_KEY]: { version: 1 },
 					[ACP_INTERVIEWS_META_KEY]: { version: 1, request: INTERVIEW_REQUEST_METHOD, cancel: INTERVIEW_CANCEL_METHOD },
+					// An MCP server's form or link reaches the person here; without this no server is told anyone answers.
+					[ACP_ELICITATION_META_KEY]: {
+						version: 1,
+						request: ELICITATION_REQUEST_METHOD,
+						cancel: ELICITATION_CANCEL_METHOD,
+					},
 					// A dispatched worker's escalation reaches the approval card as a permission request,
 					// and a withdrawn one retires the card, because the wire cannot cancel a single ask.
 					[ACP_WORKER_PERMISSIONS_META_KEY]: { version: 1, withdraw: PERMISSION_WITHDRAW_METHOD },

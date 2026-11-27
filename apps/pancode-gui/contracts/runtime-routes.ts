@@ -110,6 +110,12 @@ export const routes = {
 	userConfigGraph: { name: "userConfigGraph", method: "GET", path: "/api/config-graph" },
 	sessionInterview: { name: "sessionInterview", method: "GET", path: "/api/sessions/:id/interview" },
 	answerInterview: { name: "answerInterview", method: "POST", path: "/api/sessions/:id/interview/:roundId" },
+	sessionElicitation: { name: "sessionElicitation", method: "GET", path: "/api/sessions/:id/elicitation" },
+	answerElicitation: {
+		name: "answerElicitation",
+		method: "POST",
+		path: "/api/sessions/:id/elicitation/:promptId",
+	},
 	permission: { name: "permission", method: "POST", path: "/api/sessions/:id/permissions/:permissionId" },
 	cancelTurn: { name: "cancelTurn", method: "POST", path: "/api/sessions/:id/turns/:turnId/cancel" },
 	sessionCapabilities: { name: "sessionCapabilities", method: "GET", path: "/api/sessions/:id/capabilities" },

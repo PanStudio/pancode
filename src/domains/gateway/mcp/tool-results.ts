@@ -59,6 +59,16 @@ export interface McpToolCallResult {
 	/** Bounded plain rendering of the content blocks. */
 	text: string;
 	textTruncated: boolean;
+	/** What the operator answered to each elicitation the server sent during this call, never the values. */
+	elicitations?: McpElicitationOutcome[];
+}
+
+/** One elicitation a call went through: its mode and the action sent, and why PanCode answered for the operator. */
+export interface McpElicitationOutcome {
+	mode: "form" | "url";
+	action: "accept" | "decline" | "cancel";
+	/** Set when PanCode declined or cancelled without the operator: an unsupported form, a secret field, a bad answer. */
+	reason?: string;
 }
 
 /** Cut a string at a UTF-8 byte boundary at or below `maxBytes`. */

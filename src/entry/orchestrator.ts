@@ -264,6 +264,7 @@ import {
 import type { AcpHostReport } from "../engine/acp/commands.js";
 import {
 	bindBoardActions,
+	createAcpElicitationChannel,
 	createAcpInterviewChannel,
 	createHostToolEvents,
 	followWorkerRuns,
@@ -701,6 +702,8 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	const acpHandshake = options.acp?.handshake;
 	const acpInterviews = acpHandshake?.initialized === true && acpHandshake.interviewsEnabled;
 	const acpWorkerPermissions = acpHandshake?.initialized === true && acpHandshake.workerPermissionsEnabled;
+	const acpElicitationChannel =
+		acpHandshake?.initialized === true && acpHandshake.elicitationEnabled ? createAcpElicitationChannel() : undefined;
 	const acpInterviewChannel = acpInterviews
 		? createAcpInterviewChannel({
 				unattendedWindowMs: () => unattendedWindowMs(getCurrentSettings().safety.unattendedAfterSeconds),
@@ -2319,6 +2322,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		dispatch,
 		bus,
 		...(interactive || acpInterviews || options.headless?.answers ? { askUser: askUserBridge } : {}),
+		...(interactive
+			? { mcpElicitation: "ask_user" as const }
+			: acpElicitationChannel
+				? { mcpElicitation: acpElicitationChannel.elicit }
+				: {}),
 		// R-12: the agent drafts or offers a PanCode report; the host keeps the budget and never sends.
 		report: {
 			...reportSession,
@@ -3113,6 +3121,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				...(options.acp.handshake ? { handshake: options.acp.handshake } : {}),
 				...(options.acp.onReady ? { onReady: options.acp.onReady } : {}),
 				...(acpInterviewChannel ? { interviews: acpInterviewChannel } : {}),
+				...(acpElicitationChannel ? { elicitation: acpElicitationChannel } : {}),
 				...(acpWorkerPermissions && dispatch?.resolveWorkerPermission
 					? {
 							workerPermissions: {

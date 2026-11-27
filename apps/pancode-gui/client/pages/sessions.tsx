@@ -71,6 +71,7 @@ import "../chat/conversation.css";
 // The rewind dialog and transcript downloads open only from `?rewind=1` and `?download=`, so their code waits for the task page.
 const RewindHost = lazy(() => import("../chat/RewindDialog.js").then((module) => ({ default: module.RewindHost })));
 const Interview = lazy(() => import("../chat/Interview.js").then((module) => ({ default: module.Interview })));
+const Elicitation = lazy(() => import("../chat/Elicitation.js").then((module) => ({ default: module.Elicitation })));
 
 /** The old projects page. Choosing and opening projects now lives in the rail and the Open workspace dialog. */
 export function Workspaces() {
@@ -790,6 +791,12 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 						</div>
 						<Suspense fallback={null}>
 							<Interview
+								client={client}
+								sessionId={snapshot.id}
+								sessionOpen={snapshot.state === "open"}
+								capabilities={capabilities.data}
+							/>
+							<Elicitation
 								client={client}
 								sessionId={snapshot.id}
 								sessionOpen={snapshot.state === "open"}

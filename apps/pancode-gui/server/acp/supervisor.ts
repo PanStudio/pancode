@@ -24,6 +24,11 @@ import { SessionTree } from "../../contracts/branches.js";
 import { Id } from "../../contracts/common.js";
 import { WireContextLedger } from "../../contracts/context-ledger.js";
 import { ContextOperationStatus } from "../../contracts/context-work.js";
+import {
+	ELICITATION_CANCEL_METHOD,
+	ELICITATION_REQUEST_METHOD,
+	type ElicitationSubmission,
+} from "../../contracts/elicitation.js";
 import { ExtensionReload, HubReload, SessionExtensions } from "../../contracts/extensions.js";
 import {
 	FleetPreview,
@@ -149,6 +154,7 @@ import {
 } from "./child-lifecycle.js";
 import { type ChildRow, ChildrenFile } from "./children-file.js";
 import { AcpClient, acpProblem, record } from "./client.js";
+import { Elicitations } from "./elicitations.js";
 import { EventFault, fleetEvent } from "./fleet-events.js";
 import { Interviews } from "./interviews.js";
 import { JOB_QUIET_MS, jobChangeIsStructural, scheduledTurnPrompt } from "./jobs.js";
@@ -556,6 +562,18 @@ export class Supervisor {
 				if (owned.client.capabilities.interviews?.cancel === INTERVIEW_CANCEL_METHOD)
 					owned.interviews?.withdraw(owned.id, params);
 			});
+			owned.elicitations = new Elicitations((prompt) =>
+				this.hub.publish({ type: "elicitation.changed", payload: { resource: owned.id, prompt } }),
+			);
+			transport.onRequest(ELICITATION_REQUEST_METHOD, (params) => {
+				if (!owned.client.capabilities.elicitation)
+					throw new AppProblem("conflict", "This peer has not announced MCP elicitation support.");
+				return owned.elicitations?.request(owned.id, owned.turnId, params);
+			});
+			transport.onNotification(ELICITATION_CANCEL_METHOD, (params) => {
+				if (owned.client.capabilities.elicitation?.cancel === ELICITATION_CANCEL_METHOD)
+					owned.elicitations?.withdraw(owned.id, params);
+			});
 			transport.onNotification(PERMISSION_WITHDRAW_METHOD, (params) => {
 				const withdrawn = record(params);
 				if (withdrawn.sessionId === owned.id) owned.permissions?.withdraw(withdrawn.requestId);
@@ -822,6 +840,7 @@ export class Supervisor {
 		if (!entry.turnId) return;
 		entry.permissions?.cancel();
 		entry.interviews?.cancel();
+		entry.elicitations?.cancel();
 		this.publish({
 			type: "turn.finished",
 			payload: {
@@ -1173,6 +1192,19 @@ export class Supervisor {
 		entry.interviews.answer(roundId, submission);
 		return {};
 	}
+	elicitation(id: string) {
+		const entry = this.active(id);
+		if (!entry.client.capabilities.elicitation)
+			throw new AppProblem("conflict", "This runtime does not put MCP elicitations to the GUI.");
+		return entry.elicitations?.current() ?? null;
+	}
+	answerElicitation(id: string, promptId: string, submission: ElicitationSubmission) {
+		const entry = this.active(id);
+		if (!entry.client.capabilities.elicitation || !entry.elicitations)
+			throw new AppProblem("conflict", "This runtime does not put MCP elicitations to the GUI.");
+		entry.elicitations.answer(promptId, submission);
+		return {};
+	}
 	decide(id: string, permissionId: string, decision: PermissionDecision) {
 		const permissions = this.active(id).permissions;
 		if (!permissions) throw new AppProblem("conflict", "This task has no approval waiting.");
@@ -1207,6 +1239,7 @@ export class Supervisor {
 			await entry.client.request(ACP_SESSION_CANCEL_METHOD, { sessionId: entry.id }, this.cancelTimeoutMs);
 			entry.permissions?.cancel();
 			entry.interviews?.cancel();
+			entry.elicitations?.cancel();
 		} catch {
 			if (entry.turnId !== null) entry.stopUnconfirmedAt = performance.now();
 			throw new AppProblem("upstream_acp", STOP_UNCONFIRMED);
@@ -1457,6 +1490,7 @@ export class Supervisor {
 		entry.turnId = null;
 		entry.permissions?.cancel();
 		entry.interviews?.cancel();
+		entry.elicitations?.cancel();
 		this.publish({
 			type: "session.reset",
 			payload: { resource: entry.id, revision: this.revision(entry.id), reason: "branch" },
@@ -2025,6 +2059,7 @@ export class Supervisor {
 				await entry.client.request(ACP_SESSION_CANCEL_METHOD, { sessionId: entry.id }, 2000);
 				entry.permissions?.cancel();
 				entry.interviews?.cancel();
+				entry.elicitations?.cancel();
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				await Promise.race([
 					entry.contextCommand ?? entry.prompt,

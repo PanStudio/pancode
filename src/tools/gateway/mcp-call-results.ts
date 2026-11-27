@@ -6,6 +6,7 @@ import { prepareBoundedImage } from "../../core/file-references.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type {
 	McpContentBlock,
+	McpElicitationOutcome,
 	McpProgressUpdate,
 	McpToolCallResult,
 	McpToolDescriptor,
@@ -292,4 +293,23 @@ export async function boundedImageResult(
 	} finally {
 		releaseObservation(reservation);
 	}
+}
+
+/**
+ * The lines that tell the model what became of the input a server asked for
+ * during a call: who declined or cancelled it, and why when PanCode answered
+ * for the operator. An accepted elicitation needs no line, and the values
+ * the operator gave are never repeated.
+ */
+export function elicitationNote(serverId: string, outcomes: readonly McpElicitationOutcome[] | undefined): string {
+	return (outcomes ?? [])
+		.filter((outcome) => outcome.action !== "accept")
+		.map((outcome) => {
+			const done = outcome.action === "decline" ? "declined" : "cancelled";
+			const asked = `the input MCP server '${serverId}' asked for (${outcome.mode})`;
+			return outcome.reason === undefined
+				? `the operator ${done} ${asked}`
+				: `PanCode ${done} ${asked}: ${outcome.reason}`;
+		})
+		.join("\n");
 }

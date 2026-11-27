@@ -10,6 +10,8 @@ import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../..
 import type {
 	McpCatalogIdentity,
 	McpClient,
+	McpElicitationContext,
+	McpElicitationRequest,
 	McpServerCatalog,
 	McpSurface,
 	McpSurfaceStatus,
@@ -46,6 +48,7 @@ import { readMaxBytes } from "../read.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import {
 	boundedImageResult,
+	elicitationNote,
 	errorMessage,
 	imageBlocks,
 	MCP_RESULT_CONTEXT_BYTES,
@@ -162,6 +165,7 @@ function quoted(value: string): string {
 export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): McpCapabilitySource {
 	const registry = options.registry;
 	const clientFactory = options.clientFactory ?? createMcpStdioClient;
+	const elicitationHost = options.elicitation;
 	const openStoreBackend = options.openStoreBackend ?? defaultOpenStoreBackend;
 	/** The project's store backend, opened once for whoever asks first. */
 	const storeBackend = (): (() => Promise<StoreBackend>) => {
@@ -568,19 +572,23 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						textTruncated: rendered.truncated,
 						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
 						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
+						...(result.elicitations !== undefined ? { elicitations: result.elicitations } : {}),
 					};
+					const note = neutralizeFraming(elicitationNote(declaration.id, result.elicitations));
 					if (result.isError) {
 						const refusal = serverPolicyRefusalResult(state, tool, name, trustClass, result);
 						if (refusal !== null) return refusal;
+						const text = neutralizeFraming(rendered.text) || "tool error";
 						return withCatalogChange(state, {
 							kind: "error",
-							message: `${name}: ${neutralizeFraming(rendered.text) || "tool error"}`,
+							message: `${name}: ${note.length > 0 ? `${note}\n${text}` : text}`,
 							details,
 						});
 					}
 					const images = imageBlocks(result);
 					// Server text cannot open or close a host frame (a reminder block or a middleware note), as bash and web_fetch output cannot.
 					let output = neutralizeFraming(rendered.text);
+					if (note.length > 0) output = output.length > 0 ? `${note}\n${output}` : note;
 					if (prepared !== null && prepared.writes.length > 0) {
 						// An interrupted call commits nothing, whatever the server answered.
 						if (invokeOptions?.signal?.aborted === true) {
@@ -778,6 +786,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						{
 							workspaceRoot: placement.workspaceRoot,
 							...(sandboxNetwork ? { sandboxNetwork: true } : {}),
+							...(elicitationHost !== undefined
+								? {
+										elicitation: (request: McpElicitationRequest, context: McpElicitationContext) =>
+											elicitationHost(declaration.id, request, context),
+									}
+								: {}),
 							onFailure: (error) => {
 								state.failure ??= errorMessage(error);
 								void closeClient(state);

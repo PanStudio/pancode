@@ -391,6 +391,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			workspace: options.workspace !== undefined,
 			images: options.expandPrompt !== undefined,
 			interviews: options.interviews !== undefined,
+			elicitation: options.elicitation !== undefined,
 			workerPermissions: options.workerPermissions !== undefined,
 			shell: shellWired(options),
 			queueEdit: queueEditWired(options),
@@ -3118,7 +3119,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		// A shell line never runs beside a prompt, so this stops whichever of the two is running.
 		if (activeShell?.sessionId === session.id) activeShell.abort.abort();
 		if (activeSessionId === session.id || activeSessionId === null) permission.cancelPending(reason);
-		if ((activeSessionId ?? boundSessionId) === session.id) options.interviews?.cancel();
+		if ((activeSessionId ?? boundSessionId) === session.id) {
+			options.interviews?.cancel();
+			options.elicitation?.cancel();
+		}
 		if (!session.activePrompt) {
 			if ((contextCommandInFlight !== null || operationId !== undefined) && session.id === boundSessionId)
 				options.chat.cancel();
@@ -4092,12 +4096,20 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		timeoutMs: interviewWindowMs,
 		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
 	});
+	const detachElicitation = options.elicitation?.attach({
+		transport: options.transport,
+		sessionId: () => activeSessionId ?? boundSessionId,
+		enabled: () => handshake.initialized && handshake.elicitationEnabled,
+		timeoutMs: () => handshake.elicitationTimeoutMs ?? permissionTimeoutMs,
+		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
+	});
 	options.onReady?.();
 	return await new Promise<number>((resolve) => {
 		options.transport.onClose(() => {
 			telemetry.dispose();
 			unsubscribeTelemetryUpdates?.();
 			detachInterviews?.();
+			detachElicitation?.();
 			// Unbound first: a scheduled turn must be refused, never run where no client can see it.
 			unbindMachineTurns?.();
 			permission.unregister();

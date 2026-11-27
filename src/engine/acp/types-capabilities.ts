@@ -18,6 +18,9 @@ import {
 	ACP_COMMANDS_META_KEY,
 	ACP_CONTEXT_META_KEY,
 	ACP_DECISION_META_KEY,
+	ACP_ELICITATION_CANCEL_METHOD,
+	ACP_ELICITATION_META_KEY,
+	ACP_ELICITATION_REQUEST_METHOD,
 	ACP_EVENTS_META_KEY,
 	ACP_EXTENSIONS_META_KEY,
 	ACP_FLEET_META_KEY,
@@ -221,6 +224,17 @@ export const AcpInterviewsCapability = Type.Object(
 	closed,
 );
 export type AcpInterviewsCapability = Static<typeof AcpInterviewsCapability>;
+/** Echoed only to a client that opted in to MCP elicitation; `timeoutMs` only when it asked for one. */
+export const AcpElicitationCapability = Type.Object(
+	{
+		version: Type.Literal(1),
+		request: Type.Literal(ACP_ELICITATION_REQUEST_METHOD),
+		cancel: Type.Optional(Type.Literal(ACP_ELICITATION_CANCEL_METHOD)),
+		timeoutMs: Type.Optional(negotiatedTimeoutMs),
+	},
+	closed,
+);
+export type AcpElicitationCapability = Static<typeof AcpElicitationCapability>;
 /** Echoed only to a client that opted in; `timeoutMs` only when it asked for one. */
 export const AcpWorkerPermissionsCapability = Type.Object(
 	{
@@ -320,6 +334,7 @@ export interface AcpAgentCapabilitiesMeta {
 	[ACP_WORKSPACE_META_KEY]?: { version: 1; update: "session_info_update" };
 	[ACP_ASIDE_META_KEY]?: AcpAsideCapability;
 	[ACP_INTERVIEWS_META_KEY]?: AcpInterviewsCapability;
+	[ACP_ELICITATION_META_KEY]?: AcpElicitationCapability;
 	[ACP_WORKER_PERMISSIONS_META_KEY]?: AcpWorkerPermissionsCapability;
 	[ACP_CONTEXT_META_KEY]?: AcpContextCapability;
 	[ACP_ARTIFACTS_META_KEY]?: AcpWire<AcpArtifactsCapability>;
@@ -346,6 +361,18 @@ export interface AcpClientCapabilitiesMeta {
 		 * never an explicit `pancode acp --permission-timeout`. Any other value
 		 * refuses the whole opt-in.
 		 */
+		timeoutMs?: number;
+	};
+	/**
+	 * A person at the client answers MCP servers' elicitations: forms and
+	 * links, over `_pancode/elicitation/request`. Without it no MCP server is
+	 * told PanCode can ask anyone. `timeoutMs` is bounded and pinned like the
+	 * interview one.
+	 */
+	[ACP_ELICITATION_META_KEY]?: {
+		version: 1;
+		request: typeof ACP_ELICITATION_REQUEST_METHOD;
+		cancel?: typeof ACP_ELICITATION_CANCEL_METHOD;
 		timeoutMs?: number;
 	};
 	[ACP_WORKER_PERMISSIONS_META_KEY]?: {

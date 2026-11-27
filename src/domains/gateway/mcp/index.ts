@@ -26,6 +26,8 @@ export {
 	type McpClient,
 	type McpClientOptions,
 	type McpContentBlock,
+	type McpElicitationHandler,
+	type McpElicitationOutcome,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
 	type McpServerInfo,
@@ -57,6 +59,22 @@ export {
 	parseMcpConfigText,
 	pluginServerRevocation,
 } from "./config.js";
+export {
+	describeValue,
+	fieldValueError,
+	formContentErrors,
+	type McpElicitAction,
+	type McpElicitationContext,
+	type McpElicitationHost,
+	type McpElicitationRequest,
+	type McpElicitResult,
+	type McpElicitValue,
+	type McpFieldOption,
+	type McpFormElicitation,
+	type McpFormField,
+	type McpUrlElicitation,
+	readTypedValue,
+} from "./elicitation.js";
 export {
 	type McpCatalogIdentity,
 	type McpServerCatalog,

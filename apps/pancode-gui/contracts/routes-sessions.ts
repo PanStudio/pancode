@@ -18,6 +18,7 @@ import { Empty, Id } from "./common.js";
 import { ContextLedger } from "./context-ledger.js";
 import { ContextOperationStatus } from "./context-work.js";
 import { SessionControl } from "./control.js";
+import { ElicitationPrompt, ElicitationSubmission } from "./elicitation.js";
 import { ExtensionReload, SessionExtensions } from "./extensions.js";
 import { FleetPreview, FleetPreviewRequest, FleetRunRequest, FleetRunResult } from "./fleet-run.js";
 import {
@@ -85,6 +86,22 @@ export const sessionWorkRoutes = {
 		response: Empty,
 		summary: "Submit this interview round's choices and text, or cancel it",
 		...runtimeRoutes.answerInterview,
+	}),
+	sessionElicitation: defineRoute({
+		...get,
+		params: operationParams,
+		response: Type.Union([ElicitationPrompt, Type.Null()]),
+		summary: "The oldest MCP server form or link waiting for the operator, when the ACP peer advertises support",
+		...runtimeRoutes.sessionElicitation,
+	}),
+	answerElicitation: defineRoute({
+		...post,
+		status: 200,
+		params: Type.Object({ id: Id, promptId: Id }, { additionalProperties: false }),
+		body: ElicitationSubmission,
+		response: Empty,
+		summary: "Accept this MCP request with the form's values, decline it, or cancel it",
+		...runtimeRoutes.answerElicitation,
 	}),
 	permission: defineRoute({
 		...post,
