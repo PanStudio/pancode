@@ -35,6 +35,8 @@ export interface RecordedPutOptions {
 	record?: StorePutRecordFields | ((stored: StoreBlobPut) => StorePutRecordFields | Promise<StorePutRecordFields>);
 	/** `link` shares the source's blocks by a reflink where the file system can, else copies; default `copy`. */
 	mode?: StorePutMode;
+	/** The tool was admitted to create this blob, not to replace it. */
+	ifAbsent?: boolean;
 	signal?: AbortSignal;
 }
 
@@ -64,13 +66,12 @@ export async function recordedPut(backend: StoreBackend, options: RecordedPutOpt
 	const { tag, blob } = options;
 	return backend.withLock(storeBlobLockKey(tag, blob), async (): Promise<RecordedPutResult> => {
 		const replaced = (await backend.statBlob(tag, blob)) !== null;
-		const put = await backend.putBlobFromFile(
-			tag,
-			blob,
-			options.source,
-			options.signal,
-			options.mode !== undefined ? { mode: options.mode } : undefined,
-		);
+		if (replaced && options.ifAbsent)
+			throw new StoreRefusal("exists", `${tag}:${blob} exists; submit the put again to have the replacement admitted.`);
+		const put = await backend.putBlobFromFile(tag, blob, options.source, options.signal, {
+			...(options.mode !== undefined ? { mode: options.mode } : {}),
+			...(options.ifAbsent ? { ifAbsent: true } : {}),
+		});
 		// From here the bytes are in the store. The record names what this put streamed; the blob is never
 		// re-read, as a later writer may own its name by then.
 		try {

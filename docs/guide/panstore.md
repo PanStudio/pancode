@@ -195,7 +195,7 @@ There is no host-local index and no free-space figure; `put --link` copies.
 
 ## The model's `store` tool
 
-The model reaches the same store through the `store` tool. Its eight ops (`tags`, `create`, `list`, `stat`, `get`, `put`, `note` and `remove`) and the admission each one gets are in [tool-usage.md](tool-usage.md#store-keep-results-and-datasets-outside-the-working-tree). `get` returns a path to a read-only copy that the model passes unchanged to `data`, `read`, `run_script` or an MCP tool.
+The model reaches the same store through the `store` tool. Its eight ops (`tags`, `create`, `list`, `stat`, `get`, `put`, `note` and `remove`) and the admission each one gets are in [tool-usage.md](tool-usage.md#store-keep-results-and-datasets-outside-the-working-tree). An S3 put admitted as a creation cannot replace an object: if the name is taken, submit the put again for replacement approval. `get` returns a path to a read-only copy that the model passes unchanged to `data`, `read`, `run_script` or an MCP tool.
 
 ## Workers and tags
 

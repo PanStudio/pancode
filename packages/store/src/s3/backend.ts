@@ -587,7 +587,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				return { ...current.file.xattrs };
 			}),
 
-		putBlobFromFile: (tag, blob, source, signal) =>
+		putBlobFromFile: (tag, blob, source, signal, putOptions) =>
 			guarded(async (): Promise<StoreBlobPut> => {
 				await requireTag(tag);
 				checkBlob(tag, blob);
@@ -616,6 +616,10 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 					throw error;
 				}
 				const key = `${blobsBase(tag)}${blob}`;
+				const previous = putOptions?.ifAbsent ? null : await head(key, `${tag}:${blob}`);
+				const etag = previous?.headers.get("etag");
+				if (previous !== null && !etag)
+					throw new StoreRefusal("unavailable", `The bucket returned no ETag for ${tag}:${blob}; refusing to replace it.`);
 				await fenceHeldLeases();
 				const modifiedMs = Date.now();
 				const fenced = fencedSignal(signal);
@@ -623,7 +627,7 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				try {
 					// The signed digest is of the bytes hashed above, so a source changed since is refused by S3.
 					response = await client.send("PUT", key, {
-						headers: { [MTIME_HEADER]: String(modifiedMs) },
+						headers: { [MTIME_HEADER]: String(modifiedMs), ...(etag ? { "if-match": etag } : { "if-none-match": "*" }) },
 						body: { file: source, bytes: sourceInfo.size, sha256 },
 						...(fenced !== undefined ? { signal: fenced } : {}),
 					});
@@ -635,6 +639,10 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 				}
 				if (response.status !== 200) {
 					if (signal?.aborted) throw aborted();
+					if (response.status === 412 || response.status === 409) {
+						await discard(response);
+						throw new StoreRefusal("exists", `${tag}:${blob} changed before the put committed; inspect it before retrying.`);
+					}
 					throw await client.refusal(response, `the put of ${blob} into ${tag}`);
 				}
 				await discard(response);

@@ -14,7 +14,13 @@ import {
 } from "@pancode/store";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { observeFileHash } from "../../core/run-records.js";
-import { isRecordsTag, STORE_REPLACES_ARG, validateBlobName, validateTagName } from "../../core/store-paths.js";
+import {
+	isRecordsTag,
+	STORE_REPLACES_ARG,
+	storeReplacedBytes,
+	validateBlobName,
+	validateTagName,
+} from "../../core/store-paths.js";
 import { STORE_UNGRANTED_ARG } from "../../domains/safety/action-classifier.js";
 import {
 	openStoreBackend,
@@ -225,7 +231,7 @@ async function statShape(
  * A put's admission arguments with STORE_REPLACES_ARG set to the existing blob's size when its blob
  * already exists, so the put is admitted as the replace it is and the safety judge can say what it
  * replaces. Any value the model sent is dropped; an unreachable backend sets nothing, and on a
- * backend admission cannot stat on disk the put then refuses itself.
+ * bucket the put may then only create a new object.
  */
 export async function storeAdmissionFacts(
 	args: Record<string, unknown>,
@@ -250,7 +256,7 @@ export async function storeAdmissionFacts(
 		const existing = await backend.statBlob(tag, blob);
 		if (existing !== null) out[STORE_REPLACES_ARG] = existing.bytes;
 	} catch {
-		// Unreachable: the tool reaches the same backend, refuses, and says why.
+		// Without a positive replacement observation an S3 put uses If-None-Match.
 	}
 	return out;
 }
@@ -354,6 +360,7 @@ async function runOp(
 		const result = await recordedPut(backend, {
 			tag,
 			blob,
+			...(backend.kind === "s3" && storeReplacedBytes(args) === null ? { ifAbsent: true } : {}),
 			source: source.abs,
 			actor: producedBy,
 			...(signal !== undefined ? { signal } : {}),
@@ -452,6 +459,7 @@ export function createStoreTool(deps: StoreToolDeps): ToolSpec {
 	return {
 		...storeToolSurface,
 		prepareAdmissionArguments: (args) => prepareStoreAdmissionArguments(args, getCwd(), deps),
+		resolveAdmissionFacts: (args) => storeAdmissionFacts(args, getCwd(), deps.openBackend),
 		async run(rawArgs, options?: ToolInvokeOptions): Promise<ToolResult> {
 			const args = prepareStoreArguments(rawArgs);
 			const op = typeof args.op === "string" ? args.op : "";

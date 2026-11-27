@@ -40,7 +40,7 @@ export interface StoreBackend {
 		blob: string,
 		source: string,
 		signal?: AbortSignal,
-		options?: { mode?: StorePutMode },
+		options?: { mode?: StorePutMode; ifAbsent?: boolean },
 	): Promise<StoreBlobPut>;
 	/** A read-only local copy whose writes cannot change the stored blob. `copied` is true when the backend materialized bytes for it. */
 	getBlobAsPath(tag: string, blob: string, signal?: AbortSignal): Promise<{ path: string; copied: boolean }>;

@@ -560,12 +560,21 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 			tag: string;
 			blob: string;
 		},
+		ifAbsent = false,
 	): Promise<StoreBlobPut> {
 		await fsyncFile(temp);
 		if (put.signal?.aborted) throw new StoreRefusal("io", `The put of ${put.blob} into ${put.tag} was aborted.`);
 		const modifiedMs = (await lstat(temp)).mtimeMs;
 		await fenceHeldLeases();
-		await rename(temp, target);
+		if (ifAbsent) {
+			try {
+				await link(temp, target);
+			} catch (error) {
+				if (errnoOf(error) !== "EEXIST") throw error;
+				throw new StoreRefusal("exists", `${put.tag}:${put.blob} already exists.`);
+			}
+			await unlink(temp);
+		} else await rename(temp, target);
 		await fsyncDirectoryAsync(path.dirname(target));
 		return { bytes: put.bytes, modifiedMs, version: null, sha256: put.sha256, link: put.link, key: target };
 	}
@@ -874,7 +883,12 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 						// The digest and size are of the clone this put made, as for a copy.
 						const digest = await hashStoreFile(temp, signal);
 						bytes = (await lstat(temp)).size;
-						return await finishPut(temp, target, { bytes, sha256: digest, link: transfer, signal, tag, blob });
+						return await finishPut(
+							temp,
+							target,
+							{ bytes, sha256: digest, link: transfer, signal, tag, blob },
+							putOptions.ifAbsent,
+						);
 					}
 					await pipeline(
 						createReadStream(source),
@@ -888,7 +902,12 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 						createWriteStream(temp, { flags: "wx", mode: 0o600 }),
 						...(signal !== undefined ? [{ signal }] : []),
 					);
-					return await finishPut(temp, target, { bytes, sha256: hash.digest("hex"), link: transfer, signal, tag, blob });
+					return await finishPut(
+						temp,
+						target,
+						{ bytes, sha256: hash.digest("hex"), link: transfer, signal, tag, blob },
+						putOptions?.ifAbsent,
+					);
 				} catch (error) {
 					await rm(temp, { force: true });
 					if (signal?.aborted) throw new StoreRefusal("io", `The put of ${blob} into ${tag} was aborted.`);
