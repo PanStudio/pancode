@@ -83,7 +83,7 @@ Run the smallest real case first, with the same code path and a few ranks
   skill. `MPIIO_COLL_WRITES` against `MPIIO_INDEP_WRITES` shows whether the
   collective path was taken, and the POSIX request-size histogram shows whether
   aggregation produced large requests. For the per-file check, call
-  `mcp_darshan__darshan_files` with the log as `path` and `module` = `MPIIO`
+  `mcp_hpc__darshan_files` with the log as `path` and `module` = `MPIIO`
   (or `POSIX`) to see which files carried the bytes and through which layer.
 
 ## Final answer

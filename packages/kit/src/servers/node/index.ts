@@ -7,9 +7,9 @@
  */
 import { existsSync } from "node:fs";
 import { defineServer } from "@pancode/sdk/tool";
-import { resolveProgram } from "../../exec.js";
+import { resolveProgram } from "../../../../../hub/packs/plugins/hpc/src/exec.js";
+import { NODE_TOOLS } from "../../../../../hub/packs/plugins/hpc/src/node/tools.js";
 import type { ServerProbe } from "../../registry.js";
-import { NODE_TOOLS } from "./tools.js";
 
 export const server = defineServer({ id: "node", version: "0.2.0", title: "Node facts", tools: NODE_TOOLS });
 

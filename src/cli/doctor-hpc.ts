@@ -223,7 +223,7 @@ const LAUNCH_OPTION_VARIABLES: ReadonlyArray<{
 		option: "--file",
 		label: "file",
 		variable: "XDG_CONFIG_HOME",
-		suffix: path.join("pankit", "catalog.json"),
+		suffix: path.join("science-data", "catalog.json"),
 	},
 	{
 		id: "scidata",
@@ -282,13 +282,10 @@ function serverFinding(id: string, row: KitDoctorRow | undefined, launchPath: st
  * run none; this spawn is bounded. No row ever fails doctor.
  */
 export async function pankitFindings(options: PankitFindingsOptions): Promise<DoctorFinding[]> {
-	const {
-		defaultMcpBuiltinSource,
-		kitInvocation,
-		loadMcpBuiltinServers,
-		mcpBuiltinLaunchArgs,
-		mcpBuiltinLaunchEnvironment,
-	} = await import("../domains/gateway/mcp/builtin.js");
+	const { defaultMcpBuiltinSource, kitInvocation, loadMcpBuiltinServers, mcpBuiltinLaunchArgs } = await import(
+		"../domains/gateway/mcp/builtin.js"
+	);
+	const { mcpPassedEnvironment } = await import("../domains/gateway/mcp/passed-environment.js");
 	const source = options.source ?? defaultMcpBuiltinSource();
 	const loaded = loadMcpBuiltinServers(options.workspaceRoot, source);
 	const findings: DoctorFinding[] = loaded.diagnostics.map((diagnostic) => ({
@@ -303,7 +300,7 @@ export async function pankitFindings(options: PankitFindingsOptions): Promise<Do
 		return [{ ok: true, name: "pankit", level: "info", detail: "this PanCode ships no PanKit servers" }];
 	}
 	// Each probe reads only its own names, so the union equals each launch.
-	const env = mcpBuiltinLaunchEnvironment([...new Set(servers.flatMap((server) => server.builtin?.environment ?? []))]);
+	const env = mcpPassedEnvironment([...new Set(servers.flatMap((server) => server.builtin?.environment ?? []))]);
 	const launch = launchOptionPaths(
 		servers.map((server) => server.id),
 		mcpBuiltinLaunchArgs,

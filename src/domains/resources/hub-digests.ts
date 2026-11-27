@@ -39,6 +39,7 @@ export function hubMcpDigest(root: string, treeSha256: string): string | undefin
 			args: Array.isArray(value.args) ? value.args.map(String) : [],
 			cwd: typeof value.cwd === "string" ? value.cwd : null,
 			env: isRecord(value.env) ? (value.env as Record<string, string>) : {},
+			envVars: Array.isArray(value.envVars) ? value.envVars.map(String) : [],
 			timeoutMs: typeof value.timeoutMs === "number" ? value.timeoutMs : null,
 			toolActionClasses: isRecord(value.toolActionClasses)
 				? (value.toolActionClasses as Record<string, "read" | "execute" | "destructive" | "unknown">)

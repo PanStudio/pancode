@@ -796,7 +796,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
 	["src/domains/providers/extension.ts#createProvidersBundle", 625],
-	["src/domains/resources/hub-validation.ts#validateHubPackage", 579],
+	["src/domains/resources/hub-validation.ts#validateHubPackage", 577],
 	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1713],
 	["src/domains/scheduling/job-controller.ts#createJobController", 979],
 	["src/domains/session/compaction/compact.ts#compactWithCalls", 738],

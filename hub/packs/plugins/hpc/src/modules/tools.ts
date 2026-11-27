@@ -10,7 +10,7 @@
  */
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { defineTool, type ToolResult } from "@pancode/sdk/tool";
+import { defineTool, type ToolResult } from "pancode/sdk/tool";
 import {
 	findModuleTool,
 	type ModuleTool,

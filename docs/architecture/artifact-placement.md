@@ -85,7 +85,7 @@ problem.
 | `plugins/` | PanHub plugin pack state (`state.json`) and one directory per installed pack |
 | `hub.yaml`, `skill-marketplace.json`, `skill-promotion-declines.json` | The user PanHub catalog, the user skill index that overrides the shipped one in `hub/packs/skills/`, and declined skill promotions |
 | `mcp.yaml`, `mcp-trust.json` | User MCP servers and the trust records for project-declared servers |
-| `pankit/catalog.json` | The catalog file PanCode's builtin PanKit `catalog` server reads. PanCode passes it as `--file`, so a server it launches never reads the operator's own `~/.config/pankit/catalog.json` ([builtin.ts](../../src/domains/gateway/mcp/builtin.ts)) |
+| `science-data/catalog.json` | The catalog file PanCode's builtin PanKit `catalog` server reads. PanCode passes it as `--file`, so a server it launches never reads the operator's own `~/.config/science-data/catalog.json` ([builtin.ts](../../src/domains/gateway/mcp/builtin.ts)) |
 | `hooks.yaml` | User middleware hooks, trusted as the operator's own and loaded ahead of project hooks |
 | `PANCODE.md` | User handbook, loaded ahead of project handbooks in every session; `interop adopt` writes marked sections into it |
 | `workspace-trust/` | Per-workspace approvals from `pancode config trust` |

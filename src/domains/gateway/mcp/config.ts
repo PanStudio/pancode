@@ -41,6 +41,7 @@ import {
 	type McpBuiltinSource,
 } from "./builtin.js";
 import { isLoopbackHost } from "./files.js";
+import { parsePassedVariables } from "./passed-environment.js";
 import { mcpCredentialKeyRefusal, mcpDeclaredHeaderRefusal, mcpRemoteEndpoint } from "./remote.js";
 
 export const MCP_CONFIG_VERSION = 1;
@@ -95,6 +96,7 @@ const PLUGIN_SERVER_FIELDS = new Set([
 	"args",
 	"cwd",
 	"env",
+	"envVars",
 	"url",
 	"headers",
 	"timeoutMs",
@@ -224,6 +226,12 @@ export interface McpStdioServerDeclaration extends McpServerDeclarationBase {
 	command: string;
 	args: string[];
 	env: Record<string, string>;
+	/**
+	 * A plugin server's `envVars`: variable names, or prefixes ending in `*`,
+	 * whose values the launch copies from PanCode's environment. Sorted; the
+	 * names are in the digest and the values never are.
+	 */
+	envVars?: string[];
 	url?: never;
 	headers?: never;
 }
@@ -352,6 +360,7 @@ export function mcpServerDigest(
 				args: ReadonlyArray<string>;
 				cwd: string | null;
 				env: Readonly<Record<string, string>>;
+				envVars?: ReadonlyArray<string>;
 		  }
 		| { url: string; headers: Readonly<Record<string, string>>; oauth?: Readonly<McpOAuthSettings> }
 	) & {
@@ -389,7 +398,14 @@ export function mcpServerDigest(
 							}
 						: {}),
 				}
-			: { command: fields.command, args: [...fields.args], cwd: fields.cwd, env: sorted(fields.env) }),
+			: {
+					command: fields.command,
+					args: [...fields.args],
+					cwd: fields.cwd,
+					env: sorted(fields.env),
+					// Absent when empty, so a declaration without passed variables keeps the digest it was trusted at.
+					...(fields.envVars !== undefined && fields.envVars.length > 0 ? { envVars: [...fields.envVars].sort() } : {}),
+				}),
 		timeoutMs: fields.timeoutMs,
 		...(fields.toolActionClasses !== undefined && Object.keys(fields.toolActionClasses).length > 0
 			? {
@@ -1145,8 +1161,10 @@ function loadFile(filePath: string, scope: McpServerScope, root: string): McpCon
 /**
  * One plugin's `mcp.json`, in the Agent Plugins shape
  * `{"mcpServers": {"<id>": {"type": "stdio", "command", "args", "env"}}}`.
- * A server may add PanCode's `toolActionClasses` and `toolPathArguments`; the
- * declaration digest covers them, so the operator's trust names what it approved.
+ * A server may add PanCode's `toolActionClasses` and `toolPathArguments`, and
+ * a stdio server `envVars`, the variables its launch copies from PanCode's
+ * environment; the declaration digest covers them (variable names, never
+ * values), so the operator's trust names what it approved.
  * Each server keeps the id it declares and runs in the plugin root unless its
  * cwd names another directory there or in the plugin's data directory.
  * `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` expand in args, env values and cwd,
@@ -1219,10 +1237,17 @@ export function loadPluginMcpFile(plugin: {
 		const unknown = unknownFields(value, PLUGIN_SERVER_FIELDS);
 		if (unknown.length > 0)
 			return { servers: [], diagnostics: [diagnostic(`${location} has unknown field(s): ${unknown.join(", ")}`)] };
-		const { type: _type, ...declared } = value;
+		const { type: _type, envVars: declaredEnvVars, ...declared } = value;
 		const validated = validateServer({ id, ...declared }, location, "plugin");
 		if (validated instanceof Error) return { servers: [], diagnostics: [diagnostic(validated.message)] };
 		const { fields, declaredCwd } = validated;
+		let envVars: string[] = [];
+		if (declaredEnvVars !== undefined) {
+			if ("url" in fields) return { servers: [], diagnostics: [diagnostic(`${location}.envVars needs a stdio server`)] };
+			const parsedVars = parsePassedVariables(declaredEnvVars, `${location}.envVars`);
+			if (typeof parsedVars === "string") return { servers: [], diagnostics: [diagnostic(parsedVars)] };
+			envVars = parsedVars;
+		}
 		if (validated.networkIgnored) {
 			diagnostics.push({ ...diagnostic(networkIgnoredMessage(`${location}.network`, fields.id)), severity: "warning" });
 		}
@@ -1248,7 +1273,7 @@ export function loadPluginMcpFile(plugin: {
 			actionClassExplicit: false,
 			toolActionClasses: fields.toolActionClasses,
 			...(Object.keys(fields.toolPathArguments).length > 0 ? { toolPathArguments: fields.toolPathArguments } : {}),
-			digest: mcpServerDigest({ ...fields, pluginContentDigest: plugin.contentDigest }),
+			digest: mcpServerDigest({ ...fields, envVars, pluginContentDigest: plugin.contentDigest }),
 			plugin: {
 				id: plugin.id,
 				scope: plugin.scope,
@@ -1270,6 +1295,7 @@ export function loadPluginMcpFile(plugin: {
 							PLUGIN_ROOT: plugin.rootPath,
 							PLUGIN_DATA: dataDir,
 						},
+						...(envVars.length > 0 ? { envVars } : {}),
 					},
 		);
 	}

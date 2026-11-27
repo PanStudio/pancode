@@ -10,8 +10,8 @@
 import { readFile, realpath, statfs } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { defineTool } from "@pancode/sdk/tool";
-import { runCommand } from "../../exec.js";
+import { defineTool } from "pancode/sdk/tool";
+import { runCommand } from "../exec.js";
 import {
 	type CpuinfoFacts,
 	type LscpuFacts,

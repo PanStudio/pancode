@@ -37,6 +37,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
+import { biomeJson } from "./build-plugin-servers.js";
 
 /** Public-facing marketplace id: users type `<plugin>@pancode` to install. */
 const MARKETPLACE_NAME = "pancode";
@@ -102,6 +103,114 @@ const HOST_SCANNED_ROOTS = ["agents", "commands", "hooks", "output-styles", ".mc
  */
 const CLAUDE_MCP_PACK = "pankit";
 
+/** PanCode's plugin directory variables and Claude Code's names for the same directories. */
+const CLAUDE_PLUGIN_VARIABLES: ReadonlyArray<[string, string]> = [
+	[`\${PLUGIN_ROOT}`, `\${CLAUDE_PLUGIN_ROOT}`],
+	[`\${PLUGIN_DATA}`, `\${CLAUDE_PLUGIN_DATA}`],
+];
+
+/**
+ * Fields of a PanCode `mcp.json` stdio server that are PanCode's own policy,
+ * which Claude Code's `.mcp.json` has no place for. `envVars` goes with them:
+ * Claude Code starts a stdio server with its own environment.
+ */
+const PANCODE_ONLY_SERVER_FIELDS = new Set([
+	"toolActionClasses",
+	"toolPathArguments",
+	"envVars",
+	"network",
+	"fileTargets",
+	"timeoutMs",
+]);
+
+/**
+ * The Claude Code `.mcp.json` for a plugin's PanCode `mcp.json`: each stdio
+ * server's command, args and env, with `${PLUGIN_ROOT}` and `${PLUGIN_DATA}`
+ * renamed to `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}`, and
+ * PanCode's policy fields dropped. A server with a field that has no Claude
+ * Code form (a remote server, a cwd) is an error, never a silent omission.
+ */
+export function claudeMcpForm(declaration: unknown): { value: unknown } | { error: string } {
+	const rename = (text: string): string =>
+		CLAUDE_PLUGIN_VARIABLES.reduce((out, [ours, theirs]) => out.split(ours).join(theirs), text);
+	const servers = (declaration as { mcpServers?: unknown } | null)?.mcpServers;
+	if (typeof servers !== "object" || servers === null || Array.isArray(servers))
+		return { error: "mcp.json has no mcpServers mapping" };
+	const out: Record<string, unknown> = {};
+	for (const [id, server] of Object.entries(servers as Record<string, unknown>)) {
+		if (typeof server !== "object" || server === null || Array.isArray(server))
+			return { error: `mcpServers.${id} must be an object` };
+		const { type, command, args, env, ...rest } = server as Record<string, unknown>;
+		const untranslated = Object.keys(rest).filter((field) => !PANCODE_ONLY_SERVER_FIELDS.has(field));
+		if ((type !== undefined && type !== "stdio") || untranslated.length > 0)
+			return {
+				error: `mcpServers.${id} has no Claude Code form: ${type !== undefined && type !== "stdio" ? `type ${String(type)}` : untranslated.join(", ")}`,
+			};
+		if (typeof command !== "string") return { error: `mcpServers.${id}.command must be a string` };
+		if (args !== undefined && (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")))
+			return { error: `mcpServers.${id}.args must be an array of strings` };
+		if (
+			env !== undefined &&
+			(typeof env !== "object" ||
+				env === null ||
+				Array.isArray(env) ||
+				!Object.values(env).every((value) => typeof value === "string"))
+		)
+			return { error: `mcpServers.${id}.env must be an object of strings` };
+		out[id] = {
+			command,
+			...(args !== undefined ? { args: args.map((arg) => rename(arg)) } : {}),
+			...(env !== undefined
+				? {
+						env: Object.fromEntries(
+							Object.entries(env as Record<string, string>).map(([key, value]) => [key, rename(value)]),
+						),
+					}
+				: {}),
+		};
+	}
+	return { value: { mcpServers: out } };
+}
+
+/**
+ * Writes each first-party plugin's `.mcp.json` from its `mcp.json`, or with
+ * `check` reports each one that differs. `pin-hub.ts` runs it before pinning,
+ * so the pinned tree holds the file Claude Code reads.
+ */
+export function generateClaudeMcpFiles(options: { root: string; check: boolean }): {
+	changed: string[];
+	errors: string[];
+} {
+	const plugins = path.join(options.root, "hub", "packs", "plugins");
+	const changed: string[] = [];
+	const errors: string[] = [];
+	if (!existsSync(plugins)) return { changed, errors };
+	for (const entry of readdirSync(plugins, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+		const source = path.join(plugins, entry.name, "mcp.json");
+		if (!entry.isDirectory() || !existsSync(source)) continue;
+		const where = path.relative(options.root, source);
+		let parsed: unknown;
+		try {
+			parsed = readJson<unknown>(source);
+		} catch (error) {
+			errors.push(`${where}: ${error instanceof Error ? error.message : String(error)}`);
+			continue;
+		}
+		const form = claudeMcpForm(parsed);
+		if ("error" in form) {
+			errors.push(`${where}: ${form.error}`);
+			continue;
+		}
+		const destination = path.join(plugins, entry.name, ".mcp.json");
+		const content = biomeJson(options.root, destination, form.value);
+		const current = existsSync(destination) ? readFileSync(destination, "utf8") : null;
+		if (current === content) continue;
+		changed.push(path.relative(options.root, destination));
+		if (!options.check) writeFileSync(destination, content);
+	}
+	return { changed, errors };
+}
+
 /** Why a pinned package is not published to the Claude Code marketplace. */
 interface Exclusion {
 	name: string;
@@ -127,8 +236,10 @@ function portabilityVerdict(
 	manifest: PortableManifest,
 	mcpPack: boolean,
 ): { publish: boolean; reason?: string } {
+	// A pack whose `.mcp.json` is generated from its `mcp.json` publishes that server beside its skills.
+	const generatedMcp = existsSync(path.join(directory, "mcp.json"));
 	for (const scanned of HOST_SCANNED_ROOTS) {
-		if (mcpPack && scanned === ".mcp.json") continue;
+		if ((mcpPack || generatedMcp) && scanned === ".mcp.json") continue;
 		if (existsSync(path.join(directory, scanned))) {
 			return {
 				publish: false,

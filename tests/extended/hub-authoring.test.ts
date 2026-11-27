@@ -391,6 +391,38 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		}
 	});
 
+	it("validation rejects a plugin whose mcp.json declares a refused envVars entry", async () => {
+		const env = await isolatePancodeEnv("val-bad-plugin-mcp-");
+		try {
+			const pkgDir = join(env.dir, "bad-plugin-mcp");
+			mkdirSync(pkgDir, { recursive: true });
+			writeFileSync(
+				join(pkgDir, "plugin.json"),
+				JSON.stringify({
+					$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+					name: "bad-plugin-mcp",
+					version: "1.0.0",
+					description: "Plugin with refused mcp.json envVars",
+				}),
+			);
+			writeFileSync(
+				join(pkgDir, "mcp.json"),
+				JSON.stringify({
+					mcpServers: {
+						bad: { type: "stdio", command: "node", args: [`\${PLUGIN_ROOT}/server.mjs`], envVars: ["NODE_OPTIONS"] },
+					},
+				}),
+			);
+			const res = validateHubPackage(pkgDir);
+			equal(res.valid, false);
+			equal(res.manifestValid, true);
+			equal(res.validation.contentValid, false);
+			ok(res.validation.diagnostics.some((d) => d.code === "ERR_SERVER" && d.message.includes("NODE_OPTIONS")));
+		} finally {
+			env.restore();
+		}
+	});
+
 	it("read-only validation leaves source bytes and installation state unchanged", async () => {
 		const env = await isolatePancodeEnv("val-readonly-");
 		try {

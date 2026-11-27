@@ -12,7 +12,6 @@ export {
 	type McpBuiltinLaunchContext,
 	type McpBuiltinSource,
 	mcpBuiltinLaunchArgs,
-	mcpBuiltinLaunchEnvironment,
 } from "./builtin.js";
 export {
 	createMcpClient,
@@ -129,6 +128,7 @@ export {
 } from "./metadata-cache.js";
 export * from "./oauth.js";
 export * from "./oauth-grants.js";
+export { mcpPassedEnvironment } from "./passed-environment.js";
 export {
 	classifyJsonRpcMessage,
 	createLineFramer,

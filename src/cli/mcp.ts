@@ -356,6 +356,11 @@ function launchLabel(server: {
 	return `url=${JSON.stringify(server.url)}${named.length > 0 ? ` headers=${named.join(",")}` : ""}`;
 }
 
+/** The variable names a builtin manifest or a plugin's envVars passes from PanCode's environment. */
+function environmentLabel(names: ReadonlyArray<string>): string {
+	return names.length > 0 ? ` environment=${names.join(",")}` : "";
+}
+
 function networkLabel(grant: ReturnType<typeof networkGrant>): string {
 	return grant.network
 		? `network=true (${grant.networkSource === "trust" ? "trust record" : "user declaration"})`
@@ -572,7 +577,7 @@ export function mcpCommandOutput(
 			// Each server's tools and surface sit under its own header line (CLI audit 7).
 			const lines = result.servers.flatMap((server) => {
 				const block = [
-					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${server.builtin !== undefined && server.builtin.environment.length > 0 ? ` environment=${server.builtin.environment.join(",")}` : ""} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
+					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${environmentLabel(server.builtin?.environment ?? ("envVars" in server ? server.envVars : undefined) ?? [])} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
 				];
 				if (server.status?.reason !== undefined) {
 					const remedy =
@@ -670,7 +675,7 @@ export function mcpCommandOutput(
 			return {
 				code: 0,
 				text: [
-					`mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
+					`mcp: trusted ${id} for ${record.projectRoot} with actionClass=${record.actionClass} network=${record.network === true} ${entryLabel(entryScripts)}${toolClassesLabel(result.toolActionClasses)}${pathArgumentsLabel(result.toolPathArguments)}${environmentLabel(declared?.url === undefined ? (declared?.envVars ?? []) : [])} (digest ${record.digest.slice(0, 12)}, recorded ${record.trustedAt})`,
 					// A trusted declaration decides where a stored credential goes, so trust names each route.
 					...(declared?.url !== undefined
 						? mcpCredentialRoutes(declared.url, declared.headers).map((route) => `  ${route}`)

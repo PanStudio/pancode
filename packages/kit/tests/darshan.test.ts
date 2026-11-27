@@ -6,8 +6,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import type { AnyTool } from "@pancode/sdk/tool";
-import { runCommand } from "../src/exec.js";
-import { probe, server } from "../src/servers/darshan/index.js";
 import {
 	isRecordLine,
 	moduleKey,
@@ -21,8 +19,15 @@ import {
 	parseRecords,
 	parseTotals,
 	parseVersion,
-} from "../src/servers/darshan/parse.js";
-import { createDarshanTools, MAX_BINS, MAX_COUNTERS, MAX_FILES } from "../src/servers/darshan/tools.js";
+} from "../../../hub/packs/plugins/hpc/src/darshan/parse.js";
+import {
+	createDarshanTools,
+	MAX_BINS,
+	MAX_COUNTERS,
+	MAX_FILES,
+} from "../../../hub/packs/plugins/hpc/src/darshan/tools.js";
+import { runCommand } from "../../../hub/packs/plugins/hpc/src/exec.js";
+import { probe, server } from "../src/servers/darshan/index.js";
 
 /**
  * The darshan server. Its parsers read text captured from darshan-parser and

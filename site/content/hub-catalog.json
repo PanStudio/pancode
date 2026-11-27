@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "9099224915d121104f2d1852472f2f79048f9482915df3792f344d7aa92fc323",
+		"sha256": "fc46cd5e0ab544c276a74e4e25d831b8be3443777af7b5f98ef23d8501a7ad04",
 		"rows": 52,
 		"revoked": 0
 	},
@@ -76,15 +76,15 @@
 			"kind": "plugin",
 			"name": "hpc",
 			"publisher": "pancode",
-			"version": "0.4.2",
-			"description": "HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through PanCode's builtin modules, spack and darshan servers with the cluster's own tools as the fallback.",
+			"version": "0.5.0",
+			"description": "HPC pack: Lmod and Spack software environments, parallel HDF5 and MPI-IO, and Darshan I/O analysis, through the pack's own hpc MCP server (node, module, Spack and Darshan tools), with the cluster's own tools as the fallback.",
 			"category": null,
 			"tier": "core",
 			"licence": "LicenseRef-PanCode-1.0",
 			"source": {
 				"path": "hub/packs/plugins/hpc"
 			},
-			"sha256": "fd86ef3d52b0176b5678817ef4d3dd067d0af0376054ed7a235ee7e1d2d9f6a5",
+			"sha256": "033c10f3f8709f7ad50ff5dff6aaeb957c0680f7852981258b35ff94af024cdb",
 			"install": "pancode hub install plugin:hpc"
 		},
 		{
@@ -136,15 +136,15 @@
 			"kind": "plugin",
 			"name": "science-data",
 			"publisher": "pancode",
-			"version": "0.4.2",
-			"description": "Science data pack: a skill that finds datasets in the store and through PanCode's catalog server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it.",
+			"version": "0.5.0",
+			"description": "Science data pack: a skill that finds datasets in the store and through the pack's own catalog MCP server, keeps results in the store, reads HDF5, NetCDF, Parquet and CSV with PanCode's data tool first, and writes a read-only Python script through run_script only for analysis beyond it.",
 			"category": null,
 			"tier": "core",
 			"licence": "LicenseRef-PanCode-1.0",
 			"source": {
 				"path": "hub/packs/plugins/science-data"
 			},
-			"sha256": "138894071e64430388dddd8c6f646d433546405aa0edf1284f94bbd6d876aa1e",
+			"sha256": "de699b4694109f76f18a77f5b75a6cbaecac30efb02d6f49b50a13f236c7ed0e",
 			"install": "pancode hub install plugin:science-data"
 		},
 		{

@@ -6,9 +6,9 @@
  * darshan-util. It needs `darshan-parser` on PATH and reads no environment.
  */
 import { defineServer } from "@pancode/sdk/tool";
-import { resolveProgram } from "../../exec.js";
+import { DARSHAN_TOOLS, DXT_PARSER, PARSER } from "../../../../../hub/packs/plugins/hpc/src/darshan/tools.js";
+import { resolveProgram } from "../../../../../hub/packs/plugins/hpc/src/exec.js";
 import type { ServerProbe } from "../../registry.js";
-import { DARSHAN_TOOLS, DXT_PARSER, PARSER } from "./tools.js";
 
 export const server = defineServer({
 	id: "darshan",

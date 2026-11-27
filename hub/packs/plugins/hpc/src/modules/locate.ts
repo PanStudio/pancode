@@ -9,8 +9,7 @@
  * stderr and shell code on stdout; the server reads the text and never
  * evaluates the shell code.
  */
-import { type RunCommandResult, resolveProgram, runCommand } from "../../exec.js";
-import type { ProbeSource } from "../../registry.js";
+import { type ProbeSource, type RunCommandResult, resolveProgram, runCommand } from "../exec.js";
 import { type ModuleToolKind, parseLmodVersion, parseModulesVersion } from "./parse.js";
 
 /** The variables the module tools read, which the login shell set; `*` ends a prefix. */

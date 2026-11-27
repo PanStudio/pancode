@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { AnyTool } from "@pancode/sdk/tool";
-import { probe, server } from "../src/servers/node/index.js";
 import {
 	parseCpuinfo,
 	parseElapsed,
@@ -16,14 +15,15 @@ import {
 	parseMounts,
 	parseNvidiaSmiCsv,
 	parsePsOutput,
-} from "../src/servers/node/parse.js";
+} from "../../../hub/packs/plugins/hpc/src/node/parse.js";
 import {
 	MAX_ADDRESSES_PER_INTERFACE,
 	MAX_GPUS,
 	MAX_INTERFACES,
 	MAX_MOUNTS,
 	MAX_PROCESSES,
-} from "../src/servers/node/tools.js";
+} from "../../../hub/packs/plugins/hpc/src/node/tools.js";
+import { probe, server } from "../src/servers/node/index.js";
 
 /**
  * The node server: its parsers against output captured on a Linux x86_64

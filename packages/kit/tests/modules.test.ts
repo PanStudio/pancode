@@ -6,8 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { AnyTool } from "@pancode/sdk/tool";
-import { environment, probe, server } from "../src/servers/modules/index.js";
-import { findModuleTool, passedVariables } from "../src/servers/modules/locate.js";
+import { findModuleTool, passedVariables } from "../../../hub/packs/plugins/hpc/src/modules/locate.js";
 import {
 	markDefaults,
 	moduleNameProblem,
@@ -26,8 +25,14 @@ import {
 	parseModulesVersion,
 	tclWords,
 	versionAtLeast,
-} from "../src/servers/modules/parse.js";
-import { MAX_LISTED, MAX_MODULEFILE_BYTES, MAX_PLAN_SHOWS, PLAN_DEPTH } from "../src/servers/modules/tools.js";
+} from "../../../hub/packs/plugins/hpc/src/modules/parse.js";
+import {
+	MAX_LISTED,
+	MAX_MODULEFILE_BYTES,
+	MAX_PLAN_SHOWS,
+	PLAN_DEPTH,
+} from "../../../hub/packs/plugins/hpc/src/modules/tools.js";
+import { environment, probe, server } from "../src/servers/modules/index.js";
 
 /**
  * The modules server. Where each input comes from:

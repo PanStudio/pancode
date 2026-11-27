@@ -1,6 +1,6 @@
 ---
 name: hpc-modules
-description: "Finds software on an HPC system through PanCode's modules and spack servers (Lmod or Environment Modules, and Spack installs), plans the module loads a script needs, and loads them from bash in the shell that uses them. Not for installing software or for writing the job script's science."
+description: "Finds software on an HPC system through the hpc plugin's MCP server (Lmod or Environment Modules, and Spack installs), plans the module loads a script needs, and loads them from bash in the shell that uses them. Not for installing software or for writing the job script's science."
 triggers:
   - load the modules this build needs
   - which module provides this software
@@ -14,13 +14,13 @@ Find which compiler, MPI and library builds a cluster offers, and make a
 command or job use them, so that the run names its exact environment. All of it
 is local: no network is needed, and air-gapped login nodes work the same way.
 
-Discovery goes through two servers PanCode ships, `modules` and `spack`. Call a
-tool by its capability name, such as `mcp_modules__modules_avail`; when it is
+Discovery goes through the `hpc` server this plugin ships. Call a
+tool by its capability name, such as `mcp_hpc__modules_avail`; when it is
 not attached to the session, call it through
-`gateway(op="call", capability="mcp_modules__modules_avail", args={...})`. A
-builtin server that cannot work on this host answers every call with the
-reason. On that answer, or when the tool does not exist (another harness
-without these servers), use the `bash` steps in "Fallback without the servers".
+`gateway(op="call", capability="mcp_hpc__modules_avail", args={...})`. A
+tool that cannot work on this host answers every call with the
+reason. On that answer, or when the tool does not exist (a harness without
+this server), use the `bash` steps in "Fallback without the server".
 
 ## The one rule: a load lives only in its own shell
 
@@ -30,7 +30,7 @@ which prints shell code, and `eval`s that code in the current shell. So a
 `module load` changes only the shell it runs in. Each `bash` tool call is a
 fresh shell, and a load in one call is gone in the next. A program that runs
 `module load` as a child process changes nothing, whatever it reports, and the
-`modules` server never evaluates shell code: it finds and plans, and loading
+`hpc` server never evaluates shell code: it finds and plans, and loading
 stays in `bash`.
 
 - Put the loads and the command that needs them in one call:
@@ -44,12 +44,12 @@ stays in `bash`.
 
 | Question | Tool |
 | --- | --- |
-| What can I load now? | `mcp_modules__modules_avail`, `name` to narrow (`match`: `prefix` or `contains`) |
-| Every version of a package, loadable or not (Lmod only) | `mcp_modules__modules_spider` with `name` |
-| What must I load first to reach one version? (Lmod only) | `mcp_modules__modules_spider` with `name` = `<name>/<version>` |
-| What does a module set? | `mcp_modules__modules_show` with `name` |
-| What was loaded when PanCode started? | `mcp_modules__modules_list` |
-| Which saved collections exist, and what is in one? | `mcp_modules__modules_collections`, `name` for one |
+| What can I load now? | `mcp_hpc__modules_avail`, `name` to narrow (`match`: `prefix` or `contains`) |
+| Every version of a package, loadable or not (Lmod only) | `mcp_hpc__modules_spider` with `name` |
+| What must I load first to reach one version? (Lmod only) | `mcp_hpc__modules_spider` with `name` = `<name>/<version>` |
+| What does a module set? | `mcp_hpc__modules_show` with `name` |
+| What was loaded when PanCode started? | `mcp_hpc__modules_list` |
+| Which saved collections exist, and what is in one? | `mcp_hpc__modules_collections`, `name` for one |
 
 `modules_list` reports the environment PanCode started from, not a shell a
 later `bash` call built. Sites often build a hierarchy: an MPI or library
@@ -59,7 +59,7 @@ one set, and load it before the module.
 
 ## Phase 2: plan, load and record
 
-`mcp_modules__modules_plan` with `modules` (in load order) returns the ordered
+`mcp_hpc__modules_plan` with `modules` (in load order) returns the ordered
 `module load` lines a script needs, prerequisites included. It loads nothing.
 Run those lines in one shell, check the result there, and record what you got:
 
@@ -72,15 +72,15 @@ environment another person needs to reproduce the run.
 
 ## Phase 3: Spack-installed packages
 
-The `spack` server reads the Spack instance on `PATH` or in `SPACK_ROOT`.
+The `spack_*` tools read the Spack instance on `PATH` or in `SPACK_ROOT`.
 
 | Question | Tool |
 | --- | --- |
-| Which installs match a spec? | `mcp_spack__spack_find` with `spec` (and `environment` for one environment) |
-| A package's versions, variants and dependencies | `mcp_spack__spack_info` with `package` |
-| One install's prefix | `mcp_spack__spack_locate` with `spec` = `/<hash>` |
-| The active and named environments and their roots | `mcp_spack__spack_env` |
-| How a spec would concretize, and what is already installed | `mcp_spack__spack_spec` with `spec` |
+| Which installs match a spec? | `mcp_hpc__spack_find` with `spec` (and `environment` for one environment) |
+| A package's versions, variants and dependencies | `mcp_hpc__spack_info` with `package` |
+| One install's prefix | `mcp_hpc__spack_locate` with `spec` = `/<hash>` |
+| The active and named environments and their roots | `mcp_hpc__spack_env` |
+| How a spec would concretize, and what is already installed | `mcp_hpc__spack_spec` with `spec` |
 
 No match from `spack_find` is an answer, not an error. Pass a hash to
 `spack_locate`, so the answer is a single install. `spack_spec` is `execute`
@@ -96,7 +96,7 @@ needs it: `bash -lc 'eval "$(spack load --sh /<hash>)" && <command>'`.
 mirror, and it takes a long time. Run it only when the user asks for it, and
 never as a side step of a lookup.
 
-## Fallback without the servers
+## Fallback without the server
 
 Run each as `bash -lc '<command>'`; the `-l` login shell reads the site's
 profile, which defines `module`.

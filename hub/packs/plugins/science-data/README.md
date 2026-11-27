@@ -6,10 +6,10 @@ summary statistics for HDF5, NetCDF and Parquet, plus CSV and JSON, read-only
 and with no Python. Only for a question `data` cannot answer (grouped or
 filtered aggregates, correlations, hypothesis tests, pivots) does it write a
 short read-only h5py, netCDF4, pyarrow or pandas script and run it through
-`run_script`. Installing the pack launches nothing. The pack declares no MCP
-server; it uses the `catalog` server PanCode ships to find datasets outside the
-project (and the `scidata` and `store` servers outside PanCode), and
-`pancode doctor` shows whether this host can serve them.
+`run_script`. The pack ships one MCP server, `catalog`, to find datasets
+outside the project. It is the bundled `server.mjs`, started as
+`node server.mjs`, with no dependencies to install. Outside PanCode the skill
+also uses the `scidata` and `store` servers.
 
 ```bash
 pancode hub install plugin:science-data --project
@@ -19,19 +19,64 @@ Run `/reload hub` in a running session after installing.
 
 ## Datasets outside the project
 
-The skill searches the dataset catalogs the operator names in PanCode's catalog
-file with `catalog_search` and `catalog_describe`, and brings one resource into
-the project with `catalog_stage`, which asks first. Without a catalog file the
-server is unavailable and names the path to create; `pankit catalog --example`
-prints a valid file. A fleet worker reaches a remote portal only after
+The skill searches the dataset catalogs the operator names in the catalog file
+with `catalog_search` and `catalog_describe` (`read`), and brings one resource
+into the project with `catalog_stage` (`execute`, `destination` is a write
+path), which asks first. A fleet worker reaches a remote portal only after
 `pancode mcp trust catalog --network`.
+
+The server reads `$XDG_CONFIG_HOME/science-data/catalog.json`, or
+`~/.config/science-data/catalog.json` when `XDG_CONFIG_HOME` is not set, on
+every call, so edits apply at once. Without it the server is unavailable and
+names the path to create. This file is valid as is; replace the values:
+
+```json
+{
+	"version": 1,
+	"sources": [
+		{
+			"id": "site",
+			"type": "local",
+			"datasets": [
+				{
+					"id": "climate-2024",
+					"title": "Regional climate runs 2024",
+					"description": "Daily fields, 12 km grid.",
+					"tags": ["climate", "netcdf"],
+					"license": "CC-BY-4.0",
+					"updated": "2024-05-01T12:00:00Z",
+					"resources": [
+						{ "id": "tas", "name": "tas_day.nc", "format": "NetCDF", "path": "/data/climate/tas_day.nc", "sha256": null }
+					]
+				}
+			]
+		},
+		{
+			"id": "open",
+			"type": "ckan",
+			"url": "https://catalog.example.org",
+			"resourceHosts": ["files.example.org"]
+		}
+	]
+}
+```
+
+The file is read strictly: an unknown field, a duplicate id, or more than 32
+sources or 5000 local datasets is refused with its location. A local dataset
+needs `id` and `title`; a local resource needs `id` and an absolute `path`. A
+`ckan` source needs `id` and the portal's base `url` (the part before
+`/api/3/action`), without credentials, query or fragment. Every `ckan` request
+goes over https to the source's own host or a host in its `resourceHosts`
+(`"allowHttp": true` also permits http), and the server sends no credentials.
 
 ## Other harnesses
 
-Declare `npx -y -p @panstudio/pancode pankit serve <id>` (`catalog`, `scidata`, `store`)
-as a stdio MCP server yourself. The skill's `data` reads are then the
-`scidata` server's tools, and its store is the `store` server's, which needs
-`--root` options there (`pancode store where` prints them).
+The pack's `.mcp.json` declares the `catalog` server for Claude Code, and any
+other MCP host runs it as a stdio server with `node <pack>/server.mjs`
+(Node.js 22 or later). Declare `npx -y -p @panstudio/pancode pankit serve <id>`
+(`scidata`, `store`) as a stdio MCP server yourself. The skill's `data` reads
+are then the `scidata` server's tools, and its store is the `store` server's,
+which needs `--root` options there (`pancode store where` prints them).
 
 ## Datasets and results in the store
 

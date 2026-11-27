@@ -1,0 +1,64 @@
+{
+	"mcpServers": {
+		"hpc": {
+			"type": "stdio",
+			"command": "node",
+			"args": ["${PLUGIN_ROOT}/server.mjs"],
+			"envVars": [
+				"LMOD_*",
+				"LOADEDMODULES",
+				"MODULEPATH",
+				"MODULESHOME",
+				"MODULES_*",
+				"SPACK_DISABLE_LOCAL_CONFIG",
+				"SPACK_ENV",
+				"SPACK_PYTHON",
+				"SPACK_ROOT",
+				"SPACK_SYSTEM_CONFIG_PATH",
+				"SPACK_USER_CACHE_PATH",
+				"SPACK_USER_CONFIG_PATH",
+				"_LMFILES_",
+				"_ModuleTable*",
+				"__LMOD_*",
+				"__MODULES_*"
+			],
+			"toolActionClasses": {
+				"darshan_files": "read",
+				"darshan_modules": "read",
+				"darshan_summary": "read",
+				"darshan_timeline": "read",
+				"modules_avail": "read",
+				"modules_collections": "read",
+				"modules_list": "read",
+				"modules_plan": "read",
+				"modules_show": "read",
+				"modules_spider": "read",
+				"node_cpu": "read",
+				"node_disks": "read",
+				"node_gpus": "read",
+				"node_memory": "read",
+				"node_network": "read",
+				"node_processes": "read",
+				"spack_env": "read",
+				"spack_find": "read",
+				"spack_info": "read",
+				"spack_locate": "read",
+				"spack_spec": "execute"
+			},
+			"toolPathArguments": {
+				"darshan_files": {
+					"path": "read"
+				},
+				"darshan_modules": {
+					"path": "read"
+				},
+				"darshan_summary": {
+					"path": "read"
+				},
+				"darshan_timeline": {
+					"path": "read"
+				}
+			}
+		}
+	}
+}

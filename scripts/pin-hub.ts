@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import { parse, stringify } from "yaml";
 import { validateHubPackage } from "../src/domains/resources/hub-validation.js";
-import { generateHubMarketplace } from "./generate-hub-marketplace.js";
+import { buildPluginServers } from "./build-plugin-servers.js";
+import { generateClaudeMcpFiles, generateHubMarketplace } from "./generate-hub-marketplace.js";
 import {
 	buildRegistryRow,
 	mergeCommunityRows,
@@ -18,6 +19,26 @@ import { pinSkillsCatalog } from "./pin-skills.js";
 const root = path.resolve(import.meta.dirname, "..");
 const destination = path.join(root, "hub", "index.yaml");
 const checkMode = process.argv.includes("--check");
+
+// ---------------------------------------------------------------------------
+// 0. Build each plugin's MCP server from its src/ into server.mjs and mcp.json,
+// then its Claude Code .mcp.json from that mcp.json. They are package files,
+// so they must be current before the pins below hash the tree.
+// ---------------------------------------------------------------------------
+const servers = await buildPluginServers({ root, check: checkMode });
+const claudeForms =
+	servers.errors.length > 0 ? { changed: [], errors: [] } : generateClaudeMcpFiles({ root, check: checkMode });
+const buildErrors = [...servers.errors, ...claudeForms.errors];
+if (buildErrors.length > 0) {
+	for (const error of buildErrors) process.stderr.write(`hub plugin server error: ${error}\n`);
+	process.exit(1);
+}
+if (checkMode && servers.changed.length + claudeForms.changed.length > 0) {
+	for (const file of [...servers.changed, ...claudeForms.changed])
+		process.stderr.write(`hub:check: ${file} does not match what its plugin's src/ builds\n`);
+	process.stderr.write("Run `pnpm hub:pin` and commit the result.\n");
+	process.exit(1);
+}
 
 // ---------------------------------------------------------------------------
 // 1. Validate curated packages and authoring templates

@@ -8,6 +8,7 @@
 	"include": [
 		"src/**/*",
 		"tests/**/*",
+		"hub/packs/plugins/*/src/**/*",
 		"packages/*/src/**/*",
 		"packages/*/tests/**/*",
 		"scripts/**/*.ts",
