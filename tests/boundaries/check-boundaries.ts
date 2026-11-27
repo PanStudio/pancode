@@ -1455,6 +1455,105 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
 	return violations;
 }
 
+const GIT_RUNNER = "src/core/internal-git-run.ts";
+/** Calls outside {@link GIT_RUNNER} that name git first, each kept with its reason (rule 24). */
+const GIT_SPAWN_EXEMPTIONS: ReadonlyArray<{ file: string; callee: string; reason: string }> = [
+	{
+		file: "src/tools/safe-exec.ts",
+		callee: "runVectorTool",
+		reason:
+			"the typed git tool is the agent's git, not PanCode's: it carries its own host config, and its add and commit run the repository's hooks on purpose",
+	},
+];
+/** Helpers that take git as a display word, not a program: they start nothing. */
+const GIT_WORD_CALLEES: ReadonlySet<string> = new Set(["joinDefined"]);
+const CHILD_PROCESS_MODULES = new Set(["node:child_process", "child_process"]);
+
+/**
+ * Rule 24: PanCode starts git only through {@link GIT_RUNNER}, which hardens every argv with internalGitArgv. Outside
+ * it, no call in src/ passes git as the program: the literal `"git"` (or a const bound to it) first with more
+ * arguments after, or a `git ...` command line to node:child_process. Only the runner imports internalGitArgv.
+ */
+export function checkGitSpawns(file: string, source: string, usedExemptions?: Set<string>): string[] {
+	if (!file.startsWith("src/") || file === GIT_RUNNER) return [];
+	const tree = parseTree(file, source);
+	const violations: string[] = [];
+	const line = (node: ts.Node) => tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1;
+	const gitNames = new Set<string>();
+	const childProcessNames = new Set<string>();
+	for (const statement of tree.statements) {
+		if (
+			ts.isImportDeclaration(statement) &&
+			ts.isStringLiteral(statement.moduleSpecifier) &&
+			statement.importClause !== undefined &&
+			!statement.importClause.isTypeOnly
+		) {
+			const bindings = statement.importClause.namedBindings;
+			const named = bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements : [];
+			if (CHILD_PROCESS_MODULES.has(statement.moduleSpecifier.text)) {
+				if (statement.importClause.name !== undefined) childProcessNames.add(statement.importClause.name.text);
+				if (bindings !== undefined && ts.isNamespaceImport(bindings)) childProcessNames.add(bindings.name.text);
+				for (const element of named) if (!element.isTypeOnly) childProcessNames.add(element.name.text);
+			}
+			for (const element of named)
+				if (!element.isTypeOnly && (element.propertyName ?? element.name).text === "internalGitArgv")
+					violations.push(
+						`rule24: ${file}:${line(element)} imports internalGitArgv; start git through ${GIT_RUNNER}, which applies it`,
+					);
+		}
+	}
+	const visitDeclarations = (node: ts.Node): void => {
+		if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.initializer !== undefined &&
+			ts.isStringLiteralLike(node.initializer) &&
+			node.initializer.text === "git"
+		)
+			gitNames.add(node.name.text);
+		ts.forEachChild(node, visitDeclarations);
+	};
+	visitDeclarations(tree);
+	const calleeName = (callee: ts.Expression): string =>
+		ts.isIdentifier(callee)
+			? callee.text
+			: ts.isPropertyAccessExpression(callee)
+				? callee.name.text
+				: callee.getText(tree);
+	const fromChildProcess = (callee: ts.Expression): boolean =>
+		ts.isIdentifier(callee)
+			? childProcessNames.has(callee.text)
+			: ts.isPropertyAccessExpression(callee) &&
+				ts.isIdentifier(callee.expression) &&
+				childProcessNames.has(callee.expression.text);
+	const visit = (node: ts.Node): void => {
+		if (ts.isCallExpression(node) && node.arguments.length > 0) {
+			const first = node.arguments[0] as ts.Expression;
+			const program =
+				(ts.isStringLiteralLike(first) && first.text === "git") || (ts.isIdentifier(first) && gitNames.has(first.text));
+			const commandLine =
+				(ts.isStringLiteralLike(first) || ts.isTemplateExpression(first)) &&
+				/^git\s/u.test(ts.isTemplateExpression(first) ? first.head.text : first.text) &&
+				fromChildProcess(node.expression);
+			const callee = calleeName(node.expression);
+			if (
+				((program && (node.arguments.length > 1 || fromChildProcess(node.expression))) || commandLine) &&
+				!GIT_WORD_CALLEES.has(callee)
+			) {
+				const key = `${file}#${callee}`;
+				if (GIT_SPAWN_EXEMPTIONS.some((entry) => entry.file === file && entry.callee === callee)) usedExemptions?.add(key);
+				else
+					violations.push(
+						`rule24: ${file}:${line(node)} starts git through ${callee}; PanCode's own git goes through ${GIT_RUNNER} (gitVia for another runner), or exempt the call with its reason in GIT_SPAWN_EXEMPTIONS`,
+					);
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(tree);
+	return violations;
+}
+
 /**
  * Enforce the static isolation rules:
  *   1. Only src/engine/** may import @earendil-works/pi-* at all. Since the
@@ -1509,6 +1608,10 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
  *      share, and the client imports it directly. It value-imports only within
  *      itself, takes types only from src/**, and imports no Node builtin, no
  *      package and no pi-* module, type-only included.
+ *  24. PanCode starts git only through src/core/internal-git-run.ts, which
+ *      hardens every argv with internalGitArgv: no other call in src/ passes
+ *      git as the program, and only the runner imports internalGitArgv, except
+ *      the calls GIT_SPAWN_EXEMPTIONS names with a reason.
  */
 export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const srcRoot = path.join(projectRoot, "src");
@@ -1530,6 +1633,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const valueReachedSeams = new Map<string, Set<string>>();
 	const usedSurfaceExemptions = new Set<string>();
 	const usedCapabilityHolders = new Set<string>();
+	const usedGitSpawnExemptions = new Set<string>();
 
 	for (const filePath of walk(srcRoot)) {
 		const source = readFileSync(filePath, "utf8");
@@ -1539,6 +1643,9 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		violations.push(...checkLedgerUsageKeys(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkTurnStateOwnership(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkRecipeIdBranches(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
+		violations.push(
+			...checkGitSpawns(path.relative(projectRoot, filePath).split(path.sep).join("/"), source, usedGitSpawnExemptions),
+		);
 		violations.push(
 			...checkSurfaceTotals(path.relative(projectRoot, filePath).split(path.sep).join("/"), source, usedSurfaceExemptions),
 		);
@@ -1730,6 +1837,12 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		if (!usedCapabilityHolders.has(holder))
 			violations.push(
 				`rule17: OWNER_CAPABILITY_HOLDERS lists ${holder}, which no longer names that domain's capability; remove the entry`,
+			);
+
+	for (const exemption of GIT_SPAWN_EXEMPTIONS)
+		if (!usedGitSpawnExemptions.has(`${exemption.file}#${exemption.callee}`))
+			violations.push(
+				`rule24: GIT_SPAWN_EXEMPTIONS exempts ${exemption.file}#${exemption.callee}, which no longer names git first; remove the exemption`,
 			);
 
 	for (const directory of ["client", "server"]) {
