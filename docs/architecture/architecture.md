@@ -229,12 +229,12 @@ must go through the coordinator.
 ## Lazy built-in tool boundary
 
 The registry always owns one complete, immutable `ToolSpec` surface before a
-model turn starts. Seventeen tools register through `lazyTool` and keep their
+model turn starts. Eighteen tools register through `lazyTool` and keep their
 name, description, TypeBox schema, action class, execution mode, synchronous
 argument hooks, source provenance, and policy metadata in lightweight surface
 modules. [core-bootstrap.ts](../../src/tools/core-bootstrap.ts) registers `context`, `code_nav`,
-`verify`, `data`, `store`, `web_fetch`, `web_read`, `run_script`, `pancode_docs`, and
-`pancode_hub`. [bootstrap.ts](../../src/tools/bootstrap.ts) registers `ledger`, `monitor`,
+`verify`, `data`, `store`, `web_fetch`, `web_read`, `run_script`, `pancode_docs`,
+`pancode_hub`, and `configure_pancode`. [bootstrap.ts](../../src/tools/bootstrap.ts) registers `ledger`, `monitor`,
 `steer`, `panes`, `report`, `music`, and `browser`. `registerAllTools` registers those surfaces in
 the same order as every other built-in; capability discovery, worker
 attestation, provider schema serialization, safety classification, autonomy and
