@@ -372,7 +372,10 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 	/** Where an existing tag lives, through the placement map alone. */
 	async function placeOf(tag: string, write: boolean): Promise<PlacedTag> {
 		const name = resolvePlacement(await readPlacement(), null, tag);
-		if (name === null) return onPrimary;
+		if (name === null) {
+			if (shared) await requireRoot(primary, write);
+			return onPrimary;
+		}
 		const root = rootNamed(name);
 		if (root === undefined) {
 			throw new StoreRefusal(
@@ -705,13 +708,28 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 				};
 			}),
 
-		withLock: (key, fn) => withStoreLock(projectDir, key, fn, lockOptions),
+		withLock: async (key, fn) => {
+			if (shared) await guarded(() => requireRoot(primary, true));
+			return withStoreLock(projectDir, key, fn, lockOptions);
+		},
 
-		listLocks: () => guarded(() => listStoreLocks(projectDir, lockOptions)),
+		listLocks: () =>
+			guarded(async () => {
+				if (shared) await requireRoot(primary, false);
+				return listStoreLocks(projectDir, lockOptions);
+			}),
 
-		readLock: (id) => guarded(() => readStoreLock(projectDir, id, lockOptions)),
+		readLock: (id) =>
+			guarded(async () => {
+				if (shared) await requireRoot(primary, false);
+				return readStoreLock(projectDir, id, lockOptions);
+			}),
 
-		breakLock: (id) => guarded(() => breakStoreLock(projectDir, id, lockOptions)),
+		breakLock: (id) =>
+			guarded(async () => {
+				if (shared) await requireRoot(primary, true);
+				return breakStoreLock(projectDir, id, lockOptions);
+			}),
 
 		usage: (tag) =>
 			guarded(async (): Promise<StoreUsage> => {
@@ -758,6 +776,7 @@ function createFolderStoreBackend(options: LocalStoreOptions, shared: boolean): 
 
 		listTags: () =>
 			guarded(async () => {
+				if (shared) await requireRoot(primary, false);
 				const mapping = await readPlacement();
 				const tags = await tagsOn(onPrimary, mapping);
 				const placedRoots = new Set(Object.values(mapping.tags));

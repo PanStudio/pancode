@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { StoreRefusal, storeLockId, withStoreLock } from "../src/index.js";
+import { createSharedStoreBackend, StoreRefusal, storeLockId, withStoreLock } from "../src/index.js";
 import { storeLocksDir } from "../src/paths/index.js";
 
 const WAIT = { waitMs: 150 };
@@ -69,5 +69,37 @@ describe("store locks", () => {
 			);
 			return true;
 		});
+	});
+
+	it("takes over a shared lease from another boot of this host at once", async () => {
+		const dir = project();
+		const rebooted = plant(
+			dir,
+			"blob:reboot",
+			owner({ key: "blob:reboot", pid: process.pid, host: hostname(), bootId: "another-boot" }),
+		);
+		strictEqual(await withStoreLock(dir, "blob:reboot", async () => true, { waitMs: 150, lease: true }), true);
+		strictEqual(existsSync(rebooted), false);
+	});
+
+	it("refuses shared backend calls on a missing folder without creating it", async () => {
+		const scratch = mkdtempSync(join(tmpdir(), "store-shared-missing-"));
+		const missing = join(scratch, "unmounted");
+		const backend = createSharedStoreBackend({
+			root: missing,
+			cacheDir: join(scratch, "cache"),
+			projectKey: "0123456789abcdef",
+			projectRoot: scratch,
+		});
+		const unavailable = (error: unknown) => error instanceof StoreRefusal && error.reason === "unavailable";
+		await rejects(
+			backend.withLock("tag\0sim", async () => "ok"),
+			unavailable,
+		);
+		await rejects(backend.listTags(), unavailable);
+		await rejects(backend.tagExists("sim"), unavailable);
+		await rejects(backend.delTag("sim"), unavailable);
+		await rejects(backend.listLocks(), unavailable);
+		strictEqual(existsSync(missing), false);
 	});
 });

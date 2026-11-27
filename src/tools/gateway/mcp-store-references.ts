@@ -487,8 +487,8 @@ export async function storeServerLaunchContext(input: {
 			"the PanKit store server does not run on an s3 store: it opens local store roots only; use the store tool",
 		);
 	const roots = storeRootSpecs();
-	// The primary is created on its first write, as the store's own backend does; a further root must be there.
-	for (const root of roots.slice(1)) {
+	// A local primary is created on its first write; a shared folder and any further root must already be mounted.
+	for (const root of storeBackendKind() === "shared" ? roots : roots.slice(1)) {
 		let problem: string | null = null;
 		try {
 			if (!statSync(root.path).isDirectory()) problem = "is not a directory";

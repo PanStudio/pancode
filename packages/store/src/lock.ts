@@ -111,7 +111,7 @@ function stateOf(owner: LockOwner | null): StoreLockState {
  */
 function leaseStateOf(owner: LockOwner | null, seen: SeenLock, now: number): StoreLockState {
 	if (owner === null) return "unreadable";
-	if (owner.host === hostname() && owner.bootId === bootId() && !pidAlive(owner.pid)) return "dead";
+	if (owner.host === hostname() && (owner.bootId !== bootId() || !pidAlive(owner.pid))) return "dead";
 	return now - seen.mtimeMs > STORE_LEASE_EXPIRY_MS ? "dead" : "live";
 }
 
@@ -194,14 +194,14 @@ function infoOf(id: string, file: string, seen: SeenLock, judge: Judge): StoreLo
  * `.break` file and compare the lock again while they hold it. A `.break` file
  * left by a breaker that died is cleared after BREAK_STALE_MS.
  */
-async function removeIfUnchanged(file: string, expected: SeenLock): Promise<boolean> {
+async function removeIfUnchanged(file: string, expected: SeenLock, now: number): Promise<boolean> {
 	const breaker = `${file}.break`;
 	try {
 		await (await open(breaker, "wx", 0o600)).close();
 	} catch (error) {
 		if (errnoOf(error) !== "EEXIST") throw error;
 		try {
-			if (Date.now() - (await stat(breaker)).mtimeMs > BREAK_STALE_MS) await rm(breaker, { force: true });
+			if (now - (await stat(breaker)).mtimeMs > BREAK_STALE_MS) await rm(breaker, { force: true });
 		} catch (statError) {
 			if (errnoOf(statError) !== "ENOENT") throw statError;
 		}
@@ -300,8 +300,9 @@ async function acquire(file: string, key: string, waitMs: number, lease: boolean
 			}
 			const seen = await readLockSeen(file);
 			if (seen === null) continue;
-			const info = infoOf(id, file, seen, await judgeFor(path.dirname(file), lease));
-			if (info.state === "dead" && (await removeIfUnchanged(file, seen))) continue;
+			const judge = await judgeFor(path.dirname(file), lease);
+			const info = infoOf(id, file, seen, judge);
+			if (info.state === "dead" && (await removeIfUnchanged(file, seen, judge.lease ? judge.now : Date.now()))) continue;
 			if (Date.now() >= deadline) throw holderRefusal(key, info, lease);
 			await new Promise((resolve) => setTimeout(resolve, lease ? LEASE_POLL_MS : LOCK_POLL_MS));
 		}
@@ -416,12 +417,14 @@ async function seeStoreLock(
 	projectDir: string,
 	id: string,
 	lease: boolean,
-): Promise<{ info: StoreLockInfo; seen: SeenLock } | null> {
+): Promise<{ info: StoreLockInfo; seen: SeenLock; judge: Judge } | null> {
 	if (!LOCK_ID.test(id)) throw new StoreRefusal("invalid-name", `'${id}' is not a lock id: it is 32 hex characters.`);
 	const dir = storeLocksDir(projectDir);
 	const file = path.join(dir, `${id}${LOCK_SUFFIX}`);
 	const seen = await readLockSeen(file);
-	return seen === null ? null : { info: infoOf(id, file, seen, await judgeFor(dir, lease)), seen };
+	if (seen === null) return null;
+	const judge = await judgeFor(dir, lease);
+	return { info: infoOf(id, file, seen, judge), seen, judge };
 }
 
 /**
@@ -437,7 +440,7 @@ export async function breakStoreLock(
 	const lease = options.lease === true;
 	const found = await seeStoreLock(projectDir, id, lease);
 	if (found === null) throw new StoreRefusal("not-found", `No store lock ${id} in this project.`);
-	const { info, seen } = found;
+	const { info, seen, judge } = found;
 	if (info.state === "live")
 		throw new StoreRefusal(
 			"unavailable",
@@ -445,7 +448,10 @@ export async function breakStoreLock(
 				? `Store lock ${id} is held by pid ${info.pid} on ${info.host} and renewed within ${STORE_LEASE_EXPIRY_MS / 1000} s; it is not broken while its writer runs.`
 				: `Store lock ${id} is held by pid ${info.pid}, alive on this host; it is not broken while its writer runs.`,
 		);
-	if (!(await removeIfUnchanged(info.file, seen)) && (await readLockSeen(info.file)) !== null)
+	if (
+		!(await removeIfUnchanged(info.file, seen, judge.lease ? judge.now : Date.now())) &&
+		(await readLockSeen(info.file)) !== null
+	)
 		throw new StoreRefusal("unavailable", `Store lock ${id} changed while it was being broken; look again.`);
 	return info;
 }

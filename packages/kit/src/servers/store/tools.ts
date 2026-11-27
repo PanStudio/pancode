@@ -73,7 +73,7 @@ type Opened = { config: StoreServerConfig; backend: StoreBackend } | { error: st
 async function openStore(tool: string, forWrite: boolean): Promise<Opened> {
 	const config = storeConfig();
 	if (config === null) return { error: `${tool}: ${NO_ROOT_REASON}` };
-	if (!forWrite) {
+	if (!forWrite || config.shared) {
 		const problem = await primaryRootProblem(config);
 		if (problem !== null) return { error: `${tool}: ${problem}` };
 	}

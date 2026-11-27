@@ -10,7 +10,7 @@
  * starts and refuses on the first mismatch, so a worker whose store is not the
  * dispatcher's writes nothing.
  */
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { ensureStoreRootId, readStoreRootId, recordsTag, type StoreRootSpec } from "@pancode/store";
 import type { StoreBackendSetting } from "./defaults.js";
@@ -72,11 +72,16 @@ export async function prepareSharedStoreGrant(
 		}
 	}
 	const used = [primary, ...roots.filter((root) => root !== primary && placed.some((entry) => entry.root === root))];
+	const shared = storeBackendKind() === "shared";
 	const ids = new Map<StoreRootSpec, string>();
 	for (const root of used) {
 		if (sharedFsOf(root) === false)
 			throw new Error(
 				`dispatch: admission denied: store root '${root.name}' (${root.path}) is on a file system local to this host, so node '${nodeId}' cannot reach it; place the granted tags on a shared root or run this task on the local node`,
+			);
+		if ((shared || root !== primary) && statSync(root.path, { throwIfNoEntry: false })?.isDirectory() !== true)
+			throw new Error(
+				`dispatch: admission denied: store root '${root.name}' (${root.path}) is missing or not a directory; mount it before granting tags to node '${nodeId}'`,
 			);
 		ids.set(root, await ensureStoreRootId(root.path));
 	}
