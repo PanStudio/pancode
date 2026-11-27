@@ -160,8 +160,9 @@ JSON responses (--json):
     judge may allow it), and a tool the server does not list is never sent. A
     call whose request gets no answer is recorded as {tool, error} and ends
     the calls; a JSON-RPC error answer is that call's error.
-    An untrusted or stale declaration is never launched. Test never records a
-    surface approval, so its calls are refused until the surface is approved.
+    An untrusted or stale declaration is never launched. Test records a first
+    surface only for a pinned core plugin; any other server's calls are refused
+    until its surface is approved.
     dropped lists [{name, reason}] for each tool a remote server offered with
     an x-mcp-header PanCode cannot send; such a tool is never registered.
     A server that declares the io.modelcontextprotocol/skills extension also
@@ -378,11 +379,18 @@ type McpSurfaceReport = McpSurfaceStatus & { remedy?: string };
 
 /**
  * A trusted server's surface approval against what it served, or against
- * nothing when it was not launched; null for a server that is not trusted.
+ * nothing when it was not launched; null for a server that is not trusted. A
+ * served surface is judged against the approval on file now, which its own
+ * listing may have just recorded (a core plugin's first listing).
  */
-function surfaceStatusOf(server: ResolvedMcpServer, served: McpSurface | null): McpSurfaceReport | null {
+function surfaceStatusOf(
+	server: ResolvedMcpServer,
+	served: McpSurface | null,
+	trustOptions: McpTrustOptions,
+): McpSurfaceReport | null {
 	if (server.trust.status !== "trusted") return null;
-	const status = judgeMcpSurface(server, server.trust.surface, served);
+	const approved = served === null ? server.trust.surface : currentMcpSurfaceApproval(server, trustOptions);
+	const status = judgeMcpSurface(server, approved, served);
 	return status.status === "approved" ? status : { ...status, remedy: mcpSurfaceRemedyFor(server) };
 }
 
@@ -530,7 +538,7 @@ export function mcpCommandOutput(
 				servers: resolved.servers.map((server) => {
 					const offline = offlineTools(server, options.cwd);
 					const entry = boundEntry(server);
-					const surface = surfaceStatusOf(server, served.get(server.id) ?? null);
+					const surface = surfaceStatusOf(server, served.get(server.id) ?? null, options);
 					const state = live.get(server.id);
 					// The shipped schemas are policy, not a listing; list shows the version, title and the variable names it is given.
 					const { builtin, ...declaration } = server;
@@ -887,7 +895,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 		const skills = await mcpTestSkills(source, server, latestInfo);
 		const listing = refreshed.listing;
 		const offers = await liveResourcesAndPrompts(source, live, id);
-		const surface = surfaceStatusOf(server, source.servedSurface(id));
+		const surface = surfaceStatusOf(server, source.servedSurface(id), { cwd });
 		const dropped = listing?.dropped ?? [];
 		const data = {
 			ok: results.every((result) => result.isError === false),
@@ -1094,7 +1102,7 @@ async function mcpSurfaceOutput(options: McpSurfaceApprovalOptions): Promise<Mcp
 		import("../engine/worker-tools.js"),
 	]);
 	const registry = createRegistry({ safety: createWorkerSafety({ cwd: options.cwd }) });
-	const source = createMcpCapabilitySource({ ...trustOptions, registry, attended: false });
+	const source = createMcpCapabilitySource({ ...trustOptions, registry, attended: false, persistCatalog: false });
 	let served: McpSurface | null;
 	try {
 		const refreshed = await source.refresh(id);

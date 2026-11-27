@@ -17,6 +17,8 @@ import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import type { OverlayHandle, TUI } from "../../engine/tui.js";
 import type { SlashCommandContext } from "../../session-control/slash-command-types.js";
 import { displaySafe } from "../display-safe.js";
+import type { PancodeKeybindingManager } from "../keybinding-manager.js";
+import { settleExtensionKeys } from "../surfaces/extension-pane-keys.js";
 import {
 	chip,
 	chipRows,
@@ -156,7 +158,41 @@ function receiptTime(at: string): string {
 		: date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-export function openExtensionsOverlay(tui: TUI, ctx: SlashCommandContext, onClose: () => void): OverlayHandle {
+/** Global key rows for one extension in `/extensions`: bound keys and why any declared key was refused. */
+function extensionKeyFacts(
+	extensionId: string,
+	settled: ReturnType<typeof settleExtensionKeys> | undefined,
+	theme: ReturnType<typeof pancodeTheme>,
+): Fact[] {
+	if (!settled) return [];
+	const sep = theme.fg("divider", ` ${GLYPH.sep} `);
+	const bound: Fact[] = settled.bound
+		.filter((entry) => entry.extensionId === extensionId)
+		.map((entry) => ({
+			label: "Key",
+			value: [
+				theme.fg("inlineCode", entry.key),
+				statusChip(theme, "ok", "bound"),
+				theme.fg("body", sanitizeCallTargetText(entry.label)),
+			].join(sep),
+		}));
+	const refused: Fact[] = settled.refused
+		.filter((entry) => entry.extensionId === extensionId)
+		.map((entry) => ({
+			label: "Key",
+			value: [theme.fg("inlineCode", entry.key), statusChip(theme, "warning", sanitizeCallTargetText(entry.reason))].join(
+				sep,
+			),
+		}));
+	return [...bound, ...refused];
+}
+
+export function openExtensionsOverlay(
+	tui: TUI,
+	ctx: SlashCommandContext,
+	onClose: () => void,
+	keybindings?: PancodeKeybindingManager,
+): OverlayHandle {
 	const operator = ctx.operatorExtensions;
 	const promptNames = (): ReturnType<typeof promptRefs> =>
 		promptRefs((ctx.listPromptsForDisplay ?? ctx.listPrompts)?.().items ?? []);
@@ -172,6 +208,8 @@ export function openExtensionsOverlay(tui: TUI, ctx: SlashCommandContext, onClos
 		const list = displaySafe(raw);
 		const runtimes = displaySafe(operator?.entries() ?? []);
 		const commands = displaySafe(operator?.commands(promptNames()) ?? []);
+		const settledKeys =
+			operator && keybindings ? displaySafe(settleExtensionKeys(operator.keyClaims(), keybindings)) : undefined;
 		runnable = new Map();
 		for (const command of commands)
 			if (command.available && !runnable.has(command.extensionId)) runnable.set(command.extensionId, command.invocation);
@@ -270,6 +308,7 @@ export function openExtensionsOverlay(tui: TUI, ctx: SlashCommandContext, onClos
 								theme.fg("body", sanitizeCallTargetText(command.description)),
 							].join(theme.fg("divider", ` ${GLYPH.sep} `)),
 						});
+					use.push(...extensionKeyFacts(ext.id, settledKeys, theme));
 					if (runtime?.status) use.push({ label: "Status", value: sanitizeCallTargetText(runtime.status.text) });
 					if (runtime?.reason) use.push({ label: "Reason", value: runtime.reason, tone: "warning" });
 					for (const reason of runtime?.newSessionReasons ?? [])

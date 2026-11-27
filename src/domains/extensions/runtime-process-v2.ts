@@ -487,7 +487,7 @@ export class ExtensionRuntimeProcessV2 {
 			run = (signal) => binaries(request, signal);
 		} else if (kind === "pane") {
 			const pane = this.options.pane;
-			if (!services?.pane || !pane) throw new Error("this session has no pane host; run PanCode inside herdr");
+			if (!services?.pane || !pane) throw new Error("pane: this session has no pane host; run PanCode inside herdr");
 			const request = m.request;
 			if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("invalid pane request");
 			const { op, ...payload } = request as Record<string, unknown>;

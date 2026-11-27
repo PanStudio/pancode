@@ -42,7 +42,14 @@ import {
 	trustMcpServer,
 	untrustMcpServer,
 } from "../../src/domains/gateway/mcp/index.js";
-import { clearPluginSnapshots, disablePlugin, installPlugin, PLUGIN_SCHEMA } from "../../src/domains/plugins/index.js";
+import {
+	clearPluginSnapshots,
+	disablePlugin,
+	installPlugin,
+	PLUGIN_SCHEMA,
+	pluginDataDir,
+	removePlugin,
+} from "../../src/domains/plugins/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { saveMcpDownloads, transferMcpUploads } from "../../src/tools/gateway/mcp-file-transfer.js";
@@ -50,6 +57,7 @@ import { createRegistry } from "../../src/tools/registry.js";
 import { applyRegisteredToolClassification } from "../../src/tools/registry-call-prep.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { builtinFixtureSource, emptyBuiltinSource } from "../fixtures/mcp-builtin-server.js";
+import { trustProjectPackages } from "../harness/project-trust.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const roots: string[] = [];
@@ -1049,6 +1057,92 @@ describe("plugin mcp.json declarations", () => {
 		const surface = judgeMcpSurface(server, server.trust.surface, null);
 		strictEqual(surface.status, "unapproved");
 		match(surface.reason ?? "", /pancode mcp trust files --surface/u);
+	});
+
+	it("removes project PLUGIN_DATA across symlinks, creates a PLUGIN_DATA subdir cwd, and enforces plugin cwd caps", async () => {
+		env = await isolatePancodeEnv("pancode-mcp-plugin-");
+		const realProject = join(env.dir, "real-project");
+		const linkProject = join(env.dir, "link-project");
+		mkdirSync(realProject, { recursive: true });
+		symlinkSync(realProject, linkProject);
+		const source = pluginWithServer(env.dir, "state-kit", "stateful");
+		writeFileSync(
+			join(source, "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					stateful: {
+						command: "node",
+						args: [`\${PLUGIN_ROOT}/server.mjs`],
+						cwd: `\${PLUGIN_DATA}/nested/work`,
+					},
+				},
+			}),
+		);
+		const installed = installPlugin(source, { cwd: linkProject, scope: "project" }).plugin;
+		ok(installed);
+		trustProjectPackages(linkProject, "plugins");
+		clearPluginSnapshots();
+		const server = resolveMcpServers({ cwd: linkProject }).servers.find((entry) => entry.id === "stateful");
+		ok(server?.plugin);
+		strictEqual(server.plugin.dataDir, pluginDataDir("project", installed.rootPath));
+		ok(trustMcpServer({ cwd: linkProject, id: "stateful", actionClass: "read" }).ok);
+		const launches: string[] = [];
+		const registry = createRegistry({ safety: createWorkerSafety({ cwd: linkProject }) });
+		const mcp = createMcpCapabilitySource({
+			cwd: linkProject,
+			registry,
+			clientFactory: (spec) => {
+				if ("cwd" in spec && spec.cwd) launches.push(spec.cwd);
+				return {
+					id: spec.id,
+					serverInfo: () => ({
+						protocolVersion: "2025-11-25",
+						serverInfo: { name: "stateful", version: "1.0.0" },
+						instructions: null,
+						capabilities: {},
+					}),
+					listTools: async () => ({ tools: [], truncated: false }),
+					callTool: async () => ({ isError: false, content: [] }),
+					listResources: async () => ({ resources: [], truncated: false }),
+					listResourceTemplates: async () => ({ resourceTemplates: [], truncated: false }),
+					readResource: async () => ({ contents: [] }),
+					listPrompts: async () => ({ prompts: [], truncated: false }),
+					getPrompt: async () => ({ messages: [] }),
+					onListChanged: () => () => {},
+					listChanged: () => false,
+					close: async () => {},
+				} as unknown as ReturnType<typeof import("../../src/domains/gateway/mcp/index.js").createMcpClient>;
+			},
+		});
+		await mcp.refresh("stateful");
+		await mcp.close();
+		deepStrictEqual(launches, [join(server.plugin.dataDir, "nested", "work")]);
+		strictEqual(existsSync(join(server.plugin.dataDir, "nested", "work")), true);
+		ok(removePlugin("state-kit", { cwd: linkProject, scope: "project" }).removed);
+		strictEqual(existsSync(server.plugin.dataDir), false);
+
+		// Cwd caps and cross-platform absolute paths fail closed for plugin variables.
+		const badCap = pluginWithServer(env.dir, "cap-kit", "capped");
+		writeFileSync(
+			join(badCap, "mcp.json"),
+			JSON.stringify({
+				mcpServers: { capped: { command: "node", cwd: `\${PLUGIN_ROOT}/${"a".repeat(MCP_CONFIG_CAPS.cwdBytes)}` } },
+			}),
+		);
+		ok(installPlugin(badCap, { cwd: realProject }).plugin?.loadable);
+		const capDiag = resolveMcpServers({ cwd: realProject }).diagnostics.find((entry) => entry.message.includes("cap"));
+		ok(capDiag, "oversized PLUGIN_ROOT cwd must fail the cwdBytes cap");
+
+		const badWin = pluginWithServer(env.dir, "win-kit", "winabs");
+		writeFileSync(
+			join(badWin, "mcp.json"),
+			JSON.stringify({ mcpServers: { winabs: { command: "node", cwd: `\${PLUGIN_DATA}/C:/Windows` } } }),
+		);
+		ok(installPlugin(badWin, { cwd: realProject }).plugin?.loadable);
+		const winDiag = resolveMcpServers({ cwd: realProject }).diagnostics.find((entry) =>
+			entry.message.includes("escapes the plugin data directory"),
+		);
+		ok(winDiag, "Windows-absolute path under PLUGIN_DATA must be refused");
 	});
 });
 

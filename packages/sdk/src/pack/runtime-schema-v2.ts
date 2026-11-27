@@ -685,10 +685,10 @@ export function parseExtensionRuntimeV2(
 			);
 		// A write-class tool is admitted as a file change, so its runtime must be unable to run
 		// programs and must hold a workspace root to change.
-		if (tool.actionClass === "write" && (declaration.permissions.exec || !writesBeyondStore))
+		if (tool.actionClass === "write" && (declaration.permissions.exec || binaries.length > 0 || !writesBeyondStore))
 			fail(
 				`runtime.tools[${index}].actionClass`,
-				"can be write only in a package that declares a workspace fs.write root and no exec",
+				"can be write only in a package that declares a workspace fs.write root and no exec or binaries",
 			);
 	}
 	return declaration;
@@ -742,8 +742,20 @@ export function capabilityEnvelope(
 						name: binary.name,
 						version: binary.version,
 						minimumVersion: binary.minimumVersion,
+						versionArgs: binary.versionArgs,
 						env: binary.env,
-						sha256: Object.values(binary.downloads).map((download) => download.sha256),
+						downloads: Object.fromEntries(
+							Object.entries(binary.downloads).flatMap(([platform, download]) =>
+								download === undefined
+									? []
+									: [
+											[
+												platform,
+												{ sha256: download.sha256, ...(download.member !== undefined ? { member: download.member } : {}) },
+											],
+										],
+							),
+						),
 					})),
 				}
 			: {}),
@@ -894,11 +906,19 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 			growth.push(`new program: ${binary.name} ${binary.version}`);
 			continue;
 		}
-		// Another download or a lower floor runs bytes the operator never approved, whatever the version says.
+		const downloadsChanged = Object.entries(binary.downloads).some(([platform, asset]) => {
+			const approvedAsset = prior.downloads[platform];
+			return !approvedAsset || approvedAsset.sha256 !== asset.sha256 || approvedAsset.member !== asset.member;
+		});
+		const versionArgsChanged =
+			prior.versionArgs.length !== binary.versionArgs.length ||
+			prior.versionArgs.some((arg, index) => arg !== binary.versionArgs[index]);
+		// Another download, archive member, version probe or lower floor runs bytes or flags the operator never approved.
 		if (
 			prior.version !== binary.version ||
 			prior.minimumVersion !== binary.minimumVersion ||
-			added(prior.sha256, binary.sha256).length > 0
+			downloadsChanged ||
+			versionArgsChanged
 		)
 			growth.push(`program ${binary.name} changed: ${binary.version} (approved ${prior.version})`);
 		push(`program ${binary.name} environment`, added(prior.env, binary.env));

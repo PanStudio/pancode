@@ -785,10 +785,10 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/core/settings-validate.ts#validateSettings", 1332],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
-	["src/domains/dispatch/extension.ts#createDispatchBundle", 8606],
-	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt", 2964],
-	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt.<iife>[2]", 1054],
-	["src/domains/dispatch/extension.ts#createDispatchBundle.dispatchAcpDelegation", 1006],
+	["src/domains/dispatch/extension.ts#createDispatchBundle", 8593],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt", 2944],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt.<iife>", 1054],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.dispatchAcpDelegation", 985],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1055],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 741],
 	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
@@ -840,7 +840,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
-	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1769],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1767],
 	["src/tools/registry.ts#createRegistry", 2346],
 ]);
 

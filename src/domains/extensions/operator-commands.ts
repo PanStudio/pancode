@@ -90,8 +90,12 @@ export function resolveExtensionAliases(
 				: others.length > 0
 					? `/${row.invocation} is also claimed by ${others.join(", ")}`
 					: undefined;
-		return reason === undefined
-			? row
-			: { ...row, available: false, reason: `${reason}; use /${extensionInvocation(row.extensionId, row.alias.command)}` };
+		if (reason === undefined) return row;
+		const { transient: _transient, ...rest } = row;
+		return {
+			...rest,
+			available: false,
+			reason: `${reason}; use /${extensionInvocation(row.extensionId, row.alias.command)}`,
+		};
 	});
 }

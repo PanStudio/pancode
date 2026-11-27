@@ -10,7 +10,7 @@
  * host to run a binary it declared, with arguments and only the environment keys
  * it declared, and the host answers with the exit code and bounded output.
  */
-import { existsSync, rmdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { type ExtensionBinaryDeclaration, RESERVED_BINARY_ENV } from "@pancode/sdk/pack";
 import { runCommandVector } from "../../../core/safe-exec.js";
@@ -114,13 +114,26 @@ export async function syncPackBinaries(
 	options: PackBinaryInstallOptions = {},
 ): Promise<string[]> {
 	const copies = listInstalledExtensions(cwd, { all: true }).filter(
-		(entry) => entry.id === extensionId && (entry.runtimeV2?.binaries?.length ?? 0) > 0,
+		(entry) =>
+			entry.id === extensionId &&
+			entry.valid &&
+			entry.compatible &&
+			entry.enabled &&
+			!entry.trustBlocked &&
+			(entry.runtimeV2?.binaries?.length ?? 0) > 0,
 	);
 	const binaries = (copies.find((entry) => entry.effective) ?? copies[0])?.runtimeV2?.binaries ?? [];
 	try {
 		if (binaries.length === 0) {
 			removePackBinaries(extensionId, options.root);
 			return [];
+		}
+		const keep = new Set(binaries.map((binary) => binary.name));
+		const dir = packBinaryRoot(extensionId, options.root);
+		if (existsSync(dir)) {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				if (!keep.has(entry.name)) rmSync(path.join(dir, entry.name), { recursive: true, force: true });
+			}
 		}
 		const results = await installPackBinaries(extensionId, binaries, options);
 		return results.filter((result) => !result.ok).map((result) => `${extensionId}: ${result.message}`);
@@ -155,7 +168,7 @@ export function packBinaryPath(
 	if (resolution.binaryPath !== null) return { path: resolution.binaryPath };
 	// The toolchain's remedy names `pancode tools install <id>`, which has no row for a pack binary.
 	const found = describeResolution(toolStatus(packBinaryTool(extensionId, binary))).replace(
-		/\s*\(update with `[^`]*`\)$/u,
+		/\s*\((?:install|update) with `[^`]*`\)$/u,
 		"",
 	);
 	return {

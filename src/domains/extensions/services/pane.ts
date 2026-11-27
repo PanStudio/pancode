@@ -11,9 +11,12 @@
  * host classifies taps and the package's global key through one gate, so a
  * second press inside 400 ms arrives as `double`.
  */
+import { lstatSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionPaneChangeReason, ExtensionPanePalette, ExtensionPaneState } from "@pancode/sdk/extension";
 import type { ExtensionBinaryDeclaration, ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
+import { canonicalizeExistingPath } from "../../../core/path-canonical.js";
+import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { terminalBackground } from "../../../core/terminal-background.js";
 import { roleHex } from "../../../core/theme-roles.js";
 import type { MuxContract } from "../../mux/contract.js";
@@ -59,6 +62,8 @@ export interface ExtensionPaneHost {
 	yieldSlot(): Promise<boolean>;
 	/** Whether this extension holds the slot now. */
 	owns(extensionId: string): boolean;
+	/** The extension currently holding the slot, or null when idle. */
+	owner(): string | null;
 	dispose(): Promise<void>;
 }
 
@@ -83,10 +88,26 @@ function record(value: unknown): Record<string, unknown> {
 function storePath(storeDir: string, relative: unknown, label: string): string {
 	if (typeof relative !== "string" || relative.length === 0 || relative.length > 200 || relative.includes("\0"))
 		throw new Error(`${label} must be a store-relative path`);
-	const resolved = path.resolve(storeDir, relative);
-	if (path.isAbsolute(relative) || !resolved.startsWith(storeDir + path.sep))
+	const base = path.resolve(storeDir);
+	const resolved = path.resolve(base, relative);
+	if (path.isAbsolute(relative) || !isSameOrDescendant(resolved, base) || resolved === base)
 		throw new Error(`${label} must stay inside the extension's store`);
-	return resolved;
+	const storeRoot = canonicalizeExistingPath(base);
+	// Walk every segment under the store: a symlink (including a dangling one) would make watchTapFile truncate or create a file outside the store.
+	let current = storeRoot;
+	for (const segment of path.relative(base, resolved).split(path.sep)) {
+		current = path.join(current, segment);
+		try {
+			if (lstatSync(current).isSymbolicLink()) throw new Error(`${label} must not pass through a symbolic link`);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
+			throw error;
+		}
+	}
+	const canonical = canonicalizeExistingPath(resolved);
+	if (!isSameOrDescendant(canonical, storeRoot) || canonical === storeRoot)
+		throw new Error(`${label} must stay inside the extension's store`);
+	return canonical;
 }
 
 /** Checks one `ctx.pane.open` request against the declaration; throws the reason. */
@@ -207,7 +228,7 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 		return closed;
 	};
 	const press = (extensionId: string, action: string, source: "dock" | "key"): void => {
-		void gate.press(extensionId, {
+		void gate.press(`${extensionId}\0${action}`, {
 			single: () => deps.press(extensionId, { id: action, source, key: "tap" }),
 			double: () => deps.press(extensionId, { id: action, source, key: "double" }),
 		});
@@ -327,6 +348,9 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 		},
 		owns(extensionId): boolean {
 			return held?.extensionId === extensionId;
+		},
+		owner(): string | null {
+			return held?.extensionId ?? null;
 		},
 		async dispose(): Promise<void> {
 			await serial(async () => {

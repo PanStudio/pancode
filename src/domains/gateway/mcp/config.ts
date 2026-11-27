@@ -33,7 +33,7 @@ import { pancodeProjectRoot } from "../../../core/project-root.js";
 import { resolveSafeCwd } from "../../../core/safe-exec.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
-import { listInstalledPlugins } from "../../plugins/index.js";
+import { bundledPluginCatalog, listInstalledPlugins, pluginDataDir } from "../../plugins/index.js";
 import {
 	defaultMcpBuiltinSource,
 	loadMcpBuiltinServers,
@@ -170,6 +170,10 @@ export interface McpServerPlugin {
 	scope: "user" | "project";
 	/** The plugin tree's recorded SHA-256; the declaration digest covers it. */
 	contentDigest: string;
+	/** The plugin's writable data directory, `${PLUGIN_DATA}`; created before each launch. */
+	dataDir: string;
+	/** Installed from PanCode's shipped index at tier core, its tree still the pinned one: trusted without a record. */
+	core?: true;
 }
 
 interface McpServerDeclarationBase {
@@ -537,19 +541,24 @@ function realDirectory(candidate: string, location: string): string | Error {
 	}
 }
 
+function cwdTextRefusal(raw: string | null, location: string): Error | null {
+	if (raw === null) return null;
+	if (raw.length === 0) return new Error(`${location} must be a non-empty path when given`);
+	if (raw.includes("\0")) return new Error(`${location} must not contain a NUL byte`);
+	if (utf8Bytes(raw) > MCP_CONFIG_CAPS.cwdBytes) {
+		return new Error(`${location} exceeds the ${MCP_CONFIG_CAPS.cwdBytes}-byte cap`);
+	}
+	return null;
+}
+
 /**
  * A project server's cwd is repository-relative and must stay inside the
  * repository, symlinks included. A user server's cwd is absolute or relative
  * to the config directory; an absolute directory is its own containment root.
  */
 function resolveCwd(raw: string | null, scope: McpServerScope, root: string, location: string): ResolvedCwd | Error {
-	if (raw !== null) {
-		if (raw.length === 0) return new Error(`${location} must be a non-empty path when given`);
-		if (raw.includes("\0")) return new Error(`${location} must not contain a NUL byte`);
-		if (utf8Bytes(raw) > MCP_CONFIG_CAPS.cwdBytes) {
-			return new Error(`${location} exceeds the ${MCP_CONFIG_CAPS.cwdBytes}-byte cap`);
-		}
-	}
+	const refused = cwdTextRefusal(raw, location);
+	if (refused !== null) return refused;
 	const absolute = raw !== null && (path.isAbsolute(raw) || path.win32.isAbsolute(raw));
 	if (scope !== "user" && absolute) {
 		return new Error(
@@ -577,6 +586,41 @@ function resolveCwd(raw: string | null, scope: McpServerScope, root: string, loc
 		return new Error(`${location} escapes its root through a symbolic link: '${raw}'`);
 	}
 	return { cwd: real, cwdRoot: realRoot };
+}
+
+const PLUGIN_VARIABLE = /\$\{(PLUGIN_ROOT|PLUGIN_DATA)\}/gu;
+const PLUGIN_ENV_KEYS = new Set(["PLUGIN_ROOT", "PLUGIN_DATA"]);
+const NAMES_PLUGIN_VARIABLE = /\$\{PLUGIN_(?:ROOT|DATA)\}/u;
+const ANCHORED_PLUGIN_CWD = /^\$\{(PLUGIN_ROOT|PLUGIN_DATA)\}(?:\/(.*))?$/su;
+
+/** `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` replaced in one pass; any other `${...}` text stays as written. */
+function expandPluginVariables(value: string, root: string, dataDir: string): string {
+	return value.replace(PLUGIN_VARIABLE, (_match, name: string) => (name === "PLUGIN_ROOT" ? root : dataDir));
+}
+
+/**
+ * A plugin server's cwd: relative to the plugin root, or `${PLUGIN_ROOT}` or
+ * `${PLUGIN_DATA}` alone or followed by a relative path that stays inside that
+ * directory. The data directory is created at launch, so a cwd under it is
+ * resolved here only by its text; the spawn checks the real path.
+ */
+function resolvePluginCwd(raw: string | null, root: string, dataDir: string, location: string): ResolvedCwd | Error {
+	const refused = cwdTextRefusal(raw, location);
+	if (refused !== null) return refused;
+	const anchored = raw === null ? null : ANCHORED_PLUGIN_CWD.exec(raw);
+	const rest = anchored === null ? raw : anchored[2] !== undefined && anchored[2].length > 0 ? anchored[2] : null;
+	if (rest !== null && NAMES_PLUGIN_VARIABLE.test(rest)) {
+		return new Error(`${location} may name \${PLUGIN_ROOT} or \${PLUGIN_DATA} only at its start: '${raw}'`);
+	}
+	if (anchored?.[1] !== "PLUGIN_DATA") return resolveCwd(rest, "plugin", root, location);
+	if (rest !== null && (path.isAbsolute(rest) || path.win32.isAbsolute(rest))) {
+		return new Error(`${location} escapes the plugin data directory: '${raw}'`);
+	}
+	try {
+		return { cwd: resolveSafeCwd(rest ?? undefined, dataDir), cwdRoot: dataDir };
+	} catch {
+		return new Error(`${location} escapes the plugin data directory: '${raw}'`);
+	}
 }
 
 function sha256OfRegularFile(filePath: string): string | Error {
@@ -1103,8 +1147,12 @@ function loadFile(filePath: string, scope: McpServerScope, root: string): McpCon
  * `{"mcpServers": {"<id>": {"type": "stdio", "command", "args", "env"}}}`.
  * A server may add PanCode's `toolActionClasses` and `toolPathArguments`; the
  * declaration digest covers them, so the operator's trust names what it approved.
- * Each server keeps the id it declares and runs in the plugin root. A server
- * of type `http` (or `streamable-http`) is reached at its `url`, and its
+ * Each server keeps the id it declares and runs in the plugin root unless its
+ * cwd names another directory there or in the plugin's data directory.
+ * `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` expand in args, env values and cwd,
+ * never in command, and the process gets both as environment variables; the
+ * digest covers the text as written, so it does not depend on where the
+ * plugin is installed. A server of type `http` (or `streamable-http`) is reached at its `url`, and its
  * `headers` name stored credential keys as in mcp.yaml. The 2024 HTTP+SSE
  * transport (`sse`) and any other type are reported and skipped; a malformed
  * file contributes nothing (fail closed).
@@ -1114,8 +1162,10 @@ export function loadPluginMcpFile(plugin: {
 	scope: "user" | "project";
 	rootPath: string;
 	contentDigest: string;
+	core?: boolean;
 }): McpConfigLoadResult {
 	const filePath = path.join(plugin.rootPath, MCP_PLUGIN_CONFIG_FILENAME);
+	const dataDir = pluginDataDir(plugin.scope, plugin.rootPath);
 	const diagnostic = (message: string): McpConfigDiagnostic => ({ scope: "plugin", path: filePath, message });
 	const read = readBoundedFileText(filePath, MCP_CONFIG_CAPS.fileBytes);
 	if (!read.ok) return { servers: [], diagnostics: read.reason === "missing" ? [] : [diagnostic(read.message)] };
@@ -1179,7 +1229,13 @@ export function loadPluginMcpFile(plugin: {
 		if (validated.fileTargetsIgnored) {
 			diagnostics.push({ ...diagnostic(fileTargetsIgnoredMessage(`${location}.fileTargets`)), severity: "warning" });
 		}
-		const resolved = resolveCwd(declaredCwd, "plugin", plugin.rootPath, `${location}.cwd`);
+		const reserved = "env" in fields ? Object.keys(fields.env).find((key) => PLUGIN_ENV_KEYS.has(key)) : undefined;
+		if (reserved !== undefined)
+			return {
+				servers: [],
+				diagnostics: [diagnostic(`${location}.env.${reserved} is set by PanCode for every plugin server; remove it`)],
+			};
+		const resolved = resolvePluginCwd(declaredCwd, plugin.rootPath, dataDir, `${location}.cwd`);
 		if (resolved instanceof Error) return { servers: [], diagnostics: [diagnostic(resolved.message)] };
 		const shared = {
 			id: fields.id,
@@ -1193,12 +1249,28 @@ export function loadPluginMcpFile(plugin: {
 			toolActionClasses: fields.toolActionClasses,
 			...(Object.keys(fields.toolPathArguments).length > 0 ? { toolPathArguments: fields.toolPathArguments } : {}),
 			digest: mcpServerDigest({ ...fields, pluginContentDigest: plugin.contentDigest }),
-			plugin: { id: plugin.id, scope: plugin.scope, contentDigest: plugin.contentDigest },
+			plugin: {
+				id: plugin.id,
+				scope: plugin.scope,
+				contentDigest: plugin.contentDigest,
+				dataDir,
+				...(plugin.core === true ? { core: true as const } : {}),
+			},
 		};
+		const expand = (value: string): string => expandPluginVariables(value, plugin.rootPath, dataDir);
 		servers.push(
 			"url" in fields
 				? { ...shared, url: fields.url, headers: fields.headers }
-				: { ...shared, command: fields.command, args: fields.args, env: fields.env },
+				: {
+						...shared,
+						command: fields.command,
+						args: fields.args.map(expand),
+						env: {
+							...Object.fromEntries(Object.entries(fields.env).map(([key, value]) => [key, expand(value)])),
+							PLUGIN_ROOT: plugin.rootPath,
+							PLUGIN_DATA: dataDir,
+						},
+					},
 		);
 	}
 	return { servers, diagnostics };
@@ -1267,6 +1339,16 @@ function loadPluginServers(cwd: string): McpConfigLoadResult {
 		};
 	}
 	const trustImports = trustProjectImports();
+	let corePins: Map<string, string> | undefined;
+	// Read the shipped index only for a copy that could match one of its rows.
+	const corePin = (name: string): string | undefined => {
+		corePins ??= new Map(
+			bundledPluginCatalog([])
+				.filter((row) => row.kind === "plugin" && row.tier === "core" && row.sha256 !== undefined)
+				.map((row) => [row.name, row.sha256 as string]),
+		);
+		return corePins.get(name);
+	};
 	for (const item of installed) {
 		if (!item.loadable || item.provenance === undefined) continue;
 		if (item.trust === "foreign" && !trustImports) {
@@ -1282,6 +1364,12 @@ function loadPluginServers(cwd: string): McpConfigLoadResult {
 			scope: item.scope,
 			rootPath: item.provenance.canonicalRoot,
 			contentDigest: item.provenance.contentDigest,
+			core:
+				item.kind === "plugin" &&
+				item.trust === "trusted" &&
+				typeof item.origin === "object" &&
+				item.origin.kind === "catalog" &&
+				corePin(item.id) === item.provenance.contentDigest,
 		});
 		servers.push(...loaded.servers);
 		diagnostics.push(...loaded.diagnostics);

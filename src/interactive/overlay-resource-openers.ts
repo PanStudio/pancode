@@ -154,7 +154,7 @@ export function createOverlayResourceOpeners(deps: OverlayResourceOpenersDeps): 
 	const openExtensionsOverlayState = (): void => {
 		if (deps.transitions.state !== "closed") return;
 		deps.transitions.state = "extensions";
-		deps.transitions.handle = openExtensions(deps.tui, deps.getSlashContext(), deps.closeOverlay);
+		deps.transitions.handle = openExtensions(deps.tui, deps.getSlashContext(), deps.closeOverlay, deps.keybindings);
 		deps.tui.requestRender();
 	};
 
