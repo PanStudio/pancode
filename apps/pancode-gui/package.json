@@ -1,6 +1,6 @@
 {
 	"name": "pancode-gui",
-	"version": "0.9.1",
+	"version": "0.9.2-dev",
 	"private": true,
 	"license": "SEE LICENSE IN LICENSE",
 	"description": "PanCode on the desktop (alpha): a local workspace in your browser for sessions, usage, artifacts and evidence.",
