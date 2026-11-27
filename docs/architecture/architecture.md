@@ -14,6 +14,7 @@ src/
 ├── engine/          # Pi (pi-ai, pi-agent-core, pi-tui) boundary, runtime adapters, ACP, worker runtime
 ├── entry/           # orchestrator bootstrap wiring (bootOrchestrator)
 ├── interactive/     # TUI panels, overlays, key routing, dashboard
+├── lib/             # domain-free shared libraries (autonomy, call-target, scratch-roots, secrets, validation-wrappers)
 ├── session-control/ # surface-neutral chat loop, turn lifecycle, slash-command specifications
 ├── tools/           # built-in tool specs and registry admission boundary
 ├── utils/           # image and git support utilities

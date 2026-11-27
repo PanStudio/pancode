@@ -203,13 +203,12 @@ import { createCitationGroundingRegistration } from "../domains/safety/citation-
 import { createFinishContractRegistration } from "../domains/safety/finish-contract-registration.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
 import { createGitHookDriftGuard, type GitHookDriftGuard, gitHookDriftNotice } from "../domains/safety/hook-drift.js";
-import type { AutonomyLevel, FlowRestrictionSet } from "../domains/safety/index.js";
+import type { FlowRestrictionSet } from "../domains/safety/index.js";
 import {
 	EMPTY_INFORMATION_FLOW_POLICY,
 	flowUnmediatedAgentRefusal,
 	isFlowRestrictionSet,
 	mergeFlowRestrictions,
-	modelMayActivateSkills,
 	parseRigorOverride,
 	resolveModelDestination,
 	resolveRigor,
@@ -299,7 +298,13 @@ import {
 } from "../engine/loop-guard.js";
 import { cwdHash, openSession, readSessionTailTurns, sessionCurrentPath, sessionPaths } from "../engine/session.js";
 import type { RunIo } from "../interactive/index.js";
-import { admissionAutonomy, containedYolo, effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
+import {
+	type AutonomyLevel,
+	admissionAutonomy,
+	containedYolo,
+	effectiveYoloConfinement,
+	modelMayActivateSkills,
+} from "../lib/autonomy/autonomy.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
 	answerExtensionLine,

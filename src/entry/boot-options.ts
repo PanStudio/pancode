@@ -8,12 +8,12 @@ import type { SessionToolLimits } from "../core/tool-limit-flags.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
 import type { SessionVerifier } from "../domains/safety/finish-contract.js";
-import type { AutonomyLevel } from "../domains/safety/index.js";
 import type { HeadlessCompactionRequest } from "../domains/session/headless-compact.js";
 import type { AcpHandshake } from "../engine/acp/server-options.js";
 import type { AcpJsonRpcPeerTransport, StdioServerTransportOptions } from "../engine/acp/transport.js";
 import type { ImageContent } from "../engine/types.js";
 import type { TerminalLease } from "../interactive/terminal-lease.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 
 export interface HeadlessSamplingOverrides {
 	temperature?: number;

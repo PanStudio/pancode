@@ -9,7 +9,7 @@ import { knownSecretValues } from "../../core/sandbox/env-scrub.js";
 import { SETTINGS_FIELD_NAMES } from "../../core/settings-fields.js";
 import { FailureCause } from "../../core/telemetry/enums.js";
 import { BILLING_PROVIDERS } from "../../core/telemetry/schemas.js";
-import { createRedactionTally, redactKnownSecrets, redactSecretsText } from "../evidence/index.js";
+import { createRedactionTally, redactKnownSecrets, redactSecretsText } from "../../lib/secrets/redact.js";
 import { inspectInstallation } from "../lifecycle/index.js";
 import { RUNTIME_VOCABULARY } from "../telemetry/index.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";

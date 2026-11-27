@@ -251,7 +251,7 @@ export const DEFAULT_WORKING_SET_SETTINGS: WorkingSetSettings = {
 	policy: "structural-v2",
 	// The protection profile: `default` adds nothing to the absolute predicates.
 	// `data-analysis` and `web-design` pin what those kinds of work come back
-	// to; see policies/profiles.ts.
+	// to; see src/domains/context/working-set/policies/profiles.ts.
 	profile: "default",
 	target: 0.6,
 	protectLastTurns: 6,

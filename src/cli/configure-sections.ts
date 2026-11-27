@@ -16,12 +16,12 @@ import { resolvePancodeDirs } from "../core/xdg.js";
 import { getVersionInfo } from "../domains/lifecycle/version.js";
 import { targetFundingEvidence } from "../domains/providers/funding-evidence.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
-import { autonomyFromUserInput } from "../domains/safety/index.js";
 import {
 	describeLocalCapacity,
 	observeHostCapacityFacts,
 	resolveLocalConcurrency,
 } from "../domains/scheduling/local-capacity.js";
+import { autonomyFromUserInput } from "../lib/autonomy/autonomy.js";
 import { ask, askYesNo } from "./ask.js";
 import { emptyArgs } from "./configure-args.js";
 import { editSettingControl, orderedAreaControls } from "./configure-controls.js";
