@@ -654,7 +654,8 @@ export class OperatorExtensionRuntimeV2 {
 				(entry): entry is ApiV2Extension => isApiV2(entry) && (!this.options.onlyId || entry.id === this.options.onlyId),
 			);
 			// A pane keeps playing across a reload; it closes once its package can no longer drive it.
-			for (const id of prior)
+			const paneOwner = this.options.pane?.owner() ?? null;
+			for (const id of new Set([...prior, ...(paneOwner ? [paneOwner] : [])]))
 				if (
 					this.options.pane?.owns(id) &&
 					!eligible.some((entry) => entry.id === id && entry.runtimeV2.services?.pane === true)
@@ -1032,9 +1033,13 @@ export class OperatorExtensionRuntimeV2 {
 		}
 	}
 
-	/** A press on something this extension drew. */
+	/** A press on something this extension drew, or one of its global keys (which may start a deferred runtime). */
 	async action(extensionId: string, event: ExtensionUiAction): Promise<ExtensionOutputV2> {
-		const entry = this.runningEntry(extensionId);
+		if (event.source === "key") {
+			while (this.reloading && this.reloadTask && !this.closed) await this.reloadTask;
+		}
+		this.refuseFenced(extensionId);
+		const entry = (event.source === "key" ? this.deferred.get(extensionId) : undefined) ?? this.runningEntry(extensionId);
 		return this.operator(
 			entry,
 			(process) => process.action(event),

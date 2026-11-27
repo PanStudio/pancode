@@ -62,6 +62,8 @@ export interface ExtensionPaneHost {
 	yieldSlot(): Promise<boolean>;
 	/** Whether this extension holds the slot now. */
 	owns(extensionId: string): boolean;
+	/** The extension currently holding the slot, or null when idle. */
+	owner(): string | null;
 	dispose(): Promise<void>;
 }
 
@@ -226,7 +228,7 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 		return closed;
 	};
 	const press = (extensionId: string, action: string, source: "dock" | "key"): void => {
-		void gate.press(extensionId, {
+		void gate.press(`${extensionId}\0${action}`, {
 			single: () => deps.press(extensionId, { id: action, source, key: "tap" }),
 			double: () => deps.press(extensionId, { id: action, source, key: "double" }),
 		});
@@ -346,6 +348,9 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 		},
 		owns(extensionId): boolean {
 			return held?.extensionId === extensionId;
+		},
+		owner(): string | null {
+			return held?.extensionId ?? null;
 		},
 		async dispose(): Promise<void> {
 			await serial(async () => {
