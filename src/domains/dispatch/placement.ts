@@ -8,7 +8,12 @@ import type { FleetRegistry } from "../scheduling/cluster.js";
 import type { DispatchRequest } from "./contract.js";
 import type { DispatchNodePlacement } from "./extension.js";
 import { sessionFleetNode } from "./fleet-placement-preference.js";
-import { type FleetNodeSandbox, fleetNodeSandbox, fleetPreflightVerdict } from "./fleet-preflight.js";
+import {
+	type FleetNodeSandbox,
+	fleetNodeSandbox,
+	fleetPreflightVerdict,
+	readFleetPreflightRecords,
+} from "./fleet-preflight.js";
 import { createSshWorkerTransport, LOCAL_NODE_ID, localNodeIdentity, type WorkerTransport } from "./transport.js";
 import type { RunNodeIdentity, RunNodeReroute } from "./types.js";
 
@@ -86,11 +91,10 @@ function requestedNodeId(
 function selectFleetNode(
 	settings: Readonly<PancodeSettings> | undefined,
 	deps: FleetPlacementDeps,
-	verdictFor: NonNullable<FleetPlacementDeps["preflightVerdict"]>,
 	projectRoot: string,
 	requested: string | null,
 	excludedNodeIds: ReadonlySet<string>,
-): FleetNodeSettings | null {
+): { config: FleetNodeSettings; sandbox: FleetNodeSandbox | null } | null {
 	const nodes = settings?.fleet?.nodes ?? [];
 	const fleet = deps.fleet;
 	if (requested !== null) {
@@ -104,9 +108,11 @@ function selectFleetNode(
 				`fleet node '${node.id}' is ${snapshot.state}${snapshot.stateReason ? ` (${snapshot.stateReason})` : ""}`,
 			);
 		}
-		const preflight = verdictFor(node, projectRoot);
+		// A concurrent --record can replace the file. Admit and describe the node from the same snapshot.
+		const records = readFleetPreflightRecords();
+		const preflight = (deps.preflightVerdict ?? fleetPreflightVerdict)(node, projectRoot, records);
 		if (!preflight.ok) throw admissionError(preflight.reason ?? `node '${node.id}' is not preflighted`);
-		return node;
+		return { config: node, sandbox: (deps.nodeSandbox ?? fleetNodeSandbox)(node.id, projectRoot, records) };
 	}
 	// A node exclusion that also excludes local has no eligible node left:
 	// fail closed rather than silently re-running on the excluded local node.
@@ -120,8 +126,6 @@ export function createFleetPlacementResolver(
 	deps: FleetPlacementDeps,
 ): (req: DispatchRequest) => DispatchNodePlacement | null {
 	const transportForNode = deps.transportForNode ?? ((node: FleetNodeSettings) => createSshWorkerTransport(node));
-	const verdictFor = deps.preflightVerdict ?? fleetPreflightVerdict;
-	const sandboxFor = deps.nodeSandbox ?? fleetNodeSandbox;
 
 	return (req: DispatchRequest): DispatchNodePlacement | null => {
 		const settings = deps.getSettings();
@@ -140,17 +144,17 @@ export function createFleetPlacementResolver(
 		if (nodes.length === 0 && requested === null && !req.reroutes?.length) return null;
 
 		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
-		const selected = selectFleetNode(settings, deps, verdictFor, projectRoot, requested, excludedNodeIds);
+		const selected = selectFleetNode(settings, deps, projectRoot, requested, excludedNodeIds);
 		if (selected === null) {
 			const reroutes = completedReroutes(req.reroutes, LOCAL_NODE_ID);
 			return { node: localNodeIdentity(), ...(reroutes !== undefined ? { reroutes } : {}) };
 		}
-		const transport = transportForNode(selected);
-		const reroutes = completedReroutes(req.reroutes, selected.id);
+		const transport = transportForNode(selected.config);
+		const reroutes = completedReroutes(req.reroutes, selected.config.id);
 		return {
 			node: transport.node,
 			spawn: (spec, opts) => transport.spawn(spec, opts),
-			sandbox: sandboxFor(selected.id, projectRoot),
+			sandbox: selected.sandbox,
 			...(reroutes !== undefined ? { reroutes } : {}),
 		};
 	};
@@ -165,19 +169,17 @@ export function createFleetPlacementResolver(
 export function createFleetPlacementPreviewResolver(
 	deps: FleetPlacementDeps,
 ): (req: DispatchRequest) => FleetPlacementPreview {
-	const verdictFor = deps.preflightVerdict ?? fleetPreflightVerdict;
-	const sandboxFor = deps.nodeSandbox ?? fleetNodeSandbox;
 	return (req: DispatchRequest): FleetPlacementPreview => {
 		const settings = deps.getSettings();
 		const excludedNodeIds = new Set((req.reroutes ?? []).map((hop) => hop.fromNode).filter((id) => id.length > 0));
 		let requested = requestedNodeId(req, settings, deps.getSessionId?.());
 		if (requested !== null && excludedNodeIds.has(requested)) requested = null;
 		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
-		const selected = selectFleetNode(settings, deps, verdictFor, projectRoot, requested, excludedNodeIds);
+		const selected = selectFleetNode(settings, deps, projectRoot, requested, excludedNodeIds);
 		if (selected === null) return { node: localNodeIdentity() };
 		return {
-			node: { id: selected.id, kind: "ssh", host: selected.host },
-			sandbox: sandboxFor(selected.id, projectRoot),
+			node: { id: selected.config.id, kind: "ssh", host: selected.config.host },
+			sandbox: selected.sandbox,
 		};
 	};
 }

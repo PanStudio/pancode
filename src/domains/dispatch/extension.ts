@@ -5284,6 +5284,7 @@ export function createDispatchBundle(
 			!isDeepStrictEqual(actualNode, admittedPlacement.node) ||
 			(actualNode.kind === "ssh" &&
 				lifecycle.runtimeKind === "http" &&
+				(settings?.safety.sandbox !== "off" || isHoareResultContract(dispatchResultContract(req, lifecycle.recipe))) &&
 				!isDeepStrictEqual(placement?.sandbox ?? null, admittedPlacement.sandbox ?? null))
 		)
 			throw new Error(
