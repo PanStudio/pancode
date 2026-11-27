@@ -20,6 +20,11 @@ export interface ExtensionCommandDeclarationV2 {
 	timeoutMs: number;
 	/** Bundle only: this command owns `/<plugin>:<name>` in place of the package's prompt of that name. */
 	replaces?: "prompt";
+	/**
+	 * A bare `/<alias>` the operator may type for this command. The host refuses it while a built-in
+	 * command, a loaded prompt or another extension holds the name.
+	 */
+	alias?: string;
 }
 
 export interface ExtensionHookDeclaration {
@@ -75,6 +80,46 @@ export interface ExtensionPermissionsDeclaration {
 	net: boolean;
 }
 
+/** Platforms a pinned binary may name a download for. */
+export type ExtensionBinaryPlatform = "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64";
+
+/** One platform's release asset, verified by the hash of the bytes as downloaded. */
+export interface ExtensionBinaryDownload {
+	url: string;
+	sha256: string;
+	archive: "raw" | "zip" | "tar.gz";
+	/** Path of the executable inside a zip or tar.gz; absent for `raw`. */
+	member?: string;
+}
+
+/**
+ * A third-party program at one version, downloaded and verified at install and
+ * run by the host outside the runtime sandbox, only through `ctx.binaries` and
+ * `ctx.pane`. A copy on PATH whose version meets `minimumVersion` is preferred.
+ */
+export interface ExtensionBinaryDeclaration {
+	name: string;
+	version: string;
+	/** SPDX identifier of the upstream license. */
+	license: string;
+	homepage: string;
+	minimumVersion: string;
+	versionArgs: string[];
+	/** Environment keys a call may set; every other key is the host's safe tool environment. */
+	env: string[];
+	downloads: Partial<Record<ExtensionBinaryPlatform, ExtensionBinaryDownload>>;
+	/** License or notice files fetched beside the binary, pinned like it. */
+	documents: Array<{ name: string; url: string; sha256: string }>;
+}
+
+/** A global key that presses one of the package's actions, outside any workspace. */
+export interface ExtensionKeyDeclaration {
+	/** `alt+<letter>`; the leader menu gets the same letter. */
+	key: string;
+	action: string;
+	label: string;
+}
+
 export interface ExtensionConfigField {
 	key: string;
 	type: "string" | "number" | "boolean";
@@ -111,6 +156,10 @@ export interface ExtensionRuntimeDeclarationV2 {
 	/** Host services reachable over the extension IPC only after operator consent. */
 	services?: ExtensionServicesDeclaration;
 	config: ExtensionConfigField[];
+	/** Pinned external programs; absent when none, which keeps existing declarations stable. */
+	binaries?: ExtensionBinaryDeclaration[];
+	/** Global keys; absent when none. */
+	keys?: ExtensionKeyDeclaration[];
 }
 
 /**
@@ -132,6 +181,8 @@ export interface ExtensionStoreServiceDeclaration {
 
 export interface ExtensionServicesDeclaration {
 	embedding: boolean;
+	/** One terminal pane in the host's dock, running a declared binary. */
+	pane?: boolean;
 	model?: ExtensionModelServiceDeclaration;
 	store?: ExtensionStoreServiceDeclaration;
 }
@@ -159,4 +210,14 @@ export type ExtensionCapabilityEnvelope = Pick<
 	/** Tools attached to every request; absent when none, which keeps existing digests stable. */
 	promote?: string[];
 	workspaces: Array<Pick<ExtensionWorkspaceDeclaration, "id" | "regions" | "board" | "keys">>;
+	/** Bare command names the package claims; absent when none. */
+	aliases?: string[];
+	/** Pinned programs by name, version, probe args and per-platform hash/member; absent when none. */
+	binaries?: Array<
+		Pick<ExtensionBinaryDeclaration, "name" | "version" | "minimumVersion" | "versionArgs" | "env"> & {
+			downloads: Record<string, { sha256: string; member?: string }>;
+		}
+	>;
+	/** Global keys; absent when none. */
+	keys?: ExtensionKeyDeclaration[];
 };

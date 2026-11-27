@@ -125,7 +125,9 @@ export function createOverlayResourceOpeners(deps: OverlayResourceOpenersDeps): 
 			// plugin resources always, extensions when one changed. It is reported
 			// separately from the write and can be retried on its own, so a refresh
 			// failure never restates a successful install.
-			lifecycle: createHubLifecycle(hubRefreshHost(sessionReload(ctx))),
+			lifecycle: createHubLifecycle(hubRefreshHost(sessionReload(ctx)), (failure) =>
+				ctx.notice("warn", `hub: a pinned program did not download: ${failure}`),
+			),
 			// A fleet's `use` is its approval preview, which is a surface of its own.
 			// PanHub closes first so the preview owns the overlay slot, exactly
 			// as `/fleet run <playbook>` typed into the composer would.
@@ -152,7 +154,7 @@ export function createOverlayResourceOpeners(deps: OverlayResourceOpenersDeps): 
 	const openExtensionsOverlayState = (): void => {
 		if (deps.transitions.state !== "closed") return;
 		deps.transitions.state = "extensions";
-		deps.transitions.handle = openExtensions(deps.tui, deps.getSlashContext(), deps.closeOverlay);
+		deps.transitions.handle = openExtensions(deps.tui, deps.getSlashContext(), deps.closeOverlay, deps.keybindings);
 		deps.tui.requestRender();
 	};
 

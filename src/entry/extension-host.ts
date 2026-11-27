@@ -41,6 +41,8 @@ export interface ExtensionHostOptions {
 	services?: Omit<ExtensionHostServicesDeps, "ask">;
 	sandboxUnixSockets?: OperatorExtensionsOptions["sandboxUnixSockets"];
 	readOnly?: OperatorExtensionsOptions["readOnly"];
+	/** Passed by a host that routes typed lines, so a bare alias never takes a built-in; the worker hook host has none. */
+	builtinCommandNames?: OperatorExtensionsOptions["builtinCommandNames"];
 	/** False in the worker hook host, which serves no session and so never prunes another's state. */
 	pruneOrphanedSessionState?: false;
 	/** One line naming the extension and the reason. */
@@ -74,6 +76,7 @@ export function startExtensionHost(options: ExtensionHostOptions): ExtensionHost
 		context: () => ({ workspace: process.cwd(), sessionId: options.sessionId(), mode: options.mode }),
 		isIdle,
 		list: options.list,
+		...(options.builtinCommandNames ? { builtinCommandNames: options.builtinCommandNames } : {}),
 		...(options.frozenTools ? { frozenTools: options.frozenTools } : {}),
 		...(options.services ? { services: createExtensionHostServices(options.services) } : {}),
 		...(options.sandboxUnixSockets ? { sandboxUnixSockets: options.sandboxUnixSockets } : {}),

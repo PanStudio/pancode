@@ -50,6 +50,7 @@ import {
 	readOnlyRuntimeDeclaration,
 	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
+import { type PackBinaryRunRequest, type PackBinaryRunResult, parsePackBinaryRun } from "./services/binaries.js";
 import type { LoadableExtension } from "./types.js";
 
 export interface RuntimeProcessV2Options {
@@ -68,6 +69,10 @@ export interface RuntimeProcessV2Options {
 	 * this runtime may read. A get answers `{ base64 }` or null.
 	 */
 	blobs?: (request: ExtensionBlobRequest, signal: AbortSignal) => Promise<unknown>;
+	/** Runs a declared binary; the request is already checked against the declaration. */
+	binaries?: (request: PackBinaryRunRequest, signal: AbortSignal) => Promise<PackBinaryRunResult>;
+	/** One `ctx.pane` call; the pane host checks the payload against the declaration. */
+	pane?: (op: string, payload: unknown) => Promise<unknown>;
 	onState?: () => void;
 	/** The operator's `safety.sandboxUnixSockets` when this runtime starts; absent blocks them. */
 	unixSockets?: UnixSocketMode;
@@ -158,7 +163,20 @@ function confinedSource(sourcePath: string, workspace: string, roots: readonly s
 }
 
 /** Calls to host services a runtime makes from inside a request, by kind, with the most of each in flight. */
-const SERVICE_CALLS = { embed: 4, complete: RUNTIME_V2_LIMITS.completionConcurrency, blobs: 4 } as const;
+const SERVICE_CALLS = {
+	embed: 4,
+	complete: RUNTIME_V2_LIMITS.completionConcurrency,
+	blobs: 4,
+	binaries: 2,
+	pane: 2,
+} as const;
+const SERVICE_LABELS: Record<ServiceKind, string> = {
+	embed: "embedding",
+	complete: "model",
+	blobs: "store",
+	binaries: "binary",
+	pane: "pane",
+};
 type ServiceKind = keyof typeof SERVICE_CALLS;
 
 interface Pending {
@@ -337,6 +355,7 @@ export class ExtensionRuntimeProcessV2 {
 			declaration: this.declaration,
 			snapshot: options.snapshot,
 			options: options.options,
+			...(this.declaration.permissions.fs.write.includes("store") ? { storeDir: options.storeDir } : {}),
 			limits: {
 				completionMessages: RUNTIME_V2_LIMITS.completionMessages,
 				completionRequestChars: RUNTIME_V2_LIMITS.completionRequestChars,
@@ -428,7 +447,7 @@ export class ExtensionRuntimeProcessV2 {
 		m: Record<string, unknown>,
 		reply: (body: Record<string, unknown>) => void,
 	): Promise<void> {
-		const label = kind === "embed" ? "embedding" : kind === "complete" ? "model" : "store";
+		const label = SERVICE_LABELS[kind];
 		if (typeof m.id !== "string" || typeof m.parentRequestId !== "string" || !this.pending.has(m.parentRequestId))
 			throw new Error(`${label} call has no active parent request`);
 		if (this.serviceCalls.has(m.id)) throw new Error(`duplicate ${label} call id`);
@@ -459,6 +478,21 @@ export class ExtensionRuntimeProcessV2 {
 			// A completion ends with its parent request; this only stops one nobody is waiting on.
 			timeoutMs = RUNTIME_V2_LIMITS.toolMsMax;
 			run = async (signal) => parseExtensionCompletion(await complete(request, signal));
+		} else if (kind === "binaries") {
+			const binaries = this.options.binaries;
+			const declared = this.declaration.binaries ?? [];
+			if (declared.length === 0 || !binaries) throw new Error("binaries are not declared or this host does not run them");
+			const request = parsePackBinaryRun(m.request, declared);
+			timeoutMs = request.timeoutMs + 1000;
+			run = (signal) => binaries(request, signal);
+		} else if (kind === "pane") {
+			const pane = this.options.pane;
+			if (!services?.pane || !pane) throw new Error("pane: this session has no pane host; run PanCode inside herdr");
+			const request = m.request;
+			if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("invalid pane request");
+			const { op, ...payload } = request as Record<string, unknown>;
+			if (typeof op !== "string") throw new Error("invalid pane request");
+			run = () => pane(op, payload);
 		} else {
 			const blobs = this.options.blobs;
 			if (!services?.store || !blobs) throw new Error("store service is not declared or available");
@@ -488,8 +522,8 @@ export class ExtensionRuntimeProcessV2 {
 	private async serveCall(m: Record<string, unknown>): Promise<void> {
 		const reply = (body: Record<string, unknown>): void => this.send({ kind: "returned", id: m.id, ...body });
 		try {
-			if (m.op === "embed" || m.op === "complete" || m.op === "blobs") {
-				await this.serveService(m.op, m, reply);
+			if (typeof m.op === "string" && Object.hasOwn(SERVICE_CALLS, m.op)) {
+				await this.serveService(m.op as ServiceKind, m, reply);
 				return;
 			}
 			const [scope, verb] = String(m.op).split(".");

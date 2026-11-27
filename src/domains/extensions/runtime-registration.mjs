@@ -74,6 +74,9 @@ export function createRuntimeRegistration(
 			for (const workspace of declaration.workspaces)
 				for (const binding of workspace.keys ?? [])
 					if (!actions.has(binding.action)) throw new Error(`workspace key names an unregistered action: ${binding.action}`);
+			for (const binding of declaration.keys ?? [])
+				if (!actions.has(binding.action))
+					throw new Error(`key ${binding.key} names an unregistered action: ${binding.action}`);
 		},
 	};
 }

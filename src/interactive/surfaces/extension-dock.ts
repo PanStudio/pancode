@@ -36,6 +36,8 @@ export function createExtensionDockHost(deps: {
 	sessionId: () => string | null;
 	dirs?: PancodeDirs;
 	log?: (message: string) => void;
+	/** An extension's pane leaves the shared slot first; false when it would not close. */
+	yieldSlot?: () => Promise<boolean>;
 }): ExtensionDockHost {
 	const dirs = deps.dirs ?? {
 		config: pancodeConfigDir(),
@@ -160,6 +162,7 @@ export function createExtensionDockHost(deps: {
 		open(extensionId, title, view): Promise<boolean> {
 			return serial(async () => {
 				if (!available() || !deps.mux) return false;
+				if (deps.yieldSlot && !(await deps.yieldSlot())) return false;
 				const nextPaths = extensionDockPaths(deps.stateDir, deps.sessionId());
 				if (nextPaths.frameFile !== paths.frameFile) {
 					// A surviving viewer follows the old file. Close our old pane before switching sessions.

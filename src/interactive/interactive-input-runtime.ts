@@ -88,6 +88,8 @@ export interface InteractiveInputRuntimeDeps {
 	dispatchAction: (id: PancodeKeybinding, deps: InteractiveInputKeyActionDeps) => boolean;
 	/** Leader entries the host adds that are not keybindings, such as an active workspace's keys. */
 	extraLeaderTargets?: () => ReadonlyArray<{ key: string; label: string; run: () => void }>;
+	/** A global key an installed extension holds; true when it took the press. */
+	extensionKey?: (data: string) => boolean;
 	actions: {
 		suspendProcess?(): void;
 		canExit(): boolean;
@@ -410,6 +412,7 @@ export function createInteractiveInputRuntime(deps: InteractiveInputRuntimeDeps)
 
 	const removeReload = deps.keybindings.onReload?.(() => leaderKeys.reset());
 	controller = createApplicationController({
+		...(deps.extensionKey ? { extensionKey: deps.extensionKey } : {}),
 		routeComposerKey: (data) => {
 			if (deps.keybindings.matches(data, "tui.altScreen.search") && !(deps.tui instanceof TuiAltScreen)) {
 				deps.explainSearchUnavailable?.();

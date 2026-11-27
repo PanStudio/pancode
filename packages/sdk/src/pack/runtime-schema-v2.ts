@@ -9,10 +9,14 @@ import type {
 } from "../extension/public-api-v2.js";
 import { ManifestKeyPolicy } from "./ignorable.js";
 import type {
+	ExtensionBinaryDeclaration,
+	ExtensionBinaryDownload,
+	ExtensionBinaryPlatform,
 	ExtensionCapabilityEnvelope,
 	ExtensionCommandDeclarationV2,
 	ExtensionConfigField,
 	ExtensionHookDeclaration,
+	ExtensionKeyDeclaration,
 	ExtensionModelServiceDeclaration,
 	ExtensionPermissionsDeclaration,
 	ExtensionRuntimeDeclarationV2,
@@ -75,7 +79,20 @@ export const RUNTIME_V2_LIMITS = {
 	blobGetBytes: 192 * 1024,
 	blobListLimit: 500,
 	blobNoteChars: 1000,
+	/** Pinned programs one package may run outside the sandbox. */
+	binaries: 2,
+	binaryEnvKeys: 8,
+	binaryDocuments: 4,
+	/** Global Alt+letter keys one package may claim. */
+	keys: 2,
 } as const;
+
+/**
+ * Environment keys no declared binary may set, whatever the manifest says: they
+ * steer the loader, the shell or PanCode itself.
+ */
+export const RESERVED_BINARY_ENV =
+	/^(?:PANCODE_|LD_|DYLD_|NODE_|npm_)|^(?:PATH|HOME|SHELL|ENV|BASH_ENV|IFS|PS4|TMPDIR)$/u;
 
 const EVENTS: ReadonlyArray<Exclude<ExtensionObservationEventV2, "tick">> = [
 	"session_open",
@@ -94,6 +111,7 @@ const EVENTS: ReadonlyArray<Exclude<ExtensionObservationEventV2, "tick">> = [
 	"fs_changed",
 	"workspace_enter",
 	"workspace_leave",
+	"pane_changed",
 ];
 const HOOK_POINTS: ReadonlyArray<ExtensionHookPoint> = [
 	"prompt_submit",
@@ -106,6 +124,16 @@ const SLOTS: ReadonlyArray<ExtensionSlot> = ["status", "band", "card", "toast", 
 const REGIONS: ReadonlyArray<WorkspaceRegion | "islands"> = ["header", "board", "islands", "rail", "footer"];
 const ACCESS: ReadonlyArray<ExtensionContentAccess> = ["prompt", "tool-args", "tool-results", "assistant-text"];
 const ENTRYPOINT_SUFFIXES = [".mjs", ".ts", ".mts"];
+const BINARY_PLATFORMS: ReadonlyArray<ExtensionBinaryPlatform> = [
+	"linux-x64",
+	"linux-arm64",
+	"darwin-x64",
+	"darwin-arm64",
+	"win32-x64",
+];
+const COMMAND_NAME = /^[a-z][a-z0-9_-]*$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+const VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 /** The store's own tag rule: an operator creates these tags, so a package can only name one. */
 const STORE_TAG = /^(?!.*(?:^|\/)\.)(?!\/)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/u;
 
@@ -181,10 +209,11 @@ function duration(value: unknown, path: string): number {
 
 function parseCommands(value: unknown, policy: ManifestKeyPolicy): ExtensionCommandDeclarationV2[] {
 	const names = new Set<string>();
+	const aliases = new Set<string>();
 	return list(value, "runtime.commands", RUNTIME_V2_LIMITS.commands).map((item, index) => {
 		const path = `runtime.commands[${index}]`;
-		const raw = record(item, path, ["name", "description", "timeoutMs", "replaces"], policy);
-		const name = named(raw.name, `${path}.name`, /^[a-z][a-z0-9_-]*$/, 40);
+		const raw = record(item, path, ["name", "description", "timeoutMs", "replaces", "alias"], policy);
+		const name = named(raw.name, `${path}.name`, COMMAND_NAME, 40);
 		if (names.has(name)) fail(`${path}.name`, `repeats '${name}'`);
 		names.add(name);
 		const command: ExtensionCommandDeclarationV2 = {
@@ -193,7 +222,107 @@ function parseCommands(value: unknown, policy: ManifestKeyPolicy): ExtensionComm
 			timeoutMs: milliseconds(raw.timeoutMs, `${path}.timeoutMs`, RUNTIME_LIMITS.commandMs, 100, 300000),
 		};
 		if (raw.replaces !== undefined) command.replaces = choice(raw.replaces, `${path}.replaces`, ["prompt"]);
+		if (raw.alias !== undefined) {
+			if (command.replaces !== undefined) fail(`${path}.alias`, "cannot be set on a command that takes over a prompt");
+			const alias = named(raw.alias, `${path}.alias`, COMMAND_NAME, 40);
+			if (aliases.has(alias)) fail(`${path}.alias`, `repeats '${alias}'`);
+			aliases.add(alias);
+			command.alias = alias;
+		}
 		return command;
+	});
+}
+
+function httpsUrl(value: unknown, path: string): string {
+	const url = text(value, path, 500);
+	if (!/^https:\/\/[^\s]+$/u.test(url)) fail(path, "must be an https URL");
+	return url;
+}
+
+function parseDownload(value: unknown, path: string, policy: ManifestKeyPolicy): ExtensionBinaryDownload {
+	const raw = record(value, path, ["url", "sha256", "archive", "member"], policy);
+	const sha256 = named(raw.sha256, `${path}.sha256`, SHA256, 64);
+	const archive = choice(raw.archive, `${path}.archive`, ["raw", "zip", "tar.gz"] as const, "raw");
+	const download: ExtensionBinaryDownload = { url: httpsUrl(raw.url, `${path}.url`), sha256, archive };
+	if (archive === "raw" && raw.member !== undefined) fail(`${path}.member`, "applies only to a zip or tar.gz");
+	if (archive !== "raw") download.member = containedPath(raw.member, `${path}.member`);
+	return download;
+}
+
+/**
+ * Programs the host downloads at install and runs outside the runtime's
+ * sandbox. Each names its upstream license and pins every platform's bytes by
+ * sha256, and the environment keys it may receive are listed here, so the
+ * operator approves exactly what can run.
+ */
+function parseBinaries(value: unknown, policy: ManifestKeyPolicy): ExtensionBinaryDeclaration[] {
+	const names = new Set<string>();
+	return list(value, "runtime.binaries", RUNTIME_V2_LIMITS.binaries).map((item, index) => {
+		const path = `runtime.binaries[${index}]`;
+		const raw = record(
+			item,
+			path,
+			["name", "version", "license", "homepage", "minimumVersion", "versionArgs", "env", "downloads", "documents"],
+			policy,
+		);
+		const name = named(raw.name, `${path}.name`, /^[a-z][a-z0-9._-]*$/, 40);
+		if (names.has(name)) fail(`${path}.name`, `repeats '${name}'`);
+		names.add(name);
+		const version = named(raw.version, `${path}.version`, VERSION, 40);
+		const env = list(raw.env, `${path}.env`, RUNTIME_V2_LIMITS.binaryEnvKeys).map((entry, at) => {
+			const key = named(entry, `${path}.env[${at}]`, /^[A-Z][A-Z0-9_]*$/, 64);
+			if (RESERVED_BINARY_ENV.test(key)) fail(`${path}.env[${at}]`, `'${key}' is reserved for PanCode`);
+			return key;
+		});
+		if (new Set(env).size !== env.length) fail(`${path}.env`, "lists a key twice");
+		const platforms = record(raw.downloads, `${path}.downloads`, BINARY_PLATFORMS, policy);
+		const downloads: ExtensionBinaryDeclaration["downloads"] = {};
+		for (const platform of BINARY_PLATFORMS)
+			if (platforms[platform] !== undefined)
+				downloads[platform] = parseDownload(platforms[platform], `${path}.downloads.${platform}`, policy);
+		if (Object.keys(downloads).length === 0) fail(`${path}.downloads`, "must name at least one platform");
+		const documents = list(raw.documents, `${path}.documents`, RUNTIME_V2_LIMITS.binaryDocuments).map((entry, at) => {
+			const docPath = `${path}.documents[${at}]`;
+			const doc = record(entry, docPath, ["name", "url", "sha256"], policy);
+			return {
+				name: named(doc.name, `${docPath}.name`, /^[A-Za-z0-9][A-Za-z0-9._-]*$/, 64),
+				url: httpsUrl(doc.url, `${docPath}.url`),
+				sha256: named(doc.sha256, `${docPath}.sha256`, SHA256, 64),
+			};
+		});
+		const versionArgs =
+			raw.versionArgs === undefined
+				? ["--version"]
+				: list(raw.versionArgs, `${path}.versionArgs`, 4).map((arg, at) => text(arg, `${path}.versionArgs[${at}]`, 40));
+		return {
+			name,
+			version,
+			license: text(raw.license, `${path}.license`, 80),
+			homepage: httpsUrl(raw.homepage, `${path}.homepage`),
+			minimumVersion:
+				raw.minimumVersion === undefined ? version : named(raw.minimumVersion, `${path}.minimumVersion`, VERSION, 40),
+			versionArgs,
+			env,
+			downloads,
+			documents,
+		};
+	});
+}
+
+function parseKeys(value: unknown, policy: ManifestKeyPolicy): ExtensionKeyDeclaration[] {
+	const taken = new Set<string>();
+	return list(value, "runtime.keys", RUNTIME_V2_LIMITS.keys).map((item, index) => {
+		const path = `runtime.keys[${index}]`;
+		const raw = record(item, path, ["key", "action", "label"], policy);
+		const key = text(raw.key, `${path}.key`, 8).toLowerCase();
+		if (!/^alt\+[a-z]$/u.test(key)) fail(`${path}.key`, "must be alt+<letter>");
+		if (taken.has(key)) fail(`${path}.key`, `repeats '${key}'`);
+		taken.add(key);
+		return {
+			key,
+			action: named(raw.action, `${path}.action`, /^[a-z][a-z0-9_.-]*$/, 64),
+			label: text(raw.label, `${path}.label`, 24),
+		};
 	});
 }
 
@@ -486,6 +615,8 @@ export function parseExtensionRuntimeV2(
 			"state",
 			"services",
 			"config",
+			"binaries",
+			"keys",
 		],
 		policy,
 	);
@@ -498,11 +629,14 @@ export function parseExtensionRuntimeV2(
 	);
 	if (new Set(watch).size !== watch.length) fail("runtime.watch", "lists a glob twice");
 	const state = record(raw.state ?? {}, "runtime.state", ["session", "store"], policy);
-	const services = record(raw.services ?? {}, "runtime.services", ["embedding", "model", "store"], policy);
+	const services = record(raw.services ?? {}, "runtime.services", ["embedding", "pane", "model", "store"], policy);
 	const model = parseModelService(services.model, policy);
 	const store = parseStoreService(services.store, policy);
 	const tools = parseTools(raw.tools, policy);
 	const promote = parsePromote(raw.promote, tools);
+	const binaries = parseBinaries(raw.binaries, policy);
+	const keys = parseKeys(raw.keys, policy);
+	const pane = flag(services.pane, "runtime.services.pane", false);
 	const declaration: ExtensionRuntimeDeclarationV2 = {
 		api: 2,
 		entrypoint,
@@ -522,10 +656,13 @@ export function parseExtensionRuntimeV2(
 		},
 		services: {
 			embedding: flag(services.embedding, "runtime.services.embedding", false),
+			...(pane ? { pane } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(store !== undefined ? { store } : {}),
 		},
 		config: parseConfig(raw.config, policy),
+		...(binaries.length > 0 ? { binaries } : {}),
+		...(keys.length > 0 ? { keys } : {}),
 	};
 
 	// Cross-field rules: each one keeps a declared capability honest about what it needs.
@@ -536,16 +673,22 @@ export function parseExtensionRuntimeV2(
 	);
 	if (usesWorkspaceEvents && declaration.workspaces.length === 0)
 		fail("runtime.events", "names a workspace event but the package declares no workspace");
+	if (pane && binaries.length === 0) fail("runtime.services.pane", "needs a declared binary to run");
+	if (declaration.events.includes("pane_changed") && !pane)
+		fail("runtime.events", "names pane_changed but the package declares no runtime.services.pane");
 	const writesBeyondStore = declaration.permissions.fs.write.some((root) => root !== "store");
 	for (const [index, tool] of declaration.tools.entries()) {
-		if (tool.actionClass === "read" && (declaration.permissions.exec || writesBeyondStore))
-			fail(`runtime.tools[${index}].actionClass`, "cannot be read in a package that may execute or write files");
-		// A write-class tool is admitted as a file change, so its runtime must be unable to run
-		// programs and must hold a workspace root to change.
-		if (tool.actionClass === "write" && (declaration.permissions.exec || !writesBeyondStore))
+		if (tool.actionClass === "read" && (declaration.permissions.exec || writesBeyondStore || binaries.length > 0))
 			fail(
 				`runtime.tools[${index}].actionClass`,
-				"can be write only in a package that declares a workspace fs.write root and no exec",
+				"cannot be read in a package that may execute or write files or runs a declared binary",
+			);
+		// A write-class tool is admitted as a file change, so its runtime must be unable to run
+		// programs and must hold a workspace root to change.
+		if (tool.actionClass === "write" && (declaration.permissions.exec || binaries.length > 0 || !writesBeyondStore))
+			fail(
+				`runtime.tools[${index}].actionClass`,
+				"can be write only in a package that declares a workspace fs.write root and no exec or binaries",
 			);
 	}
 	return declaration;
@@ -565,11 +708,16 @@ export function capabilityEnvelope(
 				.filter((command) => command.replaces === "prompt")
 				.map((command) => `${plugin}:${command.name}`)
 		: [];
+	const aliases = declaration.commands.flatMap((command) => (command.alias === undefined ? [] : [command.alias]));
+	const binaries = declaration.binaries ?? [];
 	return {
 		commands: declaration.commands.map((command) => command.name),
 		...(takesOver.length > 0 ? { takesOver } : {}),
 		...(declaration.state.session || declaration.state.store ? { state: declaration.state } : {}),
-		...(declaration.services?.embedding || declaration.services?.model || declaration.services?.store
+		...(declaration.services?.embedding ||
+		declaration.services?.model ||
+		declaration.services?.store ||
+		declaration.services?.pane
 			? { services: declaration.services }
 			: {}),
 		events: declaration.events,
@@ -587,6 +735,31 @@ export function capabilityEnvelope(
 		})),
 		access: declaration.access,
 		permissions: declaration.permissions,
+		...(aliases.length > 0 ? { aliases } : {}),
+		...(binaries.length > 0
+			? {
+					binaries: binaries.map((binary) => ({
+						name: binary.name,
+						version: binary.version,
+						minimumVersion: binary.minimumVersion,
+						versionArgs: binary.versionArgs,
+						env: binary.env,
+						downloads: Object.fromEntries(
+							Object.entries(binary.downloads).flatMap(([platform, download]) =>
+								download === undefined
+									? []
+									: [
+											[
+												platform,
+												{ sha256: download.sha256, ...(download.member !== undefined ? { member: download.member } : {}) },
+											],
+										],
+							),
+						),
+					})),
+				}
+			: {}),
+		...(declaration.keys?.length ? { keys: declaration.keys } : {}),
 	};
 }
 
@@ -696,6 +869,10 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 	push("new commands", added(approved.commands, next.commands));
 	push("takes over prompts", added(approved.takesOver ?? [], next.takesOver ?? []));
 	push(
+		"claims bare commands",
+		added(approved.aliases ?? [], next.aliases ?? []).map((name) => `/${name}`),
+	);
+	push(
 		"keeps host state",
 		(["session", "store"] as const).filter((kind) => next.state?.[kind] === true && approved.state?.[kind] !== true),
 	);
@@ -722,6 +899,32 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 		push("reads store tags", added(readable, store.read));
 		push("writes store tags", added(approvedStore?.write ?? [], store.write));
 	}
+	if (next.services?.pane && !approved.services?.pane) growth.push("may open a pane below PanCode");
+	for (const binary of next.binaries ?? []) {
+		const prior = approved.binaries?.find((entry) => entry.name === binary.name);
+		if (!prior) {
+			growth.push(`new program: ${binary.name} ${binary.version}`);
+			continue;
+		}
+		const downloadsChanged = Object.entries(binary.downloads).some(([platform, asset]) => {
+			const approvedAsset = prior.downloads[platform];
+			return !approvedAsset || approvedAsset.sha256 !== asset.sha256 || approvedAsset.member !== asset.member;
+		});
+		const versionArgsChanged =
+			prior.versionArgs.length !== binary.versionArgs.length ||
+			prior.versionArgs.some((arg, index) => arg !== binary.versionArgs[index]);
+		// Another download, archive member, version probe or lower floor runs bytes or flags the operator never approved.
+		if (
+			prior.version !== binary.version ||
+			prior.minimumVersion !== binary.minimumVersion ||
+			downloadsChanged ||
+			versionArgsChanged
+		)
+			growth.push(`program ${binary.name} changed: ${binary.version} (approved ${prior.version})`);
+		push(`program ${binary.name} environment`, added(prior.env, binary.env));
+	}
+	const keyLine = (binding: { key: string; action: string }): string => `${binding.key}:${binding.action}`;
+	push("new keys", added((approved.keys ?? []).map(keyLine), (next.keys ?? []).map(keyLine)));
 	push("new events", added(approved.events, next.events));
 	if (next.tickMs !== undefined && approved.tickMs === undefined) growth.push("a timer");
 	else if (next.tickMs !== undefined && approved.tickMs !== undefined && next.tickMs < approved.tickMs)

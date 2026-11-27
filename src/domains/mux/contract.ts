@@ -106,9 +106,10 @@ export interface MuxOpenUtilityPaneRequest {
 	 * (clamped, cell-floored). Requires the layout tier (protocol 17); below
 	 * the floor the request degrades to a plain split and `direction` applies.
 	 * `hidden` creates the pane in the session's parking tab instead, so the
-	 * layout does not change until `showDock`.
+	 * layout does not change until `showDock`. `minCells` raises the slot's
+	 * cell floor for this pane, for a program that draws nothing useful below it.
 	 */
-	dock?: { slot: DockSlot; share?: number; hidden?: boolean };
+	dock?: { slot: DockSlot; share?: number; hidden?: boolean; minCells?: number };
 }
 
 export interface MuxNotifyRequest {
@@ -306,6 +307,14 @@ function hasOwnedPaneToken(tokens: Readonly<Record<string, string>>): boolean {
 	return tokens[OWNER_TOKEN_KEY] === OWNER_TOKEN_VALUE;
 }
 
+/** A dock request's optional share and row floor, passed on only when set. */
+function dockSizing(dock: NonNullable<MuxOpenUtilityPaneRequest["dock"]>): { share?: number; minCells?: number } {
+	return {
+		...(dock.share === undefined ? {} : { share: dock.share }),
+		...(dock.minCells === undefined ? {} : { minCells: dock.minCells }),
+	};
+}
+
 export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 	const { detection, client } = options;
 	const log = options.log ?? ((): void => undefined);
@@ -496,7 +505,7 @@ export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 					if (request.dock && docks) {
 						const placed = await docks.open(request.dock.slot, {
 							onRefused: (message) => report({ source: "local", message }),
-							...(request.dock.share === undefined ? {} : { share: request.dock.share }),
+							...dockSizing(request.dock),
 							...(request.dock.hidden ? { hidden: true } : {}),
 							cwd: request.cwd,
 							...(env ? { env } : {}),
