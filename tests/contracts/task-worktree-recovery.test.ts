@@ -260,6 +260,7 @@ process.stdin.on('end', () => {
 `,
 			{ mode: 0o755 },
 		);
+		git(root, "config", "gpg.format", "openpgp");
 		git(root, "config", "gpg.program", signer);
 		git(root, "config", "commit.gpgsign", "true");
 		const receipt = applyTaskWorktree({

@@ -106,8 +106,18 @@ test("a post-checkout hook planted after the baseline does not run in PanCode's 
 	createTaskWorktree(baseline.root, "run-steady");
 	strictEqual(existsSync(early), false, "the hook the session started with did not run");
 	deepStrictEqual(steady.records, []);
+
+	const yoloRepo = repository();
+	const yoloHook = join(yoloRepo.scratch, "yolo-hook-ran");
+	const yoloSession = session(yoloRepo.root, yoloRepo.scratch, "yolo");
+	markerScript(join(yoloRepo.root, ".git", "hooks", "post-checkout"), yoloHook);
+	createTaskWorktree(yoloRepo.root, "run-yolo");
+	strictEqual(existsSync(yoloHook), false, "the hook did not run under yolo either");
+	strictEqual(yoloSession.records[0]?.outcome, "yolo");
+
 	rmSync(planted.scratch, { recursive: true, force: true });
 	rmSync(baseline.scratch, { recursive: true, force: true });
+	rmSync(yoloRepo.scratch, { recursive: true, force: true });
 });
 
 test("PanCode's task worktree add, commit, merge and cleanup run no hook from core.hooksPath via includeIf, .git/hooks or GIT_CONFIG_COUNT", () => {
@@ -131,6 +141,16 @@ test("PanCode's task worktree add, commit, merge and cleanup run no hook from co
 	hooks(includedHooks, included.scratch);
 	writeFileSync(join(included.scratch, "hooks.inc"), `[core]\n\thooksPath = ${includedHooks}\n`);
 	git(included.root, "config", `includeIf.gitdir:${included.root}/.path`, join(included.scratch, "hooks.inc"));
+	strictEqual(
+		gitExecFileSync(["rev-parse", "--git-path", "hooks"], { cwd: included.root, encoding: "utf8" }).trim(),
+		includedHooks,
+		"internal rev-parse still reports the repository's real hooks path",
+	);
+	strictEqual(
+		gitExecFileSync(["config", "--get", "core.hooksPath"], { cwd: included.root, encoding: "utf8" }).trim(),
+		includedHooks,
+		"internal git config still reports the repository's real core.hooksPath",
+	);
 	const local = repository();
 	hooks(join(local.root, ".git", "hooks"), local.scratch);
 	const inherited = repository();
