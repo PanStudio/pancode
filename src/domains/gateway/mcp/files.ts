@@ -762,7 +762,7 @@ export function mcpMultipartBody(
 	form: NonNullable<McpUploadTarget["form"]>,
 	file: Pick<McpFileInput, "name" | "mimeType">,
 	content: Uint8Array,
-): { body: Buffer; contentType: string } {
+): { body: Buffer<ArrayBuffer>; contentType: string } {
 	const boundary = `----pancode${randomBytes(24).toString("hex")}`;
 	const parts: Buffer[] = [];
 	for (const field of form.fields) {

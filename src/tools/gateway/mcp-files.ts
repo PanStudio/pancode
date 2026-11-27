@@ -182,7 +182,7 @@ export async function prepareMcpFiles(input: {
 			name = path.posix.basename(source.reference.blob);
 		}
 		const argument = input.fileArguments.find((entry) => entry.name === source.named.argument);
-		let bytes: Uint8Array;
+		let bytes: Uint8Array<ArrayBuffer>;
 		try {
 			const info = await stat(readPath);
 			if (!info.isFile()) return `${label} names ${source.named.value}, which is not a regular file`;

@@ -46,7 +46,7 @@ interface CheckedTarget {
 /** A file the call holds, by the id its `FileInput` carries. */
 export interface McpHeldFile {
 	input: McpFileInput;
-	bytes: Uint8Array;
+	bytes: Uint8Array<ArrayBuffer>;
 }
 
 /** What a transfer is checked against beyond the target rules. */
@@ -162,7 +162,7 @@ function pinnedRequest(
 	url: URL,
 	method: string,
 	headers: Array<[string, string]>,
-	body: Uint8Array | null,
+	body: Uint8Array<ArrayBuffer> | null,
 	address: Address,
 	signal: AbortSignal,
 ): Promise<TransferResponse> {
@@ -200,7 +200,7 @@ async function send(
 	checked: CheckedTarget,
 	method: string,
 	headers: Array<[string, string]>,
-	body: Uint8Array | null,
+	body: Uint8Array<ArrayBuffer> | null,
 	signal: AbortSignal,
 ): Promise<TransferResponse> {
 	if (checked.route.kind === "pinned") {
@@ -226,7 +226,7 @@ function uploadRequestOf(
 	target: McpUploadTarget,
 	held: McpHeldFile,
 	headers: Array<[string, string]>,
-): { headers: Array<[string, string]>; body: Uint8Array } {
+): { headers: Array<[string, string]>; body: Uint8Array<ArrayBuffer> } {
 	if (target.form === null) return { headers, body: held.bytes };
 	const { body, contentType } = mcpMultipartBody(target.form, held.input, held.bytes);
 	return {
