@@ -61,6 +61,20 @@ function isStringMap(value: unknown): value is Record<string, string> {
 	return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
 }
 
+function isFlowMcpBinding(value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	if (typeof value.url === "string") {
+		return value.command === undefined && value.args === undefined && value.cwd === undefined && value.env === undefined;
+	}
+	return (
+		value.url === undefined &&
+		typeof value.command === "string" &&
+		isStringArray(value.args) &&
+		(value.cwd === undefined || typeof value.cwd === "string") &&
+		(value.env === undefined || isStringMap(value.env))
+	);
+}
+
 function isFlowInput(value: unknown): value is InformationFlowPolicyInput {
 	if (!isRecord(value) || !isRecord(value.groups) || !isRecord(value.targets) || !isRecord(value.mcp)) return false;
 	if (!Array.isArray(value.sources)) return false;
@@ -71,17 +85,7 @@ function isFlowInput(value: unknown): value is InformationFlowPolicyInput {
 		)
 	)
 		return false;
-	if (
-		!Object.values(value.mcp).every(
-			(m) =>
-				isRecord(m) &&
-				typeof m.command === "string" &&
-				isStringArray(m.args) &&
-				(m.cwd === undefined || typeof m.cwd === "string") &&
-				(m.env === undefined || isStringMap(m.env)),
-		)
-	)
-		return false;
+	if (!Object.values(value.mcp).every(isFlowMcpBinding)) return false;
 	return value.sources.every(
 		(rule) =>
 			isRecord(rule) &&
