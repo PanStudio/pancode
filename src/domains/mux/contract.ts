@@ -307,6 +307,14 @@ function hasOwnedPaneToken(tokens: Readonly<Record<string, string>>): boolean {
 	return tokens[OWNER_TOKEN_KEY] === OWNER_TOKEN_VALUE;
 }
 
+/** A dock request's optional share and row floor, passed on only when set. */
+function dockSizing(dock: NonNullable<MuxOpenUtilityPaneRequest["dock"]>): { share?: number; minCells?: number } {
+	return {
+		...(dock.share === undefined ? {} : { share: dock.share }),
+		...(dock.minCells === undefined ? {} : { minCells: dock.minCells }),
+	};
+}
+
 export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 	const { detection, client } = options;
 	const log = options.log ?? ((): void => undefined);
@@ -497,9 +505,8 @@ export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 					if (request.dock && docks) {
 						const placed = await docks.open(request.dock.slot, {
 							onRefused: (message) => report({ source: "local", message }),
-							...(request.dock.share === undefined ? {} : { share: request.dock.share }),
+							...dockSizing(request.dock),
 							...(request.dock.hidden ? { hidden: true } : {}),
-							...(request.dock.minCells === undefined ? {} : { minCells: request.dock.minCells }),
 							cwd: request.cwd,
 							...(env ? { env } : {}),
 						});
