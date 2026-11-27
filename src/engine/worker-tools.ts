@@ -19,11 +19,8 @@ import type { McpAttestedSkill } from "../domains/resources/skills/mcp-source.js
 import { sha256Hex } from "../core/hash.js";
 import { workerReadOnlyTargetViolation, workerSandboxWritesNothing } from "../core/sandbox/worker-process.js";
 import { type ToolName, ToolNames } from "../core/tool-names.js";
-import {
-	createMiddlewareHostFromSnapshot,
-	type MiddlewareHookRegistration,
-	type MiddlewareSnapshot,
-} from "../domains/middleware/index.js";
+import type { MiddlewareHookRegistration, MiddlewareSnapshot } from "../domains/middleware/index.js";
+import { createMiddlewareHostFromSnapshot } from "../domains/middleware/snapshot.js";
 import { classify as classifyAction } from "../domains/safety/action-classifier.js";
 import type { AdmissionGitContext } from "../domains/safety/admission.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../domains/safety/autonomy.js";

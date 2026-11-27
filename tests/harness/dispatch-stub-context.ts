@@ -18,7 +18,7 @@ import type { AgentRecipe } from "../../src/domains/agents/recipe.js";
 import { loadRecipesFromDir } from "../../src/domains/agents/registry.js";
 import { normalizeAgentSpec } from "../../src/domains/agents/spec.js";
 import type { ConfigContract } from "../../src/domains/config/contract.js";
-import { createMiddlewareBundle } from "../../src/domains/middleware/index.js";
+import { createMiddlewareBundle } from "../../src/domains/middleware/module.js";
 import type { ProvidersContract, RuntimeDescriptor, TargetStatus } from "../../src/domains/providers/index.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import type { TargetDescriptor } from "../../src/domains/providers/types/target-descriptor.js";

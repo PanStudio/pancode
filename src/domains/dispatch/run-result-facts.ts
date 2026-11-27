@@ -22,7 +22,7 @@ import { type GateReview, readRunGateIndex, readRunTrust } from "../evidence/run
 import { integrityClause, trustStateWord, validationClause } from "../evidence/trust-projection.js";
 import type { CanonicalTrustStatus } from "../evidence/trust-status.js";
 import { TELEMETRY_FOLD_VERSION } from "../telemetry/folds.js";
-import { readRunRecord } from "../telemetry/index.js";
+import { readRunRecord } from "../telemetry/run-record.js";
 import { reviewFindingsWords } from "./failure-headline.js";
 import { hostCheckNotRunNote } from "./host-verification-note.js";
 import { readRunFeed } from "./run-feed.js";

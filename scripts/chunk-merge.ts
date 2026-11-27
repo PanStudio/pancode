@@ -619,10 +619,12 @@ export async function mergeChunks(options: MergeOptions): Promise<{ files: Built
 						const rendered = file === undefined ? undefined : meta.chunks[file];
 						if (rendered === undefined || seen.has(rendered.fileName)) return;
 						seen.add(rendered.fileName);
+						for (const imported of rendered.imports) if (meta.chunks[imported] !== undefined) visit(imported);
+						// Packages are claimed after the imported files, so a file that imports the same package is
+						// never listed before it.
 						const packages: string[] = [];
 						for (const imported of rendered.imports) {
-							if (meta.chunks[imported] !== undefined) visit(imported);
-							else if (isExternalPackage(imported) && !seen.has(imported)) {
+							if (meta.chunks[imported] === undefined && isExternalPackage(imported) && !seen.has(imported)) {
 								seen.add(imported);
 								packages.push(imported);
 							}

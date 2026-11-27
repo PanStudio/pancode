@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { abbreviateHeadTail, shareBytesFairly } from "../context/index.js";
+import { abbreviateHeadTail, shareBytesFairly } from "../context/fold/briefing.js";
 
 export const EXECUTION_HANDOFF_MAX_ITEMS = 16;
 export const EXECUTION_HANDOFF_MAX_TEXT_BYTES = 12_000;
