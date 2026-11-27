@@ -356,7 +356,7 @@ test("an operator install into an untrusted package surface stays untrusted", as
 	}
 });
 
-test("a version 1 package digest stays an exact-bytes approval and a digest-only record stays version 1", async () => {
+test("a version 1 record is asked about again and every record is written as version 2", async () => {
 	const home = await isolatePancodeEnv("pancode-trust-packages-v1-");
 	try {
 		const workspace = join(home.dir, "workspace");
@@ -370,14 +370,11 @@ test("a version 1 package digest stays an exact-bytes approval and a digest-only
 			`${createHash("sha256").update(snapshot.workspaceRoot).digest("hex")}.json`,
 		);
 		mkdirSync(workspaceTrustDirectory(), { recursive: true });
-		writeFileSync(
-			recordFile,
-			JSON.stringify({
-				version: 1,
-				workspaceRoot: snapshot.workspaceRoot,
-				surfaces: { extensions: snapshot.contentHash },
-			}),
-		);
+		const record = (version: number) =>
+			JSON.stringify({ version, workspaceRoot: snapshot.workspaceRoot, surfaces: { extensions: snapshot.contentHash } });
+		writeFileSync(recordFile, record(1));
+		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "untrusted");
+		writeFileSync(recordFile, record(2));
 		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
 		writeFileSync(join(workspace, ".pancode", "hooks.yaml"), "[]\n");
 		approve(workspace, "hooks");
@@ -385,13 +382,13 @@ test("a version 1 package digest stays an exact-bytes approval and a digest-only
 			version: number;
 			surfaces: Record<string, unknown>;
 		};
-		strictEqual(rewritten.version, 1);
+		strictEqual(rewritten.version, 2);
 		strictEqual(rewritten.surfaces.extensions, snapshot.contentHash);
 		strictEqual(captureProjectSurface(workspace, "extensions").verdict, "trusted");
 		recordProjectPackageTrust(captureProjectSurface(workspace, "extensions"));
 		strictEqual((JSON.parse(readFileSync(recordFile, "utf8")) as { version: number }).version, 2);
 		revokeProjectSurfaceTrust(workspace, "extensions");
-		strictEqual((JSON.parse(readFileSync(recordFile, "utf8")) as { version: number }).version, 1);
+		strictEqual((JSON.parse(readFileSync(recordFile, "utf8")) as { version: number }).version, 2);
 	} finally {
 		home.restore();
 	}
