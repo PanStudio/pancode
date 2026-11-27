@@ -23,7 +23,7 @@ import { loadSkills, type Skill } from "./loader.js";
 export type MarketplaceSkillOrigin = "catalog" | "index";
 
 import { relativePathEscapes } from "../../../core/path-containment.js";
-import type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
+import type { HubRequirementRef } from "../hub-types.js";
 
 export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
 
@@ -35,7 +35,7 @@ export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
 export const MARKETPLACE_UNCONFIGURED = "no local skill marketplace catalog or index configured";
 
 export interface MarketplaceSkill {
-	kind: Exclude<HubEntryKind, "plugin">;
+	kind: "skill";
 	name: string;
 	description: string;
 	/** Local path or URL accepted by `pancode hub install`. */

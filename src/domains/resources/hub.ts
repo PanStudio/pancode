@@ -184,7 +184,7 @@ export function discoverHub(options: { catalog?: string; cwd?: string } = {}): H
 	};
 }
 
-const REQUIREMENT_PATTERN = /^(skill|agent|prompt|playbook|plugin|extension):([A-Za-z0-9][A-Za-z0-9._-]*)$/;
+const REQUIREMENT_PATTERN = /^(skill|plugin|extension):([A-Za-z0-9][A-Za-z0-9._-]*)$/;
 
 export function resolveHubRequirements(entry: HubEntry, catalog: ReadonlyArray<HubEntry>): HubEntry[] {
 	const byRef = new Map(catalog.map((item) => [hubEntryRef(item), item]));

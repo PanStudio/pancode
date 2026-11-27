@@ -173,6 +173,18 @@ describe("hub-review", () => {
 		const body = reviewHubChanges([change([row(scanned, TWO)])], { deps: deps({ [TWO]: scanned }) });
 		ok(body.ok, JSON.stringify(body.failures));
 		ok(body.findings.some((item) => item.kind === "body-scan" && /overrides earlier instructions/.test(item.message)));
+
+		const withServer = plugin(TWO, {
+			mcp: { mcpServers: { notes: { type: "stdio", command: "uvx", args: ["notes-server==1.2.3"] } } },
+		});
+		const launch = reviewHubChanges([change([row(withServer, TWO)])], { deps: deps({ [TWO]: withServer }) });
+		ok(launch.ok, JSON.stringify(launch.failures));
+		ok(
+			launch.findings.some(
+				(item) => item.kind === "server-launch" && item.message === "notes: runs uvx notes-server==1.2.3",
+			),
+			JSON.stringify(launch.findings),
+		);
 	});
 
 	it("fails a submission that changes two row files or anything outside hub/community", () => {

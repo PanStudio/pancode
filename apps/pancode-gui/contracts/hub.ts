@@ -154,7 +154,7 @@ const operation = Type.Union([
 	Type.Literal("remove"),
 ]);
 /** Catalog refs only. Paths and URLs stay terminal operations, so the browser can never name a source. */
-const packageRef = Type.String({ pattern: "^(skill|agent|prompt|playbook|plugin):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" });
+const packageRef = Type.String({ pattern: "^(skill|plugin):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" });
 const identity = Type.Object({ ref: Type.String(), kind: Type.String(), name: Type.String(), scope }, closed);
 const copyState = Type.Object({ scope, loadable: Type.Boolean(), state: Type.String() }, closed);
 const dependentBreak = Type.Object({ ref: Type.String(), scope, missing: strings }, closed);

@@ -49,7 +49,7 @@ pancode hub refresh [--json]
 pancode hub status [--json]
 ```
 
-`--kind` takes the three kinds; `components` takes the four component kinds. `--from <index.yaml>` adds an index with the highest priority. `-f` is short for `--force`. `--dry-run` is accepted by `install`, `import`, `package`, `update`, `enable`, `disable` and `remove`, and `--source` only by `components`, where it narrows the loader diagnostics as it narrows the rows. `--user` and `--project` are mutually exclusive. `install` and `register` default to user scope; other mutations select the project copy when one exists, and an explicit scope selects exactly that copy.
+`--kind` takes the three pack kinds (`plugin`, `skill`, `extension`) or a component kind (`agent`, `prompt`, `playbook`) to match plugins providing it; `components` takes the four component kinds. `--from <index.yaml>` adds an index with the highest priority. `-f` is short for `--force`. `--dry-run` is accepted by `install`, `import`, `package`, `update`, `enable`, `disable` and `remove`, and `--source` only by `components`, where it narrows the loader diagnostics as it narrows the rows. `--user` and `--project` are mutually exclusive. `install` and `register` default to user scope; other mutations select the project copy when one exists, and an explicit scope selects exactly that copy.
 
 Exit codes: 0 for success; 1 for an operational failure, an invalid pack, a refused plan, a refused refresh, or a `drift` report that is not clean; 2 for a usage error such as an unknown subcommand or flag, both scope flags, or a bare `pancode hub`.
 

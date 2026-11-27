@@ -3047,7 +3047,7 @@
 									},
 									"ref": {
 										"type": "string",
-										"pattern": "^(skill|agent|prompt|playbook|plugin):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+										"pattern": "^(skill|plugin):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 									},
 									"scope": {
 										"$ref": "#/components/schemas/Union_0dda181c"
@@ -4485,7 +4485,7 @@
 									},
 									"ref": {
 										"type": "string",
-										"pattern": "^(skill|agent|prompt|playbook|plugin):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+										"pattern": "^(skill|plugin):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 									},
 									"scope": {
 										"$ref": "#/components/schemas/Union_0dda181c"

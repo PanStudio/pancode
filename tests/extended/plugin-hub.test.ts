@@ -412,6 +412,10 @@ describe("plugin PanHub lifecycle", () => {
 		throws(() => resolveHubRequirements(loaded, rows), /hub_requirement_missing/);
 		const cyclic = { ...loaded, requires: ["plugin:fixture" as const] };
 		throws(() => resolveHubRequirements(cyclic, [cyclic]), /hub_requirement_cycle/);
+		for (const retired of ["agent:old", "prompt:old", "playbook:old", "server:old"]) {
+			const malformed = { ...loaded, requires: [retired as unknown as "plugin:old"] };
+			throws(() => resolveHubRequirements(malformed, [malformed]), /hub_requirement_malformed/);
+		}
 	});
 
 	it("refuses unavailable plugin requirements without reactivating installed dependencies", async () => {

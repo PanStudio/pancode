@@ -294,8 +294,6 @@ function hubRowProblems(item: Record<string, unknown>, mode: HubIndexMode): stri
 			problems.push(`${field} must be a SHA-256 digest`);
 	if (item.envelopeDigest !== undefined && item.kind !== "extension")
 		problems.push("only an extension row has envelopeDigest");
-	if (Array.isArray(item.requires) && item.requires.some((ref) => typeof ref === "string" && ref.startsWith("server:")))
-		problems.push("requires names packs, never a server");
 	if (!strict) return problems;
 	if (typeof item.publisher !== "string") problems.push("publisher is required");
 	if (item.tier === undefined) problems.push("tier is required");

@@ -122,9 +122,7 @@ function pancodeConfiguration(value: unknown, root: string): PancodePluginConfig
 	if (
 		raw.requires !== undefined &&
 		(!Array.isArray(raw.requires) ||
-			raw.requires.some(
-				(ref) => typeof ref !== "string" || !/^(plugin|skill|agent|prompt|playbook):[a-z0-9][a-z0-9.-]*$/.test(ref),
-			))
+			raw.requires.some((ref) => typeof ref !== "string" || !/^(plugin|skill):[a-z0-9][a-z0-9.-]*$/.test(ref)))
 	)
 		throw new Error("package requires must contain kind:name references");
 	let compatibility: PancodePluginConfiguration["compatibility"];
