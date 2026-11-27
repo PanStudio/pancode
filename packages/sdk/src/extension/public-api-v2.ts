@@ -623,9 +623,15 @@ export interface ExtensionContextV2 {
 	readonly blobs?: ExtensionBlobs;
 	/** Absolute path of the files directory `permissions.fs.write: [store]` opens; absent without it. */
 	readonly storeDir?: string;
-	/** Present when runtime.binaries is declared, in a host that runs them. */
+	/**
+	 * Present when runtime.binaries is declared, in a host that runs them. Runs only from a command, an action or a
+	 * tool call, never in a read-only turn; elsewhere a call throws the reason.
+	 */
 	readonly binaries?: ExtensionBinaries;
-	/** Present when runtime.services.pane is declared, in a host with a pane dock: an interactive session inside herdr. */
+	/**
+	 * Present when runtime.services.pane is declared, in a host with a pane dock: an interactive session inside herdr.
+	 * Acts only from a command, an action or a tool call, never in a read-only turn; elsewhere a call throws the reason.
+	 */
 	readonly pane?: ExtensionPane;
 	/** Present in a command or an action when runtime.services.runs is declared and approved. */
 	readonly runs?: ExtensionRuns;

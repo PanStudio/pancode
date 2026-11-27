@@ -44,13 +44,18 @@ function result(partial: Partial<SafeCommandResult>): SafeCommandResult {
 	};
 }
 
-function harness(ceilings: Partial<ExtensionRunCeilings> = {}, yolo: string | null = null, readOnly = false) {
+function harness(
+	ceilings: Partial<ExtensionRunCeilings> = {},
+	yolo: string | null = null,
+	readOnly = false,
+	env: Record<string, string> = {},
+) {
 	const tempRoot = mkdtempSync(join(tmpdir(), "run-service-"));
 	const calls: Call[] = [];
 	const service = createExtensionRunService({
 		ceilings: { maxConcurrent: 2, autonomy: ["default"], maxCostUsd: 2, maxTimeoutSeconds: 600, ...ceilings },
 		launch: { file: "node", args: ["/pancode.js"], env: { PANCODE_SELF: "1" } },
-		sourceEnv: { PATH: "/bin", SECRET_TOKEN: "x" },
+		sourceEnv: { PATH: "/bin", SECRET_TOKEN: "x", ...env },
 		envPolicy: { targets: [], passEnv: [] },
 		yoloRefusal: () => yolo,
 		...(readOnly ? { readOnly: () => true } : {}),
@@ -140,6 +145,20 @@ describe("extension run service", () => {
 		assert.ok(call.args.includes("yolo"));
 		assert.equal(call.options.env?.PANCODE_YOLO_CONFINEMENT, "contained");
 		h.cleanup();
+	});
+
+	it("refuses a run nested two extension runs deep and counts the depth into each run it starts", async () => {
+		const nested = harness({}, null, false, { PANCODE_EXTENSION_RUN_DEPTH: "1" });
+		await nested.service.wait((await nested.service.start(base)).id);
+		assert.equal(nested.calls[0]?.options.env?.PANCODE_EXTENSION_RUN_DEPTH, "2");
+		nested.cleanup();
+		const deep = harness({}, null, false, { PANCODE_EXTENSION_RUN_DEPTH: "2" });
+		await assert.rejects(
+			deep.service.start(base),
+			(error: ExtensionRunError) => error.code === "refused" && /2 extension runs deep/u.test(error.message),
+		);
+		assert.equal(deep.calls.length, 0);
+		deep.cleanup();
 	});
 
 	it("ends a run when the starting request ends", async () => {
