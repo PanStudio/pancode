@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "spack",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "The Spack instance on PATH or SPACK_ROOT: installed specs, package recipes, prefixes, concretization and environments.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {

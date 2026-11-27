@@ -48,7 +48,8 @@ export interface Staged {
 }
 
 /**
- * Write `chunks` to `destination` through a temporary file beside it. Stops
+ * Write `chunks` to `destination` through a temporary file beside it, calling
+ * `onChunk` with the bytes received so far as each chunk arrives. Stops
  * with a `StageError` past `maxBytes` or on a hash mismatch, and whatever
  * ends the transfer early (an abort, a read error) propagates; in every such
  * case the temporary file is removed and the destination is untouched.
@@ -56,7 +57,7 @@ export interface Staged {
 export async function writeStaged(
 	chunks: AsyncIterable<Uint8Array>,
 	options: { destination: string; overwrite: boolean; maxBytes: number; expectedSha256: string | null },
-	onChunk?: () => void,
+	onChunk?: (bytesWritten: number) => void,
 ): Promise<Staged> {
 	const { destination } = options;
 	const temporary = path.join(
@@ -69,8 +70,8 @@ export async function writeStaged(
 		const hash = createHash("sha256");
 		let bytesWritten = 0;
 		for await (const chunk of chunks) {
-			onChunk?.();
 			bytesWritten += chunk.byteLength;
+			onChunk?.(bytesWritten);
 			if (bytesWritten > options.maxBytes)
 				throw new StageError(`the resource is larger than maxBytes (${options.maxBytes} bytes); nothing was kept`);
 			hash.update(chunk);

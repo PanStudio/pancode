@@ -1,7 +1,8 @@
 {
 	"id": "modules",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Software modules",
+	"instructions": "The module tool and MODULEPATH come from the login shell the host was started from; where `module avail` does not work in that shell, every tool reports the module tool missing. No tool loads a module into the caller's environment: modules_plan writes the `module load` lines for a script.",
 	"environment": [
 		"LMOD_*",
 		"LOADEDMODULES",
@@ -16,6 +17,7 @@
 	"tools": [
 		{
 			"name": "modules_avail",
+			"title": "Available modules",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -35,13 +37,16 @@
 				}
 			},
 			"annotations": {
+				"title": "Available modules",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "modules_collections",
+			"title": "Module collections",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -56,13 +61,16 @@
 				}
 			},
 			"annotations": {
+				"title": "Module collections",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "modules_list",
+			"title": "Loaded modules",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -70,13 +78,16 @@
 				"properties": {}
 			},
 			"annotations": {
+				"title": "Loaded modules",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "modules_plan",
+			"title": "Plan module loads",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -97,13 +108,16 @@
 				"required": ["modules"]
 			},
 			"annotations": {
+				"title": "Plan module loads",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "modules_show",
+			"title": "Show a module",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -119,13 +133,16 @@
 				"required": ["name"]
 			},
 			"annotations": {
+				"title": "Show a module",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "modules_spider",
+			"title": "Search all modules",
 			"actionClass": "read",
 			"pathArguments": {},
 			"inputSchema": {
@@ -141,9 +158,11 @@
 				"required": ["name"]
 			},
 			"annotations": {
+				"title": "Search all modules",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": false
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		}
 	]

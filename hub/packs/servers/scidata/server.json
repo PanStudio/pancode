@@ -1,11 +1,12 @@
 {
 	"id": "scidata",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"title": "Scientific data",
 	"environment": [],
 	"tools": [
 		{
 			"name": "scidata_inspect",
+			"title": "Inspect a data file",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -51,13 +52,16 @@
 				"additionalProperties": false
 			},
 			"annotations": {
+				"title": "Inspect a data file",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "scidata_select",
+			"title": "Select data values",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -142,13 +146,16 @@
 				"additionalProperties": false
 			},
 			"annotations": {
+				"title": "Select data values",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		},
 		{
 			"name": "scidata_stats",
+			"title": "Data statistics",
 			"actionClass": "read",
 			"pathArguments": {
 				"path": "read"
@@ -217,9 +224,11 @@
 				"additionalProperties": false
 			},
 			"annotations": {
+				"title": "Data statistics",
 				"readOnlyHint": true,
 				"destructiveHint": false,
-				"idempotentHint": true
+				"idempotentHint": true,
+				"openWorldHint": false
 			}
 		}
 	]

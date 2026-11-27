@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { JSON_RPC_ERROR, MAX_FRAME_BYTES, serveStdio } from "../src/mcp-server/index.js";
+import { MAX_FRAME_BYTES, serveStdio } from "../src/mcp-server/index.js";
 import { defineServer, defineTool, policyManifest, type ToolServer, type ToolSpec } from "../src/tool/index.js";
 
 /**
@@ -15,9 +15,11 @@ import { defineServer, defineTool, policyManifest, type ToolServer, type ToolSpe
 
 interface Frame {
 	jsonrpc: string;
-	id: string | number | null;
+	id?: string | number | null;
+	method?: string;
+	params?: Record<string, unknown>;
 	result?: Record<string, unknown>;
-	error?: { code: number; message: string };
+	error?: { code: number; message: string; data?: unknown };
 }
 
 function serve(server: ToolServer) {
@@ -86,6 +88,7 @@ function serve(server: ToolServer) {
 
 const echo = defineTool({
 	name: "echo",
+	title: "Echo",
 	description: "Echo the text back.",
 	input: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
 	actionClass: "read",
@@ -119,16 +122,23 @@ test("initialize, tools/list and tools/call round trip with annotations and the 
 	assert.deepEqual(listed.result?.tools, [
 		{
 			name: "echo",
+			title: "Echo",
 			description: "Echo the text back.",
 			inputSchema: echo.input,
-			annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+			annotations: {
+				title: "Echo",
+				readOnlyHint: true,
+				destructiveHint: false,
+				idempotentHint: true,
+				openWorldHint: false,
+			},
 			_meta: { "dev.pancode/policy": { actionClass: "read", pathArguments: {} } },
 		},
 		{
 			name: "write_note",
 			description: "Write a note to a file.",
 			inputSchema: writeNote.input,
-			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 			_meta: { "dev.pancode/policy": { actionClass: "execute", pathArguments: { path: "write" } } },
 		},
 	]);
@@ -139,6 +149,85 @@ test("initialize, tools/list and tools/call round trip with annotations and the 
 		content: [{ type: "text", text: '{"wrote":"a.txt"}' }],
 		structuredContent: { wrote: "a.txt" },
 	});
+	await client.close();
+});
+
+test("a request with the 2026-07-28 _meta is served statelessly beside a legacy session, with progress", async () => {
+	const counted = defineTool({
+		name: "counted",
+		description: "Counts to three.",
+		input: { type: "object" },
+		output: { type: "array", items: { type: "integer" } },
+		actionClass: "read",
+		run: (_args, { progress }) => {
+			progress(1, 3, "one");
+			progress(1, 3);
+			progress(3, 3);
+			return { json: [1, 2, 3] };
+		},
+	});
+	const client = serve(
+		defineServer({ id: "modern", version: "1", title: "Modern", instructions: "Counts.", tools: [counted] }),
+	);
+	const meta = {
+		"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+		"io.modelcontextprotocol/clientCapabilities": {},
+	};
+	const serverInfo = { "io.modelcontextprotocol/serverInfo": { name: "modern", version: "1", title: "Modern" } };
+	const discover = await client.request("server/discover", { _meta: meta });
+	assert.deepEqual(discover.result, {
+		resultType: "complete",
+		supportedVersions: ["2026-07-28"],
+		capabilities: { tools: {} },
+		instructions: "Counts.",
+		ttlMs: 3_600_000,
+		cacheScope: "public",
+		_meta: serverInfo,
+	});
+	const listed = await client.request("tools/list", { _meta: meta });
+	assert.equal(listed.result?.resultType, "complete");
+	assert.equal(listed.result?.cacheScope, "public");
+	assert.deepEqual((listed.result?.tools as Array<Record<string, unknown>>)[0]?.outputSchema, counted.output);
+	const called = await client.request("tools/call", {
+		name: "counted",
+		arguments: {},
+		_meta: { ...meta, progressToken: "p1" },
+	});
+	assert.deepEqual(called.result, {
+		resultType: "complete",
+		content: [{ type: "text", text: "[1,2,3]" }],
+		structuredContent: [1, 2, 3],
+		_meta: serverInfo,
+	});
+	assert.deepEqual(
+		client.frames.filter((frame) => frame.method === "notifications/progress").map((frame) => frame.params),
+		[
+			{ progressToken: "p1", progress: 1, total: 3, message: "one" },
+			{ progressToken: "p1", progress: 3, total: 3 },
+		],
+	);
+	const noCapabilities = await client.request("tools/list", {
+		_meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+	});
+	assert.equal(noCapabilities.error?.code, -32602);
+	const future = await client.request("tools/list", {
+		_meta: { ...meta, "io.modelcontextprotocol/protocolVersion": "2099-01-01" },
+	});
+	assert.deepEqual(future.error, {
+		code: -32022,
+		message: "Unsupported protocol version",
+		data: { supported: ["2026-07-28"], requested: "2099-01-01" },
+	});
+	assert.equal((await client.request("ping", { _meta: meta })).error?.code, -32601);
+	// A legacy session on the same process: initialize, then the legacy shapes.
+	const init = await client.request("initialize", { protocolVersion: "2025-11-25", capabilities: {} });
+	assert.equal(init.result?.protocolVersion, "2025-11-25");
+	assert.equal(init.result?.instructions, "Counts.");
+	const legacyList = await client.request("tools/list", {});
+	assert.equal((legacyList.result?.tools as Array<Record<string, unknown>>)[0]?.outputSchema, undefined);
+	const legacyCall = await client.request("tools/call", { name: "counted", arguments: {} });
+	assert.deepEqual(legacyCall.result, { content: [{ type: "text", text: "[1,2,3]" }] });
+	assert.equal((await client.request("tools/list", { _meta: meta })).result?.resultType, "complete");
 	await client.close();
 });
 
@@ -218,25 +307,27 @@ test("a cancelled call's signal aborts and no response is written for it", async
 	);
 });
 
-test("bad arguments, an unknown tool and an unknown method answer the matching JSON-RPC errors", async () => {
+test("bad arguments are tool errors; an unknown tool and an unknown method answer JSON-RPC errors", async () => {
 	const client = serve(defineServer({ id: "errors", version: "1", tools: [writeNote] }));
+	// Without initialize or the modern _meta, a request has no revision to be served by.
 	const early = await client.request("tools/list", {});
-	assert.equal(early.error?.code, JSON_RPC_ERROR.serverNotInitialized);
-	// PanCode's client probes server/discover before initialize and reads "method not found" as a legacy server.
+	assert.equal(early.error?.code, -32602);
 	const discover = await client.request("server/discover", {});
-	assert.equal(discover.error?.code, -32601);
+	assert.equal(discover.error?.code, -32602);
 	await client.initialize();
 	const missing = await client.request("tools/call", { name: "write_note", arguments: { body: "x" } });
-	assert.equal(missing.error?.code, -32602);
-	assert.match(missing.error?.message ?? "", /missing required argument path/);
+	assert.deepEqual(missing.result, {
+		content: [{ type: "text", text: "write_note: missing required argument path" }],
+		isError: true,
+	});
 	const wrongType = await client.request("tools/call", { name: "write_note", arguments: { path: 7 } });
-	assert.equal(wrongType.error?.code, -32602);
-	assert.match(wrongType.error?.message ?? "", /argument path must be string/);
+	assert.equal(wrongType.result?.isError, true);
+	assert.match(JSON.stringify(wrongType.result?.content), /argument path must be string/);
 	const wrongInteger = await client.request("tools/call", {
 		name: "write_note",
 		arguments: { path: "a", count: 1.5 },
 	});
-	assert.equal(wrongInteger.error?.code, -32602);
+	assert.equal(wrongInteger.result?.isError, true);
 	const notObject = await client.request("tools/call", { name: "write_note", arguments: ["a"] });
 	assert.equal(notObject.error?.code, -32602);
 	const unknownTool = await client.request("tools/call", { name: "nope", arguments: {} });
@@ -344,14 +435,16 @@ test("policyManifest is plain JSON sorted by tool name and stable across tool or
 					actionClass: "destructive",
 					readOnly: false,
 					idempotent: false,
+					openWorld: false,
 					pathArguments: { source: "read", target: "write" },
 				},
-				{ name: "echo", actionClass: "read", readOnly: true, idempotent: true, pathArguments: {} },
+				{ name: "echo", actionClass: "read", readOnly: true, idempotent: true, openWorld: false, pathArguments: {} },
 				{
 					name: "write_note",
 					actionClass: "execute",
 					readOnly: false,
 					idempotent: false,
+					openWorld: false,
 					pathArguments: { path: "write" },
 				},
 			],

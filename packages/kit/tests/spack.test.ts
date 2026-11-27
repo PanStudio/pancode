@@ -523,7 +523,7 @@ else finish();
 	};
 }
 
-const context = { signal: new AbortController().signal, log: () => {} };
+const context = { signal: new AbortController().signal, log: () => {}, progress: () => {} };
 
 function tool(name: string): AnyTool {
 	const found = server.tools.find((entry) => entry.name === name);

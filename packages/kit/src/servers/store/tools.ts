@@ -167,6 +167,7 @@ function recordView(record: StoreRecord) {
 
 const storeTags = defineTool({
 	name: "store_tags",
+	title: "Store tags",
 	description: `Returns the project store's tags (at most ${MAX_TAGS}) with each tag's blob count, total bytes and the store root it is placed on. Prefer it over running pancode store tags or listing the store directory: one call answers in structured fields and says when the list was cut.`,
 	input: { type: "object", properties: {} },
 	actionClass: "read",
@@ -199,6 +200,7 @@ const storeTags = defineTool({
 
 const storeList = defineTool({
 	name: "store_list",
+	title: "List a store tag",
 	description: `Returns the blobs of one tag (at most ${MAX_BLOBS}, sorted by name, optionally only those whose name starts with prefix) with each blob's bytes, when it was stored and whether it has a record. Prefer it over running pancode store ls or listing the store directory: sizes are bytes, times are ISO 8601, and the result says when the list was cut.`,
 	input: {
 		type: "object",
@@ -267,6 +269,7 @@ const storeList = defineTool({
 
 const storeStat = defineTool({
 	name: "store_stat",
+	title: "Store blob details",
 	description:
 		"Returns one blob's bytes, SHA-256, the store root its tag is placed on, whether the stored bytes still match their record (drift), and the record of its last put (actor, time, note) with the notes added since. Prefer it over running pancode store stat or sha256sum on the store: it reports what was recorded and whether the bytes changed since.",
 	input: { type: "object", properties: { tag: TAG_SCHEMA, blob: BLOB_SCHEMA }, required: ["tag", "blob"] },
@@ -323,6 +326,7 @@ const storeStat = defineTool({
 
 const storeGet = defineTool({
 	name: "store_get",
+	title: "Get a store blob",
 	description:
 		"Returns the path of a read-only copy of one blob, with its bytes and SHA-256; it never returns the content, which the host's own read tool reads from that path. Prefer it over reading the store directory: writing the copy cannot change the stored blob.",
 	input: { type: "object", properties: { tag: TAG_SCHEMA, blob: BLOB_SCHEMA }, required: ["tag", "blob"] },
@@ -374,6 +378,7 @@ async function tagHistory(
 
 const storeHistory = defineTool({
 	name: "store_history",
+	title: "Store tag history",
 	description: `Returns the records of one blob, or of every blob of a tag when blob is left out, newest first (at most ${MAX_HISTORY}): each put, note and removal with its actor, time, note, bytes and SHA-256. Prefer it over running pancode store history: it covers a whole tag in one call and says when the list was cut.`,
 	input: { type: "object", properties: { tag: TAG_SCHEMA, blob: BLOB_SCHEMA }, required: ["tag"] },
 	actionClass: "read",
@@ -415,6 +420,7 @@ const storeHistory = defineTool({
 
 const storePut = defineTool({
 	name: "store_put",
+	title: "Put a file in the store",
 	description:
 		"Puts the file at source into tag as blob (default the file's name) and records the put with actor mcp, returning the store's result unchanged, including a put whose bytes are stored but whose record could not be written; a tag the server was not started with --write-tag for is refused. Prefer it over copying into the store directory: the put is atomic, hashed and recorded.",
 	input: {
@@ -483,6 +489,7 @@ const storePut = defineTool({
 
 const storeNote = defineTool({
 	name: "store_note",
+	title: "Add a store note",
 	description:
 		"Adds a note to one blob's records with actor mcp, as PanCode's own store tool records a note, and returns the record written; a tag the server was not started with --write-tag for is refused. Prefer it over keeping notes beside the store: the note joins the blob's history, which store_stat and store_history show.",
 	input: {

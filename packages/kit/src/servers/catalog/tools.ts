@@ -227,6 +227,7 @@ async function ckanSearch(
 function createSearch(settings: CatalogSettings): Tool<Record<string, unknown>> {
 	return defineTool({
 		name: "catalog_search",
+		title: "Search dataset catalogs",
 		description: `Returns datasets matching every word of query across the catalog sources the operator named (or one source): source and dataset id, title, description clipped to ${DESCRIPTION_CLIP_CHARS} characters, tags (at most ${MAX_TAGS}), resource count, license and last update, at most ${MAX_LIMIT} per call (limit, default ${DEFAULT_LIMIT}, with offset), plus each source's own status so one source that is down does not hide the others. Prefer it over fetching catalog APIs with curl: it reads only the operator's sources, merges them in one bounded list, and says when the list was cut.`,
 		input: {
 			type: "object",
@@ -259,7 +260,8 @@ function createSearch(settings: CatalogSettings): Tool<Record<string, unknown>> 
 			required: ["query"],
 		},
 		actionClass: "read",
-		idempotent: false,
+		idempotent: true,
+		openWorld: true,
 		async run(args, context) {
 			const { query } = args;
 			if (typeof query !== "string" || !isQuery(query))
@@ -445,6 +447,7 @@ async function ckanShow(
 function createDescribe(settings: CatalogSettings): Tool<Record<string, unknown>> {
 	return defineTool({
 		name: "catalog_describe",
+		title: "Describe a catalog dataset",
 		description: `Returns one dataset from a catalog source by source and id: its full description, tags, license, last update, and every resource (at most ${MAX_RESOURCES}) with id, name, format, size in bytes when known, URL or path, and SHA-256 when the catalog gives one. Prefer it over fetching the catalog's API with curl: it reads the operator's named source, answers in typed fields, and says when the resource list was cut.`,
 		input: {
 			type: "object",
@@ -459,7 +462,8 @@ function createDescribe(settings: CatalogSettings): Tool<Record<string, unknown>
 			required: ["source", "id"],
 		},
 		actionClass: "read",
-		idempotent: false,
+		idempotent: true,
+		openWorld: true,
 		async run(args, context) {
 			const problem = sourceIdProblem("catalog_describe", args.source) ?? itemIdProblem("catalog_describe", "id", args.id);
 			if (problem !== null) return { error: problem };
@@ -531,6 +535,7 @@ function createDescribe(settings: CatalogSettings): Tool<Record<string, unknown>
 function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 	return defineTool({
 		name: "catalog_stage",
+		title: "Stage a catalog resource",
 		description: `Copies one resource of a catalog dataset to destination and returns the bytes written and the SHA-256 the server computed, checked against the catalog's SHA-256 when it gives one; a local resource is copied from its path, a CKAN resource is downloaded over https only from the source's own host or a host in its resourceHosts, following at most 5 redirects that pass the same check. Prefer it over curl or cp: an existing destination is kept unless overwrite is true, the file appears only when complete and verified, and transfers stop at maxBytes (default ${DEFAULT_MAX_BYTES} bytes) leaving nothing behind.`,
 		input: {
 			type: "object",
@@ -557,6 +562,7 @@ function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 			required: ["source", "dataset", "resource", "destination"],
 		},
 		actionClass: "execute",
+		openWorld: true,
 		pathArguments: { destination: "write" },
 		async run(args, context) {
 			const problem =
@@ -609,8 +615,10 @@ function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 				if (dataset === undefined) return { error: `catalog_stage: source ${sourceId} has no dataset ${datasetId}` };
 				const resource = dataset.resources.find((entry) => entry.id === resourceId);
 				if (resource === undefined) return { error: `catalog_stage: dataset ${datasetId} has no resource ${resourceId}` };
+				let size: number;
 				try {
 					const info = await stat(resource.path);
+					size = info.size;
 					if (!info.isFile()) return { error: `catalog_stage: ${resource.path} is not a regular file` };
 					if (info.size > maxBytes)
 						return {
@@ -620,10 +628,11 @@ function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 					return { error: `catalog_stage: the resource path ${resource.path} cannot be read: ${message(error)}` };
 				}
 				try {
-					const staged = await writeStaged(createReadStream(resource.path, { signal: context.signal }), {
-						...target,
-						expectedSha256: resource.sha256,
-					});
+					const staged = await writeStaged(
+						createReadStream(resource.path, { signal: context.signal }),
+						{ ...target, expectedSha256: resource.sha256 },
+						(bytes) => context.progress(bytes, size, `${bytes} of ${size} bytes copied`),
+					);
 					return done(staged, resource.sha256, { path: resource.path });
 				} catch (error) {
 					if (context.signal.aborted) return { error: "catalog_stage: cancelled; nothing was kept" };
@@ -664,7 +673,11 @@ function createStage(settings: CatalogSettings): Tool<Record<string, unknown>> {
 				}
 				stall.touch();
 				const body = response.body ?? (async function* () {})();
-				const staged = await writeStaged(body, { ...target, expectedSha256: resource.sha256 }, () => stall.touch());
+				const total = Number.isFinite(length) ? length : undefined;
+				const staged = await writeStaged(body, { ...target, expectedSha256: resource.sha256 }, (bytes) => {
+					stall.touch();
+					context.progress(bytes, total, `${bytes}${total !== undefined ? ` of ${total}` : ""} bytes downloaded`);
+				});
 				return done(staged, resource.sha256, {
 					url: resource.url,
 					finalUrl: fetched.redirects === 0 ? resource.url : withoutQuery(fetched.url),

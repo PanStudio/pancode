@@ -53,6 +53,8 @@ export const MAX_ENVIRONMENTS = 200;
 export const MAX_ROOTS = 200;
 const MAX_NOTICES = 50;
 const NOTICE_LENGTH = 500;
+/** How often spack_spec reports the time it has run. */
+const SPEC_PROGRESS_MS = 5_000;
 
 const NO_FETCH =
 	"It never fetches: when Spack's package repository has not been cloned yet, it returns available false with the `spack repo update` command to run once.";
@@ -93,6 +95,7 @@ function architectureText(node: SpackNode): string | null {
 
 const spackFind = defineTool({
 	name: "spack_find",
+	title: "Installed Spack packages",
 	description: `Returns the specs installed in this Spack instance (at most ${MAX_SPECS}), optionally only those matching a spec or those in a named Spack environment (without one, the whole store, whichever environment is active), each with name, version, 7-character hash, architecture, compilers, install prefix, whether it was installed explicitly and whether it is external. Prefer it over running spack find: the fields come from Spack's JSON, the result says when the list was cut, and nothing is installed or fetched. ${NO_FETCH}`,
 	input: {
 		type: "object",
@@ -190,6 +193,7 @@ const spackFind = defineTool({
 
 const spackInfo = defineTool({
 	name: "spack_info",
+	title: "Spack package info",
 	description: `Returns one Spack package's recipe facts: description, homepage, preferred version, known versions (at most ${MAX_INFO_ENTRIES}, deprecated ones marked), variants with their defaults, values and conditions (at most ${MAX_INFO_ENTRIES}), dependencies with their types and conditions (at most ${MAX_INFO_ENTRIES}), and licenses; a section the server could not read is returned as text of at most 4096 characters and counted. Prefer it over running spack info: the sections come as fields, and nothing is installed or fetched. ${NO_FETCH}`,
 	input: {
 		type: "object",
@@ -262,6 +266,7 @@ const spackInfo = defineTool({
 
 const spackLocate = defineTool({
 	name: "spack_locate",
+	title: "Locate a Spack install",
 	description: `Returns the install prefix of one installed spec, or the directory holding one package's recipe (package.py); a spec that matches several installs is an error listing each one's hash and spec. Prefer it over running spack location: the path comes checked, and an ambiguous spec names its matches. ${NO_FETCH}`,
 	input: {
 		type: "object",
@@ -328,6 +333,7 @@ const spackLocate = defineTool({
 
 const spackSpec = defineTool({
 	name: "spack_spec",
+	title: "Concretize a Spack spec",
 	description: `Returns how Spack concretizes a spec without installing it: every node (at most ${MAX_NODES}) with name, version, 7-character hash, architecture, variants, dependencies with their types and virtuals, whether it is external, and whether it is already installed. Prefer it over running spack spec: the graph comes from Spack's JSON and says what would have to be built. The first concretization on a machine can clone Spack's package repository and bootstrap its solver, which downloads into and writes Spack's user directories and can take minutes, so it has a 300 second timeout and any notices Spack printed are returned.`,
 	input: {
 		type: "object",
@@ -345,6 +351,11 @@ const spackSpec = defineTool({
 		if ("error" in found) return found;
 		const { program, version, unavailable } = found;
 		const started = performance.now();
+		// Spack reports nothing while it concretizes, so the progress is the time it has taken.
+		const ticker = setInterval(() => {
+			const seconds = Math.round((performance.now() - started) / 1000);
+			context.progress(seconds, undefined, `spack spec has run for ${seconds} seconds`);
+		}, SPEC_PROGRESS_MS);
 		const [concretized, installed] = await Promise.all([
 			runSpack(program, ["-E", "spec", "--json", ...tokens.tokens], {
 				timeoutMs: SPACK_TIMEOUTS.specMs,
@@ -352,7 +363,7 @@ const spackSpec = defineTool({
 				signal: context.signal,
 			}),
 			runSpack(program, ["-E", "find", "--format", "{hash}"], read(context.signal)),
-		]);
+		]).finally(() => clearInterval(ticker));
 		const durationSeconds = Math.round((performance.now() - started) / 100) / 10;
 		if (!concretized.ok) return { error: `spack_spec: ${concretized.reason}` };
 		const parsed = parseSpecJson(concretized.stdout);
@@ -405,6 +416,7 @@ const spackSpec = defineTool({
 
 const spackEnv = defineTool({
 	name: "spack_env",
+	title: "Spack environment",
 	description: `Returns the active Spack environment (from SPACK_ENV), the named environments (at most ${MAX_ENVIRONMENTS}), and for one environment (the one named, else the active one) its root specs (at most ${MAX_ROOTS}) with each one's install status, how many roots are installed, and how many specs it has installed. Prefer it over running spack env status, spack env list and spack find: one call answers all three in fields, and nothing is activated, installed or fetched.`,
 	input: {
 		type: "object",

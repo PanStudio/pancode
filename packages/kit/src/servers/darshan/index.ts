@@ -12,7 +12,7 @@ import { DARSHAN_TOOLS, DXT_PARSER, PARSER } from "./tools.js";
 
 export const server = defineServer({
 	id: "darshan",
-	version: "0.1.0",
+	version: "0.2.0",
 	title: "Darshan I/O traces",
 	tools: DARSHAN_TOOLS,
 });

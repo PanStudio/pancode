@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "catalog",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "The dataset catalogs the operator names in a catalog file, local and public CKAN, and staging one resource.",
 	"license": "LicenseRef-PanCode-1.0",
 	"author": {

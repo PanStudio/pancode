@@ -32,7 +32,7 @@ import { type CatalogSettings, catalogTools, MAX_LIMIT, MAX_RESOURCES } from "..
  * assert exactly what was asked and that a refused host was never asked.
  */
 
-const context = { signal: new AbortController().signal, log: () => {} };
+const context = { signal: new AbortController().signal, log: () => {}, progress: () => {} };
 const root = mkdtempSync(join(tmpdir(), "pankit-catalog-"));
 
 function scratch(name: string): string {
@@ -283,7 +283,7 @@ const LOCAL = {
 test("the server lists three tools with the classes and path arguments of its policy", () => {
 	assert.equal(server.id, "catalog");
 	assert.equal(server.title, "Dataset catalogs");
-	assert.equal(server.version, "0.1.0");
+	assert.equal(server.version, "0.2.0");
 	const shape = server.tools.map((tool) => [tool.name, tool.actionClass, tool.pathArguments]);
 	assert.deepEqual(shape, [
 		["catalog_search", "read", {}],

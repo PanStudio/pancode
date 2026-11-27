@@ -505,7 +505,7 @@ test("the environment it declares passes the module variables and nothing else",
 
 // the tools against stub programs ---------------------------------------------
 
-const context = { signal: new AbortController().signal, log: () => {} };
+const context = { signal: new AbortController().signal, log: () => {}, progress: () => {} };
 
 function tool(name: string): AnyTool {
 	const found = server.tools.find((entry) => entry.name === name);
