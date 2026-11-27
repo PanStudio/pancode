@@ -79,7 +79,6 @@ import type {
 } from "./dispatch-types.js";
 import type { HostEffectCall } from "./registry-contract.js";
 import { gitCheckoutRoot, gitHeadIsUnborn, WORKTREE_UNBORN_HEAD_MESSAGE } from "./task-worktree.js";
-import type { ToolSpec } from "./tool-spec.js";
 import { runnableChecksAtRoot } from "./verify/resolve.js";
 import { judgedFileSha256, readJudgedFile } from "./verify/scripts.js";
 
@@ -1251,13 +1250,3 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 		},
 	};
 }
-
-export type DispatchAdmissionToolHooks = Pick<
-	ToolSpec,
-	| "prepareAdmissionArguments"
-	| "disposeAdmissionArguments"
-	| "prepareArguments"
-	| "describeDispatchPlan"
-	| "hostEffectCalls"
-	| "rewriteNarrows"
->;

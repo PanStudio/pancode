@@ -18,8 +18,6 @@ import { sliceByColumn, stripTerminalSequences, visibleWidth } from "@earendil-w
 
 const MARK_PREFIX = "\x1b_pancode:";
 const MARK_END = "\x07";
-/** A row that starts a new line of copied text. */
-export const COPY_ROW_MARK = `${MARK_PREFIX}r${MARK_END}`;
 /** A wrapped continuation: joins the row before it with one space. */
 export const COPY_JOIN_MARK = `${MARK_PREFIX}s${MARK_END}`;
 /** A word broken across rows (a long URL): joins the row before it with no space. */

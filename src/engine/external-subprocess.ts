@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import { boundedExternalDiagnostic } from "../core/external-diagnostic.js";
@@ -11,8 +11,6 @@ import {
 	SAFE_EXEC_PIPE_DRAIN_BOUND_MS,
 } from "../core/safe-exec.js";
 import { clampTimerDelayMs } from "../core/timers.js";
-
-export type SubprocessWithStdio = ChildProcessByStdio<null, Readable, Readable>;
 
 export type BoundedLine = { kind: "line"; line: string } | { kind: "oversized" };
 
