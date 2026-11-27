@@ -25,6 +25,7 @@ import { pancodeCacheDir } from "../../../core/xdg.js";
 import { MCP_INSTRUCTIONS_BYTES, MCP_TOOL_LIST_CAP, type McpToolDescriptor } from "./client.js";
 import type { McpServerScope } from "./config.js";
 import { readBoundedFileText } from "./config.js";
+import { MCP_PROMPT_LIST_CAP } from "./resources.js";
 
 export const MCP_METADATA_CACHE_VERSION = 1;
 
@@ -47,6 +48,9 @@ export const MCP_METADATA_CACHE_CAPS = Object.freeze({
 	schemaBytes: 64 * 1024,
 	/** The client keeps at most MCP_INSTRUCTIONS_BYTES plus its truncation marker. */
 	instructionsBytes: MCP_INSTRUCTIONS_BYTES + 64,
+	prompts: MCP_PROMPT_LIST_CAP,
+	promptArguments: 32,
+	promptTextBytes: 1024,
 });
 
 const CACHE_SUBDIRECTORY = "mcp-catalogs";
@@ -78,6 +82,22 @@ export interface McpCachedTool {
 	annotations?: Record<string, unknown> | null;
 }
 
+/** One prompt as a slash command needs it before the server runs: its name, its words and its arguments. */
+export interface McpCachedPrompt {
+	name: string;
+	title?: string;
+	description: string;
+	arguments: Array<{ name: string; description: string; required: boolean }>;
+}
+
+/** The server's prompt list as of the catalog's listing. */
+export interface McpCachedPrompts {
+	prompts: McpCachedPrompt[];
+	truncated: boolean;
+	/** The freshness `prompts/list` gave, modern era only; past it the list is stale, never a miss. */
+	ttlMs?: number;
+}
+
 export interface McpServerCatalog {
 	version: typeof MCP_METADATA_CACHE_VERSION;
 	projectRoot: string;
@@ -101,6 +121,14 @@ export interface McpServerCatalog {
 	ttlMs?: number;
 	/** The server's own guidance, shown as server-written text beside its tools. */
 	instructions?: string;
+	/** The server declared the resources capability. */
+	resources?: true;
+	/** How many resources and templates its last resources/list gave. */
+	resourceCount?: McpResourceCount;
+	/** The server declared the completions capability. */
+	completions?: true;
+	/** Present when the server declared prompts and listed them. */
+	prompts?: McpCachedPrompts;
 	tools: McpCachedTool[];
 }
 
@@ -153,7 +181,61 @@ function decodeTool(value: unknown): McpCachedTool | null {
 	return { name, description, inputSchema, ...(Object.keys(hints).length === 0 ? {} : { annotations: hints }) };
 }
 
+function boundedText(value: unknown, required: boolean): value is string {
+	if (typeof value !== "string") return false;
+	if (required && value.length === 0) return false;
+	return Buffer.byteLength(value, "utf8") <= MCP_METADATA_CACHE_CAPS.promptTextBytes;
+}
+
+function decodePrompt(value: unknown): McpCachedPrompt | null {
+	if (!isRecord(value) || !boundedText(value.name, true) || !boundedText(value.description, false)) return null;
+	if (value.title !== undefined && !boundedText(value.title, true)) return null;
+	if (!Array.isArray(value.arguments) || value.arguments.length > MCP_METADATA_CACHE_CAPS.promptArguments) return null;
+	const args: McpCachedPrompt["arguments"] = [];
+	for (const entry of value.arguments) {
+		if (!isRecord(entry) || !boundedText(entry.name, true) || !boundedText(entry.description, false)) return null;
+		if (typeof entry.required !== "boolean") return null;
+		args.push({ name: entry.name, description: entry.description, required: entry.required });
+	}
+	return {
+		name: value.name,
+		...(typeof value.title === "string" ? { title: value.title } : {}),
+		description: value.description,
+		arguments: args,
+	};
+}
+
+function decodePrompts(value: unknown): McpCachedPrompts | null {
+	if (!isRecord(value) || typeof value.truncated !== "boolean") return null;
+	const { ttlMs } = value;
+	if (ttlMs !== undefined && (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs < 0)) return null;
+	if (!Array.isArray(value.prompts) || value.prompts.length > MCP_METADATA_CACHE_CAPS.prompts) return null;
+	const prompts: McpCachedPrompt[] = [];
+	const seen = new Set<string>();
+	for (const entry of value.prompts) {
+		const prompt = decodePrompt(entry);
+		if (prompt === null || seen.has(prompt.name)) return null;
+		seen.add(prompt.name);
+		prompts.push(prompt);
+	}
+	return { prompts, truncated: value.truncated, ...(ttlMs === undefined ? {} : { ttlMs }) };
+}
+
 /** Decode a whole file or reject it. A single bad tool fails the catalog: half a listing is not a listing. */
+export interface McpResourceCount {
+	resources: number;
+	templates: number;
+	truncated?: true;
+}
+
+function decodeResourceCount(value: unknown): McpResourceCount | null {
+	if (!isRecord(value)) return null;
+	const { resources, templates, truncated } = value;
+	const count = (entry: unknown): entry is number => Number.isSafeInteger(entry) && (entry as number) >= 0;
+	if (!count(resources) || !count(templates) || (truncated !== undefined && truncated !== true)) return null;
+	return { resources, templates, ...(truncated === true ? { truncated } : {}) };
+}
+
 function decodeCatalog(value: unknown): McpServerCatalog | null {
 	if (!isRecord(value)) return null;
 	if (value.version !== MCP_METADATA_CACHE_VERSION) return null;
@@ -173,6 +255,12 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 			Buffer.byteLength(instructions, "utf8") > MCP_METADATA_CACHE_CAPS.instructionsBytes)
 	)
 		return null;
+	if (value.resources !== undefined && value.resources !== true) return null;
+	if (value.completions !== undefined && value.completions !== true) return null;
+	const resourceCount = value.resourceCount === undefined ? undefined : decodeResourceCount(value.resourceCount);
+	if (resourceCount === null) return null;
+	const prompts = value.prompts === undefined ? undefined : decodePrompts(value.prompts);
+	if (prompts === null) return null;
 	if (!Array.isArray(value.tools) || value.tools.length > MCP_METADATA_CACHE_CAPS.tools) return null;
 	const tools: McpCachedTool[] = [];
 	const seen = new Set<string>();
@@ -194,6 +282,10 @@ function decodeCatalog(value: unknown): McpServerCatalog | null {
 		observedAt: value.observedAt as string,
 		...(ttlMs === undefined ? {} : { ttlMs }),
 		...(instructions === undefined ? {} : { instructions }),
+		...(value.resources === true ? { resources: true as const } : {}),
+		...(resourceCount === undefined ? {} : { resourceCount }),
+		...(value.completions === true ? { completions: true as const } : {}),
+		...(prompts === undefined ? {} : { prompts }),
 		tools,
 	};
 }
@@ -210,7 +302,14 @@ export function readMcpServerCatalog(
 	identity: McpCatalogIdentity,
 	options: McpCatalogOptions = {},
 ): McpServerCatalog | null {
-	const read = readBoundedFileText(mcpCatalogPath(identity, options.cacheDir), MCP_METADATA_CACHE_CAPS.fileBytes);
+	let file: string;
+	try {
+		file = mcpCatalogPath(identity, options.cacheDir);
+	} catch {
+		// A cache root that cannot be made is a missing catalog, as an unwritable one is a skipped write.
+		return null;
+	}
+	const read = readBoundedFileText(file, MCP_METADATA_CACHE_CAPS.fileBytes);
 	if (!read.ok) return null;
 	let parsed: unknown;
 	try {
@@ -247,6 +346,54 @@ export function mcpCatalogStale(catalog: McpServerCatalog, nowMs: number = Date.
 	return catalog.ttlMs !== undefined && nowMs - Date.parse(catalog.observedAt) >= catalog.ttlMs;
 }
 
+/** The prompt list's own `ttlMs` has passed: still the list the slash menu shows, labelled stale. */
+export function mcpPromptsStale(catalog: McpServerCatalog, nowMs: number = Date.now()): boolean {
+	const ttlMs = catalog.prompts?.ttlMs;
+	return ttlMs !== undefined && nowMs - Date.parse(catalog.observedAt) >= ttlMs;
+}
+
+function cappedTtl(ttlMs: number | undefined): { ttlMs?: number } {
+	return ttlMs === undefined ? {} : { ttlMs: Math.min(MCP_METADATA_CACHE_TTL_MS, Math.max(0, Math.floor(ttlMs))) };
+}
+
+/** A prompt as the writer takes it: a live descriptor, or the recorded one carried over. */
+interface McpPromptRecord {
+	name: string;
+	title?: string | null;
+	description: string;
+	arguments: ReadonlyArray<{ name: string; description: string; required: boolean }>;
+}
+
+/** A prompt the decoder would reject is dropped and the list marked truncated, as with tools. */
+function encodePrompts(listing: {
+	prompts: ReadonlyArray<McpPromptRecord>;
+	truncated: boolean;
+	ttlMs?: number;
+}): McpCachedPrompts {
+	const prompts: McpCachedPrompt[] = [];
+	const seen = new Set<string>();
+	for (const prompt of listing.prompts.slice(0, MCP_METADATA_CACHE_CAPS.prompts)) {
+		const encoded = decodePrompt({
+			name: prompt.name,
+			...(typeof prompt.title === "string" ? { title: prompt.title } : {}),
+			description: prompt.description,
+			arguments: prompt.arguments.map((entry) => ({
+				name: entry.name,
+				description: entry.description,
+				required: entry.required,
+			})),
+		});
+		if (encoded === null || seen.has(encoded.name)) continue;
+		seen.add(encoded.name);
+		prompts.push(encoded);
+	}
+	return {
+		prompts,
+		truncated: listing.truncated || prompts.length !== listing.prompts.length,
+		...cappedTtl(listing.ttlMs),
+	};
+}
+
 /**
  * Replace one server's catalog atomically. Returns false rather than throwing:
  * a cache that cannot be written must never fail the live tool listing that
@@ -259,6 +406,10 @@ export function writeMcpServerCatalog(
 		truncated: boolean;
 		ttlMs?: number;
 		instructions?: string | null;
+		resources?: boolean;
+		resourceCount?: McpResourceCount | null;
+		completions?: boolean;
+		prompts?: { prompts: ReadonlyArray<McpPromptRecord>; truncated: boolean; ttlMs?: number } | null;
 	},
 	options: Pick<McpCatalogOptions, "cacheDir" | "nowMs"> = {},
 ): boolean {
@@ -286,13 +437,15 @@ export function writeMcpServerCatalog(
 		// A tool dropped above is as much missing catalog as one the client's cap cut.
 		truncated: listing.truncated || tools.length !== listing.tools.length,
 		observedAt: new Date(options.nowMs ?? Date.now()).toISOString(),
-		...(listing.ttlMs === undefined
-			? {}
-			: { ttlMs: Math.min(MCP_METADATA_CACHE_TTL_MS, Math.max(0, Math.floor(listing.ttlMs))) }),
+		...cappedTtl(listing.ttlMs),
 		...(typeof listing.instructions === "string" &&
 		Buffer.byteLength(listing.instructions, "utf8") <= MCP_METADATA_CACHE_CAPS.instructionsBytes
 			? { instructions: listing.instructions }
 			: {}),
+		...(listing.resources === true ? { resources: true as const } : {}),
+		...(listing.resources === true && listing.resourceCount ? { resourceCount: listing.resourceCount } : {}),
+		...(listing.completions === true ? { completions: true as const } : {}),
+		...(listing.prompts ? { prompts: encodePrompts(listing.prompts) } : {}),
 		tools,
 	};
 	const text = `${JSON.stringify(catalog, null, 2)}\n`;

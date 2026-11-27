@@ -412,7 +412,8 @@ function parseRelativePathList(value: unknown, label: string, errors: string[]):
 	return out;
 }
 
-const TOOL_REF_RE = /^(?:[a-z][a-z0-9_]*|mcp:[a-z0-9][a-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)?)$/;
+const TOOL_REF_RE =
+	/^(?:[a-z][a-z0-9_]*|mcp:[a-z0-9][a-z0-9_-]*(?:\/(?:[A-Za-z0-9][A-Za-z0-9_.-]*|:list_resources|:read_resource))?)$/;
 
 function parseToolRefList(value: unknown, label: string, errors: string[]): string[] {
 	if (!Array.isArray(value)) {

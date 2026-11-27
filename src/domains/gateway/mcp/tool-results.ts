@@ -45,6 +45,8 @@ export type McpContentBlock =
 	| { type: "image"; mimeType: string; data: string }
 	| { type: "audio"; mimeType: string; data: string }
 	| { type: "resource"; uri: string; text?: string; blob?: string; mimeType?: string }
+	/** A pointer to a resource the server did not embed; reading it is a separate `resources/read`. */
+	| { type: "resource_link"; uri: string; name: string; mimeType?: string; size?: number }
 	| { type: "other"; raw: unknown };
 
 export interface McpToolCallResult {
@@ -90,7 +92,8 @@ export function parseToolDescriptor(value: unknown): McpToolDescriptor | McpErro
 	};
 }
 
-function normalizeContentBlock(value: unknown): McpContentBlock {
+/** One content block as the server sent it, read into PanCode's shape; an unreadable one is `other`. */
+export function normalizeContentBlock(value: unknown): McpContentBlock {
 	if (!isRecord(value) || typeof value.type !== "string") return { type: "other", raw: value };
 	switch (value.type) {
 		case "text":
@@ -113,11 +116,15 @@ function normalizeContentBlock(value: unknown): McpContentBlock {
 			};
 		}
 		case "resource_link":
-			if (typeof value.uri !== "string") return { type: "other", raw: value };
+			if (typeof value.uri !== "string" || value.uri.length === 0) return { type: "other", raw: value };
 			return {
-				type: "resource",
+				type: "resource_link",
 				uri: value.uri,
+				name: typeof value.name === "string" ? value.name : "",
 				...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
+				...(typeof value.size === "number" && Number.isSafeInteger(value.size) && value.size >= 0
+					? { size: value.size }
+					: {}),
 			};
 		default:
 			return { type: "other", raw: value };
@@ -130,7 +137,21 @@ function binaryLine(label: string, mimeType: string | undefined, base64: string,
 	return pointer === null ? `[${described}]` : `[${described}; base64 ${pointer}]`;
 }
 
-function renderContentBlock(block: McpContentBlock, pointerOf: (block: McpContentBlock) => string | null): string {
+/** How a resource link reads when nobody says how to follow it. */
+export function resourceLinkLine(block: Extract<McpContentBlock, { type: "resource_link" }>, follow?: string): string {
+	const facts = [
+		...(block.name.length > 0 && block.name !== block.uri ? [JSON.stringify(block.name)] : []),
+		...(block.mimeType !== undefined ? [block.mimeType] : []),
+		...(block.size !== undefined ? [`${block.size} bytes`] : []),
+	];
+	return `[resource link ${block.uri}${facts.length > 0 ? ` (${facts.join(", ")})` : ""}${follow !== undefined ? `; ${follow}` : ""}]`;
+}
+
+function renderContentBlock(
+	block: McpContentBlock,
+	pointerOf: (block: McpContentBlock) => string | null,
+	linkLine: (block: Extract<McpContentBlock, { type: "resource_link" }>) => string,
+): string {
 	switch (block.type) {
 		case "text":
 			return block.text;
@@ -141,6 +162,8 @@ function renderContentBlock(block: McpContentBlock, pointerOf: (block: McpConten
 			if (block.blob !== undefined)
 				return binaryLine(`resource ${block.uri}`, block.mimeType, block.blob, pointerOf(block));
 			return block.text === undefined ? `[resource ${block.uri}]` : `[resource ${block.uri}]\n${block.text}`;
+		case "resource_link":
+			return linkLine(block);
 		case "other": {
 			const type = isRecord(block.raw) && typeof block.raw.type === "string" ? block.raw.type : "unknown";
 			return `[unsupported content type ${type}]`;
@@ -151,14 +174,16 @@ function renderContentBlock(block: McpContentBlock, pointerOf: (block: McpConten
 /**
  * Render every block as plain text and bound the whole rendering. A binary
  * block (an image, audio, or an embedded resource blob) renders as its type,
- * mime type and size; `pointerOf` names where its bytes were offloaded.
+ * mime type and size; `pointerOf` names where its bytes were offloaded, and
+ * `linkLine` says how the reader follows a resource link.
  */
 export function renderMcpContent(
 	blocks: ReadonlyArray<McpContentBlock>,
 	maxBytes: number = DEFAULT_RESULT_TEXT_BYTES,
 	pointerOf: (block: McpContentBlock) => string | null = () => null,
+	linkLine: (block: Extract<McpContentBlock, { type: "resource_link" }>) => string = (block) => resourceLinkLine(block),
 ): { text: string; truncated: boolean } {
-	const joined = blocks.map((block) => renderContentBlock(block, pointerOf)).join("\n");
+	const joined = blocks.map((block) => renderContentBlock(block, pointerOf, linkLine)).join("\n");
 	if (Buffer.byteLength(joined, "utf8") <= maxBytes) return { text: joined, truncated: false };
 	const marker = `\n[mcp result text truncated at ${maxBytes} bytes]`;
 	const budget = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));

@@ -90,6 +90,11 @@ export function dispatchSlashCommand(command: SlashCommand, ctx: SlashCommandCon
 		// A template that exists and refused is not a typo. Its reason reaches the
 		// operator and nothing reaches the model.
 		const refusal = expansion?.expanded === false ? expansion.refusal : undefined;
+		// An MCP prompt never shadows a built-in or a template: both were tried above.
+		if (!refusal && ctx.mcpPromptClaims?.(command.token)) {
+			ctx.submitChat(command.text);
+			return "accepted";
+		}
 		// A command that became a key is answered with that key, and the line is
 		// spent like any command that ran: nothing in it is left to correct.
 		const key =

@@ -28,6 +28,7 @@ export {
 	type McpContentBlock,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
+	type McpRequestOptions,
 	type McpServerInfo,
 	type McpServerSpec,
 	type McpSubscription,
@@ -40,6 +41,7 @@ export {
 	type McpTransportEvents,
 	mcpRequiredCapabilities,
 	renderMcpContent,
+	resourceLinkLine,
 } from "./client.js";
 export {
 	loadMcpServerConfig,
@@ -58,9 +60,12 @@ export {
 	pluginServerRevocation,
 } from "./config.js";
 export {
+	type McpCachedPrompt,
 	type McpCatalogIdentity,
+	type McpResourceCount,
 	type McpServerCatalog,
 	mcpCatalogStale,
+	mcpPromptsStale,
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "./metadata-cache.js";
@@ -86,6 +91,24 @@ export {
 	type ProtocolFrame,
 	parseJsonRpcLine,
 } from "./protocol.js";
+export {
+	isMcpAppResource,
+	isMcpResourceNotFound,
+	MCP_PROMPT_LIST_CAP,
+	MCP_RESOURCE_LIST_CAP,
+	type McpCompletion,
+	type McpCompletionReference,
+	type McpPromptArgument,
+	type McpPromptDescriptor,
+	type McpPromptListing,
+	type McpPromptMessage,
+	type McpPromptResult,
+	type McpResourceContents,
+	type McpResourceDescriptor,
+	type McpResourceListing,
+	type McpResourceRead,
+	type McpResourceTemplateDescriptor,
+} from "./resources.js";
 export {
 	judgeMcpSurface,
 	type McpSurface,

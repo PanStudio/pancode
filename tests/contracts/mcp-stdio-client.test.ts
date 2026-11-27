@@ -293,7 +293,7 @@ describe("mcp stdio client", () => {
 		const media = await c.callTool("media", {});
 		deepStrictEqual(
 			media.content.map((block) => block.type),
-			["text", "image", "audio", "resource", "resource", "other"],
+			["text", "image", "audio", "resource", "resource_link", "other"],
 		);
 		strictEqual(
 			media.text,
@@ -302,7 +302,7 @@ describe("mcp stdio client", () => {
 				"[image image/png, 3 bytes]",
 				"[audio audio/wav, 4 bytes]",
 				"[resource file:///a.txt]\nalpha",
-				"[resource file:///b.txt]",
+				'[resource link file:///b.txt ("b")]',
 				"[unsupported content type hologram]",
 			].join("\n"),
 		);

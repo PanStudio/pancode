@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { escapeTerminalControls } from "../core/terminal-controls.js";
-import { mcpToolName } from "../core/tool-names.js";
+import { isMcpResourceCapability, mcpToolName } from "../core/tool-names.js";
 import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
 import type { McpClient, McpServerInfo } from "../domains/gateway/mcp/client.js";
 import type {
@@ -28,8 +28,14 @@ import {
 	trustMcpServer,
 	untrustMcpServer,
 } from "../domains/gateway/mcp/index.js";
-import { mcpCatalogStale, readMcpServerCatalog } from "../domains/gateway/mcp/metadata-cache.js";
+import {
+	type McpResourceCount,
+	mcpCatalogStale,
+	mcpPromptsStale,
+	readMcpServerCatalog,
+} from "../domains/gateway/mcp/metadata-cache.js";
 import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
+import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
 import { printError } from "./shared.js";
 
@@ -278,6 +284,8 @@ function offlineTools(
 	catalog: "shipped" | "cached" | "missing";
 	catalogStale?: true;
 	instructions?: string;
+	resources?: McpResourceCount | "unlisted";
+	prompts?: { count: number; stale?: true };
 } {
 	if (server.builtin !== undefined) {
 		return { tools: server.builtin.tools.map(({ name, annotations }) => ({ name, annotations })), catalog: "shipped" };
@@ -299,7 +307,50 @@ function offlineTools(
 		catalog: "cached",
 		...(mcpCatalogStale(catalog) ? { catalogStale: true as const } : {}),
 		...(catalog.instructions !== undefined ? { instructions: catalog.instructions } : {}),
+		...(catalog.resources === true ? { resources: catalog.resourceCount ?? ("unlisted" as const) } : {}),
+		...(catalog.prompts !== undefined
+			? {
+					prompts: {
+						count: catalog.prompts.prompts.length,
+						...(mcpPromptsStale(catalog) ? { stale: true as const } : {}),
+					},
+				}
+			: {}),
 	};
+}
+
+/** One bounded line of what a server offers besides tools; null when it offers neither resources nor prompts. */
+function resourcesAndPromptsLine(
+	resources: McpResourceCount | "unlisted" | undefined,
+	prompts: { count: number; stale?: true; truncated?: true } | undefined,
+): string | null {
+	const parts: string[] = [];
+	if (resources === "unlisted") parts.push("resources=declared (not listed yet)");
+	else if (resources !== undefined)
+		parts.push(
+			`resources=${resources.resources}${resources.truncated ? "+" : ""} templates=${resources.templates}${resources.truncated ? "+" : ""}`,
+		);
+	if (prompts !== undefined)
+		parts.push(`prompts=${prompts.count}${prompts.truncated ? "+" : ""}${prompts.stale ? " (stale)" : ""}`);
+	return parts.length > 0 ? `  ${parts.join(" ")}` : null;
+}
+
+/** `<id>:<prompt>` for every prompt a trusted server's recorded catalog lists; no server is launched. */
+export function recordedMcpPromptCommands(cwd: string): Set<string> {
+	const names = new Set<string>();
+	for (const server of resolveMcpServers({ cwd }).servers) {
+		if (server.trust.status !== "trusted" || server.builtin !== undefined) continue;
+		const catalog = readMcpServerCatalog({
+			projectRoot: canonicalProjectRoot(cwd),
+			scope: server.scope,
+			declarationPath: server.path,
+			serverId: server.id,
+			digest: server.digest,
+			cwd: server.cwd,
+		});
+		for (const prompt of catalog?.prompts?.prompts ?? []) names.add(`${server.id}:${prompt.name}`);
+	}
+	return names;
 }
 
 function surfaceLabel(surface: McpSurfaceReport): string {
@@ -353,6 +404,8 @@ export function mcpCommandOutput(
 						catalog: offline.catalog,
 						...(offline.catalogStale === true ? { catalogStale: true } : {}),
 						...(offline.instructions !== undefined ? { instructions: offline.instructions } : {}),
+						...(offline.resources !== undefined ? { resources: offline.resources } : {}),
+						...(offline.prompts !== undefined ? { prompts: offline.prompts } : {}),
 						...(surface !== null ? { surface } : {}),
 					};
 				}),
@@ -367,6 +420,8 @@ export function mcpCommandOutput(
 					block.push("  no recorded tool catalog; use pancode mcp list --refresh");
 				if (server.catalogStale === true)
 					block.push("  catalog stale: older than the server's own ttlMs; pancode mcp list --refresh lists it again");
+				const offers = resourcesAndPromptsLine(server.resources, server.prompts);
+				if (offers !== null) block.push(offers);
 				if (server.surface !== undefined) block.push(`  ${surfaceLabel(server.surface)}`);
 				if (server.instructions !== undefined) block.push(...instructionsLines(server.instructions));
 				return block;
@@ -637,6 +692,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 		}
 		const latestInfo = live.serverInfo() ?? info;
 		const listing = refreshed.listing;
+		const offers = await liveResourcesAndPrompts(source, live, id);
 		const surface = surfaceStatusOf(server, source.servedSurface(id));
 		const data = {
 			ok: results.every((result) => result.isError === false),
@@ -646,12 +702,14 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			...(latestInfo.instructions !== null ? { instructions: latestInfo.instructions } : {}),
 			tools,
 			truncated: listing?.truncated === true,
+			...offers.data,
 			...(surface !== null ? { surface } : {}),
 			calls: results,
 		};
 		const lines = [
-			mcpTestHeadline(id, latestInfo, tools.length, described),
+			mcpTestHeadline(id, latestInfo, tools.filter((tool) => !isMcpResourceCapability(tool.name)).length, described),
 			...tools.map((tool) => `  ${tool.capability} actionClass=${tool.actionClass}`),
+			...offers.lines,
 			...(surface !== null ? [`  ${surfaceLabel(surface)}`] : []),
 			...(latestInfo.instructions !== null ? instructionsLines(latestInfo.instructions) : []),
 			...results.map(
@@ -665,6 +723,59 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 	} finally {
 		await source.close();
 	}
+}
+
+const MCP_TEST_LISTED = 20;
+
+/**
+ * What `mcp test` shows of a launched server's resources and prompts: the
+ * counts, then the first entries of each by name. Every name is server text,
+ * so it is one bounded line with terminal controls escaped.
+ */
+async function liveResourcesAndPrompts(
+	source: Pick<McpCapabilitySource, "resourceServerIds" | "listResources">,
+	client: McpClient,
+	id: string,
+): Promise<{ lines: string[]; data: Record<string, unknown> }> {
+	const lines: string[] = [];
+	const data: Record<string, unknown> = {};
+	const named = (text: string): string => escapeTerminalControls(text.replace(/\s+/gu, " ")).slice(0, 160);
+	let resources: McpResourceCount | undefined;
+	let listed: Array<{ uri: string; name: string }> = [];
+	if (source.resourceServerIds().includes(id)) {
+		const answer = await source.listResources(id);
+		if (answer.ok) {
+			const { resources: entries, templates, truncated } = answer.value;
+			resources = { resources: entries.length, templates: templates.length, ...(truncated ? { truncated } : {}) };
+			listed = [
+				...entries.map((entry) => ({ uri: entry.uri, name: entry.name })),
+				...templates.map((entry) => ({ uri: entry.uriTemplate, name: entry.name })),
+			];
+			data.resources = { ...resources, listed: listed.slice(0, MCP_TEST_LISTED) };
+		} else data.resources = { error: answer.error };
+	}
+	let prompts: string[] = [];
+	let promptCount: { count: number; truncated?: true } | undefined;
+	if (client.serverInfo()?.capabilities.prompts !== undefined) {
+		try {
+			const listing = await client.listPrompts();
+			prompts = listing.prompts.map((prompt) => prompt.name);
+			promptCount = { count: prompts.length, ...(listing.truncated ? { truncated: true as const } : {}) };
+			data.prompts = { ...promptCount, listed: prompts.slice(0, MCP_TEST_LISTED) };
+		} catch (error) {
+			data.prompts = { error: error instanceof Error ? error.message : String(error) };
+			lines.push(`  prompts: ${named(String((data.prompts as { error: unknown }).error))}`);
+		}
+	}
+	const line = resourcesAndPromptsLine(resources, promptCount);
+	if (line !== null) lines.unshift(line);
+	if (typeof data.resources === "object" && data.resources !== null && "error" in data.resources)
+		lines.push(`  resources: ${named(String((data.resources as { error: unknown }).error))}`);
+	for (const entry of listed.slice(0, MCP_TEST_LISTED)) lines.push(`  @${id}:${named(entry.uri)}`);
+	if (listed.length > MCP_TEST_LISTED) lines.push(`  ... ${listed.length - MCP_TEST_LISTED} more resources`);
+	for (const prompt of prompts.slice(0, MCP_TEST_LISTED)) lines.push(`  /${id}:${named(prompt)}`);
+	if (prompts.length > MCP_TEST_LISTED) lines.push(`  ... ${prompts.length - MCP_TEST_LISTED} more prompts`);
+	return { lines, data };
 }
 
 interface McpSurfaceApprovalOptions extends McpTrustOptions {

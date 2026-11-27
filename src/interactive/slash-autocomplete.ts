@@ -119,7 +119,20 @@ export interface PromptCommandTemplate {
 	unavailable?: string;
 	/** Rendered for the operator on submit; the model never sees it. */
 	displayOnly?: boolean;
+	/** The MCP server whose prompt this row runs, rather than a template file. */
+	mcpServer?: string;
 }
+
+/** Values for the argument under the cursor of a command no built-in grammar owns, from `start` in `args`. */
+export type PromptArgumentSource = (request: {
+	command: string;
+	args: string;
+	cursor: number;
+	signal: AbortSignal;
+}) => Promise<{
+	start: number;
+	values: ReadonlyArray<{ id: string; value: string; label: string; description: string; appendSpace: boolean }>;
+} | null>;
 
 export interface SlashAutocompleteOptions {
 	extensionCommands?: () => ReadonlyArray<ExtensionCommandRow>;
@@ -146,6 +159,8 @@ export interface SlashAutocompleteOptions {
 	unavailable?: (command: string) => string | undefined;
 	/** Built-in commands this session leaves out of the palette; typed in full they still answer. */
 	hidden?: (command: string) => boolean;
+	/** Argument values for MCP prompt commands. */
+	promptArguments?: PromptArgumentSource;
 }
 
 /** How many of the operator's most-used commands lead a bare `/`. */
@@ -447,6 +462,7 @@ class PancodeAutocompleteProvider implements AutocompleteProvider {
 		private commandCounts: () => Readonly<Record<string, number>> = () => ({}),
 		private unavailable: (command: string) => string | undefined = () => undefined,
 		private hidden: (command: string) => boolean = () => false,
+		private promptArguments?: PromptArgumentSource,
 	) {
 		this.files = new CombinedAutocompleteProvider([], basePath, fdPath);
 		this.fileReferences = fileReferenceSource ?? createFileReferenceCompletionSource({ basePath });
@@ -486,9 +502,11 @@ class PancodeAutocompleteProvider implements AutocompleteProvider {
 				label: rowLabel(name, hint),
 				effectDescription: template.unavailable
 					? `Prompt template unavailable: ${template.unavailable}`
-					: template.displayOnly
-						? `Reference card shown to you; nothing is sent to the model: ${does}`
-						: `Prompt template: ${summary}`,
+					: template.mcpServer !== undefined
+						? `MCP prompt from server ${template.mcpServer}; its messages are sent as your turn: ${summary}`
+						: template.displayOnly
+							? `Reference card shown to you; nothing is sent to the model: ${does}`
+							: `Prompt template: ${summary}`,
 				path: `/${name}`,
 				usage: hint ? `/${name} ${hint}` : `/${name}`,
 				...(template.unavailable ? { nextAction: "Unavailable until the package reference resolves." } : {}),
@@ -652,7 +670,32 @@ class PancodeAutocompleteProvider implements AutocompleteProvider {
 		const ref = commandReference({ includeHidden: true }).find(
 			(candidate) => candidate.name.toLowerCase() === context.command.toLowerCase(),
 		);
-		if (!ref?.args) return null;
+		if (!ref?.args) {
+			if (ref || !this.promptArguments || cursorCol < context.argsStart) return null;
+			const answer = await this.promptArguments({
+				command: context.command,
+				args: context.line.slice(context.argsStart),
+				cursor: cursorCol - context.argsStart,
+				signal: options.signal,
+			});
+			if (!answer || generation !== this.generation || options.signal.aborted) return null;
+			const start = context.argsStart + answer.start;
+			return {
+				prefix: context.line.slice(start, cursorCol),
+				items: answer.values.map(
+					(value): SlashCompletionItem => ({
+						id: value.id,
+						kind: "value",
+						value: value.value,
+						label: value.label,
+						description: value.description,
+						effectDescription: value.description,
+						replacement: { start, end: cursorCol },
+						appendSpace: value.appendSpace,
+					}),
+				),
+			};
+		}
 		const argumentText = context.line.slice(context.argsStart);
 		const argumentCursor = Math.max(0, cursorCol - context.argsStart);
 		const grammar = completionGrammar(ref.name, ref.args);
@@ -901,5 +944,6 @@ export function createSlashCommandAutocompleteProvider(options: SlashAutocomplet
 		options.commandCounts,
 		options.unavailable,
 		options.hidden,
+		options.promptArguments,
 	);
 }

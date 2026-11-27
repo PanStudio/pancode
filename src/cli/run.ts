@@ -363,6 +363,9 @@ async function headlessSlashPreflight(
 	const { expandPromptTemplateInput, loadPromptTemplates } = await import("../domains/resources/index.js");
 	const templates = loadPromptTemplates({ cwd: process.cwd() });
 	if (!templates.items.some((template) => template.name === command.token)) {
+		// `/<id>:<prompt>` names a trusted MCP server's recorded prompt; the boot path asks the server for it.
+		const { recordedMcpPromptCommands } = await import("./mcp.js");
+		if (recordedMcpPromptCommands(process.cwd()).has(command.token)) return null;
 		return { refusal: `/${command.token} is not a command. Type /help for the list.` };
 	}
 	// A display-only template is for the operator, so it is answered here and

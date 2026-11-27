@@ -3,7 +3,7 @@
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { isSameOrDescendant } from "../../core/path-containment.js";
-import { isMcpToolName } from "../../core/tool-names.js";
+import { isMcpResourceCapability, isMcpToolName } from "../../core/tool-names.js";
 import {
 	canonicalProjectRoot,
 	type McpBuiltinSource,
@@ -85,6 +85,11 @@ export function resolveWorkerMcpAdmission(input: WorkerMcpAdmissionInput): Worke
 			digest: declaration.digest,
 			cwd: declaration.cwd,
 		});
+		if (isMcpResourceCapability(owner.tool) && catalog !== null && catalog.resources !== true) {
+			throw new Error(
+				`dispatch: admission denied: ${who} names MCP capability ${name}, but MCP server '${declaration.id}' declares no resources in its recorded catalog; list it again with \`pancode mcp test ${declaration.id}\` if it now serves them`,
+			);
+		}
 		const recorded = catalog?.tools.find((tool) => tool.name === owner.tool);
 		tools.push({
 			serverId: declaration.id,

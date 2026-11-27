@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { isMcpResourceCapability } from "../../../core/tool-names.js";
 import type { McpToolDescriptor } from "./client.js";
 import type { McpTrustActionClass, ResolvedMcpServer } from "./trust.js";
 
@@ -67,6 +68,8 @@ export function mcpToolActionClass(
 ): McpTrustActionClass {
 	if (server.trust.status !== "trusted") return "unknown";
 	if (server.scope === "client") return "unknown";
+	// Listing and reading resources has no side effect on the server (server/resources).
+	if (isMcpResourceCapability(tool.name)) return "read";
 	const override = Object.hasOwn(server.toolActionClasses, tool.name) ? server.toolActionClasses[tool.name] : undefined;
 	if (override !== undefined) return override;
 	// A project or plugin file can name its server slurm too; only the

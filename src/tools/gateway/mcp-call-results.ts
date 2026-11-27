@@ -221,12 +221,14 @@ export function mcpCallFailureText(declaration: GatewayMcpServer, error: unknown
 /**
  * The result text with every audio block and binary resource offloaded: the
  * base64 is written to the session's offload directory and the block's line
- * names its type, size and that file. Null when nothing was offloaded, so the
- * client's own rendering stands.
+ * names its type, size and that file; with `linkLine`, each resource link
+ * names how to read it. Null when neither applies, so the client's own
+ * rendering stands.
  */
 export function offloadedBinaryText(
 	result: McpToolCallResult,
 	context: ToolInvokeOptions | undefined,
+	linkLine?: (block: Extract<McpContentBlock, { type: "resource_link" }>) => string,
 ): { text: string; truncated: boolean } | null {
 	const pointers = new Map<McpContentBlock, string>();
 	for (const block of result.content) {
@@ -235,8 +237,14 @@ export function offloadedBinaryText(
 		const written = writeToolOffload(base64, context, MCP_BINARY_OFFLOAD_BYTES);
 		if (written !== null) pointers.set(block, offloadPointer(written));
 	}
-	if (pointers.size === 0) return null;
-	return renderMcpContent(result.content, DEFAULT_RESULT_TEXT_BYTES, (block) => pointers.get(block) ?? null);
+	const links = linkLine !== undefined && result.content.some((block) => block.type === "resource_link");
+	if (pointers.size === 0 && !links) return null;
+	return renderMcpContent(
+		result.content,
+		DEFAULT_RESULT_TEXT_BYTES,
+		(block) => pointers.get(block) ?? null,
+		links ? linkLine : undefined,
+	);
 }
 
 export function imageBlocks(result: McpToolCallResult): ImageContent[] {

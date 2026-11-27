@@ -37,6 +37,25 @@ import {
 	MCP_UNSUPPORTED_PROTOCOL_VERSION,
 	McpError,
 } from "./protocol.js";
+import {
+	MCP_PROMPT_LIST_CAP,
+	MCP_RESOURCE_LIST_CAP,
+	type McpCompletion,
+	type McpCompletionReference,
+	type McpPromptDescriptor,
+	type McpPromptListing,
+	type McpPromptResult,
+	type McpResourceDescriptor,
+	type McpResourceListing,
+	type McpResourceRead,
+	type McpResourceTemplateDescriptor,
+	parseCompletion,
+	parsePromptDescriptor,
+	parsePromptResult,
+	parseResourceDescriptor,
+	parseResourceRead,
+	parseResourceTemplate,
+} from "./resources.js";
 import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "./stdio-transport.js";
 import {
 	cutUtf8,
@@ -62,6 +81,7 @@ export {
 	type McpToolCallResult,
 	type McpToolDescriptor,
 	renderMcpContent,
+	resourceLinkLine,
 } from "./tool-results.js";
 export type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
@@ -208,6 +228,22 @@ export interface McpClient {
 	initialize(signal?: AbortSignal): Promise<McpServerInfo>;
 	listTools(signal?: AbortSignal): Promise<McpToolListing>;
 	callTool(name: string, args: Record<string, unknown>, options?: McpCallToolOptions): Promise<McpToolCallResult>;
+	/** `resources/list` and `resources/templates/list`, paged, sharing MCP_RESOURCE_LIST_CAP. */
+	listResources(signal?: AbortSignal): Promise<McpResourceListing>;
+	/**
+	 * `resources/read` for one uri. `extensions` names the client extensions
+	 * this one read declares in its envelope (modern era); a plain read declares none.
+	 */
+	readResource(uri: string, options?: McpRequestOptions): Promise<McpResourceRead>;
+	listPrompts(signal?: AbortSignal): Promise<McpPromptListing>;
+	getPrompt(name: string, args: Record<string, string>, options?: McpRequestOptions): Promise<McpPromptResult>;
+	/** `completion/complete`; `context` carries the arguments already chosen. */
+	complete(
+		ref: McpCompletionReference,
+		argument: { name: string; value: string },
+		context?: Record<string, string>,
+		signal?: AbortSignal,
+	): Promise<McpCompletion>;
 	/** Resolves with the teardown outcome; an incomplete teardown is flagged there and in state(), not thrown. */
 	close(): Promise<McpTeardownOutcome>;
 	/** Synchronous exit backstop. Signals only a currently owned group; use close() for awaited teardown. */
@@ -217,6 +253,11 @@ export interface McpClient {
 	/** Set by `notifications/tools/list_changed`, legacy or on a listen stream; cleared by acknowledgeToolsChanged. */
 	toolsChanged(): boolean;
 	acknowledgeToolsChanged(): void;
+	/** Set by a prompts or resources list_changed, legacy or on the listen stream; cleared by acknowledgeListChanged. */
+	listChanged(primitive: McpListedPrimitive): boolean;
+	acknowledgeListChanged(primitive: McpListedPrimitive): void;
+	/** Called on each prompts or resources list_changed, in either era. Returns the unregister. */
+	onListChanged(handler: (primitive: McpListedPrimitive) => void): () => void;
 	notificationCount(): number;
 	/**
 	 * Receive every notification of one method that no listen stream claims,
@@ -227,6 +268,14 @@ export interface McpClient {
 	subscribe(filter: McpSubscriptionFilter, handler: (method: string, params: unknown) => void): McpSubscription;
 	/** Bounded tail of everything the server wrote to stderr. */
 	stderrTail(): string;
+}
+
+export type McpListedPrimitive = "prompts" | "resources";
+
+export interface McpRequestOptions {
+	signal?: AbortSignal;
+	/** Client extensions declared on this one request (modern era), such as a skills read. */
+	extensions?: Record<string, unknown>;
 }
 
 interface PendingRequest {
@@ -473,6 +522,28 @@ export function createMcpProtocolClient(
 	let outputSchemas = new Map<string, Record<string, unknown>>();
 	let notifications = 0;
 	let toolsChangedFlag = false;
+	/** Prompts or resources the server said changed since the gateway last acknowledged them. */
+	const primitivesChanged = new Set<McpListedPrimitive>();
+	const listChangedHandlers = new Set<(primitive: McpListedPrimitive) => void>();
+
+	const noteListChanged = (method: string): void => {
+		if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+		const primitive: McpListedPrimitive | null =
+			method === "notifications/prompts/list_changed"
+				? "prompts"
+				: method === "notifications/resources/list_changed"
+					? "resources"
+					: null;
+		if (primitive === null) return;
+		primitivesChanged.add(primitive);
+		for (const handler of listChangedHandlers) {
+			try {
+				handler(primitive);
+			} catch {
+				// A listener's failure never reaches the protocol.
+			}
+		}
+	};
 
 	/** The error every later request gets once the client cannot serve it. */
 	const closedError = (): McpError => failure ?? new McpError("closed", `mcp server ${id} is closed`);
@@ -642,7 +713,7 @@ export function createMcpProtocolClient(
 			routeSubscription(meta[MCP_META_SUBSCRIPTION_ID], method, params);
 			return;
 		}
-		if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
+		noteListChanged(method);
 		if (method === "notifications/progress") routeProgress(params);
 		for (const handler of notificationHandlers.get(method) ?? []) {
 			try {
@@ -659,18 +730,19 @@ export function createMcpProtocolClient(
 	 * and the `tasks/*` methods), so a server never hands a task to a request
 	 * that cannot follow it. Nothing is added on the legacy path.
 	 */
-	const withEnvelope = (method: string, params: unknown): unknown => {
+	const withEnvelope = (method: string, params: unknown, declared?: Record<string, unknown>): unknown => {
 		if (era !== "modern" && method !== "server/discover") return params;
 		const base = isRecord(params) ? params : {};
 		const meta = isRecord(base._meta) ? base._meta : {};
 		const drivesTasks = method === "tools/call" || method.startsWith("tasks/");
+		const extensions = { ...(drivesTasks ? { [MCP_TASKS_EXTENSION]: {} } : {}), ...declared };
 		return {
 			...base,
 			_meta: {
 				...meta,
 				[MCP_META_PROTOCOL_VERSION]: MCP_MODERN_PROTOCOL_VERSION,
 				[MCP_META_CLIENT_INFO]: { name: MCP_CLIENT_NAME, version: clientVersion },
-				[MCP_META_CLIENT_CAPABILITIES]: drivesTasks ? { extensions: { [MCP_TASKS_EXTENSION]: {} } } : {},
+				[MCP_META_CLIENT_CAPABILITIES]: Object.keys(extensions).length > 0 ? { extensions } : {},
 			},
 		};
 	};
@@ -681,9 +753,10 @@ export function createMcpProtocolClient(
 		timeoutMs: number,
 		signal?: AbortSignal,
 		onId?: (requestId: number) => void,
+		extensions?: Record<string, unknown>,
 	): Promise<unknown> =>
 		new Promise<unknown>((resolve, reject) => {
-			const params = withEnvelope(method, rawParams);
+			const params = withEnvelope(method, rawParams, extensions);
 			if (signal?.aborted) {
 				reject(new McpError("aborted", `${method} aborted before it was sent`));
 				return;
@@ -852,16 +925,20 @@ export function createMcpProtocolClient(
 	};
 
 	/**
-	 * A modern server that announces tools.listChanged is asked for the change
-	 * stream at once (MCP 2026-07-28 basic/patterns/subscriptions). The stream
-	 * lives as long as this client; a restarted server gets a new client, which
-	 * listens again.
+	 * A modern server is asked for the change stream at once, for each of
+	 * tools, prompts and resources whose capability announces listChanged
+	 * (MCP 2026-07-28 basic/patterns/subscriptions). The stream lives as long
+	 * as this client; a restarted server gets a new client, which listens again.
 	 */
-	const listenForToolChanges = (capabilities: Record<string, unknown>): void => {
-		if (!isRecord(capabilities.tools) || capabilities.tools.listChanged !== true) return;
-		const stream = subscribe({ toolsListChanged: true }, (method) => {
-			if (method === "notifications/tools/list_changed") toolsChangedFlag = true;
-		});
+	const listenForListChanges = (capabilities: Record<string, unknown>): void => {
+		const announces = (key: string): boolean => isRecord(capabilities[key]) && capabilities[key].listChanged === true;
+		const filter: McpSubscriptionFilter = {
+			...(announces("tools") ? { toolsListChanged: true } : {}),
+			...(announces("prompts") ? { promptsListChanged: true } : {}),
+			...(announces("resources") ? { resourcesListChanged: true } : {}),
+		};
+		if (Object.keys(filter).length === 0) return;
+		const stream = subscribe(filter, noteListChanged);
 		stream.acknowledged.catch(() => {
 			// A server that refuses or ends the stream still serves calls; the next discovery lists again.
 		});
@@ -935,7 +1012,7 @@ export function createMcpProtocolClient(
 				era = "modern";
 				info = discovered;
 				if (status === "starting") status = "ready";
-				listenForToolChanges(discovered.capabilities);
+				listenForListChanges(discovered.capabilities);
 				return discovered;
 			}
 			if (probeId !== null) pending.get(probeId)?.abandon();
@@ -967,37 +1044,182 @@ export function createMcpProtocolClient(
 		await initialize(signal);
 	};
 
+	/**
+	 * Page through one list method, keeping at most `cap` entries; each page
+	 * carries its own freshness and the listing is as fresh as its stalest
+	 * part. A legacy server's method-not-found reads as an empty list when `optional`.
+	 */
+	const pagedList = async <T>(
+		method: string,
+		key: string,
+		parse: (value: unknown) => T | McpError,
+		cap: number,
+		signal: AbortSignal | undefined,
+		optional = false,
+	): Promise<{ items: T[]; truncated: boolean; ttlMs?: number }> => {
+		const items: T[] = [];
+		let cursor: string | undefined;
+		let pages = 0;
+		let ttlMs = era === "modern" ? (info?.ttlMs ?? 0) : undefined;
+		const finish = (truncated: boolean) => ({ items, truncated, ...(ttlMs !== undefined ? { ttlMs } : {}) });
+		for (;;) {
+			pages += 1;
+			let result: unknown;
+			try {
+				result = await request(method, cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal);
+			} catch (error) {
+				const missing =
+					error instanceof McpError &&
+					error.code === "server" &&
+					isRecord(error.data) &&
+					error.data.code === JSON_RPC_METHOD_NOT_FOUND;
+				if (optional && pages === 1 && missing) return finish(false);
+				throw error;
+			}
+			const page = isRecord(result) ? result[key] : undefined;
+			if (!isRecord(result) || !Array.isArray(page)) {
+				throw new McpError("protocol", `${method} result lacks a ${key} array`);
+			}
+			if (ttlMs !== undefined) ttlMs = Math.min(ttlMs, freshnessOf(result.ttlMs));
+			for (const entry of page) {
+				if (items.length >= cap) return finish(true);
+				const parsed = parse(entry);
+				if (parsed instanceof McpError) throw parsed;
+				items.push(parsed);
+			}
+			const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
+			if (next === undefined) return finish(false);
+			if (items.length >= cap || pages >= MCP_TOOL_LIST_PAGE_CAP) return finish(true);
+			cursor = next;
+		}
+	};
+
 	const listTools = (signal?: AbortSignal): Promise<McpToolListing> =>
 		withDiscoverySignal(signal, async () => {
 			await ensureReady(signal);
-			const tools: McpToolDescriptor[] = [];
-			let cursor: string | undefined;
-			let pages = 0;
-			// Each page carries its own freshness; the listing is as fresh as its stalest part.
-			let ttlMs = era === "modern" ? (info?.ttlMs ?? 0) : undefined;
-			const finish = (truncated: boolean): McpToolListing => {
-				outputSchemas = new Map(tools.flatMap((tool) => (tool.outputSchema ? [[tool.name, tool.outputSchema]] : [])));
-				return { tools, truncated, ...(ttlMs !== undefined ? { ttlMs } : {}) };
-			};
-			for (;;) {
-				pages += 1;
-				const result = await request("tools/list", cursor === undefined ? {} : { cursor }, requestTimeoutMs, signal);
-				if (!isRecord(result) || !Array.isArray(result.tools)) {
-					throw new McpError("protocol", "tools/list result lacks a tools array");
-				}
-				if (ttlMs !== undefined) ttlMs = Math.min(ttlMs, freshnessOf(result.ttlMs));
-				for (const entry of result.tools) {
-					if (tools.length >= MCP_TOOL_LIST_CAP) return finish(true);
-					const descriptor = parseToolDescriptor(entry);
-					if (descriptor instanceof McpError) throw descriptor;
-					tools.push(descriptor);
-				}
-				const next = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
-				if (next === undefined) return finish(false);
-				if (tools.length >= MCP_TOOL_LIST_CAP || pages >= MCP_TOOL_LIST_PAGE_CAP) return finish(true);
-				cursor = next;
-			}
+			const listed = await pagedList("tools/list", "tools", parseToolDescriptor, MCP_TOOL_LIST_CAP, signal);
+			const tools = listed.items;
+			outputSchemas = new Map(tools.flatMap((tool) => (tool.outputSchema ? [[tool.name, tool.outputSchema]] : [])));
+			return { tools, truncated: listed.truncated, ...(listed.ttlMs !== undefined ? { ttlMs: listed.ttlMs } : {}) };
 		});
+
+	const listResources = (signal?: AbortSignal): Promise<McpResourceListing> =>
+		withDiscoverySignal(signal, async () => {
+			await ensureReady(signal);
+			const resources = await pagedList<McpResourceDescriptor>(
+				"resources/list",
+				"resources",
+				parseResourceDescriptor,
+				MCP_RESOURCE_LIST_CAP,
+				signal,
+			);
+			const templates = await pagedList<McpResourceTemplateDescriptor>(
+				"resources/templates/list",
+				"resourceTemplates",
+				parseResourceTemplate,
+				MCP_RESOURCE_LIST_CAP - resources.items.length,
+				signal,
+				true,
+			);
+			const ttls = [resources.ttlMs, templates.ttlMs].filter((ttl): ttl is number => ttl !== undefined);
+			return {
+				resources: resources.items,
+				templates: templates.items,
+				truncated: resources.truncated || templates.truncated,
+				...(ttls.length > 0 ? { ttlMs: Math.min(...ttls) } : {}),
+			};
+		});
+
+	const listPrompts = (signal?: AbortSignal): Promise<McpPromptListing> =>
+		withDiscoverySignal(signal, async () => {
+			await ensureReady(signal);
+			const prompts = await pagedList<McpPromptDescriptor>(
+				"prompts/list",
+				"prompts",
+				parsePromptDescriptor,
+				MCP_PROMPT_LIST_CAP,
+				signal,
+			);
+			return {
+				prompts: prompts.items,
+				truncated: prompts.truncated,
+				...(prompts.ttlMs !== undefined ? { ttlMs: prompts.ttlMs } : {}),
+			};
+		});
+
+	/**
+	 * One request that may answer `input_required` (resources/read, prompts/get):
+	 * retried with the server's requestState until it completes, inside one
+	 * timeout measured from the first send.
+	 */
+	const requestWithRetries = async (
+		method: string,
+		first: Record<string, unknown>,
+		options: McpRequestOptions,
+	): Promise<unknown> => {
+		const { signal, extensions } = options;
+		if (signal?.aborted) throw new McpError("aborted", `${method} aborted before it was sent`);
+		await ensureReady(signal);
+		const timeoutMs = clampTimerDelayMs(requestTimeoutMs);
+		const startedAt = performance.now();
+		let params = first;
+		for (let round = 1; ; round += 1) {
+			let budget = timeoutMs;
+			if (round > 1 && timeoutMs > 0) {
+				budget = Math.ceil(startedAt + timeoutMs - performance.now());
+				if (budget <= 0) throw new McpError("timeout", `${method} timed out after ${timeoutMs}ms`);
+			}
+			const result = await request(method, params, budget, signal, undefined, extensions);
+			if (era !== "modern" || !isRecord(result) || result.resultType === undefined || result.resultType === "complete") {
+				return result;
+			}
+			if (result.resultType !== "input_required") {
+				throw new McpError(
+					"protocol",
+					`${method} returned resultType ${serverText(JSON.stringify(result.resultType))}, which this client does not handle`,
+				);
+			}
+			params = answerInputRequired(method, params, result, round);
+		}
+	};
+
+	const readResource = async (uri: string, options: McpRequestOptions = {}): Promise<McpResourceRead> => {
+		const result = await requestWithRetries("resources/read", { uri }, options);
+		const contents = parseResourceRead(result);
+		if (contents instanceof McpError) throw contents;
+		return {
+			contents,
+			...(era === "modern" && isRecord(result) ? { ttlMs: freshnessOf(result.ttlMs) } : {}),
+		};
+	};
+
+	const getPrompt = async (
+		name: string,
+		args: Record<string, string>,
+		options: McpRequestOptions = {},
+	): Promise<McpPromptResult> => {
+		const result = await requestWithRetries("prompts/get", { name, arguments: args }, options);
+		const parsed = parsePromptResult(result);
+		if (parsed instanceof McpError) throw parsed;
+		return parsed;
+	};
+
+	const complete = async (
+		ref: McpCompletionReference,
+		argument: { name: string; value: string },
+		context?: Record<string, string>,
+		signal?: AbortSignal,
+	): Promise<McpCompletion> => {
+		await ensureReady(signal);
+		const params = {
+			ref,
+			argument,
+			...(context !== undefined && Object.keys(context).length > 0 ? { context: { arguments: context } } : {}),
+		};
+		const parsed = parseCompletion(await request("completion/complete", params, requestTimeoutMs, signal));
+		if (parsed instanceof McpError) throw parsed;
+		return parsed;
+	};
 
 	/** Route this call's progress notifications to its caller while the call runs (basic/utilities/progress). */
 	const trackProgress = (onProgress: (update: McpProgressUpdate) => void): { token: string; release(): void } => {
@@ -1317,6 +1539,11 @@ export function createMcpProtocolClient(
 		initialize,
 		listTools,
 		callTool,
+		listResources,
+		readResource,
+		listPrompts,
+		getPrompt,
+		complete,
 		close,
 		killOwnedOnExit: () => transport.killOwnedOnExit(),
 		state: () => {
@@ -1331,8 +1558,18 @@ export function createMcpProtocolClient(
 		acknowledgeToolsChanged: () => {
 			toolsChangedFlag = false;
 		},
+		listChanged: (primitive) => primitivesChanged.has(primitive),
+		acknowledgeListChanged: (primitive) => {
+			primitivesChanged.delete(primitive);
+		},
 		notificationCount: () => notifications,
 		onNotification,
+		onListChanged: (handler) => {
+			listChangedHandlers.add(handler);
+			return () => {
+				listChangedHandlers.delete(handler);
+			};
+		},
 		subscribe,
 		stderrTail: () => transport.stderrTail(),
 	};
