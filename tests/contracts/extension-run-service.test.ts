@@ -11,6 +11,7 @@ import {
 	type ExtensionRunCeilings,
 	type ExtensionRunError,
 } from "../../src/domains/extensions/services/runs.js";
+import { createExtensionRequestScope } from "../../src/domains/extensions/services/scope.js";
 
 interface Call {
 	file: string;
@@ -135,9 +136,9 @@ describe("extension run service", () => {
 
 	it("ends a run when the starting request ends", async () => {
 		const h = harness();
-		const request = new AbortController();
-		const { id } = await h.service.start({ ...base, prompt: "hang" }, request.signal);
-		request.abort();
+		const scope = createExtensionRequestScope();
+		const { id } = await h.service.start({ ...base, prompt: "hang" }, scope);
+		await scope.end();
 		assert.equal((await h.service.wait(id)).outcome, "canceled");
 		h.cleanup();
 	});

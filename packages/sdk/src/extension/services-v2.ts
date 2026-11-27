@@ -56,8 +56,10 @@ export interface ExtensionRuns {
 
 export interface ExtensionWorktree {
 	id: string;
-	/** Absolute path, inside this extension's store directory. */
+	/** The worktree's root, an absolute path inside this extension's store directory. */
 	path: string;
+	/** Where the workspace sits in the worktree: `path` itself unless the workspace is a subdirectory of its repository. */
+	cwd: string;
 	head: string;
 	kept: boolean;
 }
@@ -70,8 +72,8 @@ export interface ExtensionGitResult {
 
 export interface ExtensionWorktrees {
 	/**
-	 * A detached worktree of the workspace's repository at `base` (default HEAD). `copy` names workspace files to copy
-	 * in as they are on disk. Without `keep` the worktree is removed when the request ends.
+	 * A detached worktree of the workspace's repository at `base` (default HEAD). `copy` names workspace-relative regular
+	 * files to copy in as they are on disk. Without `keep` the worktree is removed when the request ends.
 	 */
 	create(options?: { base?: string; copy?: ReadonlyArray<string>; keep?: boolean }): Promise<ExtensionWorktree>;
 	list(): Promise<ExtensionWorktree[]>;
@@ -81,8 +83,17 @@ export interface ExtensionWorktrees {
 	checkout(id: string, commit: string): Promise<void>;
 	/** Remove untracked and ignored files except the `keep` entries. */
 	clean(id: string, options?: { keep?: ReadonlyArray<string> }): Promise<void>;
-	/** Commit everything with the host identity, except untracked `leaveOut` paths; HEAD afterwards. */
-	commit(id: string, message: string, options?: { leaveOut?: ReadonlyArray<string> }): Promise<{ head: string }>;
+	/** Copy workspace files in again, over whatever the worktree holds there. */
+	copy(id: string, paths: ReadonlyArray<string>): Promise<void>;
+	/**
+	 * Commit everything, untracked files included, with the host identity, except the untracked files `leaveOut` names
+	 * (an entry ending in `/` covers a directory). HEAD afterwards, unchanged when nothing changed.
+	 */
+	commit(
+		id: string,
+		message: string,
+		options?: { leaveOut?: ReadonlyArray<string> },
+	): Promise<{ head: string; leftOut: string[] }>;
 	/** Refs under `refs/heads/pancode/<extension id>/` only. */
 	refs: {
 		get(name: string): Promise<string | null>;
@@ -100,6 +111,8 @@ export interface ExtensionCheck {
 	timeoutMs: number;
 	/** A sweep's runs; check `<id>/<run>` names one. */
 	runs?: ReadonlyArray<string>;
+	/** Workspace-relative files the check's command names, the inputs a worktree needs as the workspace holds them. */
+	inputs: ReadonlyArray<string>;
 }
 
 export interface ExtensionCheckResult {

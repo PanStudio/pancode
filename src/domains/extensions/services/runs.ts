@@ -17,6 +17,7 @@ import type {
 import { runCommandVector, type SafeCommandResult } from "../../../core/safe-exec.js";
 import { withContainedYoloPin } from "../../safety/autonomy.js";
 import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "./run-env.js";
+import type { ExtensionRequestScope } from "./scope.js";
 
 export interface ExtensionRunCeilings {
 	maxConcurrent: number;
@@ -37,15 +38,15 @@ export interface ExtensionRunServiceDeps {
 	envPolicy: RunEnvPolicy;
 	/** Why a yolo run may not start here, or null when it may. */
 	yoloRefusal(): string | null;
-	resolvePlace(place: ExtensionWorkPlace): ExtensionRunPlace;
+	resolvePlace(place: ExtensionWorkPlace): ExtensionRunPlace | Promise<ExtensionRunPlace>;
 	/** Where answer files live while their run does. */
 	tempRoot: string;
 	spawn?: typeof runCommandVector;
 }
 
 export interface ExtensionRunService {
-	/** `signal` is the starting request's: when it aborts, the run is ended. */
-	start(request: ExtensionRunRequest, signal?: AbortSignal): Promise<{ id: string }>;
+	/** The run belongs to `scope`: it is ended when the scope ends, which waits for it to settle. */
+	start(request: ExtensionRunRequest, scope?: ExtensionRequestScope): Promise<{ id: string }>;
 	frames(id: string, options?: { cursor?: number; limit?: number; waitMs?: number }): Promise<ExtensionRunFrames>;
 	wait(id: string): Promise<ExtensionRunEnd>;
 	cancel(id: string): Promise<void>;
@@ -241,8 +242,10 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 	};
 
 	return {
-		async start(request, signal) {
+		async start(request, scope) {
+			const signal = scope?.signal;
 			const run = clampRequest(request, deps.ceilings);
+			const place = await deps.resolvePlace(request.cwd ?? "workspace");
 			if (active >= deps.ceilings.maxConcurrent)
 				throw new ExtensionRunError("busy", `runs.start: ${deps.ceilings.maxConcurrent} runs are already running`);
 			if (run.autonomy === "yolo") {
@@ -250,7 +253,6 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				if (refusal !== null) throw new ExtensionRunError("refused", refusal);
 			}
 			if (signal?.aborted === true) throw new ExtensionRunError("refused", "runs.start: the request has ended");
-			const place = deps.resolvePlace(request.cwd ?? "workspace");
 			const id = randomUUID();
 			let answersDir: string | null = null;
 			let answersPath: string | null = null;
@@ -325,6 +327,7 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				wake(record);
 				return record.end;
 			})();
+			scope?.defer(() => record.settled);
 			return { id };
 		},
 
