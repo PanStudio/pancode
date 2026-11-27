@@ -119,7 +119,7 @@ function callbackOrPasted(
 
 /**
  * OpenAI's Codex client accepts only the fixed http://localhost:1455/auth/callback
- * redirect, and pi-ai 1.4.0 continues through its pasted-URL prompt when it
+ * redirect, and pi-ai 1.5.2 continues through its pasted-URL prompt when it
  * cannot bind that port. PanCode binds it first, once the operator picks browser
  * login, and answers that prompt with the redirect; pi still checks the state
  * and exchanges the code. Recheck this handoff on every Pi upgrade.
@@ -159,7 +159,7 @@ export async function withCodexCallbackHandoff(
 	}
 }
 
-// Mirrors pi-ai 1.4.0 dist/auth/oauth/anthropic.js, unchanged since 1.1.0. Recheck these on every Pi upgrade.
+// Mirrors pi-ai 1.5.2 dist/auth/oauth/anthropic.js. Recheck these on every Pi upgrade.
 const ANTHROPIC_CLIENT_ID = atob("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
 const ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
