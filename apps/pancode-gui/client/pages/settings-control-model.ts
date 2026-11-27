@@ -74,6 +74,7 @@ export function emptyMeaning(control: SettingControl): string {
 	if (["chat.model", "fleet.default.model", "context.memory.model"].includes(control.path))
 		return "Use connection default";
 	if (control.kind === "list") return "None";
+	if (control.kind === "json") return "Not set";
 	return control.optional ? "Automatic" : "Not set";
 }
 
