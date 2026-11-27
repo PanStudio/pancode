@@ -78,6 +78,44 @@ function requestedNodeId(
 	return sessionFleetNode(req.ownerSessionId ?? sessionId) ?? workers.defaultNode ?? null;
 }
 
+/**
+ * Resolve which node (local or a preflighted online SSH entry) a request maps to, applying `req.reroutes` node
+ * exclusions identically for both preview and launch so failover never seals the failed node's sandbox or refuses
+ * failover to local.
+ */
+function selectFleetNode(
+	settings: Readonly<PancodeSettings> | undefined,
+	deps: FleetPlacementDeps,
+	verdictFor: NonNullable<FleetPlacementDeps["preflightVerdict"]>,
+	projectRoot: string,
+	requested: string | null,
+	excludedNodeIds: ReadonlySet<string>,
+): FleetNodeSettings | null {
+	const nodes = settings?.fleet?.nodes ?? [];
+	const fleet = deps.fleet;
+	if (requested !== null) {
+		if (requested === LOCAL_NODE_ID) return null;
+		const node = nodes.find((entry) => entry.id === requested);
+		if (!node) throw unknownNodeError(requested, settings);
+		if (fleet === undefined) throw admissionError(`fleet registry unavailable; cannot place on node '${requested}'`);
+		const snapshot = fleet.get(node.id);
+		if (snapshot && snapshot.state !== "online") {
+			throw admissionError(
+				`fleet node '${node.id}' is ${snapshot.state}${snapshot.stateReason ? ` (${snapshot.stateReason})` : ""}`,
+			);
+		}
+		const preflight = verdictFor(node, projectRoot);
+		if (!preflight.ok) throw admissionError(preflight.reason ?? `node '${node.id}' is not preflighted`);
+		return node;
+	}
+	// A node exclusion that also excludes local has no eligible node left:
+	// fail closed rather than silently re-running on the excluded local node.
+	if (excludedNodeIds.has(LOCAL_NODE_ID)) {
+		throw admissionError(`no eligible fleet node remains after excluding ${[...excludedNodeIds].join(", ")}`);
+	}
+	return null;
+}
+
 export function createFleetPlacementResolver(
 	deps: FleetPlacementDeps,
 ): (req: DispatchRequest) => DispatchNodePlacement | null {
@@ -100,49 +138,21 @@ export function createFleetPlacementResolver(
 		// No fleet configured and nothing requested: stay on the pre-fleet
 		// local path with no node identity recorded at all.
 		if (nodes.length === 0 && requested === null && !req.reroutes?.length) return null;
-		const fleet = deps.fleet;
-
-		const localPlacement = (): DispatchNodePlacement => {
-			const reroutes = completedReroutes(req.reroutes, LOCAL_NODE_ID);
-			return { node: localNodeIdentity(), ...(reroutes !== undefined ? { reroutes } : {}) };
-		};
 
 		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
-
-		const sshPlacement = (node: FleetNodeSettings): DispatchNodePlacement => {
-			if (fleet === undefined) throw admissionError(`fleet registry unavailable; cannot place on node '${node.id}'`);
-			const transport = transportForNode(node);
-			const reroutes = completedReroutes(req.reroutes, node.id);
-			return {
-				node: transport.node,
-				spawn: (spec, opts) => transport.spawn(spec, opts),
-				sandbox: sandboxFor(node.id, projectRoot),
-				...(reroutes !== undefined ? { reroutes } : {}),
-			};
+		const selected = selectFleetNode(settings, deps, verdictFor, projectRoot, requested, excludedNodeIds);
+		if (selected === null) {
+			const reroutes = completedReroutes(req.reroutes, LOCAL_NODE_ID);
+			return { node: localNodeIdentity(), ...(reroutes !== undefined ? { reroutes } : {}) };
+		}
+		const transport = transportForNode(selected);
+		const reroutes = completedReroutes(req.reroutes, selected.id);
+		return {
+			node: transport.node,
+			spawn: (spec, opts) => transport.spawn(spec, opts),
+			sandbox: sandboxFor(selected.id, projectRoot),
+			...(reroutes !== undefined ? { reroutes } : {}),
 		};
-
-		if (requested !== null) {
-			if (requested === LOCAL_NODE_ID) return localPlacement();
-			const node = nodes.find((entry) => entry.id === requested);
-			if (!node) throw unknownNodeError(requested, settings);
-			if (fleet === undefined) throw admissionError(`fleet registry unavailable; cannot place on node '${requested}'`);
-			const snapshot = fleet.get(node.id);
-			if (snapshot && snapshot.state !== "online") {
-				throw admissionError(
-					`fleet node '${node.id}' is ${snapshot.state}${snapshot.stateReason ? ` (${snapshot.stateReason})` : ""}`,
-				);
-			}
-			const preflight = verdictFor(node, projectRoot);
-			if (!preflight.ok) throw admissionError(preflight.reason ?? `node '${node.id}' is not preflighted`);
-			return sshPlacement(node);
-		}
-
-		// A node exclusion that also excludes local has no eligible node left:
-		// fail closed rather than silently re-running on the excluded local node.
-		if (excludedNodeIds.has(LOCAL_NODE_ID)) {
-			throw admissionError(`no eligible fleet node remains after excluding ${[...excludedNodeIds].join(", ")}`);
-		}
-		return localPlacement();
 	};
 }
 
@@ -159,32 +169,15 @@ export function createFleetPlacementPreviewResolver(
 	const sandboxFor = deps.nodeSandbox ?? fleetNodeSandbox;
 	return (req: DispatchRequest): FleetPlacementPreview => {
 		const settings = deps.getSettings();
-		const nodes = settings?.fleet?.nodes ?? [];
-		const requested = requestedNodeId(req, settings, deps.getSessionId?.());
-		const fleet = deps.fleet;
+		const excludedNodeIds = new Set((req.reroutes ?? []).map((hop) => hop.fromNode).filter((id) => id.length > 0));
+		let requested = requestedNodeId(req, settings, deps.getSessionId?.());
+		if (requested !== null && excludedNodeIds.has(requested)) requested = null;
 		const projectRoot = req.taskWorktree?.root ?? req.cwd ?? process.cwd();
-		const local = (): FleetPlacementPreview => ({ node: localNodeIdentity() });
-		const remote = (node: FleetNodeSettings): FleetPlacementPreview => ({
-			node: { id: node.id, kind: "ssh", host: node.host },
-			sandbox: sandboxFor(node.id, projectRoot),
-		});
-
-		if (requested !== null) {
-			if (requested === LOCAL_NODE_ID) return local();
-			const node = nodes.find((entry) => entry.id === requested);
-			if (!node) throw unknownNodeError(requested, settings);
-			if (fleet === undefined) throw admissionError(`fleet registry unavailable; cannot place on node '${requested}'`);
-			const snapshot = fleet.get(node.id);
-			if (snapshot && snapshot.state !== "online") {
-				throw admissionError(
-					`fleet node '${node.id}' is ${snapshot.state}${snapshot.stateReason ? ` (${snapshot.stateReason})` : ""}`,
-				);
-			}
-			const preflight = verdictFor(node, projectRoot);
-			if (!preflight.ok) throw admissionError(preflight.reason ?? `node '${node.id}' is not preflighted`);
-			return remote(node);
-		}
-
-		return local();
+		const selected = selectFleetNode(settings, deps, verdictFor, projectRoot, requested, excludedNodeIds);
+		if (selected === null) return { node: localNodeIdentity() };
+		return {
+			node: { id: selected.id, kind: "ssh", host: selected.host },
+			sandbox: sandboxFor(selected.id, projectRoot),
+		};
 	};
 }
