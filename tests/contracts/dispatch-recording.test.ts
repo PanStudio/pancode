@@ -264,7 +264,10 @@ it("dispatch preserves the explicit capture option with journal history disabled
 			journalRunEvents: false,
 			getSessionOrigin: () => selectedSession,
 			...(placed
-				? { resolveNode: () => ({ node, spawn: spawnWorker }), previewNode: () => ({ node, sandbox: NODE_SANDBOX }) }
+				? {
+						resolveNode: () => ({ node, spawn: spawnWorker, sandbox: NODE_SANDBOX }),
+						previewNode: () => ({ node, sandbox: NODE_SANDBOX }),
+					}
 				: {}),
 		});
 		await bundle.extension.start();

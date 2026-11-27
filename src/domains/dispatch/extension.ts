@@ -1240,15 +1240,6 @@ export function createDispatchBundle(
 			getSessionId: options?.getSessionId,
 			fleet: fleetRegistry,
 		});
-	/** The node a store grant's boundaries are judged for; an unplaceable request is left to admission. */
-	const storeGrantNode = (req: DispatchRequest): RunNodeIdentity | null => {
-		try {
-			return previewNode(req).node;
-		} catch {
-			// Placement refuses this request with its own reason later.
-			return null;
-		}
-	};
 	const startAcpRun = options?.startAcpDelegationRun ?? startAcpDelegationRun;
 	const collectReproducibility = options?.collectReproducibility ?? collectReproducibilityMetadata;
 	const heartbeatSpec = options?.heartbeatSpec ?? DEFAULT_HEARTBEAT_SPEC;
@@ -3628,7 +3619,7 @@ export function createDispatchBundle(
 		try {
 			const recipe = agents.get(req.agentId);
 			if (!recipe) return false;
-			const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => storeGrantNode(req));
+			const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => previewNode(req).node);
 			if (pathScope.writeBoundaries.length === 0) return false;
 			const settings = getEffectiveSettings();
 			const targets = readWorkerTargets(settings);
@@ -3649,7 +3640,7 @@ export function createDispatchBundle(
 					pathScope,
 					target,
 					settings,
-					placement: () => previewNode(req),
+					placement: previewNode(req),
 				}),
 			);
 		} catch {
@@ -3660,6 +3651,7 @@ export function createDispatchBundle(
 	async function resolveLifecycle(
 		req: DispatchRequest,
 		settings: EffectiveSettings,
+		placement: FleetPlacementPreview,
 		metadataDeadlineAt: number,
 		signal?: AbortSignal,
 	): Promise<DispatchLifecycleStage> {
@@ -3668,7 +3660,7 @@ export function createDispatchBundle(
 			throw new Error(`dispatch: unknown agent recipe: ${req.agentId}`);
 		}
 		const { spec, capabilityMismatch } = assertRecipeAdmissible(req, recipe, settings);
-		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => storeGrantNode(req));
+		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => placement.node);
 		publishDispatchPathScope(req, pathScope);
 		const admission = resolveDispatchAdmissionStage(req, recipe, safety, pathScope);
 		const targets = readWorkerTargets(settings);
@@ -3751,9 +3743,11 @@ export function createDispatchBundle(
 			liveSettings: withLiveAutonomy(settings),
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
-			placement: () => previewNode(req),
+			placement,
 		});
 		const { envelope, permit, readOnly, judgeWithheld } = stage;
+		if (envelope.write.mode === "worktree" && req.taskWorktree === undefined)
+			throw new Error("dispatch: the admitted write roots need a task worktree; dispatch again with worktree: true");
 		const effectiveTools = stage.tools;
 		await assertStoreGrantAdmissible(req, readOnly);
 		// A capability the write roots cost this run reaches the parent's dispatch result and the worker's prompt (CLI-H2).
@@ -5253,7 +5247,8 @@ export function createDispatchBundle(
 			) ?? req;
 		const metadataDeadlineAt =
 			req.assignmentDeadlineAt ?? Date.parse(requestedAt) + (req.routingIntent?.deadlineMs ?? 60_000);
-		const lifecycle = await resolveLifecycle(req, settings, metadataDeadlineAt, preparation?.signal);
+		const admittedPlacement = previewNode(req);
+		const lifecycle = await resolveLifecycle(req, settings, admittedPlacement, metadataDeadlineAt, preparation?.signal);
 		preparation?.signal?.throwIfAborted();
 		assertResponseSchemaEnforceable(
 			lifecycle.target.runtime,
@@ -5283,6 +5278,17 @@ export function createDispatchBundle(
 		await assertBudgetAdmitsRoute(req, lifecycle.target.effectivePricing, settings, lifecycle, preparation?.signal);
 
 		const placement = resolveNode(req) ?? null;
+		const actualNode = placement?.node ?? { id: "local", kind: "local" };
+		assertPlannedNodeIdentity(req, actualNode);
+		if (
+			!isDeepStrictEqual(actualNode, admittedPlacement.node) ||
+			(actualNode.kind === "ssh" &&
+				lifecycle.runtimeKind === "http" &&
+				!isDeepStrictEqual(placement?.sandbox ?? null, admittedPlacement.sandbox ?? null))
+		)
+			throw new Error(
+				`dispatch: node or sandbox changed after admission for '${admittedPlacement.node.id}'; request a fresh dispatch`,
+			);
 		const remoteStoreGrant = remoteStoreGrantRefusal(req, placement?.node ?? null);
 		if (remoteStoreGrant !== null) throw new Error(remoteStoreGrant);
 		const sharedStoreGrant = await sharedStoreGrantFor(req, placement?.node ?? null, lifecycle.readOnly);
@@ -5300,7 +5306,6 @@ export function createDispatchBundle(
 			assertFleetProjectAuthority(project, lifecycle.readOnly, req.taskWorktree !== undefined);
 			if (project.kind === "independent" && req.taskWorktree) remoteReturn = { node, worktree: req.taskWorktree };
 		}
-		assertPlannedNodeIdentity(req, placement?.node ?? { id: "local", kind: "local" });
 		const effectiveRoute = {
 			agentId: req.agentId,
 			target: lifecycle.target.target.id,
@@ -8528,7 +8533,8 @@ export function createDispatchBundle(
 		const recipe = agents.get(req.agentId);
 		if (!recipe) throw new Error(`dispatch: unknown agent recipe: ${req.agentId}`);
 		const { spec: agentSpec } = assertRecipeAdmissible(req, recipe, settings);
-		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => storeGrantNode(req));
+		const placement = previewNode(req);
+		const pathScope = withStoreGrantBoundaries(req, resolveDispatchPathScope(req), () => placement.node);
 		const admission = resolveDispatchAdmissionStage(req, recipe, safety, pathScope);
 		const targets = readWorkerTargets(settings);
 		const target = resolveDispatchTarget(
@@ -8556,7 +8562,7 @@ export function createDispatchBundle(
 			liveSettings: withLiveAutonomy(settings),
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
-			placement: () => previewNode(req),
+			placement,
 		});
 		const effectiveTools = stage.tools;
 		const previewPermit = stage.permit;
@@ -8592,7 +8598,7 @@ export function createDispatchBundle(
 			wireModelId: target.wireModelId,
 			runtimeId: target.runtime.id,
 			...(endpoint !== null ? { endpoint: { key: endpoint.key, label: endpoint.label, limit: endpoint.limit } } : {}),
-			node: previewNode(req).node,
+			node: placement.node,
 			thinkingLevel: target.thinkingLevel,
 			toolSignature: toolSignatureOf(effectiveTools),
 			endpointIdentityHash: endpointIdentityHash(target.target.url),

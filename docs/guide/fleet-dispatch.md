@@ -486,7 +486,8 @@ refused. A native worker placed on the node is sealed with that answer, so its c
 run under the node's sandbox. With `safety.sandbox` at `auto` or `required`, admission
 refuses a native worker on a node with no sandbox, naming the node, the reason and the
 fix; `allowUnsandboxed: true` on the node admits it under `auto` with its commands
-unsandboxed, and `required` ignores the opt-in
+unsandboxed, and `required` ignores the opt-in. If placement or the native worker's
+node sandbox record changes during admission, dispatch refuses launch
 ([safety-model.md](../architecture/safety-model.md#worker-os-sandbox)).
 
 Target facts stay separate: network reachability, access to a supported model

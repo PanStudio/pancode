@@ -14,6 +14,7 @@ import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { isClaudeSdkTool } from "../../engine/claude/tool-safety.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import { networkToolsDisabled } from "../../tools/network-policy.js";
+import { applyToolProfile } from "../../tools/profiles.js";
 import { runtimeAttachesGateway } from "../../tools/surface.js";
 import { gitCheckoutRoot } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
@@ -93,8 +94,7 @@ export function writeModeInput(input: {
 	pathScope: DispatchPathScope;
 	target: ResolvedTarget;
 	settings: EffectiveSettings;
-	placement: () => FleetPlacementPreview;
-	allowedTools?: ReadonlyArray<ToolName>;
+	placement: FleetPlacementPreview;
 }): Parameters<typeof resolveWriteMode>[0] {
 	const { req } = input;
 	const hoare = isHoareResultContract(dispatchResultContract(req, input.recipe));
@@ -110,10 +110,9 @@ export function writeModeInput(input: {
 	});
 	const network = sandboxAllowsNetwork({
 		req,
-		recipe: input.recipe,
 		role,
 		capabilityClass: input.spec.capabilityClass,
-		...(input.allowedTools !== undefined ? { allowedTools: input.allowedTools } : {}),
+		allowedTools: applyToolProfile(input.recipe.tools as ReadonlyArray<ToolName>, req.toolProfile),
 		target: input.target,
 		settings: input.settings,
 		hoare,
@@ -140,7 +139,7 @@ export function resolveDispatchEnvelopeStage(input: {
 	liveSettings: EffectiveSettings;
 	pathScope: DispatchPathScope;
 	judgeSeated: boolean;
-	placement: () => FleetPlacementPreview;
+	placement: FleetPlacementPreview;
 }): DispatchEnvelopeStage {
 	const { req, recipe, spec, admission, target, pathScope } = input;
 	const settings = input.liveSettings;
@@ -159,7 +158,6 @@ export function resolveDispatchEnvelopeStage(input: {
 	});
 	const network = sandboxAllowsNetwork({
 		req,
-		recipe,
 		role,
 		capabilityClass: spec.capabilityClass,
 		allowedTools: admission.allowedTools,
@@ -266,14 +264,13 @@ export function resolveDispatchEnvelopeStage(input: {
 		approval: envelopeApproval(permit.allowance, judgeRoutedPermit(permit, settings)),
 		permitDigest: permit.digest,
 	});
-	// A placement the preview cannot settle is refused later; until then this host's probe stands in.
 	return {
 		envelope,
 		tools,
 		permit,
 		readOnly,
 		judgeWithheld,
-		placedSandbox: placedAvailability ?? placementSandboxAvailability({ node: { id: "local", kind: "local" } }, network),
+		placedSandbox: placedAvailability,
 	};
 }
 
@@ -416,10 +413,9 @@ function deniedToolNames(req: DispatchRequest): ReadonlySet<string> {
 /** Whether a native worker's sandboxed commands keep network on (mirrors `resolveExecAndNetwork`). */
 function sandboxAllowsNetwork(input: {
 	req: DispatchRequest;
-	recipe: AgentRecipe;
 	role: ReturnType<typeof resolveRunRole>;
 	capabilityClass: ReturnType<typeof normalizeAgentSpec>["capabilityClass"];
-	allowedTools?: ReadonlyArray<ToolName>;
+	allowedTools: ReadonlyArray<ToolName>;
 	target: ResolvedTarget;
 	settings: EffectiveSettings;
 	hoare: boolean;
@@ -428,11 +424,8 @@ function sandboxAllowsNetwork(input: {
 	if (input.settings?.safety.sandboxNetwork === true) return true;
 	if (networkToolsDisabled() || !targetToolCapability(input.target)) return false;
 	const denied = deniedToolNames(input.req);
-	const recipeTools = new Set<string>(input.recipe.tools ?? []);
-	const candidates = input.allowedTools ?? (input.recipe.tools as ReadonlyArray<ToolName> | undefined) ?? [];
-	for (const tool of candidates) {
+	for (const tool of input.allowedTools) {
 		if (tool !== ToolNames.WebFetch && tool !== ToolNames.WebRead) continue;
-		if (!recipeTools.has(tool) && !turnDelegatesTool(input.req.turnConstraints, tool)) continue;
 		if (denied.has(tool)) continue;
 		if (roleExcludes(input.role, input.capabilityClass, tool, toolActionClass(tool)) !== null) continue;
 		return true;
@@ -483,30 +476,22 @@ function assertNodeSandboxAdmitted(
 /**
  * The OS sandbox facts of the placement that runs the worker, sealed into the envelope (M6, M7); nothing else
  * decides them. Only the native HTTP runtime executes PanCode's command tools in the worker process. A local worker
- * reads this host's probe and an SSH worker its node's recorded one; a placement the preview cannot settle has none.
+ * reads this host's probe and an SSH worker its node's recorded one.
  * Bubblewrap bound to the roots confines every command, so a writer with file roots keeps its check tools.
  */
 function placementSandboxFacts(
 	runtimeKind: RuntimeDescriptor["kind"],
 	settings: Readonly<ReturnType<ConfigContract["get"]>> | undefined,
-	placement: () => FleetPlacementPreview,
+	placement: FleetPlacementPreview,
 	hoare: boolean,
 	network: boolean,
-): EnvelopeInput["sandbox"] & { confinesWrites: boolean; availability: SandboxAvailability | null } {
+): EnvelopeInput["sandbox"] & { confinesWrites: boolean; availability: SandboxAvailability } {
 	const mode = hoare ? "required" : (settings?.safety.sandbox ?? "auto");
 	const applies = runtimeKind === "http" && mode !== "off";
-	let placed: FleetPlacementPreview | null = null;
-	try {
-		placed = placement();
-	} catch {
-		// Placement refuses this request with its own reason.
-		placed = null;
-	}
-	const availability = placed === null ? null : placementSandboxAvailability(placed, network);
-	if (applies && placed !== null && availability !== null && placed.node.kind === "ssh")
-		assertNodeSandboxAdmitted(placed.node, availability, mode, hoare, settings);
-	const backend =
-		applies && availability?.available === true && availability.backend !== null ? availability.backend : "none";
+	const availability = placementSandboxAvailability(placement, network);
+	if (applies && placement.node.kind === "ssh")
+		assertNodeSandboxAdmitted(placement.node, availability, mode, hoare, settings);
+	const backend = applies && availability.available && availability.backend !== null ? availability.backend : "none";
 	return {
 		backend,
 		applies,

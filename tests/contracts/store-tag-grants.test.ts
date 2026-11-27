@@ -336,7 +336,7 @@ describe("store grants to SSH nodes", () => {
 			const shared = await sharedProject(root, "run-proof");
 			const bundle = makeDispatchBundle(dispatchStubContext(), {
 				previewNode: () => ({ node: SSH_NODE, sandbox: SSH_NODE_SANDBOX }),
-				resolveNode: () => ({ node: SSH_NODE }),
+				resolveNode: () => ({ node: SSH_NODE, sandbox: SSH_NODE_SANDBOX }),
 				spawnWorker: () => {
 					throw new Error("fixture launch reached");
 				},
