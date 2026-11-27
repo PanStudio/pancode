@@ -184,7 +184,7 @@ export function parseExtensionOutputV2(
 	origin: OutputOrigin,
 ): ExtensionOutputV2 {
 	bounded(value, "runtime output", RUNTIME_V2_LIMITS.outputBytes);
-	const raw = record(value, "runtime output", ["text", ...AMBIENT_KEYS, "workspace", "interview", "prompt"]);
+	const raw = record(value, "runtime output", ["text", ...AMBIENT_KEYS, "workspace", "interview", "prompt", "exitCode"]);
 	const operator = origin === "command" || origin === "action";
 	const output: ExtensionOutputV2 = {
 		text: text(raw.text, "text", 32768, true),
@@ -214,6 +214,13 @@ export function parseExtensionOutputV2(
 	if (raw.interview !== undefined) {
 		if (!operator) throw new Error("only a command, an action or a tool may start an interview");
 		output.interview = interview(raw.interview, declaration);
+	}
+	if (raw.exitCode !== undefined) {
+		if (origin !== "command") throw new Error("only a command may set an exit code");
+		const code = raw.exitCode;
+		if (typeof code !== "number" || !Number.isInteger(code) || code < 0 || code > 125)
+			throw new Error("exitCode must be a whole number from 0 to 125");
+		output.exitCode = code;
 	}
 	return output;
 }
