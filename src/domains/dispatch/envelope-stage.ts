@@ -7,9 +7,9 @@
 
 import { resolve as resolvePath } from "node:path";
 import { bashShellPath } from "../../core/bash-shell.js";
-import { sandboxAvailability } from "../../core/sandbox/availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation } from "../../core/sandbox/availability.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
-import { isHarnessExtensionToolName, isMcpToolName, type ToolName } from "../../core/tool-names.js";
+import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../core/tool-names.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { isClaudeSdkTool } from "../../engine/claude/tool-safety.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
@@ -19,6 +19,7 @@ import { gitCheckoutRoot } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import { INTERNAL_HELPER_RESULT_KINDS } from "../agents/result-contract.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
+import { roleExcludes, toolActionClass } from "../agents/role-class.js";
 import type { normalizeAgentSpec } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import { enabledHarnessExtensionToolNames } from "../extensions/command-tools.js";
@@ -93,6 +94,7 @@ export function writeModeInput(input: {
 	target: ResolvedTarget;
 	settings: EffectiveSettings;
 	placement: () => FleetPlacementPreview;
+	allowedTools?: ReadonlyArray<ToolName>;
 }): Parameters<typeof resolveWriteMode>[0] {
 	const { req } = input;
 	const hoare = isHoareResultContract(dispatchResultContract(req, input.recipe));
@@ -101,11 +103,26 @@ export function writeModeInput(input: {
 		capabilityClass: input.spec.capabilityClass,
 		hoareContract: hoare,
 	});
+	const role = resolveRunRole({
+		gateRole: req.gate?.role,
+		capabilityClass: input.spec.capabilityClass,
+		readOnly: writeNone,
+	});
+	const network = sandboxAllowsNetwork({
+		req,
+		recipe: input.recipe,
+		role,
+		capabilityClass: input.spec.capabilityClass,
+		...(input.allowedTools !== undefined ? { allowedTools: input.allowedTools } : {}),
+		target: input.target,
+		settings: input.settings,
+		hoare,
+	});
 	return {
 		writeNone,
 		roots: writeNone ? [] : input.pathScope.writeBoundaries,
 		worktree: req.taskWorktree !== undefined || req.worktree === true,
-		confinesWrites: placementSandboxFacts(input.target.runtime.kind, input.settings, input.placement, hoare)
+		confinesWrites: placementSandboxFacts(input.target.runtime.kind, input.settings, input.placement, hoare, network)
 			.confinesWrites,
 		gitCheckout: gitCheckoutRoot(resolvePath(req.cwd ?? process.cwd())) !== null,
 		scopeEnforcement: runtimeEnforcement(input.target.runtime).scopeEnforcement,
@@ -127,28 +144,45 @@ export function resolveDispatchEnvelopeStage(input: {
 }): DispatchEnvelopeStage {
 	const { req, recipe, spec, admission, target, pathScope } = input;
 	const settings = input.liveSettings;
-	const facts = writeModeInput({ ...input, settings: input.settings });
-	const { confinesWrites } = facts;
+	const hoare = isHoareResultContract(dispatchResultContract(req, recipe));
+	const writeNone = requestedWriteNone({
+		readOnly: req.readOnly,
+		capabilityClass: spec.capabilityClass,
+		hoareContract: hoare,
+	});
 	// The one role rule over the facts the request was admitted with; `requestRunRole` resolves the same rule at
 	// request time, so the journaled role and the route tuple are this role (DESIGN 4.2).
 	const role = resolveRunRole({
 		gateRole: req.gate?.role,
 		capabilityClass: spec.capabilityClass,
-		readOnly: facts.writeNone,
+		readOnly: writeNone,
 	});
+	const network = sandboxAllowsNetwork({
+		req,
+		recipe,
+		role,
+		capabilityClass: spec.capabilityClass,
+		allowedTools: admission.allowedTools,
+		target,
+		settings: input.settings,
+		hoare,
+	});
+	const {
+		confinesWrites,
+		availability: placedAvailability,
+		...sandbox
+	} = placementSandboxFacts(target.runtime.kind, input.settings, input.placement, hoare, network);
+	const facts: Parameters<typeof resolveWriteMode>[0] = {
+		writeNone,
+		roots: writeNone ? [] : pathScope.writeBoundaries,
+		worktree: req.taskWorktree !== undefined || req.worktree === true,
+		confinesWrites,
+		gitCheckout: gitCheckoutRoot(resolvePath(req.cwd ?? process.cwd())) !== null,
+		scopeEnforcement: runtimeEnforcement(target.runtime).scopeEnforcement,
+	};
 	const mode = resolveWriteMode(facts);
 	const cwd = req.cwd ?? process.cwd();
 	const ownLoop = runtimeAttachesGateway(target.runtime);
-	const {
-		confinesWrites: _confines,
-		availability: placedAvailability,
-		...sandbox
-	} = placementSandboxFacts(
-		target.runtime.kind,
-		input.settings,
-		input.placement,
-		isHoareResultContract(dispatchResultContract(req, recipe)),
-	);
 	const envelopeInput: Omit<EnvelopeInput, "permitDigest" | "approval"> = {
 		role,
 		capabilityClass: spec.capabilityClass,
@@ -239,7 +273,7 @@ export function resolveDispatchEnvelopeStage(input: {
 		permit,
 		readOnly,
 		judgeWithheld,
-		placedSandbox: placedAvailability ?? sandboxAvailability(),
+		placedSandbox: placedAvailability ?? placementSandboxAvailability({ node: { id: "local", kind: "local" } }, network),
 	};
 }
 
@@ -379,14 +413,46 @@ function deniedToolNames(req: DispatchRequest): ReadonlySet<string> {
 	);
 }
 
+/** Whether a native worker's sandboxed commands keep network on (mirrors `resolveExecAndNetwork`). */
+function sandboxAllowsNetwork(input: {
+	req: DispatchRequest;
+	recipe: AgentRecipe;
+	role: ReturnType<typeof resolveRunRole>;
+	capabilityClass: ReturnType<typeof normalizeAgentSpec>["capabilityClass"];
+	allowedTools?: ReadonlyArray<ToolName>;
+	target: ResolvedTarget;
+	settings: EffectiveSettings;
+	hoare: boolean;
+}): boolean {
+	if (input.hoare) return false;
+	if (input.settings?.safety.sandboxNetwork === true) return true;
+	if (networkToolsDisabled() || !targetToolCapability(input.target)) return false;
+	const denied = deniedToolNames(input.req);
+	const recipeTools = new Set<string>(input.recipe.tools ?? []);
+	const candidates = input.allowedTools ?? (input.recipe.tools as ReadonlyArray<ToolName> | undefined) ?? [];
+	for (const tool of candidates) {
+		if (tool !== ToolNames.WebFetch && tool !== ToolNames.WebRead) continue;
+		if (!recipeTools.has(tool) && !turnDelegatesTool(input.req.turnConstraints, tool)) continue;
+		if (denied.has(tool)) continue;
+		if (roleExcludes(input.role, input.capabilityClass, tool, toolActionClass(tool)) !== null) continue;
+		return true;
+	}
+	return false;
+}
+
 /**
  * The OS sandbox the placed worker starts: this host's probe for a local worker, the node's recorded
- * `pancode version --sandbox` answer for an SSH worker. The prompt line, the envelope and the receipt all read it.
+ * `pancode version --sandbox` answer for an SSH worker. Network-off runs also require network isolation,
+ * matching `worker-process.ts:withNetworkIsolation`. The prompt line, the envelope and the receipt all read it.
  */
-function placementSandboxAvailability(placement: FleetPlacementPreview): SandboxAvailability {
-	return placement.node.kind === "local"
-		? sandboxAvailability()
-		: fleetNodeSandboxAvailability(placement.sandbox ?? null);
+function placementSandboxAvailability(placement: FleetPlacementPreview, network: boolean): SandboxAvailability {
+	if (placement.node.kind === "local") {
+		const availability = sandboxAvailability();
+		if (network || !availability.available) return availability;
+		const failure = sandboxNetworkIsolation(availability);
+		return failure === null ? availability : { available: false, backend: null, executable: null, reason: failure };
+	}
+	return fleetNodeSandboxAvailability(placement.sandbox ?? null, network);
 }
 
 /**
@@ -425,6 +491,7 @@ function placementSandboxFacts(
 	settings: Readonly<ReturnType<ConfigContract["get"]>> | undefined,
 	placement: () => FleetPlacementPreview,
 	hoare: boolean,
+	network: boolean,
 ): EnvelopeInput["sandbox"] & { confinesWrites: boolean; availability: SandboxAvailability | null } {
 	const mode = hoare ? "required" : (settings?.safety.sandbox ?? "auto");
 	const applies = runtimeKind === "http" && mode !== "off";
@@ -435,7 +502,7 @@ function placementSandboxFacts(
 		// Placement refuses this request with its own reason.
 		placed = null;
 	}
-	const availability = placed === null ? null : placementSandboxAvailability(placed);
+	const availability = placed === null ? null : placementSandboxAvailability(placed, network);
 	if (applies && placed !== null && availability !== null && placed.node.kind === "ssh")
 		assertNodeSandboxAdmitted(placed.node, availability, mode, hoare, settings);
 	const backend =

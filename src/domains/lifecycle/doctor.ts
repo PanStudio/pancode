@@ -1025,10 +1025,13 @@ export async function runDoctorFleetChecks(
 					`${fact.targetId}: network=${fact.reachable}, listingAccess=${fact.authentication ?? "unknown"}, model=${fact.modelAvailable}, runtime=${fact.runtimeCompatible}`,
 			)
 			.join("; ");
-		// Native workers are refused on a node with no sandbox unless it opts in, which a required sandbox ignores.
+		// Native workers are refused on a node with no sandbox (or no network isolation when network stays off)
+		// unless it opts in, which a required sandbox ignores.
 		const mode = settings.safety.sandbox;
+		const sandboxUsable =
+			record.sandbox?.available === true && (settings.safety.sandboxNetwork === true || record.sandbox.network === null);
 		const unsandboxedRefused =
-			record.sandbox?.available !== true && mode !== "off" && (mode === "required" || node?.allowUnsandboxed !== true);
+			!sandboxUsable && mode !== "off" && (mode === "required" || node?.allowUnsandboxed !== true);
 		const sandbox = `${fleetNodeSandboxSummary(record.sandbox)}${unsandboxedRefused ? ", native workers refused (allowUnsandboxed admits them unless safety.sandbox is required)" : ""}`;
 		return {
 			ok: true,

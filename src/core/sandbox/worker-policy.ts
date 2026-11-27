@@ -99,8 +99,8 @@ export interface WorkerSandboxReceipt {
 	mode: SandboxMode;
 	backend: SandboxBackend | null;
 	/**
-	 * Probed on the orchestrator host for a local worker. Null when the mode is
-	 * off, or when the worker runs on a remote node whose own probe decides.
+	 * Availability of the OS sandbox where the worker runs (this host's probe for a local worker,
+	 * the node's recorded probe for an SSH worker). Null when the mode is off.
 	 */
 	available: boolean | null;
 	reason?: string;

@@ -282,12 +282,16 @@ export function fleetNodeSandbox(
 }
 
 /** The node's sandbox as an availability answer, the shape the prompt line and the receipt read for a local worker. */
-export function fleetNodeSandboxAvailability(sandbox: FleetNodeSandbox | null): SandboxAvailability {
+export function fleetNodeSandboxAvailability(sandbox: FleetNodeSandbox | null, network = false): SandboxAvailability {
 	if (sandbox === null)
 		return { available: false, backend: null, executable: null, reason: "the node has no recorded sandbox check" };
+	const available = sandbox.available && sandbox.backend !== null;
+	if (available && !network && sandbox.network !== null) {
+		return { available: false, backend: null, executable: null, reason: sandbox.network };
+	}
 	return {
-		available: sandbox.available && sandbox.backend !== null,
-		backend: sandbox.available ? sandbox.backend : null,
+		available,
+		backend: available ? sandbox.backend : null,
 		executable: null,
 		reason: sandbox.reason,
 	};
@@ -440,6 +444,7 @@ function parseNodeSandbox(lines: ReadonlyArray<string>, customEntry: boolean): F
 	if (
 		typeof value?.available !== "boolean" ||
 		(backend !== null && backend !== "bwrap" && backend !== "seatbelt") ||
+		(value.available && backend === null) ||
 		(value.reason !== null && typeof value.reason !== "string") ||
 		(value.network !== null && typeof value.network !== "string")
 	)

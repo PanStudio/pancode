@@ -66,7 +66,6 @@ import { asDirectoryPathBoundary } from "../../core/path-boundary.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { runtimeSpeaksResponseSchemaDialect, UnsupportedResponseSchemaError } from "../../core/response-schema.js";
 import { requirePricedRefusal } from "../../core/run-overrides.js";
-import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerMcpNoNetworkNotice, workerSandboxReceipt } from "../../core/sandbox/worker-policy.js";
 import { isSkillActivation, type SkillActivation } from "../../core/skill-activation.js";
@@ -380,7 +379,7 @@ import {
 	importFleetChanges,
 	prepareFleetChangeReturn,
 } from "./fleet-change-return.js";
-import { type FleetNodeSandbox, fleetNodeSandboxAvailability, routeFactVerdict } from "./fleet-preflight.js";
+import { type FleetNodeSandbox, routeFactVerdict } from "./fleet-preflight.js";
 import { assertFleetProjectAuthority, verifyFleetProject } from "./fleet-project-verification.js";
 import { gateVerdictFactsOf } from "./gate-decisions.js";
 import { type GradeContract, type GradeFacts, type GradeVerdict, grade, type RunVerdict } from "./grading.js";
@@ -1156,6 +1155,8 @@ interface DispatchLifecycleStage {
 	projectContext: RunProjectContextProvenance;
 	/** The run's capability envelope, resolved once; everything after admission reads it (M7). */
 	envelope: WorkerEnvelope;
+	/** The OS sandbox availability resolved for the worker's placement. */
+	placedSandbox: SandboxAvailability;
 	/** What to write over a delegated harness's instruction files in the run's task worktree; absent without an overlay. */
 	peerOverlay?: ReadonlyArray<{ file: string; content: string }>;
 	/** The run's prompt with the rules in the message instead, for when the overlay cannot be written at spawn. */
@@ -4013,6 +4014,7 @@ export function createDispatchBundle(
 			projectContext: projectContextProvenance,
 			// Sealed over the compiled prompt, so the worker can prove the head it sends is the one admitted (DESIGN 4.4).
 			envelope: withStaticHead(envelope, envelopeStaticHeadInput(target, systemPrompt, envelope)),
+			placedSandbox: stage.placedSandbox,
 			...(peerStale !== null ? { peerStale } : {}),
 			...(peer?.overlay !== undefined
 				? {
@@ -5502,17 +5504,6 @@ export function createDispatchBundle(
 					},
 					config ?? undefined,
 				);
-			// workerSandboxFor cannot see placement, so it expects this host's
-			// backend only with no fleet nodes. A worker placed here with nodes
-			// configured shares this probe's answer too (R1-safety-secrets-13).
-			const placedHere = placement === null || (placement.node.kind === "local" && placement.spawn === undefined);
-			const buildUnplacedSpec = buildSpec;
-			buildSpec = () => {
-				const built = buildUnplacedSpec();
-				if (placedHere && built.sandbox !== undefined && sandboxAvailability().available)
-					built.sandbox = { ...built.sandbox, backendExpected: true };
-				return built;
-			};
 			spec = buildSpec();
 		} catch (error) {
 			leaseSlot.release();
@@ -6994,9 +6985,7 @@ export function createDispatchBundle(
 								sandbox: workerSandboxReceipt(
 									lifecycle.settings?.safety.sandbox ?? "auto",
 									spec.sandbox,
-									placement !== null && placement.node.kind !== "local"
-										? fleetNodeSandboxAvailability(placement.sandbox ?? null)
-										: sandboxAvailability(),
+									lifecycle.placedSandbox,
 								),
 							}
 						: {}),
