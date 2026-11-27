@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PANCODE_ARTIFACT_DIR } from "../core/artifact-paths.js";
 import { sha256Hex } from "../core/hash.js";
-import { internalGitArgv } from "../core/internal-git.js";
+import { gitExecFileSync } from "../core/internal-git-run.js";
 import { relativePathEscapes } from "../core/path-containment.js";
 import { codemapPath } from "../domains/context/codewiki/artifact.js";
 import { type CodewikiCoordinatedResult, coordinateCodewikiWrite } from "../domains/context/codewiki/coordinator.js";
@@ -33,7 +32,7 @@ function defaultRepoMapPath(cwd: string): string {
 
 function gitValue(cwd: string, args: string[], raw = false): string | null {
 	try {
-		const out = execFileSync("git", internalGitArgv(args, cwd), {
+		const out = gitExecFileSync(args, {
 			cwd,
 			timeout: 5000,
 			stdio: ["ignore", "pipe", "ignore"],

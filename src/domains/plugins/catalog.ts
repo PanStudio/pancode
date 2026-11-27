@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync }
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { gitVia } from "../../core/internal-git-run.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { runStagingCommandSync } from "../../core/safe-exec.js";
@@ -92,7 +93,7 @@ function fetchableRepo(repo: string): boolean {
 function resolveGitRef(repo: string, ref: string): string {
 	if (HUB_COMMIT_PATTERN.test(ref)) return ref;
 	if (!fetchableRepo(repo)) throw new Error(`unsupported repository URL: ${repo}`);
-	const output = runStagingCommandSync("git", ["ls-remote", "--exit-code", "--", repo, ref], GIT_OPTIONS);
+	const output = gitVia(runStagingCommandSync, ["ls-remote", "--exit-code", "--", repo, ref], GIT_OPTIONS);
 	const refs = new Map<string, string>();
 	for (const line of output.split("\n")) {
 		const [commit, name] = line.trim().split(/\s+/u);
@@ -117,9 +118,9 @@ export function fetchPluginCommit(source: HubRowSource, expectedSha256?: string)
 	const temp = mkdtempSync(path.join(tmpdir(), "pancode-plugin-"));
 	const cleanup = (): void => rmSync(temp, { recursive: true, force: true });
 	try {
-		runStagingCommandSync("git", ["init", "-q", temp], GIT_OPTIONS);
-		runStagingCommandSync(
-			"git",
+		gitVia(runStagingCommandSync, ["init", "-q", temp], GIT_OPTIONS);
+		gitVia(
+			runStagingCommandSync,
 			[
 				"-C",
 				temp,
@@ -135,8 +136,8 @@ export function fetchPluginCommit(source: HubRowSource, expectedSha256?: string)
 			],
 			GIT_OPTIONS,
 		);
-		runStagingCommandSync(
-			"git",
+		gitVia(
+			runStagingCommandSync,
 			[
 				"-C",
 				temp,
@@ -150,7 +151,7 @@ export function fetchPluginCommit(source: HubRowSource, expectedSha256?: string)
 			],
 			GIT_OPTIONS,
 		);
-		const head = runStagingCommandSync("git", ["-C", temp, "rev-parse", "HEAD"], GIT_OPTIONS).trim();
+		const head = gitVia(runStagingCommandSync, ["-C", temp, "rev-parse", "HEAD"], GIT_OPTIONS).trim();
 		if (head !== source.commit) throw new Error(`fetched ${head || "nothing"} where ${source.commit} was requested`);
 		const root = source.subdir ? path.join(temp, source.subdir) : temp;
 		if (!existsSync(root) || !statSync(root).isDirectory())

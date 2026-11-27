@@ -9,7 +9,7 @@ import {
 } from "../domains/extensions/bus-observations.js";
 import { createExtensionHostServices, type ExtensionHostServicesDeps } from "../domains/extensions/host-services.js";
 import { OperatorExtensions, type OperatorExtensionsOptions } from "../domains/extensions/operator-extensions.js";
-import type { OperatorReloadResult } from "../domains/extensions/operator-runtime.js";
+import type { OperatorReloadResult } from "../domains/extensions/operator-runtime-v2.js";
 import { OBSERVATION_BACKLOG } from "../domains/extensions/operator-runtime-v2.js";
 import type { ExtensionRuntimeHookBridge } from "../domains/extensions/runtime-hook-bridge.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
@@ -142,7 +142,6 @@ export function startExtensionHost(options: ExtensionHostOptions): ExtensionHost
 		observeChatTurns((handler) => options.chat.onEvent(handler), turns, options.targetId),
 		options.chat.onEvent((event) => {
 			if (event.type !== "agent_end") return;
-			operator.observe({ event: "turn_end", reason: "completed" });
 			schedule();
 		}),
 	];

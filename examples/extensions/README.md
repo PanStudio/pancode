@@ -3,10 +3,9 @@
 These installable examples are extensions: PanCode code in its own process, declared
 in `pancode-extension.yaml` or `.json`. They are separate from plugins, which
 carry content only, and from the components (skills, agents, prompt templates and
-playbooks) that `pancode hub components` lists. `lab-status` is an
-operator runtime api 1 example, `measurements` is a command-tool package, and
-`git-pulse` and `peer-guard` use runtime api 2. Each manifest enforces its
-minimum PanCode version.
+playbooks) that `pancode hub components` lists. `lab-status`, `git-pulse` and
+`peer-guard` use runtime api 2, and `measurements` is a command-tool package.
+Each manifest enforces its minimum PanCode version.
 
 From the repository root:
 
@@ -23,10 +22,11 @@ and displays the status with the extension's owner label. The default record is
 `jobs.synthetic.json`: **SYNTHETIC FIXTURE**, two completed jobs and one running
 job. These are deterministic demonstration records, not measured cluster facts.
 
-Pass a local JSON record filename as the argument to inspect your own data:
+Pass the path of a JSON record in the workspace, relative to it, to inspect your
+own data. The runtime may read only the workspace and its own package:
 
 ```bash
-pancode extensions run lab-status dashboard -- /absolute/path/experiment.json
+pancode extensions run lab-status dashboard -- results/experiment.json
 ```
 
 The record has `experiment` and `jobs` fields. Each job supplies a string `id`,
@@ -35,8 +35,8 @@ nonnegative finite `elapsedSeconds`. Set `synthetic: true` for simulated data.
 Records without that marker are labeled local reported data, not independently
 verified results. Files are regular local files up to 32 KiB and at most 100 jobs.
 The example performs no SSH, scheduler query, submission, provider request or
-credential access. Turn observations repeat the last explicit snapshot; invoke
-the dashboard again to refresh the file. Runtime state resets on reload.
+credential access. A session that opens shows the last snapshot's status again;
+invoke the dashboard again to refresh the file. Runtime state resets on reload.
 
 The separate measurement package keeps the existing model tool contract:
 
@@ -65,12 +65,10 @@ pancode extensions remove lab-status --project
 
 Do not edit installed package bytes in place. Whole-tree digest drift revokes
 calls; mixed tool/UI packages need a new session even when only UI bytes change.
-Installed api 1 runtime code and command tools have your account's
-filesystem/network authority. A child process gives bounded teardown and fresh
-module caches, not an OS sandbox. An api 2 runtime reviewed through its
-capability envelope also runs under the OS sandbox when one exists (bubblewrap on
-Linux), with its network following the manifest; `/extensions` shows the
-confinement line.
+Installed command tools have your account's filesystem/network authority. A
+runtime reviewed through its capability envelope runs under its declared Node
+permissions and, when one exists, the OS sandbox (bubblewrap on Linux), with its
+network following the manifest; `/extensions` shows the confinement line.
 
 ## Git pulse (api 2)
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { sha256Hex } from "../../core/hash.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { isRecord } from "../../core/type-guards.js";
 import { claimRecordId } from "./capture.js";
 import { claimLogRecordId } from "./edges.js";
@@ -24,7 +24,7 @@ import {
 
 function git(cwd: string, args: ReadonlyArray<string>): string | null {
 	try {
-		const out = execFileSync("git", [...args], {
+		const out = gitExecFileSync(args, {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],

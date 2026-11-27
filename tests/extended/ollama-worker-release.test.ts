@@ -4,6 +4,8 @@ import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, it } from "node:test";
+// The orchestrator registers Ollama's exit release when its providers domain loads this API module.
+import "../../src/engine/apis/ollama-native.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import {
 	approvedIdentityForSpec,

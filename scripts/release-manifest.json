@@ -49,7 +49,6 @@
 		"packages/kit/servers.json",
 		".claude-plugin/marketplace.json",
 		"hub/packs/plugins/hpc/plugin.json",
-		"src/domains/extensions/runtime-child.mjs",
 		"dist/sdk/extension.d.ts",
 		"dist/sdk/extension.js",
 		"dist/sdk/pack.d.ts",

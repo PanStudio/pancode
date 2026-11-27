@@ -764,6 +764,180 @@ export function checkCompositionRoot(file: string, source: string): string[] {
 	return violations;
 }
 
+/**
+ * rule23: the most lines one function may span, from the line of its first token to the line of its last. Every
+ * function form counts (declarations, expressions, arrows, methods, constructors, accessors), and a nested function
+ * counts on its own as well as inside its parent.
+ */
+const FUNCTION_LINE_CEILING = 500;
+
+/**
+ * The functions over FUNCTION_LINE_CEILING when rule23 landed, each at the size it may not grow past. An entry only
+ * shrinks: lower its number when its function shrinks, and remove it once the function is at or under the ceiling.
+ * The key is `file#name`, the name qualified by its enclosing classes and functions. An anonymous function is named
+ * by where it sits: `<iife>`, `<withLock callback>` for an argument to `withLock(...)`, else `<anonymous>`; a name
+ * repeated in one file takes `[2]`, `[3]` in source order.
+ */
+const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
+	["src/cli/modes/print.ts#runHeadlessMainAgent", 865],
+	["src/cli/uninstall.ts#runUninstallCommand", 555],
+	["src/cli/upgrade.ts#runUpgradeCommand", 569],
+	["src/core/settings-validate.ts#validateSettings", 1332],
+	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
+	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
+	["src/domains/dispatch/extension.ts#createDispatchBundle", 8606],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt", 2964],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.admitDispatchAttempt.<iife>[2]", 1054],
+	["src/domains/dispatch/extension.ts#createDispatchBundle.dispatchAcpDelegation", 1006],
+	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1055],
+	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 741],
+	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
+	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],
+	["src/domains/mux/contract.ts#createMuxRuntime", 734],
+	["src/domains/mux/socket-client.ts#createMuxClient", 553],
+	["src/domains/providers/extension.ts#createProvidersBundle", 625],
+	["src/domains/resources/hub-validation.ts#validateHubPackage", 579],
+	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1713],
+	["src/domains/scheduling/job-controller.ts#createJobController", 979],
+	["src/domains/session/compaction/compact.ts#compactWithCalls", 738],
+	["src/domains/session/extension.ts#createSessionBundle", 505],
+	["src/domains/telemetry/call-journal.ts#openCallJournal", 554],
+	["src/domains/telemetry/call-journal.ts#openCallJournal.<withStateFileLock callback>", 513],
+	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
+	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
+	["src/engine/acp/adapter.ts#startAcpDelegationRun", 721],
+	["src/engine/acp/server.ts#servePancodeAcpAgent", 3788],
+	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
+	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3709],
+	["src/interactive/chat-panel.ts#createChatPanel", 2064],
+	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
+	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 2213],
+	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1078],
+	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 795],
+	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 741],
+	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 607],
+	["src/interactive/overlay-permission-lifecycle.ts#createOverlayPermissionLifecycle", 671],
+	["src/interactive/overlays/hub.ts#openHubOverlay", 606],
+	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
+	["src/interactive/panes-runtime.ts#createPanesRuntime", 587],
+	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
+	["src/session-control/chat-loop-state-machine.ts#createChatLoopStateMachine", 645],
+	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
+	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
+	["src/session-control/chat-loop.ts#createChatLoop", 1576],
+	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
+	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
+	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
+	["src/session-control/turn-context.ts#createTurnContext", 2789],
+	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
+	["src/session-control/turn-recovery.ts#createTurnRecovery", 681],
+	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
+	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
+	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
+	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 880],
+	["src/tools/dispatch-compete.ts#runCompete", 543],
+	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
+	["src/tools/gateway/index.ts#createGatewayTool", 875],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1769],
+	["src/tools/registry.ts#createRegistry", 2346],
+]);
+
+function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {
+	return ts.isIdentifier(name) ||
+		ts.isPrivateIdentifier(name) ||
+		ts.isStringLiteral(name) ||
+		ts.isNumericLiteral(name) ||
+		ts.isNoSubstitutionTemplateLiteral(name)
+		? name.text
+		: name.getText(tree);
+}
+
+function functionNameSegment(node: ts.FunctionLikeDeclaration | ts.ClassLikeDeclaration, tree: ts.SourceFile): string {
+	if (node.name) return memberNameText(node.name, tree);
+	if (ts.isConstructorDeclaration(node)) return "constructor";
+	const parent = node.parent;
+	if (
+		(ts.isVariableDeclaration(parent) || ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent)) &&
+		parent.initializer === node
+	)
+		return memberNameText(parent.name, tree);
+	if (ts.isClassLike(node)) return "<class>";
+	if (ts.isParenthesizedExpression(parent) && ts.isCallExpression(parent.parent) && parent.parent.expression === parent)
+		return "<iife>";
+	if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.arguments?.includes(node as ts.Expression)) {
+		const callee = parent.expression;
+		const calleeName = ts.isIdentifier(callee)
+			? callee.text
+			: ts.isPropertyAccessExpression(callee)
+				? callee.name.text
+				: undefined;
+		return calleeName ? `<${calleeName} callback>` : "<callback>";
+	}
+	return "<anonymous>";
+}
+
+/**
+ * rule23 for one file: a function over FUNCTION_LINE_CEILING needs a FUNCTION_LINE_EXEMPTIONS entry, may not grow
+ * past it, and an entry its function has shrunk below is stale. `seen` collects the exempt keys found, so the caller
+ * can report entries whose function is gone.
+ */
+function checkFunctionLengths(file: string, source: string, seen: Set<string>): string[] {
+	if (/\.d\.[cm]?ts$/.test(file)) return [];
+	const violations: string[] = [];
+	const tree = parseTree(file, source);
+	const lineOf = (position: number): number => tree.getLineAndCharacterOfPosition(position).line + 1;
+	const occurrences = new Map<string, number>();
+	const visit = (node: ts.Node, scope: string): void => {
+		let inner = scope;
+		const isFunction =
+			(ts.isFunctionDeclaration(node) ||
+				ts.isFunctionExpression(node) ||
+				ts.isArrowFunction(node) ||
+				ts.isMethodDeclaration(node) ||
+				ts.isConstructorDeclaration(node) ||
+				ts.isGetAccessorDeclaration(node) ||
+				ts.isSetAccessorDeclaration(node)) &&
+			node.body !== undefined;
+		if (isFunction || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+			let name = `${scope}${scope ? "." : ""}${functionNameSegment(node, tree)}`;
+			const occurrence = (occurrences.get(name) ?? 0) + 1;
+			occurrences.set(name, occurrence);
+			if (occurrence > 1) name = `${name}[${occurrence}]`;
+			inner = name;
+		}
+		if (isFunction) {
+			const start = lineOf(node.getStart(tree));
+			const lines = lineOf(node.end) - start + 1;
+			const key = `${file}#${inner}`;
+			const allowed = FUNCTION_LINE_EXEMPTIONS.get(key);
+			if (allowed !== undefined) seen.add(key);
+			if (allowed === undefined) {
+				if (lines > FUNCTION_LINE_CEILING)
+					violations.push(
+						`rule23: ${file}:${start} ${inner} is ${lines} lines, over the ${FUNCTION_LINE_CEILING}-line function ceiling; split it into functions that each do one job. If an exempt function only moved or was renamed, rekey its old FUNCTION_LINE_EXEMPTIONS entry (tests/boundaries/check-boundaries.ts) to ${key} at the same number`,
+					);
+			} else if (lines <= FUNCTION_LINE_CEILING) {
+				violations.push(
+					`rule23: FUNCTION_LINE_EXEMPTIONS lists ${key}, which is now ${lines} lines, within the ${FUNCTION_LINE_CEILING}-line ceiling; remove the entry`,
+				);
+			} else if (lines > allowed) {
+				violations.push(
+					`rule23: ${file}:${start} ${inner} grew to ${lines} lines, past the ${allowed} its FUNCTION_LINE_EXEMPTIONS entry allows; an exempt function may only shrink, so move the new logic out of it`,
+				);
+			} else if (lines < allowed) {
+				violations.push(
+					`rule23: FUNCTION_LINE_EXEMPTIONS allows ${key} ${allowed} lines and it is now ${lines}; lower the entry to ${lines}`,
+				);
+			}
+		}
+		ts.forEachChild(node, (child) => visit(child, inner));
+	};
+	visit(tree, "");
+	return violations;
+}
+
 const jsSuffixRegex = /\.m?jsx?$/;
 const piPackagePrefix = "@earendil-works/pi-";
 // Since the 0.83.0 engine-boundary rework, no file outside src/engine/** may
@@ -835,6 +1009,12 @@ function extractSpecifiers(source: string): ExtractedSpecifier[] {
 		if (!specifier) continue;
 		const typeOnly = isTypeOnlyImportOrExportClause(clause);
 		specifiers.push({ specifier, typeOnly, dynamic: false });
+	}
+
+	const sideEffectRegex = /(?:^|[;\n])\s*import\s*["']([^"']+)["']/g;
+	for (const match of stripped.matchAll(sideEffectRegex)) {
+		const specifier = match[1];
+		if (specifier) specifiers.push({ specifier, typeOnly: false, dynamic: false });
 	}
 
 	const dynRegex = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -1174,6 +1354,67 @@ function valueImportClosure(entry: string): Set<string> {
 	return seen;
 }
 
+/**
+ * The static value-import closure of `entry`, each file mapped to the file
+ * that first imported it (the entry maps to null). Type-only imports erase and
+ * dynamic imports split a chunk, so neither is followed: this is what the
+ * entry's chunk loads before its first line runs.
+ */
+function staticValueImportClosure(entry: string): Map<string, string | null> {
+	const parents = new Map<string, string | null>([[entry, null]]);
+	const queue = [entry];
+	for (let index = 0; index < queue.length; index++) {
+		const file = queue[index] as string;
+		let source: string;
+		try {
+			source = readFileSync(file, "utf8");
+		} catch {
+			continue;
+		}
+		for (const { specifier, typeOnly, dynamic } of extractSpecifiers(source)) {
+			if (typeOnly || dynamic) continue;
+			if (!(specifier.startsWith(".") || specifier.startsWith("/"))) continue;
+			const resolved = resolveRelativeImport(file, specifier);
+			if (parents.has(resolved)) continue;
+			parents.set(resolved, file);
+			queue.push(resolved);
+		}
+	}
+	return parents;
+}
+
+/**
+ * Orchestrator-only modules the worker must not load statically (rule 2b):
+ * every domain bundle (`extension.ts`) and the heavy modules only the
+ * orchestrator's composition reaches.
+ */
+function isWorkerDeniedModule(relative: string): boolean {
+	return (
+		/^src\/domains\/[^/]+\/extension\.ts$/u.test(relative) ||
+		relative === "src/domains/telemetry/read-model.ts" ||
+		relative === "src/domains/memory/intervention.ts" ||
+		relative.startsWith("src/domains/context/wiki/") ||
+		relative === "src/core/settings-controls.ts"
+	);
+}
+
+function checkWorkerClosure(projectRoot: string): string[] {
+	const entry = path.join(projectRoot, "src", "worker", "entry.ts");
+	const parents = staticValueImportClosure(entry);
+	const relative = (file: string): string => path.relative(projectRoot, file).split(path.sep).join("/");
+	const violations: string[] = [];
+	for (const file of parents.keys()) {
+		const rel = relative(file);
+		if (!isWorkerDeniedModule(rel)) continue;
+		const chain: string[] = [];
+		for (let at: string | null | undefined = file; at; at = parents.get(at)) chain.unshift(relative(at));
+		violations.push(
+			`rule2b: the worker statically loads ${rel}, an orchestrator-only module (import it lazily or from a lighter module): ${chain.join(" -> ")}`,
+		);
+	}
+	return violations;
+}
+
 function domainOf(filePath: string, domainsRoot: string): string | null {
 	if (!isWithin(filePath, domainsRoot)) return null;
 	const rel = path.relative(domainsRoot, filePath);
@@ -1455,6 +1696,210 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
 	return violations;
 }
 
+const GIT_RUNNER = "src/core/internal-git-run.ts";
+/** Calls outside {@link GIT_RUNNER} that start git, each kept with its reason (rule 24). */
+const GIT_SPAWN_EXEMPTIONS: ReadonlyArray<{ file: string; callee: string; reason: string }> = [
+	{
+		file: "src/tools/safe-exec.ts",
+		callee: "runVectorTool",
+		reason:
+			"the typed git tool is the agent's git, not PanCode's: it carries its own host config, and its add and commit run the repository's hooks on purpose",
+	},
+];
+/** Helpers that take git as a display word, not a program: they start nothing. */
+const GIT_WORD_CALLEES: ReadonlySet<string> = new Set(["joinDefined"]);
+/** Runners whose executable argument sits after leading metadata (for example `runVectorTool(toolName, file, ...)`). */
+const GIT_PROGRAM_ARG_INDEX: ReadonlyMap<string, number> = new Map([["runVectorTool", 1]]);
+const CHILD_PROCESS_MODULES = new Set(["node:child_process", "child_process"]);
+const UTIL_MODULES = new Set(["node:util", "util"]);
+const INTERNAL_GIT_MODULE = /(?:^|\/)internal-git(?:\.[cm]?[jt]s)?$/u;
+
+function unwrapExpression(node: ts.Expression): ts.Expression {
+	while (
+		ts.isParenthesizedExpression(node) ||
+		ts.isAsExpression(node) ||
+		ts.isSatisfiesExpression(node) ||
+		ts.isNonNullExpression(node)
+	)
+		node = node.expression;
+	return node;
+}
+
+function dynamicImportSpecifier(node: ts.Expression): string | undefined {
+	let expr = unwrapExpression(node);
+	if (ts.isAwaitExpression(expr)) expr = unwrapExpression(expr.expression);
+	if (
+		ts.isCallExpression(expr) &&
+		expr.expression.kind === ts.SyntaxKind.ImportKeyword &&
+		expr.arguments.length > 0 &&
+		ts.isStringLiteralLike(expr.arguments[0] as ts.Expression)
+	)
+		return (expr.arguments[0] as ts.StringLiteralLike).text;
+	return undefined;
+}
+
+function isGitCommandLiteral(node: ts.Expression): boolean {
+	const expr = unwrapExpression(node);
+	return (
+		(ts.isStringLiteralLike(expr) || ts.isTemplateExpression(expr)) &&
+		/^git\s/u.test(ts.isTemplateExpression(expr) ? expr.head.text : expr.text)
+	);
+}
+
+/**
+ * Rule 24: PanCode starts git only through {@link GIT_RUNNER}, which hardens every argv with internalGitArgv. Outside
+ * it, no call in src/ passes git as the program: the literal `"git"` (or a const bound to it) at the program slot with
+ * more arguments after, or a `git ...` command line to node:child_process (directly, aliased, promisified or via
+ * dynamic import). Only the runner imports internalGitArgv.
+ */
+export function checkGitSpawns(file: string, source: string, usedExemptions?: Set<string>): string[] {
+	if (!file.startsWith("src/") || file === GIT_RUNNER) return [];
+	const tree = parseTree(file, source);
+	const violations: string[] = [];
+	const line = (node: ts.Node) => tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1;
+	const gitNames = new Set<string>();
+	const gitCommandLines = new Set<string>();
+	const childProcessNames = new Set<string>();
+	const promisifyNames = new Set<string>();
+	const utilNamespaces = new Set<string>();
+	const internalGitNamespaces = new Set<string>();
+	const reportInternalGitArgv = (node: ts.Node, verb: string): void => {
+		violations.push(
+			`rule24: ${file}:${line(node)} ${verb} internalGitArgv; start git through ${GIT_RUNNER}, which applies it`,
+		);
+	};
+	for (const statement of tree.statements) {
+		if (
+			ts.isImportDeclaration(statement) &&
+			ts.isStringLiteral(statement.moduleSpecifier) &&
+			statement.importClause !== undefined &&
+			!statement.importClause.isTypeOnly
+		) {
+			const spec = statement.moduleSpecifier.text;
+			const bindings = statement.importClause.namedBindings;
+			const named = bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements : [];
+			if (CHILD_PROCESS_MODULES.has(spec)) {
+				if (statement.importClause.name !== undefined) childProcessNames.add(statement.importClause.name.text);
+				if (bindings !== undefined && ts.isNamespaceImport(bindings)) childProcessNames.add(bindings.name.text);
+				for (const element of named) if (!element.isTypeOnly) childProcessNames.add(element.name.text);
+			}
+			if (UTIL_MODULES.has(spec)) {
+				if (statement.importClause.name !== undefined) utilNamespaces.add(statement.importClause.name.text);
+				if (bindings !== undefined && ts.isNamespaceImport(bindings)) utilNamespaces.add(bindings.name.text);
+				for (const element of named)
+					if (!element.isTypeOnly && (element.propertyName ?? element.name).text === "promisify")
+						promisifyNames.add(element.name.text);
+			}
+			if (INTERNAL_GIT_MODULE.test(spec) && bindings !== undefined && ts.isNamespaceImport(bindings))
+				internalGitNamespaces.add(bindings.name.text);
+			for (const element of named)
+				if (!element.isTypeOnly && (element.propertyName ?? element.name).text === "internalGitArgv")
+					reportInternalGitArgv(element, "imports");
+		} else if (
+			ts.isExportDeclaration(statement) &&
+			!statement.isTypeOnly &&
+			statement.moduleSpecifier !== undefined &&
+			ts.isStringLiteral(statement.moduleSpecifier)
+		) {
+			if (statement.exportClause === undefined && INTERNAL_GIT_MODULE.test(statement.moduleSpecifier.text))
+				reportInternalGitArgv(statement, "re-exports");
+			else if (statement.exportClause !== undefined && ts.isNamedExports(statement.exportClause))
+				for (const element of statement.exportClause.elements)
+					if (!element.isTypeOnly && (element.propertyName ?? element.name).text === "internalGitArgv")
+						reportInternalGitArgv(element, "re-exports");
+		}
+	}
+	const fromChildProcess = (callee: ts.Expression): boolean => {
+		const expr = unwrapExpression(callee);
+		if (ts.isIdentifier(expr)) return childProcessNames.has(expr.text);
+		if (ts.isPropertyAccessExpression(expr)) {
+			const owner = unwrapExpression(expr.expression);
+			if (ts.isIdentifier(owner) && childProcessNames.has(owner.text)) return true;
+			const spec = dynamicImportSpecifier(owner);
+			return spec !== undefined && CHILD_PROCESS_MODULES.has(spec);
+		}
+		if (ts.isCallExpression(expr) && expr.arguments.length > 0) {
+			const fn = unwrapExpression(expr.expression);
+			const isPromisify =
+				(ts.isIdentifier(fn) && promisifyNames.has(fn.text)) ||
+				(ts.isPropertyAccessExpression(fn) &&
+					fn.name.text === "promisify" &&
+					ts.isIdentifier(unwrapExpression(fn.expression)) &&
+					utilNamespaces.has((unwrapExpression(fn.expression) as ts.Identifier).text));
+			if (isPromisify) return fromChildProcess(expr.arguments[0] as ts.Expression);
+		}
+		return false;
+	};
+	const visitDeclarations = (node: ts.Node): void => {
+		if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
+			const init = unwrapExpression(node.initializer);
+			const dynamicSpec = dynamicImportSpecifier(init);
+			if (ts.isIdentifier(node.name)) {
+				if (ts.isStringLiteralLike(init) && init.text === "git") gitNames.add(node.name.text);
+				else if (isGitCommandLiteral(init)) gitCommandLines.add(node.name.text);
+				else if (dynamicSpec !== undefined && CHILD_PROCESS_MODULES.has(dynamicSpec)) childProcessNames.add(node.name.text);
+				else if (dynamicSpec !== undefined && INTERNAL_GIT_MODULE.test(dynamicSpec))
+					internalGitNamespaces.add(node.name.text);
+				else if (fromChildProcess(init)) childProcessNames.add(node.name.text);
+			} else if (ts.isObjectBindingPattern(node.name) && dynamicSpec !== undefined) {
+				if (CHILD_PROCESS_MODULES.has(dynamicSpec))
+					for (const element of node.name.elements)
+						if (ts.isIdentifier(element.name)) childProcessNames.add(element.name.text);
+				if (INTERNAL_GIT_MODULE.test(dynamicSpec))
+					for (const element of node.name.elements) {
+						const prop = element.propertyName ?? element.name;
+						if (ts.isIdentifier(prop) && prop.text === "internalGitArgv") reportInternalGitArgv(element, "imports");
+					}
+			}
+		}
+		ts.forEachChild(node, visitDeclarations);
+	};
+	visitDeclarations(tree);
+	const calleeName = (callee: ts.Expression): string => {
+		const expr = unwrapExpression(callee);
+		return ts.isIdentifier(expr) ? expr.text : ts.isPropertyAccessExpression(expr) ? expr.name.text : expr.getText(tree);
+	};
+	const isGitProgram = (arg: ts.Expression): boolean => {
+		const expr = unwrapExpression(arg);
+		return (ts.isStringLiteralLike(expr) && expr.text === "git") || (ts.isIdentifier(expr) && gitNames.has(expr.text));
+	};
+	const visit = (node: ts.Node): void => {
+		if (ts.isPropertyAccessExpression(node) && node.name.text === "internalGitArgv") {
+			const owner = unwrapExpression(node.expression);
+			const spec = dynamicImportSpecifier(owner);
+			if (
+				(ts.isIdentifier(owner) && internalGitNamespaces.has(owner.text)) ||
+				(spec !== undefined && INTERNAL_GIT_MODULE.test(spec))
+			)
+				reportInternalGitArgv(node, "uses");
+		}
+		if (ts.isCallExpression(node) && node.arguments.length > 0) {
+			const callee = calleeName(node.expression);
+			const programAt = GIT_PROGRAM_ARG_INDEX.get(callee) ?? 0;
+			const programArg = node.arguments[programAt];
+			const program =
+				programArg !== undefined &&
+				isGitProgram(programArg) &&
+				(node.arguments.length > programAt + 1 || fromChildProcess(node.expression));
+			const first = unwrapExpression(node.arguments[0] as ts.Expression);
+			const commandLine =
+				(isGitCommandLiteral(first) || (ts.isIdentifier(first) && gitCommandLines.has(first.text))) &&
+				fromChildProcess(node.expression);
+			if ((program || commandLine) && !GIT_WORD_CALLEES.has(callee)) {
+				const key = `${file}#${callee}`;
+				if (GIT_SPAWN_EXEMPTIONS.some((entry) => entry.file === file && entry.callee === callee)) usedExemptions?.add(key);
+				else
+					violations.push(
+						`rule24: ${file}:${line(node)} starts git through ${callee}; PanCode's own git goes through ${GIT_RUNNER} (gitVia for another runner), or exempt the call with its reason in GIT_SPAWN_EXEMPTIONS`,
+					);
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(tree);
+	return violations;
+}
+
 /**
  * Enforce the static isolation rules:
  *   1. Only src/engine/** may import @earendil-works/pi-* at all. Since the
@@ -1464,6 +1909,11 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
  *      provider runtime registry, builtin descriptors, and plugin loader used
  *      to rehydrate runtime descriptors from stdin. Type-only imports are
  *      allowed because they erase at compile time.
+ *   2b. The static value-import closure of src/worker/entry.ts contains no
+ *      domain bundle (any domain's extension.ts), telemetry/read-model.ts,
+ *      memory/intervention.ts, context/wiki/** or core/settings-controls.ts.
+ *      Those are orchestrator-only; a worker reaches them by dynamic import
+ *      at most, so they never load before the worker reads its spec.
  *   3. src/domains/<x> never imports src/domains/<y>/extension.ts for y != x.
  *   7. src/domains/turn-control/** imports no interactive, engine, tools or
  *      worker modules, and reaches other domains only through index.ts.
@@ -1509,6 +1959,12 @@ export function checkTurnStateOwnership(file: string, source: string): string[] 
  *      share, and the client imports it directly. It value-imports only within
  *      itself, takes types only from src/**, and imports no Node builtin, no
  *      package and no pi-* module, type-only included.
+ *  23. No function under src/ spans more than FUNCTION_LINE_CEILING lines,
+ *      except those FUNCTION_LINE_EXEMPTIONS lists, each held at its size.
+ *  24. PanCode starts git only through src/core/internal-git-run.ts, which
+ *      hardens every argv with internalGitArgv: no other call in src/ passes
+ *      git as the program, and only the runner imports internalGitArgv, except
+ *      the calls GIT_SPAWN_EXEMPTIONS names with a reason.
  */
 export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const srcRoot = path.join(projectRoot, "src");
@@ -1525,11 +1981,13 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const stage0Owner = path.join(projectRoot, STAGE_0_OWNER);
 	const stage0Closure = valueImportClosure(stage0Owner);
 
-	const violations: string[] = [];
+	const violations: string[] = [...checkWorkerClosure(projectRoot)];
 	/** Runtime importers by declared seam, so rule 6b can disposition each reacher. */
 	const valueReachedSeams = new Map<string, Set<string>>();
 	const usedSurfaceExemptions = new Set<string>();
 	const usedCapabilityHolders = new Set<string>();
+	const seenFunctionExemptions = new Set<string>();
+	const usedGitSpawnExemptions = new Set<string>();
 
 	for (const filePath of walk(srcRoot)) {
 		const source = readFileSync(filePath, "utf8");
@@ -1539,6 +1997,16 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		violations.push(...checkLedgerUsageKeys(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkTurnStateOwnership(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkRecipeIdBranches(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
+		violations.push(
+			...checkFunctionLengths(
+				path.relative(projectRoot, filePath).split(path.sep).join("/"),
+				source,
+				seenFunctionExemptions,
+			),
+		);
+		violations.push(
+			...checkGitSpawns(path.relative(projectRoot, filePath).split(path.sep).join("/"), source, usedGitSpawnExemptions),
+		);
 		violations.push(
 			...checkSurfaceTotals(path.relative(projectRoot, filePath).split(path.sep).join("/"), source, usedSurfaceExemptions),
 		);
@@ -1726,10 +2194,22 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 					`rule14: SURFACE_TOTAL_EXEMPTIONS exempts ${exemption.file}#${fn}, which no longer sums a token or cost field; remove the exemption`,
 				);
 
+	for (const key of FUNCTION_LINE_EXEMPTIONS.keys())
+		if (!seenFunctionExemptions.has(key))
+			violations.push(
+				`rule23: FUNCTION_LINE_EXEMPTIONS lists ${key}, which names no function; remove the entry, or rekey it to the function's new file or name`,
+			);
+
 	for (const holder of OWNER_CAPABILITY_HOLDERS.keys())
 		if (!usedCapabilityHolders.has(holder))
 			violations.push(
 				`rule17: OWNER_CAPABILITY_HOLDERS lists ${holder}, which no longer names that domain's capability; remove the entry`,
+			);
+
+	for (const exemption of GIT_SPAWN_EXEMPTIONS)
+		if (!usedGitSpawnExemptions.has(`${exemption.file}#${exemption.callee}`))
+			violations.push(
+				`rule24: GIT_SPAWN_EXEMPTIONS exempts ${exemption.file}#${exemption.callee}, which no longer starts git; remove the exemption`,
 			);
 
 	for (const directory of ["client", "server"]) {

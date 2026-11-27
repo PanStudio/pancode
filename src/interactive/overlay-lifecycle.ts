@@ -165,7 +165,6 @@ export interface OverlayLifecycleRuntimeDeps {
 
 export interface OverlayLifecycleController {
 	openExtensionViewPanelState: import("./overlay-resource-openers.js").OverlayResourceOpeners["openExtensionViewPanelState"];
-	openExtensionPanelState: import("./overlay-resource-openers.js").OverlayResourceOpeners["openExtensionPanelState"];
 	getState(): OverlayState;
 	closeOverlay(): void;
 	finishAuthOverlay(dismiss: boolean): void;
@@ -779,7 +778,6 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 		openHelpOverlayState: overlayResourceOpeners.openHelpOverlayState,
 		openSkillsHubState: overlayResourceOpeners.openSkillsHubState,
 		openExtensionsOverlayState: overlayResourceOpeners.openExtensionsOverlayState,
-		openExtensionPanelState: overlayResourceOpeners.openExtensionPanelState,
 		openExtensionViewPanelState: overlayResourceOpeners.openExtensionViewPanelState,
 		openInteropOverlayState: overlayResourceOpeners.openInteropOverlayState,
 		openProjectTrustState: overlayResourceOpeners.openProjectTrustState,

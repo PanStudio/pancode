@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { execFileSync } from "node:child_process";
 import { relative } from "node:path";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import type { AdoptionScanResult } from "./adoption.js";
 
 export function gitOutput(cwd: string, args: ReadonlyArray<string>): string | null {
 	try {
-		return execFileSync("git", internalGitArgv(args, cwd), {
+		return gitExecFileSync(args, {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
@@ -47,7 +46,7 @@ export function uncommittedContextSources(cwd: string, adoption: AdoptionScanRes
 
 export function gitStatus(cwd: string): string {
 	try {
-		return execFileSync("git", internalGitArgv(["status", "--short"], cwd), {
+		return gitExecFileSync(["status", "--short"], {
 			cwd,
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { runBashCommand } from "../../core/bash-exec.js";
-import { internalGitArgv, withoutRepositoryEnv } from "../../core/internal-git.js";
+import { withoutRepositoryEnv } from "../../core/internal-git.js";
+import { gitExecFileSync } from "../../core/internal-git-run.js";
 import type { RunHostVerification, RunHostVerificationCheck } from "../../domains/dispatch/types.js";
 import type { SessionVerifier } from "../../domains/safety/finish-contract.js";
 import type { RunJsonVerifyResult } from "./run-json-schema.js";
@@ -44,7 +44,7 @@ const VERIFY_OUTPUT_TAIL_BYTES = 2_048;
 /** The base of a run in `cwd` (CLI-4): its repository top level and HEAD; null outside git or before a first commit. */
 export function verifyBaseOf(cwd: string): VerifyBase | null {
 	const git = (args: string[]) =>
-		execFileSync("git", internalGitArgv(["-C", cwd, ...args]), {
+		gitExecFileSync(["-C", cwd, ...args], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: 30_000,

@@ -30,26 +30,27 @@ test("built CLI operator invocation isolates stdout, disposes code and keeps ord
 				version: "1.0.0",
 				description: "Synthetic command",
 				runtime: {
-					api: 1,
+					api: 2,
 					entrypoint: "extension.mjs",
 					commands: [{ name: "inspect", description: "Synthetic inspect" }],
 					events: ["session_open"],
 					ui: ["panel"],
+					permissions: { fs: { read: [], write: [".out"] }, exec: false, net: false },
 				},
 			}),
 		);
 		writeFileSync(
 			path.join(source, "extension.mjs"),
-			'import {writeFileSync} from "node:fs";console.log("untrusted startup stdout");export default api=>{api.on("session_open",()=>writeFileSync("pancode-session-event.txt","unexpected"));api.onDispose(()=>writeFileSync("pancode-disposed.txt","disposed"));api.handle("inspect",(args,ctx)=>({text:JSON.stringify({args,session:ctx.snapshot.sessionId,mode:ctx.snapshot.mode}),panel:{title:"SYNTHETIC",sections:[]}}));};',
+			'import {writeFileSync} from "node:fs";console.log("untrusted startup stdout");export default api=>{api.on("session_open",()=>writeFileSync(".out/pancode-session-event.txt","unexpected"));api.onDispose(()=>writeFileSync(".out/pancode-disposed.txt","disposed"));api.handle("inspect",(args,ctx)=>({text:JSON.stringify({args,session:ctx.snapshot.sessionId,mode:ctx.snapshot.mode}),panel:{title:"SYNTHETIC",view:{t:"text",text:""}}}));};',
 		);
 		equal(run(["extensions", "discover", source, "--json"]).status, 0);
 		equal(run(["extensions", "install", source, "--project", "--json"]).status, 0);
-		// The installed extension claims the token, so the runtime refuses it without loading the extension's code.
+		// With no model target saved the run refuses before boot, so the extension's code never loads.
 		const ordinary = run(["run", "/ext:pancode-fixture:inspect"]);
-		equal(ordinary.status, 1, ordinary.stderr);
-		match(ordinary.stderr, /\/ext:pancode-fixture:inspect is not an available extension command/);
+		equal(ordinary.status, 2, ordinary.stderr);
+		match(ordinary.stderr, /not configured: no model target is saved/);
 		equal(`${ordinary.stdout}${ordinary.stderr}`.includes("untrusted startup stdout"), false);
-		equal(existsSync(path.join(cwd, "pancode-disposed.txt")), false);
+		equal(existsSync(path.join(cwd, ".out", "pancode-disposed.txt")), false);
 		const unclaimed = run(["run", "/ext:nope:inspect"]);
 		equal(unclaimed.status, 2, unclaimed.stderr);
 		match(unclaimed.stderr, /\/ext:nope:inspect is not a command/);
@@ -60,8 +61,8 @@ test("built CLI operator invocation isolates stdout, disposes code and keeps ord
 		equal(JSON.parse(output.output.text).session, null);
 		equal(JSON.parse(output.output.text).mode, "headless");
 		ok(output.output.panel);
-		equal(existsSync(path.join(cwd, "pancode-session-event.txt")), false);
-		ok(existsSync(path.join(cwd, "pancode-disposed.txt")));
+		equal(existsSync(path.join(cwd, ".out", "pancode-session-event.txt")), false);
+		ok(existsSync(path.join(cwd, ".out", "pancode-disposed.txt")));
 		const text = run(["extensions", "run", "pancode-fixture", "inspect"]);
 		equal(text.status, 0, text.stderr);
 		equal(JSON.parse(text.stdout).mode, "headless");

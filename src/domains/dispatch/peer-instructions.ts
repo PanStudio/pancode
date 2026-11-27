@@ -13,7 +13,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { internalGitArgv } from "../../core/internal-git.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { writeRootsCover } from "../../core/path-boundary.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { runCommandVector } from "../../core/safe-exec.js";
@@ -101,7 +101,7 @@ const judged = new Map<string, Promise<HandbookLedgerEntry[]>>();
 const JUDGED_CACHE_MAX = 16;
 
 async function headOf(root: string): Promise<string> {
-	const result = await runCommandVector("git", internalGitArgv(["-C", root, "rev-parse", "HEAD"]), { timeoutMs: 5000 });
+	const result = await gitVia(runCommandVector, ["-C", root, "rev-parse", "HEAD"], { timeoutMs: 5000 });
 	return result.exitCode === 0 ? result.stdout.trim() : "";
 }
 
@@ -125,9 +125,9 @@ async function judgePeerFiles(cwd: string, files: ReadonlyArray<PeerFile>): Prom
 }
 
 async function tracked(root: string, files: ReadonlyArray<string>): Promise<boolean> {
-	const result = await runCommandVector(
-		"git",
-		internalGitArgv(["-C", root, "ls-files", "--error-unmatch", "--", ...files.map((file) => `:(top,literal)${file}`)]),
+	const result = await gitVia(
+		runCommandVector,
+		["-C", root, "ls-files", "--error-unmatch", "--", ...files.map((file) => `:(top,literal)${file}`)],
 		{ timeoutMs: 5000 },
 	);
 	return result.exitCode === 0;

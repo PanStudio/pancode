@@ -6,7 +6,6 @@ import type { ExtensionDiagnostic, PancodeExtensionManifest } from "@pancode/sdk
 import {
 	ManifestKeyPolicy,
 	parseExtensionCapabilities,
-	parseExtensionRuntime,
 	parseExtensionRuntimeV2,
 	parseIgnorable,
 	resolveExtensionEntrypoint,
@@ -148,13 +147,12 @@ export function parseExtensionManifest(
 			path: manifestPath,
 		});
 	let capabilities: PancodeExtensionManifest["capabilities"];
-	let runtime: PancodeExtensionManifest["runtime"];
 	let runtimeV2: PancodeExtensionManifest["runtimeV2"];
 	if (value.runtime !== undefined) {
 		try {
-			if ((value.runtime as { api?: unknown } | null)?.api === 2)
-				runtimeV2 = parseExtensionRuntimeV2(value.runtime, policy);
-			else runtime = parseExtensionRuntime(value.runtime, policy);
+			if ((value.runtime as { api?: unknown } | null)?.api === 1)
+				throw new Error("runtime.api 1 is no longer supported; declare runtime.api: 2");
+			runtimeV2 = parseExtensionRuntimeV2(value.runtime, policy);
 		} catch (error) {
 			diagnostics.push({
 				type: "error",
@@ -210,7 +208,6 @@ export function parseExtensionManifest(
 		return { diagnostics };
 	}
 	const manifest: PancodeExtensionManifest = { id, name, version, description };
-	if (runtime) manifest.runtime = runtime;
 	if (runtimeV2) manifest.runtimeV2 = runtimeV2;
 	if (capabilities) manifest.capabilities = capabilities;
 	if (compatibility && Object.keys(compatibility).length > 0) manifest.compatibility = compatibility;
@@ -259,17 +256,6 @@ export function loadManifestFromRoot(root: string): ExtensionCandidate {
 	}
 	try {
 		const parsed = parseExtensionManifest(readJsonOrYaml(manifestPath), manifestPath);
-		if (parsed.manifest?.runtime) {
-			try {
-				resolveExtensionEntrypoint(root, parsed.manifest.runtime.entrypoint);
-			} catch (error) {
-				parsed.diagnostics.push({
-					type: "error",
-					message: `runtime: ${error instanceof Error ? error.message : String(error)}`,
-					path: manifestPath,
-				});
-			}
-		}
 		const runtimeV2 = parsed.manifest?.runtimeV2;
 		// A plugin and an extension are separate packages, each with its own
 		// manifest, digest and consent; one root never serves as both.

@@ -8,7 +8,6 @@ export {
 	type DetachedBatchNudgeView,
 	openDetachedBatchViews,
 } from "./dispatch-nudge.js";
-export { createMiddlewareBundle, createMiddlewareDomain } from "./extension.js";
 export { dialectToolNames, isUserHookDialect, type UserHookDialect } from "./hook-dialect.js";
 export type { HookReceipt, HookReceiptSink, UserHookCommandRunner, UserHookOrigin } from "./hooks.js";
 export { loadUserHooks, USER_HOOK_COMMAND_TIMEOUT_MAX_MS } from "./hooks.js";

@@ -43,7 +43,6 @@ import { isBuiltinToolName } from "../../core/tool-names.js";
 import type { EmbeddingResponse } from "../providers/embedding/types.js";
 import { parseExtensionManifest } from "./discovery.js";
 import { extensionContentDigestWithCapture } from "./integrity.js";
-import type { RuntimeProcessState } from "./runtime-process.js";
 import {
 	type ExtensionSandboxReport,
 	planExtensionLaunch,
@@ -183,6 +182,8 @@ function sameNames(value: unknown, expected: readonly string[]): boolean {
 }
 
 /** One api 2 runtime: a process, a private package copy and the requests in flight. No live host object crosses. */
+export type RuntimeProcessState = "staging" | "starting" | "ready" | "failed" | "disposed";
+
 export class ExtensionRuntimeProcessV2 {
 	readonly instance = randomUUID();
 	readonly declaration: ExtensionRuntimeDeclarationV2;

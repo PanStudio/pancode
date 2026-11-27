@@ -4,6 +4,7 @@ import { isIPv6 } from "node:net";
 import { homedir, hostname, userInfo } from "node:os";
 import { basename, sep } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
+import { gitVia } from "../../core/internal-git-run.js";
 import { knownSecretValues } from "../../core/sandbox/env-scrub.js";
 import { SETTINGS_FIELD_NAMES } from "../../core/settings-fields.js";
 import { FailureCause } from "../../core/telemetry/enums.js";
@@ -410,7 +411,7 @@ export async function localIdentity(
 	let workspace = cwd;
 	const git = async (args: string[]) => {
 		try {
-			const result = await run("git", ["-C", cwd, ...args], { timeoutMs: 5000 });
+			const result = await gitVia(run, ["-C", cwd, ...args], { timeoutMs: 5000 });
 			return result.exitCode === 0 ? result.stdout : "";
 		} catch {
 			// No git, or not a repository: the workspace is then only the working directory.

@@ -37,7 +37,7 @@ async function readRecord(file) {
 		await handle.close();
 	}
 }
-/** @param {import('pancode/sdk/extension').ExtensionApi} api */
+/** @param {import("pancode/sdk/extension").ExtensionApiV2} api */
 export default function extension(api) {
 	api.handle("dashboard", async (args, context) => {
 		const file = args.trim()
@@ -54,17 +54,21 @@ export default function extension(api) {
 			status: lastStatus,
 			panel: {
 				title: data.experiment,
-				sections: [
-					{
-						kind: "text",
-						text: `${label}\nSource: ${file}\nThis extension reads records only. It never submits or queries cluster jobs.`,
-					},
-					{ kind: "metrics", items: [{ label: "Completed", value: `${completed}/${data.jobs.length}` }] },
-					{ kind: "table", columns: ["Job", "MPI ranks", "State", "Elapsed s"], rows },
-				],
+				view: {
+					t: "box",
+					dir: "col",
+					gap: 1,
+					children: [
+						{
+							t: "text",
+							text: `${label}\nSource: ${file}\nThis extension reads records only. It never submits or queries cluster jobs.`,
+						},
+						{ t: "kv", items: [{ label: "Completed", value: `${completed}/${data.jobs.length}` }] },
+						{ t: "table", columns: ["Job", "MPI ranks", "State", "Elapsed s"], rows },
+					],
+				},
 			},
 		};
 	});
 	api.on("session_open", () => ({ text: "", status: lastStatus }));
-	api.on("turn_end", () => ({ text: "", status: lastStatus }));
 }

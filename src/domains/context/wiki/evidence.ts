@@ -2,13 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Mechanical publication checks; these do not prove a claim or that a writer read its source. */
 
-import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import type { Tokens } from "marked";
 import { parse } from "yaml";
 import { sha256Hex } from "../../../core/hash.js";
-import { internalGitArgv } from "../../../core/internal-git.js";
+import { gitExecFileSync } from "../../../core/internal-git-run.js";
 import { isSameOrDescendant, relativePathEscapes } from "../../../core/path-containment.js";
 import { enumerateWorkspaceFiles } from "../../../core/workspace-files.js";
 import { readWikiPage, resolveSourcePath, stripFrontmatter } from "./frontmatter.js";
@@ -487,7 +486,7 @@ export function validateWikiPageEvidence(input: WikiPageEvidenceInput): WikiPage
 		if (glob && !template) {
 			if (trackedFiles === undefined) {
 				try {
-					trackedFiles = execFileSync("git", internalGitArgv(["ls-files", "--cached", "-z"], root), {
+					trackedFiles = gitExecFileSync(["ls-files", "--cached", "-z"], {
 						cwd: root,
 						encoding: "utf8",
 						maxBuffer: 128 * 1024 * 1024,
