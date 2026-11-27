@@ -45,7 +45,12 @@ export function dispatchSlashCommand(command: SlashCommand, ctx: SlashCommandCon
 			return "rejected";
 		}
 		if (line?.kind === "run" && runtime) {
-			const runLocal = ctx.runLocalOperation ?? ((operation: () => Promise<void>) => void operation());
+			const detached = (operation: () => Promise<void>) => void operation();
+			// A long command may run for hours, so the next command does not queue behind it.
+			const long = runtime
+				.commands(promptRefs(ctx.listPrompts?.().items ?? []))
+				.some((row) => row.invocation === line.token && row.long === true);
+			const runLocal = long ? detached : (ctx.runLocalOperation ?? detached);
 			runLocal(async () => {
 				try {
 					const output = await runtime.invoke(line.token, line.args, promptRefs(ctx.listPrompts?.().items ?? []));

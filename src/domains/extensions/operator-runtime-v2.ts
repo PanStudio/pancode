@@ -39,6 +39,7 @@ import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcess
 import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
 import { type ExtensionGlobWatch, watchExtensionGlobs } from "./runtime-watch.js";
+import { createExtensionWork, type ExtensionWorkOptions } from "./services/work.js";
 import { pruneOrphanedExtensionSessionState } from "./session-state.js";
 import { validateSkin } from "./skin-schema.js";
 import { listInstalledExtensions } from "./state.js";
@@ -133,6 +134,8 @@ export interface OperatorRuntimeV2Options {
 	 * gone rather than failing.
 	 */
 	admits?: (extensionId: string) => boolean;
+	/** How the run and verify services start PanCode; this process's own entry and environment by default. */
+	work?: ExtensionWorkOptions;
 }
 
 /** Observations a slow runtime may fall behind by before the oldest is dropped. */
@@ -453,6 +456,16 @@ export class OperatorExtensionRuntimeV2 {
 		const blobs = entry.runtimeV2.services?.store ? services?.blobs : undefined;
 		const unixSockets = this.options.sandboxUnixSockets?.();
 		const sandboxMode = (this.options.sandboxMode ?? layeredSandboxMode)(context.workspace);
+		const work = createExtensionWork(
+			{
+				extensionId: entry.id,
+				workspace: context.workspace,
+				sessionId: context.sessionId,
+				storeDir: paths.storeDir,
+				declaration: entry.runtimeV2,
+			},
+			this.options.work,
+		);
 		created.process = new ExtensionRuntimeProcessV2(entry, {
 			snapshot: { ...context, generation, activeWorkspace, plugin: servedPlugin(entry) },
 			options: Object.fromEntries(entry.runtimeV2.config.map((field) => [field.key, field.default])),
@@ -461,6 +474,7 @@ export class OperatorExtensionRuntimeV2 {
 			...(embed ? { embed: (request, signal) => embed(request, signal, context.workspace) } : {}),
 			...(complete ? { complete: (request, signal) => complete(binding, request, signal) } : {}),
 			...(blobs ? { blobs: (request, signal) => blobs(binding, request, signal) } : {}),
+			...(work ? { work: work.host } : {}),
 			...(unixSockets !== undefined ? { unixSockets } : {}),
 			sandboxMode,
 			...(this.options.readOnly?.() === true ? { readOnly: true } : {}),
@@ -474,6 +488,8 @@ export class OperatorExtensionRuntimeV2 {
 				if (created.process && this.processes.get(entry.id) === created.process) this.changed();
 			},
 		});
+		// Runs and transient worktrees belong to this process: when it is gone, so are they.
+		if (work) void created.process.ended.then(() => work.dispose());
 		return created.process;
 	}
 	private current(process: ExtensionRuntimeProcessV2): boolean {
@@ -851,6 +867,7 @@ export class OperatorExtensionRuntimeV2 {
 						description: command.description,
 						generation: this.generation,
 						available,
+						...(command.long ? { long: true as const } : {}),
 						...(reason ? { reason } : {}),
 						...(!available && settling && failure === undefined && !muted && entry.loadable
 							? { transient: true as const }
@@ -955,11 +972,16 @@ export class OperatorExtensionRuntimeV2 {
 		}
 	}
 
+	/**
+	 * `progress` hears a `long` command's lines; without it they replace the extension's status line when it
+	 * declares one.
+	 */
 	async invoke(
 		invocation: string,
 		args: string,
 		promptNames: ReadonlyArray<string | PromptRef> = [],
 		signal?: AbortSignal,
+		progress?: (text: string) => void,
 	): Promise<ExtensionOutputV2> {
 		this.reconcile();
 		// The first command after a turn that created the session is what starts
@@ -982,7 +1004,7 @@ export class OperatorExtensionRuntimeV2 {
 		try {
 			const output = await this.operator(
 				entry,
-				(process, abort) => process.command(name, args, abort),
+				(process, abort) => process.command(name, args, abort, progress ?? this.statusProgress(process)),
 				(process, output) => this.apply(process, output, "command"),
 				signal,
 			);
@@ -992,6 +1014,13 @@ export class OperatorExtensionRuntimeV2 {
 			this.activity(entry, "command", "error", { ...details, reason: message(error) });
 			throw error;
 		}
+	}
+
+	private statusProgress(process: ExtensionRuntimeProcessV2): ((text: string) => void) | undefined {
+		if (!process.declaration.ui.includes("status")) return undefined;
+		return (text) => {
+			if (this.current(process)) this.apply(process, { status: { text } }, "observation");
+		};
 	}
 
 	/** A press on something this extension drew. */

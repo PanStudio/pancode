@@ -15,6 +15,8 @@ export interface ExtensionCommandRow {
 	reason?: string;
 	/** Unavailable only until a reload settles; a takeover refuses meanwhile instead of handing its prompt to the model. */
 	transient?: true;
+	/** A `long` command: it may run for hours, so a surface does not hold the next command behind it. */
+	long?: true;
 }
 export function extensionInvocation(id: string, command: string): string {
 	return `ext:${id}:${command}`;
