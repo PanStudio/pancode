@@ -137,7 +137,7 @@ A `plugin` may carry many public components. Every other content kind is a singl
 - A standalone agent package declares `skills: []`, because an agent cannot bind a skill outside its own package.
 - `README.md` stays at the package root, outside any resource directory, so the loader does not discover it as a second public component.
 
-A `server` pack holds one MCP server and nothing else: no resource roots and no components. Its root `mcp.json` declares exactly one stdio server whose id is the pack name and which is not the id of a server PanCode ships. `hub validate` loads that file the way the gateway does, so a pack that validates also declares. Installed with `pancode hub install server:<name>`, it becomes a plugin-scope declaration that launches only after `pancode mcp trust <name>`; another agent host runs it with `pankit serve <name>` after `pankit add <name>`.
+A third-party `server` pack may include files its launcher runs, but no components or `skills/`, `agents/`, `prompts/` or `playbooks/` root, even if undeclared. Its root `mcp.json` declares exactly one stdio server whose id is the pack name and which is not the id of a server PanCode ships. `hub validate` reads that file with the gateway's declaration and size checks. Installed with `pancode hub install server:<name>`, it becomes a plugin-scope declaration that launches only after `pancode mcp trust <name>`; another agent host runs it with `pankit serve <name>` after `pankit add <name>`.
 
 ### Components and references
 

@@ -222,27 +222,18 @@ function validateLauncherServer(
 	if (typeof servers === "string") return fail(servers);
 	if (servers.some((server) => server.id === manifest.name))
 		return fail(`${manifest.name} is a server PanCode carries; a server pack cannot take its name`);
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(path.join(root, "mcp.json"), "utf8"));
-	} catch (err) {
-		return fail(`mcp.json is not JSON: ${err instanceof Error ? err.message : String(err)}`);
-	}
-	if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) return fail("mcp.json has no mcpServers mapping");
-	const declared = Object.entries(parsed.mcpServers);
-	if (declared.length !== 1)
-		return fail(`mcp.json declares ${declared.length} servers; a server pack declares exactly one`);
-	const [id, value] = declared[0] as [string, unknown];
-	if (id !== manifest.name) return fail(`mcp.json declares server ${id}, not the pack name ${manifest.name}`);
-	if (isRecord(value) && value.type !== undefined && value.type !== "stdio")
-		return fail(`mcpServers.${id} uses transport ${JSON.stringify(value.type)}; a server pack runs a stdio server`);
 	const loaded = loadPluginMcpFile({ id: manifest.name, scope: "user", rootPath: root, contentDigest: "" });
 	const refused = loaded.diagnostics.find((diagnostic) => diagnostic.severity !== "warning");
 	if (refused !== undefined) return fail(`mcp.json: ${refused.message}`);
+	const [server] = loaded.servers;
+	if (!server || loaded.servers.length !== 1)
+		return fail(`mcp.json declares ${loaded.servers.length} servers; a server pack declares exactly one`);
+	if (server.id !== manifest.name)
+		return fail(`mcp.json declares server ${server.id}, not the pack name ${manifest.name}`);
 	return [
 		{
 			kind: "server",
-			name: id,
+			name: server.id,
 			path: "mcp.json",
 			...(manifest.description !== undefined ? { description: manifest.description } : {}),
 			valid: true,

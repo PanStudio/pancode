@@ -179,8 +179,10 @@ function pancodeConfiguration(value: unknown, root: string): PancodePluginConfig
 	}
 	if (kind === "server") {
 		// A server pack's one server is its server.json or mcp.json; hub validation checks which.
-		const root = Object.keys(resources)[0];
-		if (root !== undefined) throw new Error(`a server package has no ${root} root`);
+		const resource = PLUGIN_RESOURCE_KINDS.find(
+			(key) => resources[key] !== undefined || statSync(path.join(root, key), { throwIfNoEntry: false })?.isDirectory(),
+		);
+		if (resource !== undefined) throw new Error(`a server package has no ${resource} root`);
 		if (inventory.length > 0) throw new Error("a server package declares no components");
 	} else if (kind !== "plugin") {
 		const publicItems = inventory.filter((item) => ["prompt", "agent", "skill", "playbook"].includes(item.kind));
