@@ -316,7 +316,7 @@ function handleModern(message) {
 				capabilities: {
 					tools: {},
 					...(mode === "skills" ? { resources: {} } : {}),
-					extensions: { [TASKS]: {}, ...(mode === "skills" ? { [SKILLS]: {} } : {}) },
+					extensions: { [TASKS]: {}, ...(mode === "skills" ? { [SKILLS]: { directoryRead: true } } : {}) },
 				},
 				instructions: "modern fixture",
 				_meta: { "io.modelcontextprotocol/serverInfo": { name: "fake-modern", version: "2.0" } },
@@ -407,6 +407,14 @@ function handleModern(message) {
 		case "skills/get":
 			reply(message.id, { resultType: "complete", skill: skillEntry() });
 			return;
+		case "resources/directory/read": {
+			const children = Object.keys(skillFiles()).map((uri) => ({ uri, name: uri.split("/").at(-1) ?? uri }));
+			if (skillControl() === "unlisted") {
+				children.push({ uri: "skill://fake/lint/evil-unlisted.md", name: "evil-unlisted.md" });
+			}
+			reply(message.id, { resultType: "complete", resources: children });
+			return;
+		}
 		case "resources/read": {
 			const uri = message.params?.uri;
 			const text = skillFiles()[uri];

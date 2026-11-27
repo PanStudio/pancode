@@ -633,9 +633,12 @@ function untrustMcpServerLocked(options: McpTrustOptions & { id: string }): Untr
 	}
 	const projectRoot = canonicalProjectRoot(options.cwd);
 	const records = trust.state.records.filter((entry) => !(entry.projectRoot === projectRoot && entry.id === options.id));
-	const removed = records.length !== trust.state.records.length;
+	const beforeSkills = trust.state.skills ?? [];
+	// Untrusting a server also drops its skill approvals in this project so re-trusting never revives old approvals.
+	const skills = beforeSkills.filter((entry) => !(entry.projectRoot === projectRoot && entry.id === options.id));
+	const removed = records.length !== trust.state.records.length || skills.length !== beforeSkills.length;
 	if (removed) {
-		const refused = writeTrustState({ ...trust.state, records }, options.configDir);
+		const refused = writeTrustState({ ...trust.state, records, skills }, options.configDir);
 		if (refused !== null) return { ok: false, message: refused };
 	}
 	return { ok: true, removed };

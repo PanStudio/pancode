@@ -887,10 +887,19 @@ function loadSkillFile(
 			path: filePath,
 		});
 	}
-	for (const message of validateNameFormat(name)) diagnostics.push({ type: "warning", message, path: filePath });
+	const hasReservedColon = name.includes(":");
+	if (hasReservedColon) {
+		diagnostics.push({
+			type: "warning",
+			message: `name "${name}" contains ":", which is reserved for MCP-served skills (<server>:<name>); local skill refused`,
+			path: filePath,
+		});
+	} else {
+		for (const message of validateNameFormat(name)) diagnostics.push({ type: "warning", message, path: filePath });
+	}
 
-	// Missing description is the only hard rejection; everything else loads with a warning.
-	if (!description) return { candidate: null, diagnostics };
+	// Missing description or a reserved ":" namespace separator is a hard rejection; other format warnings still load.
+	if (!description || hasReservedColon) return { candidate: null, diagnostics };
 
 	const baseDir = path.dirname(filePath);
 	const scope = root.scope;
@@ -1243,9 +1252,9 @@ export function mcpSkillToolSurface(
 }
 
 /**
- * The skills trusted MCP servers serve. Their names carry the server id, which
- * no local skill name may; a local skill that carries one anyway keeps its name
- * and the server's skill takes a uri-tagged one, so neither is dropped.
+ * The skills trusted MCP servers serve. Their names carry `<serverId>:<name>`,
+ * and local skill names containing `:` are refused so local skills never
+ * silently shadow MCP skills.
  */
 function mcpSkills(
 	input: LoadSkillsInput,

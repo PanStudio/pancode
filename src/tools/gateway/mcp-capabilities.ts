@@ -920,6 +920,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						const listing = await client.listTools(signal);
 						if (closed || signal?.aborted || state.client !== client || state.failure !== null) return;
 						installListing(state, listing);
+						if (refreshLive) await listSkills(state, signal);
 					} catch (error) {
 						state.failure ??= errorMessage(error);
 						await closeClient(state);
@@ -1200,6 +1201,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const refusal = state.client !== null ? null : readOnlyLaunchRefusal(state.declaration, invokeOptions?.readOnly);
 			if (refusal !== null) return { listing: listingFor(state), reason: refusal };
 			await discover(state, invokeOptions?.signal, true);
+			if (state.skillsListing !== undefined) await state.skillsListing;
 			return {
 				listing: listingFor(state),
 				...(state.failure !== null ? { reason: `mcp server ${id} failed: ${state.failure}` } : {}),
@@ -1315,10 +1317,10 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			return resolveStates().get(id)?.surface?.served ?? null;
 		},
 		async skillAccess(id, invokeOptions) {
-			const askedAtMs = Date.now();
 			if (invokeOptions?.signal?.aborted) throw new McpError("aborted", "MCP discovery aborted");
 			const state = resolveStates().get(id);
 			if (state === undefined) return { transport: null, reason: `no MCP server named '${id}' is declared` };
+			const prior = state.skills;
 			const { declaration } = state;
 			if (declaration.scope === "client") {
 				return { transport: null, reason: `skills of ACP client server ${id} are not loaded` };
@@ -1344,12 +1346,11 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			if (state.skillsListing !== undefined) await state.skillsListing;
 			const held = state.skills;
 			// Listed again lazily, at the first access after the server's ttlMs passed, never on a timer.
-			// A relist is satisfied by the listing this access's own connect made.
+			// A listing produced during this access (cold connect or in-flight listSkills) satisfies it without a second RPC.
 			if (
-				(invokeOptions?.relist === true && (held === undefined || held.listedAtMs < askedAtMs)) ||
 				held === undefined ||
 				"failure" in held ||
-				Date.now() - held.listedAtMs >= held.listing.ttlMs
+				(held === prior && (invokeOptions?.relist === true || Date.now() - held.listedAtMs >= held.listing.ttlMs))
 			) {
 				await listSkills(state, invokeOptions?.signal);
 			}

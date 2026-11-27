@@ -364,8 +364,12 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				// The operator typed it, so the version shown is the one recorded, as at a terminal.
 				ctx.notice("info", `mcp: listing the skills of ${id}`);
 				void (async () => {
-					const result = await mcpSkillApprovalOutput({ cwd: process.cwd(), id, skill, record: true });
-					ctx.notice(result.code ? "error" : "info", result.text);
+					try {
+						const result = await mcpSkillApprovalOutput({ cwd: process.cwd(), id, skill, record: true });
+						ctx.notice(result.code ? "error" : "info", result.text);
+					} catch (error) {
+						ctx.notice("error", `mcp trust ${id} --skill: ${error instanceof Error ? error.message : String(error)}`);
+					}
 					ctx.render?.();
 				})();
 				return;

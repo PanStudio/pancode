@@ -321,7 +321,9 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 			const status = judge(declaration, served);
 			let approvedNow = false;
 			if (status.status !== "approved") {
-				const askedDigest = asked.get(key(options?.sessionId, name));
+				const askedKey = key(options?.sessionId, name);
+				const askedDigest = asked.get(askedKey);
+				asked.delete(askedKey);
 				const operatorApproved = options?.approval !== undefined && (options.approval.issuer ?? "operator") === "operator";
 				if (operatorApproved && askedDigest === entry.manifestDigest) {
 					const recorded = approveMcpSkill({
@@ -351,6 +353,13 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 						{ name, kind: "unapproved", source: `mcp:${origin.serverId}` },
 					);
 				}
+			}
+			const liveDisableModelInvocation = entry.frontmatter["disable-model-invocation"] === true;
+			if (input.activation === "model" && liveDisableModelInvocation) {
+				return refusal(
+					`context: skill ${name} disables model invocation; only the operator can load it. Do not retry this load.`,
+					{ name, kind: "unapproved", source: `mcp:${origin.serverId}` },
+				);
 			}
 			const failed = async (reason: string): Promise<ToolResult> => {
 				await relist(origin.serverId, options);
@@ -383,8 +392,10 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 			sessionHeld.set(name, { serverId: origin.serverId, entry });
 			held.set(sessionKey, sessionHeld);
 
+			const liveMetadata = extractLiveMetadata(entry.frontmatter);
 			const surface = mcpSkillToolSurface(entry.frontmatter, name, entry.uri);
-			const tree = input.includeTree ? await manifestTree(transport, entry, signal) : null;
+			const treeResult = input.includeTree ? await manifestTree(transport, entry, signal) : null;
+			const tree = treeResult?.rows ?? null;
 			const sourceOrigin = `mcp:${origin.serverId}`;
 			const lines = [
 				...input.preamble,
@@ -392,13 +403,18 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 				`server: ${origin.serverId}`,
 				`uri: ${neutralizeFraming(entry.uri)}`,
 				`manifest: ${entry.manifestDigest} (${entry.resources.length} files, ${entry.totalBytes} bytes, approved by the operator)`,
-				`disable_model_invocation: ${skill.disableModelInvocation}`,
+				`disable_model_invocation: ${liveDisableModelInvocation}`,
 			];
 			if (surface.allowedTools) lines.push(`allowed_tools: ${surface.allowedTools.join(", ")}`);
 			if (surface.disallowedTools) lines.push(`disallowed_tools: ${surface.disallowedTools.join(", ")}`);
 			if (tree !== null) {
 				lines.push("resources:");
 				for (const row of tree) lines.push(`  ${row}`);
+				if (treeResult?.hasUnlisted) {
+					lines.push(
+						"note: the server's skill directory reports entries outside this approved manifest; PanCode ignores them until the changed skill is approved again.",
+					);
+				}
 			}
 			lines.push(
 				"",
@@ -443,12 +459,12 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 					sourceOrigin,
 					sourceInfo: skill.sourceInfo,
 					scope: skill.scope,
-					disableModelInvocation: skill.disableModelInvocation,
+					disableModelInvocation: liveDisableModelInvocation,
 					...(surface.allowedTools ? { allowedTools: surface.allowedTools } : {}),
 					...(surface.disallowedTools ? { disallowedTools: surface.disallowedTools } : {}),
 					...(pendingPolicy?.allowListAdvisory === true ? { allowListAdvisory: true } : {}),
 					diagnostics: surface.diagnostics.map((diagnostic) => diagnostic.message),
-					metadata: skill.metadata,
+					metadata: liveMetadata,
 					mcp: {
 						serverId: origin.serverId,
 						uri: entry.uri,
@@ -481,7 +497,7 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 			const { serverId, entry } = current;
 			const file = mcpSkillFile(entry, input.file);
 			if (file === null) {
-				const listed = entry.resources.map((resource) => mcpSkillRelativePath(entry, resource.uri));
+				const listed = entry.resources.map((resource) => neutralizeFraming(mcpSkillRelativePath(entry, resource.uri)));
 				return {
 					kind: "error",
 					message: `context: ${neutralizeFraming(input.file)} is not a file of skill ${name}; only files its approved manifest lists are read: ${listed.slice(0, 64).join(", ")}${listed.length > 64 ? ", ..." : ""}.`,
@@ -566,32 +582,44 @@ export function createMcpSkillActivation(deps: ContextMcpSkillDeps, cwd: () => s
 	};
 }
 
+const CORE_FRONTMATTER_KEYS = new Set([
+	"name",
+	"description",
+	"disable-model-invocation",
+	"allowed-tools",
+	"disallowed-tools",
+]);
+
+function extractLiveMetadata(frontmatter: Record<string, unknown>): Record<string, unknown> {
+	const metadata: Record<string, unknown> = {};
+	for (const [field, value] of Object.entries(frontmatter)) {
+		if (CORE_FRONTMATTER_KEYS.has(field)) continue;
+		metadata[field] = value;
+	}
+	return metadata;
+}
+
 /**
- * The skill's files as its manifest lists them. When the server offers
- * directory reads, entries it reports at the skill root that the manifest
- * does not list are shown as unreadable.
+ * The skill's approved manifest files. Per SEP-2640, unlisted children reported
+ * by `resources/directory/read` are never surfaced to the model as files of the
+ * skill; only whether any unlisted entry appeared is noted.
  */
 async function manifestTree(
 	transport: McpSkillsTransport,
 	entry: McpSkillEntry,
 	signal: AbortSignal | undefined,
-): Promise<string[]> {
+): Promise<{ rows: string[]; hasUnlisted: boolean }> {
 	const rows = entry.resources
-		.map((resource) => `${mcpSkillRelativePath(entry, resource.uri)} (${resource.size} bytes)`)
+		.map((resource) => `${neutralizeFraming(mcpSkillRelativePath(entry, resource.uri))} (${resource.size} bytes)`)
 		.sort()
 		.slice(0, TREE_ENTRIES);
-	if (transport.settings?.directoryRead !== true) return rows;
+	if (transport.settings?.directoryRead !== true) return { rows, hasUnlisted: false };
+	let hasUnlisted = false;
 	try {
 		const children = await readMcpSkillDirectory(transport, entry, entry.root, signal);
-		for (const child of children) {
-			if (child.listed || child.directory) continue;
-			if (!child.uri.startsWith(`${entry.root}/`)) continue;
-			rows.push(
-				`${neutralizeFraming(mcpSkillRelativePath(entry, child.uri))} (listed by the server, not in the manifest; never read)`,
-			);
-		}
+		hasUnlisted = children.some((child) => !child.listed && !child.directory && child.uri.startsWith(`${entry.root}/`));
 	} catch {
 		// The directory listing only informs; the manifest is the tree.
 	}
-	return rows;
+	return { rows, hasUnlisted };
 }

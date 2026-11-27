@@ -223,7 +223,10 @@ function mcpSkillLine(skill: Skill, origin: SkillMcpOrigin): string {
 			: origin.approval === "changed"
 				? "changed since approved; the operator approves it again before it loads"
 				: "unapproved; the operator approves it before it loads";
-	return `- ${skill.name} (source: mcp server ${origin.serverId}; ${approval}; ${origin.files} files, ${origin.bytes} bytes): ${neutralizeFraming(skill.description)}`;
+	const description = neutralizeFraming(
+		skill.description.replace(/[\p{Cc}\u200e\u200f\u202a-\u202e\u2066-\u2069]+/gu, " ").trim(),
+	);
+	return `- ${skill.name} (source: mcp server ${origin.serverId}; ${approval}; ${origin.files} files, ${origin.bytes} bytes): ${description}`;
 }
 
 function haystackForMarketplace(entry: MarketplaceSkill): string {

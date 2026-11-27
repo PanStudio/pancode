@@ -187,7 +187,6 @@ import {
 	discoverMarketplaceSkills,
 	installedSkillNames,
 	installSkill,
-	type modelVisibleSkills,
 	suggestableSkills,
 } from "../domains/resources/index.js";
 import { expandSubmitText, submitDisplay } from "../domains/resources/submit-expansion.js";
@@ -1520,7 +1519,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// it runs contained yolo, so a pancode it starts cannot take more autonomy or less confinement than it has.
 	setToolEnvAutonomy(resolveEffectiveAutonomy, unattendedYolo);
 	const skillDiscoveryEnabled = options.noSkills !== true && options.headless?.noSkills !== true;
-	let readySkillSnapshot: { key: string; count: number; skills: ReturnType<typeof modelVisibleSkills> } | undefined;
+	let readySkillSnapshot: { key: string; count: number; skills: ReturnType<typeof suggestableSkills> } | undefined;
 	const getReadySkillCount = (): number => {
 		if (!resources) return 0;
 		const cwd = process.cwd();

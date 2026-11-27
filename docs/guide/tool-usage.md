@@ -896,7 +896,8 @@ observations without changing the eviction marker, including results evicted as
 skills use a 50KB cap.
 
 A trusted MCP server's skills are listed as `<id>:<name>`, with the server's
-description and its approval state; listing reads no skill file. Loading one
+description and its approval state; listing reads no skill file, and local skill
+names containing `:` are refused so local skills never shadow MCP-served ones. Loading one
 fetches it again with `skills/get` and loads it only when the served manifest
 digest equals the version the operator approved and the frontmatter of
 `SKILL.md` matches the served entry field by field. An unapproved or changed version asks the

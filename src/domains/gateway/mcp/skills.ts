@@ -16,7 +16,7 @@
 
 import { createHash } from "node:crypto";
 import { parse as parseYaml } from "yaml";
-import { canonicalJson } from "../../../core/canonical-json.js";
+import { canonicalJson, canonicalJsonStrict } from "../../../core/canonical-json.js";
 import { sha256Hex } from "../../../core/hash.js";
 import { neutralizeFraming } from "../../../core/reminder-framing.js";
 import { isRecord } from "../../../core/type-guards.js";
@@ -127,9 +127,12 @@ function schemelessPath(uri: string): string | null {
 	return scheme === null ? null : uri.slice(scheme[0].length);
 }
 
-/** A relative file path with no empty, `.` or `..` segment and nothing a uri would carry past the path. */
+/** Control, bidi, and XML tag/attribute delimiters forbidden in skill URIs and relative paths. */
+const UNSAFE_RELATIVE_CHARS = /[?#\\"<>\p{Cc}\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+
+/** A relative file path with no empty, `.` or `..` segment and nothing unsafe for URIs or framing. */
 function cleanRelative(relative: string): boolean {
-	if (relative.length === 0 || /[?#\\]/u.test(relative)) return false;
+	if (relative.length === 0 || UNSAFE_RELATIVE_CHARS.test(relative)) return false;
 	return relative.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
@@ -295,7 +298,15 @@ export function mcpSkillFrontmatterMismatch(entry: McpSkillEntry, text: string):
 	for (const field of fields) {
 		if (!(field in parsed)) return `${entry.uri} frontmatter has no ${field}, which its entry lists`;
 		if (!(field in entry.frontmatter)) return `${entry.uri} frontmatter has ${field}, which its entry does not list`;
-		if (canonicalJson(parsed[field]) !== canonicalJson(entry.frontmatter[field])) {
+		let parsedJson: string;
+		let entryJson: string;
+		try {
+			parsedJson = canonicalJsonStrict(parsed[field]);
+			entryJson = canonicalJsonStrict(entry.frontmatter[field]);
+		} catch {
+			return `${entry.uri} frontmatter ${field} contains a non-JSON value`;
+		}
+		if (parsedJson !== entryJson) {
 			return `${entry.uri} frontmatter ${field} differs from its entry`;
 		}
 	}
