@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { basename, dirname } from "node:path";
 import { runCommandVector } from "../../core/safe-exec.js";
+import { documentReaderLaunch } from "../../core/sandbox/main-session.js";
 import { formatSize } from "../truncate.js";
 import { type DocumentRequest, RENDER_CAP_BYTES, type Rendered } from "./shared.js";
 
@@ -46,15 +48,22 @@ export async function renderPdf(
 	filePath: string,
 	request: DocumentRequest,
 ): Promise<
-	Rendered & { pageCount?: number; headerLength?: number; pageStarts?: Array<{ page: number; offset: number }> }
+	Rendered & {
+		pageCount?: number;
+		headerLength?: number;
+		pageStarts?: Array<{ page: number; offset: number }>;
+	}
 > {
 	const cwd = dirname(filePath);
+	// poppler writes nothing, so in the main session it runs read-only with no network where bubblewrap can (P8).
+	const { shellSandbox, label } = documentReaderLaunch("pdf", cwd);
 	const exec = (file: string, args: string[]) =>
 		runCommandVector(file, args, {
 			cwd,
 			workspaceRoot: cwd,
 			timeoutMs: PDF_TIMEOUT_MS,
 			maxOutputBytes: RENDER_CAP_BYTES,
+			...(shellSandbox !== undefined ? { shellSandbox } : {}),
 			...(request.signal !== undefined ? { signal: request.signal } : {}),
 		});
 	const info = await exec("pdfinfo", [filePath]);
@@ -108,5 +117,5 @@ export async function renderPdf(
 		lines.push("", heading, body);
 		return { page: pageNumber, offset: start };
 	});
-	return { text: lines.join("\n"), pageCount, headerLength: (lines[0] ?? "").length, pageStarts };
+	return { text: lines.join("\n"), pageCount, headerLength: (lines[0] ?? "").length, pageStarts, launch: label };
 }

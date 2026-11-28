@@ -84,6 +84,7 @@ import {
 	applyRegisteredToolClassification,
 	disposeAdmissionArgs,
 	hookLanding,
+	hostLaunchNoteOf,
 	outboundFilesOf,
 	prepareAdmissionCall,
 	prepareToolArgs,
@@ -2068,9 +2069,12 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			const loopReason = rejected();
 			return { kind: "blocked", reason: loopReason ?? abortReason, decision: outcome.decision };
 		}
-		const consequence = outboundFilesOf(tools.get(admissionCall.tool as ToolName), admissionCall.args).map(
-			(file) => file.consequence,
-		);
+		const admittedSpec = tools.get(admissionCall.tool as ToolName);
+		const launchNote = hostLaunchNoteOf(admittedSpec);
+		const consequence = [
+			...outboundFilesOf(admittedSpec, admissionCall.args).map((file) => file.consequence),
+			...(launchNote !== null ? [launchNote] : []),
+		];
 		return new Promise<RegistryVerdict>((resolve) => {
 			const meta: PermissionRequiredMeta = {
 				requestId: nextApprovalRequestId(),

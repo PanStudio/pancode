@@ -247,6 +247,8 @@ export interface RunJsonVerifyResult {
 	timedOut: boolean;
 	/** The agent itself ran this check after its last edit, so the finish gate counted it. */
 	ranAfterLastEdit: boolean;
+	/** The operator's own command runs on the host, outside PanCode's sandbox (P8). */
+	confinement: "host";
 	/**
 	 * CLI-4: a failing check replayed on the commit the run started from, through dispatch's base comparison. `failed`
 	 * with no reason means the base fails the same way, so the failure is not the run's (not_implicated). Absent when the

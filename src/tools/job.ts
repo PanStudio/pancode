@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { Type } from "typebox";
 import {
 	JOB_PREDICATE_OPS,
@@ -10,6 +11,7 @@ import {
 	type JobRunner,
 } from "../core/job-types.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
+import { layeredConfineList } from "../core/settings-layers.js";
 import { ToolNames } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import {
@@ -27,6 +29,7 @@ import {
 	canonicalJobCwd,
 	executeJobCommand,
 	jobCommandEffect,
+	jobLaunch,
 	prepareJobCommand,
 	prepareJobConditions,
 } from "./job-command.js";
@@ -38,6 +41,8 @@ export interface JobToolDeps {
 	autonomy?: () => AutonomyLevel;
 	/** The sandbox env policy from settings, read at each occurrence; a job command's environment is scrubbed by it. */
 	sandboxEnv?: () => SandboxEnvPolicy;
+	/** `safety.confine`, read at each occurrence (P8); absent reads the layered settings for the job's tree. */
+	confine?: () => ReadonlyArray<string>;
 	controller: JobController;
 	/** `chat.loopsUntilStopped`: a job created without count, for_ms or until_stopped runs until stopped (#450). */
 	untilStoppedDefault?: () => boolean;
@@ -369,13 +374,15 @@ export function createJobTool(deps: JobToolDeps): {
 			if (artifact.kind === "error") return { kind: "error", message: artifact.message };
 			try {
 				if (artifact.kind === "execution") {
-					const result = await executeJobCommand(
-						artifact.context,
-						deps.autonomy?.(),
-						deps.sandboxEnv?.(),
-						options?.shellSandbox,
-					);
-					return { kind: "ok", output: result.summary ?? result.outcome, details: { jobRunResult: result } };
+					const cwd = artifact.context.job.owner.cwd;
+					const launch = jobLaunch(options?.shellSandbox, (deps.confine ?? (() => layeredConfineList(cwd)))(), cwd);
+					if ("refused" in launch) return { kind: "error", message: `job: ${launch.refused}` };
+					const result = await executeJobCommand(artifact.context, deps.autonomy?.(), deps.sandboxEnv?.(), launch.policy);
+					return {
+						kind: "ok",
+						output: result.summary ?? result.outcome,
+						details: { jobRunResult: result, sandbox: launch.label },
+					};
 				}
 				const nowOwner = deps.owner();
 				if (

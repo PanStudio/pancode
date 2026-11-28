@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { existsSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { Type } from "typebox";
+import type { HostLaunchLabel } from "../core/sandbox/host-launch.js";
 import { packedSourceDirectory, packedSourcePathsUnder } from "../core/source-pack.js";
 import { ToolNames } from "../core/tool-names.js";
 import { StringEnum } from "../engine/ai.js";
@@ -78,7 +80,7 @@ async function fdFind(
 	search: SearchCompleteness,
 	allows: (path: string) => boolean,
 	signal?: AbortSignal,
-): Promise<{ ok: true; paths: string[] } | { ok: false; message: string }> {
+): Promise<{ ok: true; paths: string[]; launch: HostLaunchLabel } | { ok: false; message: string }> {
 	const lines: string[] = [];
 	const diagnostics = createSearchDiagnostics(search, (path) => allows(resolve(process.cwd(), path)));
 	const result = await spawnLineStream(fdPath, buildFdArgs(pattern, searchPath, includeIgnored), {
@@ -118,7 +120,7 @@ async function fdFind(
 			if (hadTrailingSlash && !relPath.endsWith("/")) relPath += "/";
 			return toPosixPath(relPath);
 		});
-	return { ok: true, paths };
+	return { ok: true, paths, launch: result.launch };
 }
 
 // Bounded async fallback walker for hosts without fd. Uses dirents only (no
@@ -235,6 +237,8 @@ function renderFindResult(input: {
 	searchPath: string;
 	search: SearchCompleteness;
 	fallback: boolean;
+	/** Where fd ran (P8); absent when nothing was launched. */
+	launch?: HostLaunchLabel;
 	withheldPaths: number;
 	packedPaths: Set<string>;
 	ordered: OrderedPaths;
@@ -270,7 +274,11 @@ function renderFindResult(input: {
 				coverageNotice +
 				internalSearchExclusionNotice(input.searchPath) +
 				`\n[${emptySearchText(`paths under ${searchedTree(input.searchPath)} for the glob sent`)}]`,
-			details: { search, symlinkDirectories: { counted: input.fallback } },
+			details: {
+				search,
+				symlinkDirectories: { counted: input.fallback },
+				...(input.launch !== undefined ? { sandbox: input.launch } : {}),
+			},
 			shownCount: 0,
 			totalCount: search.complete ? 0 : null,
 			truncated: !search.complete,
@@ -294,7 +302,11 @@ function renderFindResult(input: {
 	const totalKnown = search.complete;
 	const truncated = !search.complete || limitHit || ordered.candidateCapHit || truncation.truncated;
 	const next = limitHit ? `limit=${limit * 2}` : ordered.candidateCapHit ? "order=path" : undefined;
-	const details: Record<string, unknown> = { search, symlinkDirectories: { counted: input.fallback } };
+	const details: Record<string, unknown> = {
+		search,
+		symlinkDirectories: { counted: input.fallback },
+		...(input.launch !== undefined ? { sandbox: input.launch } : {}),
+	};
 	if (input.packedPaths.size > 0) details.packed = { collected: input.packedPaths.size, shown: packedShown };
 	if (order === "mtime" && ordered.candidateCap !== null) {
 		details.candidates = {
@@ -378,6 +390,7 @@ export const findTool: ToolSpec = {
 			const search = newSearchCompleteness();
 			const pathFilter = createObservationPathFilter(process.cwd(), options?.allowsObservationPath);
 			const fdPath = resolveFdBinary();
+			let launch: HostLaunchLabel | undefined;
 			if (packOnly) {
 				collectedPaths = [];
 			} else if (fdPath) {
@@ -393,6 +406,7 @@ export const findTool: ToolSpec = {
 				);
 				if (!result.ok) return { kind: "error", message: result.message };
 				collectedPaths = result.paths;
+				launch = result.launch;
 			} else {
 				try {
 					collectedPaths = await fallbackFind(
@@ -435,6 +449,7 @@ export const findTool: ToolSpec = {
 				searchPath,
 				search,
 				fallback: !fdPath,
+				...(launch !== undefined ? { launch } : {}),
 				withheldPaths: pathFilter.withheldPaths,
 				packedPaths,
 				ordered,

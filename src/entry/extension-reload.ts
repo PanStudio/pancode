@@ -199,6 +199,7 @@ function recordHookRan(receipt: HookReceipt, sessionId: string | undefined): voi
 				...(receipt.runs !== undefined ? { runs: receipt.runs } : {}),
 				...(receipt.maxDurationMs !== undefined ? { maxDurationMs: Math.max(0, receipt.maxDurationMs) } : {}),
 				...(receipt.timeoutMs !== undefined ? { timeoutMs: receipt.timeoutMs } : {}),
+				...(receipt.confinement !== undefined ? { confinement: receipt.confinement } : {}),
 				...(receipt.exitCode !== undefined ? { exitCode: receipt.exitCode } : {}),
 				...(receipt.outputChars !== undefined ? { outputChars: receipt.outputChars } : {}),
 				...(receipt.toolName !== undefined ? { tool: receipt.toolName } : {}),

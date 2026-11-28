@@ -830,6 +830,7 @@ async function readDocument(
 		details: {
 			file,
 			document: kind,
+			...("launch" in rendered && rendered.launch !== undefined ? { sandbox: rendered.launch } : {}),
 			readRange: {
 				startLine:
 					view.shownCount > 0

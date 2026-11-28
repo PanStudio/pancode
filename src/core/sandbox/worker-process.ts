@@ -115,6 +115,11 @@ export function workerSandboxWritesNothing(): boolean {
 	return workerSandboxConfinesWrites() && active !== null && active.writableRoots.length === 0;
 }
 
+/** True when this process holds a worker sandbox policy, whether or not a backend can enforce it here. */
+export function workerSandboxConfigured(): boolean {
+	return active !== null;
+}
+
 /** True when this process is a worker whose children, MCP servers included, start under an OS sandbox. */
 export function workerSandboxApplies(): boolean {
 	return (

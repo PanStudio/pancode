@@ -170,6 +170,8 @@ export interface CodeStepRecord {
 	artifactPaths: ReadonlyArray<string>;
 	/** SHA-256 over the canonical report, the code step's stand-in for a receipt digest. */
 	reportDigest: string;
+	/** Where its commands ran (P8): the host verification sandbox, or the host on the operator's authority. */
+	confinement?: "sandboxed" | "host";
 }
 
 export interface CodeStepOutcome {
@@ -838,6 +840,7 @@ export async function runCodeStep(input: CodeStepRunInput): Promise<CodeStepOutc
 		cwd,
 		envNames: [...PLAYBOOK_COMMAND_BASE_ENV, ...command.env],
 		timeoutMs: command.timeoutMs,
+		confinement: input.shellSandbox !== undefined ? "sandboxed" : "host",
 		startedAt,
 		endedAt,
 		durationMs,

@@ -71,6 +71,8 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	"safety.sandboxUnixSockets",
 	// Read at every dispatch admission, so the next dispatch observes a change; a running worker keeps its spec.
 	"safety.sandboxUnconfinedLocalWorkers",
+	// Read at each host launch: an MCP server or pane already running keeps the confinement it started with.
+	"safety.confine",
 	// The startup prune reads it from the live snapshot when it runs and doctor reads the file, so neither keeps an old
 	// value; it takes effect at the next prune.
 	"safety.sandboxCacheMaxGiB",

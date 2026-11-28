@@ -31,6 +31,7 @@ import {
 } from "./defaults.js";
 import { FUNDING_ID_PATTERN } from "./funding-config.js";
 import { LIVE_CHECK_LOGIN_RUNTIMES } from "./sandbox/env-scrub.js";
+import { confineEntryProblem } from "./sandbox/host-launch.js";
 import { SANDBOX_MODES, UNIX_SOCKET_MODES } from "./sandbox/types.js";
 import {
 	describe,
@@ -966,6 +967,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"sandboxUnixSockets",
 				"sandboxUnconfinedLocalWorkers",
 				"sandboxCacheMaxGiB",
+				"confine",
 				"snapshots",
 				"validationWrappers",
 				"unattendedAfterSeconds",
@@ -1011,6 +1013,20 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 											? null
 											: `runtime ${target.runtime} has no login file PanCode can reveal (only ${[...LIVE_CHECK_LOGIN_RUNTIMES].join(", ")})`;
 								if (problem !== null) issues.add("safety.liveCheckTargets", `${id}: ${problem}`);
+								return problem === null;
+							}),
+						),
+					];
+				}
+			}
+			if ("confine" in safety) {
+				const parsed = expectStringArray(issues, "safety.confine", safety.confine);
+				if (parsed !== undefined) {
+					settings.safety.confine = [
+						...new Set(
+							parsed.filter((entry) => {
+								const problem = confineEntryProblem(entry);
+								if (problem !== null) issues.add("safety.confine", `${JSON.stringify(entry)}: ${problem}`);
 								return problem === null;
 							}),
 						),

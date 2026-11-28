@@ -33,6 +33,32 @@ export type UnixSocketMode = (typeof UNIX_SOCKET_MODES)[number];
 export const EGRESS_MODES = ["off", "proxied", "open"] as const;
 export type EgressMode = (typeof EGRESS_MODES)[number];
 
+/** Every agent-reachable host launcher, as `details.sandbox.launcher` names it (P8). */
+export const HOST_LAUNCHERS = [
+	"mcp-stdio",
+	"extension-binary",
+	"extension-pane",
+	"yaml-hook",
+	"typed-git",
+	"search",
+	"sqlite",
+	"pdf",
+	"job",
+	"code-step",
+] as const;
+export type HostLauncher = (typeof HOST_LAUNCHERS)[number];
+
+/**
+ * Where one launch ran (`details.sandbox.confinement`): `sandboxed` in PanCode's OS sandbox, `unconfined` on the host
+ * for an agent-reachable integration, `host` on the host as the operator's own authority.
+ */
+export const SANDBOX_CONFINEMENTS = ["sandboxed", "unconfined", "host"] as const;
+export type SandboxConfinement = (typeof SANDBOX_CONFINEMENTS)[number];
+
+/** `safety.confine` integration classes that take no name; `mcp:` and `extension:` entries name one. */
+export const CONFINE_CLASSES = ["hooks", "git", "jobs"] as const;
+export type ConfineClass = (typeof CONFINE_CLASSES)[number];
+
 /** Named exact host/port bundles (`safety.egress.<caller>.presets`); egress/policy.ts lists their origins. */
 export const EGRESS_PRESET_NAMES = ["npm", "pypi", "github", "crates", "go"] as const;
 export type EgressPresetName = (typeof EGRESS_PRESET_NAMES)[number];

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { parseEgressAllowEntry } from "../core/sandbox/egress/policy.js";
 import { escapeTerminalControls } from "../core/terminal-controls.js";
 import { isMcpResourceCapability, mcpToolName } from "../core/tool-names.js";
 import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
@@ -61,7 +62,7 @@ Commands:
   pancode mcp login <id> [--client-secret] [--json]
   pancode mcp logout <id> [--json]
   pancode mcp test <id> [--call <tool> [--args <json>]]... [--json]
-  pancode mcp trust <id> [--action-class <class>] [--network] [--json]
+  pancode mcp trust <id> [--action-class <class>] [--network] [--allow <host:port>]... [--json]
   pancode mcp trust <id> --surface [--hash <sha256>] [--json]
   pancode mcp trust <id> --skill <name|uri> [--hash <manifest digest>] [--json]
   pancode mcp untrust <id> [--json]
@@ -164,7 +165,7 @@ JSON responses (--json):
     The supported seam for external integration checks; nothing outside
     PanCode needs to import its source.
   trust: {ok: true, record: {projectRoot, id, digest, actionClass, trustedAt, network?,
-    entryScriptHashes?}, entry: [...], toolActionClasses, toolPathArguments}
+    allow?, entryScriptHashes?}, entry: [...], toolActionClasses, toolPathArguments}
     entry lists the project files the record binds: an absolute command,
     every argument not shaped like a flag and every value a flag carries
     after = (--require=./a.cjs) that names an existing file in the project.
@@ -186,6 +187,13 @@ JSON responses (--json):
     tree; a read-only worker keeps it. A module the server imports is not
     bound, so a writer's edit to one persists into a later read-only run
     that holds the grant. Re-trusting without it drops the grant.
+    --allow <host:port>, repeatable, is for a server the operator confines
+    in the main session (safety.confine: [mcp:<id>]): its sandboxed process
+    then reaches only those exact origins, through PanCode's egress proxy.
+    A confined server with neither grant has no network; with --network
+    alone its network is the host's, unmonitored. A user declaration's
+    allow: [host:port, ...] grants the same. Unconfined servers run on the
+    host and ignore both in the main session. Re-trusting without it drops it.
     Trust approves the launch only. Run at a terminal without --json, it then
     launches the server, prints the tool surface it serves and records that
     surface as approved; otherwise it records none and names trust --surface.
@@ -550,7 +558,7 @@ export function mcpCommandOutput(
 			// Each server's tools and surface sit under its own header line (CLI audit 7).
 			const lines = result.servers.flatMap((server) => {
 				const block = [
-					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${environmentLabel(("envVars" in server ? server.envVars : undefined) ?? [])} ${networkLabel(server)}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
+					`${server.id} scope=${server.scope}${server.plugin !== undefined ? ` plugin=${server.plugin.id}` : ""} ${launchLabel(server)} trust=${server.trust.status}${"reason" in server.trust ? ` (${server.trust.reason})` : ""} actionClass=${serverClassLabel(server.trust, server.tools)}${toolClassesLabel(server.toolActionClasses)}${pathArgumentsLabel(server.toolPathArguments)}${server.scope === "project" ? ` ${entryLabel(server.entryScripts ?? [])}` : ""}${environmentLabel(("envVars" in server ? server.envVars : undefined) ?? [])} ${networkLabel(server)}${server.trust.status === "trusted" && server.trust.allow !== undefined ? ` allow=${server.trust.allow.join(",")}` : ""}${server.status !== undefined ? ` status=${server.status.status}` : ""}`,
 				];
 				if (server.status?.reason !== undefined) {
 					const remedy =
@@ -586,14 +594,15 @@ export function mcpCommandOutput(
 		if ((command !== "trust" && command !== "untrust") || !id)
 			return fail(
 				2,
-				"usage: pancode mcp list | add <id> [--scope user|project] (--url <url> [--header <Name>=<key>]... | -- <command> [args...]) | remove <id> [--scope user|project] | login <id> [--client-secret] | logout <id> | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] | untrust <id>",
+				"usage: pancode mcp list | add <id> [--scope user|project] (--url <url> [--header <Name>=<key>]... | -- <command> [args...]) | remove <id> [--scope user|project] | login <id> [--client-secret] | logout <id> | test <id> [--call <tool> [--args <json>]]... | trust <id> [--action-class <class>] [--network] [--allow <host:port>]... | untrust <id>",
 			);
 		// A flag where the id belongs is named as a flag, never looked up as a server id (C5); exit 1 stays (NIGHT-DECISIONS 2).
 		if (id.startsWith("-")) return fail(1, `unknown flag: ${id}`);
 		let actionClass: McpTrustActionClass | undefined;
 		let network = false;
+		const allow: string[] = [];
 		const flags = [...rest];
-		if (flags.length && command !== "trust") return fail(2, "--action-class and --network apply only to trust");
+		if (flags.length && command !== "trust") return fail(2, "--action-class, --network and --allow apply only to trust");
 		while (flags.length) {
 			const flag = flags.shift();
 			if (flag === "--network" && !network) {
@@ -601,6 +610,12 @@ export function mcpCommandOutput(
 				continue;
 			}
 			const value = flags.shift();
+			if (flag === "--allow") {
+				const parsed = value === undefined ? "a value is required" : parseEgressAllowEntry(value);
+				if (typeof parsed === "string") return fail(2, `--allow ${value ?? ""}: ${parsed}`);
+				allow.push((value as string).trim());
+				continue;
+			}
 			if (
 				flag !== "--action-class" ||
 				actionClass !== undefined ||
@@ -614,7 +629,13 @@ export function mcpCommandOutput(
 		}
 		const declared = resolveMcpServers(options).servers.find((entry) => entry.id === id);
 		if (command === "trust") {
-			const result = trustMcpServer({ ...options, id, ...(actionClass ? { actionClass } : {}), network });
+			const result = trustMcpServer({
+				...options,
+				id,
+				...(actionClass ? { actionClass } : {}),
+				network,
+				...(allow.length > 0 ? { allow } : {}),
+			});
 			if (!result.ok) return fail(1, result.message);
 			const { entryScripts, ...data } = result;
 			const { record } = result;

@@ -8,6 +8,7 @@ import { proxyEnvSummary } from "../core/proxy-env.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../core/sandbox/availability.js";
 import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/policy.js";
 import {
+	documentReaderLaunch,
 	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
@@ -19,7 +20,12 @@ import { discoverSecretMasks } from "../core/sandbox/secret-files.js";
 import { hostSandboxStatus, sandboxStatusLine } from "../core/sandbox/status.js";
 import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
 import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
-import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
+import {
+	type LayeredSettings,
+	layeredConfineList,
+	readLayeredSettings,
+	settingsSourceFor,
+} from "../core/settings-layers.js";
 import { reportInvalidInstallRecordsAsRows } from "../domains/extensions/index.js";
 import { resolveOnPath } from "../domains/interop/detect.js";
 import {
@@ -258,6 +264,33 @@ function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): 
 		granted: egressGrants(egress.main.allow, egress.main.presets).origins.size,
 		upstreamProxy: egress.upstreamProxy === null ? null : redactedUpstreamProxy(egress.upstreamProxy),
 		isolationFailure: egress.main.mode === "open" ? null : sandboxNetworkIsolation(availability),
+	};
+}
+
+/**
+ * Where the main session's host-launched tools run (P8, D11): the readers
+ * PanCode confines by default, the integrations `safety.confine` opts in, and
+ * the operator's own work that runs on the host. A confined entry this host
+ * cannot sandbox warns, since that integration then refuses to start.
+ */
+export function hostLaunchersFinding(workspaceRoot: string): DoctorFinding {
+	const confine = layeredConfineList(workspaceRoot);
+	const readers = documentReaderLaunch("sqlite", workspaceRoot).label;
+	const backend = sandboxAvailability();
+	const refused = confine.length > 0 && !backend.available;
+	const readerLine =
+		readers.confinement === "sandboxed"
+			? "sqlite and PDF readers: read-only sandbox, no network"
+			: `sqlite and PDF readers: unconfined (${readers.why})`;
+	const confinedLine =
+		confine.length === 0
+			? "MCP stdio servers, extension programs, project and extension hooks, typed git and jobs: unconfined on the host (safety.confine is empty)"
+			: `safety.confine: ${confine.join(", ")}${refused ? ` (no sandbox backend: ${backend.reason ?? "none found"}; these refuse to start)` : " run in the sandbox"}; the rest of MCP stdio servers, extension programs, project and extension hooks, typed git and jobs: unconfined on the host`;
+	return {
+		ok: true,
+		name: "host launchers",
+		level: refused ? "warn" : "info",
+		detail: `grep and find: a worker's sandbox in workers, the host in the main session; ${readerLine}; ${confinedLine}; user hooks, code steps and run --verify: host (operator authority)`,
 	};
 }
 
@@ -561,6 +594,7 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 				...scratchRootFindings(workspaceRoot),
 				sandboxStatusFinding(),
 				shellSandboxFinding(workspaceRoot),
+				hostLaunchersFinding(workspaceRoot),
 				...schedulerClientFindings(),
 			];
 	// Task worktrees live in the workspace too. The sweep reads claims and asks

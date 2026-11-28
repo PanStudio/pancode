@@ -14,6 +14,7 @@ import {
 	type ValidateDataOptions,
 	type ValidateDataResult,
 } from "@pancode/scidata";
+import { documentReaderLaunch } from "../../core/sandbox/main-session.js";
 import { inspectData, selectData, statsData, validateData } from "../data/runtime.js";
 import {
 	commitObservationReservation,
@@ -229,7 +230,15 @@ export function createDataTool(deps: DataToolDeps = {}): ToolSpec {
 					totalCount: counted.totalCount,
 					truncated: counted.truncated,
 					...(counted.next !== undefined ? { next: counted.next } : {}),
-					details: { op, path: target, format: result.format, view: result.view, viewLabel: describeDataView(result.view) },
+					details: {
+						op,
+						path: target,
+						format: result.format,
+						view: result.view,
+						viewLabel: describeDataView(result.view),
+						// The SQLite reader is the one host process the data tool launches (P8).
+						...(result.format === "sqlite" ? { sandbox: documentReaderLaunch("sqlite", path.dirname(target)).label } : {}),
+					},
 					reservation,
 					...(options ? { options } : {}),
 				});

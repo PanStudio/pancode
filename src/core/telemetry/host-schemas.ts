@@ -4,6 +4,7 @@
 
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { SANDBOX_CONFINEMENTS } from "../sandbox/types.js";
 import { ConfigChangeScope, ConfigChangeSource, vocabulary } from "./enums.js";
 import { ExistingId } from "./id-schemas.js";
 import { closed, count, duration, ObjectRefSchema, sha256Hex, text, UtcSchema as utc } from "./schemas.js";
@@ -68,6 +69,8 @@ export const HookRanSchema = Type.Object(
 		runs: Type.Optional(count),
 		maxDurationMs: Type.Optional(duration),
 		timeoutMs: Type.Optional(duration),
+		/** Where a command hook ran (P8): the operator's own on the host, the rest as `safety.confine` says. */
+		confinement: Type.Optional(vocabulary(SANDBOX_CONFINEMENTS)),
 		exitCode: Type.Optional(Type.Integer()),
 		outputChars: Type.Optional(count),
 		tool: Type.Optional(ExistingId),
@@ -108,7 +111,9 @@ export const ExtensionBinaryRanSchema = Type.Object(
 		via: vocabulary(["run", "pane"]),
 		parent: vocabulary(["command", "action", "tool", "observe", "hook", "interview", "unknown"]),
 		outcome: vocabulary(["ok", "failed", "timeout", "refused"]),
-		reasonCode: Type.Optional(vocabulary(["background-request", "read-only", "not-installed"])),
+		reasonCode: Type.Optional(vocabulary(["background-request", "read-only", "not-installed", "no-sandbox"])),
+		/** Where the program ran (P8): sandboxed when `safety.confine` names the extension. */
+		confinement: Type.Optional(vocabulary(SANDBOX_CONFINEMENTS)),
 		exitCode: Type.Optional(Type.Integer()),
 		argCount: count,
 		durationMs: Type.Optional(duration),

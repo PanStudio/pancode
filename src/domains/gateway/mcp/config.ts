@@ -31,6 +31,7 @@ import { sha256Hex } from "../../../core/hash.js";
 import { isStrictDescendant } from "../../../core/path-containment.js";
 import { pancodeProjectRoot } from "../../../core/project-root.js";
 import { resolveSafeCwd } from "../../../core/safe-exec.js";
+import { parseEgressAllowEntry } from "../../../core/sandbox/egress/policy.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
 import { bundledPluginCatalog, listInstalledPlugins, pluginDataDir } from "../../plugins/index.js";
@@ -80,6 +81,7 @@ const SERVER_FIELDS = new Set([
 	"toolActionClasses",
 	"toolPathArguments",
 	"network",
+	"allow",
 	"fileTargets",
 ]);
 /** The Agent Plugins `mcp.json` file at a plugin root. */
@@ -98,6 +100,7 @@ const PLUGIN_SERVER_FIELDS = new Set([
 	"toolActionClasses",
 	"toolPathArguments",
 	"network",
+	"allow",
 	"fileTargets",
 ]);
 const SHELL_EXECUTABLES = new Set([
@@ -201,6 +204,13 @@ interface McpServerDeclarationBase {
 	 * Outside the digest: the grant changes the sandbox, not what runs.
 	 */
 	network?: true;
+	/**
+	 * Exact `host:port` origins a server the operator confined
+	 * (`safety.confine`) reaches through PanCode's egress proxy, in the main
+	 * session only. Read only from user config, like `network`; a project or
+	 * plugin server takes it from its trust record. Outside the digest.
+	 */
+	allow?: string[];
 	/**
 	 * Exact origins this server's file targets (experimental MCP files
 	 * extension) may name although they are private, http on loopback, or on
@@ -327,6 +337,24 @@ function validateFileTargets(value: unknown, location: string): string[] | Error
 /** A declaration cannot grant its own server network; only the operator's trust record can. */
 function networkIgnoredMessage(location: string, id: string): string {
 	return `${location} is ignored: only the operator grants a project or plugin server network, with pancode mcp trust ${id} --network`;
+}
+
+function allowIgnoredMessage(location: string, id: string): string {
+	return `${location} is ignored: only the operator grants a project or plugin server egress, with pancode mcp trust ${id} --allow <host:port>`;
+}
+
+/** A confined server's egress grants: exact `host:port` entries, deduplicated. */
+function validateAllow(value: unknown, location: string): string[] | Error {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) return new Error(`${location} must be a list of host:port entries`);
+	const entries: string[] = [];
+	for (const [index, entry] of value.entries()) {
+		if (typeof entry !== "string") return new Error(`${location}[${index}] must be a host:port string`);
+		const parsed = parseEgressAllowEntry(entry);
+		if (typeof parsed === "string") return new Error(`${location}[${index}] '${entry}': ${parsed}`);
+		if (!entries.includes(entry.trim())) entries.push(entry.trim());
+	}
+	return entries;
 }
 
 function utf8Bytes(value: string): number {
@@ -884,6 +912,8 @@ function validateServer(
 			declaredCwd: string | null;
 			network: boolean;
 			networkIgnored: boolean;
+			allow: string[];
+			allowIgnored: boolean;
 			fileTargets: string[];
 			fileTargetsIgnored: boolean;
 	  }
@@ -970,6 +1000,8 @@ function validateServer(
 	}
 	const fileTargets = validateFileTargets(value.fileTargets, `${location}.fileTargets`);
 	if (fileTargets instanceof Error) return fileTargets;
+	const allow = validateAllow(value.allow, `${location}.allow`);
+	if (allow instanceof Error) return allow;
 	const shared = { id, timeoutMs, actionClass, toolActionClasses, toolPathArguments };
 	return {
 		fields:
@@ -979,6 +1011,8 @@ function validateServer(
 		declaredCwd,
 		network: scope === "user" && value.network === true,
 		networkIgnored: scope !== "user" && value.network !== undefined,
+		allow: scope === "user" ? allow : [],
+		allowIgnored: scope !== "user" && value.allow !== undefined,
 		fileTargets: scope === "user" ? fileTargets : [],
 		fileTargetsIgnored: scope !== "user" && value.fileTargets !== undefined,
 	};
@@ -1041,6 +1075,14 @@ export function parseMcpConfigText(text: string, input: McpConfigTextInput): Mcp
 				severity: "warning",
 			});
 		}
+		if (validated.allowIgnored) {
+			notes.push({
+				scope: input.scope,
+				path: input.path,
+				message: allowIgnoredMessage(`${location}.allow`, fields.id),
+				severity: "warning",
+			});
+		}
 		if (validated.fileTargetsIgnored) {
 			notes.push({
 				scope: input.scope,
@@ -1068,6 +1110,7 @@ export function parseMcpConfigText(text: string, input: McpConfigTextInput): Mcp
 			toolActionClasses: fields.toolActionClasses,
 			...(Object.keys(fields.toolPathArguments).length > 0 ? { toolPathArguments: fields.toolPathArguments } : {}),
 			...(validated.network ? { network: true as const } : {}),
+			...(validated.allow.length > 0 ? { allow: validated.allow } : {}),
 			...(validated.fileTargets.length > 0 ? { fileTargets: validated.fileTargets } : {}),
 		};
 		if ("url" in fields) {
@@ -1241,6 +1284,9 @@ export function loadPluginMcpFile(plugin: {
 		}
 		if (validated.networkIgnored) {
 			diagnostics.push({ ...diagnostic(networkIgnoredMessage(`${location}.network`, fields.id)), severity: "warning" });
+		}
+		if (validated.allowIgnored) {
+			diagnostics.push({ ...diagnostic(allowIgnoredMessage(`${location}.allow`, fields.id)), severity: "warning" });
 		}
 		if (validated.fileTargetsIgnored) {
 			diagnostics.push({ ...diagnostic(fileTargetsIgnoredMessage(`${location}.fileTargets`)), severity: "warning" });

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, relative, resolve } from "node:path";
 import { scrubbedCommandEnv } from "../core/bash-exec.js";
@@ -7,13 +8,15 @@ import { sha256Hex } from "../core/hash.js";
 import type { JobCondition, JobPredicate, JobRunner } from "../core/job-types.js";
 import { relativePathEscapes } from "../core/path-containment.js";
 import { runCommandVector } from "../core/safe-exec.js";
-import type { MainSandboxPolicy } from "../core/sandbox/main-session.js";
+import { type HostLaunchLabel, sandboxedLabel } from "../core/sandbox/host-launch.js";
+import { confinedIntegrationPolicy, type MainSandboxPolicy, optInLaunch } from "../core/sandbox/main-session.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { ToolNames } from "../core/tool-names.js";
 import { JOB_CONDITION_LIMIT, type JobConditionEvidence, projectJobPredicate } from "../domains/scheduling/index.js";
 import type { JobExecutionContext, JobRunResult } from "../domains/scheduling/job-types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
+import { effectiveScratchRoots } from "../lib/scratch-roots/scratch-roots.js";
 import type { HostEffectCall } from "./registry-contract.js";
 
 const EXECUTABLE_HASH_LIMIT = 128 * 1024 * 1024;
@@ -125,6 +128,34 @@ export function attestJobCommand(runner: Extract<JobRunner, { kind: "command" }>
 				"Job executable identity changed or is unavailable; create a newly admitted job for the current executable.",
 			);
 	}
+}
+
+/**
+ * Where one job occurrence's commands run (P8). Admission ran them contained
+ * when only their sandboxed bash form was admitted; otherwise they run in the
+ * main-session sandbox, network off, when `safety.confine` names `jobs`, and
+ * on the host, as before and labelled so, when it does not.
+ */
+export function jobLaunch(
+	admitted: MainSandboxPolicy | undefined,
+	confine: ReadonlyArray<string>,
+	cwd: string,
+): { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string } {
+	if (admitted !== undefined) {
+		return { label: sandboxedLabel("job", "admission ran it in the session's sandbox", "jobs"), policy: admitted };
+	}
+	const decided = optInLaunch("job", "jobs", confine);
+	if ("refused" in decided) return decided;
+	if (!decided.confined) return { label: decided.label };
+	return {
+		label: decided.label,
+		policy: confinedIntegrationPolicy({
+			workspace: cwd,
+			scratchRoots: effectiveScratchRoots([], cwd),
+			stateDirs: [],
+			network: "off",
+		}),
+	};
 }
 
 /**

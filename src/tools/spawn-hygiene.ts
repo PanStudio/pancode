@@ -4,6 +4,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { buildSafeToolEnv } from "../core/safe-exec.js";
+import { type HostLaunchLabel, sandboxedLabel, uncontainedLabel } from "../core/sandbox/host-launch.js";
+import { planSandboxedSpawn, workerSandboxConfigured } from "../core/sandbox/worker-process.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 
 /**
@@ -242,7 +244,15 @@ export interface LineStreamResult {
 	stoppedEarly: boolean;
 	/** Spawn-level failure (binary missing, EACCES); null when the child ran. */
 	spawnError: string | null;
+	/** Where the search binary ran (P8), for the result's `details.sandbox`. */
+	launch: HostLaunchLabel;
 }
+
+/** A search with no sandbox policy runs on the host: admission judged every path it may read before it starts. */
+const HOST_SEARCH_LABEL = uncontainedLabel(
+	"search",
+	"no sandbox policy in this process; admission checks the paths it reads",
+);
 
 export function spawnLineStream(
 	file: string,
@@ -266,12 +276,23 @@ export function spawnLineStream(
 		// search tools validate pattern size up front, so this is a backstop. The
 		// IIFE keeps the child's narrowed stdio typing (non-null stdout) that an
 		// explicit ReturnType<typeof spawn> annotation would widen away.
+		// A worker's search binary runs under the worker's sandbox, like every other child the worker starts,
+		// with no network: its reads then stop at the sandbox's masks too, not only at the tool's path filter.
+		const cwd = options.cwd ?? process.cwd();
+		const plan = planSandboxedSpawn({ argv: [file, ...args] }, cwd, [], { network: false });
+		const launch: HostLaunchLabel =
+			plan.kind === "sandboxed"
+				? sandboxedLabel("search", "this worker's OS sandbox, no network")
+				: workerSandboxConfigured()
+					? uncontainedLabel("search", "no worker sandbox backend; the operator allowed unconfined workers")
+					: HOST_SEARCH_LABEL;
 		const spawned = (() => {
+			if (plan.kind === "refused") return { ok: false as const, message: plan.message };
 			try {
 				return {
 					ok: true as const,
-					child: spawn(file, [...args], {
-						cwd: options.cwd ?? process.cwd(),
+					child: spawn(plan.kind === "sandboxed" ? plan.file : file, plan.kind === "sandboxed" ? plan.args : [...args], {
+						cwd,
 						env: buildSafeToolEnv(),
 						detached: process.platform !== "win32",
 						stdio: ["ignore", "pipe", "pipe"],
@@ -291,9 +312,11 @@ export function spawnLineStream(
 				aborted: false,
 				stoppedEarly: false,
 				spawnError: spawned.message,
+				launch,
 			});
 			return;
 		}
+		if (plan.kind === "sandboxed") spawned.child.once("exit", plan.afterExit);
 		const child = spawned.child;
 		const stdoutLines = new BoundedDiagnosticDecoder((line, truncated) => {
 			// Lines buffered before an early stop still flush; they no longer
@@ -366,6 +389,7 @@ export function spawnLineStream(
 				aborted,
 				stoppedEarly,
 				spawnError,
+				launch,
 			});
 		};
 

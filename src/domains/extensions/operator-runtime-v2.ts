@@ -22,7 +22,7 @@ import type { ExtensionKeyValueHost, OutputOrigin } from "@pancode/sdk/pack";
 import { RUNTIME_LIMITS, RUNTIME_V2_LIMITS } from "@pancode/sdk/pack";
 import { recordPackageActivity } from "../../core/package-activity.js";
 import type { SandboxMode, UnixSocketMode } from "../../core/sandbox/types.js";
-import { readLayeredSettings } from "../../core/settings-layers.js";
+import { layeredConfineList, readLayeredSettings } from "../../core/settings-layers.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import type { EmbeddingResponse } from "../providers/embedding/types.js";
 import { extensionIdentity } from "./activity.js";
@@ -41,7 +41,13 @@ import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcess
 import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
 import { type ExtensionGlobWatch, watchExtensionGlobs } from "./runtime-watch.js";
-import { type PackBinaryCaller, runPackBinary, servePackPane } from "./services/binary-runs.js";
+import {
+	confinedPaneArgv,
+	type PackBinaryCaller,
+	packLaunch,
+	runPackBinary,
+	servePackPane,
+} from "./services/binary-runs.js";
 import type { ExtensionKeyClaims } from "./services/keys.js";
 import type { ExtensionPaneHost } from "./services/pane.js";
 import { createExtensionWork, type ExtensionWorkOptions } from "./services/work.js";
@@ -123,6 +129,8 @@ export interface OperatorRuntimeV2Options {
 	 * Absent reads the layered settings, so no caller can leave `required` unenforced.
 	 */
 	sandboxMode?: (workspace: string) => SandboxMode;
+	/** The operator's `safety.confine` for a workspace, read on each program launch (P8). Absent reads the layered settings. */
+	confine?: (workspace: string) => ReadonlyArray<string>;
 	surface?: ExtensionSurfaceModel;
 	/** Captured from the existing registry, never inferred from runtime activation. */
 	frozenTools?: ReadonlyArray<ExtensionProvenance>;
@@ -479,6 +487,14 @@ export class OperatorExtensionRuntimeV2 {
 		});
 		const unixSockets = this.options.sandboxUnixSockets?.();
 		const sandboxMode = (this.options.sandboxMode ?? layeredSandboxMode)(context.workspace);
+		const launchFor = (via: "run" | "pane") => () =>
+			packLaunch(
+				entry.id,
+				via,
+				(this.options.confine ?? layeredConfineList)(context.workspace),
+				context.workspace,
+				paths.storeDir,
+			);
 		const grants = this.options.onlyId === entry.id ? this.options.grants : undefined;
 		const work = createExtensionWork(
 			{
@@ -503,14 +519,30 @@ export class OperatorExtensionRuntimeV2 {
 			...(binaries.length > 0
 				? {
 						binaries: (request, signal, parent) =>
-							runPackBinary(entry.id, binaries, request, paths.storeDir, caller(parent), signal),
+							runPackBinary(entry.id, binaries, request, paths.storeDir, caller(parent), signal, launchFor("run")),
 					}
 				: {}),
 			...(pane
 				? {
 						pane: (op, payload, parent) =>
-							servePackPane(entry.id, binaries, op, payload, caller(parent), () =>
-								pane.call({ extensionId: entry.id, declaration: entry.runtimeV2, storeDir: paths.storeDir }, op, payload),
+							servePackPane(
+								entry.id,
+								binaries,
+								op,
+								payload,
+								caller(parent),
+								(policy) =>
+									pane.call(
+										{
+											extensionId: entry.id,
+											declaration: entry.runtimeV2,
+											storeDir: paths.storeDir,
+											...(policy !== undefined ? { confine: (argv, cwd) => confinedPaneArgv(policy, argv, cwd) } : {}),
+										},
+										op,
+										payload,
+									),
+								launchFor("pane"),
 							),
 					}
 				: {}),

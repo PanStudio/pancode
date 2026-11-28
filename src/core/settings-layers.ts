@@ -661,6 +661,22 @@ function stripProjectOperatorSafety(
 			else safety.egress = modes;
 		}
 	}
+	if (Object.hasOwn(safety, "confine")) {
+		// A project may confine more of its integrations, never release one the operator confined.
+		const operator = isRecord(userBlob?.safety) && Array.isArray(userBlob.safety.confine) ? userBlob.safety.confine : [];
+		const merged = Array.isArray(safety.confine) ? [...new Set([...operator, ...safety.confine])] : undefined;
+		if (merged === undefined)
+			issues.push({
+				origin,
+				path: "safety.confine",
+				message: "a project adds confined integrations as a list; project value ignored",
+			});
+		if (!isDeepStrictEqual(merged, safety.confine)) {
+			stripped = true;
+			if (merged === undefined) delete safety.confine;
+			else safety.confine = merged;
+		}
+	}
 	if (Object.hasOwn(safety, "judge")) {
 		const route = projectJudgeRoute(safety.judge, origin, issues, userBlob);
 		if (!isDeepStrictEqual(route, safety.judge)) {
@@ -1401,4 +1417,13 @@ export function settingsSourceFor(sources: Record<string, SettingsOrigin>, keyPa
 		segments.pop();
 	}
 	return "built-in";
+}
+
+/** `safety.confine` as the layers for `cwd` give it now (P8); unreadable settings confine nothing. */
+export function layeredConfineList(cwd: string | null): ReadonlyArray<string> {
+	try {
+		return readLayeredSettings(cwd).settings.safety.confine;
+	} catch {
+		return [];
+	}
 }

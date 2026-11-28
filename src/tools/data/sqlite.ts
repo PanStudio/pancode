@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { dirname } from "node:path";
 import {
 	cutView,
@@ -15,6 +16,7 @@ import {
 	sampledView,
 } from "@pancode/scidata";
 import { runCommandVector } from "../../core/safe-exec.js";
+import { documentReaderLaunch } from "../../core/sandbox/main-session.js";
 
 /**
  * Read-only SQLite access for the `data` tool. Every statement runs in a
@@ -160,6 +162,8 @@ async function runChild(
 ): Promise<{ immutable: boolean; results: ChildResult[] } | DataRefusal> {
 	const request = JSON.stringify({ path, queries, cellCap: CELL_TEXT_CAP, blobHexBytes: BLOB_HEX_BYTES });
 	const cwd = dirname(path);
+	// The reader writes nothing, so in the main session it runs read-only with no network where bubblewrap can (P8).
+	const { shellSandbox } = documentReaderLaunch("sqlite", cwd);
 	const result = await runCommandVector(
 		process.execPath,
 		["--disable-warning=ExperimentalWarning", "-e", CHILD_SCRIPT],
@@ -170,6 +174,7 @@ async function runChild(
 			timeoutMs: SQLITE_TIMEOUT_MS,
 			maxOutputBytes: CHILD_MAX_OUTPUT_BYTES,
 			killGraceMs: 0,
+			...(shellSandbox !== undefined ? { shellSandbox } : {}),
 			...(signal !== undefined ? { signal } : {}),
 		},
 	);

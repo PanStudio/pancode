@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { statSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path, { join, relative } from "node:path";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { Type } from "typebox";
 import { relativePathEscapes } from "../core/path-containment.js";
+import type { HostLaunchLabel } from "../core/sandbox/host-launch.js";
 import { ToolNames } from "../core/tool-names.js";
 import { StringEnum } from "../engine/ai.js";
 import { resolveRgBinary } from "./executables.js";
@@ -120,6 +122,8 @@ interface GrepRenderInput {
 	glob?: string | undefined;
 	search: SearchCompleteness;
 	fallback?: boolean;
+	/** Where rg ran (P8); absent for the in-process fallback, which launches nothing. */
+	launch?: HostLaunchLabel;
 	withheldPaths: number;
 	mode: GrepMode;
 	lines: RenderedLine[];
@@ -175,7 +179,7 @@ function renderGrepResult(input: GrepRenderInput): ToolResult {
 				oversizedNotice +
 				internalSearchExclusionNotice(input.searchPath) +
 				`\n[${emptySearchText(`file contents under ${searchedTree(input.searchPath)}${globbed} for the pattern sent`)}]`,
-			details: { search },
+			details: { search, ...(input.launch !== undefined ? { sandbox: input.launch } : {}) },
 			shownCount: 0,
 			totalCount: search.complete ? 0 : null,
 			truncated: !search.complete,
@@ -215,7 +219,11 @@ function renderGrepResult(input: GrepRenderInput): ToolResult {
 		withheldPaths: input.withheldPaths,
 		unit: MODE_UNITS[mode],
 		output: output + searchNotice(search, shownCount, "matches") + fallbackNotice + oversizedNotice,
-		details: observedLines === undefined ? { search } : { search, observedLines },
+		details: {
+			search,
+			...(observedLines !== undefined ? { observedLines } : {}),
+			...(input.launch !== undefined ? { sandbox: input.launch } : {}),
+		},
 		// Offload only when the byte cap cut collected content; a bare match
 		// limit continues via `next`, and the offload would duplicate the body.
 		...(truncation.truncated ? { fullOutput } : {}),
@@ -366,6 +374,7 @@ async function runRipgrep(input: RgSearchInput): Promise<ToolResult> {
 		searchPath: input.searchPath,
 		glob: input.glob,
 		search,
+		launch: result.launch,
 		withheldPaths: input.pathFilter.withheldPaths,
 		mode: input.mode,
 		lines: rendered,

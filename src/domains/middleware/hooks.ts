@@ -25,6 +25,8 @@
 import { isAbsolute, resolve } from "node:path";
 import { canonicalJson } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
+import type { HostLaunchLabel } from "../../core/sandbox/host-launch.js";
+import type { SandboxConfinement } from "../../core/sandbox/types.js";
 import { MIDDLEWARE_HOOKS } from "../../core/telemetry/session-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import {
@@ -454,6 +456,8 @@ export interface HookReceipt {
 	maxDurationMs?: number;
 	/** The command hook's own wall-clock limit, so a receipt shows how close a run came to it. */
 	timeoutMs?: number;
+	/** Where a command hook ran (P8). */
+	confinement?: SandboxConfinement;
 	exitCode?: number;
 	outputChars?: number;
 	toolName?: string;
@@ -469,11 +473,20 @@ export interface UserHookCommandResult {
 	timedOut: boolean;
 	stdout: string;
 	stderr: string;
+	/** Where the command ran (P8); absent from a runner that does not say. */
+	launch?: HostLaunchLabel;
 }
 
 export type UserHookCommandRunner = (
 	argv: string[],
-	options: { cwd?: string; timeoutMs: number /** JSON event payload written to the command's stdin. */; input?: string },
+	options: {
+		cwd?: string;
+		timeoutMs: number;
+		/** JSON event payload written to the command's stdin. */
+		input?: string;
+		/** Whose hooks file declared the command: the operator's own run on the host, the rest as `safety.confine` says. */
+		origin?: UserHookOrigin;
+	},
 ) => UserHookCommandResult;
 
 export interface UserHookRegistrationDeps {
@@ -647,9 +660,14 @@ function evaluateHook(
 		timeoutMs: hook.spec.timeoutMs,
 		...(hook.spec.cwd !== undefined ? { cwd: hook.spec.cwd } : {}),
 		input: hookPayload(hook, hook.spec, input),
+		origin: hook.source.origin,
 	});
 	// The run blocks the event loop, and a before_tool or after_tool run is billed to the tool's own duration.
-	const timing = { durationMs: Math.round(performance.now() - startedAt), timeoutMs: hook.spec.timeoutMs };
+	const run = {
+		durationMs: Math.round(performance.now() - startedAt),
+		timeoutMs: hook.spec.timeoutMs,
+		...(result.launch !== undefined ? { confinement: result.launch.confinement } : {}),
+	};
 	const output = (result.stdout || result.stderr || "").trim();
 	if (result.timedOut) {
 		deps.recordReceipt({
@@ -657,7 +675,7 @@ function evaluateHook(
 			outcome: "command-timeout",
 			exitCode: result.code ?? -1,
 			outputChars: output.length,
-			...timing,
+			...run,
 		});
 		return [];
 	}
@@ -673,7 +691,7 @@ function evaluateHook(
 			outcome,
 			exitCode: 0,
 			outputChars: output.length,
-			...timing,
+			...run,
 			...(decided.length > 0 ? { effectKinds: decided.map((effect) => effect.kind) } : {}),
 		});
 		return decided;
@@ -696,7 +714,7 @@ function evaluateHook(
 		outcome,
 		exitCode: result.code ?? -1,
 		outputChars: output.length,
-		...timing,
+		...run,
 		...(effect !== undefined ? { effectKinds: [effect.kind] } : {}),
 	});
 	return effect !== undefined ? [effect] : [];

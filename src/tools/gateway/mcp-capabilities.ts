@@ -4,7 +4,15 @@ import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
+import { hostLaunchPhrase, sandboxedLabel, uncontainedLabel } from "../../core/sandbox/host-launch.js";
+import {
+	confinedIntegrationPolicy,
+	type MainSandboxPolicy,
+	type OptInLaunch,
+	optInLaunch,
+} from "../../core/sandbox/main-session.js";
 import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
+import { layeredConfineList } from "../../core/settings-layers.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import { isMcpResourceCapability, mcpToolName } from "../../core/tool-names.js";
 import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../../domains/gateway/mcp/action-classes.js";
@@ -58,6 +66,7 @@ import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import { mcpRemoteTransportIdentity, mcpTransportIdentity } from "../../domains/safety/information-flow.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
+import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
 import { contextSkillLoadInput, createMcpSkillActivation, mcpSkillConfirmation } from "../context/mcp-skills.js";
 import { readMaxBytes } from "../read.js";
 import { MCP_DOWNLOADS_DIR, toolOffloadDir } from "../result-shaping.js";
@@ -139,15 +148,20 @@ function actionClassFor(declaration: GatewayMcpServer, tool: NamedTool): McpTrus
  * trusted and only when the first find, describe, or call needs it, registers
  * each of its tools in the registry as `mcp_<id>__<tool>` (placement gateway,
  * action class from operator policy or advisory hints), and closes every client it opened at
- * session end. In the orchestrator launching a server does not sandbox it, and
- * the trust record is the operator's explicit acceptance of that; a worker's
- * servers start under the worker's OS sandbox when one applies.
+ * session end. In the orchestrator launching a server does not sandbox it
+ * unless the operator names it in `safety.confine` (P8, D11), and the trust
+ * record is the operator's explicit acceptance of that; a worker's servers
+ * start under the worker's OS sandbox when one applies. Every stdio server's
+ * tools and calls say which.
  */
 
 /** What confines a launched server, as discovery tells the model. */
-function launchConfinement(): string {
-	return workerSandboxApplies() ? "it runs under this worker's OS sandbox" : "launching it does not sandbox it";
+function launchConfinement(decision: McpLaunchDecision): string {
+	return "refused" in decision ? `it does not start: ${decision.refused}` : `it ${hostLaunchPhrase(decision.label)}`;
 }
+
+/** Where one stdio server's process runs, or why it may not start at all. */
+type McpLaunchDecision = OptInLaunch;
 
 /**
  * Why a read-only turn may not start `declaration`'s server, or null when it
@@ -185,7 +199,7 @@ function objectiveOf(tool: NamedTool): string {
  * discovery reads identically whether the metadata came off a live listing or
  * off disk and a caller can never tell the two apart by shape alone.
  */
-function describeTool(declaration: GatewayMcpServer, tool: NamedTool): string {
+function describeTool(declaration: GatewayMcpServer, tool: NamedTool, decision: McpLaunchDecision | null): string {
 	if (declaration.url !== undefined) {
 		const where =
 			declaration.scope === "client" ? "supplied by the ACP client for this session" : `${declaration.scope} scope`;
@@ -194,7 +208,7 @@ function describeTool(declaration: GatewayMcpServer, tool: NamedTool): string {
 	if (declaration.scope === "client") {
 		return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id}, supplied by the ACP client for this session. Its calls use the gateway's unknown action class and session autonomy.`;
 	}
-	return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id} (${declaration.scope} scope), trusted with action class ${actionClassFor(declaration, tool)}; ${launchConfinement()}.`;
+	return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id} (${declaration.scope} scope), trusted with action class ${actionClassFor(declaration, tool)}${decision !== null ? `; ${launchConfinement(decision)}` : ""}.`;
 }
 
 /** Remedies name the CLI first: it exists in every session, interactive or not. */
@@ -282,6 +296,10 @@ function sameMcpAdmission(current: ResolvedMcpServer, admitted: GatewayMcpServer
 		current.trust.actionClass === admitted.trust.actionClass &&
 		(current.trust.status === "trusted" ? current.trust.network : undefined) ===
 			(admitted.trust.status === "trusted" ? admitted.trust.network : undefined) &&
+		sameStringList(
+			current.trust.status === "trusted" ? current.trust.allow : undefined,
+			admitted.trust.status === "trusted" ? admitted.trust.allow : undefined,
+		) &&
 		sameStringList(current.fileTargets, admitted.fileTargets)
 	);
 }
@@ -658,6 +676,50 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		state.catalog = undefined;
 	};
 
+	/**
+	 * `safety.confine` now. Without a session accessor (`pancode mcp`) the
+	 * layered settings are read once; unreadable ones confine nothing.
+	 */
+	let settingsConfine: ReadonlyArray<string> | undefined;
+	const confineList = (): ReadonlyArray<string> => {
+		if (options.admitted !== undefined) return [];
+		if (options.confine !== undefined) return options.confine();
+		settingsConfine ??= layeredConfineList(options.cwd);
+		return settingsConfine;
+	};
+
+	/** Where `declaration`'s process runs (P8): a worker's has the worker's sandbox, the orchestrator's {@link optInLaunch}. */
+	const launchDecision = (declaration: GatewayMcpServer): McpLaunchDecision => {
+		const integration = `mcp:${declaration.id}` as const;
+		if (options.admitted !== undefined) {
+			return workerSandboxApplies()
+				? { label: sandboxedLabel("mcp-stdio", "this worker's OS sandbox", integration), confined: false }
+				: { label: uncontainedLabel("mcp-stdio", "no worker sandbox applies", integration), confined: false };
+		}
+		return optInLaunch("mcp-stdio", integration, confineList());
+	};
+
+	/** The policy a confined server runs under: the session's tree, its plugin data, and only the network it was granted. */
+	const confinedServerPolicy = (declaration: GatewayMcpServer): MainSandboxPolicy => {
+		const trust = declaration.trust.status === "trusted" ? declaration.trust : undefined;
+		const allow = trust?.allow ?? [];
+		const workspace = options.launchRoot ?? options.cwd;
+		return confinedIntegrationPolicy({
+			workspace,
+			scratchRoots: effectiveScratchRoots([], workspace),
+			stateDirs: declaration.plugin !== undefined ? [declaration.plugin.dataDir] : [],
+			network:
+				allow.length > 0
+					? {
+							allow,
+							denyHint: `the operator grants it with pancode mcp trust ${declaration.id} --allow <host:port>`,
+						}
+					: trust?.network === true
+						? "open"
+						: "off",
+		});
+	};
+
 	const attestedNetwork = (serverId: string): boolean =>
 		options.admitted?.tools.some((entry) => entry.serverId === serverId && entry.network === true) === true;
 	/** The main session transfers files out of band; a worker only with the server's attested network grant. */
@@ -675,10 +737,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 	} => {
 		const fileSchema = filesOffered ? mcpFileSchema(tool.inputSchema) : null;
 		const fileArguments = fileSchema?.kind === "files" ? fileSchema.arguments : null;
+		const described = describeTool(
+			declaration,
+			tool,
+			declaration.url === undefined && declaration.scope !== "client" ? launchDecision(declaration) : null,
+		);
 		const description =
 			fileSchema?.kind === "unsupported"
-				? `${describeTool(declaration, tool)}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
-				: describeTool(declaration, tool);
+				? `${described}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
+				: described;
 		const parameters = fileArguments !== null ? mcpFileModelSchema(tool.inputSchema, fileArguments) : tool.inputSchema;
 		return { description, parameters, fileArguments };
 	};
@@ -922,6 +989,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						tool: tool.name,
 						contentTypes,
 						textTruncated: rendered.truncated,
+						...(state.launchLabel !== undefined ? { sandbox: state.launchLabel } : {}),
 						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
 						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
 						...(result.elicitations !== undefined ? { elicitations: result.elicitations } : {}),
@@ -1053,6 +1121,13 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			spec.outboundFiles = (args) => {
 				const sources = mcpFileSources(fileArguments, args, options.cwd);
 				return typeof sources === "string" ? [] : mcpOutboundFiles(sources, declaration.id, options.cwd, options.store);
+			};
+		}
+		if (declaration.url === undefined) {
+			// The card names where the server runs: an operator approving a call to an unconfined one sees it.
+			spec.hostLaunchNote = () => {
+				const decision = state.launchLabel !== undefined ? { label: state.launchLabel } : launchDecision(declaration);
+				return `mcp server ${declaration.id} ${"refused" in decision ? `does not start: ${decision.refused}` : hostLaunchPhrase(decision.label)}`;
 			};
 		}
 		if (trustClass === "execute" && declaration.url === undefined) {
@@ -1189,9 +1264,15 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 					}
 					preparePluginDataDir(declaration);
+					const decision = declaration.url === undefined ? launchDecision(declaration) : null;
+					if (decision !== null && "refused" in decision) {
+						throw new McpError("spawn", `mcp server ${declaration.id} failed to start: ${decision.refused}`);
+					}
+					if (decision !== null) state.launchLabel = decision.label;
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
+						...(decision?.confined === true ? { hostSandbox: confinedServerPolicy(declaration) } : {}),
 						...(fileTransfersPermitted(declaration.id) ? { fileTransfers: true } : {}),
 						...(elicitationHost !== undefined
 							? {
@@ -1841,7 +1922,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const surface = surfaceOf(owner);
 				const unapproved =
 					surface === null || surface.status === "approved" ? "" : ` Reads are refused for now: ${surface.reason}.`;
-				return `Resources of local stdio MCP server ${declaration.id} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${declaration.trust.actionClass}; listing and reading resources runs as ${actionClass}, and needs the server's tool surface approved; ${launchConfinement()}.${unapproved}`;
+				return `Resources of local stdio MCP server ${declaration.id} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${declaration.trust.actionClass}; listing and reading resources runs as ${actionClass}, and needs the server's tool surface approved; ${launchConfinement(launchDecision(declaration))}.${unapproved}`;
 			}
 			const serverClass = declaration.trust.actionClass;
 			const remote = declaration.url !== undefined;
@@ -1866,7 +1947,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const serverLabel = remote
 				? `Remote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)}`
 				: `Local stdio MCP server ${declaration.id}`;
-			const confinement = remote ? "it runs off this machine, and what a call sends leaves it" : launchConfinement();
+			const confinement = remote
+				? "it runs off this machine, and what a call sends leaves it"
+				: launchConfinement(launchDecision(declaration));
 			const filesOffered =
 				owner.client !== null ? owner.client.filesOffered() !== null : cachedCatalog(owner)?.files === true;
 			const sendsFiles =

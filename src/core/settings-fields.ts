@@ -65,6 +65,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"commitAuthor",
 	"compaction",
 	"concurrency",
+	"confine",
 	"confirmedRemote",
 	"connectTimeoutMs",
 	"content",

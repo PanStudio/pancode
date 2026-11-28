@@ -42,6 +42,8 @@ export interface JobHostDeps {
 	admissionAutonomy?(): AutonomyLevel;
 	/** `safety.sandboxPassEnv` and target key names, which scrub a job command's environment. */
 	sandboxEnv?(): SandboxEnvPolicy;
+	/** `safety.confine` now (P8): a job command runs in the sandbox when it names `jobs`. */
+	confine?(): ReadonlyArray<string>;
 	/** The session's test-runner consent is owed; a job command is admitted as its direct call would be. */
 	sessionCodeConsentPending?(): boolean;
 	/** `chat.loopsUntilStopped`, read at each create (#450). */
@@ -204,6 +206,7 @@ export function createJobHost(deps: JobHostDeps): JobHost {
 		hostRefusal,
 		autonomy: admissionAutonomy,
 		...(deps.sandboxEnv !== undefined ? { sandboxEnv: deps.sandboxEnv } : {}),
+		...(deps.confine !== undefined ? { confine: deps.confine } : {}),
 		admissionRefusal: (runner, creator, constraints) => jobAuthorityRefusal(runtimeDeps, creator, runner, constraints),
 	});
 	const subscriptions = [

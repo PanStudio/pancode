@@ -849,6 +849,11 @@ export interface SafetySettings {
 	 */
 	sandboxCacheMaxGiB: number;
 	/**
+	 * Host-launched integrations that run in PanCode's OS sandbox (P8): `mcp:<id>`, `extension:<id>`, `hooks`, `git`,
+	 * `jobs`. Any other runs on the host as before, labelled unconfined. A project layer may only add entries.
+	 */
+	confine: string[];
+	/**
 	 * Workspace snapshots before the main agent mutates a Git work tree: auto
 	 * snapshots before each turn's first mutating call and before every
 	 * destructive one, and `/rewind` restores files from them; off takes none.
@@ -1110,6 +1115,7 @@ export const DEFAULT_SETTINGS = {
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
 		sandboxCacheMaxGiB: 4,
+		confine: [] as string[],
 		snapshots: "auto" as WorkspaceSnapshotMode,
 		validationWrappers: [] as string[],
 		unattendedAfterSeconds: 300,

@@ -10,10 +10,24 @@ import {
 	SAFE_EXEC_DEFAULT_TIMEOUT_MS,
 	type SafeCommandResult,
 } from "../core/safe-exec.js";
-import { type MainSandboxPolicy, mainSandboxWriteHint } from "../core/sandbox/main-session.js";
+import {
+	type HostLaunchLabel,
+	hostLaunchPhrase,
+	sandboxedLabel,
+	uncontainedLabel,
+} from "../core/sandbox/host-launch.js";
+import {
+	confinedIntegrationPolicy,
+	type MainSandboxPolicy,
+	mainSandboxWriteHint,
+	optInLaunch,
+} from "../core/sandbox/main-session.js";
+import { workerSandboxApplies, workerSandboxConfigured } from "../core/sandbox/worker-process.js";
+import { layeredConfineList } from "../core/settings-layers.js";
 import { ToolNames } from "../core/tool-names.js";
 import { gitArgvCommand } from "../domains/safety/git-policy.js";
 import { StringEnum } from "../engine/ai.js";
+import { effectiveScratchRoots } from "../lib/scratch-roots/scratch-roots.js";
 import {
 	gitConfigBool,
 	gitConfigValue,
@@ -158,6 +172,42 @@ export async function runVectorTool(
 }
 
 /**
+ * Where typed git runs (P8). A worker's runs under the worker's sandbox. In
+ * the main session it runs in the main-session sandbox, network off, when
+ * `safety.confine` names `git` (hooks run inside it too; a signing helper or
+ * a network hook then fails), and on the host, as before and labelled so,
+ * when it does not. `workspace` is the session's tree.
+ */
+export function typedGitLaunch(
+	workspace: string = process.cwd(),
+	confine: ReadonlyArray<string> = layeredConfineList(workspace),
+): { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string } {
+	if (workerSandboxConfigured()) {
+		return {
+			label: workerSandboxApplies()
+				? sandboxedLabel("typed-git", "this worker's OS sandbox", "git")
+				: uncontainedLabel("typed-git", "no worker sandbox backend; the operator allowed unconfined workers", "git"),
+		};
+	}
+	const decided = optInLaunch("typed-git", "git", confine);
+	if ("refused" in decided) return decided;
+	if (!decided.confined) return { label: decided.label };
+	return {
+		label: decided.label,
+		policy: confinedIntegrationPolicy({
+			workspace,
+			scratchRoots: effectiveScratchRoots([], workspace),
+			stateDirs: [],
+			network: "off",
+		}),
+	};
+}
+
+function withLaunchLabel(result: ToolResult, label: HostLaunchLabel): ToolResult {
+	return { ...result, details: { ...(result.details ?? {}), sandbox: label } } as ToolResult;
+}
+
+/**
  * Run a typed add or commit. Admission already judged the exact argv; for a
  * worker admitted by its standing allowance rather than an approval, the
  * task worktree and the hooks rule are checked again right before Git runs,
@@ -168,6 +218,7 @@ async function runTypedGitMutation(
 	op: "add" | "commit",
 	args: Record<string, unknown>,
 	options: ToolInvokeOptions | undefined,
+	policy: MainSandboxPolicy | undefined,
 ): Promise<ToolResult> {
 	let cwd: string;
 	try {
@@ -213,6 +264,7 @@ async function runTypedGitMutation(
 		...(context?.allowance === "worktree" && context.taskWorktree?.typedGitWritablePaths !== undefined
 			? { typedGitWritablePaths: context.taskWorktree.typedGitWritablePaths }
 			: {}),
+		...(policy !== undefined ? { shellSandbox: policy } : {}),
 		env,
 	});
 }
@@ -271,17 +323,33 @@ export const gitTool: ToolSpec = {
 			args: { command: gitArgvCommand(built.argv), ...(cwd !== undefined ? { cwd } : {}) },
 		};
 	},
+	hostLaunchNote() {
+		const launch = typedGitLaunch();
+		return "refused" in launch ? `git will not run: ${launch.refused}` : `git ${hostLaunchPhrase(launch.label)}`;
+	},
 	async run(args, options) {
 		const check = checkGitFields(args);
 		if (!check.ok) return { kind: "error", message: check.error };
+		const launch = typedGitLaunch();
+		if ("refused" in launch) return { kind: "error", message: `git: ${launch.refused}; nothing ran` };
 		if (isGitInspectOp(check.op)) {
 			// Inspection never runs an external diff, a text conversion filter, or a pager.
-			const inspect = { ...(options?.signal !== undefined ? { signal: options.signal } : {}), env: typedGitInspectEnv() };
-			return runVectorTool("git", "git", gitInspectArgv(check.op, check.args), check.args, inspect);
+			const inspect = {
+				...(options?.signal !== undefined ? { signal: options.signal } : {}),
+				...(launch.policy !== undefined ? { shellSandbox: launch.policy } : {}),
+				env: typedGitInspectEnv(),
+			};
+			return withLaunchLabel(
+				await runVectorTool("git", "git", gitInspectArgv(check.op, check.args), check.args, inspect),
+				launch.label,
+			);
 		}
 		const built = typedGitMutationArgv(check.op, check.args);
 		if (built === null) return { kind: "error", message: `git: op ${check.op} has no argv; nothing ran` };
 		if (!built.ok) return { kind: "error", message: built.error };
-		return runTypedGitMutation(built.argv, built.op, check.args, options);
+		return withLaunchLabel(
+			await runTypedGitMutation(built.argv, built.op, check.args, options, launch.policy),
+			launch.label,
+		);
 	},
 };
