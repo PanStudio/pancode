@@ -8,7 +8,7 @@ import type { ErrorSlug } from "./lib/slugs.js";
 
 const USAGE = `Usage:
   pancode tasks [list] [--json]
-  pancode tasks add [--expect <path>] [--verify <checkId>[:timeoutMs]] [--json] <text>
+  pancode tasks add [--expect <path>] [--verify <checkId>[:<duration>]] [--json] <text>
   pancode tasks hand|done|drop <uN> [--json]
 `;
 

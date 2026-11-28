@@ -308,7 +308,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"",
 		"targets use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>] [--fleet-target <id>] [--fleet-model <id>]",
 	],
-	["tasks add", "", "tasks add [--expect <path>] [--verify <checkId>[:timeoutMs]] [--json] <text>"],
+	["tasks add", "", "tasks add [--expect <path>] [--verify <checkId>[:<duration>]] [--json] <text>"],
 	["tasks done", "", "tasks hand|done|drop <uN> [--json]"],
 	["tasks drop", "", "tasks hand|done|drop <uN> [--json]"],
 	["tasks hand", "", "tasks hand|done|drop <uN> [--json]"],
@@ -376,13 +376,13 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 
 /** The synopsis of each top-level command that is itself a leaf or has a default action (C2). */
 export const TOP_LEVEL_USAGE: Readonly<Record<string, string>> = {
-	acp: "acp [--cwd PATH] [--permission-timeout MS] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]",
+	acp: "acp [--cwd PATH] [--permission-timeout <duration>] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]",
 	agents: "agents [list] [--json] [--all]",
 	claims: "claims [list] [--check <id>] [--json]",
 	config: "config inspect [--json]",
 	configure: "configure",
-	doctor: "doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <seconds>]]",
-	gui: "gui [--path </app/path>] [--open | --no-open] [--foreground | --reuse-background] [--port <0-65535>] [--idle-exit <milliseconds>] [--log-file <file>] [--token-stdin]",
+	doctor: "doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <duration>]]",
+	gui: "gui [--path </app/path>] [--open | --no-open] [--foreground | --reuse-background] [--port <0-65535>] [--idle-exit <duration>] [--log-file <file>] [--token-stdin]",
 	models: "models [search] [--target <id>] [--json] [--offline]",
 	paths: "paths [--json]",
 	help: "help [<command> [<subcommand>...]] [--all] [--json] [--topics]",

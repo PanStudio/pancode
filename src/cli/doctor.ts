@@ -3,6 +3,7 @@
 import path from "node:path";
 import { readSettings } from "../core/config.js";
 import { DEFAULT_SETTINGS, type EgressSettings, type HomeReadsSettings } from "../core/defaults.js";
+import { parseDuration } from "../core/duration.js";
 import { canonicalizePath } from "../core/path-canonical.js";
 import { proxyEnvSummary } from "../core/proxy-env.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../core/sandbox/availability.js";
@@ -83,7 +84,7 @@ import { validationContractFinding } from "./doctor-validation-contract.js";
 import { createInstallPresenter } from "./install-presenter.js";
 import { writeCliFailure } from "./lib/json-out.js";
 
-const HELP = `pancode doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <seconds>]]
+const HELP = `pancode doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <duration>]]
 
 Diagnose PanCode state without creating files. The first row says whether
 chat can run and what to run when it cannot. On a home PanCode has never
@@ -111,7 +112,7 @@ attention, then counts the rest; --verbose prints every row.
 a cold local model and releases it afterwards, and a dry run of the workspace
 validation contract that resolves each validator command and reports whether
 it would run without an approval ask at the configured autonomy. The dry run
-executes nothing. --tools-timeout bounds each tool probe (default 120).
+executes nothing. --tools-timeout bounds each tool probe (default 120s; bare number: seconds).
 `;
 
 export interface DoctorDeepOptions {
@@ -736,10 +737,10 @@ function parseDoctorArgs(args: ReadonlyArray<string>): DoctorArgs {
 		else if (arg === "--deep") parsed.deep = true;
 		else if (arg === "--tools-timeout") {
 			const value = args[i + 1];
-			const seconds = value === undefined ? Number.NaN : Number(value);
-			if (!Number.isFinite(seconds) || seconds <= 0)
-				throw new Error("--tools-timeout requires a positive number of seconds");
-			parsed.toolsTimeoutMs = Math.round(seconds * 1000);
+			if (value === undefined) throw new Error("--tools-timeout requires a duration");
+			const duration = parseDuration(value, { bareUnit: "s" });
+			if (!duration.ok) throw new Error(`--tools-timeout: ${duration.message}`);
+			parsed.toolsTimeoutMs = duration.ms;
 			i += 1;
 		} else throw new Error(`unknown flag: ${arg}`);
 	}

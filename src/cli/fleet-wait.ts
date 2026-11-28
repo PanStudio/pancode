@@ -10,6 +10,7 @@
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
+import { parseDuration } from "../core/duration.js";
 import {
 	type FleetRootRecord,
 	fleetRootState,
@@ -19,7 +20,6 @@ import {
 } from "../domains/dispatch/fleet-root-record.js";
 import { readFleetRun } from "../domains/dispatch/state.js";
 import { ensurePancodeState } from "../domains/install/index.js";
-import { parseDuration } from "./lib/duration.js";
 import { EXIT_CODES } from "./lib/exit-codes.js";
 import { writeCliFailure } from "./lib/json-out.js";
 

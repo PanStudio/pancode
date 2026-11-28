@@ -12,8 +12,9 @@
  * Errors come back as values; the caller prints them with `writeCliFailure`.
  * Leaf of the CLI lib: imports only other CLI lib modules.
  */
+
+import { type DurationUnit, parseDuration } from "../../core/duration.js";
 import { didYouMean } from "./did-you-mean.js";
-import { type DurationUnit, parseDuration } from "./duration.js";
 import type { ErrorSlug } from "./slugs.js";
 
 interface FlagBase {

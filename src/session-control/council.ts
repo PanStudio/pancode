@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { parseDuration } from "../core/duration.js";
+
 /**
- * `/council [--roster <name>] [--rounds <n>] [--synthesis judge|vote|none] [--agent <id>] [--deadline <N|Ns|Nm>] <task>`:
+ * `/council [--roster <name>] [--rounds <n>] [--synthesis judge|vote|none] [--agent <id>] [--deadline <duration>] <task>`:
  * the roster an operator-typed council resolves to and the dispatch-tool
  * arguments it becomes.
  *
@@ -46,13 +48,10 @@ export const COUNCIL_SYNTHESIS_LABEL = "synthesis";
  */
 export const COUNCIL_SEALED_REPORT_AGENT_ID = "council-synthesis";
 
-/** `--deadline` value: bare seconds, `Ns` or `Nm`, as milliseconds; undefined when malformed. */
+/** `--deadline` value: `<duration>` (`30s`, `2m`, `500ms`, `1h`, bare seconds), as milliseconds; undefined when malformed. */
 export function parseCouncilDeadline(value: string): number | undefined {
-	const match = /^(\d+)(s|m)?$/u.exec(value.trim());
-	if (match === null) return undefined;
-	const amount = Number(match[1]);
-	if (!Number.isSafeInteger(amount) || amount < 1) return undefined;
-	return amount * (match[2] === "m" ? 60_000 : 1_000);
+	const parsed = parseDuration(value.trim(), { bareUnit: "s" });
+	return parsed.ok ? parsed.ms : undefined;
 }
 
 export function isCouncilSynthesisMode(value: string): value is CouncilSynthesisMode {

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
+import { parseDuration } from "../core/duration.js";
 import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import { type AutonomyLevel, autonomyFromUserInput } from "../lib/autonomy/autonomy.js";
 import { globalFlagPositionHint, parseMaxContextTokens } from "./argv.js";
 import { didYouMean } from "./lib/did-you-mean.js";
-import { parseDuration } from "./lib/duration.js";
 import type { ErrorSlug } from "./lib/slugs.js";
 import type { RunLimitsV2 } from "./modes/run-json-schema-v2.js";
 import { RUN_FLAGS } from "./specs/manifest.js";

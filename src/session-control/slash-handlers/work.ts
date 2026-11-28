@@ -249,7 +249,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				{ name: "--rounds", takesValue: true, valueName: "n" },
 				{ name: "--synthesis", takesValue: true, values: COUNCIL_SYNTHESIS_MODES },
 				{ name: "--agent", takesValue: true, valueName: "id" },
-				{ name: "--deadline", takesValue: true, valueName: "N|Ns|Nm" },
+				{ name: "--deadline", takesValue: true, valueName: "duration" },
 			],
 			positionals: [{ name: "task", required: true, rest: true }],
 		},
@@ -265,7 +265,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			const deadline = parsed.flags.get("--deadline");
 			if (typeof deadline === "string") {
 				const ms = parseCouncilDeadline(deadline);
-				if (ms === undefined) return usageError("council", "--deadline takes seconds, Ns or Nm");
+				if (ms === undefined) return usageError("council", "--deadline takes a duration such as 30s, 5m or 500ms");
 				options.memberDeadlineMs = ms;
 			}
 			const rounds = parsed.flags.get("--rounds");
@@ -311,7 +311,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				{ name: "--options", takesValue: true, valueName: "a|b|c" },
 				{ name: "--models", takesValue: true, valueName: "target[/model],..." },
 				{ name: "--rationale", takesValue: false },
-				{ name: "--deadline", takesValue: true, valueName: "N|Ns|Nm" },
+				{ name: "--deadline", takesValue: true, valueName: "duration" },
 			],
 			positionals: [{ name: "n question", required: true, rest: true }],
 		},
@@ -339,7 +339,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			const deadline = parsed.flags.get("--deadline");
 			if (typeof deadline === "string") {
 				const ms = parseCouncilDeadline(deadline);
-				if (ms === undefined) return usageError("poll", "--deadline takes seconds, Ns or Nm");
+				if (ms === undefined) return usageError("poll", "--deadline takes a duration such as 30s, 5m or 500ms");
 				options.memberDeadlineMs = ms;
 			}
 			return { kind: "poll", options, source: trimmed };

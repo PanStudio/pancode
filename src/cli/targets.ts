@@ -15,6 +15,7 @@ import {
 } from "../core/config.js";
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
 import { loadDomains } from "../core/domain-loader.js";
+import { parseDuration } from "../core/duration.js";
 import { readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ensurePancodeState } from "../domains/install/index.js";
@@ -46,7 +47,7 @@ List and manage configured model targets.
 that send generation requests and can load models.
 
 Usage:
-  pancode targets [--json] [--probe [--reasoning] [--tools [--tools-timeout <seconds>]]] [--target <id>]
+  pancode targets [--json] [--probe [--reasoning] [--tools [--tools-timeout <duration>]]] [--target <id>]
   pancode targets use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>]
                        [--fleet-target <id>] [--fleet-model <id>]
   pancode targets profile list [--json]
@@ -155,10 +156,10 @@ function parseListArgs(args: ReadonlyArray<string>): ListArgs {
 		}
 		if (arg === "--tools-timeout") {
 			const value = args[i + 1];
-			const seconds = value === undefined ? Number.NaN : Number(value);
-			if (!Number.isFinite(seconds) || seconds <= 0)
-				throw new Error("--tools-timeout requires a positive number of seconds");
-			parsed.toolsTimeoutMs = Math.round(seconds * 1000);
+			if (value === undefined) throw new Error("--tools-timeout requires a duration");
+			const duration = parseDuration(value, { bareUnit: "s" });
+			if (!duration.ok) throw new Error(`--tools-timeout: ${duration.message}`);
+			parsed.toolsTimeoutMs = duration.ms;
 			i += 1;
 			continue;
 		}

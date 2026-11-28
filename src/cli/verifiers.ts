@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { readSettings } from "../core/config.js";
+import { parseDuration } from "../core/duration.js";
 import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../core/safe-exec.js";
 import { DECLARED_CHECK_KINDS, type DeclaredCheckKind } from "../core/telemetry/session-vocabulary.js";
 import { hostVerificationSandbox } from "../domains/dispatch/host-verification.js";
@@ -45,15 +46,15 @@ Usage:
 
 Fields:
   --check-cwd <path>      repository-relative directory the check runs in (default .)
-  --timeout-ms <number>   bounded timeout in milliseconds (default 120000)
+  --timeout <duration>    bounded timeout, e.g. 30s, 2m, 500ms (default 120s; bare number: seconds)
   --tags <a,b>            comma-separated catalog tags
   --kind <kind>           command (default), numeric-compare, perf-budget, reproduce, or browser
   --reference <path>      numeric-compare: repository-relative reference JSON of string -> number | number[];
                           reproduce: reference metrics JSON in the command's own output format
   --tolerance <json>      numeric-compare: {"relative"?,"absolute"?,"ulp"?,"combine"?:all|any,"nonFinite"?:fail|match,"keys"?:{<key>:{bounds,"combine"?}}}, at least one numeric bound;
                           perf-budget with --baseline: {"relative"} headroom over the baseline
-  --budget-ms <number>    perf-budget: wall-time bound in milliseconds
-  --budget-relative <r>   perf-budget with --budget-ms: fractional headroom over the bound
+  --budget <duration>     perf-budget: wall-time bound, e.g. 500ms, 2s (bare number: seconds)
+  --budget-relative <r>   perf-budget with --budget: fractional headroom over the bound
   --baseline <path>       perf-budget: repository-relative baseline JSON written by 'verifiers baseline <id>'
   --input <path>[=<sha>]  reproduce, repeatable: pinned input file; without =<sha> the current file's sha256 is pinned
   --compare twice         reproduce: run twice in two clean environments instead of --reference
@@ -83,7 +84,7 @@ const VALUE_OPTIONS = new Set([
 	"--description",
 	"--command",
 	"--check-cwd",
-	"--timeout-ms",
+	"--timeout",
 	"--tags",
 	"--exclude",
 	"--rename",
@@ -91,7 +92,7 @@ const VALUE_OPTIONS = new Set([
 	"--kind",
 	"--reference",
 	"--tolerance",
-	"--budget-ms",
+	"--budget",
 	"--budget-relative",
 	"--baseline",
 	"--input",
@@ -176,9 +177,9 @@ function parseCommand(value: string | undefined): string[] | Error {
 
 function parseTimeout(value: string | undefined): number | Error {
 	if (value === undefined) return SAFE_EXEC_DEFAULT_TIMEOUT_MS;
-	const parsed = Number(value);
-	if (!Number.isInteger(parsed) || parsed <= 0) return new Error("--timeout-ms must be a positive integer");
-	return parsed;
+	const parsed = parseDuration(value, { bareUnit: "s" });
+	if (!parsed.ok) return new Error(`--timeout: ${parsed.message}`);
+	return parsed.ms;
 }
 
 function tags(value: string | undefined): string[] {
@@ -305,7 +306,7 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 	const kind = kindValue as DeclaredCheckKind;
 	const reference = oneValue(parsed, "--reference");
 	const toleranceValue = oneValue(parsed, "--tolerance");
-	const budgetMs = oneValue(parsed, "--budget-ms");
+	const budgetValue = oneValue(parsed, "--budget");
 	const budgetRelative = oneValue(parsed, "--budget-relative");
 	const baseline = oneValue(parsed, "--baseline");
 	const reproduceOptions = REPRODUCE_OPTIONS.filter((option) => oneValue(parsed, option) !== undefined);
@@ -313,7 +314,7 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 	if (kind === "browser") {
 		const stray = [
 			...reproduceOptions,
-			...(["--reference", "--tolerance", "--budget-ms", "--budget-relative", "--baseline"] as const).filter(
+			...(["--reference", "--tolerance", "--budget", "--budget-relative", "--baseline"] as const).filter(
 				(option) => oneValue(parsed, option) !== undefined,
 			),
 		];
@@ -341,8 +342,8 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 	}
 	if (browserOptions.length > 0) return new Error(`${browserOptions.join(", ")} belong to --kind browser`);
 	if (kind === "reproduce") {
-		if (budgetMs !== undefined || budgetRelative !== undefined || baseline !== undefined) {
-			return new Error("--budget-ms, --budget-relative, and --baseline belong to --kind perf-budget");
+		if (budgetValue !== undefined || budgetRelative !== undefined || baseline !== undefined) {
+			return new Error("--budget, --budget-relative, and --baseline belong to --kind perf-budget");
 		}
 		const reproduce = reproduceFromArgs(parsed);
 		return reproduce instanceof Error ? reproduce : { kind, reproduce };
@@ -352,7 +353,7 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 		const stray = [
 			["--reference", reference],
 			["--tolerance", toleranceValue],
-			["--budget-ms", budgetMs],
+			["--budget", budgetValue],
 			["--budget-relative", budgetRelative],
 			["--baseline", baseline],
 		].filter(([, value]) => value !== undefined);
@@ -363,8 +364,8 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 		return {};
 	}
 	if (kind === "numeric-compare") {
-		if (budgetMs !== undefined || budgetRelative !== undefined || baseline !== undefined) {
-			return new Error("--budget-ms, --budget-relative, and --baseline belong to --kind perf-budget");
+		if (budgetValue !== undefined || budgetRelative !== undefined || baseline !== undefined) {
+			return new Error("--budget, --budget-relative, and --baseline belong to --kind perf-budget");
 		}
 		if (reference === undefined) return new Error("--reference is required for --kind numeric-compare");
 		if (toleranceValue === undefined) return new Error("--tolerance is required for --kind numeric-compare");
@@ -375,14 +376,14 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 		return { kind, numeric: { reference, tolerance } };
 	}
 	if (reference !== undefined) return new Error("--reference belongs to --kind numeric-compare");
-	if ((budgetMs === undefined) === (baseline === undefined)) {
-		return new Error("--kind perf-budget requires exactly one of --budget-ms or --baseline");
+	if ((budgetValue === undefined) === (baseline === undefined)) {
+		return new Error("--kind perf-budget requires exactly one of --budget or --baseline");
 	}
-	if (budgetMs !== undefined) {
-		if (toleranceValue !== undefined) return new Error("use --budget-relative for headroom over --budget-ms");
-		const wallTimeMs = Number(budgetMs);
-		if (!Number.isFinite(wallTimeMs) || wallTimeMs <= 0) return new Error("--budget-ms must be a positive number");
-		const budget: NonNullable<KindFields["perf"]>["budget"] = { wallTimeMs };
+	if (budgetValue !== undefined) {
+		if (toleranceValue !== undefined) return new Error("use --budget-relative for headroom over --budget");
+		const duration = parseDuration(budgetValue, { bareUnit: "s" });
+		if (!duration.ok) return new Error(`--budget: ${duration.message}`);
+		const budget: NonNullable<KindFields["perf"]>["budget"] = { wallTimeMs: duration.ms };
 		if (budgetRelative !== undefined) {
 			const relative = Number(budgetRelative);
 			if (!Number.isFinite(relative) || relative < 0) return new Error("--budget-relative must be a non-negative number");
@@ -391,7 +392,7 @@ function kindFieldsFromArgs(parsed: ParsedAuthoringArgs): KindFields | Error {
 		return { kind, perf: { budget } };
 	}
 	if (budgetRelative !== undefined)
-		return new Error("--budget-relative belongs with --budget-ms; use --tolerance with --baseline");
+		return new Error("--budget-relative belongs with --budget; use --tolerance with --baseline");
 	const perf: NonNullable<KindFields["perf"]> = { baseline: baseline as string };
 	if (toleranceValue !== undefined) {
 		const toleranceJson = parseJsonObject(toleranceValue, "--tolerance");
@@ -430,7 +431,7 @@ function addRevision(parsed: ParsedAuthoringArgs): VerifierRevision | Error {
 	if (description instanceof Error) return description;
 	const command = parseCommand(oneValue(parsed, "--command"));
 	if (command instanceof Error) return command;
-	const timeoutMs = parseTimeout(oneValue(parsed, "--timeout-ms"));
+	const timeoutMs = parseTimeout(oneValue(parsed, "--timeout"));
 	if (timeoutMs instanceof Error) return timeoutMs;
 	const kindFields = kindFieldsFromArgs(parsed);
 	if (kindFields instanceof Error) return kindFields;
@@ -465,7 +466,7 @@ function editRevision(parsed: ParsedAuthoringArgs): VerifierRevision | Error {
 	const cwd = checkCwd(parsed);
 	if (cwd instanceof Error) return cwd;
 	if (cwd !== undefined) changes.cwd = cwd;
-	const timeoutValue = oneValue(parsed, "--timeout-ms");
+	const timeoutValue = oneValue(parsed, "--timeout");
 	if (timeoutValue !== undefined) {
 		const timeoutMs = parseTimeout(timeoutValue);
 		if (timeoutMs instanceof Error) return timeoutMs;

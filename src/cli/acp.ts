@@ -3,6 +3,7 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { createStdioServerTransport } from "../acp/transport.js";
+import { parseDuration } from "../core/duration.js";
 import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import type { SessionToolLimits } from "../core/tool-limit-flags.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
@@ -10,17 +11,18 @@ import { printError } from "./argv.js";
 import { restoreStdout, takeOverStdout, writeRawStdout } from "./output-guard.js";
 import { runPancodeCommand } from "./pancode.js";
 
-const HELP = `pancode acp [--cwd PATH] [--permission-timeout MS] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]
+const HELP = `pancode acp [--cwd PATH] [--permission-timeout <duration>] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]
 pancode acp [--cwd PATH] auth login
 
 Serve PanCode as an Agent Client Protocol v1 agent over stdio.
 
-  --cwd PATH               Pin this workspace: every session must name it. Without
-                           it, the first workspace request selects the root.
-  --permission-timeout MS  How long a mediated permission request may wait for the
-                           client before the prompt expires. Defaults to the configured
-                           integrations.externalAgents.defaults.permissionTimeoutMs.
-                           A client's negotiated timeoutMs never overrides this flag.
+  --cwd PATH                       Pin this workspace: every session must name it. Without
+                                   it, the first workspace request selects the root.
+  --permission-timeout <duration>  How long a mediated permission request may wait for the
+                                   client before the prompt expires, e.g. 30s, 5m, 10000ms
+                                   (bare number: milliseconds). Defaults to the configured
+                                   integrations.externalAgents.defaults.permissionTimeoutMs.
+                                   A client's negotiated timeoutMs never overrides this flag.
   --autonomy LEVEL         The most autonomy any session may run at: default or yolo.
                            It lowers the configured level, never raises it; with
                            default, a client's attempt to choose yolo is refused.
@@ -58,11 +60,13 @@ export function parseAcpFlags(args: ReadonlyArray<string>): AcpFlags | string {
 			continue;
 		}
 		if (arg === "--permission-timeout") {
-			const ms = value === undefined ? Number.NaN : Number(value);
-			if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMER_DELAY_MS) {
-				return `--permission-timeout needs a whole number from 1 to ${MAX_TIMER_DELAY_MS} milliseconds`;
+			if (value === undefined) return "--permission-timeout requires a duration";
+			const parsed = parseDuration(value, { bareUnit: "ms" });
+			if (!parsed.ok) return `--permission-timeout: ${parsed.message}`;
+			if (parsed.ms > MAX_TIMER_DELAY_MS) {
+				return `--permission-timeout must be at most ${MAX_TIMER_DELAY_MS}ms`;
 			}
-			flags.permissionTimeoutMs = ms;
+			flags.permissionTimeoutMs = parsed.ms;
 			index += 1;
 			continue;
 		}

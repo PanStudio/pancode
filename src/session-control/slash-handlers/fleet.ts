@@ -115,7 +115,7 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					parseFlagsInRest: true,
 					flags: [
 						{ name: "--expect", takesValue: true, repeatable: true, valueName: "path" },
-						{ name: "--verify", takesValue: true, repeatable: true, valueName: "checkId[:timeoutMs]" },
+						{ name: "--verify", takesValue: true, repeatable: true, valueName: "checkId[:<duration>]" },
 					],
 					positionals: [{ name: "text", required: true, rest: true }],
 				},
