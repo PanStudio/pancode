@@ -20,9 +20,9 @@ The guide is [PanStore](https://pancode.dev/docs/guide/panstore.html); the sourc
 
 | Import | What it gives you |
 | --- | --- |
-| `@pancode/store` | Everything below except `./cli`, plus `createLocalStoreBackend`, `createSharedStoreBackend`, `createS3StoreBackend`, `registerStoreBackend`, `resolveStoreBackend`, `withStoreLock`, `recordedPut`, `recordedRemove`, `verifyStoreTag` and the records API (`appendRecord`, `readBlobHistory`, `currentState`, `summarizeRecords`, `driftOf`). |
+| `@pancode/store` | Everything below except `./cli`, plus `createLocalStoreBackend`, `createSharedStoreBackend`, `createS3StoreBackend`, `withStoreLock`, `recordedPut`, `recordedRemove`, `verifyStoreTag` and the records API (`appendRecord`, `readBlobHistory`, `currentState`, `summarizeRecords`, `driftOf`). |
 | `@pancode/store/backend` | The `StoreBackend` interface, its fact and result types, `StoreRefusal`, and `compileBlobPattern`. |
-| `@pancode/store/paths` | Tag and blob name validation, tag segment encoding, records-tag helpers, `storeProjectKey`, `storeMainCheckout`, `storeProjectRootOf`, root and placement validation, `resolvePlacement`, and the on-disk layout functions, each taking the store root and project key (or the project directory) as arguments. |
+| `@pancode/store/paths` | Tag and blob name validation, tag segment encoding, records-tag helpers, `storeProjectKey`, `storeMainCheckout`, root and placement validation, `resolvePlacement`, and the on-disk layout functions, each taking the store root and project key (or the project directory) as arguments. |
 | `@pancode/store/cli` | The command line as a module: `runStoreCli(argv, context)` and one function per verb, for a host that supplies its own roots, actor and provenance. |
 | `@pancode/store/testing` | `runStoreBackendConformance(name, make)`, the `node:test` cases every backend must pass. |
 

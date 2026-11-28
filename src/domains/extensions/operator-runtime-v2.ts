@@ -36,6 +36,7 @@ import {
 	resolveExtensionCommands,
 } from "./operator-commands.js";
 import { extensionOwnerLabel } from "./owner-label.js";
+import type { ResolvedPathGrant } from "./path-grants.js";
 import { ExtensionRequestTimeout, ExtensionRuntimeProcessV2, type RuntimeProcessState } from "./runtime-process-v2.js";
 import type { ExtensionSandboxReport } from "./runtime-sandbox.js";
 import { createExtensionKeyValueHost, extensionDataPaths } from "./runtime-state.js";
@@ -147,6 +148,8 @@ export interface OperatorRuntimeV2Options {
 	admits?: (extensionId: string) => boolean;
 	/** How the run and verify services start PanCode; this process's own entry and environment by default. */
 	work?: ExtensionWorkOptions;
+	/** The paths the operator named on a `pancode <verb>` line, for the `onlyId` runtime that verb runs alone. */
+	grants?: ReadonlyArray<ResolvedPathGrant>;
 }
 
 /** Observations a slow runtime may fall behind by before the oldest is dropped. */
@@ -476,6 +479,7 @@ export class OperatorExtensionRuntimeV2 {
 		});
 		const unixSockets = this.options.sandboxUnixSockets?.();
 		const sandboxMode = (this.options.sandboxMode ?? layeredSandboxMode)(context.workspace);
+		const grants = this.options.onlyId === entry.id ? this.options.grants : undefined;
 		const work = createExtensionWork(
 			{
 				extensionId: entry.id,
@@ -484,7 +488,7 @@ export class OperatorExtensionRuntimeV2 {
 				declaration: entry.runtimeV2,
 				readOnly: binding.readOnly,
 			},
-			this.options.work,
+			{ ...this.options.work, ...(grants !== undefined ? { grants } : {}) },
 		);
 		created.process = new ExtensionRuntimeProcessV2(entry, {
 			snapshot: { ...context, generation, activeWorkspace, plugin: servedPlugin(entry) },
@@ -495,6 +499,7 @@ export class OperatorExtensionRuntimeV2 {
 			...(complete ? { complete: (request, signal) => complete(binding, request, signal) } : {}),
 			...(blobs ? { blobs: (request, signal) => blobs(binding, request, signal) } : {}),
 			...(work ? { work: work.host, disposeWork: () => work.dispose() } : {}),
+			...(grants !== undefined ? { grants } : {}),
 			...(binaries.length > 0
 				? {
 						binaries: (request, signal, parent) =>

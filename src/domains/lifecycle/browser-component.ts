@@ -67,7 +67,7 @@ export function resolveBrowserComponent(): BrowserComponent | null {
 	return null;
 }
 
-/** False where this process may only read the operator's components (a campaign entry). */
+/** False where this process may only read the operator's components (a run started with its own home). */
 export function browserComponentInstallable(): boolean {
 	return !usesOperatorComponents();
 }
