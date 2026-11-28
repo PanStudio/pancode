@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import {
 	attributeCommitMessage,
 	decisionTrailerRefs,
@@ -17,6 +18,7 @@ import {
 } from "../../src/core/commit-attribution.js";
 import {
 	enterAutonomousCommitScope,
+	prepareManagedGitAttribution,
 	setAutonomousCommitProcess,
 	setCommitDecisionRefsProvider,
 	setGitCommitAttributionEnabled,
@@ -24,6 +26,8 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "../../src/core/git-commit-attribution.js";
 import { resolvePackageRoot } from "../../src/core/package-root.js";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { DEFAULT_BWRAP_PATH } from "../../src/core/sandbox/bwrap.js";
 import { installWindowsLauncher, windowsLaunchFile } from "../../src/core/windows-launcher.js";
 import type { ExecutionPlan, ExecutionPlanCodeStep } from "../../src/domains/dispatch/execution-plan.js";
 import {
@@ -565,6 +569,24 @@ describe("autonomous commit authorship", () => {
 			} finally {
 				release();
 			}
+		});
+	});
+
+	it("uses the hooks a host installed when a fresh worker sees them read-only", {
+		skip: !(sandboxAvailability().available && sandboxAvailability().backend === "bwrap"),
+	}, async () => {
+		await withRepo((repo) => {
+			const root = prepareManagedGitAttribution();
+			const module = pathToFileURL(join(resolvePackageRoot(), "src", "core", "git-commit-attribution.ts")).href;
+			const script = `const { withManagedGitCommitAttributionEnvironment: seam } = await import(${JSON.stringify(module)});
+process.stdout.write(JSON.stringify(seam(process.env, { cwd: process.env.REPO, enabled: true }).diagnostic));`;
+			const node = [process.execPath, "--import", "tsx", "--input-type=module", "-e", script];
+			const out = execFileSync(DEFAULT_BWRAP_PATH, ["--dev-bind", "/", "/", "--ro-bind", root, root, ...node], {
+				cwd: resolvePackageRoot(),
+				env: { ...process.env, REPO: repo },
+				encoding: "utf8",
+			});
+			strictEqual(out, "null");
 		});
 	});
 

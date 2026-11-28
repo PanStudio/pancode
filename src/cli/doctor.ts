@@ -204,7 +204,7 @@ function sandboxStatusFinding(): DoctorFinding {
 		ok: true,
 		name: "OS sandbox",
 		level:
-			status.outcome === "available" && status.localWorker === "contained"
+			status.outcome === "available" && status.localWorker === "contained" && status.workerIsolation !== "refused"
 				? "ok"
 				: status.outcome === "off"
 					? "info"

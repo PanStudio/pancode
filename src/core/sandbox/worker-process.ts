@@ -339,6 +339,11 @@ export function composeWorkerSandboxInvocation(
 	/** Bubblewrap, network off: run the egress setup that hands the proxy its listener. */
 	egressBridge = false,
 	startup: ((writableRoots: ReadonlyArray<string>, backend: SandboxBackend) => StartupPathProtection) | null = null,
+	/**
+	 * The isolated worker's own launch (D14): the setup also hands over these loopback listeners, and the seccomp
+	 * program lets the worker start its children under their own bwrap.
+	 */
+	outer?: { extraPorts: ReadonlyArray<number> },
 ): SandboxInvocation | null {
 	if (!availability.available || availability.backend === null || availability.executable === null) return null;
 	const writableRoots = policy.writableRoots.map((entry) =>
@@ -352,6 +357,7 @@ export function composeWorkerSandboxInvocation(
 		availability,
 		{ workspaceRoots: [cwd, ...policy.readableRoots, ...writableRoots], privateTmp: true },
 		maskedPaths,
+		outer !== undefined,
 	);
 	const masks = [...maskedPaths, ...sockets.masks];
 	const aliased =
@@ -394,7 +400,15 @@ export function composeWorkerSandboxInvocation(
 		...sockets.fields,
 		...(homeReads !== undefined ? { readRestriction: homeReads.restriction } : {}),
 		unsetEnv: SANDBOX_UNSET_ENV,
-		...(egressBridge ? { egressBridge: { execPath: process.execPath, port: EGRESS_PROXY_PORT } } : {}),
+		...(egressBridge
+			? {
+					egressBridge: {
+						execPath: process.execPath,
+						port: EGRESS_PROXY_PORT,
+						...(outer !== undefined ? { extraPorts: outer.extraPorts } : {}),
+					},
+				}
+			: {}),
 		// Under bubblewrap the private /tmp is the only scratch space outside the
 		// writable roots, and an inherited TMPDIR elsewhere would be read-only.
 		// macOS keeps its per-user TMPDIR, which the seatbelt profile allows.
@@ -522,7 +536,11 @@ function isDirectoryPath(entry: string): boolean {
 }
 
 /** Secret files under the worker's own trees, on top of the home credential masks. */
-function workerSpawnMasks(policy: WorkerSandboxSpec, backend: SandboxBackend | null, cwd: string): SandboxMaskedPath[] {
+export function workerSpawnMasks(
+	policy: WorkerSandboxSpec,
+	backend: SandboxBackend | null,
+	cwd: string,
+): SandboxMaskedPath[] {
 	const config =
 		backend === "bwrap"
 			? pancodeConfigDirMask([cwd, ...policy.writableRoots, ...policy.readableRoots], {
@@ -595,10 +613,17 @@ function launchNetwork(
 	return options.bridge === true ? "proxied" : "off";
 }
 
-/** A proxied worker launch's grants: its sealed origins, with no asks (headless). */
+/**
+ * The `open` worker egress admission: any origin by name. The proxy still refuses a local or private literal and a
+ * name resolving to one; behind an upstream proxy the upstream screens what it resolves.
+ */
+export const admitPublicOrigin = async (): Promise<boolean> => true;
+
+/** A proxied worker launch's grants: its sealed origins, with no asks (headless), or every public origin when open. */
 function workerEgressPlan(policy: WorkerSandboxSpec): EgressBridgePlan {
 	return {
 		grants: egressGrants(policy.egress?.origins ?? [], []),
+		...(policy.egress?.open === true ? { ask: admitPublicOrigin } : {}),
 		denyHint: "the operator grants it in safety.egress.workers.allow or presets",
 		...(policy.egress?.upstreamProxy !== undefined ? { upstreamProxy: policy.egress.upstreamProxy } : {}),
 	};
