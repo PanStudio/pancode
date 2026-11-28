@@ -117,6 +117,7 @@ export interface ChatLoopScope {
 	readonly requestBudgetRoll: ChatLoopComposition["requestBudgetRoll"];
 	readonly turnRuntime: ChatLoopComposition["turnRuntime"];
 	readonly steerInterrupter: ChatLoopComposition["steerInterrupter"];
+	readonly continuity: ChatLoopComposition["continuity"];
 	readonly stepStarts: ChatLoopBus["stepStarts"];
 	readonly stepPipeline: ChatLoopBus["stepPipeline"];
 	readonly yoloContinuationDue: ChatLoopStateMachine["yoloContinuationDue"];

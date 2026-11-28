@@ -700,6 +700,25 @@ export type ChatLoopToolOptionsState = TurnStateView<
 	never
 >;
 
+/** chat-loop/cancel: stops the running turn and records which cause asked. */
+export type ChatLoopCancelState = TurnStateView<
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "runtime"
+	| "streaming",
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test
