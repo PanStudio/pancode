@@ -197,7 +197,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 		// say who turned it down, which a bare status cannot.
 		await page.getByLabel("Message PanCode", { exact: true }).fill("[approval] Write it again.");
 		await page.getByRole("button", { name: "Send", exact: true }).click();
-		await page.getByRole("button", { name: "Reject", exact: true }).first().click();
+		await page.getByRole("button", { name: "Deny", exact: true }).first().click();
 		await page.getByText("Permission rejected.", { exact: true }).waitFor();
 		const refused = page.locator(".diff.is-rejected").last();
 		await refused.waitFor();
@@ -389,7 +389,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 		);
 		await page.locator(".jump-to-latest").click();
 		await page.locator(".jump-to-latest").waitFor({ state: "detached" });
-		await page.getByRole("button", { name: "Stop turn", exact: true }).click();
+		await page.getByRole("button", { name: "Cancel turn", exact: true }).click();
 		await settled();
 		await check("cancelled");
 	});

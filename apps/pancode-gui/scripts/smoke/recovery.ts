@@ -282,7 +282,7 @@ export async function recoverySteps(run: SmokeRun) {
 			[],
 			"the request left the screen while the task started",
 		);
-		const stop = page.getByRole("button", { name: "Stop turn", exact: true });
+		const stop = page.getByRole("button", { name: "Cancel turn", exact: true });
 		if (await stop.count()) await stop.click();
 		await settled();
 	});
@@ -327,7 +327,7 @@ export async function recoverySteps(run: SmokeRun) {
 		assert.ok((await recordRow.locator(".tool-card").count()) > 0, "the decision record is not at its call's row");
 		await composerField.fill("[approval] Write the probe file once more.");
 		await page.getByRole("button", { name: "Send", exact: true }).click();
-		await page.getByRole("button", { name: "Reject", exact: true }).first().click();
+		await page.getByRole("button", { name: "Deny", exact: true }).first().click();
 		await page.getByText("Permission rejected.", { exact: true }).last().waitFor();
 		await settled();
 		const outcome = page.locator(".chat-turn").last().locator(".turn-outcome");

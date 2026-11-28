@@ -287,7 +287,7 @@ export const KEYBINDINGS = {
 		key: ".",
 		modifiers: ["primary"],
 		scope: "global",
-		action: "Stop the running turn",
+		action: "Cancel the running turn",
 		where: "While a turn is running",
 	},
 } as const satisfies Readonly<Record<string, Keybinding>>;

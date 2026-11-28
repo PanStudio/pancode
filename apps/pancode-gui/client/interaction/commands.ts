@@ -223,9 +223,9 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 	if (sessionId !== null) {
 		commands.push({
 			id: "session.cancel",
-			title: "Stop the running turn",
+			title: "Cancel the running turn",
 			group: "Session",
-			keywords: ["cancel", "interrupt", "halt"],
+			keywords: ["stop", "interrupt", "halt"],
 			binding: "cancelTurn",
 			available: runningTurnId !== null,
 			run: () => {

@@ -40,7 +40,7 @@ export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: stri
 	"/sessions": {
 		title: "Sessions",
 		meaning:
-			"Follow the sessions held by this PanCode server across projects. Filter by activity, review requests for your input, stop a turn or continue a session.",
+			"Follow the sessions held by this PanCode server across projects. Filter by activity, review requests for your input, cancel a turn or continue a session.",
 	},
 	"/nodes": {
 		title: "Nodes",
@@ -94,7 +94,7 @@ const VIEW_ENTRIES: readonly HelpEntry[] = Object.values(VIEW_GUIDE).map((view) 
 
 /** Keys handled by one control rather than the binding table: the message box and the task name. */
 export const COMPOSER_NOTES: readonly { term: string; action: string; where: string }[] = [
-	{ term: "Esc, Esc", action: "Stop the running turn", where: "Message box · press twice while a turn runs" },
+	{ term: "Esc, Esc", action: "Cancel the running turn", where: "Message box · press twice while a turn runs" },
 	{ term: "Up / Down", action: "Recall sent messages", where: "Message box · Up with the caret at the start" },
 	{ term: "F2", action: "Rename the session", where: "Session name in the header focused" },
 ];

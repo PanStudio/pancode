@@ -106,7 +106,7 @@ function WorkspaceMenu({
 				>
 					<Icon name="folderOpen" />
 					<span>
-						<strong>Open workspace…</strong>
+						<strong>Open project…</strong>
 					</span>
 				</button>
 			</fieldset>
@@ -163,7 +163,7 @@ function Onboarding({
 					{hasWorkspace ? null : (
 						<button type="button" className="primary" onClick={onOpenWorkspace}>
 							<Icon name="folderOpen" />
-							Open workspace
+							Open project
 						</button>
 					)}
 				</div>
@@ -290,7 +290,7 @@ export function Home({ client }: { client: Client }) {
 									{workspaces.isFetching ? "Checking…" : "Retry"}
 								</button>
 								<button type="button" onClick={() => shell?.openWorkspace()}>
-									Open workspace…
+									Open project…
 								</button>
 							</div>
 						</div>

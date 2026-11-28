@@ -348,7 +348,7 @@ const SessionCard = memo(function SessionCard({
 							onClick={() => controls.start(item, "stop")}
 						>
 							<Icon name="stop" />
-							{control?.stage === "sending" && control.action === "stop" ? "Stopping…" : "Stop"}
+							{control?.stage === "sending" && control.action === "stop" ? "Canceling…" : "Cancel"}
 						</button>
 					) : null}
 					{held ? (

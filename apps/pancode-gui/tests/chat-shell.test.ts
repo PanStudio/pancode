@@ -28,7 +28,7 @@ import {
 import type { HealthRow } from "../client/chat/health.js";
 import { type ChatTurn, groupTurns, turnStatuses } from "../client/chat/turns.js";
 import { appCommands, DESTINATIONS, liveStopTarget, NO_SITUATION } from "../client/interaction/commands.js";
-import { stopRefusal } from "../client/pages/session-control-model.js";
+import { sessionControlNotice, stopRefusal } from "../client/pages/session-control-model.js";
 import type { Problem } from "../contracts/common.js";
 import type { TimelineItem, Turn } from "../contracts/sessions.js";
 
@@ -457,6 +457,23 @@ test("a refused stop reads as nothing stopped, never as accepted", () => {
 		"utf8",
 	);
 	assert.match(actions, /stopRefusal\(error\.problem\)/);
+	const base = {
+		sessionId: "s1",
+		workspaceId: "w1",
+		title: "Seed turn",
+		action: "stop" as const,
+		turnId: "t1",
+		key: "k1",
+		epoch: "e1",
+		message: "",
+		restarted: false,
+	};
+	const sending = sessionControlNotice([{ ...base, stage: "sending" }], null);
+	assert.equal(sending.summary, "Cancel request · Seed turn");
+	const confirmed = sessionControlNotice([{ ...base, stage: "complete" }], null);
+	assert.deepEqual([confirmed.label, confirmed.summary], ["Canceled", "Cancel confirmed · Seed turn"]);
+	const idle = sessionControlNotice([{ ...base, stage: "complete", nothingStopped: true }], null);
+	assert.deepEqual([idle.label, idle.summary], ["Nothing to cancel", "Nothing canceled · Seed turn"]);
 });
 
 test("appCommands opens the task's session dialogs by name, only those its agent can serve", () => {

@@ -339,7 +339,7 @@ try {
 		// Flows share these locators and helpers; a locator resolves only when it is used.
 		let noticeSessionUrl = "";
 		let workspaceUrl = "";
-		const openDialog = page.getByRole("dialog", { name: "Open workspace", exact: true });
+		const openDialog = page.getByRole("dialog", { name: "Open project", exact: true });
 		const setting = (path: string) =>
 			page.locator("main .setting-control", { has: page.locator("code", { hasText: path }) });
 		const findSetting = page.locator("main").getByLabel("Find a setting", { exact: true });
@@ -396,7 +396,7 @@ try {
 		// A settled turn leaves no working chip in the top bar and no Stop in the composer.
 		const settled = async () => {
 			await page.locator('.wb-chip--status[data-tone="working"]').waitFor({ state: "detached" });
-			await page.getByRole("button", { name: "Stop turn", exact: true }).waitFor({ state: "detached" });
+			await page.getByRole("button", { name: "Cancel turn", exact: true }).waitFor({ state: "detached" });
 		};
 		// Session actions open from the slash palette as a dialog over the conversation. The option carries
 		// the engine's title; the dialog opens under the app's own heading.

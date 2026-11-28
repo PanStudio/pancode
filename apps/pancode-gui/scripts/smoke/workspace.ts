@@ -179,7 +179,7 @@ export async function workspaceSteps(run: SmokeRun) {
 						const rect = element.getBoundingClientRect();
 						return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
 					});
-				for (const name of ["Reject", "Allow once"]) {
+				for (const name of ["Deny", "Allow once"]) {
 					const answer = noticePage.locator(".conversation__approval").getByRole("button", { name, exact: true });
 					await answer.scrollIntoViewIfNeeded();
 					assert.equal(await receivesPointer(answer), true, `${name} stays reachable with notices at ${width}×${height}`);
