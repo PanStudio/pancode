@@ -16,6 +16,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import type { YoloConfinement } from "../../lib/autonomy/autonomy.js";
+import type { EgressSettings } from "../defaults.js";
 import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
 import { renderCount } from "../telemetry/render.js";
@@ -26,7 +27,10 @@ import {
 	pancodeDataPath,
 	pancodeStatePath,
 } from "../xdg.js";
-import { sandboxAvailability, sandboxUsable } from "./availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable } from "./availability.js";
+import type { EgressBridgePlan } from "./egress/bridge.js";
+import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
+import { mainSandboxEnvPolicy } from "./env-scrub.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
@@ -62,8 +66,10 @@ import {
  * dirs, credentials and the SSH agent are masked, the secret files inside the
  * workspace and scratch roots cannot be read, the inherited environment loses
  * its credential variables (env-scrub.ts), the command gets its own PID
- * namespace, and the network stays on because this is the operator's own
- * session. Unlike a worker the command sees the real /tmp, where operators
+ * namespace, and its network is `safety.egress.main`: by default only
+ * PanCode's egress proxy (egress/), which asks the operator about an origin
+ * not yet granted, so the session's own commands reach what the operator
+ * allows without a wide-open network. Unlike a worker the command sees the real /tmp, where operators
  * expect benchmark outputs. Containment is what lets such a call run without
  * an approval ask; a call that asks to leave it (`unsandboxed: true`) or that
  * publishes is judged instead. Under the operator's yolo nothing runs here
@@ -211,6 +217,12 @@ export interface MainSandboxPolicy {
 	pancodeDirs: ReadonlyArray<string>;
 	/** Main calls retain network; declared proof checks explicitly disable it. */
 	network: boolean;
+	/**
+	 * With `network`, the command reaches only PanCode's proxy, which admits
+	 * these grants and asks about others (`safety.egress.main.mode: proxied`);
+	 * absent, `network` is the host's.
+	 */
+	egress?: EgressBridgePlan;
 	/**
 	 * Where each launch looks for secret files to mask: the workspace, the
 	 * source checkout of a task worktree, then the scratch roots.
@@ -809,8 +821,45 @@ export function mainSandboxInvocationSpec(
 }
 
 export type MainSandboxSpawnPlan =
-	| { kind: "sandboxed"; file: string; args: string[]; afterExit: () => void; env: SandboxEnvPolicy }
+	| {
+			kind: "sandboxed";
+			file: string;
+			args: string[];
+			afterExit: () => void;
+			env: SandboxEnvPolicy;
+			/** Proxied: spawn with `egressStdio` and serve the launch with `bridgeEgress`. */
+			egress?: EgressBridgePlan;
+	  }
 	| { kind: "refused"; message: string };
+
+/** The main session's contained-shell settings, as the tool registry reads them for each contained call. */
+export function mainShellSandboxSettings(
+	settings: () => Parameters<typeof mainSandboxEnvPolicy>[0] & {
+		safety: { sandboxUnixSockets: UnixSocketMode; egress: EgressSettings };
+	},
+) {
+	return {
+		sandboxEnv: (): SandboxEnvPolicy => mainSandboxEnvPolicy(settings()),
+		sandboxUnixSockets: (): UnixSocketMode => settings().safety.sandboxUnixSockets,
+		sandboxEgress: (): EgressSettings => settings().safety.egress,
+	};
+}
+
+/**
+ * How one contained launch reaches the network. A proxied policy needs
+ * bubblewrap's network namespace and a caller that serves the bridge: a caller
+ * that cannot gets no network, and seatbelt stays open, unmonitored, until the
+ * macOS proxy. Nothing here turns proxied into open on Linux.
+ */
+export function mainLaunchEgress(
+	policy: Pick<MainSandboxPolicy, "network" | "egress">,
+	backend: SandboxAvailability["backend"],
+	bridge: boolean,
+): "off" | "proxied" | "open" {
+	if (!policy.network) return "off";
+	if (policy.egress === undefined || backend === "seatbelt") return "open";
+	return bridge ? "proxied" : "off";
+}
 
 /**
  * How one contained command spawns. Admission let it run without an ask
@@ -831,6 +880,10 @@ export function planMainSandboxSpawn(
 	command: SandboxCommand,
 	cwd: string,
 	availability: SandboxAvailability = sandboxAvailability(),
+	options: {
+		/** The caller spawns asynchronously and serves a returned `egress` plan; without it proxied runs with no network. */
+		bridge?: boolean;
+	} = {},
 ): MainSandboxSpawnPlan {
 	if (!availability.available || availability.backend === null || availability.executable === null) {
 		return {
@@ -843,6 +896,19 @@ export function planMainSandboxSpawn(
 			kind: "refused",
 			message: `sandbox: a read-only run's commands need the bubblewrap sandbox, and this host has ${availability.backend}; the command was not run`,
 		};
+	}
+	const egress = mainLaunchEgress(policy, availability.backend, options.bridge === true);
+	if (egress === "proxied" || egress === "off") {
+		const failure = sandboxNetworkIsolation(availability);
+		if (failure !== null) {
+			return {
+				kind: "refused",
+				message:
+					policy.egress !== undefined
+						? `sandbox: your session's commands reach the network only through PanCode's egress proxy, which needs bubblewrap to isolate their network, and it cannot here (${failure}); the command was not run. To run commands with your network unmonitored, set safety.egress.main.mode: open`
+						: `sandbox: this command must run with no network, and bubblewrap cannot isolate its network here (${failure}); the command was not run`,
+			};
+		}
 	}
 	// A read-only bind needs its path to exist, and naming the policy created none.
 	// No existence shortcut: a recursive mkdir passes only a directory, so a
@@ -866,6 +932,7 @@ export function planMainSandboxSpawn(
 	if (policy.sandboxCache !== undefined) holdSandboxCacheLease(policy.sandboxCache);
 	const physicalPolicy: MainSandboxPolicy = {
 		...policy,
+		network: egress === "open",
 		writableRoots: policy.writableRoots.map(physicalSandboxPath),
 		readOnlyPaths: policy.readOnlyPaths.map(physicalSandboxPath),
 		...(policy.sandboxCache !== undefined ? { sandboxCache: physicalSandboxPath(policy.sandboxCache) } : {}),
@@ -958,7 +1025,7 @@ export function planMainSandboxSpawn(
 					[policy.secretRoots.workspace, ...policy.secretRoots.scratchRoots].map(physicalSandboxPath),
 					availability.backend,
 				);
-	const spec = {
+	const base: SandboxInvocationSpec = {
 		...mainSandboxInvocationSpec(
 			{ ...physicalPolicy, readOnlyPaths: [...physicalPolicy.readOnlyPaths, ...startup.readOnlyPaths] },
 			command,
@@ -968,6 +1035,14 @@ export function planMainSandboxSpawn(
 		),
 		...sockets.fields,
 	};
+	const spec: SandboxInvocationSpec =
+		egress === "proxied"
+			? {
+					...base,
+					egressBridge: { execPath: process.execPath, port: EGRESS_PROXY_PORT },
+					setEnv: { ...base.setEnv, ...egressProxyEnv(EGRESS_PROXY_PORT) },
+				}
+			: base;
 	const invocation = buildSandboxInvocation(spec, availability.backend, availability.executable);
 	const absentFiles = policy.absentGitFiles.filter((file) => !pathExists(file));
 	const releaseStartup = holdStartupMountPoints(startup.masks);
@@ -980,6 +1055,7 @@ export function planMainSandboxSpawn(
 			releaseStartup();
 		},
 		env: policy.env,
+		...(egress === "proxied" && policy.egress !== undefined ? { egress: policy.egress } : {}),
 	};
 }
 
@@ -1226,6 +1302,38 @@ function secretFilesLine(found: MainSandboxSecretFiles): string {
 }
 
 /** One line for doctor: how the main session's shell calls run on this host, and where a contained one can write. */
+/** `safety.egress.main` and `safety.egress.upstreamProxy`, already redacted, for the doctor line. */
+export interface MainSandboxEgressFacts {
+	mode: "off" | "proxied" | "open";
+	/** Origins `allow` and `presets` grant for good. */
+	granted: number;
+	/** The upstream proxy with its credentials redacted, or null. */
+	upstreamProxy: string | null;
+	/** Why bubblewrap cannot isolate the network here, or null. */
+	isolationFailure: string | null;
+}
+
+function mainEgressLine(
+	egress: MainSandboxEgressFacts,
+	availability: SandboxAvailability,
+): { text: string; warn: boolean } {
+	if (egress.mode === "open")
+		return { text: "network: open and unmonitored (safety.egress.main.mode is open)", warn: false };
+	if (egress.mode === "proxied" && availability.backend === "seatbelt")
+		return { text: "network: open and unmonitored until PanCode's macOS egress proxy", warn: false };
+	if (egress.isolationFailure !== null)
+		return {
+			text: `network: safety.egress.main.mode is ${egress.mode}, which needs bubblewrap to isolate the network, and it cannot here (${egress.isolationFailure}), so contained commands are refused; safety.egress.main.mode: open runs them with the host network, unmonitored`,
+			warn: true,
+		};
+	if (egress.mode === "off") return { text: "network: off (safety.egress.main.mode is off)", warn: false };
+	const upstream = egress.upstreamProxy === null ? "" : `, forwarded through ${egress.upstreamProxy}`;
+	return {
+		text: `network: only through PanCode's egress proxy${upstream}; ${renderCount(egress.granted)} ${egress.granted === 1 ? "origin" : "origins"} granted in safety.egress.main, others ask the operator in an attended session and are refused otherwise; a server a command starts is reachable only inside its sandbox`,
+		warn: false,
+	};
+}
+
 export function mainSandboxLine(
 	mode: SandboxMode,
 	availability: SandboxAvailability,
@@ -1233,6 +1341,7 @@ export function mainSandboxLine(
 	confinement: YoloConfinement,
 	secretFiles?: MainSandboxSecretFiles,
 	unixSockets: UnixSocketMode = "block",
+	egress?: MainSandboxEgressFacts,
 ): string {
 	const yolo = yoloShellState(confinement, mode, availability);
 	const yoloLine =
@@ -1257,6 +1366,10 @@ export function mainSandboxLine(
 		if (availability.degraded !== undefined) warnings.push(missingBaselineLine(availability.degraded));
 		const socketState = unixSocketHostState(unixSockets, availability);
 		(socketState.kind === "masks" ? warnings : details).push(unixSocketStateLine(socketState));
+		if (egress !== undefined) {
+			const network = mainEgressLine(egress, availability);
+			(network.warn ? warnings : details).push(network.text);
+		}
 		(yolo === "refused" ? warnings : details).push(yoloLine);
 		return [...warnings, ...details].join("; ");
 	}

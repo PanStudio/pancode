@@ -11,6 +11,8 @@ import {
 	actionClassWords,
 	dispatchPlanHeadline,
 	reversibilityWords,
+	SHELL_EGRESS_EFFECT_TEXT,
+	SHELL_EGRESS_RULE_ID,
 	safetyNetRailText,
 	UNREAD_COMMAND_EFFECT,
 	unansweredWords,
@@ -93,7 +95,10 @@ export function identityRow(
 	const axisTone: Tone = presentation.semanticToken === "warning" ? "warning" : "muted";
 	const kind = toolFunction(view.tool);
 	// What the call does, in words (`runs a command`), not its class name (`execute action`).
-	const classWords = actionClassWords(view.actionClass);
+	const classWords =
+		view.axis.kind === "net" && view.axis.ruleId === SHELL_EGRESS_RULE_ID
+			? SHELL_EGRESS_EFFECT_TEXT
+			: actionClassWords(view.actionClass);
 	// `write · write action` said the word twice. When the tool and its class
 	// share the word, the tool chip alone carries it, in the risk tone, behind
 	// the function glyph the transcript uses for that tool.
