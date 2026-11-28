@@ -8,7 +8,7 @@ import type { Client } from "../../api/client.js";
 import { formatTime } from "../../api/clock.js";
 import { tokensText } from "../../chat/session-usage-model.js";
 import { PanelEmpty } from "../../design/panel.js";
-import { InspectionError, InspectionSummary } from "../../design/run-inspection.js";
+import { InspectionError, InspectionSummary, LoadOlder } from "../../design/run-inspection.js";
 import { quantityText } from "../../telemetry/quantity-model.js";
 import { inspectionSort, listDestination, sortInspectionRecords } from "../run-inspection-model.js";
 import "../run-inspection.css";
@@ -146,11 +146,7 @@ export function TraceRuns({ client }: { client: Client }) {
 				</PanelEmpty>
 			) : null}
 			{runs.hasNextPage ? <PanelEmpty>{emptyState.bounded("runs")}</PanelEmpty> : null}
-			{runs.hasNextPage ? (
-				<button type="button" onClick={() => void runs.fetchNextPage()} disabled={runs.isFetching}>
-					{runs.isFetchingNextPage ? "Loading runs…" : "Load older runs"}
-				</button>
-			) : null}
+			<LoadOlder pages={runs} label="Load older runs" loading="Loading runs…" />
 		</section>
 	);
 }

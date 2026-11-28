@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * Tool rows. Every decision lives in `tool-presentation.ts` and `diff-model.ts`;
- * this file is the markup and nothing else.
+ * Tool rows. Every decision lives in `tool-presentation.ts`, `tool-cards-model.ts`
+ * and `diff-model.ts`; this file is the markup and nothing else.
  *
  * A call is one line by default: status glyph, a plain verb, what it touched,
  * and the one fact worth reading. Opening the row shows the evidence. Four
@@ -28,12 +28,14 @@
 import { memo, useMemo, useState } from "react";
 import type { TimelineItem } from "../../contracts/sessions.js";
 import { StatusMark } from "../design/status.js";
-import { type AnsiSpan, parseAnsi } from "../render/ansi.js";
+import { parseAnsi } from "../render/ansi.js";
 import { parseJsonContainer } from "../render/json-tree-model.js";
-import { CopyButton, JsonTreeView, offersJsonTree } from "../render/Markdown.js";
+import { CopyButton, JsonTreeView } from "../render/Markdown.js";
+import { offersJsonTree } from "../render/markdown-model.js";
 import { statusGlyph } from "./activity.js";
 import { ELAPSED_TITLE } from "./chat-turn.js";
 import { DiffView } from "./Diff.js";
+import { lineCountOf, OUTPUT_VISIBLE_LINES, resultLabel, spanClass } from "./tool-cards-model.js";
 import { type ToolImagesView, toolImagesView } from "./tool-image-model.js";
 import {
 	formatLocation,
@@ -92,26 +94,6 @@ function Locations({ locations, headline }: { locations: readonly ToolLocation[]
  * DOM node exists from the first frame, which is what keeps the
  * partialOutput-to-result handover from reflowing the row.
  */
-function spanClass(span: AnsiSpan): string | undefined {
-	const names = [
-		span.color === null ? null : `ansi-${span.color}`,
-		span.bold ? "ansi-bold" : null,
-		span.dim ? "ansi-dim" : null,
-		span.italic ? "ansi-italic" : null,
-		span.underline ? "ansi-underline" : null,
-	].filter(Boolean);
-	return names.length > 0 ? names.join(" ") : undefined;
-}
-
-/** Lines the output well shows before it scrolls, from its 26em cap at the body leading. */
-const OUTPUT_VISIBLE_LINES = 16;
-
-function lineCountOf(text: string): number {
-	let count = 1;
-	for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) count++;
-	return text.endsWith("\n") ? count - 1 : count;
-}
-
 function OutputBlock({ pane }: { pane: OutputPane }) {
 	const spans = useMemo(() => (pane.styled === null ? null : parseAnsi(pane.styled)), [pane.styled]);
 	const [expanded, setExpanded] = useState(false);
@@ -194,14 +176,6 @@ function ResultDisclosure({ pane, label }: { pane: OutputPane; label: string }) 
 			{open ? <OutputBlock pane={pane} /> : null}
 		</details>
 	);
-}
-
-function resultLabel(card: ToolPresentation): string {
-	if (card.name === "read") return "View file contents";
-	if (card.name === "ls") return "View directory listing";
-	if (card.body === "fetch") return "View fetched content";
-	if (card.body === "dispatch") return "View worker result";
-	return "View result";
 }
 
 function Matches({ groups, dropped }: { groups: readonly MatchGroup[]; dropped: number }) {

@@ -8,6 +8,7 @@
 
 import type { KeyEventLike } from "../interaction/keybindings.js";
 import { KEYBINDINGS, matchesKeybinding } from "../interaction/keybindings.js";
+import { readPref, writePref } from "../interaction/prefs.js";
 
 const ENTER_SENDS_KEY = "pancode-enter-sends";
 
@@ -22,21 +23,13 @@ export function touchFirst(): boolean {
 
 /** The stored choice, or Enter-sends unless the primary pointer is touch. */
 export function initialEnterSends(): boolean {
-	try {
-		const saved = localStorage.getItem(ENTER_SENDS_KEY);
-		if (saved === "true" || saved === "false") return saved === "true";
-	} catch {
-		// The choice still works for this page when browser storage is unavailable.
-	}
+	const saved = readPref(ENTER_SENDS_KEY);
+	if (saved === "true" || saved === "false") return saved === "true";
 	return !touchFirst();
 }
 
 export function rememberEnterSends(enterSends: boolean): void {
-	try {
-		localStorage.setItem(ENTER_SENDS_KEY, String(enterSends));
-	} catch {
-		// The in-memory choice remains usable.
-	}
+	writePref(ENTER_SENDS_KEY, String(enterSends));
 }
 
 let nativeSizing: boolean | undefined;

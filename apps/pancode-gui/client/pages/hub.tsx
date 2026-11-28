@@ -8,6 +8,7 @@ import { type Client, emptyInput } from "../api/client.js";
 import { Facts } from "../design/facts.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import { useRevealCurrent } from "../interaction/use-reveal-current.js";
 import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
@@ -15,28 +16,20 @@ import { HubCatalog } from "./hub-catalog.js";
 import {
 	type Agent,
 	agentCard,
-	collectionTabLabel,
-	extensionState,
+	HUB_COLLECTIONS,
+	type HubCollection,
+	hubCollectionRead,
 	hubContextCopy,
-	matchesQuery,
+	hubEntries,
+	hubSource,
+	hubTabLabel,
+	hubVisible,
 	type Resource,
 	resourceDetails,
 	skillCard,
 	tabAfterKey,
 } from "./hub-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
-
-const collections = ["Catalog", "Agents", "Skills", "Prompts", "Playbooks", "Extensions", "Verifiers"] as const;
-type Collection = (typeof collections)[number];
-type Entry = {
-	id: string;
-	name: string;
-	description: string;
-	state: string;
-	detail: unknown;
-	agent?: Agent;
-	skill?: Resource;
-};
 
 function ResourceBody({ collection, value }: { collection: string; value: unknown }) {
 	const detail = resourceDetails(collection, value);
@@ -134,7 +127,7 @@ function SkillBody({ skill }: { skill: Resource }) {
 		</>
 	);
 }
-const purpose: Record<Collection, string> = {
+const purpose: Record<HubCollection, string> = {
 	Catalog:
 		"Every pack PanCode can install, and every copy already installed, for you or for this project. Each change is planned first, shown to you, and only then applied.",
 	Agents: "Specialists PanCode can assign work to. Their specifications describe the tools, skills and limits they use.",
@@ -158,13 +151,13 @@ export function HubPage({
 	const selection = useWorkspaceSelection(client);
 	const id = workspaceId ?? selection.id;
 	const [search, setSearch] = useSearchParams();
-	const [localDiscovery, setLocalDiscovery] = useState<{ collection: Collection; q: string }>({
+	const [localDiscovery, setLocalDiscovery] = useState<{ collection: HubCollection; q: string }>({
 		collection: "Catalog",
 		q: "",
 	});
 	const active = compact
 		? localDiscovery.collection
-		: (collections.find((name) => name.toLowerCase() === search.get("collection")) ?? "Catalog");
+		: (HUB_COLLECTIONS.find((name) => name.toLowerCase() === search.get("collection")) ?? "Catalog");
 	const filter = compact ? localDiscovery.q : (search.get("q") ?? "");
 	const tabId = useId();
 	const collectionBar = useRevealCurrent<HTMLDivElement>(active);
@@ -179,7 +172,7 @@ export function HubPage({
 		next.set("collection", active.toLowerCase());
 		setSearch(next, { replace: true });
 	});
-	const discover = (collection: Collection, query: string, replace = false) => {
+	const discover = (collection: HubCollection, query: string, replace = false) => {
 		if (compact) {
 			setLocalDiscovery({ collection, q: query });
 			return;
@@ -230,65 +223,34 @@ export function HubPage({
 		enabled: !!id,
 		queryFn: () => client.call(routes.hubVerifiers, { ...emptyInput, params: { id } }),
 	});
-	const resourceEntries = (kind: "skill" | "prompt" | "playbook"): Entry[] =>
-		(inventory.data?.resources ?? [])
-			.filter((row) => row.kind === kind)
-			.map((row) => ({
-				id: row.key,
-				name: row.name,
-				description: row.description,
-				state: `${row.availability} · ${row.source.class}`,
-				detail: row,
-				...(kind === "skill" ? { skill: row } : {}),
-			}));
-	const entries: Record<Exclude<Collection, "Catalog">, Entry[]> = {
-		Agents: (agents.data?.agents ?? []).map((row) => ({
-			id: row.id,
-			name: row.name,
-			description: row.description,
-			state: `${row.category} · ${row.source}`,
-			detail: row,
-			agent: row,
-		})),
-		Skills: resourceEntries("skill"),
-		Prompts: resourceEntries("prompt"),
-		Playbooks: resourceEntries("playbook"),
-		Extensions: (extensions.data?.extensions ?? []).map((row) => ({
-			id: `${row.id}:${row.scope}`,
-			name: row.name,
-			description: row.description,
-			state: extensionState(row),
-			detail: row,
-		})),
-		Verifiers: (verifiers.data?.checks ?? []).map((row) => ({
-			id: row.id,
-			name: row.id,
-			description: row.description,
-			state: `${row.origin} · ${row.runner}`,
-			detail: row,
-		})),
-	};
-	const source =
-		active === "Agents" ? agents : active === "Extensions" ? extensions : active === "Verifiers" ? verifiers : inventory;
-	// Free text runs across every string field a row carries, not only its name.
-	const visible = (active === "Catalog" ? [] : entries[active]).filter((row) => matchesQuery(row.detail, filter));
-	const tabs = useRef(new Map<Collection, HTMLButtonElement>());
-	const activate = (name: Collection) => {
+	const entries = hubEntries({
+		resources: inventory.data?.resources,
+		agents: agents.data?.agents,
+		extensions: extensions.data?.extensions,
+		checks: verifiers.data?.checks,
+	});
+	const reads = { inventory, agents, extensions, verifiers };
+	const source = reads[hubSource(active)];
+	const visible = hubVisible(active, entries, filter);
+	const tabs = useRef(new Map<HubCollection, HTMLButtonElement>());
+	const activate = (name: HubCollection) => {
 		discover(name, "");
 		setLimit(40);
 	};
 	const onTabKey = (event: KeyboardEvent) => {
-		const next = tabAfterKey(collections, active, event.key);
+		const next = tabAfterKey(HUB_COLLECTIONS, active, event.key);
 		if (!next) return;
 		event.preventDefault();
 		activate(next);
 		tabs.current.get(next)?.focus();
 	};
-	const tabLabel = (name: Collection) => {
-		const query =
-			name === "Agents" ? agents : name === "Extensions" ? extensions : name === "Verifiers" ? verifiers : inventory;
-		const count = !query.data ? undefined : name === "Catalog" ? inventory.data?.packages.length : entries[name].length;
-		return collectionTabLabel(name, { read: name === "Verifiers" ? !!id : resolved, count, failed: query.isError });
+	const tabLabel = (name: HubCollection) => {
+		const query = reads[hubSource(name)];
+		return hubTabLabel(
+			name,
+			{ loaded: !!query.data, failed: query.isError, packages: inventory.data?.packages.length, entries },
+			{ workspace: !!id, resolved },
+		);
 	};
 	return (
 		<section className="hub-page">
@@ -296,7 +258,7 @@ export function HubPage({
 			{!workspaceId && <WorkspacePicker selection={selection} purpose="installation" />}
 			{!compact && <p>{context.intro}</p>}
 			<div ref={collectionBar} className="settings-tabs" role="tablist" aria-label="Hub collections" onKeyDown={onTabKey}>
-				{collections.map((name) => (
+				{HUB_COLLECTIONS.map((name) => (
 					<button
 						type="button"
 						role="tab"
@@ -331,17 +293,10 @@ export function HubPage({
 				{active === "Verifiers" && !id && resolved && (
 					<PanelEmpty>Verifiers are the checks of one project. Open a project to discover its checks.</PanelEmpty>
 				)}
-				{source.isPending && (active === "Verifiers" ? !!id : resolved) && (
+				{source.isPending && hubCollectionRead(active, !!id, resolved) && (
 					<p role="status">Reading {active.toLowerCase()}…</p>
 				)}
-				{source.error && (
-					<p role="alert">
-						{source.error.message}{" "}
-						<button type="button" onClick={() => void source.refetch()}>
-							Try again
-						</button>
-					</p>
-				)}
+				{source.error && <RetryAlert retry={() => void source.refetch()}>{source.error.message}</RetryAlert>}
 				{inventory.data && Object.values(inventory.data.truncated).some(Boolean) && (
 					<PanelEmpty>
 						This inventory is incomplete. Search and filters cover only the records returned by the server.

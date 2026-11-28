@@ -8,6 +8,7 @@ import { Dialog } from "../interaction/Dialog.js";
 import type { ProjectLaunch } from "../pages/project-open.js";
 import { PancodePulse, PULSE_SIZE } from "./PancodeMark.js";
 import { PathField } from "./PathField.js";
+import { workspacesByRecency } from "./shell-model.js";
 
 /** A path box with completion, the OS folder dialog one click away, and the recent workspaces. */
 export function OpenWorkspaceDialog({
@@ -50,8 +51,7 @@ export function OpenWorkspaceDialog({
 				<section className="wb-open__recents" aria-label="Recent workspaces">
 					<h3>Recent</h3>
 					<ul>
-						{[...(recents.data ?? [])]
-							.sort((a, b) => b.openedAt.localeCompare(a.openedAt))
+						{workspacesByRecency(recents.data ?? [])
 							.slice(0, 6)
 							.map((workspace) => (
 								<li key={workspace.id}>

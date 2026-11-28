@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { buildCustomizationGraph } from "../../../../../src/cli/config-inspect.js";
+import { buildCustomizationGraph, customizationIssueCategory } from "../../../../../src/cli/config-inspect.js";
 import type { ConfigGraph } from "../../../contracts/settings.js";
 
 export function inspectConfigGraph(cwd: string): ConfigGraph {
 	const graph = buildCustomizationGraph(cwd);
 	const issueCounts = new Map<string, number>();
 	for (const issue of graph.issues) {
-		const category =
-			/^(settings|pancode-md|rules|operator-profile|hooks?|extensions|resources|safety|memory)\b/.exec(issue)?.[1] ??
-			"configuration";
+		const category = customizationIssueCategory(issue) ?? "configuration";
 		issueCounts.set(category, (issueCounts.get(category) ?? 0) + 1);
 	}
 	return {

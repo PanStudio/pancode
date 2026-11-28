@@ -10,24 +10,17 @@ import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionConfig } from "../../contracts/session-config.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import { ApiProblem, type Client } from "../api/client.js";
-import { formatTime } from "../api/clock.js";
 import { sessionQuery } from "../api/session-query.js";
 import { Icon } from "../design/icons.js";
 import { TONE_GLYPHS } from "../design/status.js";
 import { announce } from "../interaction/announcer.js";
 import { useDetailsDismiss } from "../interaction/use-details-dismiss.js";
 import { useMenuShortcut } from "../interaction/use-shortcut.js";
-import {
-	ACP_TARGET_MODEL_LIMIT,
-	catalogMayBeCut,
-	modelAfterTargetChange,
-	modelRefusalChoices,
-	modelSelectionRefusal,
-} from "../pages/model-picker-model.js";
+import { modelAfterTargetChange, modelRefusalChoices, modelSelectionRefusal } from "../pages/model-picker-model.js";
 import type { RouteFacts } from "./route.js";
 import type { RouteDraft } from "./route-picker-model.js";
 import {
-	catalogFallbackNote,
+	catalogNote,
 	conversationChanges,
 	draftWithSupportedThinking,
 	modelThinkingLevels,
@@ -249,23 +242,14 @@ function RouteForm({
 		setEdited({ ...draft, ...next });
 		save.reset();
 	};
-	const cut =
-		models !== null && catalogMayBeCut(models)
-			? ` PanCode lists at most ${ACP_TARGET_MODEL_LIMIT} models per connection.`
-			: "";
-	const count = models === null ? "" : ` ${models.length} ${models.length === 1 ? "model" : "models"}.`;
-	const note =
-		chosenTarget === ""
-			? "Select a connection before applying a model to this conversation."
-			: catalogCheck.isFetching
-				? `Asking ${chosenTarget} for its models…`
-				: catalogCheck.data?.healthy
-					? `${chosenTarget} answered at ${formatTime(new Date(catalogCheck.dataUpdatedAt).toISOString())}.${count}${cut}`
-					: catalogCheck.data
-						? `${catalogFallbackNote(chosenTarget, catalogCheck.data.reason)}${cut}`
-						: catalogCheck.error
-							? `The check failed: ${catalogCheck.error.message} These are the models PanCode last knew for it.${cut}`
-							: `The models PanCode knows for ${chosenTarget}.${count}${cut}`;
+	const note = catalogNote({
+		target: chosenTarget,
+		models,
+		asking: catalogCheck.isFetching,
+		answer: catalogCheck.data,
+		answeredAt: catalogCheck.dataUpdatedAt,
+		error: catalogCheck.error?.message ?? null,
+	});
 	const choices = routePickerChoices(config, draft, targets.data?.targets);
 	const thinkingNote = thinkingControlNote(config, draft, thinkingLevels);
 	const refusal = modelSelectionRefusal(save.error instanceof ApiProblem ? save.error.problem : null);

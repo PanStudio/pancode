@@ -9,6 +9,7 @@ import {
 	readRunHistoryEntry,
 	readRunInspection,
 } from "../../../../../src/domains/dispatch/index.js";
+import type { RunStatus } from "../../../../../src/domains/dispatch/types.js";
 import { Id } from "../../../contracts/common.js";
 import type { TraceIdentity, TraceRequest, TraceRun, TraceRunStatus } from "../../../contracts/traces.js";
 import { AppProblem } from "../../services/problem.js";
@@ -50,7 +51,8 @@ function entries(): Entry[] {
 	}
 }
 
-const LEDGER_STATUS: Record<string, TraceRunStatus> = {
+// Keyed by the engine's status union, so a status src adds fails to compile here until it is mapped.
+const LEDGER_STATUS: Record<RunStatus, TraceRunStatus> = {
 	queued: "queued",
 	running: "running",
 	completed: "success",
@@ -78,7 +80,7 @@ function identityOf(row: ReturnType<typeof readDispatchHistory>["rows"][number])
 }
 /** The ledger's status when it holds the run; otherwise the journal's settlement, and unknown until there is one. */
 function statusOf(identity: TraceIdentity | null, row: TraceRun["telemetry"] | null): TraceRunStatus {
-	if (identity) return LEDGER_STATUS[identity.status] ?? "unknown";
+	if (identity) return LEDGER_STATUS[identity.status as RunStatus] ?? "unknown";
 	const reason = row?.terminalReason ?? null;
 	return reason === null ? "unknown" : reason === "completed" ? "success" : "fail";
 }

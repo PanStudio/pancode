@@ -13,8 +13,10 @@ import { InspectionError } from "../design/run-inspection.js";
 import {
 	aaLine,
 	bestCurve,
+	campaignEyebrowState,
 	campaignFacts,
 	campaignFromProgress,
+	campaignStopClass,
 	curveChart,
 	emptyResearchDraft,
 	followedOperation,
@@ -236,14 +238,9 @@ function CampaignView({
 			<header>
 				<p className="eyebrow">
 					CAMPAIGN {campaignId}
-					{data ? ` · ${(live?.running ? "running" : data.state).toUpperCase()}` : " · OPENING"}
-					{data?.stop ? ` · ${data.stop.reason.toUpperCase()}` : ""}
+					{campaignEyebrowState(data, live?.running === true)}
 				</p>
-				{data?.stop && (
-					<p className={data.stop.reason === "error" || data.stop.reason === "noisy" ? "research-error" : ""}>
-						Stopped: {data.stop.detail}
-					</p>
-				)}
+				{data?.stop && <p className={campaignStopClass(data.stop)}>Stopped: {data.stop.detail}</p>}
 			</header>
 			{live && <LiveLog client={client} live={live} />}
 			{data && <CampaignBody client={client} workspaceId={workspaceId} view={data} />}
