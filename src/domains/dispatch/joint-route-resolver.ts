@@ -144,7 +144,6 @@ export interface JointRouteResolverInput {
 	intent: RoutingIntent;
 	independenceSubject: RouteCorrelationFacts | null;
 	posture?: RoutingPosture;
-	universeLimit?: number;
 	decisionDurationMs?: number;
 }
 
@@ -205,7 +204,7 @@ function assertProjectionIdentity(
 
 /** Enumerate every tuple and retain every hard-filter verdict before ranking. */
 function enumerateJointRouteUniverse(input: JointRouteResolverInput): ReadonlyArray<EnumeratedJointRoute> {
-	const limit = Math.max(1, Math.floor(input.universeLimit ?? JOINT_ROUTE_UNIVERSE_LIMIT));
+	const limit = JOINT_ROUTE_UNIVERSE_LIMIT;
 	const universeSize = input.agents.length * input.targets.length * input.nodes.length;
 	if (universeSize > limit) {
 		throw new Error(

@@ -40,6 +40,7 @@ export { sessionOperatorMetrics, usageReport } from "./read-model-usage.js";
 export { whyStopped } from "./read-model-why-stopped.js";
 export type { JournaledContent } from "./research-content.js";
 export { readJournaledContent } from "./research-content.js";
+export type { RetentionPruners } from "./retention.js";
 export type {
 	RouteHistoryEntry,
 	RouteHistoryFold,
@@ -64,4 +65,16 @@ export {
 } from "./share.js";
 export { packTelemetryArchive, type ShareArchiveEntry, unpackTelemetryArchive } from "./share-archive.js";
 export { carriesPath, isBuiltinRuntimeId, RUNTIME_VOCABULARY } from "./share-projection.js";
-export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageWindow } from "./usage-window.js";
+export type { RunListCursor } from "./telemetry-source.js";
+export {
+	listRunTelemetryIds,
+	listRunTelemetrySources,
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
+	loadSessionTelemetrySourceAsync,
+	runTelemetryDirectoryExists,
+	runTelemetryWrittenMs,
+} from "./telemetry-source.js";
+export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageReportWindow, usageWindow } from "./usage-window.js";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ArtifactList } from "../../contracts/artifacts.js";
-import { matchesText } from "../pages/run-inspection-model.js";
+import { matchesText } from "../design/text-match.js";
 import type { BranchRow } from "./branch-model.js";
 
 export function paneBranchRows(rows: readonly BranchRow[], query: string, kind: string): BranchRow[] {

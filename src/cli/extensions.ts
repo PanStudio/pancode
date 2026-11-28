@@ -611,17 +611,24 @@ function cliServiceDomains(): { providers: () => Promise<ProvidersContract>; sto
 					{ ConfigDomainModule },
 					{ ProvidersDomainModule },
 					{ SessionDomainModule },
-					{ TelemetryDomainModule },
+					{ createTelemetryDomainModule },
+					{ retentionPruners },
 					{ ensurePancodeState },
 				] = await Promise.all([
 					import("../domains/config/module.js"),
 					import("../domains/providers/module.js"),
 					import("../domains/session/module.js"),
 					import("../domains/telemetry/module.js"),
+					import("../entry/retention-pruners.js"),
 					import("../domains/install/index.js"),
 				]);
 				ensurePancodeState();
-				return loadDomains([ConfigDomainModule, ProvidersDomainModule, SessionDomainModule, TelemetryDomainModule]);
+				return loadDomains([
+					ConfigDomainModule,
+					ProvidersDomainModule,
+					SessionDomainModule,
+					createTelemetryDomainModule({ retention: retentionPruners }),
+				]);
 			})();
 			const providers = (await loaded).getContract("providers");
 			if (!providers) throw new Error("model routes are unavailable: the providers domain did not load");

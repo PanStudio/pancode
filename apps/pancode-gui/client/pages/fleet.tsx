@@ -11,8 +11,9 @@ import { formatTime } from "../api/clock.js";
 import { Facts } from "../design/facts.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { DISPATCH_SCOPE, emptyState, PANELS } from "../design/panel-model.js";
-import { InspectionError, InspectionSummary } from "../design/run-inspection.js";
+import { InspectionError, InspectionSummary, LoadOlder } from "../design/run-inspection.js";
 import { StatusMark, toneForOutcome } from "../design/status.js";
+import { matchesText } from "../design/text-match.js";
 import { MarkdownContent } from "../render/Markdown.js";
 import { Explained } from "../telemetry/Explained.js";
 import { explainable } from "../telemetry/quantity-model.js";
@@ -21,7 +22,7 @@ import {
 	evidenceDestination,
 	inspectionSort,
 	listDestination,
-	matchesText,
+	matchesRunStatus,
 	sortInspectionRecords,
 } from "./run-inspection-model.js";
 import "./run-inspection.css";
@@ -159,9 +160,7 @@ export function FleetPage({ client }: { client: Client }) {
 	const loadedRoots = admittedPages(roots).flatMap((page) => page.items);
 	const loadedRuns = admittedPages(runs).flatMap((page) => page.items);
 	const matchingRoots = sortInspectionRecords(
-		loadedRoots.filter(
-			(run) => matchesText(q, [run.id, run.fleet]) && (!status || (status === "active" ? !run.endedAt : !!run.endedAt)),
-		),
+		loadedRoots.filter((run) => matchesText(q, [run.id, run.fleet]) && matchesRunStatus(status, run.endedAt)),
 		sort,
 		(run) => ({ name: run.fleet, date: run.startedAt, id: run.id }),
 	);
@@ -169,7 +168,7 @@ export function FleetPage({ client }: { client: Client }) {
 		loadedRuns.filter(
 			(run) =>
 				matchesText(q, [run.id, run.agentId, run.task, run.targetId, run.wireModelId]) &&
-				(!status || (status === "active" ? !run.endedAt : !!run.endedAt)),
+				matchesRunStatus(status, run.endedAt),
 		),
 		sort,
 		(run) => ({ name: run.task || run.agentId, date: run.startedAt, id: run.id }),
@@ -313,11 +312,7 @@ export function FleetPage({ client }: { client: Client }) {
 					</article>
 				))}
 			</div>
-			{roots.hasNextPage && !roots.isRefetchError && (
-				<button type="button" disabled={roots.isFetching} onClick={() => void roots.fetchNextPage()}>
-					{roots.isFetchingNextPage ? "Loading fleet runs…" : "Load older fleet runs"}
-				</button>
-			)}
+			<LoadOlder pages={roots} label="Load older fleet runs" loading="Loading fleet runs…" />
 			<div className="inspection-section-heading">
 				<h2 id="fleet-workers">Dispatched workers</h2>
 				<span className="inspection-result-count">
@@ -369,11 +364,7 @@ export function FleetPage({ client }: { client: Client }) {
 					</article>
 				))}
 			</div>
-			{runs.hasNextPage && !runs.isRefetchError && (
-				<button type="button" disabled={runs.isFetching} onClick={() => void runs.fetchNextPage()}>
-					{runs.isFetchingNextPage ? "Loading dispatches…" : "Load older dispatches"}
-				</button>
-			)}
+			<LoadOlder pages={runs} label="Load older dispatches" loading="Loading dispatches…" />
 			<details className="trace-panel" id="fleet-decisions">
 				<summary>
 					Councils & gate decisions · {councils.data?.councils.length ?? "…"}{" "}

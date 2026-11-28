@@ -9,7 +9,6 @@ import type { TelemetryAgent } from "./id-schemas.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId, TelemetryAgentSchema } from "./id-schemas.js";
 
 export type { TelemetryAgent };
-export { AttemptIdSchema, CallIdSchema, ExistingId, TelemetryAgentSchema };
 
 const contextFields = {
 	toolCallId: Type.Optional(ExistingId),

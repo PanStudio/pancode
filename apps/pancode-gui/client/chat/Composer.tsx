@@ -34,6 +34,7 @@ import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { CommandRequest, QueueEditRequest, QueueSnapshot } from "../../contracts/steering.js";
 import type { Client } from "../api/client.js";
+import { queueSnapshot } from "../api/events.js";
 import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
 import { Keycaps } from "../interaction/Keycaps.js";
@@ -50,11 +51,9 @@ import { useRenameTask } from "../shell/tasks.js";
 import { AutonomyPill } from "./AutonomyPill.js";
 import { persistAttachments, savedAttachments } from "./attachment-drafts.js";
 import { readAttachment } from "./attachment-image.js";
-import { attachmentCapabilityIssue } from "./attachment-review-model.js";
 import {
 	type Attachment,
 	admitAttachment,
-	attachmentRefusal,
 	attachmentSize,
 	decodeTextFile,
 	type FileAttachment,
@@ -70,21 +69,27 @@ import type { CommandFields } from "./command-model.js";
 import { fitComposerField, initialEnterSends, rememberEnterSends, touchFirst } from "./composer-field.js";
 import { type HistoryBrowse, readHistory, rememberPrompt, stepHistory } from "./composer-history.js";
 import {
+	attachAbility,
+	attachmentBlock,
 	type ComposerNotice,
 	capabilityRefusal,
+	clampIndex,
 	composerDelivery,
 	composerKeyAction,
 	composerPlaceholder,
+	composerSituation,
 	draftEstimate,
-	draftStore,
 	noticeForError,
 	noticeForQueueEdit,
 	noticeForRefusal,
+	offersSteerChoice,
+	paletteKeyAction,
+	paletteStatus,
 	projectQueue,
 	queueAccess,
 	restoredDraft,
 	type SubmitIntent,
-	shellBlock,
+	sendingButtonLabel,
 	shellNotice,
 	slashNotice,
 	steeringAffordances,
@@ -92,26 +97,29 @@ import {
 	steerModeOffers,
 	submitIntent,
 	submitLabel,
-	UNREACHED,
 	unreachable,
 } from "./composer-model.js";
 import { actionOpeners, commandRunners, focusHandlers, formOpeners } from "./composer-registry.js";
 import { contextBaseline, invokeContextCommand } from "./context-command.js";
 import type { ContextOperationRef } from "./context-command-model.js";
 import { commandPresentation, contextCommandKind, startedByCommand } from "./context-command-model.js";
+import { draftStore } from "./draft-store.js";
 import { foldFleetRuns, isLiveRun, steerOutcome } from "./fleet-facts.js";
-import { SuggestionPalette, type SuggestionRow, suggestionOptionId } from "./MentionPalette.js";
+import { SuggestionPalette, suggestionOptionId } from "./MentionPalette.js";
 import {
 	applyMention,
+	mentionAgents,
+	mentionPickVerb,
 	mentionQuery,
 	parseSteerMention,
 	type RunningRun,
 	resolveSteerTarget,
-	steerCandidates,
+	steerRefusal,
+	suggestionList,
 } from "./mention-model.js";
 import { HistorySearch, preloadPanels, VisualActions } from "./on-demand-panels.js";
 import { usePaneActions } from "./pane-context.js";
-import { LARGE_PASTE_CHARACTERS, planPaste } from "./paste-model.js";
+import { pastedImages, pastedTextName, pasteStaysNative, planPaste } from "./paste-model.js";
 import { queuePollInterval } from "./queue-poll-model.js";
 import { openRoutePicker, RoutePicker } from "./RoutePicker.js";
 import type { RouteFacts } from "./route.js";
@@ -286,7 +294,7 @@ export const Composer = memo(function Composer({
 	const query = sessionState === "open" ? slashQuery(draft.text) : null;
 	const matches = useMemo(() => (query === null ? [] : filterSlashEntries(typedEntries, query)), [typedEntries, query]);
 	const paletteOpen = matches.length > 0 && dismissed !== draft.text && dialog === null && !actionsOpen;
-	const active = Math.min(activeIndex, Math.max(0, matches.length - 1));
+	const active = clampIndex(activeIndex, matches.length);
 	const line = slashDraft ? parseSlashLine(draft.text, commandCatalog.data) : null;
 
 	// The `@` list. The caret is state only so the reference under it can be read during render; it
@@ -296,7 +304,6 @@ export const Composer = memo(function Composer({
 	const [mentionDismissed, setMentionDismissed] = useState<string | null>(null);
 	const mention =
 		sessionState === "open" && !paletteOpen && draft.text.includes("@") ? mentionQuery(draft.text, caret) : null;
-	const mentionKey = mention === null ? null : `${mention.start}:${mention.path}`;
 	const files = useQuery({
 		queryKey: ["workspace-files", workspaceId, mention?.path ?? ""],
 		queryFn: () =>
@@ -312,34 +319,12 @@ export const Composer = memo(function Composer({
 	// with the transcript.
 	const liveRuns = (): readonly RunningRun[] =>
 		foldFleetRuns(queries.getQueryData<SessionSnapshot>(["session", sessionId])?.fleet ?? []).filter(isLiveRun);
-	// A message that opens with `@name` can steer a running agent, so those lead the list there.
-	const agents =
-		mention !== null && mention.start === 0 && running && steering.dispatch && !mention.path.includes("/")
-			? liveRuns().filter((run) => run.agentId.toLowerCase().startsWith(mention.path.toLowerCase()))
-			: [];
+	const agents = mentionAgents(mention, running && steering.dispatch, liveRuns);
 	const argMatches =
 		!paletteOpen && slashDraft && mention === null ? argumentSuggestions(draft.text, commandCatalog.data) : [];
-	const suggestions: readonly SuggestionRow[] =
-		mention !== null
-			? [
-					...agents.map((run) => ({
-						id: `agent:${run.runId}`,
-						label: run.agentId,
-						summary: `running agent · ${run.runId.slice(0, 8)}`,
-						icon: "bolt" as const,
-					})),
-					...fileMatches.map((match) => ({
-						id: `file:${match.path}`,
-						label: `${match.name}${match.directory ? "/" : ""}`,
-						summary: match.path.slice(0, match.path.length - match.name.length - (match.directory ? 1 : 0)),
-						icon: match.directory ? ("folder" as const) : ("artifacts" as const),
-						path: true,
-					})),
-				]
-			: argMatches.map((row) => ({ id: `arg:${row.value}`, label: row.value, summary: row.summary }));
-	const suggestionKey = mention !== null ? mentionKey : argMatches.length > 0 ? draft.text : null;
+	const { rows: suggestions, key: suggestionKey } = suggestionList(mention, agents, fileMatches, argMatches, draft.text);
 	const mentionOpen = suggestions.length > 0 && mentionDismissed !== suggestionKey && dialog === null && !actionsOpen;
-	const mentionActive = Math.min(mentionIndex, Math.max(0, suggestions.length - 1));
+	const mentionActive = clampIndex(mentionIndex, suggestions.length);
 	const [steerNote, setSteerNote] = useState<{ tone: "success" | "warn" | "fail"; message: string } | null>(null);
 	// A second Esc within this window stops the turn; the first only says so.
 	const [stopArmed, setStopArmed] = useState(false);
@@ -719,11 +704,7 @@ export const Composer = memo(function Composer({
 			client.call(routes.editSessionQueue, { ...params, body: request }, crypto.randomUUID()),
 		onMutate: () => setQueueNote(null),
 		onSuccess: (result, request) => {
-			queries.setQueryData<QueueSnapshot>(["session-queue", sessionId], {
-				steer: result.entries.filter((entry) => entry.kind === "steer").map((entry) => entry.text),
-				followUp: result.entries.filter((entry) => entry.kind === "follow-up").map((entry) => entry.text),
-				entries: result.entries,
-			});
+			queries.setQueryData<QueueSnapshot>(["session-queue", sessionId], queueSnapshot(result.entries));
 			setQueueNote(noticeForQueueEdit(result));
 			if (request.op === "restore" && result.applied && result.text !== undefined) {
 				store.write(restoredDraft(store.snapshot().text, [result.text]));
@@ -746,36 +727,25 @@ export const Composer = memo(function Composer({
 
 	const steeringUnavailable = steeringCheck(capabilities);
 	const unknownSlash = slashNotice(draft.text, commandCatalog.data, slashStage)?.message;
-	const situation = {
+	const situation = composerSituation({
 		sessionState,
-		turnRunning: running,
-		sending: send.isPending,
-		...(send.isPending && (send.isPaused || send.failureCount > 0)
-			? { unreached: send.isPaused ? ("offline" as const) : ("retrying" as const) }
-			: {}),
-		...(control && control.stage !== "complete" ? { sessionControl: control.stage } : {}),
+		running,
+		send,
+		control,
 		steering,
-		...(steeringUnavailable === undefined ? {} : { steeringUnavailable }),
+		steeringUnavailable,
 		shell: capabilities.data?.shell !== undefined,
-		...(viewing === null ? {} : { viewing }),
-		...(unknownSlash === undefined ? {} : { unknownSlash }),
-	} as const;
+		viewing,
+		unknownSlash,
+	});
 	const intent = submitIntent(draft, situation);
-	const sendingLabel = situation.unreached ? UNREACHED[situation.unreached].button : send.isPending ? "Sending…" : null;
+	const sendingLabel = sendingButtonLabel(situation);
 	const delivery = composerDelivery(situation, draft.mode, contextRunning, readingAttachments);
 	const reviewedAttachment = attachments.find((item) => item.id === reviewingAttachment) ?? null;
-	const canAttachImages = capabilities.data?.images === true && sessionState === "open";
-	const canAttachFiles = capabilities.data?.embeddedContext === true && sessionState === "open";
-	const canAttach = canAttachImages || canAttachFiles;
-	const attachBlock =
-		(contextRunning && !running ? "Context work is running. Your draft is kept until it finishes." : null) ??
-		attachmentCapabilityIssue(attachments, capabilities.data) ??
-		shellBlock(intent.kind, attachments.length) ??
-		attachmentRefusal(attachments, running);
+	const { canAttachImages, canAttachFiles, canAttach, attachLabel } = attachAbility(capabilities.data, sessionState);
+	const attachBlock = attachmentBlock(intent.kind, attachments, capabilities.data, running, contextRunning);
 	const shellHint = shellNotice(draft.text, situation.shell);
-	// The delivery switch takes the route's place in the row, and only once there is a message to
-	// deliver: an empty field mid-turn offers Stop alone.
-	const steerChoice = running && modes.length > 1 && draft.text.trim() !== "";
+	const steerChoice = offersSteerChoice(running, modes, draft.text);
 	// An image goes as an image when the agent takes them; anything else is offered as text.
 	const readPicked = async (file: File): Promise<Attachment> => {
 		if (file.type.startsWith("image/") && canAttachImages) return readAttachment(file, crypto.randomUUID());
@@ -812,7 +782,6 @@ export const Composer = memo(function Composer({
 			setReadingAttachments(attachmentReads.current > 0);
 		}
 	};
-	const attachLabel = canAttachFiles ? (canAttachImages ? "Attach files" : "Attach text files") : "Attach images";
 	const detach = (id: string) => {
 		if (sending.current) return;
 		store.attachmentsChanged();
@@ -836,14 +805,7 @@ export const Composer = memo(function Composer({
 				setSteerNote(null);
 				rememberPrompt(current.text);
 				guide.mutate({ run: target.run, message: steerTo.text, sent: current.text });
-			} else
-				setSteerNote({
-					tone: "warn",
-					message:
-						target.kind === "ambiguous"
-							? `@${steerTo.target} names more than one running agent. Use a run id: ${steerCandidates(target.candidates)}.`
-							: `No running agent is named @${steerTo.target}. Running: ${steerCandidates(runs)}. To reference a file of that name, write @"${steerTo.target}".`,
-				});
+			} else setSteerNote({ tone: "warn", message: steerRefusal(steerTo.target, target, runs) });
 			return;
 		}
 		// A line naming a session action or a catalog command runs it instead of becoming a prompt.
@@ -882,9 +844,7 @@ export const Composer = memo(function Composer({
 		const next = submitIntent(current, currentSlash === undefined ? rest : { ...rest, unknownSlash: currentSlash });
 		if (
 			next.kind !== "blocked" &&
-			shellBlock(next.kind, attached.current.length) === null &&
-			attachmentCapabilityIssue(attached.current, capabilities.data) === null &&
-			attachmentRefusal(attached.current, running) === null
+			attachmentBlock(next.kind, attached.current, capabilities.data, running, contextRunning) === null
 		) {
 			sending.current = true;
 			browse.current = null;
@@ -967,13 +927,8 @@ export const Composer = memo(function Composer({
 							keys={
 								mention !== null ? (
 									<>
-										<Keycaps chord="Enter" /> or <Keycaps chord="Tab" />{" "}
-										{mentionActive < agents.length
-											? "steer"
-											: fileMatches[mentionActive - agents.length]?.directory
-												? "open"
-												: "add"}{" "}
-										· <Keycaps chord="Esc" /> close{files.data?.truncated ? " · keep typing to narrow" : ""}
+										<Keycaps chord="Enter" /> or <Keycaps chord="Tab" /> {mentionPickVerb(mentionActive, agents, fileMatches)} ·{" "}
+										<Keycaps chord="Esc" /> close{files.data?.truncated ? " · keep typing to narrow" : ""}
 									</>
 								) : (
 									<>
@@ -987,11 +942,7 @@ export const Composer = memo(function Composer({
 						<SlashLineHint line={line} slashError={slashError} enterSends={enterSends} />
 					) : null}
 					<p className="sr-only" role="status">
-						{paletteOpen
-							? `${matches.length} slash ${matches.length === 1 ? "command" : "commands"}`
-							: mentionOpen
-								? `${suggestions.length} ${suggestions.length === 1 ? "suggestion" : "suggestions"}`
-								: ""}
+						{paletteStatus(paletteOpen ? matches.length : 0, mentionOpen ? suggestions.length : 0)}
 					</p>
 					{/* A stopped turn can leave held messages waiting for the operator. */}
 					{queuePolicy.read && queued.length > 0 ? (
@@ -1068,25 +1019,23 @@ export const Composer = memo(function Composer({
 								setAttachProblem("Wait for this send to finish before adding attachments.");
 								return;
 							}
-							const images = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
-							if (canAttachImages && images.length > 0) {
+							const images = pastedImages([...event.clipboardData.files], canAttachImages);
+							if (images.length > 0) {
 								event.preventDefault();
 								void attach(images);
 								return;
 							}
 							const paste = event.clipboardData.getData("text/plain");
-							if (paste.length < LARGE_PASTE_CHARACTERS && paste.length + store.snapshot().text.length <= 32000) return;
+							if (pasteStaysNative(paste, store.snapshot().text)) return;
 							event.preventDefault();
 							const field = event.currentTarget;
-							let index = 1;
-							while (attached.current.some((item) => item.name === `pasted-text-${index}.txt`)) index++;
 							const plan = planPaste(
 								paste,
 								store.snapshot().text,
 								field.selectionStart,
 								field.selectionEnd,
 								canAttachFiles && !sending.current,
-								`pasted-text-${index}.txt`,
+								pastedTextName(attached.current),
 							);
 							setPasteNotice(null);
 							if (plan.kind === "review") {
@@ -1151,20 +1100,19 @@ export const Composer = memo(function Composer({
 								return;
 							}
 							if (paletteOpen && !event.nativeEvent.isComposing) {
-								const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-								const count = matches.length;
-								if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
+								const key = paletteKeyAction(event, active, matches.length);
+								if (key?.kind === "move") {
 									event.preventDefault();
-									setActiveIndex((active + (event.key === "ArrowDown" ? 1 : -1) + count) % count);
+									setActiveIndex(key.index);
 									return;
 								}
-								if ((event.key === "Enter" || event.key === "Tab") && plain) {
+								if (key?.kind === "pick") {
 									event.preventDefault();
 									const entry = matches[active];
 									if (entry) pick(entry);
 									return;
 								}
-								if (event.key === "Escape") {
+								if (key?.kind === "dismiss") {
 									// The palette is the innermost layer here; nothing behind it should also close.
 									event.preventDefault();
 									event.stopPropagation();
@@ -1174,20 +1122,20 @@ export const Composer = memo(function Composer({
 							}
 							const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 							if (mentionOpen && !event.nativeEvent.isComposing) {
-								const count = suggestions.length;
-								if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
-									event.preventDefault();
-									setMentionIndex((mentionActive + (event.key === "ArrowDown" ? 1 : -1) + count) % count);
-									return;
-								}
 								// On a command line that can already run, Enter runs it and Tab takes the suggestion.
 								const enterPicks = mention !== null || line?.kind !== "command";
-								if ((event.key === "Tab" || (event.key === "Enter" && enterPicks)) && plain) {
+								const key = paletteKeyAction(event, mentionActive, suggestions.length, enterPicks);
+								if (key?.kind === "move") {
+									event.preventDefault();
+									setMentionIndex(key.index);
+									return;
+								}
+								if (key?.kind === "pick") {
 									event.preventDefault();
 									pickSuggestion(mentionActive);
 									return;
 								}
-								if (event.key === "Escape") {
+								if (key?.kind === "dismiss") {
 									event.preventDefault();
 									event.stopPropagation();
 									setMentionDismissed(suggestionKey);

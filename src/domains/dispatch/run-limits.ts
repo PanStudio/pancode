@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { formatLimit } from "../../core/format-time.js";
+import { budgetLimitWords, type RunToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import type { ResourceLimits } from "../../core/sandbox/types.js";
 import { renderUsdEstimate } from "../../core/telemetry/render.js";
-import { budgetLimitWords, type RunToolBudgetEnvelope } from "./budget-envelope.js";
 import { HANDBACK_CONTEXT_SHARE, HANDBACK_NOTE_SHARE, WALL_HANDBACK_SHARE } from "./handback.js";
 import type { RunRole } from "./obligation.js";
 

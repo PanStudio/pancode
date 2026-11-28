@@ -83,7 +83,7 @@ export function maxOutputArg(args: Record<string, unknown>): number {
  * ended, how long it took, and whether output was capped. Shared by git and
  * verify so ledgers and observers read one shape.
  */
-function resultDetails(result: SafeCommandResult): ToolResultDetails {
+export function safeCommandDetails(result: SafeCommandResult): ToolResultDetails {
 	return {
 		command: [result.file, ...result.args].join(" "),
 		argv: [result.file, ...result.args],
@@ -144,7 +144,7 @@ export async function runVectorTool(
 			? trimOutputHeadTail(combined, requestedMaxOutputBytes)
 			: truncateUtf8(combined, requestedMaxOutputBytes, TRUNCATION_MARKER);
 		const details: ToolResultDetails = {
-			...resultDetails(result),
+			...safeCommandDetails(result),
 			...(label !== undefined ? { sandbox: seamOrHostLaunch(result.sandbox, label, result) } : {}),
 		};
 		if (result.aborted) return { kind: "error", message: `${action}: aborted`, details };

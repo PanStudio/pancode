@@ -14,7 +14,6 @@ import {
 } from "../../core/turn-constraints.js";
 import { stepCheckpointApplies } from "../../domains/context/fold/contract.js";
 import { acceptsImageInput } from "../../domains/providers/index.js";
-import { visionObservationText } from "../../domains/providers/vision-sidecar.js";
 import { readPromptCompileRecords } from "../../domains/session/prompt-manifest.js";
 import { activePath, findLastEntry } from "../../domains/session/tree/active-path.js";
 import { countImageBlocks } from "../../engine/image-context.js";
@@ -24,6 +23,7 @@ import type { TurnControlRecord } from "../../lib/turn-control/index.js";
 import { resolveSessionTools } from "../../tools/agent-tools.js";
 import { scopedCapabilityShapes, scopeShapesDelta } from "../../tools/gateway/scope-shapes.js";
 import type { AskUserToolPolicy } from "../../tools/registry-contract.js";
+import { visionObservationText } from "../../tools/vision-sidecar.js";
 import type { ChatSubmitOptions } from "../chat-loop.js";
 import {
 	createAskUserToolPolicy,

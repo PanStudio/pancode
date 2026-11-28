@@ -5,32 +5,28 @@ import { Value } from "typebox/value";
 import { validateSettingsFile } from "../../../../../src/core/config.js";
 import { cwdHash } from "../../../../../src/core/cwd-hash.js";
 import { pancodeStateDir } from "../../../../../src/core/xdg.js";
-import type { RunListCursor } from "../../../../../src/domains/session/index.js";
+import type { RunListCursor } from "../../../../../src/domains/telemetry/index.js";
 import {
+	cacheReport,
+	callsReport,
+	costReport,
+	explain,
+	explainRepoRef,
+	isRepoRef,
 	listRunTelemetrySources,
 	loadRunCallsTelemetrySource,
 	loadRunScopeFiles,
 	loadRunTelemetrySource,
 	loadSessionTelemetrySource,
-	runTelemetryDirectoryExists,
-} from "../../../../../src/domains/session/index.js";
-import {
-	cacheReport,
-	callsReport,
-	costReport,
-	emptyUsageDiagnostics,
-	explain,
-	explainRepoRef,
-	isRepoRef,
 	runCostReport,
 	runRowTelemetry,
 	runTelemetry,
+	runTelemetryDirectoryExists,
 	runTimeline,
 	sessionOperatorMetrics,
 	sessionTelemetry,
 	timeline,
-	usageReport,
-	usageWindow,
+	usageReportWindow,
 	whyStopped,
 } from "../../../../../src/domains/telemetry/index.js";
 import { Id } from "../../../contracts/common.js";
@@ -47,13 +43,15 @@ import { preflightLedger } from "./sessions.js";
 export async function readTelemetry(input: TelemetryRequest): Promise<unknown> {
 	const state = pancodeStateDir();
 	if (input.kind === "metrics") {
-		const to = Date.now();
-		const from = to - 30 * 24 * 60 * 60 * 1000;
-		const diagnostics = emptyUsageDiagnostics();
-		const { repo } = await usageWindow(state, input.cwd === null ? null : cwdHash(input.cwd), 30, to, diagnostics);
-		if (diagnostics.notes.length) throw new AppProblem("unavailable", diagnostics.notes.join("; "));
 		// The window lists the operator's declared pools' fees once per period, as `usage report` does; one session or run carries none.
-		const report = usageReport(repo, from, to, validateSettingsFile().settings.funding);
+		const { from, to, report, diagnostics } = await usageReportWindow(
+			state,
+			input.cwd === null ? null : cwdHash(input.cwd),
+			30,
+			Date.now(),
+			validateSettingsFile().settings.funding,
+		);
+		if (diagnostics.notes.length) throw new AppProblem("unavailable", diagnostics.notes.join("; "));
 		return {
 			from: new Date(from).toISOString(),
 			to: new Date(to).toISOString(),

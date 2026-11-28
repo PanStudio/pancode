@@ -84,7 +84,6 @@ import {
 import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities } from "../domains/providers/index.js";
-import type { VisionSidecar } from "../domains/providers/vision-sidecar.js";
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
@@ -109,6 +108,7 @@ import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
 import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
+import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
 import { compactionFailureReason } from "./chat-loop/submit-fit.js";
 import { isRedirectReason } from "./chat-loop/submit-turn.js";

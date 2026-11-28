@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { AcpPeerQuestion } from "../../acp/adapter.js";
+import { resolveToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import { requirePricedRefusal } from "../../core/run-overrides.js";
 import { workerAgent } from "../../core/telemetry/context.js";
 import { pancodeStateDir } from "../../core/xdg.js";
@@ -12,7 +13,6 @@ import type { TelemetrySessionLease } from "../telemetry/session-journals.js";
 import type { AcpDelegationState } from "./acp-attempt-state.js";
 import { resolveAcpContinuation } from "./acp-continuation.js";
 import { resolveAcpDelegationLifecycle } from "./acp-delegation-lifecycle.js";
-import { resolveToolBudgetEnvelope } from "./budget-envelope.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import {
 	operatorContainedYolo,

@@ -15,8 +15,6 @@
 import type { RunHash } from "../../core/telemetry/run-schemas.js";
 import type { RunHashCanonicalization, RunHashSubject } from "../../core/telemetry/run-vocabulary.js";
 
-export type { RunHashCanonicalization, RunHashSubject };
-
 export interface RunHashDeclaration {
 	label: "commitment" | "resolvable";
 	function: "sha256";

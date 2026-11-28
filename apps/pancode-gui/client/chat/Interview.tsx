@@ -15,30 +15,14 @@ import {
 	blankInterview,
 	type InterviewDraft,
 	interviewSubmission,
+	restoredAnswers,
 	selectInterviewChoice,
 } from "./interview-model.js";
 import "./interview.css";
 
 function savedAnswers(round: InterviewRound): InterviewDraft[] {
 	try {
-		const saved: unknown = JSON.parse(sessionStorage.getItem(`pancode-gui-interview:${round.id}`) ?? "null");
-		if (
-			Array.isArray(saved) &&
-			saved.length === round.questions.length &&
-			saved.every(
-				(answer, index) =>
-					typeof answer?.text === "string" &&
-					answer.text.length <= 8192 &&
-					Array.isArray(answer.selected) &&
-					new Set(answer.selected).size === answer.selected.length &&
-					(round.questions[index]?.multi_select || answer.selected.length <= 1) &&
-					answer.selected.every(
-						(choice: unknown) =>
-							Number.isInteger(choice) && Number(choice) >= 0 && !!round.questions[index]?.options?.[Number(choice)],
-					),
-			)
-		)
-			return saved as InterviewDraft[];
+		return restoredAnswers(round.questions, sessionStorage.getItem(`pancode-gui-interview:${round.id}`));
 	} catch {
 		/* A draft in this tab still works without storage. */
 	}

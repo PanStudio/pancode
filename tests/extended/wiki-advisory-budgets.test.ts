@@ -7,11 +7,11 @@ import { performance } from "node:perf_hooks";
 import { it } from "node:test";
 import { modelWikiGenerate } from "../../src/cli/wiki-generate.js";
 import { configureGuardrails } from "../../src/core/guardrails.js";
+import { resolveToolBudgetEnvelope, workerBudgetFromEnvelope } from "../../src/core/run-budget-envelope.js";
 import { parseFrontmatter } from "../../src/domains/agents/frontmatter.js";
 import { parseAgentRecipeSchema } from "../../src/domains/agents/recipe-schema.js";
 import type { WikiGenerateInput } from "../../src/domains/context/wiki/generate.js";
 import { readWikiPlanFile } from "../../src/domains/context/wiki/plan-store.js";
-import { resolveToolBudgetEnvelope, workerBudgetFromEnvelope } from "../../src/domains/dispatch/budget-envelope.js";
 import type { DispatchContract, DispatchRequest } from "../../src/domains/dispatch/contract.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
