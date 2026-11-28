@@ -6,6 +6,7 @@ import type { Readable, Writable } from "node:stream";
 
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { asRecord } from "../../core/type-guards.js";
 import type { ExternalUsageObservation } from "../external-call-telemetry.js";
 import { recordExternalUsagePart } from "../external-call-telemetry.js";
 import {
@@ -63,12 +64,6 @@ const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 export function finiteUsage(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0
 		? Math.min(value, Number.MAX_SAFE_INTEGER)
@@ -84,10 +79,6 @@ export function emptyCliUsage(): Usage {
 		totalTokens: 0,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-}
-
-export function cliEventRecord(value: unknown): Record<string, unknown> | null {
-	return record(value);
 }
 
 export function startJsonlCliRun(
@@ -215,7 +206,7 @@ export function startJsonlCliRun(
 					} catch {
 						throw new Error(`${connector.label} returned an invalid JSONL event`);
 					}
-					const event = record(decoded);
+					const event = asRecord(decoded);
 					if (!event || typeof event.type !== "string")
 						throw new Error(`${connector.label} returned an invalid JSONL event`);
 					connector.onEvent(event, state, append, observeUsage);

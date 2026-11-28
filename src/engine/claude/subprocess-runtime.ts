@@ -7,6 +7,7 @@ import { claudeAuthEnvironment, withClaudeCredential } from "../../core/claude-e
 import { watchCredentialExpiry } from "../../core/credential-expiry.js";
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { asRecord } from "../../core/type-guards.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
 import {
@@ -123,13 +124,6 @@ function normalizeUsage(raw: unknown, totalCostUsd = 0): Usage {
 	};
 }
 
-function nestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
-	const value = record[key];
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function extractContentText(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	let out = "";
@@ -142,17 +136,17 @@ function extractContentText(content: unknown): string {
 }
 
 function extractDelta(record: Record<string, unknown>): string {
-	const delta = nestedRecord(record, "delta");
+	const delta = asRecord(record.delta);
 	if (delta && typeof delta.text === "string") return delta.text;
 	if (delta && typeof delta.thinking === "string") return "";
-	const contentBlock = nestedRecord(record, "content_block");
+	const contentBlock = asRecord(record.content_block);
 	if (contentBlock && contentBlock.type === "text" && typeof contentBlock.text === "string") return contentBlock.text;
 	if (typeof record.delta === "string") return record.delta;
 	return "";
 }
 
 function assistantTextFromEvent(record: Record<string, unknown>): string {
-	const message = nestedRecord(record, "message");
+	const message = asRecord(record.message);
 	if (message) return extractContentText(message.content);
 	return extractContentText(record.content);
 }
@@ -196,7 +190,7 @@ function buildAssistantMessage(input: {
 	if (typeof input.result?.request_id === "string") message.responseId = input.result.request_id;
 	if (typeof input.result?.model === "string") message.responseModel = input.result.model;
 	if (errorMessage.length > 0) message.errorMessage = boundedExternalDiagnostic(errorMessage);
-	const usage = input.result ? nestedRecord(input.result, "usage") : null;
+	const usage = input.result ? asRecord(input.result.usage) : null;
 	const costUsd = input.result?.total_cost_usd ?? usage?.costUSD ?? usage?.cost_usd;
 	// Claude Code prices its own run from a client-side table; that total is a peer estimate, never a bill (#434).
 	return bindExternalUsage(message, {
@@ -282,7 +276,7 @@ async function readJsonLines(
 			if (text.length > 0 && text.length >= state.text.length) state.text = text;
 			continue;
 		}
-		const payload = record.type === "stream_event" ? (nestedRecord(record, "event") ?? record) : record;
+		const payload = record.type === "stream_event" ? (asRecord(record.event) ?? record) : record;
 		emitTextDelta(emit, state, extractDelta(payload));
 	}
 }

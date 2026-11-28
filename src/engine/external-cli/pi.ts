@@ -3,12 +3,13 @@
 import { accessSync, constants, statSync } from "node:fs";
 import path from "node:path";
 import { buildSafeToolEnv, resolveSafeCwd, runCommandVector } from "../../core/safe-exec.js";
+import { asRecord } from "../../core/type-guards.js";
 import { piCliMode } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import type { AgentMessage } from "../types.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
 import type { JsonlCliConnector, JsonlCliDependencies, JsonlCliState } from "./jsonl-runner.js";
-import { cliEventRecord, emptyCliUsage, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
+import { emptyCliUsage, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
 
 export const PI_CLI_DEFAULT_MODEL = "pi-cli-default";
 
@@ -162,14 +163,14 @@ function textFromContent(value: unknown): string {
 	if (!Array.isArray(value)) return "";
 	return value
 		.map((entry) => {
-			const block = cliEventRecord(entry);
+			const block = asRecord(entry);
 			return block?.type === "text" && typeof block.text === "string" ? block.text : "";
 		})
 		.join("");
 }
 
 function piUsage(raw: unknown): JsonlCliState["usage"] {
-	const observed = cliEventRecord(raw);
+	const observed = asRecord(raw);
 	if (!observed) return null;
 	const usage = emptyCliUsage();
 	usage.input = finiteUsage(observed.input);
@@ -178,7 +179,7 @@ function piUsage(raw: unknown): JsonlCliState["usage"] {
 	usage.cacheWrite = finiteUsage(observed.cacheWrite);
 	usage.totalTokens =
 		finiteUsage(observed.totalTokens) || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-	const cost = cliEventRecord(observed.cost);
+	const cost = asRecord(observed.cost);
 	usage.cost = {
 		input: finiteUsage(cost?.input),
 		output: finiteUsage(cost?.output),
@@ -209,7 +210,7 @@ export const PI_CLI_CONNECTOR: JsonlCliConnector = {
 		if (event.type === "session" && typeof event.id === "string") {
 			state.sessionId = event.id;
 		} else if (event.type === "message_end") {
-			const message = cliEventRecord(event.message);
+			const message = asRecord(event.message);
 			if (message?.role !== "assistant") return;
 			const text = textFromContent(message.content);
 			if (text) append(`${state.text ? "\n" : ""}${text}`);
@@ -224,7 +225,7 @@ export const PI_CLI_CONNECTOR: JsonlCliConnector = {
 					total.cost[field] += contribution.cost[field];
 				state.usage = total;
 			}
-			const rawUsage = cliEventRecord(message.usage);
+			const rawUsage = asRecord(message.usage);
 			observeUsage(
 				{
 					usage: { ...rawUsage, pricedBy: "catalog" },
@@ -240,7 +241,7 @@ export const PI_CLI_CONNECTOR: JsonlCliConnector = {
 				[rawUsage.input, rawUsage.output, rawUsage.totalTokens].some(
 					(value) => typeof value === "number" && Number.isFinite(value),
 				);
-			const rawCost = cliEventRecord(rawUsage?.cost);
+			const rawCost = asRecord(rawUsage?.cost);
 			state.costReported ||= typeof rawCost?.total === "number" && Number.isFinite(rawCost.total);
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
 				state.error =

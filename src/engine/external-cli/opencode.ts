@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { asRecord } from "../../core/type-guards.js";
 import {
 	opencodeCliMode,
 	referencedOpenCodeCredentials,
 } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import type { WorkerRunInput } from "../worker-run-types.js";
-import { cliEventRecord, emptyCliUsage, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
+import { emptyCliUsage, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
 
 export const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
 
@@ -43,12 +45,12 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 			state.responseId = event.sessionID;
 			state.sessionId = event.sessionID;
 		}
-		const part = cliEventRecord(event.part);
+		const part = asRecord(event.part);
 		if (event.type === "text" && part?.type === "text" && typeof part.text === "string") {
 			append(`${state.text ? "\n" : ""}${part.text}`);
 		} else if (event.type === "step_finish" && part?.type === "step-finish") {
-			const tokens = cliEventRecord(part.tokens);
-			const cache = cliEventRecord(tokens?.cache);
+			const tokens = asRecord(part.tokens);
+			const cache = asRecord(tokens?.cache);
 			observeUsage(
 				{
 					usage: {
@@ -79,8 +81,8 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 				[tokens.input, tokens.output, tokens.total].some((value) => typeof value === "number" && Number.isFinite(value));
 			state.costReported ||= typeof part.cost === "number" && Number.isFinite(part.cost);
 		} else if (event.type === "error") {
-			const error = cliEventRecord(event.error);
-			const data = cliEventRecord(error?.data);
+			const error = asRecord(event.error);
+			const data = asRecord(error?.data);
 			state.error = String(data?.message ?? error?.name ?? "OpenCode reported a session error");
 		}
 	},

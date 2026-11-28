@@ -23,6 +23,7 @@ import type { WorkerTelemetryContext } from "../../core/telemetry/context.js";
 import { withTelemetryContext } from "../../core/telemetry/context.js";
 import { normalizeTokenUsage } from "../../core/token-split.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { asRecord } from "../../core/type-guards.js";
 import { workerEconomicsView } from "../../domains/dispatch/economics-view.js";
 import { resolveClaudeLaunchCredential } from "../../domains/providers/auth/index.js";
 import { getCatalogModelForRuntime } from "../../domains/providers/catalog.js";
@@ -191,13 +192,6 @@ function finite(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function nestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
-	const value = record[key];
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 /** The SDK prices its own calls from a client-side table, so its total is a peer estimate, never a bill (#434). */
 function telemetryUsage(raw: unknown, totalCostUsd?: number): Record<string, unknown> {
 	const usage = coerceToolInput(raw);
@@ -290,7 +284,7 @@ function contentFromSdkMessage(message: unknown): AgentMessage & { role: "assist
 					type: "toolCall",
 					id: tool.id,
 					name: tool.name,
-					arguments: nestedRecord(tool, "input") ?? {},
+					arguments: asRecord(tool.input) ?? {},
 				});
 			}
 		}
@@ -323,10 +317,10 @@ function extractStreamDelta(message: SDKMessage): string {
 	const event = (message as unknown as { event?: unknown }).event;
 	if (typeof event !== "object" || event === null) return "";
 	const record = event as Record<string, unknown>;
-	const delta = nestedRecord(record, "delta");
+	const delta = asRecord(record.delta);
 	if (delta && typeof delta.text === "string") return delta.text;
 	if (delta && typeof delta.thinking === "string") return "";
-	const contentBlock = nestedRecord(record, "content_block");
+	const contentBlock = asRecord(record.content_block);
 	if (contentBlock && contentBlock.type === "text" && typeof contentBlock.text === "string") return contentBlock.text;
 	return "";
 }

@@ -38,6 +38,7 @@ import type { PendingSkillRequest, PendingSkillToolPolicy, SkillDeclaredToolPoli
 import { proseAnnouncesCall, readTrailingWrittenCalls, stripDeadToolCallMarkup } from "../core/tool-call-markup.js";
 import { ToolNames } from "../core/tool-names.js";
 import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { asRecord } from "../core/type-guards.js";
 import { describeMissing } from "../domains/lifecycle/setup-status.js";
 import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
@@ -1018,17 +1019,11 @@ export function hasPersistableAssistantContent(
 	return false;
 }
 
-export function recordValue(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function textFromToolResultContent(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
 		.map((block) => {
-			const item = recordValue(block);
+			const item = asRecord(block);
 			if (item?.type !== "text" || typeof item?.text !== "string") return "";
 			return item.text;
 		})
@@ -1036,14 +1031,14 @@ function textFromToolResultContent(content: unknown): string {
 }
 
 export function toolResultSummary(result: unknown): Record<string, unknown> {
-	const obj = recordValue(result);
+	const obj = asRecord(result);
 	const text = textFromToolResultContent(obj?.content) || (typeof result === "string" ? result : "");
 	const bytes = Buffer.byteLength(text, "utf8");
-	const details = recordValue(obj?.details);
-	const size = recordValue(details?.resultSize);
-	const disposition = recordValue(details?.resultDisposition);
-	const truncation = recordValue(details?.truncation);
-	const observation = recordValue(details?.observation);
+	const details = asRecord(obj?.details);
+	const size = asRecord(details?.resultSize);
+	const disposition = asRecord(details?.resultDisposition);
+	const truncation = asRecord(details?.truncation);
+	const observation = asRecord(details?.observation);
 	const offloadPath =
 		typeof disposition?.offloadPath === "string"
 			? disposition.offloadPath

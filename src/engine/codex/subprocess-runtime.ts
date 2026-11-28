@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { asRecord } from "../../core/type-guards.js";
 import { codexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
@@ -57,12 +58,6 @@ export function buildCodexExecArgs(input: WorkerRunInput): string[] {
 	return args;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function finite(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0
 		? Math.min(value, Number.MAX_SAFE_INTEGER)
@@ -70,7 +65,7 @@ function finite(value: unknown): number {
 }
 
 function normalizeUsage(raw: unknown): Usage {
-	const usage = record(raw);
+	const usage = asRecord(raw);
 	const totalInput = finite(usage?.input_tokens);
 	const cacheRead = Math.min(totalInput, finite(usage?.cached_input_tokens));
 	const cacheWrite = Math.min(totalInput - cacheRead, finite(usage?.cache_write_input_tokens));
@@ -128,7 +123,7 @@ async function readCodexEvents(child: CodexChildProcess, emit: WorkerEventEmit, 
 		} catch {
 			throw new Error("Codex returned an invalid JSONL event");
 		}
-		const event = record(parsed);
+		const event = asRecord(parsed);
 		if (!event || typeof event.type !== "string") throw new Error("Codex returned an invalid JSONL event");
 		if (state.terminal) throw new Error("Codex emitted an event after its terminal turn");
 		switch (event.type) {
@@ -145,7 +140,7 @@ async function readCodexEvents(child: CodexChildProcess, emit: WorkerEventEmit, 
 				break;
 			case "item.completed": {
 				if (!state.turnStarted) throw new Error("Codex returned an item before turn.start");
-				const item = record(event.item);
+				const item = asRecord(event.item);
 				if (item?.type === "agent_message" && typeof item.text === "string") {
 					appendText(emit, state, `${state.text ? "\n" : ""}${item.text}`);
 				}
@@ -158,7 +153,7 @@ async function readCodexEvents(child: CodexChildProcess, emit: WorkerEventEmit, 
 				state.usage = event.usage;
 				if (event.type === "turn.failed") {
 					state.error = boundedExternalDiagnostic(
-						String(record(event.error)?.message ?? event.message ?? "Codex turn failed"),
+						String(asRecord(event.error)?.message ?? event.message ?? "Codex turn failed"),
 					);
 				}
 				break;
@@ -177,7 +172,7 @@ function assistantMessage(
 ): AgentMessage & { role: "assistant" } {
 	const succeeded = !aborted && exitCode === 0 && state.terminal === "completed" && !diagnostic;
 	const usage = normalizeUsage(state.usage) as Usage & { pancodeExternal?: Record<string, unknown> };
-	const rawUsage = record(state.usage);
+	const rawUsage = asRecord(state.usage);
 	usage.pancodeExternal = {
 		tokenUsage: [rawUsage?.input_tokens, rawUsage?.output_tokens].some(
 			(value) => typeof value === "number" && Number.isFinite(value),
