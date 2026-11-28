@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { type CliCommand, commandPlan } from "../server/cli-commands.js";
-import { CliCancelled, CliRunner } from "../server/services/cli-runner.js";
+import { CliCanceled, CliRunner } from "../server/services/cli-runner.js";
 import { AppProblem } from "../server/services/problem.js";
 import { SetupService } from "../server/services/setup.js";
 import { scratchHome } from "./harness/scratch-home.js";
@@ -140,7 +140,7 @@ test("CLI runner: cancellation observes SIGTERM, reaps the child, and closes adm
 	try {
 		const controller = new AbortController();
 		const pending = runner.run({ kind: "routing.models" }, h.path, controller.signal);
-		const rejected = assert.rejects(pending, CliCancelled);
+		const rejected = assert.rejects(pending, CliCanceled);
 		let pid = 0;
 		for (let i = 0; i < 6000; i++) {
 			const line = await readFile(log, "utf8").catch(() => "");

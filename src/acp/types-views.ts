@@ -364,7 +364,7 @@ export const AcpAsideDraftsSchema = Type.Union([
 	Type.Object({ status: Type.Literal("refused"), reason: wireAsideReason }, closed),
 ]);
 
-export const AcpAsideCancelledSchema = Type.Object({ cancelled: Type.Boolean() }, closed);
+export const AcpAsideCanceledSchema = Type.Object({ cancelled: Type.Boolean() }, closed);
 
 const wireBoardText = Type.String({ maxLength: 1100 });
 

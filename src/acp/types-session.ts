@@ -467,7 +467,7 @@ export const AcpHandoffCommittedSchema = Type.Union([
 	wireHandoffHandoffRefused,
 ]);
 
-export const AcpHandoffCancelledSchema = Type.Object({ cancelled: Type.Boolean() }, closed);
+export const AcpHandoffCanceledSchema = Type.Object({ cancelled: Type.Boolean() }, closed);
 
 const wireSteeringSTEER_TEXT_MAX_BYTES = 16384;
 

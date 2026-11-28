@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Type } from "typebox";
 import { ArtifactList, ArtifactPage, ArtifactRead } from "./artifacts.js";
-import { AsideAnswer, AsideAskRequest, AsideCancelled, AsideDraftRequest, AsideDrafts } from "./aside.js";
+import { AsideAnswer, AsideAskRequest, AsideCanceled, AsideDraftRequest, AsideDrafts } from "./aside.js";
 import { TURN_FILE_MAX, TURN_IMAGE_MAX, TurnFile, TurnImage } from "./attachments.js";
 import { Autonomy } from "./autonomy.js";
 import {
@@ -22,7 +22,7 @@ import { ElicitationPrompt, ElicitationSubmission } from "./elicitation.js";
 import { ExtensionReload, SessionExtensions } from "./extensions.js";
 import { FleetPreview, FleetPreviewRequest, FleetRunRequest, FleetRunResult } from "./fleet-run.js";
 import {
-	HandoffCancelled,
+	HandoffCanceled,
 	HandoffCancelRequest,
 	HandoffCommitRequest,
 	HandoffCommitted,
@@ -300,7 +300,7 @@ export const sessionWorkRoutes = {
 		...post,
 		status: 200,
 		params: operationParams,
-		response: AsideCancelled,
+		response: AsideCanceled,
 		summary: "Cancel the side question or draft that is running",
 		...runtimeRoutes.cancelAside,
 	}),
@@ -368,7 +368,7 @@ export const sessionWorkRoutes = {
 		status: 200,
 		params: operationParams,
 		body: HandoffCancelRequest,
-		response: HandoffCancelled,
+		response: HandoffCanceled,
 		summary: "Discard a handoff document awaiting review",
 		...runtimeRoutes.cancelHandoff,
 	}),

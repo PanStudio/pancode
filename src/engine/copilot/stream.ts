@@ -1415,16 +1415,16 @@ function declareTools(conversationRef: () => Conversation | null, tools: Readonl
 	}));
 }
 
-class CopilotOpenCancelled extends Error {
+class CopilotOpenCanceled extends Error {
 	constructor() {
-		super("Opening the Copilot session was cancelled");
-		this.name = "CopilotOpenCancelled";
+		super("Opening the Copilot session was canceled");
+		this.name = "CopilotOpenCanceled";
 	}
 }
 
 /**
  * Open a conversation under a runtime hold. Cancellation does not wait for the SDK: on abort the hold is released
- * at once and the caller sees CopilotOpenCancelled, even when createSession never answers. A session that
+ * at once and the caller sees CopilotOpenCanceled, even when createSession never answers. A session that
  * arrives after the cancel is disposed (dispose is idempotent) and never used; a creation that later fails
  * needs nothing.
  */
@@ -1440,7 +1440,7 @@ function openConversation(
 			if (settled) return;
 			settled = true;
 			release();
-			reject(new CopilotOpenCancelled());
+			reject(new CopilotOpenCanceled());
 			void opening.then(
 				(late) => late.dispose("The Copilot step was cancelled before its session was used."),
 				() => {
@@ -1781,7 +1781,7 @@ async function runStep(
 			if (stored) {
 				if (!(await request({ request: "resumeSession", sessionId: stored.sessionId, ...session }))) return;
 				opened = await openConversation({ ...base, resume: stored }, signal).catch((error: unknown) => {
-					if (error instanceof CopilotOpenCancelled) throw error;
+					if (error instanceof CopilotOpenCanceled) throw error;
 					// A session the runtime cannot resume is stale: the transcript is seeded into a new one.
 					forgetStored(stored);
 					return null;
@@ -1957,7 +1957,7 @@ async function runStep(
 		for (const id of policyIds) active.policiesSent.add(id);
 	} catch (error) {
 		// The abort already settled the step; the cancelled opening has nothing more to report.
-		if (error instanceof CopilotOpenCancelled) return;
+		if (error instanceof CopilotOpenCanceled) return;
 		const message = error instanceof Error ? error.message : String(error);
 		if (conversation && !bound) remove(conversation);
 		step.finish("error", [], message);

@@ -6,7 +6,7 @@ import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { ArtifactRead } from "../../contracts/artifacts.js";
 import { ArtifactList, ArtifactPage } from "../../contracts/artifacts.js";
-import { AsideAnswer, AsideCancelled, AsideDrafts } from "../../contracts/aside.js";
+import { AsideAnswer, AsideCanceled, AsideDrafts } from "../../contracts/aside.js";
 import {
 	attachmentWeight,
 	TURN_IMAGES_MAX_BASE64,
@@ -36,7 +36,7 @@ import {
 	type FleetRunRequest,
 	FleetRunResult,
 } from "../../contracts/fleet-run.js";
-import { HandoffCancelled, HandoffCommitted, HandoffDraft } from "../../contracts/handoff.js";
+import { HandoffCanceled, HandoffCommitted, HandoffDraft } from "../../contracts/handoff.js";
 import {
 	INTERVIEW_CANCEL_METHOD,
 	INTERVIEW_REQUEST_METHOD,
@@ -1628,7 +1628,7 @@ export class Supervisor {
 	}
 	cancelAside(id: string) {
 		this.asiding(id);
-		return this.projected(id, ACP_ASIDE_CANCEL_METHOD, { sessionId: id }, AsideCancelled);
+		return this.projected(id, ACP_ASIDE_CANCEL_METHOD, { sessionId: id }, AsideCanceled);
 	}
 	private extending(id: string) {
 		const entry = this.active(id);
@@ -1803,7 +1803,7 @@ export class Supervisor {
 	}
 	cancelHandoff(id: string, handoffId: string) {
 		this.handing(id);
-		return this.projected(id, ACP_HANDOFF_CANCEL_METHOD, { sessionId: id, handoffId }, HandoffCancelled);
+		return this.projected(id, ACP_HANDOFF_CANCEL_METHOD, { sessionId: id, handoffId }, HandoffCanceled);
 	}
 	private boardWrites(id: string, method: "supersede" | "proposeMemory") {
 		const entry = this.active(id);
