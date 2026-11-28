@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { listSessionsForCwd } from "../domains/session/history.js";
-import { resolveSessionTarget } from "../domains/session/names.js";
 import {
 	telemetryRunDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
-} from "../domains/telemetry/paths.js";
+} from "../core/telemetry/paths.js";
+import { listSessionsForCwd } from "../domains/session/history.js";
+import { resolveSessionTarget } from "../domains/session/names.js";
 
 type TelemetryTarget =
 	| { kind: "session" | "run" | "directory"; id: string; path: string; exists: boolean }

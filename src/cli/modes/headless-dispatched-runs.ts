@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { telemetryRunDirectory } from "../../core/telemetry/paths.js";
 import { sleep } from "../../core/timers.js";
 import type { DispatchContract } from "../../domains/dispatch/contract.js";
 import { withoutLandCardClause } from "../../domains/dispatch/merge-gate.js";
 import { type RunCallUsage, runUsageFromCallRecords } from "../../domains/dispatch/run-call-usage.js";
 import { isTerminalRunEnvelope, type RunEnvelope, type RunOutcome } from "../../domains/dispatch/types.js";
 import { readCallJournalSync } from "../../domains/telemetry/call-journal.js";
-import { telemetryRunDirectory } from "../../domains/telemetry/paths.js";
 import { READ_MODEL_FOLD } from "../../domains/telemetry/read-model.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import type { SettledRunEnvelope } from "./run-json-schema-v2.js";

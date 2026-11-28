@@ -8,7 +8,6 @@ export interface ImageResizeOptions {
 	maxWidth?: number;
 	maxHeight?: number;
 	maxBytes?: number;
-	jpegQuality?: number;
 }
 
 export interface ResizedImage {
@@ -27,7 +26,6 @@ const DEFAULT_OPTIONS: Required<ImageResizeOptions> = {
 	maxWidth: 2000,
 	maxHeight: 2000,
 	maxBytes: DEFAULT_MAX_BYTES,
-	jpegQuality: 80,
 };
 
 interface EncodedCandidate {
@@ -104,7 +102,7 @@ export async function resizeImage(img: ImageContent, options?: ImageResizeOption
 			}
 		}
 
-		const qualitySteps = Array.from(new Set([opts.jpegQuality, 85, 70, 55, 40]));
+		const qualitySteps = [80, 85, 70, 55, 40];
 		let currentWidth = targetWidth;
 		let currentHeight = targetHeight;
 

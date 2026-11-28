@@ -6,6 +6,7 @@ import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { SurfaceOutcome, SurfaceSettled } from "../core/telemetry/surface-schemas.js";
 import { ToolNames } from "../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
+import { SCOUT_NUDGE_REGISTRATION_ID } from "../domains/dispatch/nudges/scout-nudge.js";
 import { nextFiringId } from "../domains/middleware/fired-record.js";
 import {
 	type MiddlewareHookInput,
@@ -15,7 +16,6 @@ import {
 	READ_STREAK_SERIAL_EVIDENCE,
 	type ReadStreakObserver,
 	type ReadStreakStep,
-	SCOUT_NUDGE_REGISTRATION_ID,
 } from "../domains/middleware/index.js";
 import { FINISH_CONTRACT_REGISTRATION_ID } from "../domains/safety/finish-contract-registration.js";
 import { hashToolCall } from "../domains/safety/loop-detector.js";

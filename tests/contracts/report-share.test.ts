@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { runFlywheelCommand } from "../../src/cli/flywheel.js";
 import { runTelemetryShare } from "../../src/cli/telemetry-share.js";
 import type { TelemetryContext } from "../../src/core/telemetry/context.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import {
 	bundleDeletionComment,
 	openShare,
@@ -21,7 +22,6 @@ import {
 	telemetryShareDigest,
 } from "../../src/domains/report/index.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { packShare, planShare, resolveShareScopes, telemetryShareSource } from "../../src/domains/telemetry/share.js";
 
 const vector = JSON.parse(readFileSync(new URL("../fixtures/share-seal-vector.json", import.meta.url), "utf8")) as {

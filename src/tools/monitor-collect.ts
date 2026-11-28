@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { join } from "node:path";
 import type { RunTelemetryV1 } from "../core/telemetry/dto.js";
+import { telemetryObjectsDirectory, telemetryRunDirectory } from "../core/telemetry/paths.js";
 import { renderFactField, renderPricing } from "../core/telemetry/render.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { projectLedgerAssignments, projectReceiptFindings } from "../domains/dispatch/agent-ledger.js";
@@ -17,7 +18,6 @@ import type { CanonicalTrustStatus } from "../domains/evidence/trust-status.js";
 import { inspectRunTrustStatus, type RunIntegrity } from "../domains/evidence/trust-status.js";
 import { mergeFlowRestrictions } from "../domains/safety/information-flow.js";
 import { readRunRecord, readVerifiedRun } from "../domains/telemetry/index.js";
-import { telemetryObjectsDirectory, telemetryRunDirectory } from "../domains/telemetry/paths.js";
 import { earlierFailedAttempts, flowRestrictionsOfRuns, recoveredAttemptLines } from "./dispatch-output.js";
 import type { MonitorToolDeps } from "./monitor.js";
 import { FLOW_RESTRICTIONS_DETAIL } from "./registry-verdicts.js";

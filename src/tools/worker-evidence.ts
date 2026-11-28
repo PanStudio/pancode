@@ -3,6 +3,7 @@
 import { join } from "node:path";
 import { mentionsWorkerToolCallCap } from "../core/guardrails.js";
 import type { EvidenceAssessed } from "../core/telemetry/evidence-schemas.js";
+import { telemetryObjectsDirectory, telemetryRunDirectory } from "../core/telemetry/paths.js";
 import type { RunResultObject, RunSettled } from "../core/telemetry/run-schemas.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { RESULT_SUMMARY_MAX_BYTES_CEILING } from "../domains/agents/result-contract-allowance.js";
@@ -25,7 +26,6 @@ import {
 } from "../domains/evidence/trust-status.js";
 import { classify } from "../domains/safety/action-classifier.js";
 import { telemetryObjectRef } from "../domains/telemetry/objects.js";
-import { telemetryObjectsDirectory, telemetryRunDirectory } from "../domains/telemetry/paths.js";
 import { readRunRecord } from "../domains/telemetry/run-record.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 
