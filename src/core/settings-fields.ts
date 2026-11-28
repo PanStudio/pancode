@@ -312,6 +312,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"vision",
 	"warm",
 	"wireModels",
+	"workerIsolation",
 	"workerResponseSeconds",
 	"workers",
 	"workflows",
