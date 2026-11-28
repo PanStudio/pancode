@@ -296,7 +296,7 @@ export function sandboxAvailability(
  * reads as owned by nobody, so the process's own probe would refuse the bwrap its host launched it under.
  */
 export function adoptHostSandboxAvailability(executable: string): void {
-	cached = { available: true, backend: "bwrap", executable, reason: null };
+	cached = fullBackend("bwrap", executable);
 	cachedNetIsolation = null;
 }
 
