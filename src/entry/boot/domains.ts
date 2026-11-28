@@ -168,7 +168,7 @@ export async function loadBootDomains(input: BootDomainsInput) {
 				},
 			}),
 			// Live probes exercise this session's chat model once the effective view
-			// exists (assigned below with dispatch's); until then, the shared snapshot.
+			// exists (wired in orchestrator.ts alongside dispatch); until then, the shared snapshot.
 			createProvidersDomainModule({ getSettings: () => cells.effectiveSettingsForDispatch?.() }),
 			SafetyDomainModule,
 			createPromptsDomainModule({
@@ -201,7 +201,7 @@ export async function loadBootDomains(input: BootDomainsInput) {
 					]
 				: []),
 			// Dispatch resolves worker targets through the session's effective
-			// settings view once it exists (assigned below, after the config
+			// settings view once it exists (wired in orchestrator.ts after the config
 			// contract loads); until then it falls back to the shared snapshot.
 			createDispatchDomainModule({
 				getCapabilityGate: () => capabilityGate,

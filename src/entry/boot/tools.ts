@@ -272,7 +272,7 @@ export function registerBootTools(input: BootToolsInput) {
 		// consult exists only when a route is named at startup, so an operator who
 		// never named one keeps the registry, tool signature and prompt they had. A
 		// route removed mid-session answers "no usable answer". bound() reads the
-		// effective settings view built above, which is why that block precedes this call.
+		// effective settings view built earlier by buildBootSettings.
 		...(systemOne.bound()
 			? {
 					consult: {

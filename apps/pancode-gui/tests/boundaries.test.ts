@@ -131,7 +131,6 @@ const testModules = new Set([
 	"src/domains/session/entries.ts",
 	"tests/harness/receipt.ts",
 	"tests/harness/settled-run.ts",
-	"src/domains/evidence/index.ts",
 	"src/domains/dispatch/state.ts",
 	"src/domains/dispatch/types.ts",
 	"src/domains/dispatch/gate-decisions.ts",
@@ -148,10 +147,7 @@ const testModules = new Set([
 	"src/domains/telemetry/call-journal.ts",
 	"src/core/telemetry/paths.ts",
 	"src/core/xdg.ts",
-	"src/domains/evidence/trust-status.ts",
-	"src/core/telemetry/schemas.ts",
 	"src/domains/telemetry/index.ts",
-	"src/domains/dispatch/run-settlement.ts",
 	// The fixture child serves telemetry the CLI's own live model computes from records the CLI's encoder writes.
 	"src/core/telemetry/envelope.ts",
 	"src/core/telemetry/segment.ts",
