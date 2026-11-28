@@ -45,14 +45,45 @@ export function councilTooFewLiveSeats(
 	return `council_too_few_live_seats: ${total - down.length} of ${total} seats live, a council needs ${COUNCIL_MIN_MEMBERS}; ${seats}`;
 }
 
-export const REVIEWER_GATE_PROMPT = [
-	"You are a strict, read-only reviewer of one implementation run.",
+/**
+ * The gate's bounded contract: read-only inspection, the pass/fail question and the cited verdict shape. Every
+ * reviewer answers under it, whatever recipe sits in the seat.
+ */
+const REVIEWER_GATE_CONTRACT_LINES = [
 	"Inspect the supplied result, its evidence packet and the repository state with read-only tools.",
 	"You cannot modify anything.",
 	"Judge only whether the work passes. Whether a failure earns another attempt is not your decision.",
 	'End with a JSON object only: {"verdict":"pass|fail","checks":[{"name":"...","passed":true,"evidence":"what you inspected and observed","cites":["<evidence packet id>"]}]}.',
 	'The verdict must agree with every check. Report at least one check. Every check carries cites, the evidence packet ids it rests on, for example {"name":"the change matches the task","passed":true,"evidence":"the diff edits only value.txt","cites":["s1.diff"]}. A verdict citing none of the packet\'s ids is not a verdict.',
+];
+
+export const REVIEWER_GATE_PROMPT = [
+	"You are a strict, read-only reviewer of one implementation run.",
+	...REVIEWER_GATE_CONTRACT_LINES,
 ].join("\n");
+
+const REVIEWER_GATE_CONTRACT = [
+	"## Review gate",
+	"This run is a review gate of one implementation run. These rules take precedence over any result shape stated above, and every check the instructions above ask for is reported as a check in this verdict.",
+	...REVIEWER_GATE_CONTRACT_LINES,
+].join("\n");
+
+/** The recipe facts that decide a gate reviewer's persona. */
+export interface GateReviewerRecipe {
+	readonly source: string;
+	readonly body: string;
+}
+
+/**
+ * The persona a review gate's reviewer runs under. A recipe the operator installed (user, project or plugin) keeps
+ * its own body, with the gate's contract appended, so its extra criteria reach the verdict. A builtin recipe, an ACP
+ * delegation agent or an unknown id runs under {@link REVIEWER_GATE_PROMPT} byte for byte.
+ */
+export function reviewerGatePrompt(recipe: GateReviewerRecipe | undefined): string {
+	if (recipe === undefined || recipe.source === "builtin" || recipe.source === "custom") return REVIEWER_GATE_PROMPT;
+	const body = recipe.body.trim();
+	return body.length === 0 ? REVIEWER_GATE_PROMPT : `${body}\n\n${REVIEWER_GATE_CONTRACT}`;
+}
 
 export const JUDGE_GATE_PROMPT = [
 	"You are a strict, read-only judge ranking candidate deliverables for the same task.",
@@ -230,13 +261,21 @@ export function competeStanceLiner(stance: CompeteStance): string {
 	return `Compete stance: ${stance}. ${COMPETE_STANCE_LINERS[stance]}`;
 }
 
+/**
+ * Whether a run's system prompt is one the coordinator wrote for its gate role. A reviewer's is the pinned prompt or,
+ * given the recipe the run seats, exactly that recipe's body composed with the gate contract by
+ * {@link reviewerGatePrompt}; any other text is a caller persona.
+ */
 export function isBoundedGateRolePrompt(input: {
 	role: string | undefined;
 	readOnly: boolean | undefined;
 	systemPrompt: string | undefined;
+	recipe?: GateReviewerRecipe;
 }): boolean {
 	if (input.readOnly !== true) return false;
-	if (input.role === "reviewer") return input.systemPrompt === REVIEWER_GATE_PROMPT;
+	if (input.role === "reviewer") {
+		return input.systemPrompt === REVIEWER_GATE_PROMPT || input.systemPrompt === reviewerGatePrompt(input.recipe);
+	}
 	if (input.role === "judge") return input.systemPrompt === JUDGE_GATE_PROMPT;
 	if (input.role === "synthesis") return input.systemPrompt === COUNCIL_JUDGE_PROMPT;
 	if (input.role === "member") return input.systemPrompt === COUNCIL_VOTER_PROMPT;
