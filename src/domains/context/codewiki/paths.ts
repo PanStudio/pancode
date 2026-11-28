@@ -46,7 +46,7 @@ const CONFIG_FILE_NAMES = new Set([
 	"Gemfile",
 ]);
 
-function extensionOf(name: string): string {
+export function extensionOf(name: string): string {
 	const index = name.lastIndexOf(".");
 	return index === -1 ? "" : name.slice(index);
 }

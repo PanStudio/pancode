@@ -15,17 +15,17 @@ import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { EventPayload } from "../../src/core/telemetry/events.js";
 import { settingsFingerprintCommitment } from "../../src/core/telemetry/host-schemas.js";
 import { newProcessId } from "../../src/core/telemetry/ids.js";
-import type { ObjectRef } from "../../src/core/telemetry/schemas.js";
-import { encodeTelemetryLine, scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
-import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { storeTelemetryObject, telemetryCommitment } from "../../src/domains/telemetry/objects.js";
 import {
 	telemetryImportedStateDir,
 	telemetryObjectsDirectory,
 	telemetryProcessDirectory,
 	telemetryRunDirectory,
 	telemetrySessionDirectory,
-} from "../../src/domains/telemetry/paths.js";
+} from "../../src/core/telemetry/paths.js";
+import type { ObjectRef } from "../../src/core/telemetry/schemas.js";
+import { encodeTelemetryLine, scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
+import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
+import { storeTelemetryObject, telemetryCommitment } from "../../src/domains/telemetry/objects.js";
 import { readTelemetryScopeFiles, verifyTelemetryScope } from "../../src/domains/telemetry/seal.js";
 import {
 	freshShareSource,

@@ -4,8 +4,6 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { readLayeredSettings } from "../core/settings-layers.js";
 import type { SessionTelemetryV1 } from "../core/telemetry/dto.js";
-import { pancodeStateDir } from "../core/xdg.js";
-import { workspaceTelemetryCapture } from "../domains/telemetry/consent.js";
 import {
 	TELEMETRY_BUNDLE_FILE,
 	TELEMETRY_SEAL_MARKER_FILE,
@@ -13,7 +11,9 @@ import {
 	telemetryProcessesDirectory,
 	telemetryRunsDirectory,
 	telemetrySessionsDirectory,
-} from "../domains/telemetry/paths.js";
+} from "../core/telemetry/paths.js";
+import { pancodeStateDir } from "../core/xdg.js";
+import { workspaceTelemetryCapture } from "../domains/telemetry/consent.js";
 import { sessionTelemetry } from "../domains/telemetry/read-model-reports.js";
 import { describeSealMismatch, readTelemetryScopeFiles, verifyTelemetryScope } from "../domains/telemetry/seal.js";
 import { loadSessionTelemetrySourceAsync } from "../domains/telemetry/telemetry-source.js";

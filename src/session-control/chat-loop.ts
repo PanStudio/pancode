@@ -74,6 +74,7 @@ import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import type { DispatchContract } from "../domains/dispatch/index.js";
 import type { PinnedContextBlock } from "../domains/extensions/pinned-context.js";
+import type { CompactInput, CompactResult } from "../domains/memory/compaction/compact.js";
 import {
 	type CompletionFact,
 	createMiddlewareToolChoiceControl,
@@ -87,7 +88,6 @@ import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities }
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
-import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import {
@@ -110,6 +110,8 @@ import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
+import { compactionFailureReason } from "./chat-loop/submit-fit.js";
+import { isRedirectReason } from "./chat-loop/submit-turn.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
 import { createChatLoopComposition } from "./chat-loop-composition.js";
 import {
@@ -122,7 +124,7 @@ import { normalizeRetrySettings } from "./chat-loop-policy.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
-import { compactionFailureReason, createChatLoopSubmit, isRedirectReason } from "./chat-loop-submit.js";
+import { createChatLoopSubmit } from "./chat-loop-submit.js";
 import {
 	DRAFT_MAX_TOKENS,
 	DRAFT_TEMPERATURES,

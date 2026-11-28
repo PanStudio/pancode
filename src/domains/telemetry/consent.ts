@@ -8,8 +8,8 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import type { TelemetryCapture, TelemetrySettings } from "../../core/telemetry/capture.js";
 import { effectiveTelemetryCapture } from "../../core/telemetry/capture.js";
+import { telemetryConsentPath } from "../../core/telemetry/paths.js";
 import { isRecord } from "../../core/type-guards.js";
-import { telemetryConsentPath } from "./paths.js";
 
 /**
  * Research content capture needs the operator's consent per workspace (#434, O6).

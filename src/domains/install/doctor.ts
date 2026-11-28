@@ -40,6 +40,7 @@ import {
 import { repairSettingsCoercions, type SettingsRepairResult } from "../../core/settings-repair.js";
 import { shellQuote } from "../../core/shell-quote.js";
 import type { CacheReportV1 } from "../../core/telemetry/dto.js";
+import { telemetryJournalFiles, telemetrySessionsDirectory } from "../../core/telemetry/paths.js";
 import { renderUpperBound, unreportedCacheReadWords } from "../../core/telemetry/render.js";
 import { pancodeDirLayoutProblems, removablePancodeRootProblem, resolvePancodeDirs } from "../../core/xdg.js";
 import { readSessionFileEntries, type SessionJsonlWarning } from "../../engine/session.js";
@@ -62,7 +63,6 @@ import { readPackagedChangelog, reportsDoctorDetail } from "../report/index.js";
 import { loadSkills, type SkillSource } from "../resources/skills/loader.js";
 import { workspaceTelemetryCapture } from "../telemetry/consent.js";
 import { loadSessionTelemetrySource } from "../telemetry/index.js";
-import { telemetryJournalFiles, telemetrySessionsDirectory } from "../telemetry/paths.js";
 import { cacheReport } from "../telemetry/read-model-cache.js";
 import { deferredUpdateTarget, readDeferredResult } from "./deferred-update.js";
 import { type Installation, inspectInstallation, launcherPathFor } from "./install-method.js";

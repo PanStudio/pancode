@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { canonicalizeRawPath } from "../../core/path-canonical.js";
-import { relativeWithin } from "../../core/path-containment.js";
-import { dispatchTargetsScout, isReadOnlyCall } from "../../core/read-only-calls.js";
-import { renderCalls } from "../../core/telemetry/render.js";
-import { ToolNames } from "../../core/tool-names.js";
-import { expandPath } from "../../tools/path-utils.js";
-import type { DispatchContract } from "../dispatch/contract.js";
-import { refusedCallsWords } from "../dispatch/failure-headline.js";
-import { dispatchOwnerOf, dispatchOwnership } from "../dispatch/ownership.js";
-import { readRunResultFacts } from "../dispatch/run-result-facts.js";
-import { isTerminalRunEnvelope, type RunOutcome } from "../dispatch/types.js";
-import { dispatchMutatedParentWorkspace } from "../dispatch/workspace-mutation.js";
-import type { MiddlewareHookEvaluationContext, MiddlewareHookRegistration } from "./runtime.js";
-import type { MiddlewareEffect, MiddlewareHookInput } from "./types.js";
-import { turnCanCallTool } from "./types.js";
+import { canonicalizeRawPath } from "../../../core/path-canonical.js";
+import { relativeWithin } from "../../../core/path-containment.js";
+import { dispatchTargetsScout, isReadOnlyCall } from "../../../core/read-only-calls.js";
+import { renderCalls } from "../../../core/telemetry/render.js";
+import { ToolNames } from "../../../core/tool-names.js";
+import { turnCanCallTool } from "../../../core/turn-constraints.js";
+import { expandPath } from "../../../tools/path-utils.js";
+import type {
+	MiddlewareEffect,
+	MiddlewareHookEvaluationContext,
+	MiddlewareHookInput,
+	MiddlewareHookRegistration,
+} from "../../middleware/index.js";
+import type { DispatchContract } from "../contract.js";
+import { refusedCallsWords } from "../failure-headline.js";
+import { dispatchOwnerOf, dispatchOwnership } from "../ownership.js";
+import { readRunResultFacts } from "../run-result-facts.js";
+import { isTerminalRunEnvelope, type RunOutcome } from "../types.js";
+import { dispatchMutatedParentWorkspace } from "../workspace-mutation.js";
 
 /**
  * Detached-dispatch collection nudge, packaged as a turn_end hook

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { telemetryJournalPath, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
 	createLiveBudgetProducer,
@@ -16,7 +17,6 @@ import type { ProvidersContract } from "../../src/domains/providers/contract.js"
 import { estimateAgentMessageTokens } from "../../src/domains/session/context-accounting.js";
 import type { SessionContract, SessionMeta } from "../../src/domains/session/contract.js";
 import { readSessionContextSnapshots } from "../../src/domains/telemetry/index.js";
-import { telemetryJournalPath, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { createEngineAgent } from "../../src/engine/agent.js";
 import type { AgentMessage, Usage } from "../../src/engine/types.js";

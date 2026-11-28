@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { doesNotMatch, match, ok } from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { compact } from "../../src/domains/session/compaction/compact.js";
+import { compact } from "../../src/domains/memory/compaction/compact.js";
 import { estimateAgentContextTokens } from "../../src/domains/session/context-accounting.js";
 import type { MessageEntry, SessionEntry } from "../../src/domains/session/entries.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";

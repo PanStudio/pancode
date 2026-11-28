@@ -64,7 +64,7 @@ export interface ChainStepRow {
 /**
  * The line a settled step's raw output follows. Compaction proves a chained
  * skill load was fully visible by finding the child body directly under this
- * header (`historicalSkillReceipt` in src/domains/session/compaction/compact.ts),
+ * header (`historicalSkillReceipt` in src/domains/memory/compaction/compact.ts),
  * so a format change here must move there too.
  */
 function chainStepHeader(row: Pick<ChainStepRow, "id" | "capability" | "kind" | "truncated">): string {

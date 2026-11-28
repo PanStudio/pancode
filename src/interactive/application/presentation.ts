@@ -6,8 +6,8 @@
  * parts, the setting actions, the yazi bridge, the notice sinks and the attach controller.
  */
 
+import { openDetachedBatchViews } from "../../domains/dispatch/nudges/dispatch-nudge.js";
 import { type PromptRef, promptRefs } from "../../domains/extensions/operator-commands.js";
-import { openDetachedBatchViews } from "../../domains/middleware/index.js";
 import { setDiffusionFramesEnabled } from "../../engine/apis/diffusion-frames.js";
 import { createAgentProgress } from "../../engine/tui.js";
 import { createDockKeyGate } from "../../lib/panes/dock-keys.js";

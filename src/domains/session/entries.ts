@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { MemoryConsumptionReceipt } from "../memory/contract.js";
-import { isMemoryConsumptionReceipt } from "../memory/observations.js";
 
 /**
  * Rich session entry union.
@@ -11,7 +10,7 @@ import { isMemoryConsumptionReceipt } from "../memory/observations.js";
  * entries sort by creation), a parent pointer, and an ISO timestamp.
  *
  * Non-message kinds and where they come from:
- *   - compactionSummary is produced by compaction/compact.ts.
+ *   - compactionSummary is produced by memory/compaction/compact.ts.
  *   - branchSummary is produced by the fork path.
  *   - bashExecution is produced by the editor bash path
  *     (interactive/editor-bash.ts).
@@ -26,6 +25,7 @@ import { isMemoryConsumptionReceipt } from "../memory/observations.js";
  */
 
 import { sha256Hex } from "../../core/hash.js";
+import { isMemoryConsumptionReceipt } from "../../core/memory-receipt.js";
 import { isProviderCheckpointHandle } from "../../core/provider-checkpoint-handle.js";
 import { isSkillActivation, type PendingSkillToolPolicy, type SkillActivation } from "../../core/skill-activation.js";
 import { PROTECTED_ARTIFACT_SOURCES, type ProtectedArtifactSource } from "../../core/telemetry/session-vocabulary.js";

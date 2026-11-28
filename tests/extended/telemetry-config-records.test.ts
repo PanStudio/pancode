@@ -13,6 +13,7 @@ import type { EventPayload } from "../../src/core/telemetry/events.js";
 import { settingsFingerprintCommitment } from "../../src/core/telemetry/host-schemas.js";
 import { createTelemetryHub, telemetryHub } from "../../src/core/telemetry/hub.js";
 import type { ConfigChangePayload } from "../../src/core/telemetry/live-events.js";
+import { telemetryProcessDirectory, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { unboundTelemetrySession } from "../../src/core/telemetry/producer.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
@@ -23,7 +24,6 @@ import { openCallJournalHealth, readCallJournal } from "../../src/domains/teleme
 import { grantTelemetryConsent } from "../../src/domains/telemetry/consent.js";
 import { createTelemetryBundle } from "../../src/domains/telemetry/extension.js";
 import { readTelemetryObject } from "../../src/domains/telemetry/objects.js";
-import { telemetryProcessDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { telemetryProcessId } from "../../src/domains/telemetry/process-journal.js";
 import { JOURNAL_IDLE_CLOSE_MS } from "../../src/domains/telemetry/session-journals.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

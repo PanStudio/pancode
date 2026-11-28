@@ -209,7 +209,6 @@ export interface HttpChannelInput {
 	readonly baseUrl: string;
 	readonly host: EngineHost;
 	readonly signal: AbortSignal;
-	readonly onAdmissionRefused?: (error: LlmAdmissionRefused) => void;
 }
 
 export function createHttpChannel(input: HttpChannelInput): Channel {
@@ -220,13 +219,7 @@ export function createHttpChannel(input: HttpChannelInput): Channel {
 	let token: Promise<string | undefined> | null = null;
 
 	async function post(body: Record<string, unknown>): Promise<ChatCompletion> {
-		let recordUsage: Awaited<ReturnType<NonNullable<EngineHost["admitLlmRequest"]>>> | undefined;
-		try {
-			recordUsage = await host.admitLlmRequest?.({ engine: input.engine, targetId: target.id, model, signal });
-		} catch (error) {
-			if (error instanceof LlmAdmissionRefused) input.onAdmissionRefused?.(error);
-			throw error;
-		}
+		const recordUsage = await host.admitLlmRequest?.({ engine: input.engine, targetId: target.id, model, signal });
 		const tracking = trackCallFetch();
 		const request = async () => {
 			// This wire bypasses the engine seam, so it marks its own auth and send for the call it runs in (#429).
@@ -334,7 +327,6 @@ export interface OneShotChannelInput {
 	readonly model: string | null;
 	readonly port: OneShotPort;
 	readonly signal: AbortSignal;
-	readonly onAdmissionRefused?: (error: LlmAdmissionRefused) => void;
 }
 
 export function createOneShotChannel(input: OneShotChannelInput): Channel {
@@ -359,10 +351,7 @@ export function createOneShotChannel(input: OneShotChannelInput): Channel {
 					...(reply.usage ? { usage: reply.usage } : {}),
 				};
 			} catch (error) {
-				if (error instanceof LlmAdmissionRefused) {
-					input.onAdmissionRefused?.(error);
-					throw error;
-				}
+				if (error instanceof LlmAdmissionRefused) throw error;
 				throw new Error(`one-shot call failed: ${errorText(error)}`);
 			}
 		},

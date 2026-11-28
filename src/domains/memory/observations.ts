@@ -2,11 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
 import { sha256Hex } from "../../core/hash.js";
+import {
+	isMemoryDigest as hash,
+	isMemoryId as id,
+	isMemoryConsumptionReceipt,
+	OBSERVATION_MAX_BATCHES,
+} from "../../core/memory-receipt.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { MemoryContentStamp } from "./commit-state.js";
 import type {
 	MemoryCompactionOffer,
-	MemoryConsumptionReceipt,
 	MemoryOfferInput,
 	ObservationNote,
 	ObservationSource,
@@ -19,7 +24,8 @@ import type { TaskMemoryRoute, TaskMemoryStepUsage } from "./task-memory-policy.
 export const observationDigest = (value: unknown): string => sha256Hex(JSON.stringify(value) ?? "null");
 export const observationTokens = (text: string): number => Math.ceil(text.length / 4);
 export const OBSERVATION_MAX_BYTES = 256 * 1024;
-export const OBSERVATION_MAX_BATCHES = 64;
+export { isMemoryConsumptionReceipt, OBSERVATION_MAX_BATCHES };
+
 /** Notes one artifact may hold; a stored artifact is re-read through the same envelope check. */
 const OBSERVATION_MAX_NOTES = 16;
 
@@ -420,27 +426,6 @@ export function buildObservationOffer(
 	});
 }
 
-export function isMemoryConsumptionReceipt(value: unknown): value is MemoryConsumptionReceipt {
-	if (
-		!isRecord(value) ||
-		value.version !== 1 ||
-		!isRecord(value.scope) ||
-		!id(value.scope.sessionId) ||
-		(value.scope.branchAnchorTurnId !== null && !id(value.scope.branchAnchorTurnId)) ||
-		!id(value.offerId) ||
-		!hash(value.coverageDigest) ||
-		!Array.isArray(value.batches) ||
-		value.batches.length < 1 ||
-		value.batches.length > OBSERVATION_MAX_BATCHES ||
-		!value.batches.every((batch: unknown) => isRecord(batch) && id(batch.id) && hash(batch.digest)) ||
-		new Set(value.batches.map((batch: { id: string }) => batch.id)).size !== value.batches.length
-	)
-		return false;
-	return (
-		value.checkpoint === null || (isRecord(value.checkpoint) && id(value.checkpoint.id) && hash(value.checkpoint.digest))
-	);
-}
-
 export function isSessionObservation(value: unknown): value is SessionObservation {
 	try {
 		if (
@@ -512,14 +497,8 @@ export function isSessionObservation(value: unknown): value is SessionObservatio
 	}
 }
 
-function id(value: unknown): value is string {
-	return typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/u.test(value);
-}
 function isoTimestamp(value: unknown): value is string {
 	if (typeof value !== "string") return false;
 	const timestamp = Date.parse(value);
 	return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
-}
-function hash(value: unknown): value is string {
-	return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }

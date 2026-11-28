@@ -8,6 +8,7 @@ import {
 	type CacheCallBaseline,
 	type CacheRequestStructure,
 } from "../../src/core/cache-telemetry.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { CallSettled, CallUsage } from "../../src/core/telemetry/schemas.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type {
@@ -29,7 +30,6 @@ import {
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import {
 	type AttemptReceipt,
