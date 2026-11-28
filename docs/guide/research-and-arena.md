@@ -203,55 +203,10 @@ campaign, one per project at a time. See [Graphical application](gui.md#research
 ## Model campaigns
 
 `pancode campaign run` answers a third question: how does one seeded project, driven the same way, go on each of
-several models? It is built for extension-driven pipelines that put gates to the author, and it is unrelated to the
-research campaigns above.
-
-```bash
-pancode campaign run --fixture ./fixtures/brownfield --roster roster.yaml --answers answers.yaml \
-  --prompt "/desk:advance" --out ./campaign-out --timeout 1800 --probe desk:status
-```
-
-```yaml
-roster:
-  - target: openai-codex
-    model: gpt-6-luna
-    thinking: high          # optional, the entry's --thinking
-    label: luna-high        # optional, defaults to <target>/<model>[@<thinking>]
-  - target: lab
-    model: qwen3-32b
-```
-
-The roster is a mapping with one key, `roster`, a non-empty list of entries with `target`, `model`, an optional
-`thinking` level and an optional `label`. Labels name each entry's rows and directory, so they must be unique: at most
-80 letters, digits and `. _ @ / : + -`, starting with a letter or digit. The answers file is a
-[`run --answers`](commands-and-modes.md#script-the-author-with---answers) file. Both are validated before anything
-starts, and so is `--out`, which must be absent or empty and must not lie inside the fixture.
-
-Entries run one at a time, and `--repeat <N>` runs the whole roster N times, one pass after another. Each gets a fresh copy of the fixture under `<out>/<NN>-<label>/project` and its own empty
-PanCode data, state and cache under `<out>/<NN>-<label>/home`, so entries share no sessions or memory. `<NN>` is the entry's position from `01`, and the label's characters other than
-letters, digits, `.`, `_` and `-` become `-` in the directory name. With `--repeat` above 1, the directory also ends in `-r<K>`, the pass number from 1. Each uses
-your config directory as it is (targets, credentials, installed extensions and MCP configuration), the way your own
-`pancode run` would: nothing secret is copied under `--out`, and a login an entry refreshes is saved to your
-credential store. Each also reads the runtime components you installed with `pancode tools install` (copilot-sdk,
-claude-sdk) from your own data directory, read-only, and an entry missing one names that directory in its install hint
-rather than offering to install under `--out`. Each entry's environment is filtered the way an extension's run is (see [Limits](#limits)). The
-entry runs headless `pancode run --cwd <copy> --target <target> --model <model> --answers <file> --output-format json`, with
-`--thinking`, `--timeout` and `--autonomy yolo` when given, and its output goes to `run.stdout.log` and
-`run.stderr.log` beside the copy. `--autonomy yolo` is contained yolo only. `--probe <extension>:<command>` then runs
-`pancode extensions run <extension> <command> --json` in the copy and records its result as the desk's final
-status.
-
-The report gives, per entry, its status, exit code, the extension gates reached (the checkpoint ids its interviews
-put to the author), extension refusals (hook `block_tool` effects and refused extension tool calls), loop-guard
-blocks, input tokens with their fresh and cached parts, output tokens, wall time, the run's completion (its finish claim, the host's assessment and the facts that lowered
-it), its verification (outcome and cause codes) and the probe's first line. Gates and
-refusals come from the entry's session ledger and journal, tokens from the provider-measured totals that
-`pancode telemetry tokens` reads, and completion and verification from the `run_end` document the run writes to
-`run.stdout.log`. The status is `completed` (exit 0), `unscripted` (exit 5, a question the answers
-file does not script), `timed-out`, `failed` (any other exit), `canceled`, or `error` when the entry could not be set up
-or launched. A failing entry is reported and the campaign continues. `--json` prints the whole campaign, with `completion.state` and `verdict.aggregate` (`pass` when every entry
-completed, `fail` when none did, otherwise `partial`), and each entry also writes `<out>/<NN>-<label>/entry.json`,
-which records its pass as `repetition` (from 0).
+several models? It is unrelated to the research campaigns above. It comes from the `extension:campaign` pack, which
+PanCode installs by default. Its [README](../../hub/packs/extensions/campaign/README.md) covers the roster and answers
+files, how each entry runs in its own copy and home, the report, storage under the `--out` directory, limits and exit
+codes. `pancode hub remove extension:campaign` removes it, and `pancode hub install extension:campaign` brings it back.
 
 ## Where things are stored
 
@@ -260,7 +215,6 @@ which records its pass as `repetition` (from 0).
 | Research campaigns | `.pancode/research/<id>/`: `campaign.json` (the frozen spec, checks with their digest, seed and PanCode version), `journal.jsonl`, `samples/`, `slate.json` and, while a run holds it, `run.lock` |
 | Research worktrees | `.pancode/worktrees/research-<id>-base/` and `research-<id>-it-NNNN/`, removed after grading unless `--keep` |
 | Research results | The branch `pancode/research/<id>` |
-| Model campaigns | The `--out` directory you name: per entry `<NN>-<label>/` holds `project/`, `home/`, `run.stdout.log`, `run.stderr.log` and `entry.json` |
 
 The full list is in [Artifact placement](../architecture/artifact-placement.md).
 
@@ -270,7 +224,7 @@ The full list is in [Artifact placement](../architecture/artifact-placement.md).
   iteration. It does not run candidates in parallel. `research resume` keeps the campaign's budget; it cannot raise it.
 - `--autonomy yolo` is contained yolo only. Research never runs unconfined yolo. Each agent run is launched with `PANCODE_YOLO_CONFINEMENT=contained`, so it stays contained even if your settings turn unconfined while the campaign runs. The pin also reaches every `pancode` such a run starts from bash, and setting it to another value does not widen it.
 - Started from the bash of a session below yolo (`PANCODE_AUTONOMY_CEILING` is set), `--autonomy yolo` is refused with exit 2: a delegated run never gets more autonomy than its dispatcher.
-- Model campaign entries and the runs an extension starts, arena contenders among them, do not inherit your whole
+- The runs an extension starts, arena contenders and model campaign entries among them, do not inherit your whole
   environment. Each gets the safe command variables (`PATH`, `HOME`, `USER`,
   `LANG`, `TMPDIR`, the XDG base dirs), PanCode's own `PANCODE_*`, `LC_*`, `TERM`, `SHELL`, `TZ`, `NODE_OPTIONS`, proxy
   and CA variables, git author and committer names and emails, and the names in `safety.sandboxPassEnv`. From the credentials it
@@ -291,7 +245,5 @@ The full list is in [Artifact placement](../architecture/artifact-placement.md).
 | --- | --- | --- | --- | --- |
 | `research start`, `research resume` | A budget cap ended the campaign | An error, a noisy A/A check, unenforceable spend, or a refused resume | Usage | 130 SIGINT, 143 SIGTERM, 129 SIGHUP |
 | `research report` | Every regrade agrees with the journal | A regrade disagrees, or the campaign is missing | Usage | |
-| `campaign run` | Every entry was run, whatever its status; with `--exit-code`, only when every entry completed | The campaign itself failed, or, with `--exit-code`, some entry did not complete | Usage, including an invalid roster or answers file | The signal's exit code |
 
-Implementation: [research](../../src/domains/research/index.ts), [campaign](../../src/domains/campaign/index.ts),
-[research CLI](../../src/cli/research.ts) and [campaign CLI](../../src/cli/campaign.ts).
+Implementation: [research](../../src/domains/research/index.ts) and [research CLI](../../src/cli/research.ts).
