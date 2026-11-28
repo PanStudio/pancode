@@ -15,7 +15,7 @@ import { ToolNames } from "../../core/tool-names.js";
 import { asRecord } from "../../core/type-guards.js";
 import type { MiddlewareEffect, MiddlewareHookInput, MiddlewareHookRegistration } from "../middleware/index.js";
 
-export const DISPATCH_DEDUP_REGISTRATION_ID = "guard.dispatch-dedup";
+const DISPATCH_DEDUP_REGISTRATION_ID = "guard.dispatch-dedup";
 
 /** Bounded turn-id memory, matching the loop guard's policy. */
 const DISPATCH_GUARD_TURN_LIMIT = 32;

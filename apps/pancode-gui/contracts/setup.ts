@@ -22,7 +22,7 @@ export const SetupStatus = Type.Object(
 	},
 	closed,
 );
-export const SetupPrompt = Type.Union([
+const SetupPrompt = Type.Union([
 	Type.Object(
 		{
 			id: Type.Integer({ minimum: 1 }),

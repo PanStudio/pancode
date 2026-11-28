@@ -32,9 +32,9 @@ import {
 } from "../theme/index.js";
 import { skinEpoch } from "../theme/tokens.js";
 
-export const VIEW_OVERLAY_WIDTH = "100%";
-export const VIEW_OVERLAY_MAX_HEIGHT = "100%";
-export const VIEW_OVERLAY_MARGIN = { top: 0, right: 0, bottom: 0, left: 0 } as const;
+const VIEW_OVERLAY_WIDTH = "100%";
+const VIEW_OVERLAY_MAX_HEIGHT = "100%";
+const VIEW_OVERLAY_MARGIN = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 
 const LEFT_PANE_MIN_WIDTH = 36;
 const LEFT_PANE_MAX_WIDTH = 72;
@@ -223,7 +223,7 @@ function formatArtifactSize(sizeBytes: number | undefined): string {
 	return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function formatRelativeTime(timestamp: number, now = Date.now()): string {
+function formatRelativeTime(timestamp: number, now = Date.now()): string {
 	if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
 	const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
 	if (seconds < 60) return `${seconds}s`;

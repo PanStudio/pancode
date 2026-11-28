@@ -153,7 +153,7 @@ export function summarizeActivity(items: readonly TimelineItem[], decisions?: Ca
 const decisionFor = (item: TimelineItem, decisions: CallDecisions | undefined): string | undefined =>
 	item.toolCallId === undefined ? undefined : decisions?.get(item.toolCallId);
 
-export const TOOL_STATUS_LABELS: Readonly<Record<string, string>> = {
+const TOOL_STATUS_LABELS: Readonly<Record<string, string>> = {
 	pending: "queued",
 	in_progress: "running",
 	completed: "done",
@@ -166,7 +166,7 @@ export const TOOL_STATUS_LABELS: Readonly<Record<string, string>> = {
 	expired: "expired",
 };
 
-export const STATUS_GLYPHS: Readonly<Record<string, string>> = {
+const STATUS_GLYPHS: Readonly<Record<string, string>> = {
 	pending: "…",
 	in_progress: "◐",
 	escalated: "!",

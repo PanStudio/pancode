@@ -18,7 +18,7 @@ import {
 } from "../domains/report/index.js";
 import { printError } from "./argv.js";
 
-export const FLYWHEEL_HELP = `pancode dev flywheel --sweep [--store <dir>]
+const FLYWHEEL_HELP = `pancode dev flywheel --sweep [--store <dir>]
 pancode dev flywheel --forget <reportId> [--store <dir>]
 
 Report sharing is turned off in this build: the ranked backlog and --pull print

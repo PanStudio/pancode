@@ -83,7 +83,7 @@ const SERVER_FIELDS = new Set([
 	"fileTargets",
 ]);
 /** The Agent Plugins `mcp.json` file at a plugin root. */
-export const MCP_PLUGIN_CONFIG_FILENAME = "mcp.json";
+const MCP_PLUGIN_CONFIG_FILENAME = "mcp.json";
 const PLUGIN_ROOT_FIELDS = new Set(["$schema", "mcpServers"]);
 const PLUGIN_SERVER_FIELDS = new Set([
 	"type",

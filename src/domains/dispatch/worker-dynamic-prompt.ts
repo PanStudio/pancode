@@ -288,7 +288,7 @@ function renderWorkerWorkspaceContext(workspace: WorkspaceRootFacts): string {
 }
 
 /** UTF-8 byte cap on threaded pipeline input, applied at render time. */
-export const PIPELINE_INPUT_MAX_BYTES = 12_000;
+const PIPELINE_INPUT_MAX_BYTES = 12_000;
 
 const PIPELINE_INPUT_EMPTY_MARKER = "(previous step produced no text output)";
 

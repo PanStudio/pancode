@@ -41,7 +41,7 @@ export function codeStepsReport(source: JournalSource): CodeStepRowV1[] {
 }
 
 /** The safety and lifecycle decisions a scope journals (#434). */
-export const ACCOUNTABILITY_EVENTS = [
+const ACCOUNTABILITY_EVENTS = [
 	"tool.decided",
 	"approval.requested",
 	"approval.resolved",

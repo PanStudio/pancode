@@ -61,7 +61,7 @@ import { type LedgerSnapshot, readLedgerSnapshot } from "./state.js";
 import { HOST_VERIFICATION_EVENT } from "./verification-slot.js";
 
 /** How often a pending ask is checked for an answer, and the ledger and feeds of foreign runs are read. */
-export const CROSS_PROCESS_POLL_MS = 500;
+const CROSS_PROCESS_POLL_MS = 500;
 /** Bytes one poll folds from one foreign feed, so a backlog cannot stall a frame. */
 const FEED_READ_MAX_BYTES = 256 * 1024;
 

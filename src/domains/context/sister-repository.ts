@@ -392,7 +392,7 @@ export function sisterRepositoryNotice(rules: SisterRepositoryRules): string | n
 	return `Rules of ${rules.name}: ${rules.withheld} handbook rule${rules.withheld === 1 ? "" : "s"} the tree cannot check left out, because ${rules.root} is a repository this session did not start in and its handbook is not trusted. Review it with pancode config trust handbook, run in ${rules.root}.`;
 }
 
-export const SISTER_REPOSITORY_REMINDER_MAX_CHARS = 1_500;
+const SISTER_REPOSITORY_REMINDER_MAX_CHARS = 1_500;
 
 /**
  * The invariants of a sister repository's compile as one labeled reminder for

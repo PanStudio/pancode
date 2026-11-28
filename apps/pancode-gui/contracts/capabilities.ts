@@ -54,7 +54,7 @@ const closed = { additionalProperties: false };
  * nothing under `_meta`, and the UI must degrade to the v1 surface rather than
  * refuse to open a session.
  */
-export const SessionCapability = Type.Object(
+const SessionCapability = Type.Object(
 	{
 		close: Type.Boolean(),
 		list: Type.Boolean(),

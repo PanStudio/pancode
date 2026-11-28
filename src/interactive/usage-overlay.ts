@@ -81,7 +81,7 @@ import {
 
 const DEFAULT_CONTENT_WIDTH = 104;
 
-export const USAGE_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
+const USAGE_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
 
 /** Each agent role's share of the calls row, in the note column; a role added later still shows, under its own name. */
 const ROLE_WORD: Readonly<Record<AgentRole, string>> = {

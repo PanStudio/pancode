@@ -178,7 +178,7 @@ export interface AskUserToolDeps {
 	askUser?: AskUserHandler;
 }
 
-export const askUserParameters: TSchema = Type.Object({
+const askUserParameters: TSchema = Type.Object({
 	action: Type.Optional(
 		StringEnum(["ask", "complete"], {
 			description: "ask presents a round of questions; complete records the decisions, once, before final prose.",

@@ -50,7 +50,7 @@ export interface ReportOfferWatcher {
 }
 
 /** How long a shown offer stays takeable: its notice stands 60 s, and `/report` typed soon after still inherits it. */
-export const REPORT_OFFER_TAKE_MS = 2 * 60_000;
+const REPORT_OFFER_TAKE_MS = 2 * 60_000;
 
 function mainAgentFact(context: TelemetryContext | undefined): boolean {
 	return context?.agent.role === "main";

@@ -8,7 +8,7 @@ export type ThinkingEffortByLevel = Partial<Record<ThinkingLevel, string | null>
 const ANTHROPIC_MIN_THINKING_BUDGET = 1024;
 const ANTHROPIC_VISIBLE_OUTPUT_RESERVE = 1024;
 
-export const ANTHROPIC_DEFAULT_THINKING_BUDGETS: Readonly<ThinkingBudgetByLevel> = {
+const ANTHROPIC_DEFAULT_THINKING_BUDGETS: Readonly<ThinkingBudgetByLevel> = {
 	minimal: 1024,
 	low: 2048,
 	medium: 8192,

@@ -12,10 +12,8 @@ export type {
 	ConsultValue,
 } from "./consult.js";
 export {
-	CONSULT_DEADLINE_MS,
 	CONSULT_FILTER_MAX_CHARS,
 	CONSULT_MAX_FILE_CHARS,
-	CONSULT_MAX_FILES,
 	consultFilterPoint,
 	consultPoint,
 	fitFilterItems,
@@ -23,11 +21,8 @@ export {
 } from "./consult.js";
 export type { JudgeScreenObject, JudgeScreenResult, JudgeScreenValue } from "./judge-screen.js";
 export {
-	JUDGE_SCREEN_DEADLINE_MS,
-	JUDGE_SCREEN_MAX_RESULTS,
 	JUDGE_SCREEN_POINT,
 	judgeScreenResults,
-	screensToolResult,
 } from "./judge-screen.js";
 export type { TriageObject, TriagePick, TriageValue } from "./triage.js";
 export { triagePoint } from "./triage.js";

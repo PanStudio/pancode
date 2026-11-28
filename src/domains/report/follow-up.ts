@@ -13,9 +13,9 @@ import { REPORT_REPOSITORY } from "./vocabulary.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A reply check stops watching a report this long after it was sent. */
-export const REPLY_CHECK_MAX_AGE_MS = 90 * DAY_MS;
+const REPLY_CHECK_MAX_AGE_MS = 90 * DAY_MS;
 /** At most one reply check per install in this window. */
-export const REPLY_CHECK_INTERVAL_MS = DAY_MS;
+const REPLY_CHECK_INTERVAL_MS = DAY_MS;
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /** The switches that silence the update check silence the reply check too. */

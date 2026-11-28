@@ -23,7 +23,7 @@ import { ROUTE_POSTURES, type RouteEstimate } from "./route-policy.js";
  * floor naturally demands more evidence than this, which the floor check below
  * enforces on its own.
  */
-export const MINIMUM_ACTIVE_QUALITY_LABELS = 6;
+const MINIMUM_ACTIVE_QUALITY_LABELS = 6;
 
 export type ReadinessGap =
 	| "hard-constraint-validity-below-one"
@@ -37,7 +37,7 @@ export type ReadinessGap =
 	| "decision-latency-above-budget";
 
 /** The p95 shadow-decision budget at the configured universe bound. */
-export const DECISION_LATENCY_BUDGET_MS = 10;
+const DECISION_LATENCY_BUDGET_MS = 10;
 
 export interface RouteReadinessInput {
 	estimate: RouteEstimate;

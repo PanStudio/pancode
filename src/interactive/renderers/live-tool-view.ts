@@ -44,7 +44,7 @@ export interface LiveRowsOptions {
  * stops being an extension of the last one (a partial-JSON repair that changed
  * its last escape) is indexed again from the start; that is rare and bounded.
  */
-export class LiveTextTail {
+class LiveTextTail {
 	private text = "";
 	private lineStarts: number[] = [0];
 	private carries: CodeInkCarry[] = [];

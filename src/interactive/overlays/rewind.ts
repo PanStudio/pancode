@@ -46,7 +46,7 @@ import {
 import { type ListOverlayHandle, openListOverlay } from "./list-overlay.js";
 import { detailWithHead, type ListOverlayItem } from "./list-overlay-model.js";
 
-export const REWIND_EMPTY =
+const REWIND_EMPTY =
 	"No workspace snapshots in this session yet. PanCode takes one before it first changes files in a turn and before every destructive command, in a Git work tree with safety.snapshots on.";
 
 export const REWIND_TURN_RUNNING =

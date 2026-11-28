@@ -35,7 +35,7 @@ import {
 	selectionRow,
 } from "../theme/index.js";
 
-export const TREE_OVERLAY_WIDTH = 88;
+const TREE_OVERLAY_WIDTH = 88;
 /** Rows the list shows while the frame has not said how many it has. */
 const VISIBLE_ROWS = 16;
 const MIN_VISIBLE_ROWS = 3;

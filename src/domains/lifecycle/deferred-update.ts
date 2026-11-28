@@ -289,7 +289,7 @@ function pruneLogs(dir: string, fingerprint: string): void {
 }
 
 /** Fixed word in every wrapper's argv: its JSON payload names the install root, so without it two wrappers held each other until their deadline. */
-export const WRAPPER_SENTINEL = "--pancode-deferred-update";
+const WRAPPER_SENTINEL = "--pancode-deferred-update";
 
 /**
  * Holder judging, one source for the wrapper (pasted into its `node -e`

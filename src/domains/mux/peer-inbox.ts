@@ -50,7 +50,7 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 /** The metadata token a listening PanCode publishes on its own pane. */
 export const PEER_INBOX_TOKEN = "pancode_inbox";
 /** A prompt's size limit, the same one a handoff brief has. */
-export const PEER_PROMPT_MAX_BYTES = 8_192;
+const PEER_PROMPT_MAX_BYTES = 8_192;
 /** A request file larger than this is not read at all. */
 const REQUEST_FILE_MAX_BYTES = 4 * PEER_PROMPT_MAX_BYTES;
 const INBOX_ID = /^[0-9a-f]{32}$/u;

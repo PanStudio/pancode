@@ -6,8 +6,8 @@ import type { SemanticKind } from "./contract.js";
 import type { PointQuestion, Question } from "./types.js";
 
 export const MAX_CHOICE_OPTIONS = 255;
-export const MIN_SCORE_LEVELS = 2;
-export const MAX_SCORE_LEVELS = 10;
+const MIN_SCORE_LEVELS = 2;
+const MAX_SCORE_LEVELS = 10;
 
 /** A yes/no judgment. Both branches are described so no engine guesses the scale. */
 export function yesNo(instructions: string, whenTrue: string, whenFalse: string): Question {

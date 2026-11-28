@@ -35,7 +35,7 @@ export interface PluginSource {
 }
 
 /** A commit is named only by its full lowercase SHA-1; a short or uppercase name could be ambiguous. */
-export const HUB_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const HUB_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 export const HUB_PUBLISHER_PATTERN = /^[a-z0-9][a-z0-9-]{0,38}$/;
 const GITHUB_REPO = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 

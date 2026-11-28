@@ -103,7 +103,7 @@ export interface PaletteTask {
 }
 
 /** The palette stays a launcher, not a list of everything ever saved. */
-export const PALETTE_TASK_LIMIT = 40;
+const PALETTE_TASK_LIMIT = 40;
 
 export interface CommandHandlers {
 	navigate(path: string): void;

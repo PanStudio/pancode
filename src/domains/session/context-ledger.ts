@@ -252,7 +252,7 @@ const SEGMENT_CATEGORY: Readonly<Record<string, ContextLedgerCategory>> = {
 };
 
 /** Human labels for each bucket, shown verbatim in the overlay legend. */
-export const CONTEXT_CATEGORY_LABEL: Readonly<Record<ContextLedgerCategory, string>> = {
+const CONTEXT_CATEGORY_LABEL: Readonly<Record<ContextLedgerCategory, string>> = {
 	system: "System prompt",
 	tools: "Tool definitions",
 	toolResults: "Tool results",

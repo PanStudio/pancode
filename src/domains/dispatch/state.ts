@@ -166,7 +166,7 @@ export function writeFleetRunSync(record: FleetRunRecord): string {
  * roots for months, at the cost of missing a root older than the cap. That is
  * the right trade for every caller here: they all want the recent end.
  */
-export const MAX_FLEET_RUN_SCAN = 64;
+const MAX_FLEET_RUN_SCAN = 64;
 
 /**
  * Durable fleet-run roots, newest start first.

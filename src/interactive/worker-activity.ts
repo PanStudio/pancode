@@ -241,7 +241,7 @@ const TOOLS_THE_VERB_NAMES: ReadonlySet<string> = new Set([
  * Who owns a parked call, in the pending state's own word. Naming the call's verb here would say it is running when
  * it has not been allowed yet.
  */
-export const WAITING_FOR_APPROVAL = "needs approval";
+const WAITING_FOR_APPROVAL = "needs approval";
 
 export interface WorkerActionParts {
 	verb: string;

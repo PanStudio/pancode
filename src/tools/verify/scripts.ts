@@ -97,7 +97,7 @@ export interface CheckJudgement {
 	scientificValidity: typeof SCIENTIFIC_VALIDITY_NOT_ESTABLISHED;
 }
 
-export const SCIENTIFIC_VALIDITY_NOT_ESTABLISHED = "not established by this check";
+const SCIENTIFIC_VALIDITY_NOT_ESTABLISHED = "not established by this check";
 
 function executionOutcome(result: Pick<SafeCommandResult, "aborted" | "timedOut" | "outputCapped" | "exitCode">) {
 	if (result.aborted) return "aborted" as const;

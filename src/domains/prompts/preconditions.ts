@@ -14,7 +14,7 @@ export type PromptSurface = "attended" | "headless" | "worker";
 export type SandboxCondition = "active" | "absent";
 export type AutonomyCondition = "default" | "yolo" | "yolo-unconfined";
 
-export const PROMPT_SURFACES: ReadonlyArray<PromptSurface> = ["attended", "headless", "worker"];
+const PROMPT_SURFACES: ReadonlyArray<PromptSurface> = ["attended", "headless", "worker"];
 const SANDBOX_CONDITIONS: ReadonlyArray<SandboxCondition> = ["active", "absent"];
 const AUTONOMY_CONDITIONS: ReadonlyArray<AutonomyCondition> = ["default", "yolo", "yolo-unconfined"];
 

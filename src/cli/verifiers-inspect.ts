@@ -32,7 +32,7 @@ import {
 import { loadProjectVerifierCatalog, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH } from "../tools/verify/catalog.js";
 
 /** Wire bound on the emitted check list, independent of the catalog's own 128-check cap. */
-export const MAX_VERIFIERS_INSPECT_CHECKS = 64;
+const MAX_VERIFIERS_INSPECT_CHECKS = 64;
 
 const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const REJECTION_LOCATION_PATTERN = /^(root|checks\[\d{1,3}\])(\.[a-zA-Z]{1,32}(\[\d{1,3}\])?)?$/;
@@ -45,7 +45,7 @@ const REJECTION_LOCATION_PATTERN = /^(root|checks\[\d{1,3}\])(\.[a-zA-Z]{1,32}(\
  * this set: carrying a value this read can never emit would state a distinction
  * it never establishes.
  */
-export const VERIFIER_ORIGINS = ["package-script", "catalog", "proposed"] as const;
+const VERIFIER_ORIGINS = ["package-script", "catalog", "proposed"] as const;
 export type VerifierOrigin = (typeof VERIFIER_ORIGINS)[number];
 
 /**
@@ -57,7 +57,7 @@ export type VerifierOrigin = (typeof VERIFIER_ORIGINS)[number];
  * operator still learns a check exists and how it is bound, just not which
  * program outside this list it starts.
  */
-export const VERIFIER_RUNNERS = [
+const VERIFIER_RUNNERS = [
 	"npm",
 	"pnpm",
 	"yarn",
@@ -98,7 +98,7 @@ const RUNNER_ALIASES = new Map<string, VerifierRunner>([
 ]);
 
 /** Why discovery could not enumerate the check plane at all. */
-export const VERIFIER_BLOCKS = ["catalog-rejected", "id-collision", "unclassified"] as const;
+const VERIFIER_BLOCKS = ["catalog-rejected", "id-collision", "unclassified"] as const;
 export type VerifierBlock = (typeof VERIFIER_BLOCKS)[number];
 
 /**
@@ -109,7 +109,7 @@ export type VerifierBlock = (typeof VERIFIER_BLOCKS)[number];
  * classification says what went wrong and `rejectedAt` says where, which is the
  * pair an operator needs to find the line without being handed its contents.
  */
-export const VERIFIER_REJECTIONS = [
+const VERIFIER_REJECTIONS = [
 	"unreadable",
 	"invalid-yaml",
 	"unsupported-version",

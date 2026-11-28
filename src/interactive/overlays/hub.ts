@@ -56,15 +56,15 @@ import { refWords } from "./hub-words.js";
 import { type ListOverlayHandle, openListOverlay } from "./list-overlay.js";
 import type { ListOverlayItem, ListOverlayTab } from "./list-overlay-model.js";
 
-export const HUB_TITLE = "PanHub";
+const HUB_TITLE = "PanHub";
 
 /** @internal exported for contract tests */
-export const HUB_EMPTY_BROWSE =
+const HUB_EMPTY_BROWSE =
 	"No installable packs of this kind. Components that are already loaded are listed under Installed.";
 const HUB_EMPTY_BROWSE_REMEDY =
 	"b shows loaded components in Installed. Register a pack with pancode hub register <path>, import one with /hub import <path>, or press o to adopt from another local agent.";
 /** @internal exported for contract tests */
-export const HUB_EMPTY_INSTALLED = "Nothing of this kind is installed or loaded in this project or for your user.";
+const HUB_EMPTY_INSTALLED = "Nothing of this kind is installed or loaded in this project or for your user.";
 const HUB_EMPTY_INSTALLED_REMEDY = "b shows installable packs.";
 const HUB_READ_FAILED_REMEDY = "R reads PanHub again; n opens the notices.";
 

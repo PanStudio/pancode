@@ -63,11 +63,11 @@ export const MCP_EVENT_LIST_CAP = 200;
 /** Pages followed before an events/list cursor that never ends is abandoned. */
 export const MCP_EVENT_LIST_PAGE_CAP = 50;
 /** Occurrences one poll result may carry before the rest are refused as a protocol error. */
-export const MCP_EVENT_POLL_CAP = 1000;
+const MCP_EVENT_POLL_CAP = 1000;
 /** The least wait between two polls, whatever the server suggests (spec ruling: 1000 ms floor). */
-export const MCP_EVENT_MIN_POLL_MS = 1000;
+const MCP_EVENT_MIN_POLL_MS = 1000;
 /** The largest wait between two polls PanCode honours; a huge suggestion cannot stall a job forever. */
-export const MCP_EVENT_MAX_POLL_MS = 5 * 60_000;
+const MCP_EVENT_MAX_POLL_MS = 5 * 60_000;
 const NAME_BYTES = 256;
 const DESCRIPTION_BYTES = 2048;
 const EVENT_ID_BYTES = 512;
@@ -79,7 +79,7 @@ const CURSOR_BYTES = 4096;
  * name in `error.message` second, so a renumbering of the provisional codes
  * still reads right when the server keeps the name.
  */
-export const MCP_EVENT_ERRORS = {
+const MCP_EVENT_ERRORS = {
 	InvalidParams: -32602,
 	NotFound: -32023,
 	Forbidden: -32024,

@@ -4,7 +4,7 @@ import { type Static, Type } from "typebox";
 import { SettingsOrigin } from "./settings.js";
 
 const closed = { additionalProperties: false };
-export const SettingTiming = Type.Union([
+const SettingTiming = Type.Union([
 	Type.Literal("hotReload"),
 	Type.Literal("nextTurn"),
 	Type.Literal("restartRequired"),
@@ -55,10 +55,7 @@ export const SettingControl = Type.Object(
 	},
 	closed,
 );
-export const SettingsSection = Type.Object(
-	{ id: Type.String(), label: Type.String(), description: Type.String() },
-	closed,
-);
+const SettingsSection = Type.Object({ id: Type.String(), label: Type.String(), description: Type.String() }, closed);
 export const SettingsControls = Type.Object(
 	{ sections: Type.Array(SettingsSection), controls: Type.Array(SettingControl), userFile: Type.String() },
 	closed,

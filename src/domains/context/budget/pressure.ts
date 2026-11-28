@@ -179,8 +179,8 @@ export const DEFAULT_WORKING_SET_TARGET = 0.6;
  * threshold, expressed as proportions so a configured lower threshold scales
  * deterministically instead of producing an advisory above its own reduce point.
  */
-export const NOTICE_PROPORTION = 0.65 / 0.8;
-export const PREPARE_PROPORTION = 0.72 / 0.8;
+const NOTICE_PROPORTION = 0.65 / 0.8;
+const PREPARE_PROPORTION = 0.72 / 0.8;
 
 /** An announcement clears once pressure falls this far below the notice level. */
 export const ADVISORY_RESET_BAND = 0.05;

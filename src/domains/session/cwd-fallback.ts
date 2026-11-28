@@ -25,7 +25,7 @@ export interface FsProbe {
 	isDirectory(path: string): boolean;
 }
 
-export const defaultFsProbe: FsProbe = {
+const defaultFsProbe: FsProbe = {
 	exists: (p) => existsSync(p),
 	isDirectory: (p) => {
 		try {

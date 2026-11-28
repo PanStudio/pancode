@@ -54,10 +54,10 @@ interface TaskGateState {
 	containable: boolean;
 }
 
-export const TASK_GATE_LIMIT = 8;
+const TASK_GATE_LIMIT = 8;
 const SPAN_LIMIT = 400;
 /** The ceiling a model-supplied timeout_ms meets for a task gate. */
-export const TASK_GATE_MAX_TIMEOUT_MS = 600_000;
+const TASK_GATE_MAX_TIMEOUT_MS = 600_000;
 /** A gate word is shell-quoted when judged, so it never splits into another command; control characters never pass. */
 const CONTROL_CHARACTER = /\p{Cc}/u;
 /** One-word spans that still name a whole gate; any other one-word span is a file, flag or identifier. */

@@ -4,7 +4,7 @@ import { operatorCalendar } from "../../core/format-time.js";
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import type { MiddlewareEffect } from "./types.js";
 
-export const LOCAL_CLOCK_REMINDER_REGISTRATION_ID = "observer.local-clock";
+const LOCAL_CLOCK_REMINDER_REGISTRATION_ID = "observer.local-clock";
 
 const NONE: ReadonlyArray<MiddlewareEffect> = [];
 

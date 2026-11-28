@@ -220,7 +220,7 @@ const head = (prompt: Prompt): string => prompt.heading[0] ?? "";
 const rest = (prompt: Prompt): string[] => prompt.heading.slice(1);
 
 /** The first character or two of a name, for a tile that has no logo of its own. */
-export function monogram(label: string): string {
+function monogram(label: string): string {
 	const words = label.split(/[\s/()-]+/u).filter((word) => /[A-Za-z0-9]/u.test(word));
 	const [first, second] = words;
 	if (first === undefined) return "?";

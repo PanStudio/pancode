@@ -76,11 +76,11 @@ export type HubRowSubject =
 	| { kind: "hint"; record: HubPackageRecord; hint: HubProvidedResource }
 	| { kind: "notice"; message: string };
 
-export const HUB_GROUP_INSTALLED = "Installed";
-export const HUB_GROUP_AVAILABLE = "Available";
-export const HUB_GROUP_MEMBERS = "Members";
-export const HUB_GROUP_UNMANAGED = "Not a pack";
-export const HUB_GROUP_NOTICES = "Notices";
+const HUB_GROUP_INSTALLED = "Installed";
+const HUB_GROUP_AVAILABLE = "Available";
+const HUB_GROUP_MEMBERS = "Members";
+const HUB_GROUP_UNMANAGED = "Not a pack";
+const HUB_GROUP_NOTICES = "Notices";
 
 /** Fact tables keep their label column at every width, the way the key detail does. */
 const FACT_OPTIONS = { labelRole: "fieldName" as const, stack: "never" as const };

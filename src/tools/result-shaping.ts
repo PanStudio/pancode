@@ -262,7 +262,7 @@ export function writeToolOffload(
  * beside it, and never touched the repository again. Naming what the path is
  * costs a few tokens on truncated results and removes that reading.
  */
-export const OFFLOAD_POINTER_NOTE = "overflow copy, read-only; not the workspace";
+const OFFLOAD_POINTER_NOTE = "overflow copy, read-only; not the workspace";
 
 /** `full: <path> (<note>)`, the exact form every truncation notice carries. */
 export function offloadPointer(offloadPath: string): string {

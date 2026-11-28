@@ -30,7 +30,7 @@ import { MCP_EVENT_LIST_CAP, type McpEventDescriptor } from "./events.js";
 import { MCP_PROMPT_LIST_CAP } from "./resources.js";
 import type { McpToolDescriptor } from "./tool-results.js";
 
-export const MCP_METADATA_CACHE_VERSION = 1;
+const MCP_METADATA_CACHE_VERSION = 1;
 
 /**
  * How long a catalog is used before a live listing has to produce it again.

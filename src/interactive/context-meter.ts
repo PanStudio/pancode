@@ -18,7 +18,7 @@ import { GLYPH, pancodeTheme } from "./theme/index.js";
  * reads as an alarm. Severity belongs to the percent label and the worker
  * context tokens below.
  */
-export const CONTEXT_CATEGORY_TOKEN: Readonly<Record<ContextLedgerCategory, PancodeToken>> = {
+const CONTEXT_CATEGORY_TOKEN: Readonly<Record<ContextLedgerCategory, PancodeToken>> = {
 	system: "meterSystem",
 	tools: "meterTools",
 	toolResults: "meterResults",

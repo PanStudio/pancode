@@ -104,7 +104,7 @@ function nonZero(quantity: Quantity): boolean {
  * nothing is not usage. Detailed and /usage keep the bounds.
  */
 /** What a receipt says when no call of the turn measured anything, the footer's words for the same fact. */
-export const USAGE_NOT_MEASURED_NOTE = "usage not measured (/usage)";
+const USAGE_NOT_MEASURED_NOTE = "usage not measured (/usage)";
 
 /**
  * A receipt figure in the shared count form (`881`, `2.0k`, `151.5k`): `≈` marks an estimate and `≥` a lower bound, which

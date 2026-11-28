@@ -14,7 +14,7 @@ const INDEX = "pancode-gui-attachment-index";
 const MAX_SESSIONS = 32;
 
 /** Restore only bounded, valid attachments. Recompute UTF-8 size instead of trusting stored metadata. */
-export function decodeAttachmentDraft(raw: string | null): Attachment[] {
+function decodeAttachmentDraft(raw: string | null): Attachment[] {
 	if (!raw || raw.length > 2_000_000) return [];
 	try {
 		const data: unknown = JSON.parse(raw);

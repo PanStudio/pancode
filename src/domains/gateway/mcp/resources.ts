@@ -16,7 +16,7 @@ export const MCP_RESOURCE_LIST_CAP = 500;
 /** Prompts one listing keeps; a slash command list longer than this is not one an operator reads. */
 export const MCP_PROMPT_LIST_CAP = 200;
 /** The spec's own ceiling on one completion answer (server/utilities/completion). */
-export const MCP_COMPLETION_VALUES_CAP = 100;
+const MCP_COMPLETION_VALUES_CAP = 100;
 
 export interface McpResourceDescriptor {
 	uri: string;

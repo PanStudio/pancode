@@ -60,7 +60,7 @@ import { parseCommandFlags } from "./kit/flags.js";
 import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
 import { canSelect, promptSelect } from "./select.js";
 
-export const REPORT_HELP = `pancode report [bug|feature|question] [--title <t>] [--body-file <f> | -] [--session <id> | --last]
+const REPORT_HELP = `pancode report [bug|feature|question] [--title <t>] [--body-file <f> | -] [--session <id> | --last]
                   [--bundle none|mechanics [--consent debug|dataset] [--transcript [N]] [--with-tool-output]
                   [--anonymize-models]] [--credit] [--dry-run] [--yes] [--json]
                   [--on-duplicate comment|new|stop]

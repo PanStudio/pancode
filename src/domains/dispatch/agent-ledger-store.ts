@@ -37,7 +37,7 @@ import type { RunResult } from "./types.js";
 /** Bounded ring: newest first, oldest dropped past this count. */
 const MAX_AGENT_LEDGER_RECORDS = 50;
 /** Entries one ledger may hold before further appends are refused. */
-export const MAX_AGENT_LEDGER_ENTRIES = 200;
+const MAX_AGENT_LEDGER_ENTRIES = 200;
 /**
  * Posts one run may land on one ledger. The cap is what makes a post cost
  * something, which is the whole reason a post carries signal. Not configurable.

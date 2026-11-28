@@ -187,7 +187,7 @@ function citedPathKey(path: string): string {
  * corroborated; a path cited by one is uncorroborated; a finding that carries
  * no citation is an ungrounded lead.
  */
-export function corroboration(entries: ReadonlyArray<AgentLedgerEntry>): CorroborationReport {
+function corroboration(entries: ReadonlyArray<AgentLedgerEntry>): CorroborationReport {
 	const runsByPath = new Map<string, string[]>();
 	for (const entry of entries) {
 		if (entry.body.kind !== "finding") continue;

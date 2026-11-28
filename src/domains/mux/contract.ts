@@ -119,7 +119,7 @@ export interface MuxNotifyRequest {
 	sound?: MuxNotificationSound;
 }
 
-export const MUX_INTERRUPT_KEYS = ["esc", "ctrl+c"] as const;
+const MUX_INTERRUPT_KEYS = ["esc", "ctrl+c"] as const;
 export type MuxInterruptKey = (typeof MUX_INTERRUPT_KEYS)[number];
 
 export type MuxPromptOutcome =

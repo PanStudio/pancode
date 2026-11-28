@@ -15,7 +15,7 @@
 import type { MiddlewareEffect, MiddlewareHookInput, MiddlewareHookRegistration } from "../domains/middleware/index.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls } from "../session-control/tool-prose-loop.js";
 
-export const TOOL_PROSE_REGISTRATION_ID = "assessor.tool-prose-loop";
+const TOOL_PROSE_REGISTRATION_ID = "assessor.tool-prose-loop";
 
 export function createToolProseRegistration(): MiddlewareHookRegistration {
 	return {

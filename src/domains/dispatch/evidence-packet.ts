@@ -16,9 +16,9 @@ import { failsTheSameOnBase, hostCheckNotRunNote } from "./host-verification-not
 import type { RunGatePacket, RunResult } from "./types.js";
 
 /** Bytes of one subject's handback text shown inline; the rest stays in its run result. */
-export const PACKET_HANDBACK_PREVIEW_BYTES = 8192;
+const PACKET_HANDBACK_PREVIEW_BYTES = 8192;
 /** Bytes of measured diff the packet carries across all its subjects, shared evenly, with a per-subject floor. */
-export const PACKET_DIFF_BUDGET_BYTES = 24_000;
+const PACKET_DIFF_BUDGET_BYTES = 24_000;
 const PACKET_DIFF_FLOOR_BYTES = 4_000;
 
 /** A subject's measured change, as the host read it from git. */
@@ -94,7 +94,7 @@ export interface EvidencePacket {
 }
 
 /** The ids of one subject's items. A check id keeps the declared check's own id. */
-export const packetIds = {
+const packetIds = {
 	handback: (ordinal: number): string => `s${ordinal}.handback`,
 	diff: (ordinal: number): string => `s${ordinal}.diff`,
 	check: (ordinal: number, check: string): string => `s${ordinal}.check.${check}`,

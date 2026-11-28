@@ -22,7 +22,7 @@ import type { MiddlewareEffect, MiddlewareHookInput } from "./types.js";
  * unset is skipped rather than invented.
  */
 
-export const GUIDANCE_REGISTRATION_ID = "observer.guidance";
+const GUIDANCE_REGISTRATION_ID = "observer.guidance";
 
 /** A lesson retires after this many showings across all sessions. */
 export const LESSON_LIFETIME_SHOWS = 2;
@@ -31,7 +31,7 @@ export const SESSION_TIP_BUDGET = 1;
 /** A newcomer, who has seen fewer lessons than this across all sessions, gets one more tip per session. */
 export const NEWCOMER_LESSONS = 6;
 /** Substantive turns between tips, unless a lesson answers the prompt directly. */
-export const TURNS_BETWEEN_TIPS = 3;
+const TURNS_BETWEEN_TIPS = 3;
 /** A lesson at or above this score answers the prompt itself and may skip the spacing. */
 const DIRECT_SCORE = 3;
 /** A question about one feature outranks the generic ask-PanCode lesson, but not a direct match. */

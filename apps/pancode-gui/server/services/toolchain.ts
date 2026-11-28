@@ -8,7 +8,7 @@ import { fingerprint, type OperationRegistry } from "./operations.js";
 import { AppProblem } from "./problem.js";
 
 /** The HTTP projection deliberately exposes installDir and binaryPath to the local operator. */
-export function projectTool(raw: RawTool): Tool {
+function projectTool(raw: RawTool): Tool {
 	return {
 		id: raw.id,
 		version: raw.version,

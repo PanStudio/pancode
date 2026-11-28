@@ -7,7 +7,7 @@ import { markTokenRejected, tokenRejected } from "./auth-state.js";
 import { dropStoredToken, type LaunchSecret, rememberedCredentialKey } from "./token.js";
 
 /** Where a window keeps its client id across a reload, and its live credential only across the reload itself. */
-export const clientIdKey = "pancode-client";
+const clientIdKey = "pancode-client";
 const handoffKey = "pancode-client-handoff";
 
 export class CredentialProblem extends Error {

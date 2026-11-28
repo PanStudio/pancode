@@ -234,4 +234,4 @@ export const LiveWorkers = memo(function LiveWorkers({
 });
 
 export const workerCount = (count: number): string => (count === 1 ? "1 worker" : `${count} workers`);
-export const liveWorkersLabel = (count: number): string => `${workerCount(count)} running`;
+const liveWorkersLabel = (count: number): string => `${workerCount(count)} running`;

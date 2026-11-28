@@ -94,7 +94,7 @@ export interface LocatedTask {
  * time, the last one used first, and the search stops at the first ledger that has the task. Leaving
  * the page cancels the read in flight and reads no further project.
  */
-export async function locateTask(
+async function locateTask(
 	client: Pick<Client, "call">,
 	id: string,
 	signal: AbortSignal,

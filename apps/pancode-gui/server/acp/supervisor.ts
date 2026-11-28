@@ -189,10 +189,10 @@ const PARK_AFTER_MS = 5 * 60_000;
 /** The ownership row's place for an installation read, which has no recent workspace. */
 const INSTALLATION_CONTROL = "installation";
 /** The `interface.guiTurnCapacity` default and bounds; PanCode's settings validation enforces the same range. */
-export const DEFAULT_TURN_CAPACITY = 4;
-export const MAX_TURN_CAPACITY = 16;
+const DEFAULT_TURN_CAPACITY = 4;
+const MAX_TURN_CAPACITY = 16;
 /** A value outside 1..16 or not a whole number keeps the default rather than unlimiting or stalling turns. */
-export function boundedTurnCapacity(value: unknown) {
+function boundedTurnCapacity(value: unknown) {
 	return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_TURN_CAPACITY
 		? value
 		: DEFAULT_TURN_CAPACITY;

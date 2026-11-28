@@ -25,19 +25,19 @@ import { isRecord } from "../../../core/type-guards.js";
  * day, inclusive) this build seals nothing to it: the key is rotated yearly by shipping a new one with a new id, so an
  * old client can never encrypt to a retired key (SF-20, R-18).
  */
-export const SHARE_RECIPIENT = {
+const SHARE_RECIPIENT = {
 	kid: "d7aad758f9cb9edc",
 	publicKey: "HrgavsjtbzwR5utXQfKg9FzZ62qLykC6kJlqvOC8MS0=",
 	notAfter: "2027-12-31",
 } as const;
 
-export const SHARE_KEY_EXPIRED =
+const SHARE_KEY_EXPIRED =
 	"this PanCode is too old to share a bundle: the maintainers' key it carries has expired; upgrade, or send the report without one";
 
-export const SHARE_PLAIN_FORMAT = "pancode.share.plain";
-export const SHARE_SEALED_FORMAT = "pancode.share.sealed";
-export const SHARE_ID = /^shr_[0-9a-f]{16}$/u;
-export const SHARE_KINDS = ["report-bundle", "telemetry-share"] as const;
+const SHARE_PLAIN_FORMAT = "pancode.share.plain";
+const SHARE_SEALED_FORMAT = "pancode.share.sealed";
+const SHARE_ID = /^shr_[0-9a-f]{16}$/u;
+const SHARE_KINDS = ["report-bundle", "telemetry-share"] as const;
 export type ShareKind = (typeof SHARE_KINDS)[number];
 const HKDF_INFO = "pancode share v1";
 /** PKCS#8 DER prefix of an X25519 private key; the raw 32 bytes follow it. */

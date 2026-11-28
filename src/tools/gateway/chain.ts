@@ -15,7 +15,7 @@ import { CHAIN_OUTPUT_TRUNCATED_MARKER } from "../surface.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import { byteLength, truncateUtf8 } from "../truncate-utf8.js";
 
-export const CHAIN_MAX_STEPS = 16;
+const CHAIN_MAX_STEPS = 16;
 const CHAIN_RESULT_BYTES = 32 * 1024;
 
 interface Step {

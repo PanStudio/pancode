@@ -22,7 +22,7 @@ import type { DispatchReservationRecord } from "./reservation-store.js";
 
 export { processBirthToken } from "../../core/process-identity.js";
 
-export const MAX_CAPACITY_LEASES = 1_000;
+const MAX_CAPACITY_LEASES = 1_000;
 /** `LOCAL_NODE_ID` in transport.ts; imported by value it would pull worker spawning into every admission reader. */
 const LOCAL_NODE_ID = "local";
 // Admission waits and lease renewal yield while they wait for the lock, but
@@ -39,7 +39,7 @@ if (FILE_LOCK_ACQUIRE_TIMEOUT_MS >= LEASE_TTL_MS)
  * on the machine if the draining process never came back to clear it. Bound it
  * instead: a drain expires unless an operator renews it.
  */
-export const DEFAULT_CAPACITY_DRAIN_TTL_MS = 60 * 60_000;
+const DEFAULT_CAPACITY_DRAIN_TTL_MS = 60 * 60_000;
 
 export interface CapacityLease {
 	leaseId: string;

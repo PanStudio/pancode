@@ -39,16 +39,16 @@ import { toolEscapesWriteRoots } from "../safety/policy-write-landing.js";
 import type { WorkerMcpAttestation, WorkerPermitAllowance } from "../safety/worker-permit.js";
 import type { RunRole } from "./obligation.js";
 
-export const WORKER_ENVELOPE_VERSION = 1;
+const WORKER_ENVELOPE_VERSION = 1;
 
 /**
  * The single definition of read-only. `none` changes nothing; `roots` writes only under its roots; `worktree` writes
  * in its own task worktree and merges back only its roots when it has any; `workspace` has no write boundary.
  */
-export const ENVELOPE_WRITE_MODES = ["none", "roots", "worktree", "workspace"] as const;
+const ENVELOPE_WRITE_MODES = ["none", "roots", "worktree", "workspace"] as const;
 export type EnvelopeWriteMode = (typeof ENVELOPE_WRITE_MODES)[number];
 
-export const WITHHELD_REASONS = [
+const WITHHELD_REASONS = [
 	"role",
 	"tool-profile",
 	"denied",
@@ -62,25 +62,25 @@ export const WITHHELD_REASONS = [
 export type WithheldReason = (typeof WITHHELD_REASONS)[number];
 
 /** How a run finds skills: none, only the recipe's bound ones, or the ranked catalog. */
-export const ENVELOPE_SKILL_DISCOVERY = ["off", "bound-only", "ranked"] as const;
+const ENVELOPE_SKILL_DISCOVERY = ["off", "bound-only", "ranked"] as const;
 export type EnvelopeSkillDiscovery = (typeof ENVELOPE_SKILL_DISCOVERY)[number];
 
 /** Where the run's commands execute: no shell tool, under the OS sandbox, or directly on the host. */
-export const ENVELOPE_SHELLS = ["none", "sandboxed", "host"] as const;
+const ENVELOPE_SHELLS = ["none", "sandboxed", "host"] as const;
 export type EnvelopeShell = (typeof ENVELOPE_SHELLS)[number];
 
 /** Which checks the run may run through verify: none, the declared task gates and checks, or any. */
-export const ENVELOPE_CHECKS = ["none", "declared", "any"] as const;
+const ENVELOPE_CHECKS = ["none", "declared", "any"] as const;
 export type EnvelopeChecks = (typeof ENVELOPE_CHECKS)[number];
 
 /**
  * Who answers an approval-required call. `main` is the main agent with main authority, `operator` the main route
  * decided by a person, `judge` the main session's safety judge with main authority.
  */
-export const ENVELOPE_ASKS = ["deny", "fail", "main", "operator", "judge"] as const;
+const ENVELOPE_ASKS = ["deny", "fail", "main", "operator", "judge"] as const;
 export type EnvelopeAsks = (typeof ENVELOPE_ASKS)[number];
 
-export const ENVELOPE_SANDBOX_BACKENDS = ["bwrap", "seatbelt", "none"] as const;
+const ENVELOPE_SANDBOX_BACKENDS = ["bwrap", "seatbelt", "none"] as const;
 export type EnvelopeSandboxBackend = (typeof ENVELOPE_SANDBOX_BACKENDS)[number];
 
 export interface EnvelopeApproval {

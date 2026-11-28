@@ -31,7 +31,7 @@ import { expandChainMessages } from "../tools/surface.js";
 const count = (value: number): string => value.toLocaleString("en-US");
 
 /** Calls that reached the provider or may have; a never-sent attempt asked the model nothing. */
-export const SENT_DISPOSITIONS = ["sent_unsettled", "settled_no_usage", "settled", "incomplete"] as const;
+const SENT_DISPOSITIONS = ["sent_unsettled", "settled_no_usage", "settled", "incomplete"] as const;
 
 /**
  * Model calls that went out, counted once per call across its attempts. `/usage` counted the memory guardian's skipped

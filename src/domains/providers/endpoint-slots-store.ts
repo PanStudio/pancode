@@ -50,9 +50,9 @@ import { pancodeStateDir, stateRootRemoved } from "../../core/xdg.js";
  * probed in this process. A day spans an ordinary working session while still
  * expiring across the reconfigure-and-restart cycle that changes the number.
  */
-export const DEFAULT_ENDPOINT_SLOTS_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_ENDPOINT_SLOTS_TTL_MS = 24 * 60 * 60 * 1000;
 
-export const ENDPOINT_SLOTS_TTL_ENV_VAR = "PANCODE_ENDPOINT_SLOTS_TTL_MS";
+const ENDPOINT_SLOTS_TTL_ENV_VAR = "PANCODE_ENDPOINT_SLOTS_TTL_MS";
 
 /** Bounded ring. An operator's target list is small; a runaway file is not. */
 const MAX_ENDPOINT_SLOT_RECORDS = 64;

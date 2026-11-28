@@ -738,7 +738,7 @@ async function loadRunRecordSummary(stateDir: string, runId: string): Promise<Vi
 }
 
 /** Finished runs by their sealed evidence: the run's seal verdict and the assessment it sealed with (#434). */
-export class EvidenceArtifactProvider implements ArtifactProvider {
+class EvidenceArtifactProvider implements ArtifactProvider {
 	readonly category = "evidence" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1084,7 +1084,7 @@ function renderTaskLedgerMarkdown(entry: TaskLedgerEntry): string[] {
 	return lines;
 }
 
-export class TaskLedgerArtifactProvider implements ArtifactProvider {
+class TaskLedgerArtifactProvider implements ArtifactProvider {
 	readonly category = "task-ledger" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1228,7 +1228,7 @@ export class WorkspaceArtifactProvider implements ArtifactProvider {
 	}
 }
 
-export class ToolOutputArtifactProvider implements ArtifactProvider {
+class ToolOutputArtifactProvider implements ArtifactProvider {
 	readonly category = "tool-output" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1378,7 +1378,7 @@ function renderProtectedArtifactMarkdown(entry: ProtectedArtifactEntry): string[
 	];
 }
 
-export class ProtectedArtifactProvider implements ArtifactProvider {
+class ProtectedArtifactProvider implements ArtifactProvider {
 	readonly category = "protected-artifact" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1423,7 +1423,7 @@ export class ProtectedArtifactProvider implements ArtifactProvider {
 	}
 }
 
-export class CompactionArtifactProvider implements ArtifactProvider {
+class CompactionArtifactProvider implements ArtifactProvider {
 	readonly category = "compaction" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1471,7 +1471,7 @@ function promptManifestSearchText(record: SessionPromptCompileRecord): string[] 
 	].filter(isNonEmptyString);
 }
 
-export class PromptManifestArtifactProvider implements ArtifactProvider {
+class PromptManifestArtifactProvider implements ArtifactProvider {
 	readonly category = "prompt-manifest" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1611,7 +1611,7 @@ function auditReadErrorsArtifact(path: string, journals: ReadonlyArray<JournalSo
  * The current session's safety and lifecycle decisions, newest first, from its journal and the run journals it
  * references (#434). A view with no session lists none: the journals are per scope, never machine-wide.
  */
-export class SafetyAuditArtifactProvider implements ArtifactProvider {
+class SafetyAuditArtifactProvider implements ArtifactProvider {
 	readonly category = "audit" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}
@@ -1663,7 +1663,7 @@ export class SafetyAuditArtifactProvider implements ArtifactProvider {
 const MESSAGE_PATH_ARTIFACT_LIMIT = 200;
 
 /** What became of each operator message in this session, newest first, from its journal; no message text is in there. */
-export class MessagePathArtifactProvider implements ArtifactProvider {
+class MessagePathArtifactProvider implements ArtifactProvider {
 	readonly category = "message-path" as const;
 
 	constructor(private readonly deps: ArtifactProviderDeps) {}

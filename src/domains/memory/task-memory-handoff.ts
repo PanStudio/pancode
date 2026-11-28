@@ -15,8 +15,8 @@ import {
 import { compareCodeUnits, hasExactKeys, nonEmptyString } from "./util.js";
 import { validNamedIdentityKey, validSourceValue } from "./validate.js";
 
-export const TASK_MEMORY_HANDOFF_VERSION = 2;
-export const TASK_MEMORY_HANDOFF_LANGUAGE = "pancode-task-memory";
+const TASK_MEMORY_HANDOFF_VERSION = 2;
+const TASK_MEMORY_HANDOFF_LANGUAGE = "pancode-task-memory";
 const HANDOFF_MAX_BYTES = 1_000_000;
 
 export interface TaskMemoryHandoffEntry {

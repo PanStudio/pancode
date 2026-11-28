@@ -3,7 +3,7 @@
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import path from "node:path";
 
-export const RUNTIME_WATCH_LIMITS = {
+const RUNTIME_WATCH_LIMITS = {
 	debounceMs: 500,
 	maxPaths: 64,
 	/** How often a glob whose base directory does not exist yet looks for it. */

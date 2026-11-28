@@ -20,9 +20,9 @@ import {
 	type YaziSessionOptions,
 } from "../domains/mux/yazi/session.js";
 
-export const YAZI_PICK_MAX_PATHS = 32;
-export const YAZI_PICK_MAX_CHARS = 4096;
-export const YAZI_LIVENESS_MS = 5000;
+const YAZI_PICK_MAX_PATHS = 32;
+const YAZI_PICK_MAX_CHARS = 4096;
+const YAZI_LIVENESS_MS = 5000;
 
 export interface YaziBridgeSettings {
 	mode: YaziSessionMode;

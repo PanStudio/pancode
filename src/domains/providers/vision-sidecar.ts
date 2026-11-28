@@ -34,7 +34,7 @@ export interface VisionSidecar {
 	analyze(images: ReadonlyArray<ImageContent>, question: string, signal?: AbortSignal): Promise<VisionAnalysis>;
 }
 
-export const VISION_PROFILE = "vision";
+const VISION_PROFILE = "vision";
 export const VISION_LIMITS = {
 	images: 4,
 	base64BytesPerImage: 4_718_592,

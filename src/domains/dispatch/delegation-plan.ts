@@ -39,7 +39,7 @@ export interface ValidateDelegationPlanInput {
 	writes: ReadonlyArray<string>;
 }
 
-export const DELEGATION_PROPOSAL_BRIEFING_MAX_BYTES = 12_000;
+const DELEGATION_PROPOSAL_BRIEFING_MAX_BYTES = 12_000;
 
 export function buildDelegationProposalBriefing(proposals: ReadonlyArray<{ agent: string; output: string }>): string {
 	const value = proposals.map((proposal) => `PROPOSAL ${proposal.agent}\n${proposal.output}`).join("\n\n");

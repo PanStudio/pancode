@@ -15,8 +15,8 @@ import { ToolNames } from "../core/tool-names.js";
 import type { MiddlewareEffect, MiddlewareHookRegistration } from "../domains/middleware/index.js";
 import { toolMutationPaths } from "../domains/safety/protected-artifacts.js";
 
-export const SKILL_ACTIVATION_OBSERVER_ID = "observer.skill-activation";
-export const FILE_MUTATION_OBSERVER_ID = "observer.file-mutation";
+const SKILL_ACTIVATION_OBSERVER_ID = "observer.skill-activation";
+const FILE_MUTATION_OBSERVER_ID = "observer.file-mutation";
 
 const NO_EFFECTS: ReadonlyArray<MiddlewareEffect> = [];
 

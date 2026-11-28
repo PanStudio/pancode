@@ -126,7 +126,7 @@ const RUN_FACTS: ReadonlySet<string> = new Set([
 ]);
 
 /** True for the five fact types that fold into a run row. The other two belong to other surfaces. */
-export const isRunFact = (type: string): boolean => RUN_FACTS.has(type);
+const isRunFact = (type: string): boolean => RUN_FACTS.has(type);
 
 function blank(runId: string, at: string): FleetRun {
 	return {
@@ -155,7 +155,7 @@ function measuredCount(value: unknown): number | null {
  * A code and its detail as one line. A detail that already opens with the code in words
  * ("assurance compromised: …" for `assurance_compromised`) is not prefixed with it again (gui-verify 10).
  */
-export function codedDetail(code: string | null, detail: string | null): string | null {
+function codedDetail(code: string | null, detail: string | null): string | null {
 	if (detail === null || code === null) return detail ?? code;
 	const words = code.replaceAll(/[_-]+/g, " ").toLowerCase();
 	return detail.toLowerCase().startsWith(words) ? detail : `${code}: ${detail}`;

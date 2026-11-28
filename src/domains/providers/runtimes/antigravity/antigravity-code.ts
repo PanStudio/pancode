@@ -20,13 +20,13 @@ import type { TargetDescriptor } from "../../types/target-descriptor.js";
  * and translates the documented structured result into a worker result.
  */
 
-export const ANTIGRAVITY_AUTH_NOTICE =
+const ANTIGRAVITY_AUTH_NOTICE =
 	"Experimental local delegation through your installed Antigravity (`agy`) CLI. PanCode neither signs in nor stores " +
 	"or inspects Antigravity credentials. Run `agy` yourself and complete sign-in before probing this target.";
 
 // Hints only until an account returns a live catalog. They are never used to
 // validate a model after a successful live probe.
-export const ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
+const ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
 	"gemini-3.8-flash-high",
 	"gemini-3.8-flash-medium",
 	"gemini-3.8-flash-low",
@@ -35,7 +35,7 @@ export const ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
 ];
 
 /** Typed PanCode capabilities only. Antigravity's own opaque tools are declared separately. */
-export const antigravityCapabilities: CapabilityFlags = {
+const antigravityCapabilities: CapabilityFlags = {
 	chat: true,
 	tools: false,
 	reasoning: false,
@@ -48,7 +48,7 @@ export const antigravityCapabilities: CapabilityFlags = {
 	maxTokens: 0,
 };
 
-export const ANTIGRAVITY_MAX_CATALOG_BYTES = 1024 * 1024;
+const ANTIGRAVITY_MAX_CATALOG_BYTES = 1024 * 1024;
 export const ANTIGRAVITY_MAX_DISCOVERED_MODELS = 4096;
 const MAX_MODEL_ID_CHARS = 1024;
 const MAX_MODEL_LABEL_CHARS = 1024;

@@ -14,7 +14,7 @@ import { mcpOAuthCatalogBinding } from "./oauth-grants.js";
 import { mcpHeaderCredentialRef, mcpOriginOf, parseMcpHeaderCredentialRef } from "./remote.js";
 
 /** Cap on one stored header value. */
-export const MCP_HEADER_VALUE_BYTES = 8192;
+const MCP_HEADER_VALUE_BYTES = 8192;
 
 /** The part of the credential store the MCP header credentials use. */
 export interface McpHeaderCredentialStore {

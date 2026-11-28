@@ -87,20 +87,20 @@ export type UserHookKind = "command" | "prompt" | "effect";
  */
 export type UserHookOrigin = "extension" | "user" | "project" | "project.local";
 
-export const USER_HOOK_ORIGIN_ORDER: ReadonlyArray<UserHookOrigin> = ["extension", "user", "project", "project.local"];
+const USER_HOOK_ORIGIN_ORDER: ReadonlyArray<UserHookOrigin> = ["extension", "user", "project", "project.local"];
 
 /** Default and bounds for a command hook's wall-clock timeout. */
-export const USER_HOOK_COMMAND_TIMEOUT_DEFAULT_MS = 2_000;
-export const USER_HOOK_COMMAND_TIMEOUT_MIN_MS = 100;
+const USER_HOOK_COMMAND_TIMEOUT_DEFAULT_MS = 2_000;
+const USER_HOOK_COMMAND_TIMEOUT_MIN_MS = 100;
 export const USER_HOOK_COMMAND_TIMEOUT_MAX_MS = 5_000;
 /** Hard cap on command output captured into an effect, in characters. */
-export const USER_HOOK_COMMAND_OUTPUT_MAX_CHARS = 4_000;
+const USER_HOOK_COMMAND_OUTPUT_MAX_CHARS = 4_000;
 /** Cap on a prompt hook's injected message, in characters. */
-export const USER_HOOK_PROMPT_MAX_CHARS = 2_000;
+const USER_HOOK_PROMPT_MAX_CHARS = 2_000;
 /** Cap on the JSON payload a command hook reads on stdin; a larger tool result is left out and flagged. */
 const USER_HOOK_PAYLOAD_MAX_BYTES = 256 * 1024;
 /** The exit status by which a command hook blocks what its event can block. */
-export const USER_HOOK_BLOCK_EXIT_CODE = 2;
+const USER_HOOK_BLOCK_EXIT_CODE = 2;
 
 /**
  * Provenance of an installed package that supplied hook declarations, as the

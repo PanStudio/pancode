@@ -34,9 +34,9 @@ import { boundedHead, probability } from "./bounds.js";
  * verdict aborts the reading, so the bound only stops a hung engine outliving its use
  * when the judge itself runs long toward its 30 s timeout.
  */
-export const JUDGE_SCREEN_DEADLINE_MS = 10_000;
+const JUDGE_SCREEN_DEADLINE_MS = 10_000;
 /** The newest results one review reads. */
-export const JUDGE_SCREEN_MAX_RESULTS = 4;
+const JUDGE_SCREEN_MAX_RESULTS = 4;
 /** Code points of the content's head sent. An injection sits where the tool put the text, not at the far end of a large file. */
 const MAX_CONTENT_CHARS = 6000;
 const MAX_SOURCE_CHARS = 200;
@@ -49,7 +49,7 @@ const SCREENED_TOOLS: ReadonlySet<string> = new Set([ToolNames.WebFetch, ToolNam
 /** The argument that names what a screened tool read, in the order a tool's schema is likeliest to carry it. */
 const TARGET_ARGS = ["url", "uri", "path", "query"] as const;
 
-export function screensToolResult(toolName: string): boolean {
+function screensToolResult(toolName: string): boolean {
 	return SCREENED_TOOLS.has(toolName) || isMcpToolName(toolName);
 }
 
