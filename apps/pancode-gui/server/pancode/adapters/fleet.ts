@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { Static, TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
 	readDispatchHistory,
 	readFleetHistory,
@@ -19,14 +18,11 @@ import {
 	FleetRoot,
 	FleetRootDetail,
 } from "../../../contracts/fleet.js";
-import { AppProblem } from "../../services/problem.js";
+import { AppProblem, projected } from "../../services/problem.js";
 import { artifactPage } from "./storage.js";
 
-function checked<S extends TSchema>(schema: S, raw: unknown): Static<S> {
-	const value = Value.Clean(schema, structuredClone(raw));
-	if (!Value.Check(schema, value)) throw new AppProblem("unavailable", "Fleet storage returned an invalid record.");
-	return value;
-}
+const checked = <S extends TSchema>(schema: S, raw: unknown) =>
+	projected(schema, raw, "unavailable", "Fleet storage returned an invalid record.", { clone: true });
 function rootSummary(record: NonNullable<ReturnType<typeof readFleetHistoryRoot>>): FleetRoot {
 	return checked(FleetRoot, { ...record, stepCount: record.stepIds.length, completedCount: record.steps.length });
 }
