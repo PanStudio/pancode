@@ -676,6 +676,108 @@ export type ChatLoopSubmitState = TurnStateView<
 	| "turnToolNames"
 >;
 
+/** chat-loop/preparation: owns the preparation phase the composer renders. */
+export type ChatLoopPreparationState = TurnStateView<
+	"turnPreparation" | "turnPreparationSince" | "turnPreparationStage",
+	"turnPreparation" | "turnPreparationSince" | "turnPreparationStage"
+>;
+
+/** chat-loop/notices: reads the turn a notice belongs to and arms the skill surface. */
+export type ChatLoopNoticesState = TurnStateView<"activeSkillSurface" | "lastTurnId", "activeSkillSurface">;
+
+/** chat-loop/tool-options: reads the running turn a tool call is invoked in. */
+export type ChatLoopToolOptionsState = TurnStateView<
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "continuation"
+	| "currentAskUserPolicy"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastTurnId"
+	| "runtime"
+	| "synthesisToolLock"
+	| "toolProseAbortReason",
+	never
+>;
+
+/** chat-loop/cancel: stops the running turn and records which cause asked. */
+export type ChatLoopCancelState = TurnStateView<
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "runtime"
+	| "streaming",
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+>;
+
+/** chat-loop/route-move: reads the running request a route move would carry. */
+export type ChatLoopRouteMoveState = TurnStateView<
+	"routeMove" | "runtime" | "streamStallReason" | "streamStallStage",
+	"routeMove" | "streamStallReason" | "streamStallStage"
+>;
+
+/** chat-loop/context-commands: reads the idle turn an operator context command runs between. */
+export type ChatLoopContextCommandsState = TurnStateView<
+	"activeUserTurnId" | "lastTurnId" | "streaming" | "turnPreparation",
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "streaming"
+>;
+
+/** chat-loop/session-reset: clears the turn when the session under the loop changes. */
+export type ChatLoopSessionResetState = TurnStateView<
+	| "activeSkillSurface"
+	| "continuityAtMs"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastRunSnapshot"
+	| "lastTurnId"
+	| "replayedContextMessages"
+	| "runtime"
+	| "streaming",
+	| "activeSkillSurface"
+	| "continuityAtMs"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastRunSnapshot"
+	| "lastTurnId"
+	| "replayedContextMessages"
+	| "streaming"
+>;
+
+/** chat-loop/session-commands: reads the turn scope an operator session command narrows or resumes. */
+export type ChatLoopSessionCommandsState = TurnStateView<
+	| "activeSkillSurface"
+	| "activeUserTurnId"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastTurnId"
+	| "replayedContextMessages"
+	| "runtime"
+	| "streaming",
+	"currentTurnConstraints"
+>;
+
+/** chat-loop/machine-turn: reads whether the conversation is idle enough to admit a job's turn. */
+export type ChatLoopMachineTurnState = TurnStateView<
+	"activeUserTurnId" | "currentAskUserPolicy" | "runtime" | "streaming",
+	never
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

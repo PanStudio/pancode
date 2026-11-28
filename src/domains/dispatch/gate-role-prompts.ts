@@ -74,13 +74,15 @@ export interface GateReviewerRecipe {
 	readonly body: string;
 }
 
+const INSTALLED_REVIEWER_SOURCES = new Set(["user", "project", "plugin"]);
+
 /**
  * The persona a review gate's reviewer runs under. A recipe the operator installed (user, project or plugin) keeps
- * its own body, with the gate's contract appended, so its extra criteria reach the verdict. A builtin recipe, an ACP
- * delegation agent or an unknown id runs under {@link REVIEWER_GATE_PROMPT} byte for byte.
+ * its own body, with the gate's contract appended, so its extra criteria reach the verdict. Any other recipe source
+ * (builtin, ACP delegation or unknown) runs under {@link REVIEWER_GATE_PROMPT} byte for byte.
  */
 export function reviewerGatePrompt(recipe: GateReviewerRecipe | undefined): string {
-	if (recipe === undefined || recipe.source === "builtin" || recipe.source === "custom") return REVIEWER_GATE_PROMPT;
+	if (recipe === undefined || !INSTALLED_REVIEWER_SOURCES.has(recipe.source)) return REVIEWER_GATE_PROMPT;
 	const body = recipe.body.trim();
 	return body.length === 0 ? REVIEWER_GATE_PROMPT : `${body}\n\n${REVIEWER_GATE_CONTRACT}`;
 }
