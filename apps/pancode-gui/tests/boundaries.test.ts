@@ -124,7 +124,7 @@ const adapters = new Set([
 	"src/domains/session/index.ts",
 	"src/domains/evidence/index.ts",
 	"src/domains/telemetry/read-model.ts",
-	"src/domains/session/telemetry-source.ts",
+	"src/domains/telemetry/telemetry-source.ts",
 	// The repository window `usage report` folds, so a repo reference explains to the CLI's number (#434 §11.4).
 	"src/domains/telemetry/usage-window.ts",
 	// The run-history read model the fleet and trace adapters page through.

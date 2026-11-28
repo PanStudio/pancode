@@ -5,9 +5,9 @@ import { normalizeOutputStyle, type OutputStyle } from "../core/defaults.js";
 import { GLYPH } from "../core/glyphs.js";
 import type { RunIntegrity, RunOrigin, RunValidation } from "../core/run-row.js";
 import { factKnownValue } from "../core/telemetry/known.js";
-import { loadRunTelemetrySource, runTelemetryJournalStamp } from "../domains/session/telemetry-source.js";
 import { sizeCallJournalCache } from "../domains/telemetry/call-journal.js";
 import { runTelemetry } from "../domains/telemetry/read-model-runs.js";
+import { loadRunTelemetrySource, runTelemetryJournalStamp } from "../domains/telemetry/telemetry-source.js";
 import { isStructuredAnswerText } from "../domains/telemetry/worker-progress.js";
 /**
  * The workers dashboard's model: which workers the board shows and what each

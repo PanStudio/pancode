@@ -5,9 +5,9 @@ import { join, resolve, sep } from "node:path";
 import { cwdHash } from "../../core/cwd-hash.js";
 import type { ExplanationV1, ParsedFactRef } from "../../core/telemetry/dto.js";
 import { isRecord } from "../../core/type-guards.js";
-import { loadRepoTelemetrySources } from "../session/telemetry-source.js";
 import { explain } from "./read-model.js";
 import { parseRepoOwner, type RepoSource, repoOwner } from "./read-model-sources.js";
+import { loadRepoTelemetrySources } from "./telemetry-source.js";
 
 /**
  * The window `usage report` folds and `telemetry explain` rebuilds for a repository reference (#434 §11.1, §11.4).

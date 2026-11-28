@@ -60,8 +60,8 @@ import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../providers/
 import type { TargetDescriptor } from "../providers/types/target-descriptor.js";
 import { readPackagedChangelog, reportsDoctorDetail } from "../report/index.js";
 import { loadSkills, type SkillSource } from "../resources/skills/loader.js";
-import { loadSessionTelemetrySource } from "../session/telemetry-source.js";
 import { workspaceTelemetryCapture } from "../telemetry/consent.js";
+import { loadSessionTelemetrySource } from "../telemetry/index.js";
 import { telemetryJournalFiles, telemetrySessionsDirectory } from "../telemetry/paths.js";
 import { cacheReport } from "../telemetry/read-model-cache.js";
 import { deferredUpdateTarget, readDeferredResult } from "./deferred-update.js";

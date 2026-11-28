@@ -17,8 +17,8 @@ import {
 } from "../../core/state-boundary.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { CallJournalRead } from "../telemetry/call-journal.js";
-import { readCallJournal, readCallJournalSync } from "../telemetry/call-journal.js";
+import type { CallJournalRead } from "./call-journal.js";
+import { readCallJournal, readCallJournalSync } from "./call-journal.js";
 import {
 	isTelemetryJournalFile,
 	telemetryJournalFiles,
@@ -29,11 +29,11 @@ import {
 	telemetryRunsDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
-} from "../telemetry/index.js";
-import type { JournalSource, ProcessIdentity, SessionSource } from "../telemetry/read-model-sources.js";
-import { journalSourceFromRead, sessionAccountQuotaWindow, withSettledCalls } from "../telemetry/read-model-sources.js";
-import type { TelemetryScopeFiles } from "../telemetry/seal.js";
-import { readTelemetryScopeFiles, readTelemetryScopeFilesSync } from "../telemetry/seal.js";
+} from "./paths.js";
+import type { JournalSource, ProcessIdentity, SessionSource } from "./read-model-sources.js";
+import { journalSourceFromRead, sessionAccountQuotaWindow, withSettledCalls } from "./read-model-sources.js";
+import type { TelemetryScopeFiles } from "./seal.js";
+import { readTelemetryScopeFiles, readTelemetryScopeFilesSync } from "./seal.js";
 
 /**
  * Cold-path loader for the telemetry read model (#434 §11): a session's own journal, the run journals it referenced,

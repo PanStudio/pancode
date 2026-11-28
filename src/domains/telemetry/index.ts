@@ -65,4 +65,16 @@ export {
 } from "./share.js";
 export { packTelemetryArchive, type ShareArchiveEntry, unpackTelemetryArchive } from "./share-archive.js";
 export { carriesPath, isBuiltinRuntimeId, RUNTIME_VOCABULARY } from "./share-projection.js";
+export type { RunListCursor } from "./telemetry-source.js";
+export {
+	listRunTelemetryIds,
+	listRunTelemetrySources,
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
+	loadSessionTelemetrySourceAsync,
+	runTelemetryDirectoryExists,
+	runTelemetryWrittenMs,
+} from "./telemetry-source.js";
 export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageWindow } from "./usage-window.js";

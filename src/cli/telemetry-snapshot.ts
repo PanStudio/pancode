@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { HealthV1, QuotaStateV1, RunRowV1 } from "../core/telemetry/dto.js";
 import { pancodeStateDir } from "../core/xdg.js";
+import type { LiveTelemetryModel } from "../domains/telemetry/telemetry-live.js";
+import { createLiveTelemetryModel } from "../domains/telemetry/telemetry-live.js";
 import {
 	loadHostQuotaRecordsAsync,
 	loadProcessTelemetrySourceAsync,
@@ -9,9 +11,7 @@ import {
 	loadRunScopeFilesAsync,
 	loadRunTelemetrySourceAsync,
 	loadSessionTelemetrySourceAsync,
-} from "../domains/session/telemetry-source.js";
-import type { LiveTelemetryModel } from "../domains/telemetry/telemetry-live.js";
-import { createLiveTelemetryModel } from "../domains/telemetry/telemetry-live.js";
+} from "../domains/telemetry/telemetry-source.js";
 import { formatColumns } from "./argv.js";
 import { parseCommandFlags } from "./kit/flags.js";
 import { writeCliFailure } from "./kit/json-out.js";

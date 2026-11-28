@@ -13,8 +13,8 @@
 import { pancodeStateDir } from "../core/xdg.js";
 import { codeStepDir } from "../domains/dispatch/code-step.js";
 import { readCodeStepCommands } from "../domains/dispatch/code-step-commands.js";
-import { loadRunTelemetrySource } from "../domains/session/telemetry-source.js";
 import { type CodeStepRowV1, codeStepsReport } from "../domains/telemetry/read-model-runs.js";
+import { loadRunTelemetrySource } from "../domains/telemetry/telemetry-source.js";
 
 const USAGE = "usage: pancode fleet code-steps <rootId> [--json]";
 
