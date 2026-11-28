@@ -3,8 +3,8 @@
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { telemetryContext, telemetryContexts } from "./context-store.js";
 import type { AgentRole } from "./enums.js";
+import { telemetryContext, telemetryContexts } from "./hub.js";
 import type { TelemetryAgent } from "./id-schemas.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId, TelemetryAgentSchema } from "./id-schemas.js";
 

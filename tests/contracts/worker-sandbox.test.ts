@@ -51,8 +51,7 @@ import {
 import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import type { TelemetryContext } from "../../src/core/telemetry/context.js";
-import { telemetryContexts } from "../../src/core/telemetry/context-store.js";
-import { attachJournalRoute } from "../../src/core/telemetry/hub.js";
+import { attachJournalRoute, telemetryContexts } from "../../src/core/telemetry/hub.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import { settingsChangeKind } from "../../src/domains/config/classify.js";

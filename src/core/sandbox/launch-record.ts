@@ -2,8 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Static } from "typebox";
 import type { TelemetryContext } from "../telemetry/context.js";
-import { telemetryContext } from "../telemetry/context-store.js";
-import { telemetryHub } from "../telemetry/hub.js";
+import { telemetryContext, telemetryHub } from "../telemetry/hub.js";
 import type { SandboxDestinationSchema, SandboxLaunchedSchema } from "../telemetry/tool-schemas.js";
 import type { EgressReport } from "./egress/bridge.js";
 import type { EgressReceipt } from "./egress/proxy.js";
