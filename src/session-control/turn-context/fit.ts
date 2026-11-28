@@ -13,8 +13,8 @@ import type { AgentMessage } from "../../engine/types.js";
 import type { MessageListDigests } from "../message-list-digest.js";
 import { resolveFitOutputReserve, turnAdmissionRemedy } from "../output-reserve.js";
 import type { LiveContextEstimate } from "../turn-context.js";
-import type { TurnContextScope } from "../turn-context-scope.js";
 import type { AgentRuntime } from "../turn-state.js";
+import type { TurnContextScope } from "./scope.js";
 
 /** A tool result cut to fit keeps at least this much, so what the model reads still says what to ask for next. */
 const BOUNDED_RESULT_MIN_CHARS = 2_048;

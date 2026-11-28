@@ -17,9 +17,9 @@ import type { AgentMessage, Usage } from "../../engine/types.js";
 import type { MessageListDigests } from "../message-list-digest.js";
 import { continuityContextFromSession, renderModelReplay } from "../model-session-replay.js";
 import type { TurnContext } from "../turn-context.js";
-import { sha256Json, type TurnContextScope } from "../turn-context-scope.js";
 import type { AgentRuntime } from "../turn-state.js";
 import { anchorModelKey, carriedTokens, sameRoute } from "./helpers.js";
+import { sha256Json, type TurnContextScope } from "./scope.js";
 
 export function createTurnContextAnchor(shared: TurnContextScope) {
 	/**

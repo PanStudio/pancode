@@ -23,9 +23,9 @@ import { type MessageListDigests, withSettledHistory } from "../message-list-dig
 import { resolveFitOutputReserve, turnAdmissionRemedy } from "../output-reserve.js";
 import { extractTurnText } from "../session-replay-messages.js";
 import type { TurnContext } from "../turn-context.js";
-import type { TurnContextScope } from "../turn-context-scope.js";
 import type { AgentRuntime } from "../turn-state.js";
 import { continuationContextUpdate, oversizedResultStop, toolResultTail } from "./helpers.js";
+import type { TurnContextScope } from "./scope.js";
 
 export function createTurnContextProvider(shared: TurnContextScope) {
 	const bindProviderCompaction = (runtime: AgentRuntime): void => {

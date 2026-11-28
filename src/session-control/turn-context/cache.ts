@@ -32,8 +32,8 @@ import { backendCacheVerdict, extractUserText, sumRunUsage } from "../chat-loop-
 import { coldCacheNoticeText } from "../cold-reasons.js";
 import { extractTurnText } from "../session-replay-messages.js";
 import type { ExpectedColdReason, TurnContext } from "../turn-context.js";
-import { sha256Json, type TurnContextScope } from "../turn-context-scope.js";
 import { TIER_INDEPENDENT_COLD_REASONS } from "./helpers.js";
+import { sha256Json, type TurnContextScope } from "./scope.js";
 
 export function createTurnContextCache(shared: TurnContextScope) {
 	const loadCacheCallBaseline = (): void => {
