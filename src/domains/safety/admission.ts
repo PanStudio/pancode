@@ -18,6 +18,7 @@ import {
 	gitControlFileReason,
 	SCRATCH_DISPOSABLE_REASON_CODE,
 	SNAPSHOT_RECOVERABLE_REASON_CODE,
+	STARTUP_PATH_RULE_ID,
 } from "./containment.js";
 import type { SafetyContract, SafetyDecision } from "./contract.js";
 import { CONFIRMED_POSTURE, MAIN_GRANT_POSTURE } from "./contract.js";
@@ -275,7 +276,11 @@ export type AdmissionDisposition =
  * roots of its own and no yolo script sandbox, because its dispatch scope and
  * its OS sandbox already bound where it writes.
  */
-const WORKER_YOLO_SCOPE: OperatorYoloScope = Object.freeze({ scratchRoots: [], scriptSandbox: "unsandboxed" });
+const WORKER_YOLO_SCOPE: OperatorYoloScope = Object.freeze({
+	scratchRoots: [],
+	scriptSandbox: "unsandboxed",
+	worker: true,
+});
 
 /** Classes a contained call is admitted at by autonomy default; the sandbox stands in for their asks. */
 const CONTAINED_CLASSES: ReadonlySet<ActionClass> = new Set<ActionClass>(["execute", "system_modify", "destructive"]);
@@ -507,6 +512,25 @@ function admit(input: AdmissionInput): AdmissionDisposition {
 		return deny("skill_surface", `${call.tool} blocked: outside active skill tool surface`, decision, {
 			skillViolation: surfaceViolation,
 		});
+	}
+	// Dispatched workers never modify protected editor, agent, git or shell
+	// startup paths, even under escalate or yolo permits; the main session asks
+	// the operator directly on an approval card.
+	if (principal === "worker") {
+		const startupDecision = [capabilityDecision, ...effectDecisions].find(
+			(candidate) => candidate?.policy?.ruleId === STARTUP_PATH_RULE_ID,
+		);
+		if (startupDecision !== undefined) {
+			const reason =
+				startupDecision.kind === "ask"
+					? startupDecision.rejection.short
+					: (startupDecision.policy?.reasons[0] ?? `${call.tool} blocked: protected startup path`);
+			const blocked: SafetyDecision =
+				startupDecision.kind === "ask"
+					? { ...startupDecision, kind: "block" }
+					: { ...startupDecision, kind: "block", rejection: { short: reason, detail: reason, hints: [] } };
+			return deny("safety_net", reason, blocked);
+		}
 	}
 
 	// Under true yolo the net already held only the floor, operator-authored

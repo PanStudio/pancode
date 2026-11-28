@@ -44,6 +44,8 @@ import {
 	SCRATCH_DISPOSABLE_REASON_CODE,
 	SNAPSHOT_RECOVERABLE_GIT_PATTERNS,
 	SNAPSHOT_RECOVERABLE_REASON_CODE,
+	STARTUP_PATH_RULE_ID,
+	startupPathReason,
 } from "./containment.js";
 import { CONFIRMED_POSTURE } from "./contract.js";
 import type { DamageControlMatch, DamageControlRule } from "./damage-control.js";
@@ -161,6 +163,7 @@ import {
 	outsideExistingTypedMutationTarget,
 	resolveGitControls,
 	scratchRootWrite,
+	startupPathLanding,
 	WRITE_ROOT_TOOLS,
 	writeRootViolation,
 } from "./policy-write-landing.js";
@@ -328,6 +331,8 @@ export interface OperatorYoloScope {
 	level?: "yolo";
 	/** `safety.scratchRoots` from the operator's own settings, unvalidated here. */
 	scratchRoots: ReadonlyArray<string>;
+	/** True when a dispatched worker inherits yolo; keeps protected startup paths hard-denied. */
+	worker?: boolean;
 	/**
 	 * How a command runs on this host under the operator's yolo; absent reads
 	 * as `unsandboxed`. `sandboxed` and `refused` come from `safety.sandbox:
@@ -478,6 +483,14 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 	// repository created after that.
 	let gitControls = resolveGitControls(cwd);
 	let gitControlsStale = false;
+	// Captured once at construction so typed startup-path checks pay zero per-call fs ops (admission-fs-ops).
+	const startupWorkspaceReal = canonicalizePath(cwd);
+	const startupWorkspaceForms =
+		startupWorkspaceReal === null || startupWorkspaceReal === cwd ? [cwd] : [cwd, startupWorkspaceReal];
+	const startupHome = homedir();
+	const startupHomeReal = canonicalizePath(startupHome);
+	const startupHomeForms =
+		startupHomeReal === null || startupHomeReal === startupHome ? [startupHome] : [startupHome, startupHomeReal];
 	/** First secret-bearing path an admitted call read, or null; taints later outbound fetches. */
 	let secretRead: string | null = null;
 	const secretBearingReadOf = (rawCall: ClassifierCall): string | null => {
@@ -496,6 +509,20 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 			gitControlsStale = false;
 		}
 		return gitControlLanding(candidates, gitControls);
+	};
+	const startupPathHit = (
+		call: ClassifierCall,
+		candidates: ReturnType<typeof mutationCandidates>,
+		resort: DefaultResort | undefined,
+	): string | null => {
+		if (EXECUTION_TOOLS.has(call.tool) || call.tool === ToolNames.RunScript || candidates.length === 0) return null;
+		const currentHome = homedir();
+		const homeForms = currentHome === startupHome ? startupHomeForms : [...startupHomeForms, currentHome];
+		const roots =
+			resort === undefined || resort.scratchRoots.length === 0
+				? startupWorkspaceForms
+				: [...startupWorkspaceForms, ...resort.scratchRoots];
+		return startupPathLanding(candidates, roots, homeForms);
 	};
 	const skillRoots = activePancodeSkillRoots(cwd);
 	// PanCode's own trees are the operator's real directories, captured once when the session's engine is built; a HOME or
@@ -1525,6 +1552,20 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 			}
 			return gateDecision("block", base, blockInput);
 		}
+		// Protected editor, agent, git and shell startup paths are read-only in
+		// the shell sandbox; typed writes, edits and deletes to the same shared
+		// path list go straight to the operator approval card (never silent, never
+		// the judge), and headless runs and workers deny them.
+		const startupPath = startupPathHit(call, candidates, resort);
+		if (startupPath !== null) {
+			const input = {
+				ruleId: STARTUP_PATH_RULE_ID,
+				reasonCode: STARTUP_PATH_RULE_ID,
+				reasons: [startupPathReason(startupPath)],
+				policySource: "builtin-classifier" as const,
+			};
+			return settle(posture === CONFIRMED_POSTURE ? allowDecision(base, input) : gateDecision("ask", base, input));
+		}
 		// The contained shell cannot write the repository's hooks, config or git
 		// dir pointers, so under the operator's default a typed write asks for
 		// them too and the safety judge weighs it against the operator's intent.
@@ -1816,6 +1857,18 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 		if (floor?.ruleId === LOGIN_PATH_PENDING_RULE_ID)
 			return gateDecision("block", base, { ...floor, reasons: [...floor.reasons, LOGIN_PATH_PENDING_YOLO_HOLD] });
 		if (floor !== null) return gateDecision("block", base, floor);
+		if (scope.worker === true && !EXECUTION_TOOLS.has(call.tool) && call.tool !== ToolNames.RunScript) {
+			const targets = pathPolicyTargets(call, judgedCommand);
+			const startupPath = startupPathHit(call, mutationCandidates(targets, callCwd, judgedCommand), undefined);
+			if (startupPath !== null) {
+				return gateDecision("block", base, {
+					ruleId: STARTUP_PATH_RULE_ID,
+					reasonCode: STARTUP_PATH_RULE_ID,
+					reasons: [startupPathReason(startupPath)],
+					policySource: "builtin-classifier",
+				});
+			}
+		}
 		const held: string[] = [];
 		const required = yoloRequiredSandbox(rawCall, call, base.classification, judgedCommand, scope, () => ({
 			...outwardPlaces(scope, callCwd),

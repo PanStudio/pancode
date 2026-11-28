@@ -7,8 +7,10 @@ import type { SandboxBackend, SandboxMaskedPath } from "./types.js";
 
 /**
  * Editor and agent configuration a host program loads, and may run code from, when it opens a writable root:
- * VS Code tasks and settings, JetBrains, Cursor and Zed project files, dev containers, husky hooks, Claude Code,
- * Codex and Gemini project config, direnv, project MCP servers, submodules, git and ripgrep config.
+ * VS Code tasks and settings, JetBrains, Cursor and Zed project files, dev containers, husky hooks, Claude Code
+ * (whole `.claude`, which carries executable hooks in `settings.json`/`settings.local.json`, plus commands, agents,
+ * skills and project instructions), Codex and Gemini project config, direnv, project MCP servers, submodules,
+ * git and ripgrep config.
  */
 export const PROTECTED_STARTUP_NAMES = [
 	".vscode",
@@ -29,6 +31,66 @@ export const PROTECTED_STARTUP_NAMES = [
 
 /** Shell startup files, protected when a writable root is the home directory. */
 export const PROTECTED_HOME_NAMES = [".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile"] as const;
+
+const PROTECTED_STARTUP_SET: ReadonlySet<string> = new Set(PROTECTED_STARTUP_NAMES.map((name) => name.toLowerCase()));
+const PROTECTED_HOME_SET: ReadonlySet<string> = new Set(PROTECTED_HOME_NAMES.map((name) => name.toLowerCase()));
+
+function splitNormalizedSegments(location: string): string[] {
+	return location
+		.replace(/\\/gu, "/")
+		.split("/")
+		.filter((part) => part.length > 0);
+}
+
+function relativeIfUnder(location: string, root: string): string | null {
+	const rel = path.relative(root, location);
+	if (rel === "" || rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+	return rel;
+}
+
+/**
+ * Pure: the protected startup path `location` lands on, or null. Shares
+ * {@link PROTECTED_STARTUP_NAMES} and {@link PROTECTED_HOME_NAMES} with
+ * {@link startupPathProtection}. Segments strictly above the deepest containing
+ * workspace/scratch root are ignored so a project hosted under a directory such
+ * as `~/.claude/worktrees/app` is not flagged on ordinary files.
+ */
+export function protectedStartupPath(
+	location: string,
+	roots: ReadonlyArray<string>,
+	homeForms: ReadonlyArray<string>,
+): string | null {
+	const folded = location.toLowerCase();
+	for (const home of homeForms) {
+		const rel = relativeIfUnder(folded, home.toLowerCase());
+		if (rel === null) continue;
+		const first = splitNormalizedSegments(rel)[0];
+		if (first !== undefined && PROTECTED_HOME_SET.has(first)) return `~/${first}`;
+	}
+	let bestRoot: string | null = null;
+	let bestRel: string | null = null;
+	for (const root of roots) {
+		const rel = relativeIfUnder(folded, root.toLowerCase());
+		if (rel !== null && (bestRoot === null || root.length > bestRoot.length)) {
+			bestRoot = root;
+			bestRel = rel;
+		}
+	}
+	if (bestRel === null) {
+		for (const home of homeForms) {
+			const rel = relativeIfUnder(folded, home.toLowerCase());
+			if (rel !== null && (bestRoot === null || home.length > bestRoot.length)) {
+				bestRoot = home;
+				bestRel = rel;
+			}
+		}
+	}
+	const segments = splitNormalizedSegments(bestRel ?? folded);
+	for (const segment of segments) {
+		if (PROTECTED_STARTUP_SET.has(segment)) return segment;
+	}
+	return null;
+}
 
 export interface StartupPathProtection {
 	/** Startup paths that exist, bound read-only; under seatbelt the absent ones too, which it refuses to create. */

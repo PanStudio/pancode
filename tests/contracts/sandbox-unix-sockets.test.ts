@@ -10,6 +10,8 @@ import {
 	mkdtempSync,
 	realpathSync,
 	renameSync,
+	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -178,6 +180,7 @@ test("the seccomp program holds the baseline on every covered ABI and adds the u
 
 test("a bwrap the operator's uid could replace is not trusted; a root-owned one outside writable roots is", (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "bwrap-trust-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const fake = join(dir, "bwrap");
 	writeFileSync(fake, "#!/bin/sh\nexit 0\n");
 	chmodSync(fake, 0o755);
@@ -186,6 +189,16 @@ test("a bwrap the operator's uid could replace is not trusted; a root-owned one 
 	if (!existsSync("/usr/bin/bwrap")) return t.skip("no /usr/bin/bwrap on this host");
 	assert.equal(untrustedBwrapReason("/usr/bin/bwrap"), null);
 	assert.equal(untrustedBwrapReason("/usr/bin/bwrap", 0), null);
+	// A symlink in a writable PATH dir resolves to the canonical root-owned binary so it cannot be swapped before launch.
+	const linkDir = mkdtempSync(join(tmpdir(), "bwrap-link-"));
+	t.after(() => rmSync(linkDir, { recursive: true, force: true }));
+	symlinkSync("/usr/bin/bwrap", join(linkDir, "bwrap"));
+	const resolved = sandboxAvailability("linux", { PATH: linkDir });
+	if (resolved.available) {
+		assert.equal(resolved.executable, realpathSync("/usr/bin/bwrap"));
+	} else {
+		assert.equal(resolved.found, realpathSync("/usr/bin/bwrap"));
+	}
 });
 
 test("WSL1 has no sandbox and names the fix; a WSL2 or plain kernel is probed as usual", () => {

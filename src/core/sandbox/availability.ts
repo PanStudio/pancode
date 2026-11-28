@@ -71,8 +71,11 @@ function findBwrap(env: NodeJS.ProcessEnv): { path: string } | { skipped: string
 		if (seen.has(candidate) || !executable(candidate)) continue;
 		seen.add(candidate);
 		const untrusted = untrustedBwrapReason(candidate);
-		if (untrusted === null) return { path: candidate };
-		skipped.push(untrusted);
+		if (untrusted === null) {
+			// Return the verified real path so a symlink in a writable PATH directory cannot be swapped before launch.
+			return { path: realpathSync(candidate) };
+		}
+		if (!skipped.includes(untrusted)) skipped.push(untrusted);
 	}
 	return { skipped };
 }

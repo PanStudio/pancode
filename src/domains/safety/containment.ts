@@ -983,6 +983,20 @@ export const SNAPSHOT_RECOVERABLE_REASON_CODE = "snapshot-recoverable";
 export const SCRATCH_DISPOSABLE_REASON_CODE = "scratch-disposable";
 
 /**
+ * Rule of a typed file mutation that lands on a protected editor, agent, git or
+ * shell startup path (`startup-paths.ts`), which the shell sandbox keeps
+ * read-only even when absent. In the main session it goes straight to the
+ * operator approval card (never silent, never the safety judge); headless runs
+ * and dispatched workers deny it.
+ */
+export const STARTUP_PATH_RULE_ID = "startup-path-confirm";
+
+/** Why a typed write, edit or delete to `startupPath` requires operator approval. */
+export function startupPathReason(startupPath: string): string {
+	return `'${startupPath}' is a protected editor, agent, git or shell startup path that host programs load outside the sandbox; changing it requires operator approval and is denied for workers and headless runs`;
+}
+
+/**
  * Rule of a typed file mutation that lands on a git hook, config or git dir
  * pointer of the repository, which the sandbox keeps read-only. The
  * operator's default asks for it in the policy engine; a worker at default

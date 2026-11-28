@@ -8,6 +8,7 @@ import type { PathWalkMemo } from "../../core/path-canonical.js";
 import { canonicalizePath, canonicalizeRawPath, createPathWalkMemo } from "../../core/path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../../core/path-containment.js";
 import { mainSandboxGitControlPaths } from "../../core/sandbox/main-session.js";
+import { protectedStartupPath } from "../../core/sandbox/startup-paths.js";
 import { isSessionAuthoredFile } from "../../core/session-authored-files.js";
 import { storeBookkeepingPaths, storeGrantProbes, storeWriteSet } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
@@ -260,6 +261,26 @@ function isGitControlName(location: string): boolean {
 		}
 	}
 	return false;
+}
+
+/**
+ * The protected startup path a typed file mutation lands on, or null. Shares
+ * `PROTECTED_STARTUP_NAMES` and `PROTECTED_HOME_NAMES` with the shell sandbox
+ * (`startup-paths.ts`) and reads only the candidates admission already resolved,
+ * costing no filesystem call.
+ */
+export function startupPathLanding(
+	candidates: ReturnType<typeof mutationCandidates>,
+	roots: ReadonlyArray<string>,
+	homeForms: ReadonlyArray<string>,
+): string | null {
+	for (const candidate of candidates) {
+		for (const location of [candidate.lexical, candidate.resolved]) {
+			const hit = protectedStartupPath(location, roots, homeForms);
+			if (hit !== null) return hit;
+		}
+	}
+	return null;
 }
 
 /**

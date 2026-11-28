@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { networkInterfaces, tmpdir } from "node:os";
+import { homedir, networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -848,24 +848,141 @@ test("a typed write into the core.hooksPath directory asks at default, also once
 	process.chdir(cwd);
 	t.after(() => process.chdir(saved));
 	spawnSync("git", ["init", "-q"], { cwd });
-	mkdirSync(join(cwd, ".husky"));
+	mkdirSync(join(cwd, ".githooks"));
 	const before = createWorkerSafety({ cwd });
-	spawnSync("git", ["config", "core.hooksPath", ".husky"], { cwd });
+	spawnSync("git", ["config", "core.hooksPath", ".githooks"], { cwd });
 	const main = createWorkerSafety({ cwd });
 	const worker = createWorkerSafety({ cwd, writeRoots: [`${cwd}/`] });
 	const operatorDefault: OperatorDefaultScope = { level: "default", scratchRoots: [], sandbox: true, snapshots: true };
 	const write = (path: string): ClassifierCall => ({ tool: ToolNames.Write, args: { path, content: "x" } });
 	const admitMain = (safety: typeof main, call: ClassifierCall) =>
 		evaluateAdmission({ principal: "main", effects: [call], safety, autonomy: "default", operatorDefault });
-	const asked = admitMain(main, write(".husky/pre-commit"));
+	const asked = admitMain(main, write(".githooks/pre-commit"));
 	strictEqual(asked.kind === "ask" && asked.decision.policy?.reasonCode, "git-control-file");
-	const workerAsked = evaluateAdmission({ principal: "worker", effects: [write(".husky/pre-commit")], safety: worker });
+	const workerAsked = evaluateAdmission({ principal: "worker", effects: [write(".githooks/pre-commit")], safety: worker });
 	strictEqual(workerAsked.kind === "ask" && workerAsked.approvalAuthority, "main");
 	strictEqual(admitMain(main, write("src/app.py")).kind, "allow");
 	// An engine built before the setting re-reads it after an admitted command that may have written it.
-	strictEqual(admitMain(before, bash("git config core.hooksPath .husky")).kind, "allow");
-	const refreshed = admitMain(before, write(".husky/pre-commit"));
+	strictEqual(admitMain(before, bash("git config core.hooksPath .githooks")).kind, "allow");
+	const refreshed = admitMain(before, write(".githooks/pre-commit"));
 	strictEqual(refreshed.kind === "ask" && refreshed.decision.policy?.reasonCode, "git-control-file");
+});
+
+test("typed writes and edits to protected startup paths require operator approval, bypass the judge, and deny in headless, contained yolo, and workers", async (t) => {
+	const cwd = workspace("pancode-startup-paths-typed-");
+	const saved = process.cwd();
+	process.chdir(cwd);
+	t.after(() => process.chdir(saved));
+	mkdirSync(join(cwd, ".vscode"), { recursive: true });
+	mkdirSync(join(cwd, ".claude"), { recursive: true });
+	mkdirSync(join(cwd, ".husky"), { recursive: true });
+	writeFileSync(join(cwd, ".vscode", "tasks.json"), "{}\n");
+	writeFileSync(join(cwd, ".claude", "settings.json"), "{}\n");
+	writeFileSync(join(cwd, ".envrc"), "export A=1\n");
+	const main = createWorkerSafety({ cwd });
+	const worker = createWorkerSafety({ cwd, writeRoots: [`${cwd}/`] });
+	const operatorDefault: OperatorDefaultScope = { level: "default", scratchRoots: [], sandbox: true, snapshots: true };
+	const writeCall = (path: string): ClassifierCall => ({ tool: ToolNames.Write, args: { path, content: "x" } });
+	const editCall = (path: string): ClassifierCall => ({
+		tool: ToolNames.Edit,
+		args: { path, old_string: "{}\n", new_string: '{"x":1}\n' },
+	});
+	const askCases: ClassifierCall[] = [
+		writeCall(".vscode/tasks.json"),
+		editCall(".vscode/tasks.json"),
+		writeCall(".husky/pre-commit"),
+		writeCall(".idea/workspace.xml"),
+		writeCall(".devcontainer/devcontainer.json"),
+		writeCall(".envrc"),
+		writeCall(".mcp.json"),
+		writeCall(".gitmodules"),
+		writeCall(join(homedir(), ".zprofile")),
+	];
+	for (const call of askCases) {
+		const asked = evaluateAdmission({ principal: "main", effects: [call], safety: main, autonomy: "default", operatorDefault });
+		strictEqual(asked.kind, "ask", `${call.tool} ${String(call.args.path)} should ask in main`);
+		if (asked.kind !== "ask") continue;
+		strictEqual(asked.approvalAuthority, "operator");
+		strictEqual(asked.decision.policy?.ruleId, "startup-path-confirm");
+		strictEqual(
+			operatorOnlyAsk({
+				tool: call.tool,
+				args: call.args,
+				decision: asked.decision,
+				source: asked.source,
+				approvalAuthority: asked.approvalAuthority,
+			}),
+			"rule startup-path-confirm",
+		);
+		const confirmed = evaluateAdmission({
+			principal: "main",
+			effects: [call],
+			safety: main,
+			autonomy: "default",
+			operatorDefault,
+			authorization: { issuer: "operator", actionClass: asked.decision.classification.actionClass },
+		});
+		strictEqual(confirmed.kind, "allow", `${call.tool} ${String(call.args.path)} should allow after operator confirmation`);
+		for (const workerOpts of [
+			{},
+			{ workerExecuteAutonomy: "yolo" as const },
+		]) {
+			const workerDenied = evaluateAdmission({
+				principal: "worker",
+				effects: [call],
+				safety: worker,
+				...workerOpts,
+			});
+			strictEqual(workerDenied.kind, "deny", `worker should deny ${call.tool} ${String(call.args.path)}`);
+		}
+	}
+	// Startup paths already hard-blocked by path policy (foreign agent dirs, shell rc) remain denied in main and workers.
+	for (const call of [
+		writeCall(".claude/settings.json"),
+		editCall(".claude/settings.json"),
+		writeCall(join(homedir(), ".bashrc")),
+	]) {
+		strictEqual(
+			evaluateAdmission({ principal: "main", effects: [call], safety: main, autonomy: "default", operatorDefault }).kind,
+			"deny",
+			`main should keep denying ${call.tool} ${String(call.args.path)}`,
+		);
+		strictEqual(
+			evaluateAdmission({ principal: "worker", effects: [call], safety: worker, workerExecuteAutonomy: "yolo" }).kind,
+			"deny",
+			`worker should keep denying ${call.tool} ${String(call.args.path)}`,
+		);
+	}
+	// Headless main session (no park listener) denies without consulting the judge; contained yolo also denies.
+	let judgedCalls = 0;
+	const judge = createSafetyJudge({
+		config: () => ({ enabled: true, target: "local", model: "m", environment: [], allow: [], deny: [] }),
+		complete: async () => {
+			judgedCalls += 1;
+			return { text: JSON.stringify({ verdict: "allow", rule: "operator-named", reason: "ok" }) };
+		},
+		operatorMessages: () => ["update .vscode/tasks.json"],
+		session: () => "s",
+		consequences: () => [],
+	});
+	for (const unattendedAsks of [false, true]) {
+		const registry = createRegistry({
+			safety: createWorkerSafety({ cwd }),
+			autonomy: () => "default",
+			unattendedAsks: () => unattendedAsks,
+			scratchRoots: () => [],
+			containment: () => ({ sandbox: true, snapshots: true }),
+			safetyJudge: judge,
+		});
+		registry.register(writeTool);
+		const verdict = await registry.invoke(writeCall(".vscode/tasks.json"));
+		strictEqual(
+			verdict.kind,
+			"blocked",
+			`${unattendedAsks ? "contained yolo" : "headless default"} should deny startup-path write`,
+		);
+	}
+	strictEqual(judgedCalls, 0, "safety judge must never review startup-path asks");
 });
 
 test("the default scratch roots include $TMPDIR and /tmp", () => {

@@ -22,6 +22,7 @@ import {
 	storeReplaceConsequences,
 } from "./call-consequence.js";
 import { type RefusedCompound, refusedCompound } from "./compound-refusal.js";
+import { STARTUP_PATH_RULE_ID } from "./containment.js";
 import type { SafetyDecision } from "./contract.js";
 import type { SafetyJudgementInput } from "./decision-events.js";
 import { GIT_HOOKS_CHANGED_RULE_ID } from "./hook-drift.js";
@@ -99,6 +100,7 @@ const SAFETY_JUDGE_OPERATOR_ONLY_RULES: ReadonlySet<string> = new Set([
 	"pancode-owned-state",
 	GIT_HOOKS_CHANGED_RULE_ID,
 	MCP_SKILL_APPROVAL_RULE_ID,
+	STARTUP_PATH_RULE_ID,
 ]);
 
 /** The operator channel itself, PanCode's own settings tool and a restart of the running session. */

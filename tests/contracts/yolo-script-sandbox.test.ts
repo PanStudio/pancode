@@ -371,8 +371,13 @@ test("under bwrap editor and agent startup files stay read-only, present or abse
 		"echo 'eval evil' > .envrc 2>/dev/null || echo envrc-refused",
 		"echo '{}' > .mcp.json 2>/dev/null || echo mcp-refused",
 		"mv .gitmodules gm 2>/dev/null || echo gitmodules-pinned",
+		"test ! -f .gitmodules && echo gitmodules-not-file",
 		'test -z "$(git status --porcelain)" && echo git-clean',
+		"git submodule status && echo git-submodule-ok",
+		"git diff --exit-code && echo git-diff-ok",
 		"echo ok > ordinary.txt && echo ordinary-written",
+		"git add -A && git -c user.name=t -c user.email=t@t commit -q -m ordinary && echo git-commit-ok",
+		'test -z "$(git ls-files .gitmodules)" && echo gitmodules-not-staged',
 	].join("; ");
 	const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);
 	assert.equal(plan.kind, "sandboxed");
@@ -387,8 +392,13 @@ test("under bwrap editor and agent startup files stay read-only, present or abse
 		"envrc-refused",
 		"mcp-refused",
 		"gitmodules-pinned",
+		"gitmodules-not-file",
 		"git-clean",
+		"git-submodule-ok",
+		"git-diff-ok",
 		"ordinary-written",
+		"git-commit-ok",
+		"gitmodules-not-staged",
 	]) {
 		assert.match(result.output, new RegExp(marker, "u"), result.output);
 	}

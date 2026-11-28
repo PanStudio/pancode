@@ -71,8 +71,11 @@ stay read-only in every writable root, present or absent: `.vscode`, `.idea`,
 `.cursor`, `.zed`, `.devcontainer`, `.husky`, `.claude`, `.codex`, `.gemini`,
 `.envrc`, `.mcp.json`, `.gitmodules`, `.gitconfig` and `.ripgreprc`, and the
 shell startup files such as `.bashrc` and `.profile` when your home directory
-is a writable root. A shell command that edits one needs `unsandboxed: true`
-and your approval; the `write` and `edit` tools are not affected.
+is a writable root. A shell command that edits one needs `unsandboxed: true`,
+`unsandboxed_reason` and your approval; a typed `write`, `edit` or `artifact`
+call targeting the same paths goes straight to the operator approval card
+(never silent, never the safety judge), and headless runs and dispatched
+workers deny it.
 
 Under bubblewrap a seccomp baseline also refuses `ptrace`, reading or writing
 another process's memory, `io_uring`, vsock sockets and new namespaces. Where
