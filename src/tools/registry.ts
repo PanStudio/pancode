@@ -237,6 +237,41 @@ interface ParkedCall {
 	approve?: (requestedBy: string | undefined) => void;
 }
 
+/**
+ * A call reaching execution without the main-session sandbox. A job command admitted only contained is refused
+ * (true). Otherwise a main-session bash or run_script call journals that the session's shell ran uncontained, once per
+ * reason, so no record of the session reads as contained by omission.
+ */
+function refusesUncontainedLaunch(
+	deps: RegistryDeps,
+	spec: ToolSpec,
+	options: ToolInvokeOptions,
+	jobNeedsContainment: () => boolean,
+): boolean {
+	if (options.shellSandbox !== undefined) return false;
+	if (jobNeedsContainment()) return true;
+	if ((deps.principal ?? "main") !== "main") return false;
+	if (spec.name !== ToolNames.Bash && spec.name !== ToolNames.RunScript) return false;
+	if (deps.sandboxState === undefined || deps.containment === undefined) return false;
+	const state = deps.sandboxState();
+	const why: SandboxLaunchWhy =
+		state.mode === "off"
+			? "sandbox-off"
+			: !deps.containment().sandbox
+				? "no-backend"
+				: (deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) === "yolo"
+					? "unconfined-opt-in"
+					: "operator-authority";
+	const readOnly = deps.readOnly === true || options.turnConstraints?.readOnly === true;
+	recordUncontainedShell({
+		caller: readOnly ? "main-read-only" : "main",
+		why,
+		mode: state.mode,
+		backend: state.backend,
+	});
+	return false;
+}
+
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const tools = new Map<ToolName, ToolSpec>();
 	/**
@@ -362,31 +397,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			if (admission.kind === "deny" || (admission.kind === "ask" && admission.source !== "session-consent")) return true;
 		}
 		return false;
-	};
-	/**
-	 * A main-session bash or run_script call about to run without the main-session sandbox: the session journal says
-	 * so once per reason, so no record of the session reads as contained by omission.
-	 */
-	const noteUncontainedShell = (spec: ToolSpec, options: ToolInvokeOptions): void => {
-		if ((deps.principal ?? "main") !== "main" || options.shellSandbox !== undefined) return;
-		if (spec.name !== ToolNames.Bash && spec.name !== ToolNames.RunScript) return;
-		if (deps.sandboxState === undefined || deps.containment === undefined) return;
-		const state = deps.sandboxState();
-		const why: SandboxLaunchWhy =
-			state.mode === "off"
-				? "sandbox-off"
-				: !deps.containment().sandbox
-					? "no-backend"
-					: (deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) === "yolo"
-						? "unconfined-opt-in"
-						: "operator-authority";
-		const readOnly = deps.readOnly === true || options.turnConstraints?.readOnly === true;
-		recordUncontainedShell({
-			caller: readOnly ? "main-read-only" : "main",
-			why,
-			mode: state.mode,
-			backend: state.backend,
-		});
 	};
 	const shellSandboxPolicy = (
 		roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
@@ -814,7 +824,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 						: {}),
 				};
 				// Fail closed: a job command admitted only contained never runs without its sandbox (XR-12).
-				if (executionOptions.shellSandbox === undefined && jobNeedsContainment(spec, call)) {
+				if (refusesUncontainedLaunch(deps, spec, executionOptions, () => jobNeedsContainment(spec, call))) {
 					const reason = `${spec.name} did not run: its command is admitted only in the sandbox, and the call reached execution without the sandbox policy.`;
 					const verdict = blockedVerdict(decision, `${call.tool} blocked: contained command without its sandbox`, reason, {
 						kind: "block",
@@ -823,7 +833,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 					recordRegistryDisposition(call, verdict.decision, "blocked", { reasonCode: "host_effect_not_admitted" });
 					return verdict;
 				}
-				noteUncontainedShell(spec, executionOptions);
 				bodyStartedAt = performance.now();
 				execution = { executionStarted: true };
 				notifyBodyStart(options);

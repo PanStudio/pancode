@@ -40,6 +40,7 @@ import { discoverSecretMasks, SECRET_SCAN_LIMITS } from "./secret-files.js";
 import { holdStartupMountPoints, startupPathProtection } from "./startup-paths.js";
 import type {
 	SandboxAvailability,
+	SandboxBackend,
 	SandboxCommand,
 	SandboxEnvPolicy,
 	SandboxInvocationSpec,
@@ -840,10 +841,14 @@ export type MainSandboxSpawnPlan = (
 /** The main session's contained-shell settings, as the tool registry reads them for each contained call. */
 export function mainShellSandboxSettings(
 	settings: () => Parameters<typeof mainSandboxEnvPolicy>[0] & {
-		safety: { sandboxUnixSockets: UnixSocketMode; egress: EgressSettings };
+		safety: { sandbox: SandboxMode; sandboxUnixSockets: UnixSocketMode; egress: EgressSettings };
 	},
 ) {
 	return {
+		sandboxState: (): { mode: SandboxMode; backend: SandboxBackend | null } => ({
+			mode: settings().safety.sandbox,
+			backend: sandboxAvailability().backend,
+		}),
 		sandboxEnv: (): SandboxEnvPolicy => mainSandboxEnvPolicy(settings()),
 		sandboxUnixSockets: (): UnixSocketMode => settings().safety.sandboxUnixSockets,
 		sandboxEgress: (): EgressSettings => settings().safety.egress,

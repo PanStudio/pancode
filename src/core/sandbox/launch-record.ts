@@ -61,7 +61,7 @@ export function launchFacts(
 	return labelLaunch({ ...plan, launcher }, label);
 }
 
-export function labelLaunch(facts: SandboxLaunchFacts, label: SandboxLaunchLabel | undefined): SandboxLaunchFacts {
+function labelLaunch(facts: SandboxLaunchFacts, label: SandboxLaunchLabel | undefined): SandboxLaunchFacts {
 	if (label === undefined) return facts;
 	const { integration: _integration, ...rest } = facts;
 	return {
@@ -80,7 +80,7 @@ const MAX_CLIPPED_HOST_CHARS = 64;
  * A name the operator never granted keeps only its rightmost labels, each bounded, so a long or many-labelled name
  * built to carry data does not reach the journal whole. An address literal is already bounded.
  */
-export function clipEgressHost(host: string): { host: string; clipped: boolean } {
+function clipEgressHost(host: string): { host: string; clipped: boolean } {
 	if (/^[0-9.]+$/u.test(host) || host.includes(":")) return { host, clipped: false };
 	const labels = host.split(".");
 	const kept = labels.slice(-MAX_HOST_LABELS).map((label) => label.slice(0, MAX_LABEL_CHARS));
@@ -175,7 +175,7 @@ export function sandboxLaunchRecord(
  * Journals one settled launch under the context its call ran in. The record is the tool result's own, so the
  * journal and the result never disagree. The call journal batches the write off this stack.
  */
-export function recordSandboxLaunch(record: SandboxLaunchRecord, ctx: TelemetryContext | undefined): void {
+function recordSandboxLaunch(record: SandboxLaunchRecord, ctx: TelemetryContext | undefined): void {
 	telemetryHub().emit("sandbox.launched", record, ctx);
 }
 
@@ -209,11 +209,6 @@ export function writeDeniedHint(
 ): SandboxLaunchHint | null {
 	if (facts?.confinement !== "sandboxed" || exitCode === 0 || exitCode === null) return null;
 	return refused(output()) ? "write-denied" : null;
-}
-
-/** The launch's telemetry context, captured when it is planned so a late settle still names its call. */
-export function launchTelemetryContext(): TelemetryContext | undefined {
-	return telemetryContext();
 }
 
 const uncontainedRecorded = new Set<string>();
