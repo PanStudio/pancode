@@ -11,7 +11,7 @@ import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/w
 import { createWorkerGitContext } from "../../src/tools/git-exec.js";
 import { gitCallIdentity } from "../../src/tools/git-inspect.js";
 import { applyToolProfile } from "../../src/tools/profiles.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { gitTool } from "../../src/tools/safe-exec.js";
 import { createTaskWorktree } from "../../src/tools/task-worktree.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";

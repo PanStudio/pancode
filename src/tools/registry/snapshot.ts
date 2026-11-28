@@ -6,8 +6,8 @@ import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import type { WorkspaceSnapshotOutcome } from "../../domains/workspace-snapshots/store.js";
 import { type WorkspaceSnapshotTrigger, workspaceSnapshotTrigger } from "../../domains/workspace-snapshots/trigger.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
 import type { ToolSpec } from "../tool-spec.js";
+import type { ToolInvokeOptions } from "./contract.js";
 import type { RegistryScope } from "./scope.js";
 
 /**

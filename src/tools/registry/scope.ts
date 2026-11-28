@@ -7,6 +7,10 @@ import type { AdmissionAskSource, ApprovalAuthority } from "../../domains/safety
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import type { GitHookDriftReport } from "../../domains/safety/hook-drift.js";
 import type { DispatchPlanView } from "../dispatch-plan.js";
+import type { ToolSpec } from "../tool-spec.js";
+import type { createRegistryAdmission } from "./admission.js";
+import type { createRegistryAsk } from "./ask.js";
+import type { createRegistryAttempts } from "./attempts.js";
 import type {
 	AdmissionReviewEvent,
 	PermissionRequiredMeta,
@@ -14,15 +18,11 @@ import type {
 	RegistryVerdict,
 	ToolBoundaryReminder,
 	ToolInvokeOptions,
-} from "../registry-contract.js";
-import type { createShellEgress, OperatorAskQueue } from "../registry-operator-asks.js";
-import type { ToolSpec } from "../tool-spec.js";
-import type { createRegistryAdmission } from "./admission.js";
-import type { createRegistryAsk } from "./ask.js";
-import type { createRegistryAttempts } from "./attempts.js";
+} from "./contract.js";
 import type { createRegistryDenials } from "./denials.js";
 import type { createFlowGates } from "./flow.js";
 import type { createRegistryHooks } from "./hooks.js";
+import type { createShellEgress, OperatorAskQueue } from "./operator-asks.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 import type { createRegistryPark } from "./park.js";
 import type { createRegistryResume } from "./resume.js";

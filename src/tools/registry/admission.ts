@@ -16,8 +16,10 @@ import {
 import { YOLO_FLOOR_REASON_PREFIX } from "../../domains/safety/yolo-floor.js";
 import { type AutonomyLevel, DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
 import { type DispatchPlanView, describeDispatchPlan } from "../dispatch-plan.js";
-import { applyRegisteredToolClassification } from "../registry-call-prep.js";
-import type { OneShotGrant, RegistryVerdict, ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolSpec } from "../tool-spec.js";
+import { applyRegisteredToolClassification } from "./call-prep.js";
+import type { OneShotGrant, RegistryVerdict, ToolInvokeOptions } from "./contract.js";
+import type { AdmitOutcome, ContainedRoots, RegistryScope, SessionConsentObstacle } from "./scope.js";
 import {
 	blockDecision,
 	blockedVerdict,
@@ -26,9 +28,7 @@ import {
 	sessionConsentParkDecision,
 	skillSurfaceBlockedVerdict,
 	toDispatchPlanAskDecision,
-} from "../registry-verdicts.js";
-import type { ToolSpec } from "../tool-spec.js";
-import type { AdmitOutcome, ContainedRoots, RegistryScope, SessionConsentObstacle } from "./scope.js";
+} from "./verdicts.js";
 
 /**
  * An escape the operator would decide on must say why, so the card has something to weigh (D9): the refusal of

@@ -25,7 +25,7 @@ import type { ApprovalRequestView } from "../session-control/approval-request-vi
 import type { ToolApprovalStateEvent } from "../session-control/chat-loop.js";
 import { resolvePermission } from "../session-control/index.js";
 import type { NoticeSource } from "../session-control/notice-source.js";
-import type { PermissionRequiredMeta, ToolRegistry } from "../tools/registry-contract.js";
+import type { PermissionRequiredMeta, ToolRegistry } from "../tools/registry/contract.js";
 import { approvalParkedNotice } from "./bus-notices.js";
 import type { NoticeLevel } from "./command-output.js";
 import { createMutationInspector, type MutationInspector } from "./mutation-preview.js";

@@ -6,11 +6,11 @@ import type { ToolName } from "../../core/tool-names.js";
 import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import { confirmationRuleOf } from "../../domains/safety/decision-events.js";
-import type { RegistryVerdict, ToolInvokeOptions } from "../registry-contract.js";
-import { firstBlockToolEffect } from "../registry-hook-effects.js";
-import { gatewayInnerScope } from "../registry-nested-calls.js";
-import { blockedVerdict, GUARD_BLOCK_REASON_CODE } from "../registry-verdicts.js";
+import type { RegistryVerdict, ToolInvokeOptions } from "./contract.js";
+import { firstBlockToolEffect } from "./hook-effects.js";
+import { gatewayInnerScope } from "./nested-calls.js";
 import type { RegistryScope } from "./scope.js";
+import { blockedVerdict, GUARD_BLOCK_REASON_CODE } from "./verdicts.js";
 
 /**
  * How a registry records a call's admission disposition and observes its blocked and rejected attempts, and

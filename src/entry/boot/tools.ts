@@ -60,7 +60,7 @@ import type { AskUserHandler } from "../../tools/ask-user.js";
 import { registerAllTools } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
 import { dispatchSchemaCompositionFor } from "../../tools/dispatch-schema.js";
-import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolRegistry } from "../../tools/registry/contract.js";
 import { createVisionSidecar } from "../../tools/vision-sidecar.js";
 import type { BootOptions } from "../boot-options.js";
 import type { ExtensionReloadCoordinator } from "../extension-reload.js";

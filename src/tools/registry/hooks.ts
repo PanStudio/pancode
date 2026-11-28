@@ -15,13 +15,13 @@ import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import { approvalAxisId } from "../../domains/safety/approval-axis.js";
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
-import { disposeAdmissionArgs, hookLanding, prepareAdmissionCall } from "../registry-call-prep.js";
-import type { ApprovalCarry, ToolBoundaryReminder, ToolInvokeOptions } from "../registry-contract.js";
-import { buildToolHookInput, firstBlockToolEffect, noteGuardRule } from "../registry-hook-effects.js";
-import { HOOK_APPROVAL_RULE_ID } from "../registry-verdicts.js";
 import type { ToolResultDigest } from "../result-disposition.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
+import { disposeAdmissionArgs, hookLanding, prepareAdmissionCall } from "./call-prep.js";
+import type { ApprovalCarry, ToolBoundaryReminder, ToolInvokeOptions } from "./contract.js";
+import { buildToolHookInput, firstBlockToolEffect, noteGuardRule } from "./hook-effects.js";
 import type { AdmitOutcome, RegistryScope } from "./scope.js";
+import { HOOK_APPROVAL_RULE_ID } from "./verdicts.js";
 
 /**
  * A registry call's before_tool and after_tool hooks: the input they read, the effects and rewrites they return,

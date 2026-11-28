@@ -37,8 +37,8 @@ import { gatewayPromptHint } from "../../src/tools/builtin-tool-catalog.js";
 import type { ConsultDeps } from "../../src/tools/consult.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import { isWorkerSurfaceExcludedTool } from "../../src/tools/policy.js";
+import type { ToolInvokeOptions, ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolInvokeOptions, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { writeToolOffload } from "../../src/tools/result-shaping.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

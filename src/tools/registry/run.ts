@@ -17,21 +17,20 @@ import {
 import { DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
 import { approvalGiver } from "../approval-note.js";
 import { settleObservationCharge } from "../observation.js";
+import type { ToolResultDigest } from "../result-disposition.js";
+import { shapeToolResult, toolResultDigestFor } from "../result-shaping.js";
+import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import {
 	disposeAdmissionArgs,
 	hookLanding,
 	prepareAdmissionCall,
 	prepareToolArgs,
 	resolveToolResultDisposition,
-} from "../registry-call-prep.js";
-import type { ExecutionProvenance, RegistryDeps, RegistryVerdict, ToolInvokeOptions } from "../registry-contract.js";
-import { applyToolResultEffects, firstBlockToolEffect, guardRuleIds } from "../registry-hook-effects.js";
-import {
-	nestedBlockedVerdict,
-	nestedChainResults,
-	nestedExecutions,
-	recordedExecution,
-} from "../registry-nested-calls.js";
+} from "./call-prep.js";
+import type { ExecutionProvenance, RegistryDeps, RegistryVerdict, ToolInvokeOptions } from "./contract.js";
+import { applyToolResultEffects, firstBlockToolEffect, guardRuleIds } from "./hook-effects.js";
+import { nestedBlockedVerdict, nestedChainResults, nestedExecutions, recordedExecution } from "./nested-calls.js";
+import type { RegistryScope } from "./scope.js";
 import {
 	blockedVerdict,
 	FLOW_BLOCK_REASON_CODE,
@@ -39,11 +38,7 @@ import {
 	flowBlockedVerdict,
 	SNAPSHOT_REQUIRED_REASON_CODE,
 	withFlowRestrictions,
-} from "../registry-verdicts.js";
-import type { ToolResultDigest } from "../result-disposition.js";
-import { shapeToolResult, toolResultDigestFor } from "../result-shaping.js";
-import type { ToolResult, ToolSpec } from "../tool-spec.js";
-import type { RegistryScope } from "./scope.js";
+} from "./verdicts.js";
 
 /** Tools whose completion may have written in the workspace, so the cached secret-mask scan is renewed. */
 const WORKSPACE_WRITING_TOOLS: ReadonlySet<string> = new Set([

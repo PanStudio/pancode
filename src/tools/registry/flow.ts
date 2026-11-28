@@ -11,10 +11,10 @@ import {
 	mergeFlowRestrictions,
 	resolveToolDestination,
 } from "../../domains/safety/information-flow.js";
-import { outboundFilesOf } from "../registry-call-prep.js";
-import { FLOW_SOURCE_TOOLS } from "../registry-verdicts.js";
 import type { ToolSpec } from "../tool-spec.js";
+import { outboundFilesOf } from "./call-prep.js";
 import type { RegistryScope } from "./scope.js";
+import { FLOW_SOURCE_TOOLS } from "./verdicts.js";
 
 /**
  * The information-flow gates a registry call passes before its body runs: content carried outward to a

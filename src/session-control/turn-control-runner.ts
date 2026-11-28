@@ -14,7 +14,7 @@ import {
 	renderCollectedElsewhereBlock,
 } from "../lib/turn-control/index.js";
 import { collectDetachedBatch } from "../tools/monitor-collect.js";
-import type { ToolInvokeOptions } from "../tools/registry-contract.js";
+import type { ToolInvokeOptions } from "../tools/registry/contract.js";
 
 interface TurnControlInput {
 	userTurnId: string;

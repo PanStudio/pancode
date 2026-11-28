@@ -5,9 +5,9 @@ import type { ToolName } from "../../core/tool-names.js";
 import { SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
 import { evaluateAdmission } from "../../domains/safety/admission.js";
 import { withApprovalNote } from "../approval-note.js";
-import { disposeAdmissionArgs } from "../registry-call-prep.js";
-import type { OneShotGrant, ToolInvokeOptions, ToolRegistry } from "../registry-contract.js";
-import { withRegistryScope } from "../registry-nested-calls.js";
+import { disposeAdmissionArgs } from "./call-prep.js";
+import type { OneShotGrant, ToolInvokeOptions, ToolRegistry } from "./contract.js";
+import { withRegistryScope } from "./nested-calls.js";
 import type { ParkedCall, RegistryScope } from "./scope.js";
 
 /**

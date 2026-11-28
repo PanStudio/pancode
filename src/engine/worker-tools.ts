@@ -48,8 +48,8 @@ import { envelopeSurfaceNames, wireParameterSchema } from "../tools/agent-tools.
 import { assertRegisteredBuiltinTools, registerCoreTools } from "../tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { registerHarnessExtensionTools } from "../tools/harness-extensions.js";
+import type { RegistryDeps, ToolRegistry } from "../tools/registry/contract.js";
 import { createRegistry } from "../tools/registry.js";
-import type { RegistryDeps, ToolRegistry } from "../tools/registry-contract.js";
 
 /** Host-owned terminal protocol, never an additional workspace capability. */
 export const INTERNAL_HELPER_RESULT_TOOL = "pancode_submit_result";

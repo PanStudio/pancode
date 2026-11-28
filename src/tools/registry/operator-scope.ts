@@ -14,9 +14,9 @@ import { type AdmissionDisposition, evaluateAdmission } from "../../domains/safe
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import type { OperatorDefaultScope, OperatorYoloScope } from "../../domains/safety/policy-engine.js";
 import { type AutonomyLevel, DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
-import { applyRegisteredToolClassification } from "../registry-call-prep.js";
-import type { HostEffectCall, RegistryDeps, ToolInvokeOptions } from "../registry-contract.js";
 import type { ToolSpec } from "../tool-spec.js";
+import { applyRegisteredToolClassification } from "./call-prep.js";
+import type { HostEffectCall, RegistryDeps, ToolInvokeOptions } from "./contract.js";
 import type { ContainedRoots, RegistryScope } from "./scope.js";
 
 /** The operator's sandbox environment, socket, and home-read choices a contained main shell command carries. */

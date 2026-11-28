@@ -148,7 +148,7 @@ import type {
 	Usage,
 } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import { backendCacheVerdict, extractUserText, sumRunUsage, toolSignatureFromState } from "./chat-loop-messages.js";
 import { codexEffortGeneration, codexEffortUpdates } from "./codex-effort.js";
 import { coldCacheNoticeText } from "./cold-reasons.js";

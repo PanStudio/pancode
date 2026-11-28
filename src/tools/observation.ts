@@ -9,7 +9,7 @@ import {
 import { OBSERVATION_WIDTH_SCALE_CEILING } from "../core/turn-budget-width.js";
 import { createSafetyPolicyEngine } from "../domains/safety/policy-engine.js";
 import type { ImageContent } from "../engine/types.js";
-import type { ObservationPoolEvent, ToolInvokeOptions } from "./registry-contract.js";
+import type { ObservationPoolEvent, ToolInvokeOptions } from "./registry/contract.js";
 import { toolResultContextText } from "./result-disposition.js";
 import { offloadPointer, writeToolOffload } from "./result-shaping.js";
 import type { ToolResult } from "./tool-spec.js";

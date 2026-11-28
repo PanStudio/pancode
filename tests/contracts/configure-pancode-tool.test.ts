@@ -14,8 +14,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createPermissionOverlayBody } from "../../src/interactive/permission-overlay.js";
 import { mainApprovalRequestView } from "../../src/session-control/approval-request-facts.js";
 import { configurePancodeApplyRefusal, createConfigurePancodeTool } from "../../src/tools/configure-pancode.js";
+import type { RegistryVerdict } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { RegistryVerdict } from "../../src/tools/registry-contract.js";
 import { writeTool } from "../../src/tools/write.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

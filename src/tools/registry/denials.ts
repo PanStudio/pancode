@@ -9,8 +9,9 @@ import { type DenialLayer, repeatedDenialReason, type ToolDenial } from "../../d
 import { hashToolCall } from "../../domains/safety/loop-detector.js";
 import { UNATTENDED_ALLOWED_BY } from "../../domains/safety/unattended.js";
 import { type AutonomyLevel, DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
-import type { RegistryVerdict, ToolInvokeOptions, ToolRegistry } from "../registry-contract.js";
-import { withRegistryScope } from "../registry-nested-calls.js";
+import type { RegistryVerdict, ToolInvokeOptions, ToolRegistry } from "./contract.js";
+import { withRegistryScope } from "./nested-calls.js";
+import type { RegistryScope } from "./scope.js";
 import {
 	askUserAnswered,
 	blockDecision,
@@ -21,8 +22,7 @@ import {
 	ESCAPE_SCOPE_ALLOWED_BY,
 	NO_PARK_LISTENER_REASON,
 	operatorAnswers,
-} from "../registry-verdicts.js";
-import type { RegistryScope } from "./scope.js";
+} from "./verdicts.js";
 
 /**
  * A registry's refusals: the structured denial a verdict carries, the escape refusals left out of the loop guard,

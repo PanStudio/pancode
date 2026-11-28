@@ -16,7 +16,7 @@ import { createDecisionBoardStore } from "../../src/domains/session/decision-boa
 import { isDecisionRecord } from "../../src/domains/session/entries.js";
 import { createAskUserTool } from "../../src/tools/ask-user.js";
 import { runParkedInterview } from "../../src/tools/extension-interview.js";
-import type { AskUserToolPolicy } from "../../src/tools/registry-contract.js";
+import type { AskUserToolPolicy } from "../../src/tools/registry/contract.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const ANSWERS = `answers:

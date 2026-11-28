@@ -12,7 +12,7 @@ import {
 } from "../domains/session/task-board.js";
 import type { UserTask, UserTasksStore } from "../domains/user-tasks/store.js";
 import { StringEnum } from "../engine/ai.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 /**

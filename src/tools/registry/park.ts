@@ -12,7 +12,7 @@ import type { SafetyDecision } from "../../domains/safety/contract.js";
 import type { SafetyJudgeOutcome } from "../../domains/safety/safety-judge.js";
 import { asksToLeaveSandbox } from "../../domains/safety/sandbox-escape.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
-import { disposeAdmissionArgs, outboundFilesOf } from "../registry-call-prep.js";
+import { disposeAdmissionArgs, outboundFilesOf } from "./call-prep.js";
 import type {
 	AdmissionReviewEvent,
 	ParkCancelOptions,
@@ -20,11 +20,11 @@ import type {
 	RegistryVerdict,
 	ToolInvokeOptions,
 	ToolRegistry,
-} from "../registry-contract.js";
-import { withRegistryScope } from "../registry-nested-calls.js";
-import { enqueueOperatorAsk } from "../registry-operator-asks.js";
-import { parkAnsweredBlockedVerdict, SAFETY_JUDGE_SKIP } from "../registry-verdicts.js";
+} from "./contract.js";
+import { withRegistryScope } from "./nested-calls.js";
+import { enqueueOperatorAsk } from "./operator-asks.js";
 import type { AdmitOutcome, ParkedCall, RegistryScope } from "./scope.js";
+import { parkAnsweredBlockedVerdict, SAFETY_JUDGE_SKIP } from "./verdicts.js";
 
 /**
  * Approval rules after which a landed typed write refreshes the git hook drift baseline: git-control-file, which the

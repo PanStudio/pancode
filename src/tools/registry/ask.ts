@@ -6,8 +6,9 @@ import type { MiddlewareEffect } from "../../domains/middleware/types.js";
 import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
 import { mainCallExposure } from "../../domains/safety/call-consequence.js";
 import { OPERATOR_NAMED_RULE, SAFETY_JUDGE_ALLOW_REASON_CODE } from "../../domains/safety/safety-judge.js";
-import { approvalConsequencesOf, disposeAdmissionArgs } from "../registry-call-prep.js";
-import type { PermissionRequiredMeta, RegistryVerdict, ToolInvokeOptions } from "../registry-contract.js";
+import { approvalConsequencesOf, disposeAdmissionArgs } from "./call-prep.js";
+import type { PermissionRequiredMeta, RegistryVerdict, ToolInvokeOptions } from "./contract.js";
+import type { AdmitOutcome, ParkedCall, RegistryScope } from "./scope.js";
 import {
 	blockDecision,
 	CONTAINED_YOLO_ESCAPE_REASON,
@@ -24,8 +25,7 @@ import {
 	parkAnsweredBlockedVerdict,
 	SAFETY_JUDGE_REASON_PREFIX,
 	safetyJudgeAllowedDecision,
-} from "../registry-verdicts.js";
-import type { AdmitOutcome, ParkedCall, RegistryScope } from "./scope.js";
+} from "./verdicts.js";
 
 /**
  * One ask's route: the safety judge, the contained-yolo and no-listener refusals, then a park on the operator card.

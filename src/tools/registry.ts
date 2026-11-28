@@ -19,15 +19,6 @@ import {
 import { createRegistryAdmission } from "./registry/admission.js";
 import { createRegistryAsk } from "./registry/ask.js";
 import { createRegistryAttempts } from "./registry/attempts.js";
-import { createRegistryDenials } from "./registry/denials.js";
-import { createFlowGates } from "./registry/flow.js";
-import { createRegistryHooks } from "./registry/hooks.js";
-import { createOperatorScopes } from "./registry/operator-scope.js";
-import { createRegistryPark } from "./registry/park.js";
-import { createRegistryResume } from "./registry/resume.js";
-import { createRegistryRun } from "./registry/run.js";
-import type { ParkedCall, RegistryScope } from "./registry/scope.js";
-import { createSnapshotGate } from "./registry/snapshot.js";
 import type {
 	AdmissionReviewEvent,
 	PermissionRequiredMeta,
@@ -35,9 +26,18 @@ import type {
 	ToolBoundaryReminder,
 	ToolInvokeOptions,
 	ToolRegistry,
-} from "./registry-contract.js";
-import { withRegistryScope } from "./registry-nested-calls.js";
-import { createShellEgress, type OperatorAskQueue } from "./registry-operator-asks.js";
+} from "./registry/contract.js";
+import { createRegistryDenials } from "./registry/denials.js";
+import { createFlowGates } from "./registry/flow.js";
+import { createRegistryHooks } from "./registry/hooks.js";
+import { withRegistryScope } from "./registry/nested-calls.js";
+import { createShellEgress, type OperatorAskQueue } from "./registry/operator-asks.js";
+import { createOperatorScopes } from "./registry/operator-scope.js";
+import { createRegistryPark } from "./registry/park.js";
+import { createRegistryResume } from "./registry/resume.js";
+import { createRegistryRun } from "./registry/run.js";
+import type { ParkedCall, RegistryScope } from "./registry/scope.js";
+import { createSnapshotGate } from "./registry/snapshot.js";
 import type { ToolSpec } from "./tool-spec.js";
 
 /**
