@@ -28,7 +28,7 @@ The manifest is the consent. Installing the pack approves this envelope, and an 
 
 ## The pane
 
-The pane opens below PanCode with at least 18 rows, because cliamp draws its spectrum only from 16 inner rows and the pane border takes two. It asks for 5 percent of the window's height, so the floor decides its size. Opening or showing it never steals keyboard focus. The status line reads `music` while the pane is visible and `music (hidden)` while it is parked; when cliamp exits, a toast says so and `/music` starts it again. The pane closes when PanCode exits and when the pack is disabled or removed.
+The pane opens below PanCode with at least 18 rows, because cliamp draws its spectrum only from 16 inner rows and the pane border takes two. It asks for 5 percent of the window's height, so the floor decides its size. Opening or showing it never steals keyboard focus. The status line reads `visible` while the pane is shown and `hidden` while it is parked; when cliamp exits, a toast says so and `/music` starts it again. The pane closes when PanCode exits and when the pack is disabled or removed.
 
 cliamp is launched with `--playlist pancode --auto-play` and driven over its own IPC with `cliamp play`, `pause`, `toggle`, `stop`, `next`, `load pancode` and `status --json`, each with a five-second timeout. No keystrokes are sent into the pane.
 

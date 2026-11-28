@@ -422,8 +422,7 @@ export default function extension(api: ExtensionApiV2): void {
 
 	api.on("pane_changed", (event) => {
 		if (event.event !== "pane_changed") return undefined;
-		if (event.state !== "closed")
-			return { text: "", status: { text: event.state === "hidden" ? "music (hidden)" : "music" } };
+		if (event.state !== "closed") return { text: "", status: { text: event.state === "hidden" ? "hidden" : "visible" } };
 		return event.reason === "exited"
 			? { text: "", status: null, toast: { text: "cliamp exited; /music starts it again", tone: "warning" } }
 			: { text: "", status: null };
