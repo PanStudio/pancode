@@ -23,7 +23,7 @@ import type { ToolFinishEvent } from "../../tools/agent-tools.js";
 import type { AttemptReceipt, RequestCursor } from "../attempt-receipt.js";
 import type { ExpectedColdReason } from "../turn-context.js";
 import type { RunningCallWait, TurnRuntime, TurnRuntimeDeps } from "../turn-runtime-types.js";
-import type { AgentRuntime, ChatLoopTarget } from "../turn-state.js";
+import type { AgentRuntime, ChatLoopTarget, PreInvocationStage } from "../turn-state.js";
 
 /** The admission outcome the tool registry settled for one call, kept until the call's end event. */
 export type SettledToolOutcome = Pick<
@@ -115,6 +115,27 @@ export interface AgentBuildScope {
 	guardStopCause: FailureCause | null;
 	// The user turn the run started under, so a call a steer moved to its own entry settles with it (bt-26 N2h).
 	runTurnId: string | null;
+	// message_start can follow response headers. Keep each invocation's
+	// monotonic anchor before that wait, including custom stream delegates.
+	apiCallStartedAt: number | null;
+	apiCallFirstDeltaAt: number | null;
+	// Ends the request in flight on the first-token watchdog's verdict; set per request, cleared when it settles (MD11).
+	cutStalledRequest: ((reason: string) => void) | null;
+	// Each provider request's serial; the cut retires every request built up to it, so their callbacks go unheard (MD11).
+	requestSerial: number;
+	retiredThrough: number;
+	// The request in flight is a compliance-first tool round the payload layer holds whole until it completes, so the
+	// turn sees no first token while the provider streams; it keeps the mid-stream window and gives no sample (MD11).
+	outputHeld: boolean;
+	// Where a request is before `onStreamInvocation`. A watchdog abort while
+	// `apiCallStartedAt` is null names this step, because no request has
+	// reached the provider it would otherwise blame (#423).
+	preInvocationStage: PreInvocationStage;
+	/** The stall watchdog's last sign of progress, on `performance.now()`; the builder stamps it once it is built. */
+	lastActivityAt: number;
+	toolsInFlight: number;
+	stallSuspendDepth: number;
+	stallTimer: ReturnType<typeof setTimeout> | null;
 	readonly requestStructure: RequestStructures;
 	readonly currentRun: () => boolean;
 	readonly localRuntime: AgentRuntime;

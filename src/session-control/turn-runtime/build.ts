@@ -43,7 +43,6 @@ import {
 } from "../../domains/scheduling/budget.js";
 import type { HostInsertSource } from "../../domains/session/entries.js";
 import { missingOutputRefusal } from "../../domains/session/output-obligations.js";
-import { type RetrySettings, recordFirstTokenMs, routeFirstTokenSamples } from "../../domains/session/retry.js";
 import { callSettlementFromMessage, reportedModelFromMessage } from "../../domains/telemetry/call-facts.js";
 import { type createEngineAgent, enginePinnedPrefix, providerFallbackOf } from "../../engine/agent.js";
 import { engineMainStreamSimple } from "../../engine/api-registry.js";
@@ -99,7 +98,6 @@ import {
 	toolNamesFromAgentState,
 	toolResultSummary,
 } from "../chat-loop-messages.js";
-import { firstTokenStallLimitMs } from "../chat-loop-policy.js";
 import { selfCompactSiblingRefusal } from "../continuity-controller.js";
 import { withSettledHistory } from "../message-list-digest.js";
 import { resolveFitOutputReserve, turnAdmissionRemedy } from "../output-reserve.js";
@@ -117,11 +115,12 @@ import type { ModelRequestFacts } from "../status-types.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls, shouldAssessToolProse } from "../tool-prose-loop.js";
 import { OVERSIZED_RESULT_STOP } from "../turn-context.js";
 import { stalledRequestEnd } from "../turn-recovery.js";
-import { MODEL_SLOTS_SAMPLE_MS, modelRequestSlots, stallAbortReason } from "../turn-runtime-wait.js";
-import type { AgentRuntime, ChatLoopTarget, PreInvocationStage } from "../turn-state.js";
+import { MODEL_SLOTS_SAMPLE_MS, modelRequestSlots } from "../turn-runtime-wait.js";
+import type { AgentRuntime, ChatLoopTarget } from "../turn-state.js";
 import { createCallTelemetry } from "./calls.js";
 import { TurnAdmissionError } from "./errors.js";
 import type { AgentBuildScope, TurnRuntimeScope } from "./scope.js";
+import { createStallWatchdog } from "./watchdog.js";
 
 const LOCAL_API_KEY_FALLBACK = "pancode-local-target";
 /** The reason a reply cut off by shutdown carries in place of the transport's abort text (bt-26). */
@@ -308,6 +307,17 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		attemptRequest: undefined,
 		guardStopCause: null,
 		runTurnId: null,
+		apiCallStartedAt: null,
+		apiCallFirstDeltaAt: null,
+		cutStalledRequest: null,
+		requestSerial: 0,
+		retiredThrough: 0,
+		outputHeld: false,
+		preInvocationStage: "transform",
+		lastActivityAt: 0,
+		toolsInFlight: 0,
+		stallSuspendDepth: 0,
+		stallTimer: null,
 		get requestStructure() {
 			return requestStructure;
 		},
@@ -318,9 +328,6 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			return localRuntime;
 		},
 	};
-	// message_start can follow response headers. Keep each invocation's
-	// monotonic anchor before that wait, including custom stream delegates.
-	let apiCallStartedAt: number | null = null;
 	let callTracking: ReturnType<typeof trackCallFetch> | null = null;
 	const requestStructure = createRequestStructures();
 	let admittedCursor: RequestCursor | null = null;
@@ -335,19 +342,6 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		abandonModelCall,
 		openModelCall,
 	} = createCallTelemetry(scope);
-	let apiCallFirstDeltaAt: number | null = null;
-	// Ends the request in flight on the first-token watchdog's verdict; set per request, cleared when it settles (MD11).
-	let cutStalledRequest: ((reason: string) => void) | null = null;
-	// Each provider request's serial; the cut retires every request built up to it, so their callbacks go unheard (MD11).
-	let requestSerial = 0;
-	let retiredThrough = 0;
-	// The request in flight is a compliance-first tool round the payload layer holds whole until it completes, so the
-	// turn sees no first token while the provider streams; it keeps the mid-stream window and gives no sample (MD11).
-	let outputHeld = false;
-	// Where a request is before `onStreamInvocation`. A watchdog abort while
-	// `apiCallStartedAt` is null names this step, because no request has
-	// reached the provider it would otherwise blame (#423).
-	let preInvocationStage: PreInvocationStage = "transform";
 	// The last request carried the local placeholder key, so an endpoint that refuses it was sent no credential at all.
 	let placeholderKeySent = false;
 	let unsettledSpendUsd = 0;
@@ -403,8 +397,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			let invokedAttempt = false;
 			const pinnedPrefix = enginePinnedPrefix(localRuntime.agent);
 			// The payload layer's own decision, read before it acts on it: a compliance-first round is held until done.
-			outputHeld = firstToolRoundAttempt(currentModel, controlled, localRuntime.targetId) !== controlled;
-			if (outputHeld && stallTimer !== null) {
+			scope.outputHeld = firstToolRoundAttempt(currentModel, controlled, localRuntime.targetId) !== controlled;
+			if (scope.outputHeld && scope.stallTimer !== null) {
 				const stallMs = deps.retrySettings().streamStallMs;
 				clearStallTimer();
 				if (stallMs > 0) armStallTimer(stallMs);
@@ -413,7 +407,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				currentModel,
 				controlled,
 				(request) => {
-					const serial = ++requestSerial;
+					const serial = ++scope.requestSerial;
 					const retry = invokedAttempt;
 					if (retry && scope.modelCall)
 						scope.modelCall =
@@ -463,7 +457,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 						onResponse: async (...args: Parameters<NonNullable<NonNullable<typeof request.options>["onResponse"]>>) => {
 							// A request the first-token watchdog retired answers no one: its late status and first byte would
 							// otherwise land on the retry's classification and facts (MD11).
-							if (serial <= retiredThrough) return;
+							if (serial <= scope.retiredThrough) return;
 							// Pi can discard HTTP 401 when rendering the body's friendly message (#427).
 							localRuntime.lastProviderStatus = args[0].status;
 							// Pi retries a retryable status inside one attempt; the first byte is the response that
@@ -709,8 +703,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 						// The watchdog re-arms through it as it does through a running
 						// tool, so a budget stop is never aborted and retried as a stream
 						// stall (#423).
-						preInvocationStage = "budget admission";
-						stallSuspendDepth += 1;
+						scope.preInvocationStage = "budget admission";
+						scope.stallSuspendDepth += 1;
 						// Parked at the ceiling this is PanCode's queue, and no provider has heard of the request.
 						let parked: ModelRequestFacts | null = null;
 						try {
@@ -751,8 +745,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 								...(streamOptions?.signal ? { signal: streamOptions.signal } : {}),
 							});
 						} finally {
-							stallSuspendDepth -= 1;
-							lastActivityAt = performance.now();
+							scope.stallSuspendDepth -= 1;
+							scope.lastActivityAt = performance.now();
 							if (parked !== null) (parked as ModelRequestFacts).admission = null;
 						}
 					} else {
@@ -786,7 +780,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 					outputTokens: output,
 					context: resolved,
 				});
-			preInvocationStage = "admission";
+			scope.preInvocationStage = "admission";
 			const admission = deps.continuity?.admission() ?? { block: false };
 			// Counted only here, once nothing else blocks: the request is about to be sent.
 			const capRefusal = admission.block ? undefined : deps.runCaps?.admitRequest();
@@ -800,9 +794,9 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
 			// This ttftMs counts from here, so it includes PanCode's request shaping and any provider-replay
 			// rebuild; the journal's TTFT starts at send.end, the handoff to Pi's provider (#434).
-			apiCallStartedAt = performance.now();
-			apiCallFirstDeltaAt = null;
-			outputHeld = false;
+			scope.apiCallStartedAt = performance.now();
+			scope.apiCallFirstDeltaAt = null;
+			scope.outputHeld = false;
 			scope.modelCall?.stage("send", "start");
 			// The request is out, so its first token is held to the route's first-token limit from now; the run's
 			// timer was armed for the mid-stream window, which a calibrated hosted route undercuts (MD11).
@@ -823,7 +817,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				localRuntime.runtimeResolution.runtime,
 			);
 			if (placeholderKeySent) return LOCAL_API_KEY_FALLBACK;
-			preInvocationStage = "auth";
+			scope.preInvocationStage = "auth";
 			call?.stage("auth", "start");
 			let refreshed: boolean | undefined;
 			try {
@@ -861,7 +855,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		const stream = await runStream(requestModel, requestContext, requestOptions);
 		const runSignal = handle.agent.signal;
 		if (runSignal !== undefined && requestOptions?.signal === runSignal)
-			cutStalledRequest = (reason) => stream.push(stalledRequestEnd(requestModel, reason));
+			scope.cutStalledRequest = (reason) => stream.push(stalledRequestEnd(requestModel, reason));
 		return stream;
 	};
 
@@ -880,110 +874,15 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	};
 	if (!options?.silent) rt.emitThinkingClampNotice(target.runtimeResolution);
 
-	// Stall watchdog. `agent_start` arms a timer for `retry.streamStallMs`;
-	// every later engine event counts as progress and pushes the deadline
-	// out. When the deadline passes with nothing from the stream, the
-	// backend is presumed wedged (the server answers /health while its slot
-	// is dead) and the run is aborted through the same `agent.abort()` call
-	// Esc uses. `state.streamStallReason` is what tells the two aborts apart
-	// once the run settles: `turn-recovery.reclassifyStallAbort` reads it and
-	// hands the failure to the transient retry ladder, while an operator
-	// cancel still ends the turn.
-	//
-	// Idle is measured on `performance.now()`. Wall time is not a duration:
-	// a forward step of one threshold or more (NTP correcting a node that
-	// booted without an RTC battery, a laptop resuming from suspend) would
-	// otherwise make a healthy stream look silent and abort it through the
-	// operator-cancel path.
-	//
-	// `toolsInFlight` and `stallSuspendDepth` cover the windows where silence
-	// is expected and the stream is not the thing we are waiting on: a tool
-	// executing (a `npm run ci` that takes ten minutes is not a stalled
-	// stream), the post-tool continuation guard, whose auto-compaction is its
-	// own model call, and a paid request parked at the session cost ceiling
-	// (#423). The watchdog re-arms instead of firing while either
-	// is above zero. They are counted apart because only the tool half can
-	// leak: the guard's depth is a try/finally around one await, while a
-	// `tool_execution_end` that never arrives would disable the watchdog for
-	// the rest of the run. The engine settles an entire tool batch before it
-	// emits `turn_end`, so that event bounds the tool suspension below.
-	let lastActivityAt = performance.now();
-	let toolsInFlight = 0;
-	let stallSuspendDepth = 0;
-	let stallTimer: ReturnType<typeof setTimeout> | null = null;
-	const clearStallTimer = (): void => {
-		if (stallTimer === null) return;
-		clearTimeout(stallTimer);
-		stallTimer = null;
-	};
-	// The silence the route's first token may keep: adaptive on a calibrated hosted route, unless the round's output is
-	// held until it completes (MD11).
-	const firstTokenLimitMs = (retry: RetrySettings): number | null =>
-		firstTokenStallLimitMs(
-			retry,
-			deps.providers.getRuntime(localRuntime.runtimeId)?.tier,
-			outputHeld ? [] : routeFirstTokenSamples(localRuntime.targetId, localRuntime.wireModelId),
-		);
+	// The stall watchdog measures idle from here.
+	scope.lastActivityAt = performance.now();
+	const { clearStallTimer, firstTokenLimitMs, armStallTimer, callWait, noteFirstOutput, firstOutputMs } =
+		createStallWatchdog(scope);
 	rt.clearCurrentWatchdog = clearStallTimer;
-	rt.callWait = () =>
-		!currentRun() || state.runtime !== localRuntime || localRuntime.agent.signal?.aborted
-			? "elsewhere"
-			: toolsInFlight > 0
-				? "tool"
-				: apiCallStartedAt === null || stallSuspendDepth > 0
-					? "elsewhere"
-					: apiCallFirstDeltaAt === null
-						? "first-output"
-						: "output";
-	const armStallTimer = (delayMs: number): void => {
-		if (rt.disposed || !currentRun() || localRuntime.agent.signal?.aborted) return;
-		stallTimer = setTimeout(
-			() => {
-				stallTimer = null;
-				const retry = deps.retrySettings();
-				// Zero disables the escalation; an operator who wants a stream to
-				// hang forever keeps that by setting `retry.streamStallMs: 0`.
-				if (retry.streamStallMs <= 0) return;
-				if (stallSuspendDepth > 0 || toolsInFlight > 0) {
-					armStallTimer(retry.streamStallMs);
-					return;
-				}
-				// Silence before a call's first delta is not silence mid-stream. A
-				// local server that slept reloads the model and prefills cold before
-				// it can emit anything, which is minutes of healthy quiet; a stream
-				// that already produced output and stops is a wedged slot.
-				const awaitingFirstToken = apiCallStartedAt !== null && apiCallFirstDeltaAt === null;
-				const firstTokenMs = awaitingFirstToken ? firstTokenLimitMs(retry) : null;
-				if (awaitingFirstToken && firstTokenMs === null) {
-					armStallTimer(retry.streamStallMs);
-					return;
-				}
-				const stallMs = firstTokenMs ?? retry.streamStallMs;
-				const idleMs = performance.now() - lastActivityAt;
-				if (idleMs < stallMs) {
-					armStallTimer(stallMs - idleMs);
-					return;
-				}
-				state.streamStallStage = apiCallStartedAt === null ? preInvocationStage : null;
-				const stallReason = stallAbortReason(localRuntime.targetId, idleMs, state.streamStallStage, awaitingFirstToken);
-				state.streamStallReason = stallReason;
-				// A request that never started is ended here, not by its provider, so nothing it sends later reaches the turn.
-				if (awaitingFirstToken) {
-					retiredThrough = requestSerial;
-					cutStalledRequest?.(stallReason);
-				}
-				cutStalledRequest = null;
-				localRuntime.agent.abort();
-			},
-			Math.max(1, delayMs),
-		);
-		// The in-flight request already holds the event loop open; this timer
-		// must not keep a settled headless run alive on its own.
-		stallTimer.unref?.();
-	};
+	rt.callWait = callWait;
 
 	handle.agent.prepareNextTurnWithContext = async (_completed, signal?: AbortSignal) => {
-		stallSuspendDepth += 1;
+		scope.stallSuspendDepth += 1;
 		scope.guardStopCause = null;
 		// Host messages queued during the tool batch (X6). Taken now, so a cancel, a throw or an early return below
 		// drops them unrecorded; they enter the ledger only where they enter the outgoing context.
@@ -1039,8 +938,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			if (!restored && update !== undefined) return tail ? { ...update, context: messages } : update;
 			return contextChanged || restored || tail ? { context: messages } : undefined;
 		} finally {
-			stallSuspendDepth -= 1;
-			lastActivityAt = performance.now();
+			scope.stallSuspendDepth -= 1;
+			scope.lastActivityAt = performance.now();
 		}
 	};
 
@@ -1106,7 +1005,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		if (terminal) persistence.appendTerminalToolAssistantTurn(terminal);
 		context.flushReconciledSnapshot();
 		turnEndFiredFor = turn.message;
-		stallSuspendDepth += 1;
+		scope.stallSuspendDepth += 1;
 		// Fleet design 4.3: an unattended turn that did work and ended undeclared gets one round pinned to finish. A
 		// zero-tool turn the stalled-turn nudge flags counts as work there, the nudge yielding to it (memory design MD14).
 		const finishRoundFor = (calledWork: boolean): boolean =>
@@ -1130,8 +1029,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				() => finishRoundFor(true),
 			);
 		} finally {
-			stallSuspendDepth -= 1;
-			lastActivityAt = performance.now();
+			scope.stallSuspendDepth -= 1;
+			scope.lastActivityAt = performance.now();
 		}
 		if (!currentRun() || state.activeInterruptReason !== null) return undefined;
 		if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return undefined;
@@ -1227,7 +1126,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		// Every span below is measured on the monotonic frame, so an NTP
 		// correction mid-turn cannot corrupt a tool duration or a TTFT.
 		const eventClock = performance.now();
-		lastActivityAt = eventClock;
+		scope.lastActivityAt = eventClock;
 		let enrichedEvent = event;
 		if (event.type === "message_end" && event.message.role === "assistant") {
 			requiredToolReminder = middlewareToolChoice.completeRound(event.message);
@@ -1241,7 +1140,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				);
 		}
 		if (event.type === "tool_execution_start") {
-			toolsInFlight += 1;
+			scope.toolsInFlight += 1;
 			middlewareToolChoice.toolStarted(event.toolName, event.args);
 			deps.toolStartTimes.set(event.toolCallId, eventClock);
 			state.turnToolCalls += 1;
@@ -1252,7 +1151,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			if (effective.toolName !== ToolNames.Finish) state.turnCalledWork = true;
 			rt.startedCallLabels.set(event.toolCallId, toolCallLabel(effective.toolName, effective.args));
 		} else if (event.type === "tool_execution_end") {
-			toolsInFlight = Math.max(0, toolsInFlight - 1);
+			scope.toolsInFlight = Math.max(0, scope.toolsInFlight - 1);
 			const startedAt = deps.toolStartTimes.get(event.toolCallId);
 			deps.toolStartTimes.delete(event.toolCallId);
 			// Carry the registry's verdict alongside the engine's result. The
@@ -1365,7 +1264,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 					(message as unknown as { anthropicResponse?: { status?: number } }).anthropicResponse?.status ??
 					localRuntime.lastProviderStatus;
 				const failure = classifyCallFailure(state.streamStallReason ?? terminal.errorMessage, {
-					invoked: responseObserved || (tracked?.invoked ?? apiCallStartedAt !== null),
+					invoked: responseObserved || (tracked?.invoked ?? scope.apiCallStartedAt !== null),
 					httpStatus: status !== undefined && status >= 400 ? status : (tracked?.httpStatus ?? null),
 					retryAttempts: tracked?.retryAttempts ?? 0,
 					aborted: terminal.stopReason === "aborted" && state.streamStallReason === null,
@@ -1381,7 +1280,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				scope.guardStopCause = null;
 				Object.assign(message, {
 					failure:
-						!failure.invoked && preInvocationStage === "budget admission"
+						!failure.invoked && scope.preInvocationStage === "budget admission"
 							? { ...failure, stage: "budget", errorClass: "budget_wait" }
 							: harnessCause !== undefined
 								? { ...failure, stage: "harness", errorClass: harnessCause }
@@ -1422,7 +1321,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				const retryAfterMs = callTracking?.retryAfterMs();
 				if (retryAfterMs !== null && retryAfterMs !== undefined) Object.assign(message, { retryAfterMs });
 			} else {
-				Object.assign(message, { callInvoked: apiCallStartedAt !== null || responseObserved });
+				Object.assign(message, { callInvoked: scope.apiCallStartedAt !== null || responseObserved });
 			}
 			const pricedBy = !observed
 				? "none"
@@ -1458,27 +1357,31 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			if (isHostAuthored(message)) await openModelCall();
 		}
 
-		if (publicEvent?.type === "message_end" && publicEvent.message.role === "assistant" && apiCallStartedAt !== null) {
+		if (
+			publicEvent?.type === "message_end" &&
+			publicEvent.message.role === "assistant" &&
+			scope.apiCallStartedAt !== null
+		) {
 			publicEvent = {
 				...publicEvent,
-				modelTimeMs: Math.round(Math.max(0, eventClock - apiCallStartedAt)),
-				ttftMs: apiCallFirstDeltaAt === null ? null : Math.round(Math.max(0, apiCallFirstDeltaAt - apiCallStartedAt)),
+				modelTimeMs: Math.round(Math.max(0, eventClock - scope.apiCallStartedAt)),
+				ttftMs: firstOutputMs(),
 			} as typeof publicEvent;
 		}
-		if (publicEvent?.type === "message_end" && publicEvent.message.role === "assistant") cutStalledRequest = null;
+		if (publicEvent?.type === "message_end" && publicEvent.message.role === "assistant") scope.cutStalledRequest = null;
 		if (publicEvent?.type === "agent_start") {
 			turnEndFiredFor = null;
-			cutStalledRequest = null;
+			scope.cutStalledRequest = null;
 			state.continuation.clearInRun();
-			apiCallStartedAt = null;
-			apiCallFirstDeltaAt = null;
-			preInvocationStage = "transform";
+			scope.apiCallStartedAt = null;
+			scope.apiCallFirstDeltaAt = null;
+			scope.preInvocationStage = "transform";
 			placeholderKeySent = false;
 			runFirstCallVerdict = null;
 			pendingTerminalToolResult = null;
 			clearStallTimer();
-			toolsInFlight = 0;
-			stallSuspendDepth = 0;
+			scope.toolsInFlight = 0;
+			scope.stallSuspendDepth = 0;
 			state.streamStallReason = null;
 			state.streamStallStage = null;
 			const stallMs = deps.retrySettings().streamStallMs;
@@ -1489,21 +1392,10 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		// A call whose `tool_execution_end` was never emitted (a crashed
 		// mediator, a dropped frame) therefore stops suspending the watchdog
 		// at the turn that issued it instead of for the rest of the run.
-		if (publicEvent?.type === "turn_end") toolsInFlight = 0;
+		if (publicEvent?.type === "turn_end") scope.toolsInFlight = 0;
 		if (publicEvent?.type === "message_update") {
 			const hasDelta = hasAssistantGenerationDelta(publicEvent.assistantMessageEvent);
-			if (hasDelta && apiCallFirstDeltaAt === null) {
-				apiCallFirstDeltaAt = eventClock;
-				scope.modelCall?.mark("firstToken");
-				// The route's first-token limit adapts to what this process has seen it do (MD11).
-				if (apiCallStartedAt !== null && !outputHeld)
-					recordFirstTokenMs(localRuntime.targetId, localRuntime.wireModelId, eventClock - apiCallStartedAt);
-				// The timer may be armed for the longer first-token window; the
-				// stream is live now, so the mid-stream window applies from here.
-				const stallMs = deps.retrySettings().streamStallMs;
-				clearStallTimer();
-				if (stallMs > 0) armStallTimer(stallMs);
-			}
+			if (hasDelta && scope.apiCallFirstDeltaAt === null) noteFirstOutput(eventClock);
 		}
 		if (enrichedEvent.type === "agent_end") {
 			context.noteRunCacheSummary(enrichedEvent.messages, runFirstCallVerdict);
@@ -1525,11 +1417,11 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		) {
 			persistence.appendAssistantTurn(
 				enrichedEvent.message,
-				apiCallStartedAt === null
+				scope.apiCallStartedAt === null
 					? null
 					: {
-							ttftMs: apiCallFirstDeltaAt === null ? null : Math.round(Math.max(0, apiCallFirstDeltaAt - apiCallStartedAt)),
-							apiMs: Math.round(Math.max(0, eventClock - apiCallStartedAt)),
+							ttftMs: firstOutputMs(),
+							apiMs: Math.round(Math.max(0, eventClock - scope.apiCallStartedAt)),
 						},
 			);
 			return;
@@ -1650,10 +1542,10 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			const isAssistant = enrichedEvent.message?.role === "assistant";
 			if (isAssistant) pendingTerminalToolResult = null;
 			const timing: AssistantCallTiming | null =
-				isAssistant && apiCallStartedAt !== null
+				isAssistant && scope.apiCallStartedAt !== null
 					? {
-							ttftMs: apiCallFirstDeltaAt !== null ? Math.round(Math.max(0, apiCallFirstDeltaAt - apiCallStartedAt)) : null,
-							apiMs: Math.round(Math.max(0, eventClock - apiCallStartedAt)),
+							ttftMs: firstOutputMs(),
+							apiMs: Math.round(Math.max(0, eventClock - scope.apiCallStartedAt)),
 						}
 					: null;
 			const correlationId = event.type === "message_end" ? handle.requestCorrelationId(event.message) : undefined;
@@ -1661,8 +1553,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			await deps.continuity?.response(persistedId, correlationId);
 			if (!currentRun()) return;
 			if (isAssistant) {
-				apiCallStartedAt = null;
-				preInvocationStage = "transform";
+				scope.apiCallStartedAt = null;
+				scope.preInvocationStage = "transform";
 				if (state.currentAskUserPolicy) {
 					const sessionId = deps.sessionId?.();
 					const turnId = state.activeUserTurnId ?? undefined;
