@@ -216,7 +216,7 @@ test("ended and settled runs ignore late progress and keep settled outcome detai
 					callIds: [],
 				},
 			} as never,
-			{ runId: "settled-run" },
+			{ sessionId: null, runId: "settled-run", agent: { role: "worker", id: "settled-run" } },
 		);
 		// Late progress frames after settlement must not mutate progress fold or status.
 		bus.emit("run.progressed", {
@@ -233,9 +233,9 @@ test("ended and settled runs ignore late progress and keep settled outcome detai
 			spend: unobservedRunUsageFacts(),
 			durationMs: 999,
 			exitCode: 1,
-			reason: "stale failure",
+			reason: "failed",
 			outcome: "failed",
-			outcomeCode: "stale",
+			outcomeCode: null,
 			outcomeDetail: "stale error detail",
 		});
 		const settled = projection.snapshot().runs.find((r) => r.runId === "settled-run");
