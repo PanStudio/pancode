@@ -13,6 +13,7 @@
  */
 
 import { canonicalJson } from "../../core/canonical-json.js";
+import { sha256Hex } from "../../core/hash.js";
 import type { ToolName } from "../../core/tool-names.js";
 import { attestedToolNames, attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import {
@@ -24,42 +25,6 @@ import {
 	WORKER_PROTOCOL_VERSION,
 	type WorkerAttestation,
 } from "../../worker/protocol.js";
-
-export type {
-	AgentLedgerBody,
-	WorkerAdmitFrame,
-	WorkerAttestation,
-	WorkerExtensionHook,
-	WorkerGrantRequestFrame,
-	WorkerHookEffect,
-	WorkerHookRequest,
-	WorkerHookResultFrame,
-	WorkerHookRun,
-	WorkerModelLoad,
-} from "../../worker/protocol.js";
-export {
-	CONTROL_FRAME_PREFIX,
-	endpointIdentityHash,
-	isControlLine,
-	isReceiptBearingFrame,
-	parseBulkFrame,
-	parseControlFrame,
-	parseWorkerHookRequest,
-	toolSignatureOf,
-	WORKER_ANNOUNCE_DEADLINE_MS,
-	WORKER_BULK_FRAME_MAX_BYTES,
-	WORKER_EVENT_QUEUE_MAX_FRAMES,
-	WORKER_HOOK_REQUEST_EVENT,
-	WORKER_PROTOCOL_VERSION,
-	WORKER_STDIN_FRAME_MAX_BYTES,
-	WORKER_STDIN_QUEUE_MAX_BYTES,
-	WORKER_STDOUT_FAILURE_MARKER,
-	WORKER_STDOUT_INCOMPLETE_MARKER,
-} from "../../worker/protocol.js";
-
-import { sha256Hex } from "../../core/hash.js";
-
-export { computeSettingsFingerprint } from "./settings-fingerprint.js";
 
 /** Route and node identity the orchestrator approved before the spawn. */
 export interface ApprovedWorkerIdentity {

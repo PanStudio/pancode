@@ -25,7 +25,7 @@ import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import { shareTaskWorktreeDependencies } from "../../tools/task-worktree-dependencies.js";
 import { parseWorkerContextSeed } from "../../worker/context-seed.js";
-import { WORKER_STDIN_FRAME_MAX_BYTES, workerStaticHead } from "../../worker/protocol.js";
+import { WORKER_STDIN_FRAME_MAX_BYTES, type WorkerExtensionHook, workerStaticHead } from "../../worker/protocol.js";
 import {
 	DEFAULT_ESCALATION_FALLBACK,
 	DEFAULT_ESCALATION_TIMEOUT_MS,
@@ -72,9 +72,9 @@ import {
 	assertRuntimeCanHonorWorkerPermissionMode,
 	assertWriteRootsEnforceable,
 } from "./runtime-enforceability.js";
+import { computeSettingsFingerprint } from "./settings-fingerprint.js";
 import { type ResolvedTarget, targetToolCapability } from "./target-resolution.js";
 import { workerApprovalBackstopMs } from "./worker-approval-window.js";
-import { computeSettingsFingerprint, type WorkerExtensionHook } from "./worker-protocol.js";
 import type { WorkerSpec } from "./worker-spawn.js";
 
 interface DispatchWorkerSpecInput {

@@ -21,21 +21,14 @@ import { parseAgentRecipeSchema } from "../../src/domains/agents/recipe-schema.j
 import { parseCodeReport } from "../../src/domains/agents/result-contract-code-report.js";
 import { normalizeAgentSpec, resolveAgentToolCompatibility } from "../../src/domains/agents/spec.js";
 import { isDeterministicOutcomeCode } from "../../src/domains/dispatch/backoff.js";
+import { computeSettingsFingerprint } from "../../src/domains/dispatch/settings-fingerprint.js";
 import { createSshWorkerTransport } from "../../src/domains/dispatch/transport.js";
 import {
 	approvedIdentityForSpec,
-	CONTROL_FRAME_PREFIX,
-	computeSettingsFingerprint,
 	createBoundedEventQueue,
-	isControlLine,
-	parseControlFrame,
 	verifyWorkerAttestation,
-	WORKER_BULK_FRAME_MAX_BYTES,
 	WORKER_EVENT_QUEUE_HARD_FRAMES,
-	WORKER_EVENT_QUEUE_MAX_FRAMES,
 	WORKER_EVENT_QUEUE_SOFT_BYTES,
-	type WorkerAttestation,
-	type WorkerHookRequest,
 } from "../../src/domains/dispatch/worker-protocol.js";
 import {
 	type SpawnedWorker,
@@ -52,9 +45,16 @@ import type { SafetyDecision } from "../../src/domains/safety/contract.js";
 import { workerPermissionCacheKey } from "../../src/engine/worker-escalation.js";
 import { projectWorkerEventForStdout } from "../../src/worker/event-projection.js";
 import {
+	CONTROL_FRAME_PREFIX,
 	endpointIdentityHash,
+	isControlLine,
+	parseControlFrame,
 	toolSignatureOf,
+	WORKER_BULK_FRAME_MAX_BYTES,
+	WORKER_EVENT_QUEUE_MAX_FRAMES,
 	WORKER_PROTOCOL_VERSION,
+	type WorkerAttestation,
+	type WorkerHookRequest,
 	workerSpecDigest,
 } from "../../src/worker/protocol.js";
 import { createOrderedSteerHandler } from "../../src/worker/stdin-demux.js";

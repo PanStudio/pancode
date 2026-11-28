@@ -12,6 +12,7 @@
  * and memoized by `(width, terminalRows, tier, skinEpoch, factsRevision, secondBucket)`.
  */
 
+import { formatCount, formatElapsed } from "../../core/format-time.js";
 import type { JobRecord } from "../../core/job-types.js";
 import { presentationTier, tierPolicy, tierRevision } from "../../core/presentation-tier.js";
 import { COST_NOT_MEASURED, renderUsdLimit } from "../../core/telemetry/render.js";
@@ -24,15 +25,7 @@ import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { buildSegmentedContextBar } from "../context-bar.js";
 import { contextPercentRole, renderContextMeterBar } from "../context-meter.js";
 import { ACTIVE_DISPATCH_STATUSES } from "../footer-panel.js";
-import {
-	boxIsland,
-	formatCount,
-	formatElapsed,
-	GLYPH,
-	onRaisedTheme,
-	type PancodeTheme,
-	pancodeTheme,
-} from "../theme/index.js";
+import { boxIsland, GLYPH, onRaisedTheme, type PancodeTheme, pancodeTheme } from "../theme/index.js";
 import { skinEpoch } from "../theme/tokens.js";
 import {
 	type ContextOccupancyFacts,

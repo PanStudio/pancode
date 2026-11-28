@@ -13,16 +13,11 @@ export {
 	createMcpProtocolClient,
 	createMcpStdioClient,
 	DEFAULT_KILL_GRACE_MS,
-	DEFAULT_RESULT_TEXT_BYTES,
 	DEFAULT_TEARDOWN_BOUND_MS,
-	MCP_INSTRUCTIONS_BYTES,
-	MCP_TOOL_LIST_CAP,
 	type McpCallToolOptions,
 	type McpClient,
 	type McpClientOptions,
-	type McpContentBlock,
 	type McpElicitationHandler,
-	type McpElicitationOutcome,
 	type McpEventStream,
 	type McpEventStreamHandlers,
 	type McpEventStreamOptions,
@@ -33,14 +28,10 @@ export {
 	type McpServerSpec,
 	type McpSubscription,
 	type McpSubscriptionFilter,
-	type McpTeardownOutcome,
-	type McpToolCallResult,
-	type McpToolDescriptor,
 	type McpToolListing,
-	type McpTransportEvents,
-	renderMcpContent,
-	resourceLinkLine,
 } from "./client.js";
+export { MCP_INSTRUCTIONS_BYTES } from "./client-init.js";
+export { MCP_TOOL_LIST_CAP } from "./client-tools.js";
 export {
 	loadMcpServerConfig,
 	MCP_CONFIG_CAPS,
@@ -222,7 +213,17 @@ export {
 	mcpSurfaceDigest,
 	mcpSurfaceRemedy,
 } from "./surface.js";
-export { outputSchemaMismatch } from "./tool-results.js";
+export {
+	DEFAULT_RESULT_TEXT_BYTES,
+	type McpContentBlock,
+	type McpElicitationOutcome,
+	type McpToolCallResult,
+	type McpToolDescriptor,
+	outputSchemaMismatch,
+	renderMcpContent,
+	resourceLinkLine,
+} from "./tool-results.js";
+export type { McpTeardownOutcome, McpTransportEvents } from "./transport.js";
 export {
 	type ApproveMcpSkillResult,
 	approveMcpSkill,

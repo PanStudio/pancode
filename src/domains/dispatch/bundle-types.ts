@@ -6,6 +6,7 @@ import type { DispatchRunIdentity } from "../../core/telemetry/live-events.js";
 import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../engine/acp/adapter.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { AskUserHandler } from "../../tools/ask-user.js";
+import type { WorkerExtensionHook, WorkerHookEffect, WorkerHookRequest, WorkerHookRun } from "../../worker/protocol.js";
 import type { WorkerBudget, WorkerPromptMessage } from "../../worker/spec-contract.js";
 import type { WorkerDecisionBinding } from "../../worker/stdin-demux.js";
 import type { AgentRecipe } from "../agents/recipe.js";
@@ -49,7 +50,6 @@ import type {
 	RunResult,
 } from "./types.js";
 import type { RunTokenMeter } from "./worker-event-fold.js";
-import type { WorkerExtensionHook, WorkerHookEffect, WorkerHookRequest, WorkerHookRun } from "./worker-protocol.js";
 import type { SpawnedWorker, SpawnOptions as WorkerSpawnOptions, WorkerSpec } from "./worker-spawn.js";
 
 export interface ActiveRun {

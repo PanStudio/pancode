@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { homedir } from "node:os";
-import { listInstalledExtensions } from "../../../../../src/domains/extensions/manager.js";
+import { listInstalledExtensions } from "../../../../../src/domains/extensions/state.js";
 import { readHubInventory } from "../../../../../src/domains/resources/hub-inventory.js";
 
 /**

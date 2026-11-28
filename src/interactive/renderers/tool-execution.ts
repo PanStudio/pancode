@@ -14,6 +14,7 @@
  * two surfaces stay byte-identical.
  */
 
+import { formatElapsed, formatWaitClock } from "../../core/format-time.js";
 import { UNICODE_GLYPH } from "../../core/glyphs.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
 import { ToolNames } from "../../core/tool-names.js";
@@ -29,7 +30,7 @@ import {
 } from "../../lib/secrets/redaction.js";
 import { classifyResourceRead, workspaceRelative } from "../../tools/presentation.js";
 import { cardHead, cardRows } from "../card.js";
-import { collapseHomePath, formatElapsed, formatWaitClock, GLYPH } from "../theme/index.js";
+import { collapseHomePath, GLYPH } from "../theme/index.js";
 import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import { transcriptDetail } from "../transcript-detail.js";
 import { toolOutputInk } from "./code-ink.js";

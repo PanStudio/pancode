@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { formatElapsed } from "../core/format-time.js";
 import type { JobRecord } from "../core/job-types.js";
 import { jobPollFailure } from "../core/job-types.js";
 import type { Text } from "../engine/tui.js";
@@ -7,7 +9,7 @@ import { truncateToWidth, visibleWidth } from "../engine/tui.js";
 import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { isHelperRun } from "../session-control/worker-stream.js";
 import type { DispatchBoardRow, DispatchBoardStatus } from "./dispatch-row-model.js";
-import { formatElapsed, GLYPH, pancodeTheme } from "./theme/index.js";
+import { GLYPH, pancodeTheme } from "./theme/index.js";
 
 /** Shared footer projection of live and failed worker states. */
 export const ACTIVE_DISPATCH_STATUSES: ReadonlySet<DispatchBoardStatus> = new Set([
