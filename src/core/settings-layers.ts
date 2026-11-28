@@ -707,6 +707,7 @@ function stripProjectOperatorSafety(
 	origin: SettingsOrigin,
 	issues: SettingsLayerIssue[],
 	userBlob: Record<string, unknown> | undefined,
+	inheritedConfine?: ReadonlyArray<unknown>,
 ): Record<string, unknown> {
 	if (!isRecord(blob.safety)) return blob;
 	const safety: Record<string, unknown> = { ...blob.safety };
@@ -726,9 +727,11 @@ function stripProjectOperatorSafety(
 		}
 	}
 	if (Object.hasOwn(safety, "confine")) {
-		// A project may confine more of its integrations, never release one the operator confined.
-		const operator = isRecord(userBlob?.safety) && Array.isArray(userBlob.safety.confine) ? userBlob.safety.confine : [];
-		const merged = Array.isArray(safety.confine) ? [...new Set([...operator, ...safety.confine])] : undefined;
+		// A project may confine more of its integrations, never release one an earlier layer confined.
+		const floor =
+			inheritedConfine ??
+			(isRecord(userBlob?.safety) && Array.isArray(userBlob.safety.confine) ? userBlob.safety.confine : []);
+		const merged = Array.isArray(safety.confine) ? [...new Set([...floor, ...safety.confine])] : undefined;
 		if (merged === undefined)
 			issues.push({
 				origin,
@@ -1087,7 +1090,12 @@ function prepareProjectLayers(
 	const projectFile = join(root, ".pancode", "settings.yaml");
 	const localFile = join(root, ".pancode", "settings.local.yaml");
 	const snapshot = captureProjectSurface(cwd, "settings");
-	const readProjectLayer = (origin: SettingsOrigin, path: string, file: ProjectSurfaceFile | undefined): RawLayer => {
+	const readProjectLayer = (
+		origin: SettingsOrigin,
+		path: string,
+		file: ProjectSurfaceFile | undefined,
+		inheritedConfine?: ReadonlyArray<unknown>,
+	): RawLayer => {
 		if (file?.error !== undefined) issues.push({ origin, path, message: file.error, kind: "unreadable" });
 		if (file?.text === null || file === undefined) return { origin, path, blob: undefined };
 		const raw = readRawLayer(origin, path, issues, file.text);
@@ -1111,6 +1119,7 @@ function prepareProjectLayers(
 									origin,
 									issues,
 									userBlob,
+									inheritedConfine,
 								),
 								origin,
 								issues,
@@ -1131,7 +1140,11 @@ function prepareProjectLayers(
 		return { ...raw, blob };
 	};
 	const projectRaw = readProjectLayer("project", projectFile, snapshot.files[0]);
-	const localRaw = readProjectLayer("project.local", localFile, snapshot.files[1]);
+	const projectConfine =
+		isRecord(projectRaw.blob?.safety) && Array.isArray(projectRaw.blob.safety.confine)
+			? projectRaw.blob.safety.confine
+			: undefined;
+	const localRaw = readProjectLayer("project.local", localFile, snapshot.files[1], projectConfine);
 	const project: RawLayer = {
 		...projectRaw,
 		blob:

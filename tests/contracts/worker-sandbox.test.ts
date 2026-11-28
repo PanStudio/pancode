@@ -1242,11 +1242,12 @@ test("safety.confine is user-set, a project may only add to it, and an opt-in la
 		assert.throws(() => readSettings(), /safety\.confine/u);
 		writeFileSync(userFile, "version: 2\nsafety:\n  confine: ['mcp:docs', jobs, jobs]\n");
 		assert.deepEqual(readSettings().safety.confine, ["mcp:docs", "jobs"]);
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "safety:\n  confine: [hooks]\n");
 		writeFileSync(join(workspace, ".pancode", "settings.local.yaml"), "safety:\n  confine: [git]\n");
 		const snapshot = captureProjectSurface(workspace, "settings");
 		if (!snapshot.contentHash) throw new Error("missing project settings hash");
 		recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
-		assert.deepEqual([...layeredConfineList(workspace)].sort(), ["git", "jobs", "mcp:docs"]);
+		assert.deepEqual([...layeredConfineList(workspace)].sort(), ["git", "hooks", "jobs", "mcp:docs"]);
 	} finally {
 		writeFileSync(userFile, "version: 2\n");
 	}
@@ -1261,6 +1262,36 @@ test("safety.confine is user-set, a project may only add to it, and an opt-in la
 		assert.deepEqual(listed, { label: sandboxedLabel("mcp-stdio", "confine-opt-in", "mcp:docs"), confined: true });
 	else assert.match("refused" in listed ? listed.refused : "", /remove it from safety\.confine to run it unconfined/u);
 	assert.deepEqual(documentReaderLaunch("sqlite", workspace, "off").label, uncontainedLabel("sqlite", "sandbox-off"));
+
+	// Inside a worker, optInLaunch yields to the worker sandbox and an unconfined host label never overwrites worker-policy.
+	configureWorkerProcessSandbox(
+		{
+			version: 1,
+			mode: "auto",
+			writableRoots: [workspace],
+			readOnlyPaths: [],
+			readableRoots: [workspace],
+			gitWritablePaths: [],
+			network: false,
+		},
+		true,
+	);
+	try {
+		assert.deepEqual(optInLaunch("job", "jobs", ["jobs"]), {
+			label: sandboxedLabel("job", "worker-policy", "jobs"),
+			confined: false,
+		});
+		const workerSearch = settleHostLaunch(
+			uncontainedLabel("search", "read-admitted"),
+			{ outcome: "ran", exitCode: 0 },
+			{ caller: "worker", confinement: "sandboxed", why: "worker-policy", backend: "bwrap", network: "off" },
+		);
+		assert.equal(workerSearch.caller, "worker");
+		assert.equal(workerSearch.confinement, "sandboxed");
+		assert.equal(workerSearch.why, "worker-policy");
+	} finally {
+		configureWorkerProcessSandbox(undefined);
+	}
 
 	// A host launch journals one record, the same one its result carries; a seam's own record is not journaled again.
 	const journaled: unknown[] = [];
@@ -1338,6 +1369,37 @@ test("safety.confine is user-set, a project may only add to it, and an opt-in la
 	const hidden = await read({ roots: [], toolchains: [] });
 	assert.notEqual(hidden.exitCode, 0);
 	assert.equal(hidden.stdout, "");
+
+	// Under listed homeReads, a confined integration can run from its own stateDir and read its vendored root
+	// while the rest of $HOME remains hidden.
+	const stateDir = join(outside, "state");
+	const toolDir = join(outside, "tool");
+	mkdirSync(stateDir, { recursive: true });
+	mkdirSync(toolDir, { recursive: true });
+	writeFileSync(join(toolDir, "helper.txt"), "vendored");
+	const listedRun = await runCommandVector(
+		"sh",
+		[
+			"-c",
+			`cat ${join(toolDir, "helper.txt")}; echo ok > ${join(stateDir, "out.txt")}; cat ${join(outside, "home-note.txt")} 2>/dev/null || true`,
+		],
+		{
+			cwd: stateDir,
+			workspaceRoot: stateDir,
+			shellSandbox: confinedIntegrationPolicy({
+				workspace,
+				scratchRoots: [],
+				stateDirs: [stateDir],
+				extraReadableRoots: [toolDir],
+				network: "off",
+				homeReads: { roots: [], toolchains: [] },
+			}),
+			launchLabel: seamLaunchLabel(sandboxedLabel("extension-binary", "confine-opt-in", "extension:demo")),
+		},
+	);
+	assert.equal(listedRun.exitCode, 0, listedRun.stderr);
+	assert.equal(listedRun.stdout, "vendored");
+	assert.ok(existsSync(join(stateDir, "out.txt")));
 });
 
 test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6, and redacts upstreamProxy control values (P3)", async (t) => {

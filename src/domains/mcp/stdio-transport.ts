@@ -410,6 +410,12 @@ export function createMcpStdioTransport(
 			return false;
 		}
 		sandboxedLauncher = sandbox.kind === "sandboxed";
+		let released = false;
+		const releaseSandbox = (): void => {
+			if (released || sandbox.kind !== "sandboxed") return;
+			released = true;
+			sandbox.afterExit();
+		};
 		let proc: ChildProcess;
 		try {
 			const [file, args] =
@@ -431,12 +437,13 @@ export function createMcpStdioTransport(
 			// A confined server's network is PanCode's proxy for its own grants, served for as long as it runs.
 			if (egressPlan !== undefined) bridgeEgress(proc, egressPlan);
 		} catch (error) {
+			releaseSandbox();
 			settleLaunch("launch-failed");
 			fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${errorMessage(error)}`), true);
 			return false;
 		}
 		child = proc;
-		if (sandbox.kind === "sandboxed") proc.once("exit", sandbox.afterExit);
+		proc.once("exit", releaseSandbox);
 		if (proc.pid !== undefined) groupPhase = "live";
 		spawned = new Promise<boolean>((resolve) => {
 			proc.once("spawn", () => {
@@ -444,7 +451,10 @@ export function createMcpStdioTransport(
 				resolve(true);
 			});
 			proc.once("error", (error) => {
-				if (proc.pid === undefined) settleLaunch("launch-failed");
+				if (proc.pid === undefined) {
+					releaseSandbox();
+					settleLaunch("launch-failed");
+				}
 				fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${error.message}`), true);
 				resolve(false);
 			});

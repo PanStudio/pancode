@@ -261,6 +261,12 @@ export interface MainSandboxPolicy {
 	 */
 	lateWritableRoots?: ReadonlyArray<string>;
 	/**
+	 * Extra read-only roots admitted under `listed` homeReads so a confined
+	 * integration can execute its own vendored files without widening writes or
+	 * exposing the rest of `$HOME`.
+	 */
+	extraReadableRoots?: ReadonlyArray<string>;
+	/**
 	 * The read-only sandbox of a read-only session: the one writable root is
 	 * the session's scratch directory, created at spawn, and the command gets
 	 * a private /tmp. Only bubblewrap runs it.
@@ -781,6 +787,7 @@ export function confinedIntegrationPolicy(input: {
 	workspace: string;
 	scratchRoots: ReadonlyArray<string>;
 	stateDirs: ReadonlyArray<string>;
+	extraReadableRoots?: ReadonlyArray<string>;
 	network: ConfinedNetwork;
 	homeReads: HomeReadList | undefined;
 }): MainSandboxPolicy {
@@ -793,6 +800,9 @@ export function confinedIntegrationPolicy(input: {
 	return {
 		...base,
 		...(input.stateDirs.length > 0 ? { lateWritableRoots: [...new Set(input.stateDirs)] } : {}),
+		...(input.extraReadableRoots !== undefined && input.extraReadableRoots.length > 0
+			? { extraReadableRoots: [...new Set(input.extraReadableRoots)] }
+			: {}),
 		network: network !== "off",
 		...(typeof network === "object"
 			? {
@@ -875,6 +885,14 @@ export function optInLaunch(
 	integration: ConfineEntry,
 	confine: ReadonlyArray<string>,
 ): OptInLaunch {
+	if (workerSandboxConfigured()) {
+		return {
+			label: workerSandboxApplies()
+				? sandboxedLabel(launcher, "worker-policy", integration)
+				: uncontainedLabel(launcher, "unconfined-opt-in", integration),
+			confined: false,
+		};
+	}
 	if (!confines(confine, integration)) return { label: notConfinedLabel(launcher, integration), confined: false };
 	const availability = sandboxAvailability();
 	if (!availability.available) {
@@ -1116,6 +1134,9 @@ function planMainSandboxLaunch(
 		...(policy.lateWritableRoots !== undefined
 			? { lateWritableRoots: policy.lateWritableRoots.map(physicalSandboxPath) }
 			: {}),
+		...(policy.extraReadableRoots !== undefined
+			? { extraReadableRoots: policy.extraReadableRoots.map(physicalSandboxPath) }
+			: {}),
 	};
 	const hookMasks: SandboxMaskedPath[] = policy.absentGitHooks
 		.filter((hooks) => !pathExists(hooks))
@@ -1184,6 +1205,8 @@ function planMainSandboxLaunch(
 						? [physicalSandboxPath(policy.secretRoots.sourceCheckout)]
 						: []),
 					...physicalPolicy.writableRoots,
+					...(physicalPolicy.lateWritableRoots ?? []),
+					...(physicalPolicy.extraReadableRoots ?? []),
 				])
 			: masks;
 	if (aliased instanceof Error) {
@@ -1263,7 +1286,15 @@ function mainHomeReadPlan(
 		list: policy.homeReads,
 		backend,
 		admitted: [
-			...new Set([workspace, ...readGitDirs, ...ownFiles].map(physicalSandboxPath).concat(physicalPolicy.writableRoots)),
+			...new Set(
+				[workspace, ...readGitDirs, ...ownFiles]
+					.map(physicalSandboxPath)
+					.concat(
+						physicalPolicy.writableRoots,
+						physicalPolicy.lateWritableRoots ?? [],
+						physicalPolicy.extraReadableRoots ?? [],
+					),
+			),
 		],
 		cwd: physicalSandboxPath(cwd),
 	});

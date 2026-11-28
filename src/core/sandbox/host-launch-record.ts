@@ -29,7 +29,7 @@ function hostLaunchFacts(
 	plan?: SandboxPlanFacts,
 	sandboxedNetwork: EgressMode = "off",
 ): SandboxLaunchFacts {
-	if (plan !== undefined) return launchFacts(plan, label.launcher, label);
+	if (plan !== undefined) return launchFacts(plan, label.launcher, seamLaunchLabel(label));
 	const sandboxed = label.confinement === "sandboxed";
 	return {
 		caller: workerSandboxConfigured() ? "worker" : "main",
@@ -42,12 +42,16 @@ function hostLaunchFacts(
 	};
 }
 
-/** The launch label an exec seam takes for this host launch: its launcher, integration and confining policy. */
+/**
+ * The launch label an exec seam takes for this host launch: its launcher,
+ * integration, and confining policy. An unconfined label's `why` never explains
+ * a sandboxed plan (such as a worker's own sandbox), so it is omitted there.
+ */
 export function seamLaunchLabel(label: HostLaunchLabel): SandboxLaunchLabel {
 	return {
 		launcher: label.launcher,
 		...(label.integration !== undefined ? { integration: label.integration } : {}),
-		why: label.why,
+		...(label.confinement === "sandboxed" ? { why: label.why } : {}),
 	};
 }
 

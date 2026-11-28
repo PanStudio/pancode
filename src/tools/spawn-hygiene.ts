@@ -280,6 +280,12 @@ export function spawnLineStream(
 		// with no network: its reads then stop at the sandbox's masks too, not only at the tool's path filter.
 		const cwd = options.cwd ?? process.cwd();
 		const plan = planSandboxedSpawn({ argv: [file, ...args] }, cwd, [], { network: false });
+		let released = false;
+		const releaseSandbox = (): void => {
+			if (released || plan.kind !== "sandboxed") return;
+			released = true;
+			plan.afterExit();
+		};
 		const settle = (outcome: SandboxLaunchOutcome, exitCode: number | null = null): SandboxLaunchRecord =>
 			settleHostLaunch(HOST_SEARCH_LABEL, { outcome, exitCode }, plan.launch);
 		const spawned = (() => {
@@ -295,6 +301,7 @@ export function spawnLineStream(
 					}),
 				};
 			} catch (error) {
+				releaseSandbox();
 				return { ok: false as const, message: error instanceof Error ? error.message : String(error) };
 			}
 		})();
@@ -312,7 +319,7 @@ export function spawnLineStream(
 			});
 			return;
 		}
-		if (plan.kind === "sandboxed") spawned.child.once("exit", plan.afterExit);
+		spawned.child.once("exit", releaseSandbox);
 		const child = spawned.child;
 		const stdoutLines = new BoundedDiagnosticDecoder((line, truncated) => {
 			// Lines buffered before an early stop still flush; they no longer
@@ -365,6 +372,7 @@ export function spawnLineStream(
 		const finish = (spawnError: string | null): void => {
 			if (settled) return;
 			settled = true;
+			if (child.pid === undefined) releaseSandbox();
 			clearTimeout(timeoutTimer);
 			if (killGraceTimer) clearTimeout(killGraceTimer);
 			options.signal?.removeEventListener("abort", onAbort);

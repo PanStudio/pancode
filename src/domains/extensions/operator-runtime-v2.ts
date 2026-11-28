@@ -22,7 +22,7 @@ import type { ExtensionKeyValueHost, OutputOrigin } from "@pancode/sdk/pack";
 import { RUNTIME_LIMITS, RUNTIME_V2_LIMITS } from "@pancode/sdk/pack";
 import { recordPackageActivity } from "../../core/package-activity.js";
 import type { SandboxMode, UnixSocketMode } from "../../core/sandbox/types.js";
-import { layeredConfineList, readLayeredSettings } from "../../core/settings-layers.js";
+import { layeredConfineList, layeredSandboxMode } from "../../core/settings-layers.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import type { EmbeddingResponse } from "../providers/embedding/types.js";
 import { extensionIdentity } from "./activity.js";
@@ -289,10 +289,6 @@ interface ObservationQueue {
  * still the current one for the same session and installation. Never used by
  * native workers or model tool bootstrap.
  */
-function layeredSandboxMode(workspace: string): SandboxMode {
-	return readLayeredSettings(workspace).settings.safety.sandbox;
-}
-
 export class OperatorExtensionRuntimeV2 {
 	private activity(entry: InstalledExtension, kind: string, outcome?: string, details?: Record<string, unknown>): void {
 		recordPackageActivity({

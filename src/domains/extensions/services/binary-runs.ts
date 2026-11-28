@@ -22,7 +22,13 @@ import { layeredMainHomeReads } from "../../../core/settings-layers.js";
 import { ownerTelemetryContext } from "../../../core/telemetry/context.js";
 import { telemetryHub } from "../../../core/telemetry/hub.js";
 import { isSecretArgKey, redactSecretString } from "../../../lib/secrets/redaction.js";
-import { BINARY_RUN_LIMITS, type PackBinaryRunRequest, packBinaryPath, packBinarySha256 } from "./binaries.js";
+import {
+	BINARY_RUN_LIMITS,
+	type PackBinaryRunRequest,
+	packBinaryPath,
+	packBinaryRoot,
+	packBinarySha256,
+} from "./binaries.js";
 
 export interface PackBinaryRunResult {
 	exitCode: number | null;
@@ -86,6 +92,7 @@ export function packLaunch(
 			workspace,
 			scratchRoots: [],
 			stateDirs: [storeDir],
+			extraReadableRoots: [packBinaryRoot(extensionId)],
 			network: "off",
 			homeReads: layeredMainHomeReads(workspace),
 		}),
