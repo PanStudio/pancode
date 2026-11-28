@@ -8,6 +8,8 @@
  * and fleet_end result as one the operator started.
  */
 
+import { resolve } from "node:path";
+import { canonicalizeExistingPath } from "../core/path-canonical.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import { isRecord } from "../core/type-guards.js";
 import { playbookTaskRefusal } from "../domains/agents/playbook-task.js";
@@ -18,6 +20,9 @@ import {
 	type FleetRunPreview,
 	type FleetRunPreviewInput,
 } from "../domains/dispatch/fleet-run-preview.js";
+import { requestedWriteNone } from "../domains/dispatch/obligation.js";
+import { canonicalWriteRoots } from "../domains/dispatch/writer-set.js";
+import type { ToolCallDispatchLanding, ToolCallDispatchTask } from "../domains/middleware/types.js";
 import { fleetEndAnswer } from "./monitor-fleet.js";
 
 export interface PlaybookRef {
@@ -119,6 +124,43 @@ export function playbookDetachRefusal(preview: FleetRunPreview): string | null {
 	const writer = preview.plan.steps.find((step) => step.scope === "workspace");
 	if (writer === undefined) return null;
 	return `dispatch: playbook '${preview.name}' cannot detach: step '${writer.id}' writes this checkout while the turn goes on. Run it attached (omit detach), or give the playbook isolation: worktree`;
+}
+
+/**
+ * The workers an approved playbook starts, for the awaited hook phase: each agent step it dispatches (a replayed
+ * step runs nothing), read-only by its scope or its recipe's class, writing its declared boundary under the run's
+ * workspace, in the task worktree when the playbook isolates one.
+ */
+export function playbookHookLanding(
+	preview: FleetRunPreview,
+	workspaceRoot: string,
+	capabilityClassOf: (agentId: string) => string | null,
+): ToolCallDispatchLanding {
+	const cwd = canonicalizeExistingPath(resolve(workspaceRoot));
+	const worktree = preview.plan.isolation === "worktree";
+	const tasks = preview.waves.flatMap((wave) =>
+		wave.steps.flatMap((step): ToolCallDispatchTask[] => {
+			if (step.kind !== "agent" || step.agentId === undefined || step.replayed === true) return [];
+			const readOnly = requestedWriteNone({
+				readOnly: step.scope === "readonly",
+				capabilityClass: capabilityClassOf(step.agentId),
+				hoareContract: false,
+			});
+			const writeRoots = readOnly ? [] : [...(step.writes ?? [])];
+			return [
+				{
+					role: "task",
+					agent: step.agentId,
+					cwd,
+					writeRoots,
+					writeBoundaries: canonicalWriteRoots({ cwd, writeRoots }),
+					worktree,
+					readOnly,
+				},
+			];
+		}),
+	);
+	return { kind: "tasks", mode: "playbook", tasks };
 }
 
 /** What a preview call answers: the card the operator would approve, and the call that starts it. */
