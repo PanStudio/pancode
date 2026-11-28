@@ -40,7 +40,6 @@ import type { HubLifecyclePlan, HubLifecyclePort, HubOperation } from "./hub-lif
 import {
 	buildHubRows,
 	type HubMode,
-	type HubRowActions,
 	type HubRowSet,
 	type HubRowSubject,
 	type HubView,
@@ -54,8 +53,6 @@ import { HUB_TABS, isHubTab } from "./hub-tabs.js";
 import { refWords } from "./hub-words.js";
 import { type ListOverlayHandle, openListOverlay } from "./list-overlay.js";
 import type { ListOverlayItem, ListOverlayTab } from "./list-overlay-model.js";
-
-export { HUB_TABS, isHubTab };
 
 export const HUB_TITLE = "PanHub";
 
@@ -759,6 +756,3 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 		},
 	};
 }
-
-/** @internal exported for contract tests */
-export type { HubRowActions };

@@ -94,12 +94,9 @@ import {
 	workerSettledFromData,
 } from "./worker-replay.js";
 
-export type { RehydrateChatPanelOptions } from "../session-control/session-replay-messages.js";
 export {
-	activeEntriesBeforeCompactionCut,
 	buildReplayAgentMessagesFromTurns,
 	retireActiveUserContextForNextOperator,
-	selectReplayEntries,
 } from "../session-control/session-replay-messages.js";
 
 const DEFAULT_COALESCE_MS = 16;

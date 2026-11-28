@@ -11,10 +11,8 @@ import { printError } from "./argv.js";
 // import sites unchanged.
 export {
 	columnWidths,
-	extractGlobalFlags,
 	formatColumnRow,
 	formatColumns,
-	parseFlags,
 	printError,
 	printNote,
 	printOk,

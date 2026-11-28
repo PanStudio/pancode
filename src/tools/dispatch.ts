@@ -18,18 +18,10 @@ import { buildDispatchParameters, FULL_DISPATCH_SCHEMA_COMPOSITION } from "./dis
 import type { DispatchExecutionSnapshot, DispatchToolDeps } from "./dispatch-types.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
-export type {
-	DispatchBackgroundControl,
-	DispatchBackgroundOutcome,
-	DispatchBackgroundRegistry,
-} from "./dispatch-background.js";
 export {
 	createDispatchRunEventRegistry,
-	type DispatchEventSummary,
 	type DispatchRunEventRegistry,
-	type RunTailEntry,
 } from "./dispatch-run-events.js";
-export type { DispatchToolDeps } from "./dispatch-types.js";
 
 /**
  * Stable, lightweight dispatch surface. Admission remains synchronous so the
