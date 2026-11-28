@@ -185,8 +185,8 @@ export function typedGitLaunch(
 	if (workerSandboxConfigured()) {
 		return {
 			label: workerSandboxApplies()
-				? sandboxedLabel("typed-git", "this worker's OS sandbox", "git")
-				: uncontainedLabel("typed-git", "no worker sandbox backend; the operator allowed unconfined workers", "git"),
+				? sandboxedLabel("typed-git", "worker-policy", "git")
+				: uncontainedLabel("typed-git", "unconfined-opt-in", "git"),
 		};
 	}
 	const decided = optInLaunch("typed-git", "git", confine);

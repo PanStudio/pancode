@@ -71,6 +71,8 @@ export function parseEgressAllowEntry(entry: string): EgressOrigin | string {
 /** The origins one caller may reach in a launch, fixed when the launch starts. */
 export interface EgressGrants {
 	readonly origins: ReadonlySet<string>;
+	/** The origins among them the operator approved earlier this session, not in the settings. */
+	readonly session?: ReadonlySet<string>;
 }
 
 export function egressGrants(
@@ -83,8 +85,10 @@ export function egressGrants(
 		const parsed = parseEgressAllowEntry(entry);
 		if (typeof parsed !== "string") origins.add(originKey(parsed));
 	}
-	for (const key of extra) origins.add(key);
-	return { origins };
+	const session = new Set<string>();
+	for (const key of extra) if (!origins.has(key)) session.add(key);
+	for (const key of session) origins.add(key);
+	return session.size > 0 ? { origins, session } : { origins };
 }
 
 // Addresses a granted name may never resolve to: loopback, private, link-local

@@ -693,8 +693,8 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		const integration = `mcp:${declaration.id}` as const;
 		if (options.admitted !== undefined) {
 			return workerSandboxApplies()
-				? { label: sandboxedLabel("mcp-stdio", "this worker's OS sandbox", integration), confined: false }
-				: { label: uncontainedLabel("mcp-stdio", "no worker sandbox applies", integration), confined: false };
+				? { label: sandboxedLabel("mcp-stdio", "worker-policy", integration), confined: false }
+				: { label: uncontainedLabel("mcp-stdio", "unconfined-opt-in", integration), confined: false };
 		}
 		return optInLaunch("mcp-stdio", integration, confineList());
 	};

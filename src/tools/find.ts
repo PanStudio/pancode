@@ -5,7 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { Type } from "typebox";
-import type { HostLaunchLabel } from "../core/sandbox/host-launch.js";
+import type { SandboxLaunchRecord } from "../core/sandbox/launch-record.js";
 import { packedSourceDirectory, packedSourcePathsUnder } from "../core/source-pack.js";
 import { ToolNames } from "../core/tool-names.js";
 import { StringEnum } from "../engine/ai.js";
@@ -80,7 +80,7 @@ async function fdFind(
 	search: SearchCompleteness,
 	allows: (path: string) => boolean,
 	signal?: AbortSignal,
-): Promise<{ ok: true; paths: string[]; launch: HostLaunchLabel } | { ok: false; message: string }> {
+): Promise<{ ok: true; paths: string[]; launch: SandboxLaunchRecord } | { ok: false; message: string }> {
 	const lines: string[] = [];
 	const diagnostics = createSearchDiagnostics(search, (path) => allows(resolve(process.cwd(), path)));
 	const result = await spawnLineStream(fdPath, buildFdArgs(pattern, searchPath, includeIgnored), {
@@ -238,7 +238,7 @@ function renderFindResult(input: {
 	search: SearchCompleteness;
 	fallback: boolean;
 	/** Where fd ran (P8); absent when nothing was launched. */
-	launch?: HostLaunchLabel;
+	launch?: SandboxLaunchRecord;
 	withheldPaths: number;
 	packedPaths: Set<string>;
 	ordered: OrderedPaths;
@@ -390,7 +390,7 @@ export const findTool: ToolSpec = {
 			const search = newSearchCompleteness();
 			const pathFilter = createObservationPathFilter(process.cwd(), options?.allowsObservationPath);
 			const fdPath = resolveFdBinary();
-			let launch: HostLaunchLabel | undefined;
+			let launch: SandboxLaunchRecord | undefined;
 			if (packOnly) {
 				collectedPaths = [];
 			} else if (fdPath) {

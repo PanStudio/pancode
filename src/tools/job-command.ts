@@ -142,7 +142,7 @@ export function jobLaunch(
 	cwd: string,
 ): { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string } {
 	if (admitted !== undefined) {
-		return { label: sandboxedLabel("job", "admission ran it in the session's sandbox", "jobs"), policy: admitted };
+		return { label: sandboxedLabel("job", "main-policy", "jobs"), policy: admitted };
 	}
 	const decided = optInLaunch("job", "jobs", confine);
 	if ("refused" in decided) return decided;

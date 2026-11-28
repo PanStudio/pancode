@@ -4,6 +4,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import http from "node:http";
 import net, { isIP } from "node:net";
 import tls from "node:tls";
+import type { EgressDecision, EgressReason, EgressSource } from "../types.js";
 import {
 	type EgressGrants,
 	type EgressOrigin,
@@ -21,13 +22,25 @@ import { EGRESS_UNGRANTED } from "./setup.js";
 export interface EgressReceipt {
 	host: string;
 	port: number;
-	decision: "allowed" | "denied";
+	/** `allowed`: the upstream connect completed. `failed`: admitted, but no connection was made. */
+	decision: EgressDecision;
+	/** Why it was denied or failed, as the tool note words it. */
 	reason?: string;
+	/** The same reason as a code, for the launch record. */
+	code?: EgressReason;
+	/** What admitted the origin; absent when it was denied. */
+	source?: EgressSource;
+	/** Sent through the upstream proxy. */
+	viaUpstream?: true;
 	count: number;
 }
 
-/** Asks the operator about one origin outside the grants; resolves true to admit it. */
-export type EgressAsk = (origin: EgressOrigin) => Promise<boolean>;
+/**
+ * Asks the operator about one origin outside the grants. `true`: the operator admitted it now; `"session"`: an
+ * earlier answer this session admitted it; `false`: the operator refused it, now or earlier; `"unasked"`: nobody
+ * could answer (a worker, a headless run, an unattended window), so it stays outside the grants.
+ */
+export type EgressAsk = (origin: EgressOrigin) => Promise<boolean | "session" | "unasked">;
 
 export interface EgressProxyOptions {
 	grants: EgressGrants;
@@ -51,6 +64,11 @@ export interface EgressProxy {
 	/** Serves one accepted client connection. */
 	accept(socket: net.Socket): void;
 	receipts(): EgressReceipt[];
+	/**
+	 * `dropped`: connection attempts no receipt lists, past the receipt bound. `shed`: connections closed unread at
+	 * the connection limit, before any origin was known.
+	 */
+	overflow(): { dropped: number; shed: number };
 	/** Closes the listener and destroys every client and upstream socket. */
 	close(): void;
 }
@@ -72,11 +90,19 @@ const HOP_BY_HOP = new Set([
 	"upgrade",
 ]);
 
+type FailureCode = Extract<
+	EgressReason,
+	"unresolved" | "dial-error" | "dial-timeout" | "upstream-refused" | "proxy-closed"
+>;
+
 class EgressRefusal extends Error {
 	readonly status: 403 | 502;
-	constructor(status: 403 | 502, message: string) {
+	/** Set on a 502 the launch record lists as a failed dial. */
+	readonly code: FailureCode | undefined;
+	constructor(status: 403 | 502, message: string, code?: FailureCode) {
 		super(message);
 		this.status = status;
+		this.code = code;
 	}
 }
 
@@ -116,7 +142,7 @@ function connected(socket: net.Socket, what: string, event: "connect" | "secureC
 	return new Promise<void>((resolve, reject) => {
 		const timer = setTimeout(() => {
 			socket.destroy();
-			reject(new EgressRefusal(502, `PanCode egress could not reach ${what}: timed out`));
+			reject(new EgressRefusal(502, `PanCode egress could not reach ${what}: timed out`, "dial-timeout"));
 		}, DIAL_TIMEOUT_MS);
 		socket.once(event, () => {
 			clearTimeout(timer);
@@ -124,7 +150,7 @@ function connected(socket: net.Socket, what: string, event: "connect" | "secureC
 		});
 		socket.once("error", (error) => {
 			clearTimeout(timer);
-			reject(new EgressRefusal(502, `PanCode egress could not reach ${what}: ${error.message}`));
+			reject(new EgressRefusal(502, `PanCode egress could not reach ${what}: ${error.message}`, "dial-error"));
 		});
 	});
 }
@@ -140,7 +166,13 @@ function connectReply(socket: net.Socket, what: string): Promise<void> {
 			socket.removeListener("data", onData);
 			socket.removeListener("close", onClose);
 			socket.destroy();
-			reject(new EgressRefusal(502, `PanCode egress could not reach ${what} through the upstream proxy: ${reason}`));
+			reject(
+				new EgressRefusal(
+					502,
+					`PanCode egress could not reach ${what} through the upstream proxy: ${reason}`,
+					"upstream-refused",
+				),
+			);
 		}
 		function onData(chunk: Buffer): void {
 			head = Buffer.concat([head, chunk]);
@@ -207,8 +239,10 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 	const sockets = new Set<net.Socket>();
 	const listeners = new Set<net.Server>();
 	/** Origins the operator admitted or refused during this launch, so concurrent connections share one ask. */
-	const decided = new Map<string, Promise<boolean>>();
+	const decided = new Map<string, Promise<boolean | "session" | "unasked">>();
 	let closed = false;
+	let dropped = 0;
+	let shed = 0;
 
 	const track = (socket: net.Socket): net.Socket => {
 		sockets.add(socket);
@@ -217,31 +251,52 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 		return socket;
 	};
 
-	const record = (origin: EgressOrigin, decision: EgressReceipt["decision"], reason?: string): void => {
-		const key = `${originKey(origin)} ${decision}`;
+	const record = (
+		origin: EgressOrigin,
+		decision: EgressDecision,
+		facts: { reason?: string; code?: EgressReason; source?: EgressSource; viaUpstream?: boolean } = {},
+	): void => {
+		const key = `${originKey(origin)} ${decision} ${facts.code ?? ""}`;
 		const existing = receipts.get(key);
 		if (existing !== undefined) existing.count += 1;
 		else if (receipts.size < MAX_RECEIPTS)
-			receipts.set(key, { host: origin.host, port: origin.port, decision, ...(reason ? { reason } : {}), count: 1 });
+			receipts.set(key, {
+				host: origin.host,
+				port: origin.port,
+				decision,
+				...(facts.reason ? { reason: facts.reason } : {}),
+				...(facts.code !== undefined ? { code: facts.code } : {}),
+				...(facts.source !== undefined ? { source: facts.source } : {}),
+				...(facts.viaUpstream === true ? { viaUpstream: true as const } : {}),
+				count: 1,
+			});
+		else dropped += 1;
 	};
 
-	const deny = (origin: EgressOrigin, reason: string, grantable: boolean): never => {
-		record(origin, "denied", reason);
+	const deny = (origin: EgressOrigin, code: EgressReason, reason: string, grantable: boolean): never => {
+		record(origin, "denied", { reason, code });
 		const hint = grantable && options.denyHint !== undefined ? `; ${options.denyHint}` : "";
 		throw new EgressRefusal(403, `PanCode egress denied ${originKey(origin)}: ${reason}${hint}`);
 	};
 
-	const admitted = async (origin: EgressOrigin): Promise<boolean> => {
-		if (isGrantedEgressOrigin(options.grants, origin)) return true;
+	/** What admitted the origin, or why it stays outside the grants. */
+	const admitted = async (
+		origin: EgressOrigin,
+	): Promise<{ admitted: true; source: EgressSource } | { admitted: false; code: EgressReason }> => {
+		if (isGrantedEgressOrigin(options.grants, origin))
+			return { admitted: true, source: options.grants.session?.has(originKey(origin)) === true ? "session" : "grant" };
 		const ask = options.ask;
-		if (ask === undefined) return false;
+		if (ask === undefined) return { admitted: false, code: "ungranted" };
 		const key = originKey(origin);
 		let pending = decided.get(key);
 		if (pending === undefined) {
-			pending = ask(origin).catch(() => false);
+			pending = ask(origin).catch(() => "unasked" as const);
 			decided.set(key, pending);
 		}
-		return await pending;
+		const answer = await pending;
+		if (answer === true) return { admitted: true, source: "operator" };
+		if (answer === "session") return { admitted: true, source: "session" };
+		return { admitted: false, code: answer === false ? "operator-denied" : "ungranted" };
 	};
 
 	const upstreamProxy = parseUpstreamProxy(options.upstreamProxy);
@@ -273,8 +328,32 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 			isDeniedEgressAddress(origin.host) &&
 			!isGrantedEgressOrigin(options.grants, origin)
 		)
-			return deny(origin, "a local or private address, reachable only through an explicit grant", true);
-		if (!(await admitted(origin))) return deny(origin, EGRESS_UNGRANTED, true);
+			return deny(origin, "private-literal", "a local or private address, reachable only through an explicit grant", true);
+		const admission = await admitted(origin);
+		if (!admission.admitted) return deny(origin, admission.code, EGRESS_UNGRANTED, true);
+		const source = admission.source;
+		const via = upstreamProxy !== null;
+		try {
+			return await dialAdmitted(origin, tunnel, source);
+		} catch (error) {
+			// A refusal already recorded its denial; every other way the dial ends is a failed origin.
+			if (error instanceof EgressRefusal && error.status === 403) throw error;
+			const code = error instanceof EgressRefusal ? (error.code ?? "dial-error") : "dial-error";
+			record(origin, "failed", {
+				reason: error instanceof Error ? error.message : String(error),
+				code,
+				source,
+				viaUpstream: via,
+			});
+			throw error;
+		}
+	};
+
+	const dialAdmitted = async (
+		origin: EgressOrigin,
+		tunnel: boolean,
+		source: EgressSource,
+	): Promise<{ upstream: net.Socket; viaProxy: boolean }> => {
 		let address: string;
 		let unresolved = false;
 		if (isLiteralEgressHost(origin.host)) address = origin.host;
@@ -292,11 +371,19 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 				unresolved = true;
 			} else {
 				const screened = screenResolvedAddresses(answers);
-				if (!screened.ok) return deny(origin, screened.reason, false);
+				if (!screened.ok) {
+					if (answers.length === 0)
+						throw new EgressRefusal(
+							502,
+							`PanCode egress could not reach ${originKey(origin)}: ${screened.reason}`,
+							"unresolved",
+						);
+					return deny(origin, "private-answer", screened.reason, false);
+				}
 				address = screened.address.address;
 			}
 		}
-		if (closed) throw new EgressRefusal(502, "PanCode egress proxy closed");
+		if (closed) throw new EgressRefusal(502, "PanCode egress proxy closed", "proxy-closed");
 		const note = unresolved ? "not resolvable here; sent by name to the upstream proxy" : undefined;
 		if (upstreamProxy !== null) {
 			const socket = await dialUpstreamProxy();
@@ -310,12 +397,12 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 				);
 				await connectReply(socket, authority);
 			}
-			record(origin, "allowed", note);
+			record(origin, "allowed", { ...(note !== undefined ? { reason: note } : {}), source, viaUpstream: true });
 			return { upstream: socket, viaProxy: !tunnel };
 		}
 		const upstream = track(dial(address, origin.port));
 		await connected(upstream, originKey(origin));
-		record(origin, "allowed");
+		record(origin, "allowed", { source });
 		return { upstream, viaProxy: false };
 	};
 
@@ -524,6 +611,7 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 
 	const accept = (socket: net.Socket): void => {
 		if (closed || sockets.size >= MAX_CONNECTIONS) {
+			if (!closed) shed += 1;
 			socket.destroy();
 			return;
 		}
@@ -554,6 +642,7 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 		},
 		accept,
 		receipts: () => [...receipts.values()].map((receipt) => ({ ...receipt })),
+		overflow: () => ({ dropped, shed }),
 		close() {
 			if (closed) return;
 			closed = true;

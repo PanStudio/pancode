@@ -43,6 +43,7 @@ import {
 	uncontainedLabel,
 } from "./host-launch.js";
 import { buildSandboxInvocation } from "./invocation.js";
+import type { SandboxPlanFacts } from "./launch-record.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
 import { missingBaselineLine } from "./seccomp.js";
@@ -50,12 +51,12 @@ import { discoverSecretMasks, SECRET_SCAN_LIMITS } from "./secret-files.js";
 import { holdStartupMountPoints, startupPathProtection } from "./startup-paths.js";
 import type {
 	HomeReadList,
-	HostLauncher,
 	SandboxAvailability,
 	SandboxBackend,
 	SandboxCommand,
 	SandboxEnvPolicy,
 	SandboxInvocationSpec,
+	SandboxLauncher,
 	SandboxMaskedPath,
 	SandboxMode,
 	UnixSocketMode,
@@ -864,7 +865,7 @@ export type OptInLaunch = { label: HostLaunchLabel; confined: boolean } | { refu
  * host, as before, and says so.
  */
 export function optInLaunch(
-	launcher: HostLauncher,
+	launcher: SandboxLauncher,
 	integration: ConfineEntry,
 	confine: ReadonlyArray<string>,
 ): OptInLaunch {
@@ -875,7 +876,7 @@ export function optInLaunch(
 			refused: `${integration} is in safety.confine and this host has no sandbox backend (${availability.reason ?? "none found"}); remove it from safety.confine to run it unconfined`,
 		};
 	}
-	return { label: sandboxedLabel(launcher, `opt-in safety.confine ${integration}`, integration), confined: true };
+	return { label: sandboxedLabel(launcher, "confine-opt-in", integration), confined: true };
 }
 
 /**
@@ -888,30 +889,32 @@ export function optInLaunch(
 export function documentReaderLaunch(
 	launcher: "sqlite" | "pdf",
 	dir: string,
+	mode: SandboxMode,
 	scratchDir: string = readOnlyScratchDir(undefined),
 ): { shellSandbox?: MainSandboxPolicy; label: HostLaunchLabel } {
 	if (workerSandboxConfigured()) {
 		return workerSandboxApplies()
-			? { label: sandboxedLabel(launcher, "this worker's OS sandbox") }
-			: { label: uncontainedLabel(launcher, "no worker sandbox backend; the operator allowed unconfined workers") };
+			? { label: sandboxedLabel(launcher, "worker-policy") }
+			: { label: uncontainedLabel(launcher, "unconfined-opt-in") };
 	}
+	if (mode === "off") return { label: uncontainedLabel(launcher, "sandbox-off") };
 	const availability = sandboxAvailability();
-	const isolation = availability.backend === "bwrap" ? sandboxNetworkIsolation(availability) : "no bubblewrap";
-	if (!availability.available || availability.backend !== "bwrap" || isolation !== null) {
-		return {
-			label: uncontainedLabel(
-				launcher,
-				`the read-only sandbox needs bubblewrap with network isolation (${availability.reason ?? isolation ?? "unavailable"})`,
-			),
-		};
-	}
+	if (documentReaderSandboxProblem(availability) !== null) return { label: uncontainedLabel(launcher, "no-backend") };
 	return {
 		shellSandbox: {
 			...readOnlyMainSandboxPolicy({ workspace: dir, scratchRoots: [], scratchDir }),
 			network: false,
 		},
-		label: sandboxedLabel(launcher, "read-only sandbox, no network"),
+		label: sandboxedLabel(launcher, "confined-by-default"),
 	};
+}
+
+/** The read-only reader sandbox needs bubblewrap that can isolate the network; else why not, or null. */
+export function documentReaderSandboxProblem(availability: SandboxAvailability = sandboxAvailability()): string | null {
+	if (!availability.available) return availability.reason ?? "no sandbox backend";
+	if (availability.backend !== "bwrap")
+		return `the read-only sandbox needs bubblewrap, and this host has ${availability.backend}`;
+	return sandboxNetworkIsolation(availability);
 }
 
 /**
@@ -951,7 +954,7 @@ export function mainSandboxInvocationSpec(
 	};
 }
 
-export type MainSandboxSpawnPlan =
+export type MainSandboxSpawnPlan = (
 	| {
 			kind: "sandboxed";
 			file: string;
@@ -961,7 +964,11 @@ export type MainSandboxSpawnPlan =
 			/** Proxied: spawn with `egressStdio` and serve the launch with `bridgeEgress`. */
 			egress?: EgressBridgePlan;
 	  }
-	| { kind: "refused"; message: string };
+	| { kind: "refused"; message: string }
+) & {
+	/** What the launch record says about this launch, refused or run. */
+	launch: SandboxPlanFacts;
+};
 
 /** The main session's contained-shell settings, as the tool registry reads them for each contained call. */
 export function mainShellSandboxSettings(
@@ -1017,6 +1024,29 @@ export function planMainSandboxSpawn(
 		bridge?: boolean;
 	} = {},
 ): MainSandboxSpawnPlan {
+	const launch: SandboxPlanFacts = {
+		caller: policy.readOnly === true ? "main-read-only" : "main",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: availability.available ? availability.backend : null,
+		network: mainLaunchEgress(policy, availability.backend, options.bridge === true),
+	};
+	return { ...planMainSandboxLaunch(policy, command, cwd, availability, options), launch };
+}
+
+type MainSandboxLaunch = MainSandboxSpawnPlan extends infer Plan
+	? Plan extends MainSandboxSpawnPlan
+		? Omit<Plan, "launch">
+		: never
+	: never;
+
+function planMainSandboxLaunch(
+	policy: MainSandboxPolicy,
+	command: SandboxCommand,
+	cwd: string,
+	availability: SandboxAvailability,
+	options: { bridge?: boolean },
+): MainSandboxLaunch {
 	if (!availability.available || availability.backend === null || availability.executable === null) {
 		return {
 			kind: "refused",
@@ -1394,6 +1424,11 @@ function sweepMainSandboxGitFiles(absent: ReadonlyArray<string>): string[] {
 }
 
 const WRITE_REFUSED = /\b(?:EROFS|EACCES|EPERM)\b|Read-only file system|Permission denied|Operation not permitted/u;
+
+/** A contained command's output reads like the sandbox refused a write: a heuristic, never proof. */
+export function sandboxWriteRefused(output: string): boolean {
+	return WRITE_REFUSED.test(output);
+}
 
 function displayWritableRoots(roots: ReadonlyArray<string>): string {
 	const rootSet = new Set(roots);

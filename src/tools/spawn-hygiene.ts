@@ -4,8 +4,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { buildSafeToolEnv } from "../core/safe-exec.js";
-import { type HostLaunchLabel, sandboxedLabel, uncontainedLabel } from "../core/sandbox/host-launch.js";
-import { planSandboxedSpawn, workerSandboxConfigured } from "../core/sandbox/worker-process.js";
+import { uncontainedLabel } from "../core/sandbox/host-launch.js";
+import { settleHostLaunch } from "../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../core/sandbox/launch-record.js";
+import type { SandboxLaunchOutcome } from "../core/sandbox/types.js";
+import { planSandboxedSpawn } from "../core/sandbox/worker-process.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 
 /**
@@ -244,15 +247,12 @@ export interface LineStreamResult {
 	stoppedEarly: boolean;
 	/** Spawn-level failure (binary missing, EACCES); null when the child ran. */
 	spawnError: string | null;
-	/** Where the search binary ran (P8), for the result's `details.sandbox`. */
-	launch: HostLaunchLabel;
+	/** Where the search binary ran and how it settled (P8), the result's `details.sandbox`. */
+	launch: SandboxLaunchRecord;
 }
 
 /** A search with no sandbox policy runs on the host: admission judged every path it may read before it starts. */
-const HOST_SEARCH_LABEL = uncontainedLabel(
-	"search",
-	"no sandbox policy in this process; admission checks the paths it reads",
-);
+const HOST_SEARCH_LABEL = uncontainedLabel("search", "read-admitted");
 
 export function spawnLineStream(
 	file: string,
@@ -280,12 +280,8 @@ export function spawnLineStream(
 		// with no network: its reads then stop at the sandbox's masks too, not only at the tool's path filter.
 		const cwd = options.cwd ?? process.cwd();
 		const plan = planSandboxedSpawn({ argv: [file, ...args] }, cwd, [], { network: false });
-		const launch: HostLaunchLabel =
-			plan.kind === "sandboxed"
-				? sandboxedLabel("search", "this worker's OS sandbox, no network")
-				: workerSandboxConfigured()
-					? uncontainedLabel("search", "no worker sandbox backend; the operator allowed unconfined workers")
-					: HOST_SEARCH_LABEL;
+		const settle = (outcome: SandboxLaunchOutcome, exitCode: number | null = null): SandboxLaunchRecord =>
+			settleHostLaunch(HOST_SEARCH_LABEL, { outcome, exitCode }, plan.launch);
 		const spawned = (() => {
 			if (plan.kind === "refused") return { ok: false as const, message: plan.message };
 			try {
@@ -312,7 +308,7 @@ export function spawnLineStream(
 				aborted: false,
 				stoppedEarly: false,
 				spawnError: spawned.message,
-				launch,
+				launch: settle(plan.kind === "refused" ? "refused" : "launch-failed"),
 			});
 			return;
 		}
@@ -389,7 +385,7 @@ export function spawnLineStream(
 				aborted,
 				stoppedEarly,
 				spawnError,
-				launch,
+				launch: settle(child.pid === undefined ? "launch-failed" : "ran", child.exitCode),
 			});
 		};
 

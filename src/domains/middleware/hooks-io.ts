@@ -257,7 +257,7 @@ export function hookLaunch(
 	workspaceRoot: string,
 	confine: ReadonlyArray<string>,
 ): HookLaunch {
-	if (origin === "user") return { label: hostAuthorityLabel("yaml-hook", "the operator's own hooks.yaml") };
+	if (origin === "user") return { label: hostAuthorityLabel("yaml-hook") };
 	const decided = optInLaunch("yaml-hook", "hooks", confine);
 	if ("refused" in decided || !decided.confined) return "refused" in decided ? decided : { label: decided.label };
 	return {

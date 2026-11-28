@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { telemetryContext, telemetryContexts } from "./context-store.js";
 import type { AgentRole } from "./enums.js";
 import type { TelemetryAgent } from "./id-schemas.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId, TelemetryAgentSchema } from "./id-schemas.js";
@@ -98,13 +98,10 @@ export function telemetryOwner(context: TelemetryContext): string {
 	return context.runId !== undefined ? `run:${context.runId}` : `session:${context.sessionId}`;
 }
 
-const contexts = new AsyncLocalStorage<TelemetryContext>();
-export function telemetryContext(): TelemetryContext | undefined {
-	return contexts.getStore();
-}
+export { telemetryContext };
 
 export function withTelemetryContext<T>(context: TelemetryContext, fn: () => T): T {
-	return contexts.run(Object.freeze({ ...context }), fn);
+	return telemetryContexts.run(Object.freeze({ ...context }), fn);
 }
 
 /**

@@ -10,7 +10,7 @@ import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/poli
 import { homeReadList } from "../core/sandbox/home-read-roots.js";
 import { homeReadsLine, planHomeReads } from "../core/sandbox/home-reads.js";
 import {
-	documentReaderLaunch,
+	documentReaderSandboxProblem,
 	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
@@ -317,13 +317,14 @@ function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): 
  */
 export function hostLaunchersFinding(workspaceRoot: string): DoctorFinding {
 	const confine = layeredConfineList(workspaceRoot);
-	const readers = documentReaderLaunch("sqlite", workspaceRoot).label;
 	const backend = sandboxAvailability();
 	const refused = confine.length > 0 && !backend.available;
+	const readerProblem =
+		configuredSandboxMode() === "off" ? "safety.sandbox is off" : documentReaderSandboxProblem(backend);
 	const readerLine =
-		readers.confinement === "sandboxed"
+		readerProblem === null
 			? "sqlite and PDF readers: read-only sandbox, no network"
-			: `sqlite and PDF readers: unconfined (${readers.why})`;
+			: `sqlite and PDF readers: unconfined (${readerProblem})`;
 	const confinedLine =
 		confine.length === 0
 			? "MCP stdio servers, extension programs, project and extension hooks, typed git and jobs: unconfined on the host (safety.confine is empty)"

@@ -16,7 +16,9 @@ import {
 	sampledView,
 } from "@pancode/scidata";
 import { runCommandVector } from "../../core/safe-exec.js";
+import { seamLaunchLabel, seamOrHostLaunch } from "../../core/sandbox/host-launch-record.js";
 import { documentReaderLaunch } from "../../core/sandbox/main-session.js";
+import { layeredSandboxMode } from "../../core/settings-layers.js";
 
 /**
  * Read-only SQLite access for the `data` tool. Every statement runs in a
@@ -163,7 +165,7 @@ async function runChild(
 	const request = JSON.stringify({ path, queries, cellCap: CELL_TEXT_CAP, blobHexBytes: BLOB_HEX_BYTES });
 	const cwd = dirname(path);
 	// The reader writes nothing, so in the main session it runs read-only with no network where bubblewrap can (P8).
-	const { shellSandbox } = documentReaderLaunch("sqlite", cwd);
+	const { shellSandbox, label } = documentReaderLaunch("sqlite", cwd, layeredSandboxMode(process.cwd()));
 	const result = await runCommandVector(
 		process.execPath,
 		["--disable-warning=ExperimentalWarning", "-e", CHILD_SCRIPT],
@@ -174,10 +176,12 @@ async function runChild(
 			timeoutMs: SQLITE_TIMEOUT_MS,
 			maxOutputBytes: CHILD_MAX_OUTPUT_BYTES,
 			killGraceMs: 0,
+			launchLabel: seamLaunchLabel(label),
 			...(shellSandbox !== undefined ? { shellSandbox } : {}),
 			...(signal !== undefined ? { signal } : {}),
 		},
 	);
+	seamOrHostLaunch(result.sandbox, label, result);
 	if (result.aborted) return refusal("aborted", "aborted before the query finished", { path });
 	if (result.timedOut) {
 		return refusal(

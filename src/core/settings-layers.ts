@@ -49,6 +49,7 @@ import {
 	noteProjectTargets,
 } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
+import type { SandboxMode } from "./sandbox/types.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
 import { type SettingsIssue, SettingsValidationError } from "./settings-issues.js";
@@ -1449,5 +1450,14 @@ export function layeredConfineList(cwd: string | null): ReadonlyArray<string> {
 		return readLayeredSettings(cwd).settings.safety.confine;
 	} catch {
 		return [];
+	}
+}
+
+/** `safety.sandbox` as the layers resolve it for `cwd`; the default when the settings cannot be read. */
+export function layeredSandboxMode(cwd: string | null): SandboxMode {
+	try {
+		return readLayeredSettings(cwd).settings.safety.sandbox;
+	} catch {
+		return DEFAULT_SETTINGS.safety.sandbox;
 	}
 }

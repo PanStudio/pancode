@@ -7,7 +7,7 @@ import path, { join, relative } from "node:path";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { Type } from "typebox";
 import { relativePathEscapes } from "../core/path-containment.js";
-import type { HostLaunchLabel } from "../core/sandbox/host-launch.js";
+import type { SandboxLaunchRecord } from "../core/sandbox/launch-record.js";
 import { ToolNames } from "../core/tool-names.js";
 import { StringEnum } from "../engine/ai.js";
 import { resolveRgBinary } from "./executables.js";
@@ -123,7 +123,7 @@ interface GrepRenderInput {
 	search: SearchCompleteness;
 	fallback?: boolean;
 	/** Where rg ran (P8); absent for the in-process fallback, which launches nothing. */
-	launch?: HostLaunchLabel;
+	launch?: SandboxLaunchRecord;
 	withheldPaths: number;
 	mode: GrepMode;
 	lines: RenderedLine[];

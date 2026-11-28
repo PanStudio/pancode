@@ -13,6 +13,7 @@ import { egressGrants } from "./egress/policy.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
 import { planHomeReads } from "./home-reads.js";
 import { buildSandboxInvocation } from "./invocation.js";
+import type { SandboxPlanFacts } from "./launch-record.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { missingBaselineLine } from "./seccomp.js";
 import { discoverSecretMasks } from "./secret-files.js";
@@ -410,9 +411,11 @@ export function composeWorkerSandboxInvocation(
 }
 
 export type SandboxedSpawnPlan =
-	| { kind: "direct" }
+	/** `launch` is set when a worker policy let the command run unconfined; absent, no policy applied. */
+	| { kind: "direct"; launch?: SandboxPlanFacts }
 	| {
 			kind: "sandboxed";
+			launch: SandboxPlanFacts;
 			file: string;
 			args: string[];
 			env: SandboxEnvPolicy;
@@ -421,7 +424,7 @@ export type SandboxedSpawnPlan =
 			/** Removes the mount points of absent startup paths once the sandbox has exited. */
 			afterExit: () => void;
 	  }
-	| { kind: "refused"; message: string };
+	| { kind: "refused"; message: string; launch?: SandboxPlanFacts };
 
 /**
  * The trees a worker's command can see that hold the run's own files: its
@@ -640,9 +643,17 @@ export function planSandboxedSpawn(
 	if (!availability.available && policy.backendExpected === true) availability = probe();
 	const mode = launchNetwork(policy, availability, options);
 	const network = mode === "open";
+	const launch: SandboxPlanFacts = {
+		caller: "worker",
+		confinement: "sandboxed",
+		why: "worker-policy",
+		backend: availability.available ? availability.backend : null,
+		network: mode,
+	};
 	if (policy.mode === "required" && availability.available && availability.degraded !== undefined) {
 		return {
 			kind: "refused",
+			launch,
 			message: `sandbox: safety.sandbox is "required" but the worker sandbox is partial (${missingBaselineLine(availability.degraded)}); the command was not run`,
 		};
 	}
@@ -666,12 +677,13 @@ export function planSandboxedSpawn(
 			},
 		);
 	} catch (error) {
-		return { kind: "refused", message: error instanceof Error ? error.message : String(error) };
+		return { kind: "refused", launch, message: error instanceof Error ? error.message : String(error) };
 	}
 	if (invocation !== null) {
 		reportSocketFallback(policy, availability);
 		return {
 			kind: "sandboxed",
+			launch,
 			file: invocation.file,
 			args: invocation.args,
 			env: { passEnv: policy.passEnv ?? [], secretNames: policy.secretEnv ?? [] },
@@ -683,18 +695,21 @@ export function planSandboxedSpawn(
 	if (policy.mode === "required") {
 		return {
 			kind: "refused",
+			launch,
 			message: `sandbox: safety.sandbox is "required" but no worker sandbox is available (${reason}); the command was not run`,
 		};
 	}
 	if (policy.backendExpected === true) {
 		return {
 			kind: "refused",
+			launch,
 			message: `sandbox: the orchestrator found a worker sandbox on this host but this worker cannot start it (${reason}); the command was not run`,
 		};
 	}
 	if (policy.unconfined !== true) {
 		return {
 			kind: "refused",
+			launch,
 			message: `sandbox: no worker sandbox is available (${reason}) and admission did not allow this worker to run unconfined; the command was not run`,
 		};
 	}
@@ -704,5 +719,8 @@ export function planSandboxedSpawn(
 			`[worker] sandbox unavailable (${reason}); worker commands run unconfined because the operator allowed it\n`,
 		);
 	}
-	return { kind: "direct" };
+	return {
+		kind: "direct",
+		launch: { caller: "worker", confinement: "unconfined", why: "unconfined-opt-in", backend: null, network: "open" },
+	};
 }
