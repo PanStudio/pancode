@@ -189,13 +189,9 @@ function budgetFor(
 	return undefined;
 }
 
-export function isHarmonyThinkingFormat(format: string | null | undefined): boolean {
-	return format === "harmony";
-}
+type HarmonyReasoningEffort = "low" | "medium" | "high";
 
-export type HarmonyReasoningEffort = "low" | "medium" | "high";
-
-export function harmonyReasoningEffort(level: string | undefined): HarmonyReasoningEffort {
+function harmonyReasoningEffort(level: string | undefined): HarmonyReasoningEffort {
 	if (level === "high" || level === "xhigh") return "high";
 	if (level === "medium") return "medium";
 	return "low";
