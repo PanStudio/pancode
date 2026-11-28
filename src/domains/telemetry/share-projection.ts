@@ -271,7 +271,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 			...keep("version"),
 			exec: { shell: "token", checks: "token" },
 			approval: { autonomy: "token", asks: "token" },
-			sandbox: { backend: "token", confinesWrites: "keep", unconfined: "keep" },
+			sandbox: { backend: "token", confinesWrites: "keep", unconfined: "keep", workerIsolation: "token" },
 			digest: "id",
 			permitDigest: "id",
 			staticHead: "id",

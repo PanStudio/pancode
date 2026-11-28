@@ -44,6 +44,7 @@ import {
 import { dispatchResultContract } from "./execution-role.js";
 import { fleetNodeSandboxAvailability } from "./fleet-preflight.js";
 import { effectiveWorkerPermissionMode, judgeWithheldCause } from "./grant-authority.js";
+import { assertWorkerIsolationAdmitted } from "./model-route-binding.js";
 import { requestedWriteNone, resolveRunRole } from "./obligation.js";
 import type { DispatchPathScope } from "./path-scope.js";
 import type { FleetPlacementPreview } from "./placement.js";
@@ -151,6 +152,21 @@ export function resolveDispatchEnvelopeStage(input: {
 		availability: placedAvailability,
 		...sandbox
 	} = placementSandboxFacts(target.runtime.kind, input.settings, input.placement, hoare, network);
+	// D14: refused here, before the permit, so a preview names the same refusal a launch would.
+	const workerIsolation = input.settings?.safety.workerIsolation;
+	const isolationNet =
+		workerIsolation === "process" && input.placement.node.kind === "local" && sandbox.applies
+			? sandboxNetworkIsolation(placedAvailability)
+			: null;
+	assertWorkerIsolationAdmitted(workerIsolation, {
+		target,
+		localPlacement: input.placement.node.kind === "local",
+		sandbox: {
+			backend: sandbox.applies ? sandbox.backend : "none",
+			...(placedAvailability.degraded !== undefined ? { degraded: placedAvailability.degraded } : {}),
+			...(isolationNet !== null ? { networkIsolation: isolationNet } : {}),
+		},
+	});
 	const facts: Parameters<typeof resolveWriteMode>[0] = {
 		writeNone,
 		roots: writeNone ? [] : pathScope.writeBoundaries,
@@ -196,7 +212,7 @@ export function resolveDispatchEnvelopeStage(input: {
 			contextAttached: (tools) => canonicalContextAttached(target.runtime, tools),
 		},
 		read: { roots: pathScope.workingContextPaths, outside: req.extraReadRoots ?? [] },
-		sandbox,
+		sandbox: workerIsolation === "process" ? { ...sandbox, workerIsolation } : sandbox,
 	};
 	// The draft settles the tool list the permit is resolved over; its approval block is replaced below.
 	const draft = resolveWorkerEnvelope({

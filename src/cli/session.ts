@@ -5,7 +5,7 @@
  * state dir from any node (#439). The persisted-session leaves
  * (`history|show|export|artifacts|rename|fork|rm|compact`) live in session-history.ts.
  *
- * Every open session keeps `live/<id>.json` fresh (domains/session/heartbeat.ts).
+ * Every open session keeps `live/<id>.json` fresh (lib/heartbeat/heartbeat.ts).
  * A terminate request is a file the owner reads on its next beat; a signal is
  * sent only to a process on this host whose birth token still matches, because
  * a pid means nothing on another node. `--force` releases a session whose

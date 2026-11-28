@@ -252,6 +252,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "safety.liveCheckTargets":
 		case "safety.sandboxUnixSockets":
 		case "safety.sandboxUnconfinedLocalWorkers":
+		case "safety.workerIsolation":
 		case "safety.scratchRoots":
 		case "safety.sandboxCacheMaxGiB":
 		case "safety.confine":

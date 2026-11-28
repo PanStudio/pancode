@@ -27,6 +27,11 @@ import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { envelopeForPermit } from "./envelope.js";
 import { operatorAdmissionAutonomy } from "./envelope-stage.js";
 import { decideJudgedGrant } from "./grant-decision.js";
+import {
+	assertWorkerIsolationAdmitted,
+	type OpenWorkerModelRoute,
+	openWorkerModelRoute,
+} from "./model-route-binding.js";
 import { createRunCallUsage } from "./run-call-usage.js";
 import { assertMainGrantRoutable } from "./runtime-enforceability.js";
 import { workerApprovalCeilingMs } from "./worker-approval-window.js";
@@ -38,6 +43,7 @@ export async function prepareAttemptWorker(rt: DispatchRuntime, attempt: Admitte
 	const { config, firstNotice, middleware, now, safety } = rt.core;
 	const { options } = rt;
 	let buildSpec: () => WorkerSpec;
+	let modelRoute: OpenWorkerModelRoute | null = null;
 	const {
 		grantAttempt,
 		judgeReachable,
@@ -84,6 +90,14 @@ export async function prepareAttemptWorker(rt: DispatchRuntime, attempt: Admitte
 				? launchCredential.profile
 				: undefined
 			: lifecycle.authProfile;
+		const localPlacement = placement === null || placement.node.kind === "local";
+		// D14: opened once per attempt, so a respawned spec names the same route; closed when the worker exits.
+		const isolation = lifecycle.settings?.safety.workerIsolation;
+		if (isolation === "process") {
+			assertWorkerIsolationAdmitted(isolation, { target: lifecycle.target, localPlacement });
+			modelRoute = await openWorkerModelRoute(rt.core.providers, lifecycle.target, preparation?.signal);
+		}
+		const routeBinding = modelRoute?.binding;
 		buildSpec = () =>
 			buildDispatchWorkerSpec(
 				{
@@ -104,10 +118,9 @@ export async function prepareAttemptWorker(rt: DispatchRuntime, attempt: Admitte
 					flowRestrictions: options?.getFlowRestrictions?.() ?? null,
 					...(options?.getFlowPolicy !== undefined ? { flowPolicy: options.getFlowPolicy() } : {}),
 					apiKey: claudeLaunch ? launchCredential?.apiKey : lifecycle.apiKey,
-					localPlacement: placement === null || placement.node.kind === "local",
-					...((placement === null || placement.node.kind === "local") && launchAuthProfile
-						? { authProfile: launchAuthProfile }
-						: {}),
+					localPlacement,
+					...(localPlacement && launchAuthProfile ? { authProfile: launchAuthProfile } : {}),
+					...(routeBinding !== undefined ? { modelRoute: routeBinding } : {}),
 					...(launchCredential?.expiresAt !== undefined ? { credentialExpiresAt: launchCredential.expiresAt } : {}),
 					envelope: envelopeForPermit(lifecycle.envelope, lifecycle.permit),
 					...(lifecycle.projectContext?.peerInstructions?.delivery === "single-source"
@@ -127,6 +140,7 @@ export async function prepareAttemptWorker(rt: DispatchRuntime, attempt: Admitte
 			);
 		attempt.spec = buildSpec();
 	} catch (error) {
+		modelRoute?.close();
 		await launch.fail(error);
 		throw error;
 	}
@@ -338,6 +352,7 @@ export async function prepareAttemptWorker(rt: DispatchRuntime, attempt: Admitte
 	attempt.heldFollower = heldFollower;
 	attempt.subscribeHeldBoard = subscribeHeldBoard;
 	return {
+		modelRoute,
 		agentLedgerId,
 		heldLedgerPosts,
 		appendLedgerPost,

@@ -34,6 +34,7 @@ import type { EventPayload } from "../../core/telemetry/events.js";
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import type { Server } from "node:net";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { withPancodeAgentEnvironment } from "../../core/agent-environment.js";
@@ -43,6 +44,7 @@ import {
 	publishPancodeCompileCache,
 	workerCompileCacheEnvironment,
 } from "../../core/compile-cache.js";
+import { prepareManagedGitAttribution } from "../../core/git-commit-attribution.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import type { ProcessGroupCleanupStatus } from "../../core/safe-exec.js";
 import {
@@ -50,7 +52,15 @@ import {
 	SAFE_EXEC_GROUP_TEARDOWN_BOUND_MS,
 	SAFE_EXEC_PIPE_DRAIN_BOUND_MS,
 } from "../../core/safe-exec.js";
+import { signalSandboxPayload } from "../../core/sandbox/signal.js";
+import type { WorkerSandboxSpec } from "../../core/sandbox/types.js";
+import {
+	isolatedChildPolicy,
+	planIsolatedWorkerLaunch,
+	serveIsolatedWorker,
+} from "../../core/sandbox/worker-isolation.js";
 import { WORKER_STDOUT_FAILURES } from "../../core/telemetry/run-vocabulary.js";
+import { pancodeStateDir } from "../../core/xdg.js";
 import {
 	type AgentLedgerBody,
 	isControlLine,
@@ -182,6 +192,18 @@ export interface WorkerBulkLaneStats {
  */
 export interface SpawnOptions extends WorkerProcessOptions {
 	workerEntryPath?: string;
+	/**
+	 * `safety.workerIsolation: process` (D14): run the worker itself under bwrap with no network, reaching its
+	 * provider through `serveModelRoute` and everything else through the host's proxy under the run's child grants.
+	 */
+	isolation?: WorkerIsolationOptions;
+}
+
+export interface WorkerIsolationOptions {
+	policy: WorkerSandboxSpec;
+	serveModelRoute(listener: Server): void;
+	taskWorktree?: { path: string; branch: string };
+	credentialEnv?: ReadonlyArray<string>;
 }
 
 const FRAME_TYPE = /^[a-z][a-z0-9_]{0,63}$/;
@@ -409,11 +431,13 @@ function launchWorkerChild(
 	command: string,
 	args: ReadonlyArray<string>,
 	opts?: Pick<WorkerProcessOptions, "cwd" | "env">,
+	ipc = false,
 ): ChildProcess {
 	return spawn(command, [...args], {
-		stdio: ["pipe", "pipe", "pipe"],
+		// An isolated launch's setup hands its loopback listeners over fd 3 before it execs the worker.
+		stdio: ipc ? ["pipe", "pipe", "pipe", "ipc"] : ["pipe", "pipe", "pipe"],
 		cwd: opts?.cwd,
-		env: withPancodeAgentEnvironment(opts?.env ?? process.env),
+		env: ipc ? (opts?.env ?? {}) : withPancodeAgentEnvironment(opts?.env ?? process.env),
 		// The worker leads its own process group so abort escalation covers the
 		// descendants a runtime spawned, not only the immediate child.
 		detached: true,
@@ -430,6 +454,26 @@ export function spawnWorkerProcess(
 }
 
 /**
+ * Signals a worker's process group. An isolated worker sits in its own session inside bwrap, out of the launcher's
+ * group: TERM goes to it alone so its handler runs and the launcher exits after it; KILL reaches both.
+ */
+function signalWorkerGroups(
+	pid: number,
+	signal: NodeJS.Signals,
+	sandboxed: boolean,
+): "delivered" | "gone" | "unreachable" {
+	const payloadSignalled = sandboxed && signalSandboxPayload(pid, signal);
+	if (payloadSignalled && signal !== "SIGKILL") return "delivered";
+	try {
+		process.kill(-pid, signal);
+		return "delivered";
+	} catch (error) {
+		if (payloadSignalled) return "delivered";
+		return (error as NodeJS.ErrnoException).code === "ESRCH" ? "gone" : "unreachable";
+	}
+}
+
+/**
  * Write the spec to a running worker child and wire both protocol lanes. The
  * approved identity is derived from this spec here, so a child that was
  * started before its spec existed is held to exactly the identity a cold
@@ -441,6 +485,7 @@ function attachWorkerChannel(
 	args: ReadonlyArray<string>,
 	spec: WorkerSpec,
 	opts?: WorkerProcessOptions,
+	sandboxed = false,
 ): SpawnedWorker {
 	const shutdownGraceMs = opts?.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS;
 	const attestationGraceMs = opts?.attestationGraceMs ?? DEFAULT_ATTESTATION_GRACE_MS;
@@ -893,12 +938,9 @@ function attachWorkerChannel(
 	function signalOwnedProcesses(signal: NodeJS.Signals): boolean {
 		let delivered: boolean;
 		if (pid !== null && process.platform !== "win32") {
-			try {
-				process.kill(-pid, signal);
-				delivered = true;
-			} catch (error) {
-				return (error as NodeJS.ErrnoException).code !== "ESRCH";
-			}
+			const outcome = signalWorkerGroups(pid, signal, sandboxed);
+			if (outcome !== "delivered") return outcome === "unreachable";
+			delivered = true;
 		} else {
 			delivered = isAlive() && child.kill(signal);
 		}
@@ -1181,11 +1223,43 @@ export function spawnNativeWorker(spec: WorkerSpec, opts?: SpawnOptions): Spawne
 	// Forward the whole option set. Enumerating it here is what silently dropped
 	// every callback a caller passed, so the only field this function decides is
 	// the entry path it consumed and the env default.
-	const { workerEntryPath: _entryPath, ...processOptions } = opts ?? {};
-	return spawnWorkerProcess(process.execPath, [workerEntry], spec, {
-		...processOptions,
-		env: withCompileCacheEnvironment(opts?.env ?? process.env),
+	const { workerEntryPath: _entryPath, isolation, ...processOptions } = opts ?? {};
+	const env = withCompileCacheEnvironment(opts?.env ?? process.env);
+	if (isolation === undefined)
+		return spawnWorkerProcess(process.execPath, [workerEntry], spec, { ...processOptions, env });
+	const cwd = opts?.cwd ?? process.cwd();
+	const compileCache = env.NODE_COMPILE_CACHE;
+	const launch = planIsolatedWorkerLaunch({
+		policy: isolation.policy,
+		command: [process.execPath, workerEntry],
+		cwd,
+		env: withPancodeAgentEnvironment(env),
+		// Node and the PanCode package are shown to every sandbox already.
+		exposed: [
+			join(pancodeStateDir(), "sandbox"),
+			prepareManagedGitAttribution(),
+			...(compileCache ? [compileCache] : []),
+		],
+		...(isolation.taskWorktree !== undefined ? { taskWorktree: isolation.taskWorktree } : {}),
+		...(isolation.credentialEnv !== undefined ? { credentialEnv: isolation.credentialEnv } : {}),
 	});
+	if (launch.kind === "refused") throw new Error(`dispatch: ${launch.message}`);
+	const child = launchWorkerChild(launch.file, launch.args, { cwd, env: launch.env }, true);
+	serveIsolatedWorker(child, isolation.policy, isolation.serveModelRoute);
+	// The worker's children chain to the host's proxy; the operator's upstream proxy stays on the host.
+	const isolated: WorkerSpec = {
+		...spec,
+		sandbox: isolatedChildPolicy(isolation.policy),
+		isolatedSandbox: { executable: launch.executable },
+	};
+	return attachWorkerChannel(
+		child,
+		launch.file,
+		launch.args,
+		isolated,
+		{ ...processOptions, cwd, env: launch.env },
+		true,
+	);
 }
 
 /**

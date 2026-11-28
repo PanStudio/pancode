@@ -14,6 +14,7 @@ import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
 import { type RunToolBudgetEnvelope, resolveToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import { probedSandboxBackend } from "../../core/sandbox/availability.js";
+import type { ModelRouteBinding } from "../../core/sandbox/egress/model-route-client.js";
 import { egressGrants } from "../../core/sandbox/egress/policy.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { withWorkerGitHookPaths } from "../../core/sandbox/git-hooks-fingerprint.js";
@@ -103,6 +104,8 @@ interface DispatchWorkerSpecInput {
 	apiKey: string | undefined;
 	authProfile?: string;
 	credentialExpiresAt?: number;
+	/** `safety.workerIsolation: process`: the launch's route; the spec then carries none of the credential fields. */
+	modelRoute?: ModelRouteBinding;
 	middlewareSnapshot: ReturnType<MiddlewareContract["snapshot"]>;
 	protectedArtifactState?: ProtectedArtifactState;
 	/** The run's envelope, sealed over `permit`; the worker reads its tools, write mode and roots from it (M7). */
@@ -462,9 +465,18 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		const protectedModels = protectedResidencyModels(settings);
 		if (protectedModels.length > 0) spec.protectedModels = protectedModels;
 	}
-	if (input.apiKey) spec.apiKey = input.apiKey;
-	if (input.authProfile) spec.authProfile = input.authProfile;
-	if (input.credentialExpiresAt !== undefined) spec.credentialExpiresAt = input.credentialExpiresAt;
+	if (input.modelRoute !== undefined) {
+		// The route injects the key and the target's auth headers on the host; the worker holds neither (D14).
+		spec.modelRoute = { ...input.modelRoute };
+		if (spec.target.auth?.headers !== undefined) {
+			const { headers: _routed, ...auth } = spec.target.auth;
+			spec.target = { ...spec.target, auth };
+		}
+	} else {
+		if (input.apiKey) spec.apiKey = input.apiKey;
+		if (input.authProfile) spec.authProfile = input.authProfile;
+		if (input.credentialExpiresAt !== undefined) spec.credentialExpiresAt = input.credentialExpiresAt;
+	}
 	const inherited = input.req.turnConstraints === undefined ? {} : workerTurnConstraints(input.req.turnConstraints);
 	spec.turnConstraints = {
 		...inherited,

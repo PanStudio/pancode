@@ -750,7 +750,12 @@ export interface RunResultSafetySummary {
 		exec: { shell: import("./envelope.js").EnvelopeShell; checks: import("./envelope.js").EnvelopeChecks };
 		network: { shell: boolean; tools: ReadonlyArray<string>; mcp: ReadonlyArray<string> };
 		approval: import("./envelope.js").EnvelopeApproval;
-		sandbox: { backend: import("./envelope.js").EnvelopeSandboxBackend; confinesWrites: boolean; unconfined?: true };
+		sandbox: {
+			backend: import("./envelope.js").EnvelopeSandboxBackend;
+			confinesWrites: boolean;
+			unconfined?: true;
+			workerIsolation?: "process";
+		};
 		withheld: ReadonlyArray<import("./envelope.js").WithheldCapability>;
 		staticHead: string;
 	};

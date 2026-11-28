@@ -4,21 +4,23 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { pancodeConfigDir, resolvePancodeDirs } from "../../core/xdg.js";
+import { defaultPancodeConfigDirs, pancodeConfigDir, resolvePancodeDirs } from "../../core/xdg.js";
 import { redactSecretString } from "./redaction.js";
 
 /**
- * Absolute path of PanCode's provider secret store, when resolvable. The policy
- * engine treats it as zero-access for tool calls, and the worker OS sandbox
- * masks it so a shell command cannot read it either.
+ * Absolute paths of PanCode's provider secret store: the active config root plus
+ * the platform's default XDG/config roots, so a relocated `PANCODE_CONFIG_DIR` or
+ * `PANCODE_HOME` still masks the operator's real store and its mount aliases.
  */
-export function pancodeCredentialStorePaths(): string[] {
+export function pancodeCredentialStorePaths(home: string = homedir()): string[] {
+	const paths: string[] = [];
 	try {
-		return [path.join(pancodeConfigDir(), "credentials.yaml")];
+		paths.push(path.join(pancodeConfigDir(), "credentials.yaml"));
 	} catch {
 		// An unresolvable config root has no credential store to protect.
-		return [];
 	}
+	for (const dir of defaultPancodeConfigDirs(home)) paths.push(path.join(dir, "credentials.yaml"));
+	return [...new Set(paths)];
 }
 
 /**
@@ -295,7 +297,7 @@ export function workerSecretPaths(home: string = homedir()): string[] {
 		path.join(home, relative),
 	);
 	return [
-		...new Set([...paths, ...buildToolSecretPaths(home), ...pancodeCredentialStorePaths(), ...pancodeControlPaths()]),
+		...new Set([...paths, ...buildToolSecretPaths(home), ...pancodeCredentialStorePaths(home), ...pancodeControlPaths()]),
 	];
 }
 
