@@ -3,15 +3,15 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { STRUCTURED_SETTINGS, type StructuredField } from "../../contracts/structured-settings.js";
 
+import { invalidCollectionNames } from "./settings-control-model.js";
 import {
-	invalidCollectionNames,
 	newEntryName,
 	type StructuredRow,
 	structuredFieldText,
 	structuredFieldValue,
 	structuredJson,
 	structuredRows,
-} from "./settings-control-model.js";
+} from "./structured-settings-model.js";
 
 export function StructuredSettingsEditor({
 	path,

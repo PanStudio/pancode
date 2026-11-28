@@ -11,7 +11,8 @@ import { targetsQuery, useOperation } from "../api/queries.js";
 import { Switch } from "../design/Switch.js";
 import { settingsDestination } from "../shell/shell-model.js";
 import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
-import { MODEL_TARGET_PATHS, modelCatalogView } from "./model-picker-model.js";
+import { modelCatalogView } from "./model-catalog-model.js";
+import { MODEL_TARGET_PATHS } from "./model-picker-model.js";
 import { ModelSelect } from "./model-select.js";
 import { StructuredSettingsEditor } from "./StructuredSettingsEditor.js";
 import {
