@@ -49,7 +49,7 @@ import {
 	playbookPromptVariables,
 	renderPlaybookPrompt,
 } from "../domains/agents/index.js";
-import { AgentsDomainModule } from "../domains/agents/module.js";
+import { createAgentsDomainModule } from "../domains/agents/module.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ContextDomainModule } from "../domains/context/module.js";
 import { clearRootCancelRequest, readRootCancelRequest } from "../domains/dispatch/cancel-requests.js";
@@ -94,6 +94,7 @@ import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { foregroundStreamUsage } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
 import { ResourcesDomainModule } from "../domains/resources/module.js";
+import { loadSkills } from "../domains/resources/skills/loader.js";
 import type { SafetyContract } from "../domains/safety/contract.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
@@ -507,7 +508,7 @@ async function runFleetTracked(
 		ProvidersDomainModule,
 		SafetyDomainModule,
 		createPromptsDomainModule({ noContextFiles: true }),
-		AgentsDomainModule,
+		createAgentsDomainModule({ loadSkills }),
 		workerHooks.middlewareModule,
 		createTelemetryDomainModule({ retention: retentionPruners }),
 		SchedulingDomainModule,

@@ -10,10 +10,10 @@ import {
 	ToolNames,
 } from "../../core/tool-names.js";
 import { classify } from "../safety/action-classifier.js";
+import { capabilityClassExcludes } from "../safety/index.js";
 import { type WorkerPermissionDeclaration, workerPermissionDeclarationErrors } from "../safety/worker-permit.js";
 import type { AgentBudget, AgentRecipe, AgentToolRequirement } from "./recipe.js";
 import type { ResultContract } from "./result-contract-types.js";
-import { capabilityClassExcludes } from "./role-class.js";
 
 export type AgentCategory =
 	| "explore"

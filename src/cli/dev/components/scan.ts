@@ -84,6 +84,10 @@ const OWNER_BY_KIND: Record<ComponentKind, string> = {
 
 const TOOL_HELPER_FILES = new Set(["src/tools/bootstrap.ts", "src/tools/registry.ts", "src/tools/truncate-utf8.ts"]);
 
+/** createRegistry and the factories under registry/ it composes read as one component, hashed across every file. */
+const REGISTRY_FILE = "src/tools/registry.ts";
+const REGISTRY_DIR = "src/tools/registry/";
+
 const CONFIG_SCHEMA_FILES: ReadonlyArray<string> = [
 	"src/core/defaults.ts",
 	"src/core/config.ts",
@@ -155,9 +159,14 @@ async function collectTools(root: string): Promise<HarnessComponent[]> {
 		.filter((repoPath) => repoPath.startsWith("src/tools/") && repoPath.endsWith(".ts"))
 		.sort((a, b) => a.localeCompare(b));
 	const components: HarnessComponent[] = [];
+	const registryModules = repoPaths.filter((repoPath) => repoPath.startsWith(REGISTRY_DIR));
 	for (const repoPath of repoPaths) {
+		if (repoPath.startsWith(REGISTRY_DIR)) continue;
 		const kind: ComponentKind = TOOL_HELPER_FILES.has(repoPath) ? "tool-helper" : "tool-implementation";
-		const component = await componentFromFile(root, repoPath, kind);
+		const component =
+			repoPath === REGISTRY_FILE
+				? await componentFromFiles(root, repoPath, registryModules, kind)
+				: await componentFromFile(root, repoPath, kind);
 		if (component) components.push(component);
 	}
 	return components;
@@ -181,11 +190,7 @@ async function componentFromFile(
 	repoPath: string,
 	kind: ComponentKind,
 ): Promise<HarnessComponent | null> {
-	const absolutePath = join(root, repoPath);
-	// An installed package serves most of src/ from its source pack (src/core/source-pack.ts).
-	const content = (await isFile(absolutePath))
-		? await readFile(absolutePath)
-		: (readPackedSource(absolutePath, root)?.bytes ?? null);
+	const content = await readComponentBytes(root, repoPath);
 	if (content === null) return null;
 	return baseComponent({
 		id: `${kind}:${repoPath}`,
@@ -193,6 +198,36 @@ async function componentFromFile(
 		path: repoPath,
 		contentHash: sha256Hex(content),
 	});
+}
+
+/** One component for an entry file and the modules beside it: the hash covers each file's path and content. */
+async function componentFromFiles(
+	root: string,
+	repoPath: string,
+	modulePaths: ReadonlyArray<string>,
+	kind: ComponentKind,
+): Promise<HarnessComponent | null> {
+	const entry = await readComponentBytes(root, repoPath);
+	if (entry === null) return null;
+	const parts = [`${repoPath}\0${sha256Hex(entry)}`];
+	for (const modulePath of modulePaths) {
+		const content = await readComponentBytes(root, modulePath);
+		if (content !== null) parts.push(`${modulePath}\0${sha256Hex(content)}`);
+	}
+	return baseComponent({
+		id: `${kind}:${repoPath}`,
+		kind,
+		path: repoPath,
+		contentHash: sha256Hex(parts.join("\n")),
+	});
+}
+
+async function readComponentBytes(root: string, repoPath: string): Promise<Uint8Array | null> {
+	const absolutePath = join(root, repoPath);
+	// An installed package serves most of src/ from its source pack (src/core/source-pack.ts).
+	return (await isFile(absolutePath))
+		? await readFile(absolutePath)
+		: (readPackedSource(absolutePath, root)?.bytes ?? null);
 }
 
 async function collectSafetyRulePacks(root: string): Promise<HarnessComponent[]> {

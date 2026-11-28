@@ -17,7 +17,6 @@ import path from "node:path";
 import { parse } from "yaml";
 import { loadManifestFromRoot } from "../src/domains/extensions/index.js";
 import { fetchPluginCommit, type PluginSource, parseHubIndexRows } from "../src/domains/plugins/catalog.js";
-import { hubEnvelopeDigest, hubMcpDigest } from "../src/domains/resources/hub-digests.js";
 import {
 	clipAtWord,
 	HUB_PROVIDES_LIMITS,
@@ -25,7 +24,8 @@ import {
 	type HubRowSource,
 	type HubTier,
 	isHubComponentKind,
-} from "../src/domains/resources/hub-types.js";
+} from "../src/domains/plugins/hub-types.js";
+import { hubEnvelopeDigest, hubMcpDigest } from "../src/domains/resources/hub-digests.js";
 import { type HubPackValidationResult, validateHubPack } from "../src/domains/resources/hub-validation.js";
 
 export type RegistryRow = Record<string, unknown> & { kind: string; name: string };

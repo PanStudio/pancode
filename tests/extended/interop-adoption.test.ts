@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { interopAgentKind } from "../../src/core/interop-agents.js";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
 import { renderPromptContext } from "../../src/domains/context/prompt-context.js";
 import {
@@ -14,7 +15,6 @@ import {
 } from "../../src/domains/interop/adopt.js";
 import { detectInteropAgents } from "../../src/domains/interop/detect.js";
 import { discoverInteropInventory } from "../../src/domains/interop/inventory.js";
-import { interopAgentKind } from "../../src/domains/interop/registry.js";
 import type { InteropAgentId, InteropInventory } from "../../src/domains/interop/types.js";
 import {
 	loadMcpServerConfig,

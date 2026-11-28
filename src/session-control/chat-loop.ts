@@ -107,7 +107,7 @@ import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js"
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
 import { createHeadlessObservationPool } from "../tools/observation.js";
-import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry/contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
 import { compactionFailureReason } from "./chat-loop/submit-fit.js";

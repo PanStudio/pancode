@@ -19,8 +19,8 @@ import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { templateTurnConstraints } from "../../core/turn-constraints.js";
 import type { ImageContent } from "../../engine/types.js";
 import { expandInlineFileReferencesAsync } from "../../tools/file-references.js";
+import { pluginResourceComponents } from "../agents/index.js";
 import type { ResourcesContract } from "./contract.js";
-import { pluginResourceComponents } from "./pack-references.js";
 
 export interface SubmitExpansion {
 	text: string;

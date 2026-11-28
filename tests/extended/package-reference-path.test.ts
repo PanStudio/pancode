@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
-import { resolvePackPathReference } from "../../src/domains/resources/pack-references.js";
+import { resolvePackPathReference } from "../../src/domains/agents/pack-references.js";
 
 it("validates complete package argument paths instead of a prefix before spaces or Unicode", () => {
 	const scratch = mkdtempSync(join(tmpdir(), "pancode-package-path-"));

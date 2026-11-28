@@ -9,7 +9,7 @@ import { ToolNames } from "../core/tool-names.js";
 import { StringEnum } from "../engine/ai.js";
 import { type AtomicPublishResult, publishFileAtomically, withFileMutationQueue } from "./file-mutation-queue.js";
 import { resolveToCwd } from "./path-utils.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import { artifactToolLanding, hookLandingRefusal, publishTargetAdmission } from "./tool-landing.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 

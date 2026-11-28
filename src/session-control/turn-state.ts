@@ -36,7 +36,7 @@ import type { createEngineAgent } from "../engine/agent.js";
 import type { MainRequestRecord } from "../engine/in-prefix-summary.js";
 import type { AgentMessage } from "../engine/types.js";
 import type { SealedCompletion } from "../tools/finish.js";
-import type { AskUserToolPolicy } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy } from "../tools/registry/contract.js";
 import type { ToolMarkupRepromptBudget } from "./chat-loop-messages.js";
 import { RunEvidenceLog } from "./run-evidence.js";
 import type { ModelRequestFacts } from "./status-types.js";

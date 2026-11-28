@@ -9,13 +9,13 @@ import { isMcpToolName, mcpToolName, ToolNames } from "../../core/tool-names.js"
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { workerPermitDigest } from "../../lib/worker-wire/protocol.js";
-import { capabilityClassExcludes } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
 import type { McpAttestedSkill } from "../mcp/skill-catalog.js";
 import type { McpTrustActionClass } from "../mcp/trust.js";
 import type { RuntimeEnforcement } from "../providers/index.js";
 import { classify } from "./action-classifier.js";
 import type { ApprovalAuthority } from "./admission.js";
+import { capabilityClassExcludes } from "./role-class.js";
 
 /**
  * The effective worker permit (Codex review, "The corrected authority

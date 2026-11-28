@@ -1114,6 +1114,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 			withIsolatedState(hubHome, () => {
 				const pristineDiagnostics: AgentRecipeDiagnostic[] = [];
 				const pristineRecipes = loadRecipesFromDir(
+					loadSkills,
 					{
 						source: "builtin",
 						dir: builtinSourceDir,

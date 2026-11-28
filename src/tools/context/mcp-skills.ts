@@ -47,7 +47,7 @@ import {
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { McpCapabilitySource } from "../gateway/mcp-capability-types.js";
 import { finalizeObservation, type ObservationReservation } from "../observation.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolConfirmation, ToolConfirmationContext, ToolResult } from "../tool-spec.js";
 import { truncateHead } from "../truncate.js";
 

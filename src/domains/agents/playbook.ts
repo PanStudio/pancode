@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { enabledPluginResourceRoots } from "../plugins/index.js";
-import { resolvePackPathReference, resolvePackReferences } from "../resources/pack-references.js";
+import { resolvePackPathReference, resolvePackReferences } from "./pack-references.js";
 /**
  * Repo-owned playbooks (Symphony P5: work policy lives in the repo, versioned
  * and strictly validated). A playbook is what the fleet runs.

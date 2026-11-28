@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { readSettings, updateSettings } from "../../src/core/config.js";
+import { HUB_PLUGIN_BACKED_KINDS, type HubEntryKind } from "../../src/domains/plugins/hub-types.js";
 import {
 	disablePlugin,
 	enablePlugin,
@@ -17,7 +18,6 @@ import {
 	removePlugin,
 	updatePlugin,
 } from "../../src/domains/plugins/index.js";
-import { HUB_PLUGIN_BACKED_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { trustProjectPackages } from "../harness/project-trust.js";

@@ -11,6 +11,7 @@ import { skillActivationFromToolDetails } from "../../src/core/skill-activation.
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { PluginsReloadedPayload } from "../../src/core/telemetry/live-events.js";
 import { createAgentsBundle } from "../../src/domains/agents/extension.js";
+import { resolvePackReferences } from "../../src/domains/agents/pack-references.js";
 import { listPlaybooks, loadPlaybook } from "../../src/domains/agents/playbook.js";
 import { discoverAgentRecipes } from "../../src/domains/agents/registry.js";
 import {
@@ -20,7 +21,6 @@ import {
 	reloadPluginResources,
 } from "../../src/domains/plugins/index.js";
 import type { ResourcesContract } from "../../src/domains/resources/contract.js";
-import { resolvePackReferences } from "../../src/domains/resources/pack-references.js";
 import { expandPromptTemplateInput, loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { expandSubmitText } from "../../src/domains/resources/submit-expansion.js";
@@ -194,7 +194,7 @@ it("loads installed plugin prompts, bound skills, agents and playbooks with cont
 		ok(skill);
 		strictEqual(skill.source, "plugin");
 		ok(!skill.content.includes("${"));
-		const recipe = discoverAgentRecipes(cwd).find((item) => item.id === "demo-pack-researcher");
+		const recipe = discoverAgentRecipes(loadSkills, cwd).find((item) => item.id === "demo-pack-researcher");
 		ok(recipe);
 		strictEqual(recipe.source, "plugin");
 		ok(recipe.body.includes(join(root, "assets/reference.txt")));
@@ -242,7 +242,7 @@ it("keeps peer plugin namespaces and user overrides; disabled project plugin sup
 		disablePlugin("resource-fixture", { cwd, scope: "project" });
 		trustProjectPackages(cwd, "plugins");
 		reloadPluginResources(cwd);
-		ok(!discoverAgentRecipes(cwd).some((item) => item.id === "demo-pack-researcher"));
+		ok(!discoverAgentRecipes(loadSkills, cwd).some((item) => item.id === "demo-pack-researcher"));
 		ok(
 			loadPromptTemplates({ cwd }).items.some((item) => item.name === "wtfp:help"),
 			"a peer plugin keeps its namespace when another plugin is suppressed",
@@ -296,7 +296,7 @@ it("refreshes admitted plugin resources after drift and does not bind another ow
 		const installed = installPlugin(source, { cwd, scope: "user" });
 		ok(installed.plugin?.loadable);
 		const diagnostics: import("../../src/domains/agents/registry.js").AgentRecipeDiagnostic[] = [];
-		ok(!discoverAgentRecipes(cwd, diagnostics).some((item) => item.id === "demo-pack-researcher"));
+		ok(!discoverAgentRecipes(loadSkills, cwd, diagnostics).some((item) => item.id === "demo-pack-researcher"));
 		ok(diagnostics.some((item) => item.message.includes("bound skill(s) unavailable")));
 		reloadPluginResources(cwd);
 		ok(loadPromptTemplates({ cwd }).items.some((item) => item.name === "demo-pack:help"));
@@ -319,7 +319,7 @@ it("publishes plugin generations before refreshing cached recipes and unsubscrib
 	const env = await isolatePancodeEnv("pancode-plugin-reload-");
 	const oldCwd = process.cwd();
 	const bus = createTelemetryHub();
-	const agents = createAgentsBundle({ bus, getContract: () => undefined });
+	const agents = createAgentsBundle({ bus, getContract: () => undefined }, { loadSkills });
 	try {
 		const cwd = join(env.dir, "workspace");
 		mkdirSync(cwd);

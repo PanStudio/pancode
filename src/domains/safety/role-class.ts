@@ -10,9 +10,9 @@
  */
 
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
+import type { AgentCapabilityClass } from "../agents/spec.js";
 import type { RunRole } from "../dispatch/obligation.js";
-import { classify } from "../safety/action-classifier.js";
-import type { AgentCapabilityClass } from "./spec.js";
+import { classify } from "./action-classifier.js";
 
 export type RoleClass = RunRole | "coordinator";
 

@@ -18,7 +18,7 @@ import { sessionChangesTree } from "../../domains/safety/run-effects.js";
 import { seedRecallLineage } from "../../lib/worker-wire/context-seed.js";
 import type { WorkerBudget } from "../../lib/worker-wire/spec-contract.js";
 import { createWorkerGitContext } from "../../tools/git-exec.js";
-import type { RegistryDeps } from "../../tools/registry-contract.js";
+import type { RegistryDeps } from "../../tools/registry/contract.js";
 import { clearTaskGates, configureWorkerTaskGates, contractDeclaresTaskGates } from "../../tools/verify/task-gates.js";
 import {
 	callRepeatsAsRead,

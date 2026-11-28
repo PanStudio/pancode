@@ -856,7 +856,8 @@ async function runDispatch(
 	const { setShutdownTextWrapper } = await import("../core/termination.js");
 	const { wrapTextWithAnsi } = await import("../engine/text-wrap.js");
 	setShutdownTextWrapper(wrapTextWithAnsi);
-	const { AgentsDomainModule } = await import("../domains/agents/module.js");
+	const { createAgentsDomainModule } = await import("../domains/agents/module.js");
+	const { loadSkills: loadSkillCatalog } = await import("../domains/resources/skills/loader.js");
 	const { audienceRefusalStandIn } = await import("../domains/agents/spec.js");
 	const { ConfigDomainModule } = await import("../domains/config/module.js");
 	const { createContextDomainModule } = await import("../domains/context/module.js");
@@ -905,7 +906,7 @@ async function runDispatch(
 		ProvidersDomainModule,
 		SafetyDomainModule,
 		createPromptsDomainModule({ noContextFiles: options.noContextFiles === true }),
-		AgentsDomainModule,
+		createAgentsDomainModule({ loadSkills: loadSkillCatalog }),
 		workerHooks.middlewareModule,
 		SessionDomainModule,
 		// Telemetry subscribes to the dispatch terminal events so a headless

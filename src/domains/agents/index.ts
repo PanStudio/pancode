@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 export type { AgentsContract } from "./contract.js";
+export { cachedFrontmatterParser, withFrontmatterCache, withFrontmatterCacheReadOnly } from "./frontmatter-cache.js";
+export {
+	type PackReferenceContext,
+	pluginResourceComponents,
+	resolvePackPathReference,
+	resolvePackReferences,
+} from "./pack-references.js";
 export type {
 	Playbook,
 	PlaybookListing,

@@ -50,8 +50,8 @@ import {
 import { admissionAutonomy, effectiveYoloConfinement } from "../../src/lib/autonomy/autonomy.js";
 import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry-contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

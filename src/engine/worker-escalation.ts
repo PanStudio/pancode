@@ -6,7 +6,7 @@ import { isMcpToolName } from "../core/tool-names.js";
 import type { ActionClass, ClassifierCall } from "../domains/safety/action-classifier.js";
 import type { ApprovalAuthority } from "../domains/safety/admission.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
-import type { GrantExecutionEvent, ToolRegistry } from "../tools/registry-contract.js";
+import type { GrantExecutionEvent, ToolRegistry } from "../tools/registry/contract.js";
 import type { PancodeWorkerEvent } from "./worker-events.js";
 import { formatWorkerRefusal, type WorkerRefusal, workerRefusalLimitReason } from "./worker-refusals.js";
 import type { WorkerEventEmit } from "./worker-run-types.js";

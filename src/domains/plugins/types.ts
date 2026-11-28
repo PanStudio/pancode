@@ -230,4 +230,4 @@ export interface PluginSnapshot {
 	resourceRoots: Readonly<Record<PluginResourceKind, ReadonlyArray<PluginResourceRoot>>>;
 }
 
-import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
+import type { HubEntryKind, HubRequirementRef } from "./hub-types.js";

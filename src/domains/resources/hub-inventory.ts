@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { readSettings } from "../../core/config.js";
 import { discoveryScore, discoveryTermsMatch } from "../../core/harness-discovery.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
@@ -13,9 +14,21 @@ import type { AgentRecipe } from "../agents/recipe.js";
 import { type AgentRecipeDiagnostic, discoverAgentRecipes } from "../agents/registry.js";
 import type { AgentAudience } from "../agents/spec.js";
 import { isSemanticVersion, satisfiesSemVerRange } from "../extensions/compatibility.js";
-import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
 import { bundledHubIndexPath, parsePluginGithubSource } from "../plugins/catalog.js";
-import { withPluginDiscoveryPass } from "../plugins/index.js";
+import type {
+	HubComponentKind,
+	HubEntryKind,
+	HubPackEntry,
+	HubProvidedResource,
+	HubRequirementRef,
+} from "../plugins/index.js";
+import {
+	clipAtWord,
+	type HubCategory,
+	isHubComponentKind,
+	isHubKind,
+	withPluginDiscoveryPass,
+} from "../plugins/index.js";
 import type { ForeignPackFormat, InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
 import type { ResourceDiagnostic } from "./collision.js";
 import { discoverHub } from "./hub.js";
@@ -26,14 +39,6 @@ import {
 	listInstalledHubPacks as listInstalledPlugins,
 	readHubInstallRecord,
 } from "./hub-packs.js";
-import type {
-	HubComponentKind,
-	HubEntryKind,
-	HubPackEntry,
-	HubProvidedResource,
-	HubRequirementRef,
-} from "./hub-types.js";
-import { clipAtWord, type HubCategory, isHubComponentKind, isHubKind } from "./hub-types.js";
 import { type HubValidationPrerequisite, validateHubPack } from "./hub-validation.js";
 import { loadPromptTemplates, type PromptTemplate } from "./prompts/loader.js";
 import { loadSkills, type Skill } from "./skills/loader.js";
@@ -1074,7 +1079,8 @@ function readHubInventoryInPass(options: HubInventoryOptions): HubInventory {
 		if (wants("agent")) {
 			const agentDiagnostics: AgentRecipeDiagnostic[] = [];
 			try {
-				for (const recipe of discoverAgentRecipes(cwd, agentDiagnostics)) agentRows.push(fromAgent(recipe, index));
+				for (const recipe of discoverAgentRecipes(loadSkills, cwd, agentDiagnostics))
+					agentRows.push(fromAgent(recipe, index));
 			} catch (error) {
 				note(`agent: discovery failed: ${error instanceof Error ? error.message : String(error)}`);
 			}

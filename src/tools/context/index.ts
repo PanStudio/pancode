@@ -49,7 +49,7 @@ import {
 	observationBudgetExhausted,
 	reserveObservation,
 } from "../observation.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import { truncateHead } from "../truncate.js";
 import { listDocsCorpus, searchDocs } from "./docs-engine.js";

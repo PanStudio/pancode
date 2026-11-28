@@ -27,7 +27,14 @@ import type { HubImportApplyResult, HubImportPlan } from "../interop/import.js";
 import {
 	disablePlugin,
 	enablePlugin,
+	type HubComponentKind,
+	type HubEntryKind,
+	type HubPackEntry,
+	type HubRequirementRef,
+	type HubTier,
 	type InstalledPlugin,
+	isHubComponentKind,
+	isHubKind,
 	listInstalledPlugins as listPluginCopies,
 	newlyBrokenDependents,
 	type PluginDependentBreak,
@@ -63,15 +70,6 @@ import {
 	withHubScopeLock,
 } from "./hub-packs.js";
 import { type HubPair, readHubPairs } from "./hub-pairing.js";
-import {
-	type HubComponentKind,
-	type HubEntryKind,
-	type HubPackEntry,
-	type HubRequirementRef,
-	type HubTier,
-	isHubComponentKind,
-	isHubKind,
-} from "./hub-types.js";
 import { validateHubPack } from "./hub-validation.js";
 
 export const HUB_OPERATIONS = ["install", "update", "enable", "disable", "remove"] as const;

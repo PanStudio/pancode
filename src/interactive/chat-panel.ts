@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { OutputStyle } from "../core/defaults.js";
-import type { ViewArtifact } from "../domains/session/view-artifacts.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { Component } from "../engine/tui.js";
 import type { ChatLoopEvent } from "../session-control/chat-loop.js";
+import type { ViewArtifact } from "../session-control/view-artifacts.js";
 import type { WorkerEntryState } from "../session-control/worker-stream.js";
 import { renderUserLines } from "./chat-entry-rows.js";
 import { PROSE_GUTTER_WIDTH } from "./chat-ink.js";

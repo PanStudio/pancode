@@ -417,7 +417,7 @@ describe("hub import of foreign plugin packages", () => {
 		);
 		ok(prompt);
 		strictEqual(prompt.argumentHint, "<env>");
-		const agent = discoverAgentRecipes(cwd).find((item) => item.filepath.startsWith(installed.rootPath));
+		const agent = discoverAgentRecipes(loadSkills, cwd).find((item) => item.filepath.startsWith(installed.rootPath));
 		ok(agent, "installed agent recipe is readable by the native loader");
 	});
 

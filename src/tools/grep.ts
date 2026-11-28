@@ -32,7 +32,7 @@ import {
 	reserveObservation,
 } from "./observation.js";
 import { resolveReadPath, toPosixPath } from "./path-utils.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import {
 	createSearchDiagnostics,
 	finishSearch,

@@ -827,10 +827,8 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
 	["src/session-control/chat-loop.ts#createChatLoop", 1570],
-	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
-	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
-	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
-	["src/session-control/turn-context.ts#createTurnContext", 2787],
+	["src/session-control/turn-context/compaction.ts#createTurnContextCompaction", 1033],
+	["src/session-control/turn-context/compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
 	["src/session-control/turn-recovery.ts#createTurnRecovery", 578],
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
@@ -841,7 +839,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1673],
-	["src/tools/registry.ts#createRegistry", 2338],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {

@@ -21,7 +21,7 @@ import {
 	isHubAuditState,
 	isHubComponentKind,
 	isHubKind,
-} from "../resources/hub-types.js";
+} from "./hub-types.js";
 import { pluginContentDigest } from "./integrity.js";
 
 export type PluginCatalogEntry = HubPackEntry;

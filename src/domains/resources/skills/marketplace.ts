@@ -23,9 +23,9 @@ import { loadSkills, type Skill } from "./loader.js";
 export type MarketplaceSkillOrigin = "catalog" | "index";
 
 import { relativePathEscapes } from "../../../core/path-containment.js";
-import type { HubAuditState, HubRequirementRef } from "../hub-types.js";
+import type { HubAuditState, HubRequirementRef } from "../../plugins/hub-types.js";
 
-export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
+export type { HubEntryKind, HubRequirementRef } from "../../plugins/hub-types.js";
 
 /**
  * The diagnostic that means "nothing is wrong, nothing is configured". Callers

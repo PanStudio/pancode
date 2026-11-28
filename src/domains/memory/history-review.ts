@@ -24,6 +24,7 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import type { SessionEntry } from "../session/index.js";
 import type { SessionLedgerStat } from "../session/related-ledgers.js";
 import { sessionLedgersForRoots } from "../session/related-ledgers.js";
@@ -32,7 +33,6 @@ import { recordObservedRead, repositoryRelativePath } from "./lesson-evidence.js
 import { observationDigest } from "./observations.js";
 import { relatedRepositoryRoots } from "./operations.js";
 import { entriesBeforeMemoryOff, isMemoryOffEntry } from "./recording-marker.js";
-import { redactForMemoryRoute } from "./secret-text.js";
 import { shortText } from "./util.js";
 
 export interface CompletedLessonSource {

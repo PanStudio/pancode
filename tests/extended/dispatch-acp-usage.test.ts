@@ -8,9 +8,9 @@ import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { capacityLeaseUsage } from "../../src/domains/dispatch/capacity-lease.js";
 import { runUsageFromCallRecords } from "../../src/domains/dispatch/run-call-usage.js";
-import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
+import { verifyRunRecordReport } from "../../src/session-control/view-artifacts.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

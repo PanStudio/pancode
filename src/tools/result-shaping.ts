@@ -8,7 +8,7 @@ import { relativePathEscapes } from "../core/path-containment.js";
 import { INSTRUCTION_SHAPED_NOTE } from "../core/untrusted-content.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { acceptsImageInput } from "../domains/providers/image-input.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import {
 	deterministicToolResultDigest,
 	normalizeToolResultDisposition,

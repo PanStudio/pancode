@@ -19,7 +19,7 @@ import { JOB_CONDITION_LIMIT, type JobConditionEvidence, projectJobPredicate } f
 import type { JobExecutionContext, JobRunResult } from "../domains/scheduling/job-types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { effectiveScratchRoots } from "../lib/scratch-roots/scratch-roots.js";
-import type { HostEffectCall } from "./registry-contract.js";
+import type { HostEffectCall } from "./registry/contract.js";
 
 const EXECUTABLE_HASH_LIMIT = 128 * 1024 * 1024;
 const JOB_COMMAND_CAPTURE_BYTES = 16 * 1024;

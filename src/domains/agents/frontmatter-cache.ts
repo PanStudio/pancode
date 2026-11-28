@@ -18,10 +18,10 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { readPancodeVersion } from "../../../core/package-root.js";
-import { safeResourceWrite } from "../../../core/safe-resource-write.js";
-import { isRecord } from "../../../core/type-guards.js";
-import { pancodeCacheDir, pancodeCachePath } from "../../../core/xdg.js";
+import { readPancodeVersion } from "../../core/package-root.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { isRecord } from "../../core/type-guards.js";
+import { pancodeCacheDir, pancodeCachePath } from "../../core/xdg.js";
 
 const CACHE_FILE = "skill-frontmatter.json";
 const CACHE_FORMAT = 1;
