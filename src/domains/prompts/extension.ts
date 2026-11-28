@@ -781,7 +781,8 @@ function playbookCatalogHeader(dispatch: boolean, headless: boolean, yolo: boole
 	if (headless && !yolo) {
 		return 'Playbooks (multi-step workflows the fleet runs; a headless run cannot approve one, so name `pancode fleet run <playbook> "<task>"` for the operator rather than starting it):';
 	}
-	return 'Playbooks (multi-step workflows the fleet runs; start one with dispatch(playbook={name:"<playbook>", vars:{task:"<task>"}}), which shows the operator its plan card; playbook.preview:true validates one without running it; never dispatch its steps yourself):';
+	// A model trusts the attached dispatch schema, which omits playbook, unless told the field lies beyond it.
+	return 'Playbooks (multi-step workflows the fleet runs; start one with dispatch(playbook={name:"<playbook>", vars:{task:"<task>"}}), a field beyond the attached dispatch schema (gateway describe dispatch), which shows the operator its plan card; playbook.preview:true validates one without running it; never dispatch its steps yourself):';
 }
 
 function catalogFragments(
