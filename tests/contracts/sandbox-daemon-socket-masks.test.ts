@@ -40,4 +40,15 @@ describe("worker sandbox masks root-equivalent daemon sockets", () => {
 			new Set([...files.map((file) => `${file}:file`), ...dirs.map((dir) => `${dir}:directory`)]),
 		);
 	});
+
+	it("masks WSL2's Windows interop socket directory and WSLg only on a WSL2 kernel", () => {
+		for (const dir of ["run/WSL", "mnt/wslg"]) mkdirSync(join(root, dir), { recursive: true });
+		const masked = (wsl: "wsl1" | "wsl2" | null): string[] =>
+			runtimeEscapeMasksUnder(root, wsl)
+				.map((mask) => `${mask.path.slice(root.length + 1)}:${mask.kind}`)
+				.filter((entry) => /WSL|wslg/u.test(entry));
+		deepStrictEqual(masked("wsl2"), ["run/WSL:directory", "mnt/wslg:directory"]);
+		deepStrictEqual(masked(null), []);
+		deepStrictEqual(masked("wsl1"), []);
+	});
 });

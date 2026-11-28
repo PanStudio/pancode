@@ -17,6 +17,8 @@ import { askAxis } from "../domains/safety/approval-axis.js";
 import { describeMainCallConsequences, mainCallExposure, mainCallReach } from "../domains/safety/call-consequence.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { escapeScopeOptionConsequence, escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
+import { asksToLeaveSandbox } from "../domains/safety/sandbox-escape.js";
+import { unsandboxedReason } from "../domains/safety/unsandboxed-reason.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import type { SessionEntry } from "../domains/session/entries.js";
 import { isOperatorTypedUserPayload, operatorTextOfUserPayload } from "../domains/session/history.js";
@@ -283,6 +285,11 @@ export function mainApprovalRequestView(
 	// gets; this object reaches the transcript row and the approval-state event.
 	const mutation = mutationFacts(call.tool, call.args);
 	const consequence = [...describeMainCallConsequences(call), ...(meta?.consequence ?? [])];
+	const statedReason = asksToLeaveSandbox(decision) ? unsandboxedReason(call.args) : null;
+	const escapeReason =
+		statedReason === null
+			? ""
+			: redactCommandOutputSecrets(redactSecretString(sanitizeCallTargetText(statedReason))).trim();
 	return {
 		requestId: meta?.requestId ?? "permission-pending",
 		tool: call.tool,
@@ -308,6 +315,7 @@ export function mainApprovalRequestView(
 		...(task !== undefined ? { task } : {}),
 		// A contained call stays contained once approved; only `unsandboxed: true` leaves, under its own ask.
 		...(decision.policy?.shellSandbox !== undefined ? { sandboxed: true as const } : {}),
+		...(escapeReason.length > 0 ? { escapeReason } : {}),
 		...(meta?.escapeScope !== undefined
 			? {
 					escapeScope: {

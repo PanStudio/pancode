@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { type Dirent, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { endianness, homedir, machine } from "node:os";
+import { type Dirent, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
-import { sha256Hex } from "../hash.js";
 import { isSameOrDescendant } from "../path-containment.js";
-import { safeResourceWrite } from "../safe-resource-write.js";
-import { pancodeStateDir } from "../xdg.js";
-import { probeSandboxInvocation } from "./availability.js";
-import { buildBwrapInvocation, UNIX_SOCKET_FILTER_STDIN } from "./bwrap.js";
+import { sandboxFilterFile, sandboxFilterProgram } from "./seccomp.js";
 import type { SandboxAvailability, SandboxInvocationSpec, SandboxMaskedPath, UnixSocketMode } from "./types.js";
 
 /**
@@ -19,207 +15,13 @@ import type { SandboxAvailability, SandboxInvocationSpec, SandboxMaskedPath, Uni
  * commands outside the sandbox, and abstract-namespace sockets (X11, some
  * D-Bus buses) have no path a mount could hide.
  *
- * Under bubblewrap every launch therefore loads a seccomp program that makes
- * `socket(AF_UNIX, ...)` fail with EPERM and allows every other call,
- * `socketpair` included, so pipes between a command's own processes keep
- * working. Seatbelt denies Unix-socket connects and binds in its profile.
- * Where bubblewrap cannot load the program, each launch masks the
- * user-owned sockets it finds instead, which leaves abstract sockets and
+ * Under bubblewrap every launch therefore loads the seccomp program with its
+ * `block` rules (seccomp.ts), which make `socket(AF_UNIX, ...)` fail with
+ * EPERM and keep `socketpair`. Seatbelt denies Unix-socket connects and binds
+ * in its profile. Where bubblewrap cannot load the program, each launch masks
+ * the user-owned sockets it finds instead, which leaves abstract sockets and
  * sockets created after the launch reachable.
  */
-
-// seccomp_data layout: int nr, u32 arch, u64 instruction_pointer, u64 args[6].
-const SECCOMP_DATA_NR = 0;
-const SECCOMP_DATA_ARCH = 4;
-/** Low word of args[0] on a little-endian host; the kernel reads the domain as an int. */
-const SECCOMP_DATA_ARG0_LOW = 16;
-
-const BPF_LD_W_ABS = 0x20;
-const BPF_ALU_AND_K = 0x54;
-const BPF_JMP_JEQ_K = 0x15;
-const BPF_RET_K = 0x06;
-
-const SECCOMP_RET_ALLOW = 0x7fff0000;
-const SECCOMP_RET_ERRNO = 0x00050000;
-const EPERM = 1;
-const AF_UNIX = 1;
-/** socketcall(2) call number for socket(2). */
-const SYS_SOCKET = 1;
-
-const AUDIT_ARCH_X86_64 = 0xc000003e;
-const AUDIT_ARCH_I386 = 0x40000003;
-const AUDIT_ARCH_AARCH64 = 0xc00000b7;
-const AUDIT_ARCH_ARM = 0x40000028;
-/** x32 syscalls carry this bit in `nr` under AUDIT_ARCH_X86_64. */
-const X32_SYSCALL_BIT = 0x40000000;
-
-/**
- * Per ABI: the socket syscall, socketcall where the ABI routes socket(2)
- * through it, and io_uring_setup, whose IORING_OP_SOCKET creates a socket
- * without the socket syscall. A 64-bit process can still enter the 32-bit
- * ABI (int 0x80 on x86_64), so each family's compat ABI is filtered too.
- *
- * `keys` are add_key, request_key and keyctl. A sandboxed process keeps the
- * session keyring of the login that started PanCode (pam_keyinit gives every
- * ssh and console login one), so without these a contained command reads,
- * adds and clears the operator's keys there: Kerberos tickets in a
- * `KEYRING:session` cache, AFS tokens. The kernel still uses the keyring on
- * the process's behalf, so NFS, CIFS and AFS file access keeps working.
- */
-const ABIS = [
-	{ label: "x86_64", arch: AUDIT_ARCH_X86_64, socket: 41, keys: [248, 249, 250], ioUringSetup: 425, x32: true },
-	{ label: "aarch64", arch: AUDIT_ARCH_AARCH64, socket: 198, keys: [217, 218, 219], ioUringSetup: 425 },
-	{ label: "i386", arch: AUDIT_ARCH_I386, socket: 359, socketcall: 102, keys: [286, 287, 288], ioUringSetup: 425 },
-	{ label: "arm", arch: AUDIT_ARCH_ARM, socket: 281, keys: [309, 310, 311], ioUringSetup: 425 },
-] as const;
-
-/** Kernel machines whose native and compat ABIs the program covers. */
-const COVERED_MACHINES = new Set(["x86_64", "aarch64", "arm64", "i386", "i686", "armv7l", "armv8l"]);
-
-interface Step {
-	code: number;
-	k: number;
-	/** Label jumped to when the comparison holds; absent falls through. */
-	jt?: string;
-	/** Label jumped to when it does not; absent falls through. */
-	jf?: string;
-	label?: string;
-}
-
-/** Classic BPF jumps are forward offsets of at most 255 instructions. */
-function assemble(steps: ReadonlyArray<Step>): Buffer {
-	const at = new Map<string, number>();
-	steps.forEach((step, index) => {
-		if (step.label !== undefined) at.set(step.label, index);
-	});
-	const out = Buffer.alloc(steps.length * 8);
-	steps.forEach((step, index) => {
-		const offset = (label: string | undefined): number => {
-			if (label === undefined) return 0;
-			const target = at.get(label);
-			if (target === undefined || target <= index || target - index - 1 > 255) {
-				throw new Error(`seccomp program: bad jump to ${label}`);
-			}
-			return target - index - 1;
-		};
-		out.writeUInt16LE(step.code, index * 8);
-		out.writeUInt8(offset(step.jt), index * 8 + 2);
-		out.writeUInt8(offset(step.jf), index * 8 + 3);
-		out.writeUInt32LE(step.k >>> 0, index * 8 + 4);
-	});
-	return out;
-}
-
-/**
- * Pure: the seccomp program bwrap loads, as the raw `struct sock_filter`
- * array in host byte order. Under the x86_64, x32, i386, aarch64 and arm
- * ABIs it returns EPERM for socket(AF_UNIX), for i386 socketcall(SYS_SOCKET)
- * (which cannot be read further), for io_uring_setup and for the keyring
- * calls add_key, request_key and keyctl, and allows
- * everything else; any other ABI is allowed whole. Null on a big-endian
- * host, where the offsets differ and no covered ABI runs.
- */
-export function unixSocketFilterProgram(byteOrder: "BE" | "LE" = endianness()): Buffer | null {
-	if (byteOrder !== "LE") return null;
-	const ld = (offset: number, label?: string): Step => ({
-		code: BPF_LD_W_ABS,
-		k: offset,
-		...(label !== undefined ? { label } : {}),
-	});
-	const jeq = (k: number, jt?: string, jf?: string): Step => ({
-		code: BPF_JMP_JEQ_K,
-		k,
-		...(jt !== undefined ? { jt } : {}),
-		...(jf !== undefined ? { jf } : {}),
-	});
-	const steps: Step[] = [ld(SECCOMP_DATA_ARCH)];
-	ABIS.forEach((abi, index) => {
-		const last = index === ABIS.length - 1;
-		steps.push(jeq(abi.arch, abi.label, last ? "allow" : undefined));
-	});
-	for (const abi of ABIS) {
-		steps.push(ld(SECCOMP_DATA_NR, abi.label));
-		// An x32 call is the x86_64 number with the x32 bit set; masking it
-		// sends both through the same comparisons.
-		if ("x32" in abi) steps.push({ code: BPF_ALU_AND_K, k: ~X32_SYSCALL_BIT >>> 0 });
-		steps.push(jeq(abi.socket, "domain"));
-		if ("socketcall" in abi) steps.push(jeq(abi.socketcall, "socketcall"));
-		for (const key of abi.keys) steps.push(jeq(key, "deny"));
-		steps.push(jeq(abi.ioUringSetup, "deny", "allow"));
-	}
-	steps.push(
-		ld(SECCOMP_DATA_ARG0_LOW, "domain"),
-		jeq(AF_UNIX, "deny", "allow"),
-		ld(SECCOMP_DATA_ARG0_LOW, "socketcall"),
-		jeq(SYS_SOCKET, "deny", "allow"),
-		{ code: BPF_RET_K, k: SECCOMP_RET_ALLOW, label: "allow" },
-		{ code: BPF_RET_K, k: SECCOMP_RET_ERRNO | EPERM, label: "deny" },
-	);
-	return assemble(steps);
-}
-
-/** The program file under PanCode's state directory; its name carries the content digest. */
-function filterFilePath(program: Buffer): string {
-	const digest = sha256Hex(program).slice(0, 16);
-	return path.join(pancodeStateDir(), "sandbox", `unix-socket-filter-${digest}.bpf`);
-}
-
-/**
- * Impure: the program file, rewritten whenever it is missing or holds other
- * bytes, so a stale or altered file never reaches bwrap. It is read again on
- * every launch, which costs one small read.
- */
-function unixSocketFilterFile(program: Buffer): string {
-	const file = filterFilePath(program);
-	let current: Buffer | null = null;
-	try {
-		if (lstatSync(file).isFile()) current = readFileSync(file);
-	} catch {
-		// Absent: written below.
-	}
-	if (current === null || !current.equals(program)) safeResourceWrite(file, program, { mode: 0o444 });
-	return file;
-}
-
-export type UnixSocketFilterSupport = { ok: true } | { ok: false; reason: string };
-
-const supportCache = new Map<string, UnixSocketFilterSupport>();
-
-/**
- * Impure, probed once per bwrap executable: whether a launch can load the
- * filter here. The kernel machine must be one the program covers, and bwrap
- * must start a command with the program, which proves the kernel accepted it.
- * The probe hands the program over stdin, so doctor's probe writes no file.
- */
-function unixSocketFilterSupport(bwrap: string): UnixSocketFilterSupport {
-	const cached = supportCache.get(bwrap);
-	if (cached !== undefined) return cached;
-	const support = probeFilterSupport(bwrap);
-	supportCache.set(bwrap, support);
-	return support;
-}
-
-function probeFilterSupport(bwrap: string): UnixSocketFilterSupport {
-	const program = unixSocketFilterProgram();
-	if (program === null || !COVERED_MACHINES.has(machine())) {
-		return { ok: false, reason: `no unix-socket filter for ${machine()} (${endianness()})` };
-	}
-	const failure = probeSandboxInvocation(
-		buildBwrapInvocation(
-			{
-				command: { argv: ["/bin/true"] },
-				cwd: "/",
-				writableRoots: [],
-				network: false,
-				maskedPaths: [],
-				unixSocketFilter: UNIX_SOCKET_FILTER_STDIN,
-			},
-			bwrap,
-		),
-		program,
-	);
-	return failure === null ? { ok: true } : { ok: false, reason: `bubblewrap did not load the filter: ${failure}` };
-}
 
 /** Where a launch looks for sockets to mask when the filter cannot load. */
 export interface UnixSocketRoots {
@@ -464,53 +266,64 @@ export type UnixSocketState =
 	| { kind: "owned"; capped: boolean }
 	| { kind: "masks"; reason: string; capped: boolean };
 
-export interface UnixSocketLaunch {
+export interface SandboxLaunchFilters {
 	/** Spread into the launch's invocation spec. */
-	fields: Pick<SandboxInvocationSpec, "unixSocketFilter" | "denyUnixSockets">;
-	/** Masks for the sockets found, when bubblewrap cannot load the filter. */
+	fields: Pick<SandboxInvocationSpec, "seccompFilter" | "denyUnixSockets">;
+	/** Masks for the sockets found, when bubblewrap cannot load the `block` rules or under `owned`. */
 	masks: SandboxMaskedPath[];
 	state: UnixSocketState;
+	/** Bubblewrap only: why this launch loads no seccomp program, so the baseline is missing. */
+	missingBaseline?: string;
 }
 
 /**
- * Impure: what one sandbox launch adds for Unix-domain sockets. `allow`
- * adds nothing. Seatbelt denies them in its profile, under `owned` too.
- * Under `owned` bubblewrap masks the operator's sockets discovered under
- * `roots` and loads no filter, so another user's socket (a system daemon's)
- * stays reachable. Under `block` it loads the filter when this host supports
- * it, and otherwise masks the same discovered sockets. Discovery skips those
- * `existing` masks already hide.
+ * Impure: what one sandbox launch adds for its seccomp program and for
+ * Unix-domain sockets. Under bubblewrap every launch loads the program
+ * (seccomp.ts): the baseline always, and the AF_UNIX and keyring rules under
+ * `block`. Under `owned` it masks the operator's sockets discovered under
+ * `roots`, so another user's socket (a system daemon's) stays reachable.
+ * Where the program cannot load, `block` masks the same discovered sockets
+ * and the launch reports the baseline missing. Seatbelt denies sockets in its
+ * profile, under `owned` too; `allow` adds no socket rule anywhere. Discovery
+ * skips those `existing` masks already hide.
  */
-export function unixSocketLaunch(
+export function sandboxLaunchFilters(
 	mode: UnixSocketMode,
 	availability: SandboxAvailability,
 	roots: UnixSocketRoots,
 	existing: ReadonlyArray<SandboxMaskedPath>,
-	support?: UnixSocketFilterSupport,
-): UnixSocketLaunch {
-	if (mode === "allow" || !availability.available || availability.executable === null) {
+): SandboxLaunchFilters {
+	if (!availability.available || availability.executable === null) {
 		return { fields: {}, masks: [], state: { kind: "allowed" } };
 	}
-	if (availability.backend === "seatbelt")
-		return { fields: { denyUnixSockets: true }, masks: [], state: { kind: "profile" } };
-	if (mode === "owned") {
-		const scan = discoverUnixSocketMasks(roots, existing);
-		return { fields: {}, masks: scan.masks, state: { kind: "owned", capped: scan.capped } };
+	if (availability.backend === "seatbelt") {
+		return mode === "allow"
+			? { fields: {}, masks: [], state: { kind: "allowed" } }
+			: { fields: { denyUnixSockets: true }, masks: [], state: { kind: "profile" } };
 	}
-	let reason: string;
-	const probed = support ?? unixSocketFilterSupport(availability.executable);
-	const program = probed.ok ? unixSocketFilterProgram() : null;
-	if (program !== null) {
-		try {
-			return { fields: { unixSocketFilter: unixSocketFilterFile(program) }, masks: [], state: { kind: "filter" } };
-		} catch (error) {
-			reason = `the filter file could not be written: ${error instanceof Error ? error.message : String(error)}`;
+	let missing = availability.degraded;
+	let seccompFilter: string | undefined;
+	if (missing === undefined) {
+		const program = sandboxFilterProgram({ unixSockets: mode === "block" });
+		if (program === null) missing = "no seccomp filter for this host";
+		else {
+			try {
+				seccompFilter = sandboxFilterFile(program);
+			} catch (error) {
+				missing = `the filter file could not be written: ${error instanceof Error ? error.message : String(error)}`;
+			}
 		}
-	} else {
-		reason = probed.ok ? "no unix-socket filter for this host" : probed.reason;
 	}
+	const fields = seccompFilter !== undefined ? { seccompFilter } : {};
+	const baseline = missing !== undefined ? { missingBaseline: missing } : {};
+	if (mode === "allow") return { fields, masks: [], state: { kind: "allowed" }, ...baseline };
+	if (mode === "block" && missing === undefined) return { fields, masks: [], state: { kind: "filter" } };
 	const scan = discoverUnixSocketMasks(roots, existing);
-	return { fields: {}, masks: scan.masks, state: { kind: "masks", reason, capped: scan.capped } };
+	const state: UnixSocketState =
+		mode === "owned"
+			? { kind: "owned", capped: scan.capped }
+			: { kind: "masks", reason: missing ?? "", capped: scan.capped };
+	return { fields, masks: scan.masks, state, ...baseline };
 }
 
 /** What doctor and the worker diagnostics say about one host's unix-socket treatment. */
@@ -529,11 +342,12 @@ export function unixSocketStateLine(state: UnixSocketState): string {
 	}
 }
 
-/** Impure: the treatment the next launch on this host gets, without discovering sockets. */
+/** Pure: the treatment the next launch on this host gets, without discovering sockets. */
 export function unixSocketHostState(mode: UnixSocketMode, availability: SandboxAvailability): UnixSocketState {
 	if (mode === "allow" || !availability.available || availability.executable === null) return { kind: "allowed" };
 	if (availability.backend === "seatbelt") return { kind: "profile" };
 	if (mode === "owned") return { kind: "owned", capped: false };
-	const support = unixSocketFilterSupport(availability.executable);
-	return support.ok ? { kind: "filter" } : { kind: "masks", reason: support.reason, capped: false };
+	return availability.degraded === undefined
+		? { kind: "filter" }
+		: { kind: "masks", reason: availability.degraded, capped: false };
 }

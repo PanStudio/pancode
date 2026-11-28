@@ -239,6 +239,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"sandboxCacheMaxGiB",
 	"sandboxNetwork",
 	"sandboxPassEnv",
+	"sandboxUnconfinedLocalWorkers",
 	"sandboxUnixSockets",
 	"scheme",
 	"scope",

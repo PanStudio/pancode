@@ -244,6 +244,7 @@ export function workerSandboxFor(input: {
 						...spec,
 						...(hoare ? { network: false } : {}),
 						...(input.envelope.sandbox.backend !== "none" ? { backendExpected: true } : {}),
+						...(input.envelope.sandbox.unconfined === true ? { unconfined: true as const } : {}),
 					},
 	};
 }

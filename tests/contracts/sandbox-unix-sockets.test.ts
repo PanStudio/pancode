@@ -2,19 +2,32 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { readSettings } from "../../src/core/config.js";
-import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { sandboxAvailability, untrustedBwrapReason, wslKind } from "../../src/core/sandbox/availability.js";
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
 import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
+import { sandboxFilterProgram } from "../../src/core/sandbox/seccomp.js";
+import { sandboxStatus, sandboxStatusLine } from "../../src/core/sandbox/status.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
-import { unixSocketFilterProgram, unixSocketLaunch } from "../../src/core/sandbox/unix-sockets.js";
+import { sandboxLaunchFilters } from "../../src/core/sandbox/unix-sockets.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import { composeWorkerSandboxInvocation } from "../../src/core/sandbox/worker-process.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
@@ -32,6 +45,7 @@ const AUDIT_ARCH_RISCV64 = 0xc00000f3;
 const X32 = 0x40000000;
 const ALLOW = 0x7fff0000;
 const EPERM = 0x00050001;
+const ENOSYS = 0x00050026;
 
 interface Insn {
 	code: number;
@@ -62,25 +76,34 @@ function run(insns: Insn[], arch: number, nr: number, arg0: bigint): number {
 		if (insn.code === 0x20) a = data.readUInt32LE(insn.k);
 		else if (insn.code === 0x54) a = (a & insn.k) >>> 0;
 		else if (insn.code === 0x15) pc += a === insn.k ? insn.jt : insn.jf;
+		else if (insn.code === 0x45) pc += (a & insn.k) !== 0 ? insn.jt : insn.jf;
 		else if (insn.code === 0x06) return insn.k;
 		else throw new Error(`unexpected opcode ${insn.code}`);
 	}
 	throw new Error("program fell off the end");
 }
 
-test("the unix-socket seccomp program refuses AF_UNIX sockets under x86_64, x32, i386, aarch64 and arm, and allows the rest", () => {
-	const program = unixSocketFilterProgram("LE");
-	assert.ok(program !== null);
-	const insns = decode(program);
-	// Load the arch, dispatch on each covered ABI, and end on ALLOW and ERRNO(EPERM).
+test("the seccomp program holds the baseline on every covered ABI and adds the unix-socket rules under block", () => {
+	const block = sandboxFilterProgram({ unixSockets: true }, "LE");
+	const baseline = sandboxFilterProgram({ unixSockets: false }, "LE");
+	assert.ok(block !== null && baseline !== null);
+	const insns = decode(block);
+	const base = decode(baseline);
+	// Load the arch, dispatch on each covered ABI, and end on ALLOW, ERRNO(EPERM) and ERRNO(ENOSYS).
 	assert.deepEqual(insns[0], { code: 0x20, jt: 0, jf: 0, k: 4 });
 	assert.deepEqual(
 		insns.slice(1, 5).map((insn) => insn.k),
 		[AUDIT_ARCH_X86_64, AUDIT_ARCH_AARCH64, AUDIT_ARCH_I386, AUDIT_ARCH_ARM],
 	);
-	assert.deepEqual(insns.at(-2), { code: 0x06, jt: 0, jf: 0, k: ALLOW });
-	assert.deepEqual(insns.at(-1), { code: 0x06, jt: 0, jf: 0, k: EPERM });
-	// x86_64 loads nr, clears the x32 bit, then compares with socket (41); aarch64 compares with 198.
+	assert.deepEqual(
+		insns.slice(-3).map(({ code, k }) => [code, k]),
+		[
+			[0x06, ALLOW],
+			[0x06, EPERM],
+			[0x06, ENOSYS],
+		],
+	);
+	// x86_64 loads nr, clears the x32 bit, then compares with socket (41).
 	const x86 = insns.findIndex((insn, index) => insn.code === 0x20 && insn.k === 0 && insns[index + 1]?.code === 0x54);
 	assert.deepEqual(
 		insns.slice(x86, x86 + 3).map(({ code, k }) => [code, k]),
@@ -90,38 +113,164 @@ test("the unix-socket seccomp program refuses AF_UNIX sockets under x86_64, x32,
 			[0x15, 41],
 		],
 	);
-	const aarch64 = insns.findIndex((insn, index) => insn.code === 0x20 && insn.k === 0 && insns[index + 1]?.k === 198);
-	assert.ok(aarch64 > x86);
-	assert.equal(unixSocketFilterProgram("BE"), null);
+	assert.equal(sandboxFilterProgram({ unixSockets: true }, "BE"), null);
 
-	const cases: Array<[string, number, number, bigint, number]> = [
-		["x86_64 socket(AF_UNIX)", AUDIT_ARCH_X86_64, 41, 1n, EPERM],
-		["x86_64 socket(AF_UNIX) with a high word", AUDIT_ARCH_X86_64, 41, 1n | (1n << 32n), EPERM],
-		["x86_64 socket(AF_INET)", AUDIT_ARCH_X86_64, 41, 2n, ALLOW],
-		["x86_64 socketpair(AF_UNIX)", AUDIT_ARCH_X86_64, 53, 1n, ALLOW],
-		["x86_64 connect", AUDIT_ARCH_X86_64, 42, 1n, ALLOW],
-		["x32 socket(AF_UNIX)", AUDIT_ARCH_X86_64, X32 | 41, 1n, EPERM],
-		["x86_64 io_uring_setup", AUDIT_ARCH_X86_64, 425, 1n, EPERM],
-		["i386 socket(AF_UNIX)", AUDIT_ARCH_I386, 359, 1n, EPERM],
-		["i386 socket(AF_INET)", AUDIT_ARCH_I386, 359, 2n, ALLOW],
-		["i386 socketcall(SYS_SOCKET)", AUDIT_ARCH_I386, 102, 1n, EPERM],
-		["i386 socketcall(SYS_SOCKETPAIR)", AUDIT_ARCH_I386, 102, 8n, ALLOW],
-		["aarch64 socket(AF_UNIX)", AUDIT_ARCH_AARCH64, 198, 1n, EPERM],
-		["aarch64 socket(AF_INET6)", AUDIT_ARCH_AARCH64, 198, 10n, ALLOW],
-		["aarch64 socketpair(AF_UNIX)", AUDIT_ARCH_AARCH64, 199, 1n, ALLOW],
-		["aarch64 io_uring_setup", AUDIT_ARCH_AARCH64, 425, 1n, EPERM],
-		["arm socket(AF_UNIX)", AUDIT_ARCH_ARM, 281, 1n, EPERM],
-		["arm socketpair(AF_UNIX)", AUDIT_ARCH_ARM, 288, 1n, ALLOW],
-		["x86_64 keyctl", AUDIT_ARCH_X86_64, 250, 11n, EPERM],
-		["x86_64 add_key", AUDIT_ARCH_X86_64, 248, 0n, EPERM],
-		["aarch64 keyctl", AUDIT_ARCH_AARCH64, 219, 11n, EPERM],
-		["i386 request_key", AUDIT_ARCH_I386, 287, 0n, EPERM],
-		["arm keyctl", AUDIT_ARCH_ARM, 311, 11n, EPERM],
-		["an uncovered arch", AUDIT_ARCH_RISCV64, 198, 1n, ALLOW],
+	const CLONE_NEWUSER = 0x10000000n;
+	const CLONE_NEWNS = 0x00020000n;
+	const CLONE_NEWNET = 0x40000000n;
+	const CLONE_NEWTIME = 0x80n;
+	const THREAD = 0x003d0f00n;
+	const FORK = 17n; // SIGCHLD in the exit-signal byte
+	// [name, arch, nr, arg0, under block, baseline only]
+	const cases: Array<[string, number, number, bigint, number, number]> = [
+		["x86_64 socket(AF_UNIX)", AUDIT_ARCH_X86_64, 41, 1n, EPERM, ALLOW],
+		["x86_64 socket(AF_UNIX) with a high word", AUDIT_ARCH_X86_64, 41, 1n | (1n << 32n), EPERM, ALLOW],
+		["x86_64 socket(AF_INET)", AUDIT_ARCH_X86_64, 41, 2n, ALLOW, ALLOW],
+		["x86_64 socket(AF_VSOCK)", AUDIT_ARCH_X86_64, 41, 40n, EPERM, EPERM],
+		["x86_64 socketpair(AF_UNIX)", AUDIT_ARCH_X86_64, 53, 1n, ALLOW, ALLOW],
+		["x86_64 connect", AUDIT_ARCH_X86_64, 42, 1n, ALLOW, ALLOW],
+		["x32 socket(AF_UNIX)", AUDIT_ARCH_X86_64, X32 | 41, 1n, EPERM, ALLOW],
+		["x32 socket(AF_VSOCK)", AUDIT_ARCH_X86_64, X32 | 41, 40n, EPERM, EPERM],
+		["x86_64 io_uring_setup", AUDIT_ARCH_X86_64, 425, 1n, EPERM, EPERM],
+		["x86_64 ptrace", AUDIT_ARCH_X86_64, 101, 16n, EPERM, EPERM],
+		["x32 ptrace", AUDIT_ARCH_X86_64, X32 | 521, 16n, EPERM, EPERM],
+		["x86_64 process_vm_readv", AUDIT_ARCH_X86_64, 310, 1n, EPERM, EPERM],
+		["x86_64 process_vm_writev", AUDIT_ARCH_X86_64, 311, 1n, EPERM, EPERM],
+		["x32 process_vm_writev", AUDIT_ARCH_X86_64, X32 | 540, 1n, EPERM, EPERM],
+		["x86_64 setns", AUDIT_ARCH_X86_64, 308, 3n, EPERM, EPERM],
+		["x86_64 clone(fork)", AUDIT_ARCH_X86_64, 56, FORK, ALLOW, ALLOW],
+		["x86_64 clone(thread)", AUDIT_ARCH_X86_64, 56, THREAD, ALLOW, ALLOW],
+		["x86_64 clone(NEWUSER)", AUDIT_ARCH_X86_64, 56, CLONE_NEWUSER | FORK, EPERM, EPERM],
+		["x86_64 clone(NEWNET)", AUDIT_ARCH_X86_64, 56, CLONE_NEWNET, EPERM, EPERM],
+		["x86_64 clone3", AUDIT_ARCH_X86_64, 435, 0n, ENOSYS, ENOSYS],
+		["x86_64 unshare(NEWNS)", AUDIT_ARCH_X86_64, 272, CLONE_NEWNS, EPERM, EPERM],
+		["x86_64 unshare(NEWTIME)", AUDIT_ARCH_X86_64, 272, CLONE_NEWTIME, EPERM, EPERM],
+		["x86_64 unshare(CLONE_FILES)", AUDIT_ARCH_X86_64, 272, 0x400n, ALLOW, ALLOW],
+		["i386 socket(AF_UNIX)", AUDIT_ARCH_I386, 359, 1n, EPERM, ALLOW],
+		["i386 socket(AF_VSOCK)", AUDIT_ARCH_I386, 359, 40n, EPERM, EPERM],
+		["i386 socket(AF_INET)", AUDIT_ARCH_I386, 359, 2n, ALLOW, ALLOW],
+		["i386 socketcall(SYS_SOCKET)", AUDIT_ARCH_I386, 102, 1n, EPERM, ALLOW],
+		["i386 socketcall(SYS_SOCKETPAIR)", AUDIT_ARCH_I386, 102, 8n, ALLOW, ALLOW],
+		["i386 ptrace", AUDIT_ARCH_I386, 26, 16n, EPERM, EPERM],
+		["i386 clone(NEWUSER)", AUDIT_ARCH_I386, 120, CLONE_NEWUSER, EPERM, EPERM],
+		["i386 unshare(NEWUSER)", AUDIT_ARCH_I386, 310, CLONE_NEWUSER, EPERM, EPERM],
+		["aarch64 socket(AF_UNIX)", AUDIT_ARCH_AARCH64, 198, 1n, EPERM, ALLOW],
+		["aarch64 socket(AF_INET6)", AUDIT_ARCH_AARCH64, 198, 10n, ALLOW, ALLOW],
+		["aarch64 socket(AF_VSOCK)", AUDIT_ARCH_AARCH64, 198, 40n, EPERM, EPERM],
+		["aarch64 socketpair(AF_UNIX)", AUDIT_ARCH_AARCH64, 199, 1n, ALLOW, ALLOW],
+		["aarch64 io_uring_setup", AUDIT_ARCH_AARCH64, 425, 1n, EPERM, EPERM],
+		["aarch64 ptrace", AUDIT_ARCH_AARCH64, 117, 16n, EPERM, EPERM],
+		["aarch64 unshare(NEWUSER)", AUDIT_ARCH_AARCH64, 97, CLONE_NEWUSER, EPERM, EPERM],
+		["aarch64 clone3", AUDIT_ARCH_AARCH64, 435, 0n, ENOSYS, ENOSYS],
+		["arm socket(AF_UNIX)", AUDIT_ARCH_ARM, 281, 1n, EPERM, ALLOW],
+		["arm socketpair(AF_UNIX)", AUDIT_ARCH_ARM, 288, 1n, ALLOW, ALLOW],
+		["arm process_vm_readv", AUDIT_ARCH_ARM, 376, 1n, EPERM, EPERM],
+		["x86_64 keyctl", AUDIT_ARCH_X86_64, 250, 11n, EPERM, ALLOW],
+		["x86_64 add_key", AUDIT_ARCH_X86_64, 248, 0n, EPERM, ALLOW],
+		["aarch64 keyctl", AUDIT_ARCH_AARCH64, 219, 11n, EPERM, ALLOW],
+		["i386 request_key", AUDIT_ARCH_I386, 287, 0n, EPERM, ALLOW],
+		["arm keyctl", AUDIT_ARCH_ARM, 311, 11n, EPERM, ALLOW],
+		["an uncovered arch", AUDIT_ARCH_RISCV64, 198, 1n, ALLOW, ALLOW],
 	];
-	for (const [name, arch, nr, arg0, expected] of cases) {
-		assert.equal(run(insns, arch, nr, arg0), expected, name);
+	for (const [name, arch, nr, arg0, underBlock, baselineOnly] of cases) {
+		assert.equal(run(insns, arch, nr, arg0), underBlock, `${name} under block`);
+		assert.equal(run(base, arch, nr, arg0), baselineOnly, `${name} under owned or allow`);
 	}
+});
+
+test("a bwrap the operator's uid could replace is not trusted; a root-owned one outside writable roots is", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "bwrap-trust-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const fake = join(dir, "bwrap");
+	writeFileSync(fake, "#!/bin/sh\nexit 0\n");
+	chmodSync(fake, 0o755);
+	assert.match(untrustedBwrapReason(fake) ?? "", /owned by uid \d+, not root/u);
+	assert.match(untrustedBwrapReason(join(dir, "absent")) ?? "", /cannot be resolved/u);
+	if (!existsSync("/usr/bin/bwrap")) return t.skip("no /usr/bin/bwrap on this host");
+	assert.equal(untrustedBwrapReason("/usr/bin/bwrap"), null);
+	assert.equal(untrustedBwrapReason("/usr/bin/bwrap", 0), null);
+	// A symlink in a writable PATH dir resolves to the canonical root-owned binary so it cannot be swapped before launch.
+	const linkDir = mkdtempSync(join(tmpdir(), "bwrap-link-"));
+	t.after(() => rmSync(linkDir, { recursive: true, force: true }));
+	symlinkSync("/usr/bin/bwrap", join(linkDir, "bwrap"));
+	const resolved = sandboxAvailability("linux", { PATH: linkDir });
+	if (resolved.available) {
+		assert.equal(resolved.executable, realpathSync("/usr/bin/bwrap"));
+	} else {
+		assert.equal(resolved.found, realpathSync("/usr/bin/bwrap"));
+	}
+});
+
+test("WSL1 has no sandbox and names the fix; a WSL2 or plain kernel is probed as usual", () => {
+	assert.equal(wslKind("4.4.0-19041-Microsoft"), "wsl1");
+	assert.equal(wslKind("5.15.167.4-microsoft-standard-WSL2"), "wsl2");
+	assert.equal(wslKind("6.8.0-45-generic"), null);
+	const wsl1 = sandboxAvailability("linux", { PATH: "/usr/bin" }, "4.4.0-19041-Microsoft");
+	assert.equal(wsl1.available, false);
+	assert.match(wsl1.reason ?? "", /WSL1 is unsupported.*convert the distribution to WSL2/u);
+});
+
+test("the sandbox status says what the main shell and a local worker get for each setting and probe", () => {
+	const full = { available: true, backend: "bwrap" as const, executable: "/usr/bin/bwrap", reason: null };
+	const partial = { ...full, degraded: "bubblewrap did not load the seccomp filter: EINVAL" };
+	const lost = {
+		available: false,
+		backend: null,
+		executable: null,
+		reason: "pivot_root: EPERM",
+		found: "/usr/bin/bwrap",
+	};
+	const missing = { available: false, backend: null, executable: null, reason: "bubblewrap (bwrap) is not installed" };
+	const status = (
+		setting: "auto" | "required" | "off",
+		availability: Parameters<typeof sandboxStatus>[0]["availability"],
+		more: Partial<Parameters<typeof sandboxStatus>[0]> = {},
+	) =>
+		sandboxStatus({
+			setting,
+			availability,
+			networkIsolation: null,
+			unixSockets: "block",
+			wsl: null,
+			unconfinedLocalWorkers: false,
+			workerNetwork: false,
+			...more,
+		});
+	const pick = (s: ReturnType<typeof sandboxStatus>) => [s.outcome, s.seccomp, s.main, s.localWorker];
+	assert.deepEqual(pick(status("auto", full)), ["available", "loaded", "contained", "contained"]);
+	assert.deepEqual(pick(status("auto", partial)), ["partial", "degraded", "contained", "contained"]);
+	assert.deepEqual(pick(status("required", partial)), ["partial", "degraded", "rails", "refused"]);
+	assert.deepEqual(pick(status("auto", lost)), ["lost", "none", "rails", "refused"]);
+	assert.deepEqual(pick(status("auto", missing, { unconfinedLocalWorkers: true })), [
+		"missing",
+		"none",
+		"rails",
+		"unconfined",
+	]);
+	assert.deepEqual(pick(status("required", missing, { unconfinedLocalWorkers: true })), [
+		"missing",
+		"none",
+		"rails",
+		"refused",
+	]);
+	assert.deepEqual(pick(status("off", full)), ["off", "loaded", "off", "off"]);
+	// A worker command keeps no network unless safety.sandboxNetwork, so a bwrap that cannot isolate it refuses workers.
+	const netless = status("auto", full, { networkIsolation: "cannot unshare net" });
+	assert.deepEqual(pick(netless), ["available", "loaded", "contained", "refused"]);
+	assert.equal(status("auto", full, { networkIsolation: "x", workerNetwork: true }).localWorker, "contained");
+	assert.equal(status("auto", lost).executable, "/usr/bin/bwrap");
+	assert.match(
+		sandboxStatusLine(status("auto", lost)),
+		/backend lost: \/usr\/bin\/bwrap cannot build a sandbox here \(pivot_root: EPERM\)/u,
+	);
+	assert.match(
+		sandboxStatusLine(status("auto", partial, { wsl: "wsl2" })),
+		/partial: seccomp baseline not loaded \(.*EINVAL\); WSL2;/u,
+	);
+	assert.match(
+		sandboxStatusLine(status("auto", missing)),
+		/main shell not sandboxed \(approval rails only\); local native workers refused$/u,
+	);
 });
 
 test("the seatbelt temp-directory write grant keeps read-only paths protected", () => {
@@ -390,7 +539,14 @@ const PROBE = [
 	"    s = socket.create_connection(('127.0.0.1', port), timeout=5); s.close(); return 'connected'",
 	"def pair():",
 	"    a, b = socket.socketpair(); a.sendall(b'x'); return 'pair-' + b.recv(1).decode()",
-	"print(f'unix={attempt(unix)} tcp={attempt(tcp)} socketpair={attempt(pair)}')",
+	"def vsock():",
+	"    s = socket.socket(40, socket.SOCK_STREAM); s.close(); return 'opened'",
+	"def userns():",
+	"    import ctypes, os",
+	"    libc = ctypes.CDLL(None, use_errno=True)",
+	"    if libc.unshare(0x10000000) == 0: return 'created'",
+	"    raise OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))",
+	"print(f'unix={attempt(unix)} tcp={attempt(tcp)} socketpair={attempt(pair)} vsock={attempt(vsock)} userns={attempt(userns)}')",
 ].join("\n");
 
 function runProbe(file: string, args: string[]): Promise<string> {
@@ -470,8 +626,14 @@ test("under bwrap a contained command cannot open a unix socket but keeps socket
 	};
 	const blocked = await contained("block");
 	assert.match(blocked, /unix=PermissionError:1 tcp=connected socketpair=pair-x/u, blocked);
+	// The baseline holds under every unix-socket mode: no vsock to the VM host, no new user namespace.
+	assert.match(blocked, /vsock=PermissionError:1 userns=PermissionError:1/u, blocked);
 	const allowed = await contained("allow");
-	assert.match(allowed, /unix=connected tcp=connected socketpair=pair-x/u, allowed);
+	assert.match(
+		allowed,
+		/unix=connected tcp=connected socketpair=pair-x vsock=PermissionError:1 userns=PermissionError:1/u,
+		allowed,
+	);
 
 	// A worker's sandbox loads the same filter, network or not: a socket on disk is not network.
 	const worker = composeWorkerSandboxInvocation(
@@ -493,14 +655,14 @@ test("under bwrap a contained command cannot open a unix socket but keeps socket
 	assert.match(await runProbe(worker.file, worker.args), /unix=PermissionError:1 /u);
 
 	// Without a filter the launch masks the sockets it finds, so the listener is gone while sockets still open.
-	const fallback = unixSocketLaunch(
+	const fallback = sandboxLaunchFilters(
 		"block",
-		availability,
+		{ ...availability, degraded: "forced by the test" },
 		{ workspaceRoots: [workspace], scratchRoots: [scratch], privateTmp: false, home: workspace },
 		[],
-		{ ok: false, reason: "forced by the test" },
 	);
 	assert.equal(fallback.state.kind, "masks");
+	assert.equal(fallback.missingBaseline, "forced by the test");
 	assert.deepEqual(fallback.fields, {});
 	assert.ok(fallback.masks.some((mask) => mask.path === socketPath && mask.kind === "file"));
 	const masked = buildBwrapInvocation(
@@ -644,7 +806,7 @@ test("socket discovery finds the pane host's socket and a home daemon's past a l
 	});
 	if (!(await listenUnixOrSkip(t, servers[0] as Server, daemon))) return;
 	if (!(await listenUnixOrSkip(t, servers[1] as Server, paneHost))) return;
-	const launch = unixSocketLaunch(
+	const launch = sandboxLaunchFilters(
 		"owned",
 		availability,
 		{ workspaceRoots: [workspace], privateTmp: true, home, env: { HERDR_SOCKET_PATH: paneHost } },
@@ -653,12 +815,11 @@ test("socket discovery finds the pane host's socket and a home daemon's past a l
 	const masked = launch.masks.map((mask) => mask.path);
 	assert.ok(masked.includes(paneHost), masked.join(", "));
 	assert.ok(masked.includes(daemon), masked.join(", "));
-	const tmux = unixSocketLaunch(
+	const tmux = sandboxLaunchFilters(
 		"block",
-		availability,
+		{ ...availability, degraded: "forced by the test" },
 		{ workspaceRoots: [workspace], privateTmp: true, home: workspace, env: { TMUX: `${paneHost},4242,0` } },
 		[],
-		{ ok: false, reason: "forced by the test" },
 	);
 	assert.ok(
 		tmux.masks.some((mask) => mask.path === paneHost),

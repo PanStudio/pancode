@@ -458,6 +458,8 @@ export function permissionCardParts(
 	// Why before the rule's name: on a short card the reason (it writes outside this workspace) is what decides it.
 	const lead: Fact[] = [];
 	if (view.netReason !== undefined && view.netReason.length > 0) lead.push({ label: "why", value: view.netReason });
+	// The agent's own account of why its escape must leave the sandbox: its words, labeled as such, never PanCode's.
+	if (view.escapeReason !== undefined) lead.push({ label: "agent says", value: view.escapeReason, tone: "muted" });
 	if (identity.ruleFact !== null) lead.push(identity.ruleFact);
 	const tail: Fact[] = [];
 	if (presentation.reversibility === "limited" || presentation.reversibility === "unknown") {
