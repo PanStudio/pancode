@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 import { RosterError, readRoster } from "./roster.ts";
 import type {
@@ -177,6 +177,14 @@ function repeatOf(value: string | undefined): number {
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+function physical(target: string): string {
+	try {
+		return realpathSync(target);
+	} catch {
+		return target;
+	}
+}
+
 function isSameOrInside(child: string, parent: string): boolean {
 	const rel = relative(parent, child);
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
@@ -185,8 +193,10 @@ function isSameOrInside(child: string, parent: string): boolean {
 /** The fixture must exist, and `--out` must be absent or empty and outside it, since the fixture is copied whole. */
 export function validateCampaignPaths(fixture: string, out: string, prompt: string): void {
 	if (prompt.trim().length === 0) throw new CampaignUsageError("campaign run needs a non-empty --prompt");
-	if (!existsSync(fixture)) throw new CampaignUsageError(`--fixture ${fixture} does not exist`);
-	if (isSameOrInside(out, fixture))
+	const fixtureStat = statSync(fixture, { throwIfNoEntry: false });
+	if (fixtureStat === undefined) throw new CampaignUsageError(`--fixture ${fixture} does not exist`);
+	if (!fixtureStat.isDirectory()) throw new CampaignUsageError(`--fixture ${fixture} is not a directory`);
+	if (isSameOrInside(out, fixture) || isSameOrInside(physical(out), physical(fixture)))
 		throw new CampaignUsageError(`--out ${out} is inside the fixture; the fixture is copied whole`);
 	if (existsSync(out) && readdirSync(out).length > 0)
 		throw new CampaignUsageError(`--out ${out} already holds files; name an absent or empty directory`);

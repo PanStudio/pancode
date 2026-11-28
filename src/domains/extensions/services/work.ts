@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionRunDigest, ExtensionWorkPlace } from "@pancode/sdk/extension";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
-import { canonicalizeExistingPath } from "../../../core/path-canonical.js";
+import { canonicalizeRawPath } from "../../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { readLayeredSettings } from "../../../core/settings-layers.js";
 import { containedYoloRefusal } from "../../safety/contained-yolo.js";
@@ -68,7 +68,8 @@ function ownLaunch(): PancodeLaunch {
 function grantedPlace(requested: string, writeRoots: ReadonlyArray<string>): string {
 	if (typeof requested !== "string" || !path.isAbsolute(requested))
 		throw new Error("a { path } place must be an absolute path");
-	const canonical = canonicalizeExistingPath(requested);
+	const canonical = canonicalizeRawPath(requested, "/");
+	if (canonical === null) throw new Error(`place ${requested} cannot be resolved`);
 	if (!writeRoots.some((root) => isSameOrDescendant(canonical, root)))
 		throw new Error(`place ${requested} is outside every path the operator granted this command`);
 	if (statSync(canonical, { throwIfNoEntry: false })?.isDirectory() !== true)
@@ -103,7 +104,10 @@ export function createExtensionWork(
 	const writeRoots = (options.grants ?? []).filter((grant) => grant.access === "write").map((grant) => grant.canonical);
 	const resolvePlace = async (place: ExtensionWorkPlace): Promise<{ cwd: string; root: string }> => {
 		if (place === "workspace") return { cwd: binding.workspace, root: binding.workspace };
-		if ("path" in place) return { cwd: grantedPlace(place.path, writeRoots), root: grantedPlace(place.path, writeRoots) };
+		if (place !== null && typeof place === "object" && "path" in place) {
+			const dir = grantedPlace(place.path, writeRoots);
+			return { cwd: dir, root: dir };
+		}
 		if (!worktrees) throw new Error("this extension declares no runtime.services.worktrees");
 		return worktrees.resolvePlace(place);
 	};

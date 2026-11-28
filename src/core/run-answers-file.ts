@@ -90,7 +90,7 @@ export function parseRunAnswersFile(text: string): AnswerRule[] {
 		fail("file", "expected a mapping with an answers list");
 	const top = document as Record<string, unknown>;
 	for (const key of Object.keys(top)) if (key !== "answers") fail(key, "unknown key; the file takes only answers");
-	// An empty list scripts nothing: every author question goes unscripted, so a campaign over a fixture that asks none needs no dummy rule.
+	// An empty list scripts nothing: every author question goes unscripted, so a run over a fixture that asks none needs no dummy rule.
 	if (!Array.isArray(top.answers)) fail("answers", "expected a list");
 	return top.answers.map((entry, index) => parseEntry(entry, index));
 }

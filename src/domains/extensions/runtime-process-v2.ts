@@ -150,7 +150,9 @@ function runtimePermissionArgs(declaration: ExtensionRuntimeDeclarationV2, roots
 	}
 	for (const grant of roots.grants ?? []) {
 		// A read grant of a file opens that file only; an absent one is opened as named, so reading it fails as missing.
-		const isDirectory = grant.access === "write" || (grant.exists && statSync(grant.canonical).isDirectory());
+		const isDirectory =
+			grant.access === "write" ||
+			(grant.exists && statSync(grant.canonical, { throwIfNoEntry: false })?.isDirectory() === true);
 		for (const root of new Set([grant.path, grant.canonical])) {
 			read.add(isDirectory ? directory(root) : root);
 			if (grant.access === "write") write.add(directory(root));

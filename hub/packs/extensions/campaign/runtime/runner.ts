@@ -134,7 +134,6 @@ export function readProbe(probe: CampaignProbe, result: ExtensionRunCommandResul
 	}
 }
 
-/** Write `entry.json` whole, so a reader never sees half of it. */
 /** Copies the fixture whole. The sandbox masks a secret file as a device, which is copied as an empty file. */
 export function copyFixture(fixture: string, project: string): void {
 	const masked: string[] = [];
@@ -150,6 +149,7 @@ export function copyFixture(fixture: string, project: string): void {
 	for (const destination of masked) writeFileSync(destination, "");
 }
 
+/** Write `entry.json` whole, so a reader never sees half of it. */
 function saveEntry(result: CampaignEntryResult): void {
 	const path = join(result.dir, "entry.json");
 	writeFileSync(`${path}.tmp`, `${JSON.stringify(result, null, 2)}\n`);
@@ -307,8 +307,7 @@ export async function runCampaign(
 }
 
 function runsOf(ctx: ExtensionContextV2): ExtensionRuns {
-	if (ctx.runs === undefined)
-		throw new Error("campaign needs the runs service; pancode extensions services campaign approves it");
+	if (ctx.runs === undefined) throw new Error("this host did not provide the runs service");
 	return ctx.runs;
 }
 

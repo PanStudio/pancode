@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -164,6 +164,28 @@ describe("campaign command line", () => {
 			nested.stderr,
 			usage(`--out ${join(root, "fixture", "sub")} is inside the fixture; the fixture is copied whole`),
 		);
+		symlinkSync(join(root, "fixture"), join(root, "fixture-link"));
+		const viaLink = args.map((arg) =>
+			arg === join(root, "fixture")
+				? join(root, "fixture-link")
+				: arg === join(root, "out")
+					? join(root, "fixture", "sub")
+					: arg,
+		);
+		const nestedViaLink = await runCampaignCli(
+			viaLink,
+			host({ path: (flag) => viaLink[viaLink.indexOf(flag) + 1] as string }),
+		);
+		assert.equal(
+			nestedViaLink.stderr,
+			usage(`--out ${join(root, "fixture", "sub")} is inside the fixture; the fixture is copied whole`),
+		);
+		const fileFixture = args.map((arg) => (arg === join(root, "fixture") ? join(root, "roster.yaml") : arg));
+		const notDir = await runCampaignCli(
+			fileFixture,
+			host({ path: (flag) => fileFixture[fileFixture.indexOf(flag) + 1] as string }),
+		);
+		assert.equal(notDir.stderr, usage(`--fixture ${join(root, "roster.yaml")} is not a directory`));
 		mkdirSync(join(root, "out"));
 		writeFileSync(join(root, "out", "x"), "");
 		const full = await runCampaignCli(args, host());

@@ -6,7 +6,7 @@
  * frames for the extension to page through, and ends every run the request that started it no longer waits on.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type {
 	ExtensionRunCommandRequest,
@@ -17,7 +17,7 @@ import type {
 	ExtensionRunRequest,
 	ExtensionWorkPlace,
 } from "@pancode/sdk/extension";
-import { canonicalizeExistingPath } from "../../../core/path-canonical.js";
+import { canonicalizeRawPath } from "../../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { runAnswersRefusal } from "../../../core/run-answers-file.js";
 import { runCommandVector, type SafeCommandResult } from "../../../core/safe-exec.js";
@@ -221,6 +221,7 @@ function endOf(record: RunRecord, result: SafeCommandResult | null, error: strin
 export function createExtensionRunService(deps: ExtensionRunServiceDeps): ExtensionRunService {
 	const spawn = deps.spawn ?? runCommandVector;
 	const runs = new Map<string, RunRecord>();
+	const commands = new Set<{ controller: AbortController; settled: Promise<unknown> }>();
 	const finished: string[] = [];
 	let active = 0;
 
@@ -291,14 +292,24 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 		const homes = deps.homes;
 		if (homes === undefined)
 			throw new ExtensionRunError("refused", `${label}: home needs a write root the operator granted on the command line`);
-		const canonical = canonicalizeExistingPath(home);
+		const canonical = canonicalizeRawPath(home, "/");
+		if (canonical === null) throw new ExtensionRunError("invalid", `${label}: home ${home} cannot be resolved`);
 		if (!homes.writeRoots.some((root) => isSameOrDescendant(canonical, root)))
 			throw new ExtensionRunError("refused", `${label}: home ${home} is outside every path the operator granted`);
-		const stat = statSync(canonical, { throwIfNoEntry: false });
+		const stat = lstatSync(canonical, { throwIfNoEntry: false });
 		if (stat !== undefined && !stat.isDirectory())
 			throw new ExtensionRunError("invalid", `${label}: home ${home} is not a directory`);
 		// The home holds sessions and memory of a run that may have seen secrets in the fixture: owner only.
-		for (const role of ["data", "state", "cache"]) mkdirSync(join(canonical, role), { recursive: true, mode: 0o700 });
+		mkdirSync(canonical, { recursive: true, mode: 0o700 });
+		if (process.platform !== "win32" && !homes.writeRoots.includes(canonical)) chmodSync(canonical, 0o700);
+		for (const role of ["data", "state", "cache"]) {
+			const dir = join(canonical, role);
+			const roleStat = lstatSync(dir, { throwIfNoEntry: false });
+			if (roleStat !== undefined && !roleStat.isDirectory())
+				throw new ExtensionRunError("invalid", `${label}: home ${dir} is not a plain directory`);
+			mkdirSync(dir, { recursive: true, mode: 0o700 });
+			if (process.platform !== "win32") chmodSync(dir, 0o700);
+		}
 		return { dir: canonical, env: homes.env(canonical) };
 	};
 
@@ -384,6 +395,8 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				...home?.env,
 				[EXTENSION_RUN_DEPTH_ENV]: childDepth(),
 			};
+			// An isolated run home puts data, state and cache under `home`, intentionally outside the parent's PANCODE_HOME.
+			if (home !== null) Reflect.deleteProperty(env, "PANCODE_REQUIRE_HOME_PREFIX");
 			const controller = new AbortController();
 			const stop = (): void => controller.abort();
 			signal?.addEventListener("abort", stop, { once: true });
@@ -515,49 +528,65 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				...home?.env,
 				[EXTENSION_RUN_DEPTH_ENV]: childDepth(),
 			};
+			if (home !== null) Reflect.deleteProperty(env, "PANCODE_REQUIRE_HOME_PREFIX");
 			const args = [...deps.launch.args, "extensions", "run", request.extension, request.command, "--json"];
 			const stdout: Buffer[] = [];
 			let stdoutBytes = 0;
 			let stderrTail = Buffer.alloc(0);
+			const controller = new AbortController();
+			const stop = (): void => controller.abort();
+			signal?.addEventListener("abort", stop, { once: true });
 			active += 1;
-			try {
-				const result = await spawn(deps.launch.file, args, {
-					cwd: place.cwd,
-					workspaceRoot: place.workspaceRoot,
-					env,
-					timeoutMs: timeout * 1000,
-					output: {
-						onStdout: (chunk) => {
-							const room = MAX_COMMAND_STDOUT_BYTES - stdoutBytes;
-							if (room <= 0) return;
-							const kept = chunk.subarray(0, room);
-							stdout.push(Buffer.from(kept));
-							stdoutBytes += kept.byteLength;
+			const entry: { controller: AbortController; settled: Promise<unknown> } = {
+				controller,
+				settled: Promise.resolve(),
+			};
+			commands.add(entry);
+			const settled = (async (): Promise<ExtensionRunCommandResult> => {
+				try {
+					const result = await spawn(deps.launch.file, args, {
+						cwd: place.cwd,
+						workspaceRoot: place.workspaceRoot,
+						env,
+						timeoutMs: timeout * 1000,
+						output: {
+							onStdout: (chunk) => {
+								const room = MAX_COMMAND_STDOUT_BYTES - stdoutBytes;
+								if (room <= 0) return;
+								const kept = chunk.subarray(0, room);
+								stdout.push(Buffer.from(kept));
+								stdoutBytes += kept.byteLength;
+							},
+							onStderr: (chunk) => {
+								stderrTail = Buffer.concat([stderrTail, chunk]);
+								if (stderrTail.byteLength > COMMAND_TAIL_BYTES) stderrTail = stderrTail.subarray(-COMMAND_TAIL_BYTES);
+							},
 						},
-						onStderr: (chunk) => {
-							stderrTail = Buffer.concat([stderrTail, chunk]);
-							if (stderrTail.byteLength > COMMAND_TAIL_BYTES) stderrTail = stderrTail.subarray(-COMMAND_TAIL_BYTES);
-						},
-					},
-					...(signal !== undefined ? { signal } : {}),
-				});
-				const stopped = result.aborted || result.timedOut || result.launched === false;
-				return {
-					exitCode: stopped ? null : result.exitCode,
-					stdout: Buffer.concat(stdout).toString("utf8"),
-					stderrTail: stderrTail.toString("utf8") || (result.launched === false ? result.stderr : ""),
-					...(stopped ? { error: result.failure ?? (result.timedOut ? `timed out after ${timeout}s` : "stopped") } : {}),
-				};
-			} catch (error) {
-				return {
-					exitCode: null,
-					stdout: "",
-					stderrTail: "",
-					error: error instanceof Error ? error.message : String(error),
-				};
-			} finally {
-				active -= 1;
-			}
+						signal: controller.signal,
+					});
+					const stopped = result.aborted || result.timedOut || result.launched === false;
+					return {
+						exitCode: stopped ? null : result.exitCode,
+						stdout: Buffer.concat(stdout).toString("utf8"),
+						stderrTail: stderrTail.toString("utf8") || (result.launched === false ? result.stderr : ""),
+						...(stopped ? { error: result.failure ?? (result.timedOut ? `timed out after ${timeout}s` : "stopped") } : {}),
+					};
+				} catch (error) {
+					return {
+						exitCode: null,
+						stdout: "",
+						stderrTail: "",
+						error: error instanceof Error ? error.message : String(error),
+					};
+				} finally {
+					signal?.removeEventListener("abort", stop);
+					active -= 1;
+					commands.delete(entry);
+				}
+			})();
+			entry.settled = settled;
+			scope?.defer(() => settled.then(() => undefined));
+			return settled;
 		},
 
 		async cancel(id) {
@@ -569,8 +598,14 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 		async dispose() {
 			const pending = [...runs.values()].filter((record) => record.end === null);
 			for (const record of pending) record.controller.abort();
-			await Promise.all(pending.map((record) => record.settled));
+			const pendingCommands = [...commands];
+			for (const command of pendingCommands) command.controller.abort();
+			await Promise.all([
+				...pending.map((record) => record.settled),
+				...pendingCommands.map((command) => command.settled),
+			]);
 			runs.clear();
+			commands.clear();
 			finished.length = 0;
 		},
 	};

@@ -3,6 +3,7 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -10,6 +11,7 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -309,18 +311,34 @@ describe("extension run service", () => {
 			/home needs a write root the operator granted/u,
 		);
 		bare.cleanup();
-		const h = harness({}, null, false, { PLACE_ONLY: "p" }, { homes });
+		const h = harness({}, null, false, { PLACE_ONLY: "p", PANCODE_REQUIRE_HOME_PREFIX: "1" }, { homes });
 		await assert.rejects(h.service.start({ ...base, home: "rel" }), /home must be an absolute path/u);
 		await assert.rejects(h.service.start({ ...base, home: tmpdir() }), /outside every path the operator granted/u);
 		writeFileSync(join(root, "file"), "");
 		await assert.rejects(h.service.start({ ...base, home: join(root, "file") }), /is not a directory/u);
+		const outside = realpathSync(mkdtempSync(join(tmpdir(), "run-home-outside-")));
+		t.after(() => rmSync(outside, { recursive: true, force: true }));
+		const escapeLink = join(root, "escape");
+		symlinkSync(join(outside, "sub"), escapeLink);
+		await assert.rejects(h.service.start({ ...base, home: `${escapeLink}/..` }), /outside every path/u);
+		const symlinkedHome = join(root, "symlinked-home");
+		mkdirSync(symlinkedHome, { mode: 0o755 });
+		symlinkSync(outside, join(symlinkedHome, "data"));
+		await assert.rejects(h.service.start({ ...base, home: symlinkedHome }), /not a plain directory/u);
 		const project = join(root, "project");
 		const home = join(root, "e1", "home");
+		mkdirSync(home, { recursive: true, mode: 0o755 });
+		chmodSync(home, 0o755);
 		const { id } = await h.service.start({ ...base, cwd: { path: project }, home });
-		for (const role of ["data", "state", "cache"]) assert.ok(existsSync(join(home, role)), role);
+		if (process.platform !== "win32") assert.equal(statSync(home).mode & 0o777, 0o700);
+		for (const role of ["data", "state", "cache"]) {
+			assert.ok(existsSync(join(home, role)), role);
+			if (process.platform !== "win32") assert.equal(statSync(join(home, role)).mode & 0o777, 0o700, role);
+		}
 		const call = h.calls[0] as Call;
 		assert.equal(call.args[call.args.indexOf("--cwd") + 1], project);
 		assert.equal(call.options.env?.PANCODE_DATA_DIR, join(home, "data"));
+		assert.equal(call.options.env?.PANCODE_REQUIRE_HOME_PREFIX, undefined);
 		assert.equal(call.options.env?.PLACE_ONLY, "p", "a path place reads its own env allowlist");
 		assert.equal((await h.service.wait(id)).outcome, "succeeded");
 		assert.equal((await h.service.digest(id)).sessionId, "s1");
@@ -519,11 +537,30 @@ describe("paths a verb's command line grants", () => {
 		};
 		assert.equal(refusal(["--in", "/"]), "--in /: cannot grant the filesystem root");
 		assert.equal(refusal(["--in", process.env.HOME]), `--in ${process.env.HOME}: cannot grant the home directory itself`);
+		const nestedHome = join(env.dir, "homes", "alice");
+		mkdirSync(nestedHome, { recursive: true });
+		process.env.HOME = nestedHome;
+		assert.match(refusal(["--in", join(env.dir, "homes")]), /cannot grant an ancestor of the home directory/u);
+		process.env.HOME = join(env.dir, "home");
 		assert.match(refusal(["--in", join(env.dir, "config", "x")]), /overlaps PanCode-managed path/u);
 		assert.match(refusal(["--out", env.dir]), /overlaps PanCode-managed path/u, "a root holding PanCode's data");
 		assert.equal(refusal(["--in", ".pancode"]), "granted", "the workspace's .pancode may be read");
 		assert.match(refusal(["--out", ".pancode/out"]), /overlaps PanCode-managed path .*\.pancode$/u);
 		assert.match(refusal(["--out", "../.pancode"], join(ws, "sub")), /overlaps PanCode-managed path/u);
+		const other = join(realpathSync(env.dir), "other-project");
+		mkdirSync(join(other, ".pancode"), { recursive: true });
+		assert.match(refusal(["--out", join(other, ".pancode", "out")]), /overlaps PanCode-managed path/u);
+		assert.match(refusal(["--out", other]), /overlaps PanCode-managed path/u);
+		symlinkSync(join(env.dir, "config", "sub"), join(ws, "config-link"));
+		assert.match(refusal(["--in", "config-link/.."]), /overlaps PanCode-managed path/u);
+		symlinkSync(join(ws, "loop"), join(ws, "loop"));
+		assert.match(refusal(["--in", "loop"]), /cannot resolve path/u);
+		const safeTarget = join(realpathSync(env.dir), "safe-dir");
+		mkdirSync(join(safeTarget, "sub"), { recursive: true });
+		symlinkSync(join(safeTarget, "sub"), join(ws, "safe-link"));
+		const diverged = resolvePathGrants(declared, ["--out", "safe-link/../out"], ws);
+		assert.equal(diverged[0]?.path, join(safeTarget, "out"));
+		assert.equal(diverged[0]?.canonical, join(safeTarget, "out"));
 		assert.equal(refusal(["--out", "file"]), "--out file: is not a directory");
 	});
 

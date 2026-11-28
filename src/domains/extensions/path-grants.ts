@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionPathGrant } from "@pancode/sdk/extension";
 import type { ExtensionCliPathDeclaration } from "@pancode/sdk/pack";
-import { canonicalizeExistingPath } from "../../core/path-canonical.js";
+import { canonicalizeExistingPath, canonicalizePath, canonicalizeRawPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { repositoryRoot } from "../../core/project-root.js";
 import { workspaceTrustDirectory } from "../../core/workspace-trust.js";
@@ -58,16 +58,26 @@ export function resolvePathGrants(
 }
 
 function checkedGrant(flag: string, value: string, access: "read" | "write", workspace: string): ResolvedPathGrant {
-	const resolved = path.resolve(workspace, value);
-	const canonical = canonicalizeExistingPath(resolved);
 	const refuse = (reason: string): never => {
 		throw new PathGrantError(flag, value, reason);
 	};
+	const canonical = canonicalizeRawPath(value, workspace);
+	if (canonical === null) return refuse("cannot resolve path");
+	const lexical = path.resolve(workspace, value);
+	// When `value` traverses `<symlink>/..`, lexical resolution points somewhere else; only the physical target is granted.
+	const resolved = canonicalizePath(lexical) === canonical ? lexical : canonical;
 	if (canonical === path.parse(canonical).root) refuse("cannot grant the filesystem root");
-	if (canonical === canonicalizeExistingPath(homedir())) refuse("cannot grant the home directory itself");
-	const managed = managedDirectories(workspace, access);
+	const home = canonicalizeExistingPath(homedir());
+	if (canonical === home) refuse("cannot grant the home directory itself");
+	const managed = managedDirectories(workspace, canonical, access);
 	const hit = managed.find((dir) => isSameOrDescendant(canonical, dir) || isSameOrDescendant(dir, canonical));
 	if (hit !== undefined) refuse(`overlaps PanCode-managed path ${hit}`);
+	if (isSameOrDescendant(home, canonical)) refuse("cannot grant an ancestor of the home directory");
+	if (access === "write") {
+		const segments = canonical.split(path.sep);
+		const dot = segments.indexOf(".pancode");
+		if (dot >= 0) refuse(`overlaps PanCode-managed path ${segments.slice(0, dot + 1).join(path.sep)}`);
+	}
 	let stat: Stats | undefined;
 	try {
 		stat = statSync(canonical, { throwIfNoEntry: false });
@@ -78,13 +88,17 @@ function checkedGrant(flag: string, value: string, access: "read" | "write", wor
 	return { flag, access, path: resolved, canonical, exists: stat !== undefined };
 }
 
-function managedDirectories(workspace: string, access: "read" | "write"): string[] {
+function managedDirectories(workspace: string, canonical: string, access: "read" | "write"): string[] {
 	const dirs = resolvePancodeDirs();
 	const managed = [pancodeConfigDir(), dirs.data, dirs.state, dirs.cache, workspaceTrustDirectory()];
 	if (access === "write") {
 		managed.push(path.join(workspace, ".pancode"));
-		const repository = repositoryRoot(workspace);
-		if (repository !== null) managed.push(path.join(repository, ".pancode"));
+		const workspaceRepo = repositoryRoot(workspace);
+		if (workspaceRepo !== null) managed.push(path.join(workspaceRepo, ".pancode"));
+		const targetRepo = repositoryRoot(canonical);
+		if (targetRepo !== null) managed.push(path.join(targetRepo, ".pancode"));
+		const nested = path.join(canonical, ".pancode");
+		if (statSync(nested, { throwIfNoEntry: false }) !== undefined) managed.push(nested);
 	}
 	return managed.map((entry) => canonicalizeExistingPath(path.resolve(entry)));
 }
