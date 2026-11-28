@@ -19,6 +19,7 @@ import { isRecord } from "../../core/type-guards.js";
 import { openAuthStorage } from "../providers/auth/index.js";
 import { ANTHROPIC_USAGE_URL, fetchAnthropicUsage } from "./anthropic-usage.js";
 import { anthropicStreamSnapshot } from "./observed.js";
+import { asNumber, snapshotFactory } from "./provider-common.js";
 import type { QuotaProvider, UsageSnapshot } from "./types.js";
 import { credentialFingerprint } from "./types.js";
 
@@ -78,19 +79,7 @@ export function createAnthropicMaxQuotaProvider(options: AnthropicMaxQuotaOption
 	const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 	const now = options.now ?? (() => new Date());
 
-	const snapshot = (
-		status: UsageSnapshot["status"],
-		message: string | null,
-		extra: Partial<UsageSnapshot> = {},
-	): UsageSnapshot => ({
-		providerId: ANTHROPIC_MAX_QUOTA_PROVIDER_ID,
-		displayName: DISPLAY_NAME,
-		status,
-		windows: [],
-		message,
-		fetchedAt: now().toISOString(),
-		...extra,
-	});
+	const snapshot = snapshotFactory(ANTHROPIC_MAX_QUOTA_PROVIDER_ID, DISPLAY_NAME, now);
 
 	return {
 		id: ANTHROPIC_MAX_QUOTA_PROVIDER_ID,
@@ -135,13 +124,4 @@ export function createAnthropicMaxQuotaProvider(options: AnthropicMaxQuotaOption
 			});
 		},
 	};
-}
-
-function asNumber(value: unknown): number | null {
-	if (typeof value === "number") return Number.isFinite(value) ? value : null;
-	if (typeof value === "string") {
-		const parsed = Number.parseFloat(value.trim());
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
 }
