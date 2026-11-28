@@ -1,0 +1,26 @@
+id: research
+name: Research
+version: 0.1.0
+description: Hill-climb one metric of a project check with agent runs, measured and kept only on a clear improvement.
+license: LicenseRef-PanCode-1.0
+runtime:
+  api: 2
+  entrypoint: runtime/extension.ts
+  commands:
+    - name: research
+      alias: research
+      description: Research campaigns; start, resume, status, report or list (pancode research --help). Alone it opens the panel.
+      long: true
+      timeoutMs: 86400000
+  cli:
+    - verb: research
+      command: research
+      summary: Hill-climb a check's metric with agent runs inside a budget.
+  ui: [panel]
+  state: { project: true }
+  services:
+    runs: { maxTimeoutSeconds: 86400, maxConcurrent: 1, autonomy: [default, yolo] }
+    worktrees: true
+    verify: true
+    claims: true
+  permissions: { fs: { read: [], write: [] }, exec: false, net: false }

@@ -1,8 +1,8 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "ab1486e65e0815e1cd82487af9a3625760fb28ca61a911457264c815e5e3fc51",
-		"rows": 46,
+		"sha256": "82c3d6b1ebe371c7ac8c246f2a5367a404c3864773e448afa93d07029e571bd6",
+		"rows": 47,
 		"revoked": 0
 	},
 	"rows": [
@@ -50,6 +50,21 @@
 			},
 			"sha256": "81d455455a1e7cf11b161b31a5c43c2920501983cfd8a0aa6944c92c75d9e1a4",
 			"install": "pancode hub install extension:music"
+		},
+		{
+			"kind": "extension",
+			"name": "research",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "Hill-climb one metric of a project check with agent runs, measured and kept only on a clear improvement.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/extensions/research"
+			},
+			"sha256": "fd1ccc9ef651419c887d2038ecf993ac1eb5f03438e9e4545fe4445ef521d2cd",
+			"install": "pancode hub install extension:research"
 		},
 		{
 			"kind": "extension",

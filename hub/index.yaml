@@ -765,6 +765,25 @@ entries:
           runnable, no-persistence prototype whose verdict is kept and whose
           code is discarded. Not for pre-registered performance experiments; use
           experiment-protocol. Not for production…"
+  - kind: extension
+    publisher: pancode
+    name: research
+    description: Hill-climb one metric of a project check with agent runs, measured
+      and kept only on a clear improvement.
+    version: 0.1.0
+    sourceUrl: packs/extensions/research
+    sha256: fd1ccc9ef651419c887d2038ecf993ac1eb5f03438e9e4545fe4445ef521d2cd
+    license: LicenseRef-PanCode-1.0
+    tier: core
+    envelopeDigest: 26eea386d1b42dc610e6af9780dc9678ca1879f6dc277406df105507aa589d8f
+    verbs:
+      - research
+    provides:
+      - kind: extension
+        name: research
+        description: Hill-climb one metric of a project check with agent runs, measured
+          and kept only on a clear improvement.
+    default: true
   - kind: skill
     publisher: pancode
     name: resolve-merge-conflicts
