@@ -17,9 +17,11 @@ import { createMiddlewareDomain } from "../../src/domains/middleware/module.js";
 import { PluginsDomainModule } from "../../src/domains/plugins/module.js";
 import { createPromptsDomainModule } from "../../src/domains/prompts/module.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
+import { ProvidersDomainModule } from "../../src/domains/providers/module.js";
 import { ResourcesDomainModule } from "../../src/domains/resources/module.js";
 import { SafetyDomainModule } from "../../src/domains/safety/module.js";
 import { SessionDomainModule } from "../../src/domains/session/module.js";
+import { TelemetryDomainModule } from "../../src/domains/telemetry/module.js";
 import { createTurnContext } from "../../src/session-control/turn-context.js";
 import type { TurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
@@ -51,6 +53,8 @@ describe("external-agent settings reach the session prompt cache", { concurrency
 			PluginsDomainModule,
 			ResourcesDomainModule,
 			AgentsDomainModule,
+			ProvidersDomainModule,
+			TelemetryDomainModule,
 			SessionDomainModule,
 			createContextDomainModule({ noContextFiles: true }),
 			createMiddlewareDomain().module,

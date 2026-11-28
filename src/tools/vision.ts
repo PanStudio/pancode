@@ -3,11 +3,11 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { Type } from "typebox";
 import { ToolNames } from "../core/tool-names.js";
-import { VISION_LIMITS, type VisionSidecar } from "../domains/providers/vision-sidecar.js";
 import type { ImageContent } from "../engine/types.js";
 import { prepareBoundedImage } from "./file-references.js";
 import { resolveReadPath } from "./path-utils.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
+import { VISION_LIMITS, type VisionSidecar } from "./vision-sidecar.js";
 
 const MAX_SOURCE_IMAGE_BYTES = 20_000_000;
 

@@ -194,7 +194,7 @@ test("fleet status answers from a module that does not load the fleet command, l
 	// 32 chunks / 1,516,888 B.
 	const rows = new Set(seen);
 	const rowsForbidden =
-		/^src\/(?:cli\/fleet\.ts|entry\/|session-control\/|interactive\/|domains\/[^/]+\/(?:extension|index)\.ts|domains\/session\/telemetry-source\.ts)$/u;
+		/^src\/(?:cli\/fleet\.ts|entry\/|session-control\/|interactive\/|domains\/[^/]+\/(?:extension|index)\.ts|domains\/telemetry\/telemetry-source\.ts)$/u;
 	for (const dependency of metadata.outputs[owner[0]]?.imports ?? [])
 		if (dependency.kind === "dynamic-import") visit(dependency.path, rows, rowsForbidden);
 	ok(rows.size <= 60, `fleet status chunks over ledger rows: ${rows.size} > 60`);

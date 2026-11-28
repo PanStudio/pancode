@@ -16,6 +16,7 @@ import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-wri
 import { writeRunOwnerRecord } from "../../src/domains/dispatch/run-directory-records.js";
 import { appendRunFeed } from "../../src/domains/dispatch/run-feed.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import { summarizeTrustStatus } from "../../src/domains/evidence/trust-projection.js";
 import type { TelemetryRunReaders } from "../../src/domains/telemetry/contract.js";
 import { createTelemetryProjection } from "../../src/domains/telemetry/projection.js";
 import { createDispatchBoardStore } from "../../src/interactive/dispatch-board-store.js";
@@ -47,6 +48,7 @@ test("only integrity-admitted receipt contract facts reach the board and a late 
 	const bus = createTelemetryHub();
 	const projection = createTelemetryProjection(bus, {
 		readRunResult: () => facts,
+		summarizeTrust: summarizeTrustStatus,
 	});
 	const store = createDispatchBoardStore(projection);
 	const event: DispatchCompletedPayload = {

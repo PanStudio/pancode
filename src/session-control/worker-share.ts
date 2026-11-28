@@ -13,12 +13,12 @@
  * Pure: no I/O, no bus, no session.
  */
 
+import { WORKER_OUTPUT_MAX_BYTES } from "../core/worker-output.js";
 import {
 	COUNCIL_SEAT_NOT_RUN_WORDS,
 	type CouncilReport,
 	isCouncilSeatNotRun,
 } from "../domains/agents/result-contract-council.js";
-import { WORKER_OUTPUT_MAX_BYTES } from "../domains/dispatch/event-pump.js";
 import { truncateUtf8 } from "../tools/truncate-utf8.js";
 import { type WorkerEntryState, workerAskedByModel } from "./worker-stream.js";
 

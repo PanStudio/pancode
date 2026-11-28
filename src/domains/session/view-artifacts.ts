@@ -1622,7 +1622,7 @@ class SafetyAuditArtifactProvider implements ArtifactProvider {
 		let source: SessionSource | null;
 		try {
 			// The journal loader reaches run records and dispatch; the /view list loads it only when opened.
-			const { loadSessionTelemetrySourceAsync } = await import("./telemetry-source.js");
+			const { loadSessionTelemetrySourceAsync } = await import("../telemetry/index.js");
 			source = await loadSessionTelemetrySourceAsync(this.deps.stateDir, sessionId);
 		} catch {
 			return [];
@@ -1672,7 +1672,7 @@ class MessagePathArtifactProvider implements ArtifactProvider {
 		const sessionId = this.deps.sessionMeta?.id;
 		if (!sessionId) return [];
 		// The journal loader reaches run records and dispatch; the /view list loads it only when opened.
-		const { loadSessionTelemetrySourceAsync } = await import("./telemetry-source.js");
+		const { loadSessionTelemetrySourceAsync } = await import("../telemetry/index.js");
 		const source = await loadSessionTelemetrySourceAsync(this.deps.stateDir, sessionId);
 		if (source === null) return [];
 		const now = new Date();

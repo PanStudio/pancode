@@ -9,8 +9,8 @@ import type { ExecutionStepResult } from "../domains/dispatch/execution-schedule
 import { fleetNodeTaskBrief } from "../domains/dispatch/fleet-node-prompt.js";
 import { openLedger, readFleetRun } from "../domains/dispatch/state.js";
 import { WRITE_BOUNDARY_VIOLATION_REASON } from "../domains/dispatch/write-boundary.js";
-import { loadRunTelemetrySource } from "../domains/session/telemetry-source.js";
 import { type CodeStepRowV1, codeStepsReport, runTelemetry } from "../domains/telemetry/read-model-runs.js";
+import { loadRunTelemetrySource } from "../domains/telemetry/telemetry-source.js";
 import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import type { fleetInspectionScope } from "./fleet-project-scope.js";
 import {

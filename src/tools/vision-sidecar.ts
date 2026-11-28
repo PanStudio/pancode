@@ -2,17 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Image perception on a separately configured llama.cpp target. */
 
-import type { PancodeSettings } from "../../core/config.js";
-import { pricingBasisFields } from "../../core/telemetry/pricing.js";
-import type { ImageContent } from "../../engine/types.js";
-import type { SessionContract } from "../session/contract.js";
-import type { CallScope } from "../telemetry/call-scope.js";
-import { openCallScope } from "../telemetry/call-scope.js";
-import type { TelemetryContract } from "../telemetry/contract.js";
-import { targetRequiresAuth } from "./auth/index.js";
-import type { ProvidersContract } from "./contract.js";
-import { modelEndpointKey, registerForegroundStream } from "./endpoint-capacity.js";
-import { resolveRuntimeTarget } from "./runtime-resolution.js";
+import type { PancodeSettings } from "../core/config.js";
+import { pricingBasisFields } from "../core/telemetry/pricing.js";
+import { targetRequiresAuth } from "../domains/providers/auth/index.js";
+import type { ProvidersContract } from "../domains/providers/contract.js";
+import { modelEndpointKey, registerForegroundStream } from "../domains/providers/endpoint-capacity.js";
+import { resolveRuntimeTarget } from "../domains/providers/runtime-resolution.js";
+import type { SessionContract } from "../domains/session/contract.js";
+import type { CallScope } from "../domains/telemetry/call-scope.js";
+import { openCallScope } from "../domains/telemetry/call-scope.js";
+import type { TelemetryContract } from "../domains/telemetry/contract.js";
+import type { ImageContent } from "../engine/types.js";
 
 export interface VisionBinding {
 	targetId: string;

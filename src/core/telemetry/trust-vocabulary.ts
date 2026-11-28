@@ -81,3 +81,19 @@ export const EVIDENCE_TAGS = [
 ] as const;
 
 export type EvidenceTag = (typeof EVIDENCE_TAGS)[number];
+
+/**
+ * Canonical failure-cause subset for run summaries and observability histograms. Quality tags such as
+ * `no-validation` remain evidence tags, but they are not failure causes.
+ */
+const FAILURE_CAUSE_TAG_ORDER = [
+	"timeout",
+	"auth-failure",
+	"missing-dependency",
+	"build-failure",
+	"test-failure",
+	"blocked-tool",
+] as const satisfies readonly EvidenceTag[];
+
+/** Fast membership test for the canonical failure-cause subset. */
+export const FAILURE_CAUSE_TAGS: ReadonlySet<EvidenceTag> = new Set(FAILURE_CAUSE_TAG_ORDER);

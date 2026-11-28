@@ -8,13 +8,13 @@ import { emitApproval } from "../../core/telemetry/approvals.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
+import { durableAssistantTextFromEvent } from "../../core/worker-output.js";
 import { INTERNAL_HELPER_RESULT_TOOL } from "../../engine/worker-tools.js";
 import { WORKER_REFUSAL_LIMIT_PREFIX } from "../../lib/worker-wire/spec-contract.js";
 import { isFlowRestrictionSet, mergeFlowRestrictions } from "../safety/information-flow.js";
 import type { SpawnedAttempt } from "./attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
-import { durableAssistantTextFromEvent } from "./event-pump.js";
 import { TOOL_GUARD_REASON_CODE } from "./failure-headline.js";
 import { compactDiagnosticText, MAX_WORKER_OUTCOME_DETAIL_BYTES } from "./run-outcome-detail.js";
 import {

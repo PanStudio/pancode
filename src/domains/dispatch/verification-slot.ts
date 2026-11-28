@@ -27,11 +27,6 @@ import { withStateFileLock } from "../../core/state-file-lock.js";
 /** How long a check waits for the slot before it runs without it. */
 const VERIFICATION_SLOT_WAIT_MS = 30 * 60_000;
 
-/** Feed event type a run's host verification publishes; see {@link VerificationSlotState}. */
-export const HOST_VERIFICATION_EVENT = "host_verification";
-/** The event's `message`: the run waits for the slot, then holds it and runs its checks. */
-export type VerificationSlotState = "waiting for a verification slot" | "running host checks";
-
 export interface VerificationSlotEvents {
 	/** Another holder has the slot; called once per wait, before the check runs. */
 	onWaiting?: () => void;
