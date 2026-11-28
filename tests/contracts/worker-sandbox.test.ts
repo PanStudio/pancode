@@ -18,8 +18,16 @@ import {
 	redactedUpstreamProxy,
 	upstreamProxyProblem,
 } from "../../src/core/sandbox/egress/policy.js";
-import { createEgressProxy } from "../../src/core/sandbox/egress/proxy.js";
+import { createEgressProxy, type EgressReceipt } from "../../src/core/sandbox/egress/proxy.js";
 import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
+import {
+	emptySandboxLaunchTally,
+	recordUncontainedShell,
+	type SandboxLaunchFacts,
+	sandboxLaunch,
+	sandboxLaunchRecord,
+	tallySandboxLaunch,
+} from "../../src/core/sandbox/launch-record.js";
 import { mainLaunchEgress, mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
@@ -30,6 +38,9 @@ import {
 } from "../../src/core/sandbox/worker-process.js";
 import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
+import type { TelemetryContext } from "../../src/core/telemetry/context.js";
+import { telemetryContexts } from "../../src/core/telemetry/context-store.js";
+import { attachJournalRoute } from "../../src/core/telemetry/hub.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
@@ -521,6 +532,17 @@ test("the egress proxy checks names before any lookup, screens every answer and 
 	);
 	assert.equal(refused["nope.test:443"], EGRESS_UNGRANTED);
 	assert.match(refused["rebind.test:443"] ?? "", /resolves to 10\.0\.0\.1, a local or private address/u);
+	// Each receipt carries its reason as a code and, when admitted, what admitted it (P6).
+	const coded = Object.fromEntries(
+		proxy
+			.receipts()
+			.map((receipt) => [`${receipt.host}:${receipt.port}`, [receipt.decision, receipt.code ?? receipt.source]]),
+	);
+	assert.deepEqual(coded["svc.test:443"], ["allowed", "grant"]);
+	assert.deepEqual(coded["asked.test:443"], ["allowed", "operator"]);
+	assert.deepEqual(coded["nope.test:443"], ["denied", "operator-denied"]);
+	assert.deepEqual(coded["rebind.test:443"], ["denied", "private-answer"]);
+	assert.deepEqual(coded["10.1.2.3:80"], ["denied", "private-literal"]);
 	assert.match(refused["10.1.2.3:80"] ?? "", /local or private address/u);
 	const note = egressResultNote({
 		receipts: proxy.receipts(),
@@ -540,6 +562,212 @@ test("the egress proxy checks names before any lookup, screens every answer and 
 			denyHint: "",
 		}),
 		null,
+	);
+});
+
+test("the launch record keeps denials, completed connects and failed dials apart, bounded and clipped (P6)", async (t) => {
+	const target = createServer((socket) => socket.end());
+	await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+	t.after(() => target.close());
+	const targetPort = (target.address() as AddressInfo).port;
+	const closed = createServer();
+	await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+	const closedPort = (closed.address() as AddressInfo).port;
+	await new Promise<void>((resolve) => closed.close(() => resolve()));
+	const { proxy, port } = await servedEgressProxy({
+		// `remembered.test` was approved earlier this session; the operator's settings grant the others.
+		grants: egressGrants(["svc.test:443", "down.test:443", "gone.test:443"], [], ["remembered.test:443"]),
+		denyHint: "add it to safety.egress.main.allow",
+		lookup: async (host) => (host === "gone.test" ? [] : [{ address: "8.8.8.8", family: 4 }]),
+		dial: () => connect(targetPort, "127.0.0.1"),
+		ask: async (origin) => (origin.host === "earlier.test" ? "session" : "unasked"),
+	});
+	t.after(() => proxy.close());
+	assert.equal(await proxyConnect(port, "svc.test:443"), 200);
+	assert.equal(await proxyConnect(port, "remembered.test:443"), 200);
+	assert.equal(await proxyConnect(port, "earlier.test:443"), 200);
+	// Nobody could answer: the origin stays outside the grants.
+	assert.equal(await proxyConnect(port, "headless.test:443"), 403);
+	// Admitted, but the name resolves nowhere: a failed dial, not a denial.
+	assert.equal(await proxyConnect(port, "gone.test:443"), 502);
+	const receipts = Object.fromEntries(
+		proxy.receipts().map((receipt) => [`${receipt.host}:${receipt.port}`, receipt] as const),
+	);
+	assert.equal(receipts["svc.test:443"]?.source, "grant");
+	assert.equal(receipts["remembered.test:443"]?.source, "session");
+	assert.equal(receipts["earlier.test:443"]?.source, "session");
+	assert.deepEqual(
+		[receipts["headless.test:443"]?.decision, receipts["headless.test:443"]?.code],
+		["denied", "ungranted"],
+	);
+	assert.deepEqual(
+		[receipts["gone.test:443"]?.decision, receipts["gone.test:443"]?.code, receipts["gone.test:443"]?.source],
+		["failed", "unresolved", "grant"],
+	);
+
+	// A refused dial to an admitted origin is a failed receipt; the connect never completed, so nothing reads allowed.
+	const refusing = await servedEgressProxy({
+		grants: egressGrants(["down.test:443"], []),
+		lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+		dial: () => connect(closedPort, "127.0.0.1"),
+	});
+	t.after(() => refusing.proxy.close());
+	assert.equal(await proxyConnect(refusing.port, "down.test:443"), 502);
+	assert.deepEqual(
+		refusing.proxy.receipts().map(({ decision, code }) => [decision, code]),
+		[["failed", "dial-error"]],
+	);
+	const note = egressResultNote({
+		receipts: [...proxy.receipts(), ...refusing.proxy.receipts()],
+		listeningPorts: [],
+		setupFailed: false,
+		denyHint: "",
+		dropped: 2,
+		shed: 1,
+	});
+	assert.match(note ?? "", /could not reach gone\.test:443 \(the name did not resolve\)/u);
+	assert.match(note ?? "", /could not reach down\.test:443 \(the connection failed\)/u);
+	assert.match(note ?? "", /2 more connection attempts not listed/u);
+	assert.match(note ?? "", /1 connection closed unread/u);
+
+	// Past its receipt bound the proxy counts what it no longer lists.
+	const flooded = await servedEgressProxy({ grants: egressGrants([], []), lookup: async () => [] });
+	t.after(() => flooded.proxy.close());
+	for (let index = 0; index < 70; index += 1) assert.equal(await proxyConnect(flooded.port, `n${index}.test:443`), 403);
+	assert.equal(flooded.proxy.receipts().length, 64);
+	assert.deepEqual(flooded.proxy.overflow(), { dropped: 6, shed: 0 });
+
+	const facts: SandboxLaunchFacts = {
+		caller: "main",
+		launcher: "shell",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: "bwrap",
+		network: "proxied",
+	};
+	const long = `${"a".repeat(60)}.${"b".repeat(40)}.exfil.example`;
+	const many: EgressReceipt[] = Array.from({ length: 40 }, (_, index) => ({
+		host: `h${index}.test`,
+		port: 443,
+		decision: "denied",
+		code: "ungranted",
+		count: 2,
+	}));
+	const record = sandboxLaunchRecord(facts, {
+		outcome: "ran",
+		exitCode: 1,
+		egress: {
+			receipts: [
+				{ host: long, port: 443, decision: "denied", code: "ungranted", count: 1 },
+				{ host: `${"g".repeat(70)}.granted.test`, port: 443, decision: "allowed", source: "grant", count: 1 },
+				...many,
+			],
+			listeningPorts: [4555],
+			setupFailed: false,
+			denyHint: "",
+			dropped: 5,
+			shed: 1,
+		},
+		hint: "write-denied",
+	});
+	assert.equal(record.network.observed, true);
+	assert.equal(record.destinations?.length, 32);
+	// 10 receipts past the record's bound, 2 attempts each, plus the proxy's own 5.
+	assert.equal(record.dropped, 25);
+	assert.equal(record.shed, 1);
+	assert.deepEqual(record.listeningPorts, [4555]);
+	assert.equal(record.hint, "write-denied");
+	assert.deepEqual(record.destinations?.[0], {
+		host: `${"b".repeat(32)}.exfil.example`,
+		port: 443,
+		decision: "denied",
+		reason: "ungranted",
+		count: 1,
+		hostClipped: true,
+	});
+	// A granted host equals an operator's entry and stays whole.
+	assert.equal(record.destinations?.[1]?.host, `${"g".repeat(70)}.granted.test`);
+	assert.equal(JSON.stringify(record).includes("a".repeat(33)), false);
+
+	// An open network was not observed: no destination list, never an empty one.
+	const open = sandboxLaunchRecord({ ...facts, network: "open" }, { outcome: "ran", exitCode: 0 });
+	assert.deepEqual(open.network, { mode: "open", observed: false });
+	assert.equal("destinations" in open, false);
+	const unconfined = sandboxLaunchRecord(
+		{ ...facts, caller: "worker", confinement: "unconfined", why: "unconfined-opt-in", backend: null, network: "open" },
+		{ outcome: "ran", exitCode: 0, hint: "write-denied" },
+	);
+	assert.equal(unconfined.network.observed, false);
+	const refused = sandboxLaunchRecord(facts, { outcome: "refused", hint: "write-denied" });
+	assert.deepEqual(
+		[refused.outcome, refused.network.observed, "hint" in refused, "exitCode" in refused],
+		["refused", false, false, false],
+	);
+	const setup = sandboxLaunchRecord(facts, {
+		outcome: "ran",
+		exitCode: 125,
+		egress: { receipts: [], listeningPorts: [], setupFailed: true, denyHint: "" },
+	});
+	assert.equal(setup.outcome, "launch-failed");
+
+	const tally = emptySandboxLaunchTally();
+	for (const each of [record, open, unconfined, refused, setup]) tallySandboxLaunch(tally, each);
+	assert.deepEqual(tally, {
+		launches: 5,
+		refused: 1,
+		launchFailed: 1,
+		allowed: 1,
+		denied: 61,
+		failed: 0,
+		dropped: 26,
+		unobserved: 2,
+	});
+});
+
+test("a launch journals one record under the call that planned it, and an uncontained shell once per session (P6)", () => {
+	const journaled: Array<{ name: string; payload: unknown; ctx: TelemetryContext | undefined }> = [];
+	attachJournalRoute({
+		journal(name, payload, _preimage, ctx) {
+			if (!name.startsWith("sandbox.")) return false;
+			journaled.push({ name, payload, ctx });
+			return true;
+		},
+		dropped() {},
+	});
+	const facts: SandboxLaunchFacts = {
+		caller: "main",
+		launcher: "command",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: "bwrap",
+		network: "off",
+	};
+	const call: TelemetryContext = { sessionId: "ses_p6", agent: { role: "main", id: "ses_p6" }, toolCallId: "call_a" };
+	// The context is captured when the launch is planned, so a settle outside it still names its call.
+	const launch = telemetryContexts.run(call, () => sandboxLaunch(facts));
+	const first = launch.settle({ outcome: "ran", exitCode: 0 });
+	assert.equal(launch.settle({ outcome: "launch-failed" }), first);
+	assert.equal(sandboxLaunch(undefined).settle({ outcome: "ran", exitCode: 0 }), undefined);
+	assert.deepEqual(
+		journaled.map(({ name, ctx }) => [name, ctx?.toolCallId]),
+		[["sandbox.launched", "call_a"]],
+	);
+	assert.deepEqual(journaled[0]?.payload, first);
+	assert.deepEqual(first?.network, { mode: "off", observed: false });
+
+	journaled.length = 0;
+	const session: TelemetryContext = { sessionId: "ses_p6_open", agent: { role: "main", id: "ses_p6_open" } };
+	const state = { caller: "main", why: "sandbox-off", mode: "off", backend: null } as const;
+	recordUncontainedShell(state, session);
+	recordUncontainedShell(state, session);
+	recordUncontainedShell({ ...state, caller: "main-read-only" }, session);
+	recordUncontainedShell(state, undefined);
+	assert.deepEqual(
+		journaled.map(({ name, payload }) => [name, (payload as { caller: string }).caller]),
+		[
+			["sandbox.uncontained", "main"],
+			["sandbox.uncontained", "main-read-only"],
+		],
 	);
 });
 
@@ -615,6 +843,18 @@ test("under bwrap a proxied command reaches only its grants through the bridge a
 	assert.deepEqual(result.egress?.listeningPorts, [4555]);
 	const note = egressResultNote(result.egress) ?? "";
 	assert.match(note, /refused 127\.0\.0\.1:\d+ \(a local or private address/u);
+	// The launch record is the one the call journal gets: who launched, how it was confined, what its network did.
+	const record = result.sandbox;
+	assert.deepEqual(
+		[record?.caller, record?.launcher, record?.confinement, record?.why, record?.backend, record?.outcome],
+		["main", "shell", "sandboxed", "main-policy", "bwrap", "ran"],
+	);
+	assert.deepEqual(record?.network, { mode: "proxied", observed: true });
+	const reached = record?.destinations?.find((destination) => destination.port === hostPort);
+	assert.deepEqual([reached?.decision, reached?.source], ["allowed", "grant"]);
+	const denied = record?.destinations?.find((destination) => destination.port === hostPort + 1);
+	assert.deepEqual([denied?.decision, denied?.reason], ["denied", "private-literal"]);
+	assert.deepEqual(record?.listeningPorts, [4555]);
 	assert.match(note, /listening on port 4555 inside the sandbox/u);
 });
 
