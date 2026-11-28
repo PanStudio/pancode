@@ -13,6 +13,7 @@ import type { AcpServerConfig } from "./server-config.js";
 import type { AcpServerControl } from "./server-control.js";
 import type { AcpServerEvents } from "./server-events.js";
 import type { AcpServerGuards } from "./server-guards.js";
+import type { AcpServerMachine } from "./server-machine.js";
 import type { AcpServerOpen } from "./server-open.js";
 import type { AcpHandoffDraft, AcpHandshake, PancodeAcpServerOptions } from "./server-options.js";
 import type { AcpPermissionBridge } from "./server-permissions.js";
@@ -98,4 +99,5 @@ export interface AcpServerScope {
 	readonly readoutFeed: AcpServerReadouts;
 	readonly config: AcpServerConfig;
 	readonly open: AcpServerOpen;
+	readonly machine: AcpServerMachine;
 }
