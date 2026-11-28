@@ -32,9 +32,9 @@ export function vendoredBinaryPath(id: string, version: string, binary: string):
 }
 
 /**
- * The operator's toolchain root, set by `campaign run` for each entry. A vendored tool is an installation artifact,
- * not session data, so an entry whose own data root is empty and thrown away resolves the operator's vendored tools
- * from here, read-only: nothing installs into it.
+ * The operator's toolchain root, set by the extension runs service for a run started with its own home. A vendored
+ * tool is an installation artifact, not session data, so a run whose own data root starts empty resolves the
+ * operator's vendored tools from here, read-only: nothing installs into it.
  */
 export const OPERATOR_TOOLS_ENV = "PANCODE_OPERATOR_TOOLS_DIR";
 

@@ -176,6 +176,18 @@ export interface ExtensionCliVerbDeclaration {
 	verb: string;
 	command: string;
 	summary: string;
+	/**
+	 * Flags whose value names a path the operator grants this one invocation: the verb runner resolves each against
+	 * the workspace and opens it to the runtime, read or write, beside its declared roots (`ctx.paths`). Absent when
+	 * none, which keeps existing declarations stable.
+	 */
+	paths?: ExtensionCliPathDeclaration[];
+}
+
+/** `--<name> <path>` on the verb's command line: a file or directory to read, or a directory to write. */
+export interface ExtensionCliPathDeclaration {
+	flag: string;
+	access: "read" | "write";
 }
 
 /**
@@ -205,6 +217,8 @@ export interface ExtensionRunsServiceDeclaration {
 	maxCostUsd: number | null;
 	/** The longest timeout one run may ask for, at most 86400. */
 	maxTimeoutSeconds: number;
+	/** `runs.command` may run other installed extensions' commands headless; absent when not declared. */
+	commands?: true;
 }
 
 export interface ExtensionServicesDeclaration {
@@ -250,7 +264,7 @@ export type ExtensionCapabilityEnvelope = Pick<
 	/** Commands that may run for up to 24 hours; absent when none. */
 	long?: string[];
 	/** Top-level verbs the package claims; absent when none. */
-	cli?: Array<Pick<ExtensionCliVerbDeclaration, "verb" | "command">>;
+	cli?: Array<Pick<ExtensionCliVerbDeclaration, "verb" | "command" | "paths">>;
 	/** Bare command names the package claims; absent when none. */
 	aliases?: string[];
 	/** Pinned programs by name, version and per-platform hash/member; absent when none. */

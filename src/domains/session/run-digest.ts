@@ -1,51 +1,24 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/**
+ * What a headless run left in its own PanCode home (`runs.start({ home })`), folded after it exited: its main session's
+ * ledger, its journal and its token attribution. The runs service reads it for `runs.digest`.
+ */
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import type { ExtensionRunDigest } from "@pancode/sdk/extension";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import { resetXdgCache } from "../../core/xdg.js";
 import { isSessionJsonlHeader, readSessionFileEntries } from "../../engine/session.js";
-import { OPERATOR_COMPONENTS_ENV } from "../lifecycle/components.js";
-import { collectSessionEntries } from "../session/compaction/session-entries.js";
-import type { SessionEntry } from "../session/entries.js";
-import { payloadObject } from "../session/message-projection.js";
-import { loadSessionTelemetrySource } from "../session/telemetry-source.js";
-import { loadTokenSourcesReport, type TokenSourcesReportV1 } from "../session/token-sources.js";
-import { OPERATOR_TOOLS_ENV } from "../toolchain/paths.js";
+import { collectSessionEntries } from "./compaction/session-entries.js";
+import type { SessionEntry } from "./entries.js";
+import { payloadObject } from "./message-projection.js";
+import { loadSessionTelemetrySource } from "./telemetry-source.js";
+import { loadTokenSourcesReport, type TokenSourcesReportV1 } from "./token-sources.js";
 
 /** The loop guard's middleware registration id (`LOOP_GUARD_REGISTRATION_ID` in src/engine/loop-guard.ts). */
 const LOOP_GUARD_RULE_ID = "guard.loop";
 const EXTENSION_TOOL_PREFIX = "extension_";
-
-/** What one roster entry's run left behind, folded from its session ledger, its journal and C2's attribution. */
-export interface CampaignMetrics {
-	sessionId: string | null;
-	/**
-	 * Interviews an extension tool put to the author. `reached` holds the distinct checkpoint ids their questions
-	 * declared, in first-asked order; `answered` interviews finished, `unscripted` were cancelled because the
-	 * answers file had no answer, and `unanswered` were cancelled any other way.
-	 */
-	gates: { reached: string[]; interviews: number; answered: number; unscripted: number; unanswered: number };
-	/**
-	 * Refusals by an extension: `hookBlocks` are its hooks' block_tool effects (journal `hook.ran`), `toolRefusals`
-	 * its own tools' calls that returned an error outside an interview (session ledger).
-	 */
-	refusals: { hookBlocks: number; toolRefusals: number };
-	/** Calls the loop guard blocked (journal `middleware.fired` from `guard.loop` with a block_tool effect). */
-	loopGuardBlocks: number;
-	/** C2's per-session totals: provider-measured input (fresh and cached) and output; null without a session. */
-	tokens: {
-		usage: TokenSourcesReportV1["basis"]["usage"];
-		calls: number;
-		unmeasuredCalls: number;
-		fresh: number | null;
-		cached: number | null;
-		input: number;
-		output: number;
-		/** Measured calls with no cache-read count: in input, in neither fresh nor cached (bt-42). */
-		unsplitCalls?: number;
-	} | null;
-}
 
 function record(value: unknown): Record<string, unknown> | null {
 	return payloadObject(value);
@@ -60,15 +33,15 @@ function isExtensionResult(payload: Record<string, unknown> | null, details: Rec
 	return typeof capability === "string" && capability.startsWith(EXTENSION_TOOL_PREFIX);
 }
 
-/** Pure fold over what a run persisted; the loader below reads those inputs from the entry's own state root. */
-export function foldCampaignMetrics(
+/** Pure fold over what a run persisted; `loadRunDigest` reads those inputs from the run's own state root. */
+export function foldRunDigest(
 	sessionId: string | null,
 	entries: ReadonlyArray<SessionEntry>,
 	records: ReadonlyArray<TelemetryRecord>,
 	tokens: TokenSourcesReportV1 | null,
-): CampaignMetrics {
-	const gates: CampaignMetrics["gates"] = { reached: [], interviews: 0, answered: 0, unscripted: 0, unanswered: 0 };
-	const refusals: CampaignMetrics["refusals"] = { hookBlocks: 0, toolRefusals: 0 };
+): ExtensionRunDigest {
+	const gates: ExtensionRunDigest["gates"] = { reached: [], interviews: 0, answered: 0, unscripted: 0, unanswered: 0 };
+	const refusals: ExtensionRunDigest["refusals"] = { hookBlocks: 0, toolRefusals: 0 };
 	for (const entry of entries) {
 		if (entry.kind !== "message" || entry.role !== "tool_result") continue;
 		const payload = record(entry.payload);
@@ -120,62 +93,22 @@ export function foldCampaignMetrics(
 	};
 }
 
-/**
- * The PanCode roots one entry's run used: the operator's config, and data, state and cache under the entry's home.
- * `components` is the operator's installed components directory, which the entry resolves runtime SDKs from and
- * never writes. `tools` is the operator's toolchain root (`<data>/tools`), where the entry looks for a
- * vendored tool binary after its own, read-only.
- */
-export interface EntryRoots {
-	home: string;
-	config: string;
-	data: string;
-	state: string;
-	cache: string;
-	components: string;
-	tools: string;
-}
-
-export function entryRoots(
-	home: string,
-	operatorConfig: string,
-	operatorComponents: string,
-	operatorTools: string,
-): EntryRoots {
+/** The roots of a run home, as `runs.start` laid them out. */
+function homeRoots(home: string): Record<string, string> {
 	return {
-		home,
-		config: operatorConfig,
-		data: join(home, "data"),
-		state: join(home, "state"),
-		cache: join(home, "cache"),
-		components: operatorComponents,
-		tools: operatorTools,
+		PANCODE_DATA_DIR: join(home, "data"),
+		PANCODE_STATE_DIR: join(home, "state"),
+		PANCODE_CACHE_DIR: join(home, "cache"),
 	};
 }
 
 /**
- * The environment that points a PanCode process at these roots. Each root is named by its own variable, which beats
- * `PANCODE_HOME`, so that one is left as the operator has it: the config root is theirs and lies outside the
- * entry's home.
- */
-export function entryRootEnv(roots: EntryRoots): Record<string, string> {
-	return {
-		PANCODE_CONFIG_DIR: roots.config,
-		PANCODE_DATA_DIR: roots.data,
-		PANCODE_STATE_DIR: roots.state,
-		PANCODE_CACHE_DIR: roots.cache,
-		[OPERATOR_COMPONENTS_ENV]: roots.components,
-		[OPERATOR_TOOLS_ENV]: roots.tools,
-	};
-}
-
-/**
- * Run `read` with this process's PanCode roots pointed at an entry's, then put them back. The session readers resolve
- * the state root from the environment, so the swap is what lets one process read every entry; `read` must be
+ * Run `read` with this process's PanCode roots pointed at a run home's, then put them back. The session readers resolve
+ * the state root from the environment, so the swap is what lets one process read every run; `read` must be
  * synchronous, so nothing else runs while the roots are swapped.
  */
-function withEntryRoots<T>(roots: EntryRoots, read: () => T): T {
-	const env = entryRootEnv(roots);
+function withHomeRoots<T>(home: string, read: () => T): T {
+	const env = homeRoots(home);
 	const previous = new Map(Object.keys(env).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, env);
 	resetXdgCache();
@@ -205,7 +138,7 @@ function canonical(path: string): string {
 	}
 }
 
-/** The run's main session: the earliest one opened in the project copy, else the earliest in the state root. */
+/** The run's main session: the earliest one opened in its directory, else the earliest in the state root. */
 function mainSession(stateDir: string, projectDir: string): SessionDir | null {
 	const root = join(stateDir, "sessions");
 	if (!existsSync(root)) return null;
@@ -235,16 +168,17 @@ function mainSession(stateDir: string, projectDir: string): SessionDir | null {
 	return found.find((session) => session.cwd === project) ?? found[0] ?? null;
 }
 
-/** Fold one entry's metrics from its own state root after its run has exited. */
-export function loadCampaignMetrics(roots: EntryRoots, projectDir: string): CampaignMetrics {
-	const session = mainSession(roots.state, projectDir);
-	if (session === null) return foldCampaignMetrics(null, [], [], null);
-	return withEntryRoots(roots, () => {
+/** Fold what the run in `home` persisted after it exited; its main session is the one opened in `cwd`. */
+export function loadRunDigest(home: string, cwd: string): ExtensionRunDigest {
+	const stateDir = join(home, "state");
+	const session = mainSession(stateDir, cwd);
+	if (session === null) return foldRunDigest(null, [], [], null);
+	return withHomeRoots(home, () => {
 		const path = join(session.dir, "current.jsonl");
 		const raw = existsSync(path) ? readSessionFileEntries(path).filter((entry) => !isSessionJsonlHeader(entry)) : [];
 		const entries = collectSessionEntries(raw, path);
-		const records = loadSessionTelemetrySource(roots.state, session.id)?.journal.records ?? [];
-		const tokens = loadTokenSourcesReport(roots.state, session.id);
-		return foldCampaignMetrics(session.id, entries, records, tokens);
+		const records = loadSessionTelemetrySource(stateDir, session.id)?.journal.records ?? [];
+		const tokens = loadTokenSourcesReport(stateDir, session.id);
+		return foldRunDigest(session.id, entries, records, tokens);
 	});
 }
