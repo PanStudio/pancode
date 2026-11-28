@@ -19,6 +19,7 @@ import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
 import type { createChatReceipts } from "./receipts.js";
+import type { createChatSegments } from "./segments.js";
 import type { createChatWorkers } from "./workers.js";
 
 export interface ChatPanelScope {
@@ -73,7 +74,19 @@ export interface ChatPanelScope {
 	 * scheduler runs steps only while nothing streams.
 	 */
 	prerender: { width: number; terminalRows: number; style: OutputStyle; next: number } | null;
+	readonly now: () => number;
+	/**
+	 * When an entry or action happened. Live, that is now; a replay pins it to
+	 * the ledger entry being replayed, so `/view` states the age of the act and
+	 * not of the resume.
+	 */
+	replayStampMs: number | undefined;
+	replayTarget: string | null;
+	readonly messageTarget: () => string | null;
+	readonly stamp: () => number;
+	readonly currentDetail: () => TranscriptDetailPolicy;
 	readonly cache: ReturnType<typeof createChatCache>;
 	readonly workers: ReturnType<typeof createChatWorkers>;
 	readonly receipts: ReturnType<typeof createChatReceipts>;
+	readonly segments: ReturnType<typeof createChatSegments>;
 }
