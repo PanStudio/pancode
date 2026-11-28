@@ -21,7 +21,7 @@ import {
 	headlessHaltNotice,
 } from "../../domains/safety/autonomy-window.js";
 import { standingDispatchRuns } from "../../domains/safety/observed-checks.js";
-import { createRunEffectsRecorder, notRunCheckIds } from "../../domains/safety/run-effects.js";
+import { createRunEffectsRecorder, notRunCheckIds, type RunEffectsRecorder } from "../../domains/safety/run-effects.js";
 import { SESSION_COST_CEILING_EXIT_CODE, SESSION_COST_CEILING_REASON } from "../../domains/scheduling/budget.js";
 import { formatStatedWait } from "../../domains/session/retry.js";
 import type { AgentMessage } from "../../engine/types.js";
@@ -114,6 +114,27 @@ function defaultShutdownHooks(): HeadlessShutdownHooks {
 	};
 }
 
+/** The run's effects recorder; its one git helper answer is handed to the host for its finish contract. */
+function headlessRunEffects(options: HeadlessMainAgentOptions): RunEffectsRecorder {
+	const runEffects = createRunEffectsRecorder(process.cwd(), {
+		scratchRoots: options.scratchRoots ?? [],
+		...(options.verify ? { sessionVerifiers: options.verify.checks } : {}),
+	});
+	options.onRunGitHelpers?.(process.cwd(), runEffects.gitHelpers);
+	return runEffects;
+}
+
+/** The dispatch runs whose checks stand at the end of the run, read with the run's own git helper answer. */
+function headlessDispatchRuns(
+	options: HeadlessMainAgentOptions,
+	entriesBefore: number,
+	runEffects: RunEffectsRecorder,
+): string[] {
+	if (options.readEntries === undefined) return [];
+	const entries = options.readEntries();
+	return standingDispatchRuns(entries, entriesBefore, process.cwd(), options.scratchRoots ?? [], runEffects.gitHelpers);
+}
+
 /** How every line this run writes to stderr starts. */
 const RUN_STDERR_PREFIX = "pancode run: ";
 
@@ -179,10 +200,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 		readingCalls: new Set(),
 		pendingVerifyCalls: new Map(),
 		verifyCalls: [],
-		runEffects: createRunEffectsRecorder(process.cwd(), {
-			scratchRoots: options.scratchRoots ?? [],
-			...(options.verify ? { sessionVerifiers: options.verify.checks } : {}),
-		}),
+		runEffects: headlessRunEffects(options),
 		skillActivations: [],
 		calls: [],
 		seenAttempts: new Set(),
@@ -207,7 +225,6 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 			options.constraints?.mode !== "proposal",
 		incompleteLimitations: 0,
 	};
-	options.onRunGitHelpers?.(process.cwd(), runStats.runEffects.gitHelpers);
 	// The ledger row is this run's accounting, so it has to exist on the costly
 	// failure paths too. Two callers can reach it: the turn's own completion
 	// path, and the coordinated shutdown a SIGINT/SIGTERM starts. The signal
@@ -238,16 +255,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 				const usage = summary.total ?? calls ?? runUsageFromCalls(runStats.calls);
 				process.stderr.write(runTextSummaryLine(chat.getSessionId(), terminal.outcome, usage, summary.workers));
 			}
-			const dispatchRuns =
-				options.readEntries !== undefined
-					? standingDispatchRuns(
-							options.readEntries(),
-							entriesBefore,
-							process.cwd(),
-							options.scratchRoots ?? [],
-							runStats.runEffects.gitHelpers,
-						)
-					: [];
+			const dispatchRuns = headlessDispatchRuns(options, entriesBefore, runStats.runEffects);
 			await recordHeadlessMainAgentRun({
 				runId,
 				chat,

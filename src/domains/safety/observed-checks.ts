@@ -270,6 +270,20 @@ export function createRunGitHelpers(): (entries: ReadonlyArray<unknown>, workspa
 	};
 }
 
+/** A headless run's one git helper answer, handed from its run-effects recorder to the host's finish contract at the same root. */
+export function createRunGitHelpersRelay(): {
+	note(workspaceRoot: string, gitHelpers: boolean): void;
+	read(workspaceRoot: string): boolean | undefined;
+} {
+	let noted: { root: string; gitHelpers: boolean } | undefined;
+	return {
+		note: (workspaceRoot, gitHelpers) => {
+			noted = { root: path.resolve(workspaceRoot), gitHelpers };
+		},
+		read: (workspaceRoot) => (noted?.root === path.resolve(workspaceRoot) ? noted.gitHelpers : undefined),
+	};
+}
+
 /** The same fold over any stretch of the session path, from `start` on; `scratchRoots` is `safety.scratchRoots`. */
 export function standingChecksFrom(
 	entries: ReadonlyArray<unknown>,
