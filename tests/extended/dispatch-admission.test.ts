@@ -747,6 +747,8 @@ describe("dispatch admission boundary", () => {
 		try {
 			let body = "Survey {{task}} carefully.";
 			let scope: "readonly" | "workspace" | "worktree" = "readonly";
+			let currentUsd = 0.0011;
+			let budgetVerdict: "under" | "at" | "over" = "under";
 			const launched: FleetRunLaunchInput[] = [];
 			const port: DispatchPlaybookPort = {
 				launcher: {
@@ -762,6 +764,7 @@ describe("dispatch admission boundary", () => {
 						workspaceRoot: root,
 						name,
 						vars,
+						budget: { verdict: budgetVerdict, currentUsd, ceilingUsd: 5 },
 						getAgentSpec: (id) => agents.getSpec(id),
 						roleFacts: agentRoleFactsResolver((id) => agents.getSpec(id)),
 						load: () => ({
@@ -780,6 +783,7 @@ describe("dispatch admission boundary", () => {
 						}),
 					}),
 			};
+			let driftMode: "spend-under" | "spend-over" | "body" = "spend-under";
 			const registry = createRegistry({ safety: createWorkerSafety({ cwd: root }), autonomy: () => "default" });
 			registry.register(
 				createDispatchTool({
@@ -790,17 +794,46 @@ describe("dispatch admission boundary", () => {
 				}),
 			);
 			registry.onPermissionRequired((_call, _decision, meta) => {
-				// Simulate the playbook changing on disk while the operator reads the approval card.
-				body = "Survey {{task}} and rewrite the repo.";
+				if (driftMode === "spend-under") {
+					// Simulate the proposing assistant turn finishing its spend fold while the card is open.
+					currentUsd = 0.0016;
+				} else if (driftMode === "spend-over") {
+					currentUsd = 5.01;
+					budgetVerdict = "over";
+				} else {
+					// Simulate the playbook changing on disk while the operator reads the approval card.
+					body = "Survey {{task}} and rewrite the repo.";
+				}
 				void registry.resumeParkedCalls({ actionClass: "dispatch", requestId: meta.requestId, requestedBy: "test" });
 			});
+			const spendTicked = await registry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(spendTicked.kind === "ok" && spendTicked.result.kind === "error", JSON.stringify(spendTicked));
+			match(spendTicked.result.message, /fixture: launcher reached/u);
+			strictEqual(launched.length, 1, "routine session spend ticking under the ceiling preserves the approval");
+
+			driftMode = "spend-over";
+			const overBudget = await registry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(overBudget.kind === "ok" && overBudget.result.kind === "error", JSON.stringify(overBudget));
+			match(overBudget.result.message, /budget ceiling crossed/u);
+			strictEqual(launched.length, 1, "crossing the budget ceiling while waiting on the card refuses launch");
+
+			currentUsd = 0.0016;
+			budgetVerdict = "under";
+			driftMode = "body";
 			const drifted = await registry.invoke({
 				tool: "dispatch",
 				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
 			});
 			ok(drifted.kind === "ok" && drifted.result.kind === "error", JSON.stringify(drifted));
 			match(drifted.result.message, /changed since the approved card/u);
-			strictEqual(launched.length, 0, "a drifted playbook must never reach the launcher");
+			strictEqual(launched.length, 1, "a drifted playbook must never reach the launcher");
+			launched.length = 0;
 
 			// Under a read-only registry ceiling: preview is allowed, writing/worktree playbooks are refused,
 			// and a purely read-only playbook forwards readOnly: true into turnConstraints.

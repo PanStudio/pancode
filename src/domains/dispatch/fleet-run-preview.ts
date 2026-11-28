@@ -403,8 +403,9 @@ export function compileFleetRunPreview(input: FleetRunPreviewInput): FleetRunPre
 			recipes: [...recipeFingerprints].sort(([left], [right]) => left.localeCompare(right)),
 			commands: commandBindings,
 			waves,
-			// How the spend was priced only words it, so the identity keeps the amounts it always sealed.
-			budget: { ceilingUsd: budget.ceilingUsd, currentUsd: budget.currentUsd, playbookUsd: budget.playbookUsd },
+			// Ceilings belong to the approved plan; live session spend is re-checked for admissibility on compile
+			// rather than invalidating an approval when the turn that proposed the playbook finishes folding its own cost.
+			budget: { ceilingUsd: budget.ceilingUsd, playbookUsd: budget.playbookUsd },
 			// Absent for a fresh run, so its approval identity is unchanged.
 			...(resume !== undefined
 				? {
