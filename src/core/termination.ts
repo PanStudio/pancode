@@ -309,7 +309,8 @@ class TerminationCoordinator {
 	 * which on a TUI session means the terminal is never given back. Exit codes
 	 * follow the 128+signal convention.
 	 */
-	installSignalHandlers(): void {
+	installSignalHandlers(options?: { textWrapper?: ShutdownTextWrapper }): void {
+		if (options?.textWrapper !== undefined) setShutdownTextWrapper(options.textWrapper);
 		if (this.signalHandler) return;
 		const handler = (signal: NodeJS.Signals): void => {
 			if (this.started) {

@@ -831,6 +831,7 @@ describe("The hub lifecycle plans", () => {
 		const forbidden = [
 			"src/worker",
 			"src/engine/worker-runtime.ts",
+			"src/engine/worker-run",
 			"src/engine/worker-run-types.ts",
 			"src/engine/worker-assistant-reply.ts",
 			"src/engine/worker-result-contract.ts",

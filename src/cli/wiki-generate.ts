@@ -20,7 +20,7 @@ import {
 } from "../core/telemetry/pricing.js";
 import { renderFactField, renderPricedBy, renderPricing } from "../core/telemetry/render.js";
 import type { RunUsageFacts } from "../core/telemetry/schemas.js";
-import { runWithBudget, writeShutdownNotice } from "../core/termination.js";
+import { runWithBudget, setShutdownTextWrapper, writeShutdownNotice } from "../core/termination.js";
 import { ALL_TOOL_NAMES, ToolNames } from "../core/tool-names.js";
 import { isRecord } from "../core/type-guards.js";
 import type { ThinkingLevel } from "../core/views/thinking-levels.js";
@@ -63,6 +63,7 @@ import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
 import { createTelemetryDomainModule } from "../domains/telemetry/module.js";
 import { runsCost, runsTotal } from "../domains/telemetry/read-model-cost.js";
+import { wrapTextWithAnsi } from "../engine/text-wrap.js";
 import { retentionPruners } from "../entry/retention-pruners.js";
 import { redactSecretString } from "../lib/secrets/redaction.js";
 import { armInternalDispatchDeadline } from "./internal-dispatch.js";
@@ -1117,15 +1118,7 @@ async function loadWikiDispatch(): Promise<{
  * matters when the primary target is unavailable. Best-effort and never throws.
  */
 export async function resolveDocumenterModelId(route: WikiModelRoute = {}): Promise<string> {
-	const loaded = await loadDomains([
-		ConfigDomainModule,
-		SafetyDomainModule,
-		ExtensionsDomainModule,
-		PluginsDomainModule,
-		AgentsDomainModule,
-		ResourcesDomainModule,
-		ProvidersDomainModule,
-	]);
+	const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
 	try {
 		const config = loaded.getContract("config");
 		const providers = loaded.getContract("providers");
@@ -1163,6 +1156,7 @@ export async function withWikiDispatchLifecycle(
 	runtime: { dispatch: Pick<DispatchContract, "drain">; stop(): Promise<void> },
 	generate: (signal: AbortSignal) => Promise<void>,
 ): Promise<void> {
+	setShutdownTextWrapper(wrapTextWithAnsi);
 	const abort = new AbortController();
 	let closing: Promise<void> | null = null;
 	let interrupted: Promise<void> | null = null;
