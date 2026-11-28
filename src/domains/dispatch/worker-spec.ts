@@ -12,6 +12,7 @@ import { GUARDRAIL_DEFAULTS } from "../../core/guardrails.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
+import { probedSandboxBackend } from "../../core/sandbox/availability.js";
 import { egressGrants } from "../../core/sandbox/egress/policy.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { withWorkerGitHookPaths } from "../../core/sandbox/git-hooks-fingerprint.js";
@@ -578,12 +579,17 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		settings,
 	}).spec;
 	const upstreamProxy = settings?.safety.egress.upstreamProxy ?? null;
+	// A local worker runs on the host this process probed, so it takes that answer rather than probing again.
+	const probedBackend =
+		sandbox?.backendExpected === true && input.localPlacement === true ? probedSandboxBackend() : null;
 	if (sandbox !== undefined)
-		spec.sandbox =
+		spec.sandbox = {
 			// The operator's upstream proxy, credentials and all, stays on this host: a fleet node's proxied worker dials directly.
-			sandbox.egress !== undefined && upstreamProxy !== null && input.localPlacement === true
+			...(sandbox.egress !== undefined && upstreamProxy !== null && input.localPlacement === true
 				? { ...sandbox, egress: { ...sandbox.egress, upstreamProxy } }
-				: sandbox;
+				: sandbox),
+			...(probedBackend === null ? {} : { probedBackend }),
+		};
 	// The worker re-attests this identity before every Git mutation; only in it
 	// does a git: worktree permit admit add and commit (Phase C).
 	const taskWorktree = input.req.taskWorktree;

@@ -118,7 +118,7 @@ export interface TokenSourcesReportV1 {
 	};
 }
 
-export const TOKEN_SOURCES_NOTE =
+const TOKEN_SOURCES_NOTE =
 	"Input totals are provider-reported per call; the split by source is estimated. Each call's total is apportioned over its request's segments by estimated tokens (chars/4 over the session ledger, the journal's context snapshot for the system side), and its cache read is assigned to the leading segments in request order. Side-agent calls (compaction, memory) and the calls of dispatched workers are not split: each role is one row of the turn it ran in.";
 
 interface Segment {

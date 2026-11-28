@@ -32,7 +32,7 @@ export const CONTEXT_SEGMENTS = 4;
  * ledger reports none. The client draws these and never formats a count. `meter` is the compact pair the top bar
  * shows, null when the window size is not reported.
  */
-export const ContextLedgerDisplay = Type.Object(
+const ContextLedgerDisplay = Type.Object(
 	{
 		used: text,
 		window: nullable,

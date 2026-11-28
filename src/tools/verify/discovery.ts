@@ -9,6 +9,7 @@ import {
 	type DeclaredCheckSource,
 	loadProjectVerifierCatalog,
 	packageDeclaredCheck,
+	workspaceRelative,
 } from "./catalog.js";
 import { PACKAGE_JSON_NO_SCRIPTS, parsePackageJson } from "./toolchain.js";
 
@@ -22,11 +23,6 @@ import { PACKAGE_JSON_NO_SCRIPTS, parsePackageJson } from "./toolchain.js";
 export type DeclaredCheckDiscoveryResult =
 	| { ok: true; sources: DeclaredCheckSource[]; diagnostics?: string[] }
 	| { ok: false; reason: string };
-
-function repositoryRelativeCwd(workspaceRoot: string, resolved: string): string {
-	const relative = path.relative(workspaceRoot, resolved);
-	return relative.length === 0 ? "." : relative.split(path.sep).join("/");
-}
 
 function packageTag(id: string): string[] {
 	const separator = id.search(/[:.-]/u);
@@ -49,7 +45,7 @@ function packageCheckSource(
 		}
 		return null;
 	}
-	const cwd = repositoryRelativeCwd(workspaceRoot, packageRoot);
+	const cwd = workspaceRelative(workspaceRoot, packageRoot);
 	const checks = declaredVerificationScripts(pkg.scripts).map((id) =>
 		packageDeclaredCheck(id, packagePath, cwd, packageTag(id)),
 	);

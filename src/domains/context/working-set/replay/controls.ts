@@ -8,6 +8,7 @@ import { protectionCutoffIndex } from "../horizon.js";
 import { buildPathIndex, callPathsByToolCallId } from "../path-index.js";
 import { isProtected } from "../protect.js";
 import type { ReferenceGraph } from "./reference-graph.js";
+import { mulberry32 } from "./synthetic.js";
 
 /** Replay-only diagnostic surface; it does not widen the live policy contract. */
 export interface ReplayCandidatePoolPolicy extends WorkingSetPolicy {
@@ -85,17 +86,6 @@ export function makeOraclePolicy(graph: ReferenceGraph): ReplayCandidatePoolPoli
 		replayCandidateCount(input): number {
 			return input === lastInput ? lastCandidateCount : safeEntries(input).length;
 		},
-	};
-}
-
-function mulberry32(seed: number): () => number {
-	let value = seed >>> 0;
-	return () => {
-		value = (value + 0x6d2b79f5) >>> 0;
-		let next = value;
-		next = Math.imul(next ^ (next >>> 15), next | 1);
-		next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
-		return ((next ^ (next >>> 14)) >>> 0) / 4_294_967_296;
 	};
 }
 

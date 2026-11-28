@@ -99,6 +99,8 @@ export interface HeadlessMainAgentOptions {
 	readEntries?: () => ReadonlyArray<unknown>;
 	/** `safety.scratchRoots`: a check logged under one changes no tree (x5-4). */
 	scratchRoots?: ReadonlyArray<string>;
+	/** Told the run's one git helper answer and the workspace it was read at, so the host's finish contract reuses it. */
+	onRunGitHelpers?: (workspaceRoot: string, gitHelpers: boolean) => void;
 	/**
 	 * The dispatch ledger. When present, the run waits for the workers it
 	 * dispatched before sealing and fails when one did not deliver (D3, D6b).

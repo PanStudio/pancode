@@ -58,16 +58,16 @@ export const AUTO_MAX_WORKERS = 8;
 export const WORKER_MEMORY_ESTIMATE_BYTES = 1024 * 1024 * 1024;
 
 /** Memory left for the OS, the orchestrator, and local inference servers. */
-export const OS_MEMORY_RESERVE_BYTES = 2 * 1024 * 1024 * 1024;
+const OS_MEMORY_RESERVE_BYTES = 2 * 1024 * 1024 * 1024;
 
 /**
  * Reserve inside a cgroup limit. The host kernel is not charged to the cgroup,
  * and the orchestrator's own memory is already in its working set.
  */
-export const CGROUP_MEMORY_RESERVE_BYTES = 512 * 1024 * 1024;
+const CGROUP_MEMORY_RESERVE_BYTES = 512 * 1024 * 1024;
 
 /** Minimum spacing between host samples. */
-export const HOST_SAMPLE_INTERVAL_MS = 30_000;
+const HOST_SAMPLE_INTERVAL_MS = 30_000;
 
 /** Global worker pool for a `fleet.concurrency` setting. */
 export function resolveGlobalConcurrency(configured: "auto" | number | undefined): number {

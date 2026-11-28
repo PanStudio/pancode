@@ -534,7 +534,7 @@ const LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
 	mk: "makefile",
 };
 
-export const MERMAID_LANGUAGE = "mermaid";
+const MERMAID_LANGUAGE = "mermaid";
 
 export interface CodeLanguage {
 	/** The label shown to the reader, or null when the fence carried no usable info string. */

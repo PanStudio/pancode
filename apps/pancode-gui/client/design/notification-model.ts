@@ -31,7 +31,7 @@ export const DEFAULT_TTL: Readonly<Record<NoticeTone, number | null>> = {
 	success: 4_000,
 };
 
-export function problemTone(code: string): NoticeTone {
+function problemTone(code: string): NoticeTone {
 	if (code === "unsupported") return "info";
 	return code === "conflict" ? "warning" : "error";
 }

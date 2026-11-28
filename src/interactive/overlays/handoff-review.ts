@@ -49,13 +49,13 @@ import {
 import { skinEpoch } from "../theme/tokens.js";
 import { scrollJump } from "./confirm-once.js";
 
-export const HANDOFF_REVIEW_OVERLAY_TITLE = "Handoff review";
+const HANDOFF_REVIEW_OVERLAY_TITLE = "Handoff review";
 const HANDOFF_PREPARING_OVERLAY_TITLE = `Handoff ${GLYPH.sep} preparing`;
 
 const HANDOFF_REVIEW_MIN_WIDTH = 44;
 const HANDOFF_REVIEW_MAX_WIDTH = 100;
 /** Rows of document shown at once when the frame has not said how many it has. */
-export const HANDOFF_REVIEW_VISIBLE_ROWS = 20;
+const HANDOFF_REVIEW_VISIBLE_ROWS = 20;
 
 function handoffReviewOverlayWidth(columns: number): number {
 	return Math.max(HANDOFF_REVIEW_MIN_WIDTH, Math.min(HANDOFF_REVIEW_MAX_WIDTH, columns - 4));

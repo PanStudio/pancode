@@ -33,7 +33,7 @@ import {
 } from "./store.js";
 import { CLAIM_RECORD_VERSION, type ClaimDisputePost, type ClaimDisputeRecord, type ClaimRecord } from "./types.js";
 
-export const CLAIM_CAPTURE_REGISTRATION_ID = "observer.claims-capture";
+const CLAIM_CAPTURE_REGISTRATION_ID = "observer.claims-capture";
 const HYPOTHESIS_CAPTURE_REGISTRATION_ID = "observer.hypothesis-capture";
 
 /** A slate past this size is not read; a hypothesis slate is a few KB. */

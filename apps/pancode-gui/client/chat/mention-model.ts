@@ -28,7 +28,7 @@ export function mentionQuery(text: string, caret: number): MentionQuery | null {
 const STEER_TARGET = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
 /** The spelling the agent's scanner reads back as exactly this path. A folder keeps its trailing slash. */
-export function mentionReference(path: string): string {
+function mentionReference(path: string): string {
 	if (!/[\s"'\\]/u.test(path) && !STEER_TARGET.test(path)) return `@${path}`;
 	return `@"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }

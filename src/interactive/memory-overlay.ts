@@ -37,7 +37,7 @@ import { skinEpoch } from "./theme/tokens.js";
 const DEFAULT_CONTENT_WIDTH = 96;
 const REFRESH_MS = 1_000;
 
-export const MEMORY_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
+const MEMORY_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
 
 function firstLine(content: string): string {
 	return content.replace(/\s+/gu, " ").trim();

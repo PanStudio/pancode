@@ -191,6 +191,7 @@ export async function gradeAttemptResult(
 			entries: finishContractEntries,
 			assistantText: attempt.finishContractAssistantText,
 			assistantTurnId: attempt.finishContractAssistantTurnId,
+			gitHelpers: runEffects.gitHelpers,
 		},
 	);
 	const resolvedOutcomeCode = resolveTrustedOutcomeCodes(trustedOutcomeCodes);

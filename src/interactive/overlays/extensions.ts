@@ -37,7 +37,7 @@ import { openListOverlay } from "./list-overlay.js";
 import { detailWithHead, type ListOverlayItem, markdownRows } from "./list-overlay-model.js";
 
 /** @internal exported for contract tests */
-export const EXTENSIONS_EMPTY =
+const EXTENSIONS_EMPTY =
 	"No extensions installed. The hub lists bundled ones under Extensions (/hub), and `pancode extensions install <path>` installs a folder.";
 
 const FACT_OPTIONS = { labelRole: "fieldName" as const, stack: "never" as const };

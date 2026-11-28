@@ -32,7 +32,7 @@ export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
  * that render an empty state of their own separate it from real failures (an
  * unreadable index, a broken package) by identity rather than by string match.
  */
-export const MARKETPLACE_UNCONFIGURED = "no local skill marketplace catalog or index configured";
+const MARKETPLACE_UNCONFIGURED = "no local skill marketplace catalog or index configured";
 
 export interface MarketplaceSkill {
 	kind: "skill";

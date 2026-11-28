@@ -57,7 +57,7 @@ export interface ToolResultSummaryProvenance {
 	redactions?: number;
 }
 
-export const TOOL_RESULT_DIGEST_MAX_BYTES = 240;
+const TOOL_RESULT_DIGEST_MAX_BYTES = 240;
 
 export interface ToolResultDigestProvenance {
 	producer: "code";

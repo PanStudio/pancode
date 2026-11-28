@@ -50,7 +50,7 @@ import { type ListOverlayHandle, openListOverlay } from "./list-overlay.js";
 import { detailWithHead, type ListOverlayItem } from "./list-overlay-model.js";
 
 /** @internal exported for contract tests */
-export const INTEROP_EMPTY =
+const INTEROP_EMPTY =
 	"No other coding agents detected on this machine. Install one, then `/hub interop` proposes it as a delegation peer.";
 
 const GROUP_PROPOSED = "Proposed";

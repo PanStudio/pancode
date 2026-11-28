@@ -30,10 +30,10 @@ import {
 import { evaluateRouteReadiness, type RouteReadinessReport } from "./route-readiness.js";
 import { type RoutingIntent, routingIntentRejection } from "./routing-intent.js";
 
-export const JOINT_ROUTE_UNIVERSE_LIMIT = 64;
-export const JOINT_ROUTE_FALLBACK_LIMIT = 3;
+const JOINT_ROUTE_UNIVERSE_LIMIT = 64;
+const JOINT_ROUTE_FALLBACK_LIMIT = 3;
 
-export const JOINT_ROUTE_HARD_FILTERS = [
+const JOINT_ROUTE_HARD_FILTERS = [
 	"manual-pins",
 	"approved-envelope",
 	"audience",

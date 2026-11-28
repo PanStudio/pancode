@@ -6,7 +6,7 @@
  * instead, and every launcher looks at the same two ports in the same order.
  */
 export const DEFAULT_GUI_PORT = 4343;
-export const FALLBACK_GUI_PORT = 7373;
+const FALLBACK_GUI_PORT = 7373;
 
 /** Ports a background app configured for `port` may be listening on, preferred first. */
 export function listenPorts(port: number): number[] {

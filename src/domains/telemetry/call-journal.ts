@@ -122,7 +122,7 @@ export interface CallJournalOptions {
 }
 
 /** Research mode is capped per session apart from standard retention (#434, §14). */
-export const RESEARCH_SESSION_BYTES = 256 * 1024 * 1024;
+const RESEARCH_SESSION_BYTES = 256 * 1024 * 1024;
 
 /** Preimage bytes a research record declares it stored in `objects/`. */
 function declaredBytes(record: TelemetryRecord): number {

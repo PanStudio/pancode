@@ -20,9 +20,9 @@ import type { ToolConfirmation, ToolConfirmationContext } from "../tool-spec.js"
 export const BROWSER_OPS = ["open", "attach", "run", "look", "serve", "close"] as const;
 export type BrowserOp = (typeof BROWSER_OPS)[number];
 
-export const BROWSER_PROVISION_RULE_ID = "browser-provision";
-export const BROWSER_OUTWARD_HOST_RULE_ID = "browser-outward-host";
-export const BROWSER_ATTACH_RULE_ID = "browser-attach-endpoint";
+const BROWSER_PROVISION_RULE_ID = "browser-provision";
+const BROWSER_OUTWARD_HOST_RULE_ID = "browser-outward-host";
+const BROWSER_ATTACH_RULE_ID = "browser-attach-endpoint";
 
 /**
  * Hosts outside loopback and CDP endpoints the operator admitted, held for one session: a call from any other session
@@ -258,7 +258,7 @@ function browserConfirmation(
 	};
 }
 
-export const BROWSER_DESCRIPTION = [
+const BROWSER_DESCRIPTION = [
 	"Drive one headless Chromium session that persists across calls (pages, console and network buffers). Main agent only.",
 	"op=open {url, page?, viewport?: '390x844', allow_hosts?}: load a URL in a new page, or in the named page (a page id not yet open names the new page). Returns the page id, final URL, title, HTTP status, new console errors and failed requests, and the first lines of the accessibility snapshot.",
 	"op=attach {endpoint}: drive a browser someone started with --remote-debugging-port (Chrome, Edge, a Tauri debug build's WebView2) instead of the session's own. endpoint is a port (9222), host:port, or the http or ws DevTools URL. Its open tabs become pages, with the console errors and exceptions they logged before the attach; requests from before it are not seen. While attached its pages reach loopback only and open refuses allow_hosts and hosts beyond loopback, because redirects in a browser PanCode did not start cannot be checked. open then adds tabs to that browser; close ends the attach, closes the tabs PanCode opened and leaves the browser and its other tabs running. Each endpoint is granted once per session.",

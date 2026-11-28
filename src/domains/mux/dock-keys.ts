@@ -15,7 +15,7 @@
  */
 
 /** How soon after one tap a second one counts as a double tap. */
-export const DOCK_DOUBLE_TAP_MS = 400;
+const DOCK_DOUBLE_TAP_MS = 400;
 
 export interface DockKeyHandlers {
 	/** A first tap: show a hidden dock, hide a visible one. */

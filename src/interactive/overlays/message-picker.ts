@@ -21,7 +21,7 @@ import {
 } from "../theme/index.js";
 import { type ChoiceItem, ChoiceList } from "./settings-submenus.js";
 
-export const MESSAGE_PICKER_OVERLAY_WIDTH = 88;
+const MESSAGE_PICKER_OVERLAY_WIDTH = 88;
 const PREVIEW_WIDTH = 60;
 
 /**

@@ -19,7 +19,7 @@ export const ACTIVE_DISPATCH_STATUSES: ReadonlySet<DispatchBoardStatus> = new Se
 	"retrying",
 	"stale",
 ]);
-export const FAILED_DISPATCH_STATUSES: ReadonlySet<DispatchBoardStatus> = new Set(["failed", "aborted", "dead"]);
+const FAILED_DISPATCH_STATUSES: ReadonlySet<DispatchBoardStatus> = new Set(["failed", "aborted", "dead"]);
 
 /** Run counts only: tokens are the read model's to total, and the footer already shows the session's (#434 §11.3). */
 function dispatchStatusCounts(rows: ReadonlyArray<DispatchBoardRow>): {

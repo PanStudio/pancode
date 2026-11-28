@@ -28,7 +28,7 @@ export interface CrashRecord {
 	message: string;
 }
 
-export const CRASH_RECORD_LIMIT = 20;
+const CRASH_RECORD_LIMIT = 20;
 const MESSAGE_LIMIT = 200;
 const FRAME_LIMIT = 8;
 const CRASH_FILE = /^\d+-\d+\.json$/u;

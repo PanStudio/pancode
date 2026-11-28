@@ -6,7 +6,7 @@ import { runningBuildIsStale, runningPackageRoot } from "../../core/running-buil
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import type { MiddlewareEffect } from "./types.js";
 
-export const STALE_BUILD_REMINDER_REGISTRATION_ID = "observer.stale-build-reminder";
+const STALE_BUILD_REMINDER_REGISTRATION_ID = "observer.stale-build-reminder";
 
 export const STALE_BUILD_REMINDER =
 	"[Build] The build this session runs was replaced on disk. Code you edited is not what is running. Ask the operator to /restart before verifying behaviour in this session.";

@@ -9,7 +9,7 @@
  * img-src, font-src and connect-src still block CSS-driven fetches. `connect-src`
  * needs no `ws:` grant because the live surface is SSE on this same origin.
  */
-export const CSP = [
+const CSP = [
 	"default-src 'self'",
 	"script-src 'self'",
 	"style-src 'self' 'unsafe-inline'",

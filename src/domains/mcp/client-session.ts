@@ -60,8 +60,8 @@ import type {
 } from "./transport.js";
 
 export const MCP_CLIENT_NAME = "pancode";
-export const DEFAULT_INITIALIZE_TIMEOUT_MS = 15_000;
-export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_INITIALIZE_TIMEOUT_MS = 15_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 /** Bound for checking server responsiveness after cancelling an in-flight call. */
 export const DEFAULT_CANCEL_GRACE_MS = 1_000;
 /** Bytes of one server-written text (an error message, its detail, a task status message) an error carries. */

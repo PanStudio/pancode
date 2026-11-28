@@ -35,8 +35,8 @@ import { type MiddlewareEffect, type MiddlewareHookInput, metadataString } from 
  */
 
 export const SCOUT_NUDGE_REGISTRATION_ID = "nudge.scout-survey";
-export const SCOUT_NUDGE_READ_THRESHOLD = 10;
-export const SCOUT_NUDGE_AREA_THRESHOLD = 3;
+const SCOUT_NUDGE_READ_THRESHOLD = 10;
+const SCOUT_NUDGE_AREA_THRESHOLD = 3;
 
 const SCOUT_NUDGE_TURN_LIMIT = 32;
 const AREAS_NAMED = 6;

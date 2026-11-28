@@ -30,10 +30,10 @@ import {
 } from "./gate-decisions.js";
 
 /** How many decisions one projection reports, newest first. */
-export const GATE_TOPOLOGY_MAX_DECISIONS = 8;
+const GATE_TOPOLOGY_MAX_DECISIONS = 8;
 
 /** Subject receipts named per decision. A compete gate judges at most four. */
-export const GATE_TOPOLOGY_MAX_SUBJECTS = 6;
+const GATE_TOPOLOGY_MAX_SUBJECTS = 6;
 
 /**
  * How many artifact files one listing will open.
@@ -45,7 +45,7 @@ export const GATE_TOPOLOGY_MAX_SUBJECTS = 6;
  * the cap. That is the right trade here, the same one {@link listFleetRuns}
  * takes, because this window only ever wants the recent end.
  */
-export const GATE_TOPOLOGY_MAX_SCAN = 128;
+const GATE_TOPOLOGY_MAX_SCAN = 128;
 
 /**
  * Why a gate ended the way it did, as a closed set.

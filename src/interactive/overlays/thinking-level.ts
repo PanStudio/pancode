@@ -11,7 +11,7 @@ import type { OverlayHandle, TUI } from "../../engine/tui.js";
 import { buildResponsiveHint, createChoiceList, FocusBox, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { GLYPH } from "../theme/index.js";
 
-export const THINKING_LEVEL_OVERLAY_WIDTH = 56;
+const THINKING_LEVEL_OVERLAY_WIDTH = 56;
 
 export interface ThinkingLevelChoice {
 	/** The level as `/thinking <level>` takes it. */

@@ -6,7 +6,7 @@ import type { ContextClearCommandOptions } from "../../session-control/slash-com
 import { buildHint, createChoiceList, FocusBox, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { pancodeTheme } from "../theme/index.js";
 
-export const CONTEXT_RESET_OVERLAY_WIDTH = 72;
+const CONTEXT_RESET_OVERLAY_WIDTH = 72;
 export type ContextResetMutationChoice = "preserve-pancode-md" | "delete-pancode-md";
 
 export interface OpenContextResetOverlayDeps {

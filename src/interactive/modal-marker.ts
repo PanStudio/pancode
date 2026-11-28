@@ -41,7 +41,7 @@ export interface ModalMarkerSink {
 }
 
 /** What the title reads when nothing modal owns the keyboard. */
-export const MODAL_MARKER_BASE_TITLE = "pancode";
+const MODAL_MARKER_BASE_TITLE = "pancode";
 
 /** Render the title for a modal stack, outermost first. */
 function formatModalMarkerTitle(stack: readonly string[]): string {

@@ -5,7 +5,7 @@ import type { MemoryRecord, MemoryRetrievalOptions } from "./types.js";
 
 /** Versioned, deterministic heuristic; not a semantic applicability or truth check. */
 export const MEMORY_RELEVANCE_VERSION = "lexical-v1";
-export const MEMORY_RELEVANCE_WEIGHTS = { taskTerm: 1, path: 8, symbol: 4 } as const;
+const MEMORY_RELEVANCE_WEIGHTS = { taskTerm: 1, path: 8, symbol: 4 } as const;
 
 export interface MemoryRelevanceInput {
 	readonly taskText: string;
@@ -100,9 +100,9 @@ const PATH_FRAGMENT_TERMS = new Set(
 	),
 );
 /** Distinctive subject terms a record must share with the turn to ride in unasked. */
-export const MEMORY_GATE_MIN_TERMS = 2;
+const MEMORY_GATE_MIN_TERMS = 2;
 /** What a record the model kept leaving unused must share instead. */
-export const MEMORY_GATE_DEMOTED_MIN_TERMS = 4;
+const MEMORY_GATE_DEMOTED_MIN_TERMS = 4;
 
 /** Distinctive subject terms, plural folded, generic coding words dropped. */
 function memoryGateTerms(value: string): Set<string> {

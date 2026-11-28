@@ -4,10 +4,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
-import { ApiProblem, type Client } from "../api/client.js";
-import { reportProblem } from "../design/notifications.js";
+import type { Client } from "../api/client.js";
+import { ProblemAlert, reportProblem } from "../design/notifications.js";
 import { StatusMark } from "../design/status.js";
 import { Dialog } from "../interaction/Dialog.js";
+import { searchWith } from "../shell/use-search-draft.js";
 import { catalogKinds, desktopManaged, TERMINAL_NOTE, terminalSteps } from "./hub-extension-model.js";
 import {
 	type Applied,
@@ -32,19 +33,6 @@ import {
 import "./hub.css";
 
 type Request = { operation: Operation; ref: string; scope: Scope; withRequirements?: boolean };
-
-function Failure({ error }: { error: Error }) {
-	return (
-		<div className="problem" role="alert">
-			<strong>{error.message}</strong>
-			{error instanceof ApiProblem && (
-				<small>
-					{error.problem.code} · {error.problem.instance}
-				</small>
-			)}
-		</div>
-	);
-}
 
 function PlanReview({ plan }: { plan: Plan }) {
 	return (
@@ -342,7 +330,7 @@ function PlanDialog({
 			)}
 			{planning.error && (
 				<>
-					<Failure error={planning.error} />
+					<ProblemAlert error={planning.error} />
 					<button type="button" disabled={busy} onClick={() => planning.mutate(request)}>
 						Retry planning
 					</button>
@@ -382,10 +370,10 @@ function PlanDialog({
 			)}
 			{applying.isPending && <p role="status">Applying the reviewed plan. Keep this review open for the result.</p>}
 			{releasing.isPending && <p role="status">Releasing staged sources…</p>}
-			{releasing.error && <Failure error={releasing.error} />}
+			{releasing.error && <ProblemAlert error={releasing.error} />}
 			{applying.error && (
 				<>
-					<Failure error={applying.error} />
+					<ProblemAlert error={applying.error} />
 					<p className="panel-note">
 						The outcome could not be confirmed. Retrying sends the same apply request so an accepted change is not applied
 						twice.
@@ -460,12 +448,7 @@ export function HubCatalog({
 			});
 			return;
 		}
-		setSearch((current) => {
-			const next = new URLSearchParams(current);
-			if (value) next.set(key, value);
-			else next.delete(key);
-			return next;
-		});
+		setSearch((current) => searchWith(current, key, value));
 	};
 	const [limit, setLimit] = useState(40),
 		[request, setRequest] = useState<Request | null>(null);

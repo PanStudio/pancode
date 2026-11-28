@@ -21,7 +21,7 @@ import {
 } from "./task-bank.js";
 
 /** Newest snapshots kept; a session older than these resumes with an empty bank. */
-export const TASK_BANK_SNAPSHOT_RETAIN = 64;
+const TASK_BANK_SNAPSHOT_RETAIN = 64;
 const SNAPSHOT_MAX_BYTES = 512 * 1024;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 

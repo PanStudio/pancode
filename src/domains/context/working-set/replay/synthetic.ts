@@ -100,7 +100,7 @@ function syntheticCorpus(id: string): SyntheticCorpusSpec | undefined {
 	return SYNTHETIC_CORPORA.find((spec) => spec.id === id);
 }
 
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
 	let value = seed >>> 0;
 	return () => {
 		value = (value + 0x6d2b79f5) >>> 0;

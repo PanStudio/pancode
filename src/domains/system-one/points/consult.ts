@@ -27,14 +27,14 @@ import { probability } from "./bounds.js";
  * Unmeasured: this is a bound from the kind timeouts in `engine-kinds.ts`, not a fit to
  * any latency anyone recorded.
  */
-export const CONSULT_DEADLINE_MS = 45_000;
+const CONSULT_DEADLINE_MS = 45_000;
 
 /**
  * Files carried as evidence, and code points of one file's head. The point's
  * bound governs, because a smaller state keeps engine latency and contamination
  * between questions down; the tool reads no more than this per file.
  */
-export const CONSULT_MAX_FILES = 12;
+const CONSULT_MAX_FILES = 12;
 export const CONSULT_MAX_FILE_CHARS = 6000;
 const MAX_PATH_CHARS = 200;
 

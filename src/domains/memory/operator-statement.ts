@@ -16,7 +16,7 @@ import type { TaskMemoryModelClient } from "./task-memory-policy.js";
 import { type MemoryRecord, OPERATOR_STATED_KINDS, type OperatorStatedKind } from "./types.js";
 
 /** Where a stated memory lives: pinned to this session, this project's memory, or the operator's own everywhere. */
-export const OPERATOR_MEMORY_SCOPES = ["session", "project", "global"] as const;
+const OPERATOR_MEMORY_SCOPES = ["session", "project", "global"] as const;
 export type OperatorMemoryScope = (typeof OPERATOR_MEMORY_SCOPES)[number];
 
 /** Matches the operator-note bound compaction already keeps verbatim. */

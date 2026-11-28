@@ -37,14 +37,14 @@ export interface JsonProbeResult<T = unknown> extends HttpProbeResult {
 }
 
 /** Enough for a provider's error JSON, small enough that a failing server cannot make a probe buffer a page. */
-export const ERROR_BODY_LIMIT = 2048;
+const ERROR_BODY_LIMIT = 2048;
 
 /**
  * A successful probe body is a model catalog or one embedding. The largest
  * catalogs (OpenRouter, LiteLLM) run to a few MiB; a body past this is not a
  * probe answer, and parsing it whole would let one server exhaust memory.
  */
-export const JSON_BODY_LIMIT = 16 * 1024 * 1024;
+const JSON_BODY_LIMIT = 16 * 1024 * 1024;
 
 class ProbeBodyTooLarge extends Error {
 	constructor() {

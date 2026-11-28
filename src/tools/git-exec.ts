@@ -123,7 +123,7 @@ export function gitConfigValue(cwd: string, key: string): string | null {
 }
 
 /** Longest commit message the typed commit accepts. */
-export const TYPED_GIT_MESSAGE_MAX_CHARS = 16_384;
+const TYPED_GIT_MESSAGE_MAX_CHARS = 16_384;
 
 export type TypedGitMutation = { ok: true; op: "add" | "commit"; argv: string[] } | { ok: false; error: string };
 

@@ -78,7 +78,7 @@ function Measure({ client, value, label }: { client: Client; value: Metric | und
 	return <Explained client={client} label={label} {...explainable(value, "not recorded")} />;
 }
 
-export function MetricSparkline({ values, label }: { values: readonly (number | null)[]; label: string }) {
+function MetricSparkline({ values, label }: { values: readonly (number | null)[]; label: string }) {
 	const segments = sparkline(values);
 	return segments.length ? (
 		<svg className="operator-sparkline" viewBox="0 0 160 30" role="img" aria-label={label}>

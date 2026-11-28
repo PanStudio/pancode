@@ -16,9 +16,7 @@
  * handbook's path, so a read of an omitted line resolves.
  */
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { writeDiagnostic } from "../../core/diagnostics.js";
 import { sha256Hex } from "../../core/hash.js";
@@ -26,6 +24,7 @@ import { ensureProjectIgnore, pancodeProjectRoot } from "../../core/project-root
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import type { ProjectPromptContext } from "./contract.js";
 import { renderPromptContext } from "./prompt-context.js";
+import { sourceWorkerUrl } from "./source-worker-url.js";
 
 export interface CompiledProjectHandbook {
 	/** Absolute path of the cached Markdown; the prompt cites it as the handbook's path. */
@@ -70,7 +69,6 @@ export type HandbookCompileWorkerMessage =
 
 const DEFAULT_COMPILE_TIMEOUT_MS = 120_000;
 let compileTimeoutMs = DEFAULT_COMPILE_TIMEOUT_MS;
-const require = createRequire(import.meta.url);
 
 export function compiledHandbookPath(root: string): string {
 	return join(root, ".pancode", "state", "compiled-handbook.md");
@@ -221,12 +219,7 @@ export function compiledProjectHandbook(cwd: string): CompiledProjectHandbook | 
 
 function buildWorkerUrl(): URL {
 	if (!import.meta.url.endsWith(".ts")) return new URL("./context/handbook-compile-worker.js", import.meta.url);
-	// Source execution: the same absolute-loader bootstrap as the codewiki build worker.
-	const loaderApi = pathToFileURL(require.resolve("tsx/esm/api")).href;
-	const source = new URL("./handbook-compile-worker.ts", import.meta.url).href;
-	return new URL(
-		`data:text/javascript,${encodeURIComponent(`const { tsImport } = await import(${JSON.stringify(loaderApi)}); await tsImport(${JSON.stringify(source)}, import.meta.url);`)}`,
-	);
+	return sourceWorkerUrl(new URL("./handbook-compile-worker.ts", import.meta.url));
 }
 
 function compileInWorker(root: string, refresh: Refresh): Promise<InputStamp[]> {

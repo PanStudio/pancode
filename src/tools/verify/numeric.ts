@@ -33,8 +33,8 @@ export type NumericToleranceCombine = "all" | "any";
  */
 export type NumericNonFinitePolicy = "fail" | "match";
 
-export const DEFAULT_NUMERIC_COMBINE: NumericToleranceCombine = "all";
-export const DEFAULT_NUMERIC_NON_FINITE: NumericNonFinitePolicy = "fail";
+const DEFAULT_NUMERIC_COMBINE: NumericToleranceCombine = "all";
+const DEFAULT_NUMERIC_NON_FINITE: NumericNonFinitePolicy = "fail";
 
 /**
  * The largest admissible `ulp` bound. `ulpDistance` reports a distance past
@@ -239,7 +239,7 @@ export interface NumericCompareReport {
 	repeat?: RepeatRecord;
 }
 
-export const NUMERIC_PAYLOAD_CAPS = Object.freeze({
+const NUMERIC_PAYLOAD_CAPS = Object.freeze({
 	keys: 4096,
 	elements: 1_000_000,
 });

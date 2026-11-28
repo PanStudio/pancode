@@ -26,7 +26,7 @@ import {
 import { rejectReminder, rejectStoredContent, stripBoundaryControlTokens } from "./task-memory-output.js";
 import { hasExactKeys, nonEmptyString, positiveInteger } from "./util.js";
 
-export const TASK_MEMORY_POLICY_MAX_OPERATIONS = 8;
+const TASK_MEMORY_POLICY_MAX_OPERATIONS = 8;
 /**
  * Fallback deadline for a caller that supplies no timeout, which is the
  * middleware constructed without settings and `runTaskMemoryPolicy` called

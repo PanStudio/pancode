@@ -37,7 +37,7 @@ import {
 } from "../theme/index.js";
 import { confirmOnceRail, listJump } from "./confirm-once.js";
 
-export const QUEUE_NAVIGATOR_OVERLAY_WIDTH = 88;
+const QUEUE_NAVIGATOR_OVERLAY_WIDTH = 88;
 
 export interface QueueNavigatorDeps {
 	entries(): ReadonlyArray<QueuedChatMessage>;

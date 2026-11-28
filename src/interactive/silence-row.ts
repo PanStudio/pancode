@@ -16,7 +16,7 @@ import { renderNoticeRow } from "./renderers/notice.js";
 import { GLYPH } from "./theme/index.js";
 
 /** The first escalation the transcript records; the rail's own `no bytes yet` and `Esc stops` come before it. */
-export const SILENCE_ROW_AFTER_MS = 60_000;
+const SILENCE_ROW_AFTER_MS = 60_000;
 
 function clockTime(at: number): string {
 	return new Date(at).toTimeString().slice(0, 8);

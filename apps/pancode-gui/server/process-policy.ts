@@ -60,7 +60,7 @@ export async function startAcpChild(cwd: string, env: NodeJS.ProcessEnv = proces
 		env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
 	});
 }
-export async function resolvePancodeCommand(
+async function resolvePancodeCommand(
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ file: string; prefix: string[] }> {
 	const override = env.PANCODE_WEB_CLI;
@@ -232,7 +232,7 @@ export function autoOpenBrowser(
 }
 
 /** Windows PowerShell as WSL interop reaches it; the shortcut and folder scripts below are the only users. */
-export const WINDOWS_POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
+const WINDOWS_POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
 /** Browsers that can show the app in its own window, in the order a person would expect them. */
 const WINDOWS_APP_BROWSERS = [
 	"/mnt/c/Program Files/Google/Chrome/Application/chrome.exe",
@@ -254,7 +254,7 @@ export function isWsl(
  * From WSL the app opens as a standalone Chrome or Edge window on the Windows desktop, which is how an
  * installed web app presents itself. The URL stays one literal argument; nothing is interpreted by a shell.
  */
-export function windowsAppCommand(
+function windowsAppCommand(
 	url: string,
 	env: NodeJS.ProcessEnv = process.env,
 	exists: (path: string) => boolean = existsSync,
@@ -596,7 +596,7 @@ function onPath(name: string, env: NodeJS.ProcessEnv, exists: (path: string) => 
  * argument; the PowerShell script is a constant. WSL prefers the Windows dialog over a WSLg one, because
  * that is the desktop the person is looking at.
  */
-export function folderPickerCommand(
+function folderPickerCommand(
 	platform: NodeJS.Platform = process.platform,
 	env: NodeJS.ProcessEnv = process.env,
 	home = homedir(),

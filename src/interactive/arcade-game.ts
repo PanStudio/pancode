@@ -52,7 +52,7 @@ export const ARCADE_MAZE: readonly string[] = [
 	"###########################",
 ];
 
-export const GHOST_LABELS = ["CI", "CD", "lint", "tests", "review"] as const;
+const GHOST_LABELS = ["CI", "CD", "lint", "tests", "review"] as const;
 
 const STEP: Record<ArcadeDirection, readonly [number, number]> = {
 	up: [0, -1],

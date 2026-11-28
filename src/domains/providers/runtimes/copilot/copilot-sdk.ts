@@ -16,7 +16,7 @@ import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../../types/r
 import type { TargetDescriptor } from "../../types/target-descriptor.js";
 import { copilotContextTierOf } from "../../types/target-descriptor.js";
 
-export const COPILOT_SDK_RUNTIME_ID = "copilot-sdk";
+const COPILOT_SDK_RUNTIME_ID = "copilot-sdk";
 
 /**
  * The model setup and onboarding pick when the account lists it, as `openai-codex` does. The listing's own first
@@ -24,7 +24,7 @@ export const COPILOT_SDK_RUNTIME_ID = "copilot-sdk";
  */
 export const COPILOT_SDK_DEFAULT_MODEL = "gpt-6-luna";
 
-export const COPILOT_SDK_AUTH_NOTICE =
+const COPILOT_SDK_AUTH_NOTICE =
 	"Uses your GitHub Copilot subscription through the official Copilot SDK, as the account signed in with `copilot login`; your organization's Copilot policies apply. PanCode stores no Copilot token.";
 
 const copilotCapabilities: CapabilityFlags = {

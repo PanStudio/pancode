@@ -14,13 +14,13 @@ import type { ToolResultDigest } from "../../tools/result-disposition.js";
 export type { MiddlewareEffectKind, MiddlewareHook, MiddlewareReminderSeverity };
 
 /** The effect kinds a hooks file or a builtin rule may declare: every kind but a rewrite. */
-export const DECLARABLE_MIDDLEWARE_EFFECT_KINDS = MIDDLEWARE_EFFECT_KINDS.filter(
+const DECLARABLE_MIDDLEWARE_EFFECT_KINDS = MIDDLEWARE_EFFECT_KINDS.filter(
 	(kind): kind is DeclarableMiddlewareEffectKind => kind !== "rewrite_tool_input",
 );
 
 export type DeclarableMiddlewareEffectKind = Exclude<MiddlewareEffectKind, "rewrite_tool_input">;
 
-export const MIDDLEWARE_ANNOTATION_SEVERITIES = ["info", "warn"] as const;
+const MIDDLEWARE_ANNOTATION_SEVERITIES = ["info", "warn"] as const;
 
 export type MiddlewareAnnotationSeverity = (typeof MIDDLEWARE_ANNOTATION_SEVERITIES)[number];
 

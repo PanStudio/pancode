@@ -29,12 +29,12 @@ import type { ClaimDisputeRecord, ClaimEdgeRecord, ClaimRecord, ClaimStatus } fr
  * deciding test, so the agent reports the ledger's status instead of one it wrote itself.
  */
 
-export const CLAIMS_DELIVERY_REGISTRATION_ID = "observer.claims-delivery";
-export const CLAIMS_DELIVERY_VERIFY_REGISTRATION_ID = "observer.claims-delivery-verify";
+const CLAIMS_DELIVERY_REGISTRATION_ID = "observer.claims-delivery";
+const CLAIMS_DELIVERY_VERIFY_REGISTRATION_ID = "observer.claims-delivery-verify";
 
 /** Per check message cap (the untrusted banner included) and per hook check cap: at most about 2.6 KB per hook point. */
-export const CLAIMS_DELIVERY_MAX_CHARS = 1300;
-export const CLAIMS_DELIVERY_MAX_CHECKS = 2;
+const CLAIMS_DELIVERY_MAX_CHARS = 1300;
+const CLAIMS_DELIVERY_MAX_CHECKS = 2;
 const CLAIM_TEXT_MAX_CHARS = 280;
 
 function clip(text: string, max: number): string {
@@ -290,7 +290,7 @@ function offersPath(project: string): string {
 /** Offers files past this size are trimmed when a session first loads them. */
 export const CLAIMS_OFFERS_MAX_BYTES = 256 * 1024;
 /** Offers older than this are dropped by the trim: a session idle this long is offered again, once. */
-export const CLAIMS_OFFERS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const CLAIMS_OFFERS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Keep the offers file bounded (#406): past `CLAIMS_OFFERS_MAX_BYTES`, rewrite it with only the offers made within

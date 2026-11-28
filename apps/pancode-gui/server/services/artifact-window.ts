@@ -27,7 +27,7 @@ export { MAX_SERVED_ARTIFACT_IDS } from "../../contracts/common.js";
  */
 
 /** Artifact families a browser may reference. One window is kept per family. */
-export const ARTIFACT_KINDS = ["evidence", "run", "dispatch"] as const;
+const ARTIFACT_KINDS = ["evidence", "run", "dispatch"] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 /**
@@ -48,7 +48,7 @@ export const RUN_KINDS = ["run", "dispatch"] as const satisfies readonly Artifac
  */
 const ARTIFACT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
-export function isArtifactId(value: unknown): value is string {
+function isArtifactId(value: unknown): value is string {
 	return typeof value === "string" && ARTIFACT_ID.test(value) && !value.includes("..");
 }
 
@@ -59,7 +59,7 @@ export type RefusalReason = "no-window" | "outside-window" | "malformed";
  * the server never looked the id up, so reporting "not found" would claim a
  * search that did not happen. `reason` keeps the three operator states apart.
  */
-export class ArtifactNotServedError extends AppProblem {
+class ArtifactNotServedError extends AppProblem {
 	override readonly name = "ArtifactNotServedError";
 	constructor(
 		readonly kind: ArtifactKind,
@@ -71,7 +71,7 @@ export class ArtifactNotServedError extends AppProblem {
 }
 
 /** A projection tried to serve something it could not have produced. */
-export class ArtifactServeError extends AppProblem {
+class ArtifactServeError extends AppProblem {
 	override readonly name = "ArtifactServeError";
 	constructor() {
 		super("internal", "PanCode could not record which artifacts this window is showing.");

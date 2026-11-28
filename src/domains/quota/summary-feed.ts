@@ -16,7 +16,7 @@ import { quotaSummaryLine } from "./presentation.js";
 import { createQuotaService, type QuotaService } from "./service.js";
 import type { UsageSnapshot } from "./types.js";
 
-export const QUOTA_SUMMARY_TTL_MS = 5 * 60_000;
+const QUOTA_SUMMARY_TTL_MS = 5 * 60_000;
 
 export interface QuotaSummaryFeedOptions {
 	service?: QuotaService;

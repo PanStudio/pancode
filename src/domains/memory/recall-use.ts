@@ -209,7 +209,7 @@ async function recordRecallUse(stateDir: string, turn: RecallUseTurn): Promise<v
 	);
 }
 
-export const MEMORY_RECALL_USE_REGISTRATION_ID = "observer.memory-recall-use";
+const MEMORY_RECALL_USE_REGISTRATION_ID = "observer.memory-recall-use";
 
 export interface MemoryRecallUseDeps {
 	dataDir(): string;

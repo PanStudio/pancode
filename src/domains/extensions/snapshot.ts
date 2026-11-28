@@ -16,8 +16,8 @@ import {
 	isLoadableExtension,
 } from "./types.js";
 
-export const EXTENSION_SNAPSHOT_DIAGNOSTIC_CAP = 200;
-export const EXTENSION_SNAPSHOT_DIAGNOSTIC_PER_PACKAGE_CAP = 20;
+const EXTENSION_SNAPSHOT_DIAGNOSTIC_CAP = 200;
+const EXTENSION_SNAPSHOT_DIAGNOSTIC_PER_PACKAGE_CAP = 20;
 export const EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP = 512;
 
 export interface BuildExtensionSnapshotInput {

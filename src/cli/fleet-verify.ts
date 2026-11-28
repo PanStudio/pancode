@@ -24,7 +24,7 @@ import { writeCliFailure } from "./kit/json-out.js";
 export type FleetVerifyState = "pending" | "verified" | "failed" | "unavailable";
 
 /** Why a run did not authenticate, as a closed set: the part of its sealed scope that did not verify, or why none did. */
-export const FLEET_VERIFY_REASONS = [
+const FLEET_VERIFY_REASONS = [
 	"manifest-mismatch",
 	"segment-mismatch",
 	"object-mismatch",
@@ -105,7 +105,7 @@ function rootVerifySnapshot(seal: FleetRootSeal, now: () => number = Date.now): 
 	};
 }
 
-export class FleetVerifyUnknownRunError extends Error {
+class FleetVerifyUnknownRunError extends Error {
 	override readonly name = "FleetVerifyUnknownRunError";
 }
 

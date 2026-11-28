@@ -11,7 +11,7 @@ import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolConfirmation, ToolSpec } from "./tool-spec.js";
 
 /** Rule id of the approval card a model-requested restart opens. */
-export const RESTART_SESSION_RULE_ID = "restart-session";
+const RESTART_SESSION_RULE_ID = "restart-session";
 
 export interface RestartSessionDeps {
 	getCwd(): string;

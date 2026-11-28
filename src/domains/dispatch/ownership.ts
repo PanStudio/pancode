@@ -51,7 +51,7 @@ export interface DispatchOwner {
 }
 
 /** Bound on the `parentSessionId` chain a dispatch owner follows. */
-export const MAX_SESSION_ANCESTORS = 32;
+const MAX_SESSION_ANCESTORS = 32;
 
 /**
  * The ancestor chain from `parentSessionId` up, nearest first, read through

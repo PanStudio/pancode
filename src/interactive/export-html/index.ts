@@ -3,7 +3,7 @@
 import { htmlTemplate } from "./template.js";
 import { renderTranscriptHtml, transcriptHtmlBlocks } from "./tool-renderer.js";
 
-export const MAX_HTML_EXPORT_BYTES = 2 * 1024 * 1024;
+const MAX_HTML_EXPORT_BYTES = 2 * 1024 * 1024;
 const TEMPLATE_RESERVE_BYTES = 8 * 1024;
 /** Lines or blocks converted between two hand-backs of the event loop in {@link renderSessionHtmlAsync}. */
 const EXPORT_CHUNK = 256;
@@ -79,5 +79,5 @@ function* sessionHtmlSteps(input: HtmlSessionExportInput): Generator<void, strin
 	return html;
 }
 
-export { ansiLinesToHtml, ansiToHtml } from "./ansi-to-html.js";
+export { ansiLinesToHtml } from "./ansi-to-html.js";
 export { renderTranscriptHtml } from "./tool-renderer.js";

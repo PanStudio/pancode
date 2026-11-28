@@ -12,13 +12,18 @@ export const DRAFT_KEY = "pancode-draft:";
 export const DRAFT_INDEX = "pancode-draft-index";
 export const stores = new Map<string, DraftStore>();
 
-export function storedDraftIds(): string[] {
+/** The string list stored under `key` in this window's session storage; unreadable or malformed reads as empty. */
+export function sessionStringList(key: string): string[] {
 	try {
-		const value: unknown = JSON.parse(sessionStorage.getItem(DRAFT_INDEX) ?? "[]");
+		const value: unknown = JSON.parse(sessionStorage.getItem(key) ?? "[]");
 		return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 	} catch {
 		return [];
 	}
+}
+
+export function storedDraftIds(): string[] {
+	return sessionStringList(DRAFT_INDEX);
 }
 
 export function discardDraftStore(id: string): void {

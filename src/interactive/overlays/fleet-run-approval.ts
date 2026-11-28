@@ -49,12 +49,12 @@ import {
 } from "../theme/index.js";
 import { scrollJump } from "./confirm-once.js";
 
-export const FLEET_RUN_APPROVAL_OVERLAY_TITLE = "Fleet run approval";
+const FLEET_RUN_APPROVAL_OVERLAY_TITLE = "Fleet run approval";
 
 const FLEET_RUN_APPROVAL_MIN_WIDTH = 48;
 const FLEET_RUN_APPROVAL_MAX_WIDTH = 110;
 /** Rows of plan shown at once when the frame has not said how many it has. */
-export const FLEET_RUN_APPROVAL_VISIBLE_ROWS = 22;
+const FLEET_RUN_APPROVAL_VISIBLE_ROWS = 22;
 /**
  * A preview budget under this many rows cannot hold a step and the position row that says how many more there are,
  * so the verdict's step count stands for the list (compact's budget is 2).

@@ -172,7 +172,7 @@ const answerRefusal = (answer: AnswerApproval, permissionId: string): Error | nu
 		: null;
 
 /** The one mutation both surfaces answer through, exported so a tool card can reuse it. */
-export function useAnswerApproval(client: Client, sessionId: string) {
+function useAnswerApproval(client: Client, sessionId: string) {
 	const queries = useQueryClient();
 	const refresh = () => {
 		void queries.invalidateQueries({ queryKey: ["session", sessionId] });

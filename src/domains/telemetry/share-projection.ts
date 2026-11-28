@@ -53,8 +53,8 @@ export type FieldProjection =
 	| AnonKind
 	| { readonly [field: string]: FieldProjection };
 
-export const WITHHELD = "[withheld]";
-export const ANONYMOUS_ID = /^anon_[0-9a-f]{16}$/u;
+const WITHHELD = "[withheld]";
+const ANONYMOUS_ID = /^anon_[0-9a-f]{16}$/u;
 
 type AllKeys<T> = T extends unknown ? keyof T : never;
 type PayloadProjection<T> = { readonly [K in AllKeys<T>]-?: FieldProjection };
@@ -769,7 +769,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
  * them becomes an anonymous id, and so does every dictionary key they hold, such as a model id under
  * `targets[].lmstudio.models`; only their fixed field names, switches and numbers stay readable.
  */
-export const SHARE_OBJECT_PROJECTIONS: Readonly<Record<string, FieldProjection>> = {
+const SHARE_OBJECT_PROJECTIONS: Readonly<Record<string, FieldProjection>> = {
 	"prompt-structure": {
 		sections: { ...keep("tokenEstimate", "contentHash"), id: "token" },
 		fragments: { ...keep("contentHash", "dynamic"), id: "token", relPath: "path" },

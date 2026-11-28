@@ -60,7 +60,7 @@ const SECTION_AUDIENCE: ReadonlyArray<readonly [RegExp, readonly HandbookAudienc
 const DEFAULT_AUDIENCE: readonly HandbookAudience[] = ["write", "verify"];
 
 /** Section titles whose rules hold in every path, whatever paths they cite; a `paths=` override still scopes one. */
-export const UNSCOPED_SECTION_TITLES: ReadonlyArray<RegExp> = [
+const UNSCOPED_SECTION_TITLES: ReadonlyArray<RegExp> = [
 	/^conventions$/i,
 	/^tests?\b/i,
 	/gotcha/i,

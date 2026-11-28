@@ -32,7 +32,7 @@ export const TrustPreviewFile = Type.Object(
 	closed,
 );
 export type TrustPreviewFile = Static<typeof TrustPreviewFile>;
-export const TrustPreviewPackage = Type.Object(
+const TrustPreviewPackage = Type.Object(
 	{
 		id: Type.String({ maxLength: 1024 }),
 		source: Type.Union([Type.String({ maxLength: 4096 }), Type.Null()]),

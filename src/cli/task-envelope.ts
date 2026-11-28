@@ -103,7 +103,7 @@ const TOP_LEVEL: Readonly<Record<string, EnvelopeLeaf>> = {
 };
 
 /** Every key the envelope accepts at its root; the manifest and `schema task` describe the same set. */
-export const TASK_ENVELOPE_KEYS: ReadonlyArray<string> = [
+const TASK_ENVELOPE_KEYS: ReadonlyArray<string> = [
 	"schemaVersion",
 	"task",
 	"attachments",

@@ -17,7 +17,7 @@ const SAFETY_ROLES: SemanticRole[] = [
 	"yoloLabel",
 	"composerSurface",
 ];
-export const SKIN_LOCKED_PALETTE: ReadonlyArray<PaletteColor> = Object.freeze([
+const SKIN_LOCKED_PALETTE: ReadonlyArray<PaletteColor> = Object.freeze([
 	...new Set([
 		...SAFETY_ROLES.map((role) => resolveRole(role).color),
 		resolveRole("commandHint", { surface: "composer", mode: "yolo" }).color,

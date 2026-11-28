@@ -29,7 +29,7 @@ export const DEFAULT_QUOTA_CACHE_TTL_MS = 5 * 60_000;
  * How long a failed read (error, expired) is served before the provider is asked again. Shorter than the TTL so an
  * outage clears quickly, but long enough that a surface re-reading on every update never turns into a poll loop.
  */
-export const QUOTA_FAILURE_BACKOFF_MS = 60_000;
+const QUOTA_FAILURE_BACKOFF_MS = 60_000;
 
 /** The longest one adapter's turn holds the next adapter on its endpoint: past the 15 s request timeout. */
 const DEFAULT_LANE_TURN_MS = 20_000;
