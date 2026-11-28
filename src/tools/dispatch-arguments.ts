@@ -3,6 +3,7 @@
 
 /** Pure model-argument parsing; every returned DispatchRequest has a concrete agent id. */
 
+import { cloneDispatchBudgetRequest } from "../core/run-budget-envelope.js";
 import { validateTagName } from "../core/store-paths.js";
 import { isRecord } from "../core/type-guards.js";
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/views/thinking-levels.js";
@@ -12,7 +13,6 @@ import { parseResultSummaryMaxBytes } from "../domains/agents/result-contract-al
 import type { AgentAutomationAuthority, AgentSpec } from "../domains/agents/spec.js";
 import { parseWorkerContextPolicy } from "../domains/context/worker/contract.js";
 import { classifyAgentTask } from "../domains/dispatch/agent-candidates.js";
-import { cloneDispatchBudgetRequest } from "../domains/dispatch/budget-envelope.js";
 import type { DispatchRequest } from "../domains/dispatch/contract.js";
 import { type AgentRoleFactsResolver, withRunRole } from "../domains/dispatch/execution-role.js";
 import { COUNCIL_VOTER_PROMPT } from "../domains/dispatch/gate-role-prompts.js";

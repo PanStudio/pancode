@@ -4,6 +4,7 @@
 // loads apart from the session route, and `preloadPanels` fetches it once the page is idle so a first open
 // rarely waits. Render each inside a `Suspense` placed outside anything that moves focus on mount.
 import { lazy } from "react";
+import { whenIdle } from "../interaction/when-idle.js";
 
 const loaders = {
 	aside: () => import("./AsidePanel.js"),
@@ -35,10 +36,5 @@ export function preloadPanels(): () => void {
 				/* The panel's own open reports a failed load; a prefetch has no one to tell. */
 			});
 	};
-	if (typeof requestIdleCallback === "function") {
-		const handle = requestIdleCallback(load, { timeout: 3000 });
-		return () => cancelIdleCallback(handle);
-	}
-	const handle = setTimeout(load, 1000);
-	return () => clearTimeout(handle);
+	return whenIdle(load, 1000);
 }

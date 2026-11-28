@@ -23,12 +23,6 @@
  * a tool segment the stream ends without `<|call|>` is flushed as incomplete.
  */
 
-import {
-	type HarmonyReasoningEffort,
-	harmonyReasoningEffort,
-	isHarmonyThinkingFormat,
-} from "../domains/providers/model-runtime-capabilities.js";
-
 const START = "<|start|>";
 const CHANNEL = "<|channel|>";
 const CONSTRAIN = "<|constrain|>";
@@ -59,8 +53,6 @@ interface HarmonyHeader {
 	recipient: string | null;
 	constrain: string | null;
 }
-
-export { type HarmonyReasoningEffort, harmonyReasoningEffort, isHarmonyThinkingFormat };
 
 /**
  * A tool name a Harmony model addressed, after the `functions.` namespace is

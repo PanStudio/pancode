@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
+import { TASK_BOARD_COMPLETION_CLAIM_PREFIX } from "../../core/task-board-claims.js";
 import {
 	isSessionEntry,
 	type TaskLedgerGoal,
@@ -22,7 +23,6 @@ import {
  */
 
 const TASK_BOARD_GOAL_ID = "board";
-export const TASK_BOARD_COMPLETION_CLAIM_PREFIX = "Completion claim: ";
 
 export interface TaskBoardTask {
 	id: string;

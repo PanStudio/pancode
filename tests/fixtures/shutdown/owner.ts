@@ -113,7 +113,7 @@ if (mode === "editor") {
 	await termination.shutdown(0);
 } else if (mode === "heartbeat") {
 	// A session held the way a TUI holds one: live record beating, the one shutdown path behind SIGTERM.
-	const { configureSessionHeartbeat, startSessionHeartbeat } = await import("../../../src/domains/session/heartbeat.js");
+	const { configureSessionHeartbeat, startSessionHeartbeat } = await import("../../../src/lib/heartbeat/heartbeat.js");
 	const termination = getTerminationCoordinator();
 	configureSessionHeartbeat({
 		surface: "tui",

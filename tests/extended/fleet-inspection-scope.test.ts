@@ -23,14 +23,14 @@ import {
 } from "../../src/cli/fleet-board-model.js";
 import { fleetInspectionScope } from "../../src/cli/fleet-project-scope.js";
 import { runFleetStatus } from "../../src/cli/fleet-status.js";
-import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
 	formatBudgetPolicy,
 	formatBudgetReasons,
 	formatBudgetRequest,
 	formatEffectiveBudget,
 	resolveToolBudgetEnvelope,
-} from "../../src/domains/dispatch/budget-envelope.js";
+} from "../../src/core/run-budget-envelope.js";
+import { pancodeStateDir } from "../../src/core/xdg.js";
 import { setCapacityDraining } from "../../src/domains/dispatch/capacity-lease.js";
 import { gateDecisionsDirectory, stagePendingGateDecision } from "../../src/domains/dispatch/gate-decisions.js";
 import { runFeedPath } from "../../src/domains/dispatch/run-feed.js";

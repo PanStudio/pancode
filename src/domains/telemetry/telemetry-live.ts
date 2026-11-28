@@ -379,7 +379,7 @@ function repeatsNewestReading(held: Iterable<TelemetryRecord>, record: QuotaRead
 }
 
 export function createLiveTelemetryModel(options: LiveTelemetryOptions): LiveTelemetryModel {
-	const importLoader = options.loader ?? (() => import("../session/telemetry-source.js"));
+	const importLoader = options.loader ?? (() => import("./telemetry-source.js"));
 	let loaded: TelemetrySourceLoader | null = null;
 	const load = async () => (loaded ??= await importLoader());
 	// Scope files are read only once the cold loader is in; a run DTO before that names no seal rather than guessing.

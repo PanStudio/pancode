@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Stats } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { extname, relative, resolve, sep } from "node:path";
+import { extname, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { Hono } from "hono";
 import { isPagePath } from "../../contracts/pages.js";
+import { relativePathEscapes } from "../pancode/http-shims.js";
 import { AppProblem, decodeRequestPath } from "../services/problem.js";
 
 interface CachedFile {
@@ -73,8 +74,7 @@ async function locate(root: string, path: string): Promise<{ file: string; info:
 	} catch {
 		return null;
 	}
-	const difference = relative(root, file);
-	if (difference === ".." || difference.startsWith(`..${sep}`) || difference.startsWith(sep)) return null;
+	if (relativePathEscapes(relative(root, file))) return null;
 	const info = await stat(file);
 	return info.isFile() ? { file, info } : null;
 }

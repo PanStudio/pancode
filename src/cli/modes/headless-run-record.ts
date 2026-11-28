@@ -4,8 +4,8 @@ import { readPancodeVersion } from "../../core/package-root.js";
 import type { RunOwnerTelemetryContext } from "../../core/telemetry/context.js";
 import { mainAgent } from "../../core/telemetry/context.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
+import { WORKER_OUTPUT_MAX_BYTES } from "../../core/worker-output.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import { WORKER_OUTPUT_MAX_BYTES } from "../../domains/dispatch/event-pump.js";
 import { mainAgentTerminalReason } from "../../domains/dispatch/outcome.js";
 import { type RunCallUsage, runUsageFromCalls } from "../../domains/dispatch/run-call-usage.js";
 import {

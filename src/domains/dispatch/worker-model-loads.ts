@@ -13,6 +13,7 @@
  * process's own resolved target, never from the worker.
  */
 
+import { isLoopbackUrl } from "../../core/project-target-urls.js";
 import { adoptWorkerLoadedModel } from "../../engine/apis/residency.js";
 import type { WorkerModelLoad } from "../../lib/worker-wire/protocol.js";
 import type { RuntimeDescriptor, TargetDescriptor } from "../providers/index.js";
@@ -23,22 +24,6 @@ export interface WorkerModelLoadRoute {
 	runtime: RuntimeDescriptor;
 	wireModelId: string;
 	node: RunNodeIdentity;
-}
-
-function isLoopbackUrl(url: string): boolean {
-	let host: string;
-	try {
-		host = new URL(url).hostname.toLowerCase();
-	} catch {
-		return false;
-	}
-	return (
-		host === "localhost" ||
-		host.endsWith(".localhost") ||
-		host === "[::1]" ||
-		host === "0.0.0.0" ||
-		/^127(\.\d{1,3}){3}$/u.test(host)
-	);
 }
 
 /**

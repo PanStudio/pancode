@@ -33,8 +33,6 @@ import {
 	validationMatch,
 } from "./validation-check-match.js";
 
-export type { ProtectedArtifactSource };
-
 export interface ProtectedArtifact {
 	path: string;
 	protectedAt: string;

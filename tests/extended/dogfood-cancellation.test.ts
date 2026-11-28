@@ -16,7 +16,6 @@ import {
 	type RuntimeDescriptor,
 } from "../../src/domains/providers/index.js";
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
-import type { VisionSidecar } from "../../src/domains/providers/vision-sidecar.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import { isSessionEntry, isSessionHeader, type SessionEntry } from "../../src/domains/session/index.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
@@ -40,6 +39,7 @@ import { estimatedUsageForInterruptedTurn } from "../../src/session-control/chat
 import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";
 import { INITIAL_STATUS } from "../../src/session-control/status-types.js";
 import { createRegistry } from "../../src/tools/registry.js";
+import type { VisionSidecar } from "../../src/tools/vision-sidecar.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { readRunJournal } from "../harness/run-journal.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";

@@ -73,8 +73,6 @@ export interface McpHttpTransportOptions {
 	maxOutboundBytes: number;
 	/** Bound on the session DELETE a legacy close sends. */
 	teardownBoundMs: number;
-	/** Waits between attempts to reach a server that refused the connection; one more attempt than entries. */
-	retryDelaysMs?: ReadonlyArray<number>;
 	fetch?: typeof fetch;
 }
 
@@ -220,7 +218,7 @@ export function createMcpHttpTransport(
 	const endpoint = new URL(spec.url);
 	const origin = mcpOriginOf(endpoint);
 	const doFetch = options.fetch ?? globalThis.fetch;
-	const retryDelays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+	const retryDelays = DEFAULT_RETRY_DELAYS_MS;
 	const credentialHeaders = Object.entries(spec.headers ?? {});
 	const authorizer = spec.authorizer;
 	/** The MCP address the latest request reached, after the same-origin redirects it followed. */

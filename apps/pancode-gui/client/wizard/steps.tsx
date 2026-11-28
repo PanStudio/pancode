@@ -10,6 +10,8 @@ import {
 	type Choice,
 	type CredentialOption,
 	canSubmitText,
+	defaultMarked,
+	FACT_MARKS,
 	matches,
 	modelChoiceVisible,
 	type ProviderOption,
@@ -19,6 +21,9 @@ import {
 	sentence,
 	startingModel,
 	textAnswer,
+	tileTarget,
+	type WizardMode,
+	welcomeTitle,
 } from "./wizard-model.js";
 
 export interface StepProps<V extends StepView = StepView> {
@@ -80,20 +85,12 @@ function Problem({ text }: { text: string | null }) {
 
 /** Arrow keys move between the buttons of a tile grid, the way a menu does. */
 function arrowNavigation(event: KeyboardEvent<HTMLElement>) {
-	const keys = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"];
-	if (!keys.includes(event.key) || !(event.target instanceof HTMLElement)) return;
+	if (!(event.target instanceof HTMLElement)) return;
 	const tiles = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-tile]:not(:disabled)")];
 	const at = tiles.indexOf(event.target);
-	if (at < 0) return;
+	const next = at < 0 ? null : tileTarget(event.key, at, tiles.length);
+	if (next === null) return;
 	event.preventDefault();
-	const next =
-		event.key === "Home"
-			? 0
-			: event.key === "End"
-				? tiles.length - 1
-				: event.key === "ArrowRight" || event.key === "ArrowDown"
-					? Math.min(tiles.length - 1, at + 1)
-					: Math.max(0, at - 1);
 	tiles[next]?.focus();
 }
 
@@ -106,7 +103,7 @@ export function WelcomeStep({
 	onStart,
 	onLater,
 }: {
-	mode: "first" | "add" | "repair";
+	mode: WizardMode;
 	busy: boolean;
 	error: string | null;
 	onStart: () => void;
@@ -114,7 +111,7 @@ export function WelcomeStep({
 }) {
 	return (
 		<Step
-			title={mode === "first" ? "Welcome to PanCode." : mode === "add" ? "Add a connection." : "Repair your connection."}
+			title={welcomeTitle(mode)}
 			lede={
 				mode === "first" ? (
 					<>
@@ -595,10 +592,10 @@ export function LoginMethodStep({ view, busy, send }: StepProps<Of<"login-method
 							onClick={() => send(selectAnswer(view.prompt, choice))}
 						>
 							<span className="wizard-card__text">
-								<strong>{choice.label.replace(/\s*\(default\)$/u, "")}</strong>
+								<strong>{defaultMarked(choice.label).text}</strong>
 								{choice.hint ? (
 									<small>{choice.hint}</small>
-								) : /\(default\)/u.test(choice.label) ? (
+								) : defaultMarked(choice.label).recommended ? (
 									<small>Recommended</small>
 								) : null}
 							</span>
@@ -753,16 +750,17 @@ function useReveal(count: number): number {
 }
 
 function FactRow({ fact }: { fact: ReviewFact }) {
+	const mark = FACT_MARKS[fact.tone];
 	return (
 		<li className="wizard-check" data-tone={fact.tone}>
 			<span className="wizard-check__mark" aria-hidden="true">
-				{fact.tone === "ok" ? <Icon name="check" /> : fact.tone === "warn" ? "!" : "·"}
+				{mark.glyph ?? <Icon name="check" />}
 			</span>
 			<span className="wizard-check__body">
 				<span className="wizard-check__label">{fact.label}</span>
 				<span className="wizard-check__text">{fact.text}</span>
 			</span>
-			<span className="sr-only">{fact.tone === "ok" ? "verified" : fact.tone === "warn" ? "not verified" : ""}</span>
+			<span className="sr-only">{mark.spoken}</span>
 		</li>
 	);
 }
