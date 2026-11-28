@@ -14,10 +14,11 @@
 import type { OutputStyle } from "../../core/defaults.js";
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
 import type { ChatPanelOptions } from "../chat-panel.js";
-import type { TranscriptEntry, WorkerTranscriptEntry } from "../chat-transcript-model.js";
+import type { TranscriptEntry, UserTurnStatus, WorkerTranscriptEntry } from "../chat-transcript-model.js";
 import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
+import type { createChatEvents } from "./events.js";
 import type { createChatFrame } from "./frame.js";
 import type { createChatReceipts } from "./receipts.js";
 import type { createChatRunSettle } from "./run-settle.js";
@@ -54,6 +55,9 @@ export interface ChatPanelScope {
 	runMovedTo: string | undefined;
 	/** The operator turn the current run's calls journal under, from its start event or a replayed run end. */
 	runTurnId: string | undefined;
+	// The prompt that opens the next run: its clock starts here, so a compaction the submit runs before the model
+	// call is inside the turn's duration, as its calls and tokens are.
+	pendingPrompt: { at: number; status?: () => UserTurnStatus } | undefined;
 	/** The latest settled receipt eligible for the turn's post-settlement prewarm record. */
 	lastSettledReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null;
 	readonly liveReplayBlocks: Set<() => boolean>;
@@ -111,4 +115,5 @@ export interface ChatPanelScope {
 	readonly toolEvents: ReturnType<typeof createChatToolEvents>;
 	readonly runSettle: ReturnType<typeof createChatRunSettle>;
 	readonly frame: ReturnType<typeof createChatFrame>;
+	readonly events: ReturnType<typeof createChatEvents>;
 }
