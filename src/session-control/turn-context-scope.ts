@@ -7,6 +7,7 @@ import { sha256Hex } from "../core/hash.js";
 import type { LiveBudgetInput, LiveBudgetProducer, LiveBudgetView } from "../domains/context/budget/live-view.js";
 import type { ClassifyCall } from "../domains/context/working-set/superseded.js";
 import type { CompiledSessionPrompt, SessionPromptInputs } from "../domains/prompts/compiler.js";
+import type { ContextWindowDetails, ContextWindowSource } from "../domains/providers/index.js";
 import type { AutoCompactionTrigger, ContextCompactionVerdict } from "../domains/session/compaction/auto.js";
 import type { CompactResult } from "../domains/session/compaction/compact.js";
 import type { CaptureContextSnapshotInput, ContextSnapshot } from "../domains/session/context-accounting.js";
@@ -40,6 +41,13 @@ export interface TurnContextScope {
 	readonly memoryOrigin: (runtime: AgentRuntime) => string;
 	readonly classifyCall: ClassifyCall;
 	readonly budgetProducer: LiveBudgetProducer;
+	readonly windowWithoutRuntime: () => {
+		contextWindow: number;
+		contextWindowSource: ContextWindowSource | null;
+		contextWindowSlots: ContextWindowDetails["contextWindowSlots"];
+	};
+	readonly overflowPinArmed: () => boolean;
+	readonly pendingUserInputTokens: () => number;
 	readonly pendingPolicyText: () => string | null;
 	readonly routeTokenRatio: (agentRuntime: AgentRuntime, observed?: MessageListDigests) => number;
 	readonly measuredAnchor: (
