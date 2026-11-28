@@ -31,6 +31,7 @@ import type { ResultContract } from "../domains/agents/result-contract-types.js"
 import { AGENT_AUTOMATION_AUTHORITIES, type AgentAutomationAuthority } from "../domains/agents/spec.js";
 import type { DispatchRequest } from "../domains/dispatch/contract.js";
 import { type ExecutionRole, isExecutionRole } from "../domains/dispatch/execution-role.js";
+import type { FleetRunCard } from "../domains/dispatch/fleet-run-card.js";
 import { type DispatchIntent, isDispatchIntent } from "../domains/dispatch/intent.js";
 import { DispatchPathScopeInferenceError, resolveDispatchPathScope } from "../domains/dispatch/path-scope.js";
 import {
@@ -41,18 +42,36 @@ import {
 import { isRouteDecisionAgentSelection, type RouteDecisionV1 } from "../domains/dispatch/route-decision.js";
 import { ROUTE_POLICY_VERSION } from "../domains/dispatch/route-policy.js";
 import { isRoutingIntent, type RoutingIntent } from "../domains/dispatch/routing-intent.js";
-import type { DispatchPlanTopology } from "../domains/dispatch/types.js";
+import type { DispatchPlanTopology, RunPlanProvenance } from "../domains/dispatch/types.js";
 import type { DispatchFailoverCandidate, DispatchFailoverMode } from "../domains/dispatch/validation.js";
 import { prepareDispatchArguments } from "./dispatch-arguments.js";
 
 export type { DispatchPlanTopology };
 
-export type DispatchPlanSource = null | {
-	kind: "scout-transition";
-	runId: string;
-	runDigest: string;
-	executionPlanHash: string;
-};
+/**
+ * A fleet plan's origin: a Scout split it continues, a batch whose tasks named their own dependencies, or a
+ * playbook whose card (`DispatchPlanView.fleetRun`) lists its steps; `planHash` is that card's approval identity.
+ */
+export type DispatchPlanSource =
+	| null
+	| {
+			kind: "scout-transition";
+			runId: string;
+			runDigest: string;
+			executionPlanHash: string;
+	  }
+	| { kind: "dependency-plan"; executionPlanHash: string }
+	| { kind: "playbook"; name: string; planHash: string };
+
+/** The execution plan a Scout or dependency-plan source seals; a playbook seals its card instead. */
+export function sourceExecutionPlanHash(source: DispatchPlanSource): string | null {
+	return source === null || source.kind === "playbook" ? null : source.executionPlanHash;
+}
+
+/** A source as a dispatched run's provenance records it; a playbook run is recorded by its own fleet root. */
+export function provenancePlanSource(source: DispatchPlanSource): RunPlanProvenance["source"] {
+	return source === null || source.kind === "playbook" ? null : { ...source };
+}
 
 export type DispatchPlanAuthorityGrant = null | {
 	requested: AgentAutomationAuthority;
@@ -140,10 +159,12 @@ export interface DispatchPlanView {
 	hash: string;
 	/** Scheduling ceiling visible in the approved artifact; 0 means no session ceiling. */
 	costCeilingUsd?: number;
-	/** Whole-plan deadline for a Scout dependency plan. */
+	/** Whole-plan deadline for a fleet dependency plan. */
 	deadlineMs?: number;
 	/** Supervised compete-winner confirmation, when this is an apply action. */
 	confirmation?: { branch: string; group: string; index: number; cwd?: string };
+	/** The playbook's approval card when this call starts a playbook run; `text` is then the card's text. */
+	fleetRun?: FleetRunCard;
 }
 
 export const RESOLVED_DISPATCH_PLAN_ARGUMENT = "__pancode_resolved_dispatch_plan";
@@ -490,9 +511,13 @@ function renderPlanText(
 		);
 	}
 	if (source !== null) {
-		lines.push(
-			`source: scout-transition run=${safeField(source.runId)} run-digest=${source.runDigest} execution-plan=${source.executionPlanHash} max-workers=${maxWorkers ?? "?"} on-failure=${onFailure ?? "?"}`,
-		);
+		const origin =
+			source.kind === "scout-transition"
+				? `scout-transition run=${safeField(source.runId)} run-digest=${source.runDigest} execution-plan=${source.executionPlanHash}`
+				: source.kind === "playbook"
+					? `playbook name=${safeField(source.name)} plan=${source.planHash}`
+					: `dependency-plan execution-plan=${source.executionPlanHash}`;
+		lines.push(`source: ${origin} max-workers=${maxWorkers ?? "?"} on-failure=${onFailure ?? "?"}`);
 	}
 	for (const [index, task] of tasks.entries()) {
 		const model = task.model !== undefined ? ` model=${safeField(task.model)}` : "";
@@ -924,7 +949,10 @@ export function resolvedDispatchPlanFromArgs(args: Record<string, unknown>): Res
 			...(value.confirmation.cwd === undefined ? {} : { cwd: value.confirmation.cwd.trim() }),
 		};
 	}
-	if (value.tasks.length === 0 && confirmation === undefined) return null;
+	const source = parsePlanSource(value.source);
+	if (source === undefined) return null;
+	// A playbook's steps are its card's; its artifact seals the card's identity in the source and lists no tasks.
+	if (value.tasks.length === 0 && confirmation === undefined && source?.kind !== "playbook") return null;
 	if (
 		value.topology !== "parallel" &&
 		value.topology !== "sequential" &&
@@ -940,8 +968,6 @@ export function resolvedDispatchPlanFromArgs(args: Record<string, unknown>): Res
 	if (typeof value.costCeilingUsd !== "number" || !Number.isFinite(value.costCeilingUsd) || value.costCeilingUsd < 0) {
 		return null;
 	}
-	const source = parsePlanSource(value.source);
-	if (source === undefined) return null;
 	const fleet = value.topology === "fleet";
 	if (fleet !== (source !== null)) return null;
 	if (fleet) {
@@ -952,15 +978,16 @@ export function resolvedDispatchPlanFromArgs(args: Record<string, unknown>): Res
 			(value.deadlineMs !== null && (!Number.isInteger(value.deadlineMs) || Number(value.deadlineMs) < 1))
 		)
 			return null;
+		// A Scout successor's agent is chosen by the shared resolver; a dependency plan's tasks name their own.
+		const selected = source?.kind === "scout-transition";
 		if (
 			value.tasks.some(
 				(task) =>
 					task.stepId === null ||
 					task.expectedResultContract === null ||
 					task.authorityGrant === null ||
-					task.agentDecision === null ||
+					(selected && (task.agentDecision === null || task.agentSelection === null)) ||
 					task.wave === null ||
-					task.agentSelection === null ||
 					task.role !== "task" ||
 					task.position === undefined,
 			)
@@ -1042,6 +1069,24 @@ export function resolvedDispatchPlanFromArgs(args: Record<string, unknown>): Res
 
 function parsePlanSource(value: unknown): DispatchPlanSource | undefined {
 	if (value === null) return null;
+	if (
+		isRecord(value) &&
+		value.kind === "playbook" &&
+		Object.keys(value).sort().join("\u0000") === "kind\u0000name\u0000planHash" &&
+		typeof value.name === "string" &&
+		value.name.length > 0 &&
+		typeof value.planHash === "string" &&
+		/^[0-9a-f]{64}$/u.test(value.planHash)
+	)
+		return { kind: "playbook", name: value.name, planHash: value.planHash };
+	if (
+		isRecord(value) &&
+		value.kind === "dependency-plan" &&
+		Object.keys(value).sort().join("\u0000") === "executionPlanHash\u0000kind" &&
+		typeof value.executionPlanHash === "string" &&
+		/^[0-9a-f]{64}$/u.test(value.executionPlanHash)
+	)
+		return { kind: "dependency-plan", executionPlanHash: value.executionPlanHash };
 	if (
 		!isRecord(value) ||
 		Object.keys(value).sort().join("\u0000") !== "executionPlanHash\u0000kind\u0000runDigest\u0000runId"

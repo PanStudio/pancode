@@ -3,6 +3,8 @@
 import type { PancodeSettings } from "../core/config.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { isFleetRootId } from "../domains/dispatch/fleet-root-record.js";
+import type { FleetRunLauncher } from "../domains/dispatch/fleet-run-launcher.js";
 import { batchesCollectedElsewhere, collectedElsewhereLine } from "../domains/dispatch/nudges/dispatch-nudge.js";
 import { dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
 import type { TurnControlRecord, TurnFacts } from "../lib/turn-control/index.js";
@@ -14,6 +16,7 @@ import {
 	renderCollectedElsewhereBlock,
 } from "../lib/turn-control/index.js";
 import { collectDetachedBatch } from "../tools/monitor-collect.js";
+import { monitorFleetRoot } from "../tools/monitor-fleet.js";
 import type { ToolInvokeOptions } from "../tools/registry/contract.js";
 
 interface TurnControlInput {
@@ -28,7 +31,10 @@ export interface TurnControlRunnerDeps {
 	dispatch: DispatchContract | undefined;
 	getInvokeOptions?: () => ToolInvokeOptions;
 	getTurnConstraints(): TurnConstraints | undefined;
+	/** Finished detached batches, and sealed model-started fleet roots nothing has collected. */
 	finishedDetachedBatchIds(): ReadonlyArray<string>;
+	/** The session's fleet launcher, told when the controller collects a root. */
+	fleetRuns?: Pick<FleetRunLauncher, "markCollected">;
 	emitNotice(text: string): void;
 }
 
@@ -89,6 +95,22 @@ export function createTurnControlRunner(deps: TurnControlRunnerDeps): TurnContro
 				for (const batchId of decision.batchIds) {
 					if (input.signal.aborted) throw new Error("canceled");
 					try {
+						if (isFleetRootId(batchId)) {
+							const outcome = await monitorFleetRoot({
+								rootId: batchId,
+								mode: "collect",
+								timeoutMs: 0,
+								signal: input.signal,
+								ownership,
+								...(deps.fleetRuns !== undefined ? { onCollected: deps.fleetRuns.markCollected } : {}),
+							});
+							if (outcome.kind !== "ok") throw new Error(outcome.message);
+							if (outcome.details?.complete !== true) throw new Error(`fleet root ${batchId} has not sealed`);
+							rendered.push(outcome.output);
+							collectedCount += 1;
+							runIds.push(batchId);
+							continue;
+						}
 						const outcome = await collectDetachedBatch(monitorDeps, batchId, ownership);
 						if (outcome.kind !== "ok") throw new Error(outcome.message);
 						if (outcome.details?.complete !== true || outcome.details.collected !== true)

@@ -10,6 +10,7 @@ import type { ConfigChangeSource } from "../core/telemetry/live-events.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import type { ContextState } from "../domains/context/index.js";
 import type { DispatchContract, RouteBreakerView } from "../domains/dispatch/contract.js";
+import type { FleetRunLauncher } from "../domains/dispatch/fleet-run-launcher.js";
 import type { ExtensionsContract } from "../domains/extensions/index.js";
 import type { ExtensionRuntimeHookBridge } from "../domains/extensions/runtime-hook-bridge.js";
 import type { InteropContract } from "../domains/interop/index.js";
@@ -54,6 +55,8 @@ export interface InteractiveDeps {
 	providers: ProvidersContract;
 	dispatch: DispatchContract;
 	agents?: AgentsContract;
+	/** The session's fleet runs: `/fleet run` and the main agent's `dispatch(playbook=...)` share one launcher. */
+	fleetRuns?: FleetRunLauncher;
 	/** Session budget state `/fleet run` shows as the ceiling a plan is admitted under. */
 	scheduling?: SchedulingContract;
 	/** System One status lines for the `/usage` Health tab. */

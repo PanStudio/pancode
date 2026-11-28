@@ -57,9 +57,12 @@ export const DEFAULT_DAMAGE_CONTROL_PATH_POLICY: PathPolicyInput = {
 		// widen its own permissions in two tool calls. Both are authored by the
 		// operator through the CLI (`pancode verifiers author` lands nothing
 		// before `--yes`), so model-side writes and deletes are refused.
+		// `playbooks/commands.yaml` is the argv catalog playbook code steps run,
+		// so a playbook the model writes can bind only commands the operator declared.
 		// Skills also refuse model-side writes and deletes; installs go through `pancode hub install`.
 		".pancode/safety.yaml",
 		".pancode/verifiers.yaml",
+		".pancode/playbooks/commands.yaml",
 		".pancode/skills/",
 		".pancode/plugins/",
 		".pancode/extensions/",

@@ -1003,6 +1003,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		createTurnOutcomeCollector,
 		dispatch,
 		effectiveSettingsForDispatch,
+		fleetRuns: toolBootstrap.fleetRuns,
 		getCurrentSettings,
 		interactive,
 		memoryWorkspaceRoot,
@@ -1284,7 +1285,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	};
 
 	if (options.acp) return runAcpSurface(surface, seams, options.acp);
-
 	if (options.headless) return runHeadlessSurface(surface, seams, options.headless);
 	return runInteractiveSurface(surface, seams);
 }

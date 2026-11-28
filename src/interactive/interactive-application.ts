@@ -13,7 +13,7 @@ import { isRestartHandoff } from "../core/restart-status.js";
 import { getTerminationCoordinator } from "../core/termination.js";
 import { immediateSequence } from "../core/timers.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { openDetachedBatchViews } from "../domains/dispatch/nudges/dispatch-nudge.js";
+import { openDetachedBatchViews, uncollectedFleetRootViews } from "../domains/dispatch/nudges/dispatch-nudge.js";
 import { subscribeExtensionObservations } from "../domains/extensions/bus-observations.js";
 import { extensionOwnerLabel } from "../domains/extensions/owner-label.js";
 import { holdExitSummaryForLauncher } from "../domains/mux/workspace/exit-summary-handoff.js";
@@ -934,7 +934,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	// after its turn ended starts a turn of its own once the operator is not
 	// mid-draft, so its results never wait for someone to type.
 	const detachedBatchWake = createDetachedBatchWake({
-		openBatches: () => openDetachedBatchViews(deps.dispatch),
+		openBatches: () => [...openDetachedBatchViews(deps.dispatch), ...uncollectedFleetRootViews(deps.fleetRuns)],
 		pendingDecisions: () => detachedBatchDecisions(deps.dispatch),
 		chat: deps.chat,
 		operatorIdle: () =>

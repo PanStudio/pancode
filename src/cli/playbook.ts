@@ -135,7 +135,7 @@ export async function runPlaybookCommand(args: ReadonlyArray<string>): Promise<n
 		case "validate":
 			return (await import("./playbook-validate.js")).runPlaybookValidate(args.slice(1));
 		case "graph":
-			return (await import("./playbook-graph.js")).runPlaybookGraph(args.slice(1));
+			return (await import("./playbook-graph.js")).runPlaybookGraphWithRoutes(args.slice(1));
 		case "commands":
 			return (await import("./playbook-commands.js")).runPlaybookCommands(args.slice(1));
 		default:

@@ -301,7 +301,12 @@ export function mainApprovalRequestView(
 		...(netReason !== undefined ? { netReason } : {}),
 		...(consequence.length > 0 ? { consequence } : {}),
 		...(call.tool === ToolNames.Dispatch && decision.kind === "ask"
-			? { artifact: { kind: "dispatch-plan" as const, text: decision.rejection.detail } }
+			? {
+					artifact: {
+						kind: meta?.dispatchPlan?.fleetRun !== undefined ? ("fleet-run" as const) : ("dispatch-plan" as const),
+						text: decision.rejection.detail,
+					},
+				}
 			: call.tool === ToolNames.ConfigurePancode && decision.kind === "ask"
 				? { artifact: { kind: "settings-change" as const, text: decision.rejection.detail } }
 				: decision.kind === "ask" && decision.confirmationRuleId === MCP_SKILL_APPROVAL_RULE_ID

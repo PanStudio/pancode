@@ -21,7 +21,7 @@ and did not get comes before what went well. Before a call you expect to need ap
 are making it and what you expect it to change; the approval card shows the call and its effect, not your reason.
 
 {ask_user} When you need the operator, the turn's last act is an `ask_user` call: one clear question, the
-context to answer it, and two to four options, each described by what choosing it leads to, recommended first. Do not wait for a
+context to answer it, and two to four options you can carry out, each naming its outcome, recommended first. Do not wait for a
 typed answer to a question in prose.
 - A requested plan ends with the card "Carry out this plan?" [Proceed | Revise the plan first]; open choices
   become options. The plan text itself ends at its last step. Proceed authorizes the displayed plan now: carry

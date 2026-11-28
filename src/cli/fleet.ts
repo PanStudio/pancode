@@ -29,14 +29,7 @@ import { sha256Hex } from "../core/hash.js";
 import type { FactSum } from "../core/telemetry/fact.js";
 import { factKnownValue, usdAmountOrFact } from "../core/telemetry/known.js";
 import { sumFactSums } from "../core/telemetry/pricing.js";
-import {
-	renderCountSum,
-	renderCountSumKnown,
-	renderPricingSum,
-	renderUsdLimit,
-	renderUsdSpend,
-	renderUsdSum,
-} from "../core/telemetry/render.js";
+import { renderPricingSum, renderUsdLimit, renderUsdSpend, renderUsdSum } from "../core/telemetry/render.js";
 import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import {
@@ -46,10 +39,10 @@ import {
 	type PlaybookCommandRegistry,
 	PlaybookCommandRegistryMissingError,
 	playbookCommandsFor,
-	playbookPromptVariables,
 	renderPlaybookPrompt,
 } from "../domains/agents/index.js";
 import { createAgentsDomainModule } from "../domains/agents/module.js";
+import { bindPlaybookTask, playbookTaskRefusal } from "../domains/agents/playbook-task.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ContextDomainModule } from "../domains/context/module.js";
 import { clearRootCancelRequest, readRootCancelRequest } from "../domains/dispatch/cancel-requests.js";
@@ -62,6 +55,13 @@ import {
 	requestRunRole,
 	withAttemptRole,
 } from "../domains/dispatch/execution-role.js";
+import {
+	type FleetEndLimits,
+	fleetEndDocument as fleetEnd,
+	fleetEndStep,
+	fleetRunFailedMessage,
+	fleetStepFailureReason,
+} from "../domains/dispatch/fleet-end-document.js";
 import { compileFleetExecutionPlan } from "../domains/dispatch/fleet-plan.js";
 import {
 	type FleetRootRecord,
@@ -71,7 +71,6 @@ import {
 	writeFleetResult,
 	writeFleetRootRecord,
 } from "../domains/dispatch/fleet-root-record.js";
-import type { FleetRunStepOutcome } from "../domains/dispatch/fleet-run-types.js";
 import { fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
 import {
 	describeFleetResumeDiff,
@@ -260,11 +259,8 @@ function parseFleetRunArgs(args: ReadonlyArray<string>): FleetRunOptions | { err
 		else return { error: `fleet run takes one task argument, got another: '${arg}'; quote the whole task` };
 	}
 	if (!name) return { error: FLEET_RUN_USAGE };
-	if (task !== undefined && vars.task !== undefined) {
-		return {
-			error: "the task is given twice: pass it as the argument after the playbook or as --var task=..., not both",
-		};
-	}
+	const bound = bindPlaybookTask(vars, task);
+	if ("error" in bound) return { error: bound.error };
 	const format = values.get("--output-format");
 	if (format !== undefined && format !== "text" && format !== "json" && format !== "stream-json") {
 		return { error: `--output-format takes text, json or stream-json, got '${format}'` };
@@ -338,15 +334,8 @@ interface FleetRunTrack {
 	cleanRun: boolean | null;
 	/** The task worktree a `worktree` run kept for `fleet land`, with its work committed on the task branch. */
 	worktree: FleetKeptWorktree | null;
-	limits: {
-		maxCostUsd: number | null;
-		maxCostSource: "flag" | "playbook" | null;
-		/** Only --max-cost-usd stops a running fleet; a playbook budgetUsd alone is a preflight check. */
-		enforced: boolean;
-		/** A step already in flight finishes its spend before the stop lands. */
-		overshootPossible: boolean;
-		timeoutMs: number | null;
-	};
+	/** Only --max-cost-usd stops a running fleet; a playbook budgetUsd alone is a preflight check. */
+	limits: FleetEndLimits;
 }
 
 function fleetEndDocument(
@@ -355,62 +344,7 @@ function fleetEndDocument(
 	exitCode: number,
 	causes: ReadonlyArray<RunCause>,
 ): Record<string, unknown> {
-	const completionState =
-		!track.started || track.refusedBeforeStep
-			? "refused"
-			: track.stopCause !== null ||
-					causes.some((cause) => cause.code === "interrupted") ||
-					(track.cleanRun === false && track.notRunStepIds.length > 0)
-				? "stopped"
-				: "completed";
-	const stopReason =
-		completionState !== "stopped"
-			? null
-			: (track.stopCause ?? (causes.some((cause) => cause.code === "interrupted") ? "signal" : "step_failed"));
-	const succeeded = track.steps.filter((step) => step.outcome !== "failed").length;
-	const aggregate = track.cleanRun === true && exitCode === 0 ? "pass" : succeeded === 0 ? "fail" : "partial";
-	return {
-		type: "fleet_end",
-		schemaVersion: 1,
-		rootId: track.rootId,
-		playbook: track.playbook ?? options.name,
-		planHash: track.planHash,
-		exitCode,
-		completion: { state: completionState, stopReason },
-		verdict: { aggregate, steps: track.steps },
-		// The step counts, and the settled runs' calls and tokens as sums the coordinator folded (never summed here).
-		usage: {
-			steps: track.steps.length,
-			succeededSteps: succeeded,
-			...(track.totalUsage !== null
-				? {
-						apiCalls: track.totalUsage.apiCalls,
-						tokens: {
-							input: track.totalUsage.input,
-							cacheRead: track.totalUsage.cacheRead,
-							cacheWrite: track.totalUsage.cacheWrite,
-							output: track.totalUsage.output,
-							total: track.totalUsage.total,
-						},
-						display: usageDisplay(track.totalUsage),
-					}
-				: {}),
-		},
-		cost:
-			track.totalCost === null
-				? null
-				: {
-						// An unpriced total is null, never a measured 0 (row 362); the schema has always allowed it.
-						usd: typeof usdAmountOrFact(track.totalCost.usd) === "number" ? factKnownValue(track.totalCost.usd) : null,
-						measuredUsd: track.totalCost.usd.measured,
-						estimatedUsd: track.totalCost.usd.estimated,
-						unknownCount: track.totalCost.usd.unknownCount,
-						display: renderPricingSum(track.totalCost),
-					},
-		causes,
-		limits: track.limits,
-		...(track.worktree !== null ? { worktree: track.worktree } : {}),
-	};
+	return fleetEnd({ ...track, playbook: track.playbook ?? options.name }, exitCode, causes);
 }
 
 async function runFleet(options: FleetRunOptions, reporter: ReturnType<typeof createFleetReporter>): Promise<number> {
@@ -482,11 +416,8 @@ async function runFleetTracked(
 	try {
 		playbook = loadPlaybook(process.cwd(), name);
 		track.playbook = playbook.name;
-		if (options.task !== undefined && !playbookPromptVariables(playbook.body).includes("task")) {
-			throw new Error(
-				`playbook '${playbook.name}' takes no task: its prompt has no {{task}}; pass its variables with --var`,
-			);
-		}
+		const refusal = playbookTaskRefusal(playbook, options.task);
+		if (refusal !== null) throw new Error(refusal);
 		prompt = renderPlaybookPrompt(playbook.body, vars);
 		commands = playbookCommandsFor(process.cwd(), playbook);
 	} catch (err) {
@@ -809,14 +740,11 @@ async function runFleetTracked(
 						if (stream) reporter.stdout(`${JSON.stringify({ type: "step_dispatched", ...event })}\n`);
 					},
 					onStepSettled(step) {
-						const stepOutcome: FleetStepOutcome =
-							step.replayed === true ? "replayed" : step.succeeded ? "succeeded" : "failed";
-						const stepRunId =
-							step.replayed === true
-								? (step.result?.terminalRunId ?? null)
-								: (step.codeStep?.runId ?? step.terminalRunId ?? null);
+						const { runId: stepRunId, outcome: stepOutcome } = fleetEndStep(step);
 						track.steps.push({ stepId: step.stepId, runId: stepRunId, outcome: stepOutcome });
-						if (stepOutcome === "failed") track.failures.push({ stepId: step.stepId, reason: stepFailureReason(step) });
+						if (stepOutcome === "failed") {
+							track.failures.push({ stepId: step.stepId, reason: fleetStepFailureReason(step) });
+						}
 						if (step.replayed !== true) track.spent = sumFactSums([track.spent, step.pricing.usd]);
 						if (stream) {
 							reporter.stdout(
@@ -958,32 +886,9 @@ async function runFleetTracked(
 	return finishFleetRun(options, reporter, track, settledExitCode(outcome.cleanRun), shutdownSignal?.aborted === true);
 }
 
-/** The fleet's tokens over its calls, naming once the calls whose tokens went unreported. */
-function usageDisplay(usage: FleetUsage): string {
-	const gap = usage.total.unknownCount;
-	const tokens = `${renderCountSumKnown(usage.total)} tokens over ${renderCountSum(usage.apiCalls)} calls`;
-	return gap > 0 ? `${tokens}; ${gap} ${gap === 1 ? "call" : "calls"} unknown` : tokens;
-}
-
-/** Why a failed step failed: the coordinator's reason, the run's own failure, or the code step's exit. */
-function stepFailureReason(step: FleetRunStepOutcome): string | null {
-	if (step.failureReason !== undefined) return step.failureReason;
-	if (step.run !== undefined) return step.run.failureMessage ?? step.run.outcomeDetail ?? `run ${step.run.outcome}`;
-	const code = step.codeStep;
-	if (code !== undefined) {
-		if (code.timedOut) return "the command timed out";
-		return code.signal !== null ? `the command ended on ${code.signal}` : `the command exited ${code.exitCode}`;
-	}
-	return null;
-}
-
 /** The run_failed cause's message: each failed step with its reason, then the steps the plan stopped before. */
 function runFailedMessage(track: FleetRunTrack): string | null {
-	const failed = track.failures.map(
-		({ stepId, reason }) => `step ${stepId} failed${reason !== null ? `: ${reason}` : ""}`,
-	);
-	if (track.notRunStepIds.length > 0) failed.push(`not run: ${track.notRunStepIds.join(", ")}`);
-	return failed.length > 0 ? failed.join("; ") : null;
+	return fleetRunFailedMessage(track.failures, track.notRunStepIds);
 }
 
 /** The plan stopped for `reason`: thrown as is, or by every step a canceled admission refused in one wave. */

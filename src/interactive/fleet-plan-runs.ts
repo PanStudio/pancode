@@ -18,6 +18,8 @@ export interface FleetPlanStepView {
 	detail?: string;
 	/** The worker run an agent step started, so the board can read the step beside that run's own row. */
 	runId?: string;
+	/** The target and model an agent step calls: the route the operator approved, or its recorded run's own. */
+	route?: { targetId: string; model: string };
 	/**
 	 * What the step's worker run says of itself, joined on by the board: whether it has ended, and the caveat its
 	 * own row carries. The plan records a step a moment after its worker ends, and a step that passed can still have
@@ -54,10 +56,12 @@ export interface FleetPlanRunView {
 	failure?: string;
 	/** Read from its durable root because an earlier PanCode process ran it. */
 	earlier?: true;
+	/** The main agent asked for the run and the operator approved it. */
+	origin?: "model";
 }
 
 export interface FleetPlanRuns {
-	start(rootId: string, preview: FleetRunPreview): void;
+	start(rootId: string, preview: FleetRunPreview, origin?: "model"): void;
 	stepDispatched(rootId: string, event: FleetRunStepEvent): void;
 	stepSettled(rootId: string, outcome: FleetRunStepOutcome): void;
 	settle(rootId: string, outcome: FleetRunOutcome): FleetPlanRunView | null;
@@ -113,7 +117,7 @@ export function createFleetPlanRuns(
 		}));
 	};
 	return {
-		start(rootId, preview) {
+		start(rootId, preview, origin) {
 			const steps = preview.waves.flatMap((wave) =>
 				wave.steps.map(
 					(step): FleetPlanStepView => ({
@@ -121,6 +125,9 @@ export function createFleetPlanRuns(
 						kind: step.kind === "agent" ? "agent" : "code",
 						label: step.kind === "agent" ? (step.agentId ?? "agent") : (step.argv?.join(" ") ?? step.commandId ?? "command"),
 						state: "pending",
+						...(step.kind !== "code" && step.route !== undefined
+							? { route: { targetId: step.route.targetId, model: step.route.wireModelId } }
+							: {}),
 					}),
 				),
 			);
@@ -134,6 +141,7 @@ export function createFleetPlanRuns(
 				requiredStepCount: steps.length,
 				succeededStepCount: 0,
 				costText: null,
+				...(origin !== undefined ? { origin } : {}),
 			});
 		},
 		stepDispatched(rootId, event) {

@@ -199,7 +199,7 @@ function fleetPlanRow(plan: FleetPlanRunView, now: number): DispatchBoardRow {
 	return {
 		runId: plan.rootId,
 		agentId: `plan ${plan.name}`,
-		requestOrigin: "user",
+		requestOrigin: plan.origin === "model" ? "agent" : "user",
 		runtimeKind: "http",
 		runtimeId: "fleet",
 		targetId: "",

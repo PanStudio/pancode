@@ -212,12 +212,17 @@ function headlessDenialGuidance(decision: SafetyDecision, reason: string): strin
 	// Interactive denials are left exactly as they were: the operator saw the
 	// reasons in the approval overlay before answering.
 	if (!reason.startsWith(HEADLESS_PERMISSION_DENIED_MARKER)) return null;
+	const recovery = decision.kind === "ask" ? decision.recovery?.trim() : undefined;
+	if (recovery) return boundedGuidance(recovery);
 	const policy = decision.policy;
 	if (policy?.execRecognition !== "unrecognized") return null;
 	const guidance = policy.reasons.slice(1).find((entry) => entry.trim().length > 0);
 	if (guidance === undefined) return null;
-	const trimmed = guidance.trim();
-	return trimmed.length > HEADLESS_GUIDANCE_MAX_CHARS ? `${trimmed.slice(0, HEADLESS_GUIDANCE_MAX_CHARS)}…` : trimmed;
+	return boundedGuidance(guidance.trim());
+}
+
+function boundedGuidance(text: string): string {
+	return text.length > HEADLESS_GUIDANCE_MAX_CHARS ? `${text.slice(0, HEADLESS_GUIDANCE_MAX_CHARS)}…` : text;
 }
 
 /**
@@ -445,6 +450,23 @@ export function toDispatchPlanAskDecision(
 	level: AutonomyLevel,
 	plan: DispatchPlanView,
 ): SafetyDecision {
+	const playbook = plan.fleetRun;
+	if (playbook !== undefined) {
+		return {
+			kind: "ask",
+			classification: decision.classification,
+			rejection: {
+				short: `playbook ${playbook.name} needs approval (${playbook.stepCount} ${playbook.stepCount === 1 ? "step" : "steps"}) at autonomy ${level}`,
+				detail: `Approving this call starts the playbook run:\n${plan.text}`,
+				hints: [
+					"One approval covers every step of the run, each on the route the card shows.",
+					"Deny to keep the fleet idle; the model can revise the playbook and preview it again.",
+				],
+			},
+			...(decision.policy !== undefined ? { policy: decision.policy } : {}),
+			recovery: `A headless run cannot approve a playbook; start it outside the session: pancode fleet run ${playbook.name} "<task>"`,
+		};
+	}
 	const single = plan.taskCount === 1;
 	return {
 		kind: "ask",

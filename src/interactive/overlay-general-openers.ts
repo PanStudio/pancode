@@ -1,27 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { randomBytes } from "node:crypto";
 import type { PancodeSettings } from "../core/config.js";
 import { GLYPH } from "../core/glyphs.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
-import { renderPricingSum } from "../core/telemetry/render.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
+import { playbookTaskRefusal } from "../domains/agents/playbook-task.js";
 import { foldWorkingSet } from "../domains/context/working-set/fold.js";
-import { type FleetStepCounts, fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
-import type {
-	DispatchContract,
-	FleetRunOutcome,
-	FleetRunPreview,
-	FleetRunPreviewInput,
-} from "../domains/dispatch/index.js";
+import { createFleetRunLauncher, type FleetRunLauncher } from "../domains/dispatch/fleet-run-launcher.js";
+import type { DispatchContract, FleetRunPreview, FleetRunPreviewInput } from "../domains/dispatch/index.js";
 import {
 	agentRoleFactsResolver,
 	compileFleetRunPreview,
-	executeFleetRun,
+	type executeFleetRun,
 	fleetRouteResolver,
-	WriterSetBusyError,
 } from "../domains/dispatch/index.js";
 import type { MemoryRecord } from "../domains/memory/index.js";
 import {
@@ -61,11 +54,9 @@ import { createDefaultArtifactProviders } from "../session-control/view-artifact
 import type { OpenContextOverlayOptions } from "./context-overlay.js";
 import { openContextOverlay } from "./context-overlay.js";
 import { type createDispatchBoardView, dispatchBoardEscapeEntry, dispatchBoardHintEntries } from "./dispatch-board.js";
-import { planWithWorkerRows } from "./dispatch-board-store.js";
-import { planStepCounts, planWarnedStepCount, renderFleetPlanCard } from "./dispatch-plan-card.js";
-import type { FleetPlanRuns, FleetPlanRunView } from "./fleet-plan-runs.js";
+import type { FleetPlanRuns } from "./fleet-plan-runs.js";
 import { recordedRunAnswerLines } from "./fleet-run-history.js";
-import { progressNoticeKeys } from "./footer/notifications.js";
+import { fleetRunBoardSurface } from "./fleet-run-surface.js";
 import { openMemoryOverlay } from "./memory-overlay.js";
 import { buildResponsiveHint, showPancodeOverlayFrame } from "./overlay-frame.js";
 import type { OverlayTransitions } from "./overlay-transitions.js";
@@ -186,7 +177,9 @@ export interface OverlayGeneralOpenersDeps {
 	/** Record which wave and step a dispatched run belongs to, for the board's phase column. */
 	setFleetRunPhase?: (runId: string, phase: { wave: number; stepId: string }) => void;
 	fleetPlans?: FleetPlanRuns;
-	/** The shared fleet-run path; overridable so a test can observe one call. */
+	/** The session's fleet launcher, which the main agent's playbook runs share; absent builds one for this surface. */
+	fleetRuns?: FleetRunLauncher;
+	/** The runner a launcher built here uses; overridable so a test can observe one call. */
 	runFleet?: typeof executeFleetRun;
 	/** Contract and command-registry loader; overridable so a test projects a fixture. */
 	loadFleetSources?: FleetRunPreviewInput["load"];
@@ -245,37 +238,53 @@ export interface OverlayGeneralOpeners {
 	startFleetRun(name: string, vars: Readonly<Record<string, string>>, options?: FleetRunStartOptions): void;
 }
 
-/**
- * The settled notice states the card's own counts, so the two never give one run two different numbers. An unpriced
- * run keeps the total a lower bound, never a measured $0.00 nobody put a number on, and steps whose worker finished
- * with a warning say so, as their rows on the card do.
- */
-function fleetSettledNotice(
+function compileOverlayFleetPreview(
+	deps: OverlayGeneralOpenersDeps,
+	agents: NonNullable<OverlayGeneralOpenersDeps["agents"]>,
+	workspaceRoot: string,
 	name: string,
-	outcome: FleetRunOutcome,
-	plan: FleetPlanRunView | null | undefined,
-	warned: number,
-): { level: "info" | "success" | "warning"; text: string } {
-	const loopTotal = outcome.result?.loops?.length ?? 0;
-	const counts: FleetStepCounts = plan
-		? planStepCounts(plan)
-		: {
-				ran: outcome.ranStepCount,
-				planned: outcome.plannedStepCount,
-				succeeded: outcome.succeededStepCount,
-				required: outcome.requiredStepCount,
-				...(loopTotal > 0 ? { loops: { resolved: outcome.resolvedLoopCount, total: loopTotal } } : {}),
-			};
-	if (plan?.state === "cancelled") {
-		return { level: "info", text: `plan ${name}: canceled ${GLYPH.sep} ${fleetStepCountText(counts)} before the stop` };
+	vars: Readonly<Record<string, string>>,
+	resume: string | undefined,
+): ReturnType<typeof compileFleetRunPreview> {
+	const roleFacts = agentRoleFactsResolver((id) => agents.getSpec(id));
+	const budget = deps.getBudgetPreflight?.();
+	return compileFleetRunPreview({
+		workspaceRoot,
+		name,
+		vars,
+		getAgentSpec: (agentId) => agents.getSpec(agentId),
+		roleFacts,
+		...(budget ? { budget } : {}),
+		...(deps.loadFleetSources ? { load: deps.loadFleetSources } : {}),
+		...(resume !== undefined ? { resume } : {}),
+		resolveRoute: fleetRouteResolver(deps.dispatch.preview, roleFacts, undefined, deps.standingTurnConstraints?.()),
+	});
+}
+
+function verifyAcceptedFleetRun(
+	name: string,
+	approved: FleetRunPreview,
+	recompile: () => ReturnType<typeof compileFleetRunPreview>,
+	notify: OverlayGeneralOpenersDeps["notify"],
+): boolean {
+	const current = recompile();
+	if (!current.ok) {
+		notify(
+			"warning",
+			`plan ${name}: changed since the card was opened and can no longer run (${current.diagnostics[0] ?? "validation failed"}). Nothing was started`,
+			"fleet-run:changed",
+		);
+		return false;
 	}
-	const steps = `${fleetStepCountText(counts, warned === 0 ? "succeeded" : "finished")}${warned === 0 ? "" : `, ${warned} with warnings`}`;
-	const loops = counts.loops === undefined ? "" : `${fleetLoopText(counts.loops)}, `;
-	const cost = plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`;
-	return {
-		level: outcome.cleanRun && warned === 0 ? "success" : "warning",
-		text: `plan ${name}: ${steps}, ${loops}${cost}`,
-	};
+	if (current.preview.planHash !== approved.planHash) {
+		notify(
+			"warning",
+			`plan ${name}: changed since the card was opened; review it again. Nothing was started`,
+			"fleet-run:changed",
+		);
+		return false;
+	}
+	return true;
 }
 
 export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): OverlayGeneralOpeners {
@@ -791,10 +800,24 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 	 * contract that fails preflight opens the same overlay with its diagnostics
 	 * and no accept action, so the only exit from a broken plan is to leave it.
 	 */
-	// The fleet this session started and has not seen settle. Launch returns at
-	// once so the session stays usable, which made a running fleet easy to read
-	// as finished; a second start is refused while one runs (Portus v3).
-	let fleetInFlight: { name: string } | null = null;
+	// The session's fleet runs, shared with the main agent's dispatch(playbook=...): one single-run guard, and every run,
+	// whoever started it, reaches the board, the footer notices and the settled card. Launch returns at once so the session
+	// stays usable, which made a running fleet easy to read as finished; a second start is refused while one runs.
+	const agentsForFleet = deps.agents;
+	const fleetRuns =
+		deps.fleetRuns ??
+		(agentsForFleet
+			? createFleetRunLauncher({
+					dispatch: deps.dispatch,
+					agents: { getSpec: (agentId) => agentsForFleet.getSpec(agentId) },
+					workspaceRoot: () => deps.getSessionMeta()?.cwd ?? process.cwd(),
+					...(deps.getSettings ? { getSettings: deps.getSettings } : {}),
+					...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
+					sessionId: () => deps.getSessionMeta()?.id ?? null,
+					...(deps.runFleet ? { run: deps.runFleet } : {}),
+				})
+			: null);
+	fleetRuns?.watch(fleetRunBoardSurface(deps));
 
 	const startFleetRun = (
 		name: string,
@@ -802,10 +825,11 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 		options: FleetRunStartOptions = {},
 	): void => {
 		if (deps.transitions.state !== "closed") return;
-		if (fleetInFlight !== null) {
+		const inFlight = fleetRuns?.inFlight() ?? null;
+		if (inFlight !== null) {
 			deps.notify(
 				"info",
-				`plan ${fleetInFlight.name} is still running; start another once it settles ${GLYPH.sep} /fleet`,
+				`plan ${inFlight.name} is still running; start another once it settles ${GLYPH.sep} /fleet`,
 				"fleet-run:in-flight",
 			);
 			return;
@@ -817,32 +841,28 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			return;
 		}
 		const agents = deps.agents;
-		if (!agents) {
+		if (!agents || !fleetRuns) {
 			deps.notify("error", "/fleet run needs the agents domain, which is not wired in this session", "fleet-run:agents");
 			return;
 		}
 		const workspaceRoot = deps.getSessionMeta()?.cwd ?? process.cwd();
-		const roleFacts = agentRoleFactsResolver((id) => agents.getSpec(id));
-		const budget = deps.getBudgetPreflight?.();
-		const result = compileFleetRunPreview({
-			workspaceRoot,
-			name,
-			vars,
-			getAgentSpec: (agentId) => agents.getSpec(agentId),
-			roleFacts,
-			...(budget ? { budget } : {}),
-			...(deps.loadFleetSources ? { load: deps.loadFleetSources } : {}),
-			...(options.resume !== undefined ? { resume: options.resume } : {}),
-			resolveRoute: fleetRouteResolver(deps.dispatch.preview, roleFacts, undefined, deps.standingTurnConstraints?.()),
-		});
+		const compile = () => compileOverlayFleetPreview(deps, agents, workspaceRoot, name, vars, options.resume);
+		const result = compile();
+		// The command line refuses a task its playbook has no {{task}} for in the same words.
+		const taskRefusal = result.ok ? playbookTaskRefusal(result.preview.playbook, options.task) : null;
 
 		deps.transitions.state = "fleet-run-approval";
 		deps.transitions.handle = (deps.openFleetRunApprovalOverlay ?? openFleetRunApprovalOverlay)(deps.tui, {
-			subject: result.ok ? { ok: true, preview: result.preview } : { ok: false, name, diagnostics: result.diagnostics },
+			subject: !result.ok
+				? { ok: false, name, diagnostics: result.diagnostics }
+				: taskRefusal !== null
+					? { ok: false, name, diagnostics: [taskRefusal] }
+					: { ok: true, preview: result.preview },
 			columns: deps.terminal.columns,
 			onAccept: () => {
 				deps.closeOverlay();
-				if (result.ok) dispatchFleetRun(result.preview, agents);
+				if (result.ok && taskRefusal === null && verifyAcceptedFleetRun(name, result.preview, compile, deps.notify))
+					dispatchFleetRun(result.preview, fleetRuns);
 			},
 			onCancel: () => {
 				deps.closeOverlay();
@@ -852,99 +872,16 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 		deps.requestRender();
 	};
 
-	const dispatchFleetRun = (preview: FleetRunPreview, agents: AgentsContract): void => {
-		const fleetRootId = `fleet-${randomBytes(6).toString("hex")}`;
-		const run = deps.runFleet ?? executeFleetRun;
-		// The arguments are built before the single-run guard is taken: a throw
-		// from a settings or session read would otherwise leave it set and refuse
-		// every later fleet run in this session.
+	// The run executes in the session's telemetry context through the launcher, so its root and steps bind the session.
+	const dispatchFleetRun = (preview: FleetRunPreview, launcher: FleetRunLauncher): void => {
 		const turnConstraints = deps.standingTurnConstraints?.();
-		// The board's cancel reaches the runner through this, which stops the running step's process (J2-F02).
-		const stop = new AbortController();
-		const args: Parameters<typeof executeFleetRun>[0] = {
-			signal: stop.signal,
-			stopped: () => stop.signal.aborted,
-			plan: preview.plan,
-			playbookName: preview.name,
-			commands: preview.commands,
-			workspaceRoot: deps.getSessionMeta()?.cwd ?? process.cwd(),
-			fleetRootId,
-			dispatch: deps.dispatch,
-			agents: { getSpec: (agentId) => agents.getSpec(agentId) },
-			...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
-			attributionEnabled: deps.getSettings?.().integrations.git.commitAttribution ?? true,
-			vars: preview.vars,
-			...(preview.resume !== undefined
-				? { resume: { record: preview.resume.record, replayed: preview.resume.replayed } }
-				: {}),
+		const launch = launcher.launch({
+			preview,
+			origin: "operator",
 			...(turnConstraints !== undefined ? { turnConstraints } : {}),
-			onStepDispatched: (event) => {
-				deps.setFleetRunPhase?.(event.assignmentId, { wave: event.waveIndex, stepId: event.stepId });
-				deps.fleetPlans?.stepDispatched(fleetRootId, event);
-			},
-			// Supplying this also stops the runner printing each step as a raw log line.
-			onStepSettled: (outcome) => deps.fleetPlans?.stepSettled(fleetRootId, outcome),
-			onStarted: () => {
-				deps.fleetPlans?.start(fleetRootId, preview);
-				deps.fleetPlans?.bindStop(fleetRootId, () => stop.abort());
-				// Counted from the waves, as the approval card counts them, so a resumed run names only what it runs. Only the
-				// first wave starts now; the rest wait on it, so the notice says how many run at once rather than all of them.
-				const steps = preview.waves.reduce((total, wave) => total + wave.steps.length, 0);
-				const first = preview.waves[0]?.steps.length ?? 0;
-				const shape =
-					first >= steps ? `${steps} ${steps === 1 ? "step" : "steps"} running` : `${first} of ${steps} steps running`;
-				deps.notify(
-					"info",
-					`plan ${preview.name} started ${GLYPH.sep} ${shape} ${GLYPH.sep} /fleet follows it`,
-					"fleet-run:started",
-				);
-			},
-			// A gate notice (a loop decision or checkpoint) is progress, not a failure; a write-boundary breach and the rest stay errors.
-			onNotice: (text, kind) =>
-				(kind === "gate" ? (deps.stdout ?? deps.stderr) : deps.stderr)(`plan ${preview.name}: ${text}\n`),
-		};
-		// The settled card reads each step beside its worker's own row, and draws at the width of each paint.
-		const appendPlanCard = (settled: FleetPlanRunView): FleetPlanRunView => {
-			const view = planWithWorkerRows(settled, deps.getDispatchRows?.() ?? []);
-			const render = (width: number) =>
-				renderFleetPlanCard(view, width, deps.getSettings?.().interface.outputDetail ?? "standard");
-			if (deps.appendBlock !== undefined) deps.appendBlock(render);
-			else deps.stderr(`${render(deps.terminal.columns).join("\n")}\n`);
-			return view;
-		};
-		fleetInFlight = { name: preview.name };
-		void run(args)
-			.then((outcome) => {
-				fleetInFlight = null;
-				deps.dismissNotification?.("fleet-run:started");
-				// A stop asked for from the board, and a refusal that said this plan runs, are over once it settles.
-				for (const key of [...progressNoticeKeys(fleetRootId), "fleet-run:in-flight"]) deps.dismissNotification?.(key);
-				const plan = deps.fleetPlans?.settle(fleetRootId, outcome);
-				const warned = plan ? planWarnedStepCount(appendPlanCard(plan)) : 0;
-				const settled = fleetSettledNotice(preview.name, outcome, plan, warned);
-				deps.notify(settled.level, settled.text, "fleet-run:settled");
-			})
-			.catch((error: unknown) => {
-				fleetInFlight = null;
-				deps.dismissNotification?.("fleet-run:started");
-				// A stop asked for from the board, and a refusal that said this plan runs, are over once it settles.
-				for (const key of [...progressNoticeKeys(fleetRootId), "fleet-run:in-flight"]) deps.dismissNotification?.(key);
-				const failed = deps.fleetPlans?.fail(fleetRootId, error instanceof Error ? error.message : String(error));
-				if (failed?.state === "cancelled") {
-					appendPlanCard(failed);
-					deps.notify("info", `plan ${preview.name}: canceled before every step settled`, "fleet-run:settled");
-					return;
-				}
-				if (error instanceof WriterSetBusyError) {
-					deps.notify("warning", `plan ${preview.name}: ${error.message}`, "fleet-run:refused");
-					return;
-				}
-				deps.notify(
-					"error",
-					`plan ${preview.name}: ${error instanceof Error ? error.message : String(error)}`,
-					"fleet-run:failed",
-				);
-			});
+		});
+		if (launch.status === "refused")
+			deps.notify("warning", `plan ${preview.name}: ${launch.reason}`, "fleet-run:refused");
 	};
 
 	const openQueueNavigatorFactory = deps.openQueueNavigatorOverlay ?? openQueueNavigatorOverlay;

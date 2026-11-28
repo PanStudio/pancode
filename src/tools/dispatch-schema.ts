@@ -370,6 +370,25 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 				},
 			),
 		),
+		playbook: Type.Optional(
+			Type.Object(
+				{
+					name: Type.String({ minLength: 1, description: "Playbook name, as /fleet list shows it." }),
+					vars: Type.Optional(
+						Type.Record(Type.String(), Type.String(), {
+							description: "Playbook variables; task fills {{task}}.",
+						}),
+					),
+					preview: Type.Optional(Type.Literal(true, { description: "Answer with the fleet card; start nothing." })),
+					detach: Type.Optional(Type.Literal(true, { description: "Return the root id at once; collect it with monitor." })),
+				},
+				{
+					additionalProperties: false,
+					description:
+						"Start a playbook: the fleet card /fleet run shows, parked once for approval; use with no other argument.",
+				},
+			),
+		),
 		task: Type.Optional(
 			Type.String({
 				description: "One self-contained worker assignment, never the operator's words. Use tasks for a batch.",
@@ -391,6 +410,17 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 					// tokens advertising them twice).
 					Type.Object({
 						task: Type.String({ description: "The assignment, with expected output and constraints." }),
+						id: Type.Optional(
+							Type.String({
+								description:
+									"Step id. Ids make the batch one approval-gated dependency plan; every task then names one, and mode, review and detach stay off.",
+							}),
+						),
+						depends_on: Type.Optional(
+							Type.Array(Type.String(), {
+								description: "Ids whose results this task needs; it starts after they succeed and receives their handoffs.",
+							}),
+						),
 						record: Type.Optional(Type.Boolean({ description: "Override the shared recording choice for this task." })),
 						context: Type.Optional(WorkerContextSchema),
 						briefing: Type.Optional(
@@ -572,4 +602,27 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 			}),
 		),
 	});
+}
+
+let canonicalFields: ReadonlySet<string> | undefined;
+
+/**
+ * The refusal for a call naming a top-level field the canonical schema does not have, or null. Dispatch reads only
+ * the fields it knows, so an unknown one would be dropped without a word: `advanced: { review }` ran ungated. Every
+ * field is top-level; nothing unwraps a wrapper object.
+ */
+export function unknownDispatchFieldRefusal(
+	args: Readonly<Record<string, unknown>>,
+	composition: DispatchSchemaComposition = FULL_DISPATCH_SCHEMA_COMPOSITION,
+): string | null {
+	canonicalFields ??= new Set(Object.keys(buildDispatchParameters().properties));
+	const known = canonicalFields;
+	const unknown = Object.keys(args).filter((key) => !known.has(key));
+	if (unknown.length === 0) return null;
+	const renamed = unknown.includes("target") && known.has("connection") ? " target is now connection." : "";
+	return [
+		`dispatch: unknown field${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}; nothing was dispatched.`,
+		` Every dispatch field is a top-level argument, never wrapped in another object.${renamed}`,
+		` Fields: ${Object.keys(buildDispatchParameters(composition).properties).join(", ")}`,
+	].join("");
 }

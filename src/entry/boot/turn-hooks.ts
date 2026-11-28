@@ -17,11 +17,13 @@ import {
 import { PANCODE_KEYBINDINGS, type PancodeKeybinding } from "../../domains/config/keybindings.js";
 import type { DispatchContract } from "../../domains/dispatch/contract.js";
 import { agentRoleFactsResolver } from "../../domains/dispatch/execution-role.js";
+import type { FleetRunLauncher } from "../../domains/dispatch/fleet-run-launcher.js";
 import {
 	createDetachedDispatchNudgeRegistration,
 	createUnbackedWorkerClaimRegistration,
 	finishedDetachedBatchIds,
 	openDetachedBatchViews,
+	uncollectedFleetRootViews,
 } from "../../domains/dispatch/nudges/dispatch-nudge.js";
 import { createPlanCloseRegistration } from "../../domains/dispatch/nudges/plan-close.js";
 import { createExplorationNudgeRegistrations } from "../../domains/dispatch/nudges/scout-nudge.js";
@@ -80,6 +82,8 @@ export interface BootTurnHooksInput {
 	createTurnOutcomeCollector: typeof createTurnOutcomeCollector;
 	dispatch: DispatchContract;
 	effectiveSettingsForDispatch: () => Readonly<PancodeSettings>;
+	/** The session's fleet launcher: its uncollected model-started roots are collected as detached batches are. */
+	fleetRuns: FleetRunLauncher | null;
 	getCurrentSettings: SessionSettingsView["getCurrentSettings"];
 	interactive: boolean;
 	memoryWorkspaceRoot: () => string;
@@ -120,6 +124,7 @@ export function registerBootTurnHooks(input: BootTurnHooksInput) {
 		createTurnOutcomeCollector,
 		dispatch,
 		effectiveSettingsForDispatch,
+		fleetRuns,
 		getCurrentSettings,
 		interactive,
 		memoryWorkspaceRoot,
@@ -242,7 +247,9 @@ export function registerBootTurnHooks(input: BootTurnHooksInput) {
 	);
 	middlewareRegistrar.registerHook(createUnbackedWorkerClaimRegistration());
 	middlewareRegistrar.registerHook(
-		createDetachedDispatchNudgeRegistration({ getOpenBatches: () => openDetachedBatchViews(dispatch) }),
+		createDetachedDispatchNudgeRegistration({
+			getOpenBatches: () => [...openDetachedBatchViews(dispatch), ...uncollectedFleetRootViews(fleetRuns)],
+		}),
 	);
 	const taskEstablished = (): boolean => {
 		const board = taskBoard.snapshot();
@@ -259,7 +266,8 @@ export function registerBootTurnHooks(input: BootTurnHooksInput) {
 			return sessionId === undefined ? {} : { sessionId };
 		},
 		getTurnConstraints: () => cells.chat.currentTurnConstraints?.(),
-		finishedDetachedBatchIds: () => finishedDetachedBatchIds(dispatch),
+		finishedDetachedBatchIds: () => finishedDetachedBatchIds(dispatch, fleetRuns),
+		...(fleetRuns ? { fleetRuns } : {}),
 		emitNotice: (text) => {
 			if (cells.deferredWatchdogNoticeSink) cells.deferredWatchdogNoticeSink(text);
 			else bootStderr(`${text}\n`);

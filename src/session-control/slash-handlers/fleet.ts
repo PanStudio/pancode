@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
+import { bindPlaybookTask } from "../../domains/agents/playbook-task.js";
 import { acceptanceFromTaskFlags } from "../../domains/dispatch/task-acceptance.js";
 import { formatUserTaskHandoff } from "../../domains/user-tasks/handoff.js";
 import type { BuiltinSlashCommand } from "../slash-command-types.js";
@@ -28,7 +29,12 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 						{ name: "--var", takesValue: true, repeatable: true, valueName: "key=value" },
 						{ name: "--resume", takesValue: true, valueName: "runId" },
 					],
-					positionals: [{ name: "playbook", required: true }],
+					// Words after the playbook name are its task, as `pancode fleet run <name> "<task>"` takes one.
+					positionals: [
+						{ name: "playbook", required: true },
+						{ name: "task", required: false, rest: true },
+					],
+					parseFlagsInRest: true,
 				},
 			},
 		},
@@ -40,9 +46,6 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			if (parsed.subcommand !== "run") {
 				return parsed.error ? { kind: "usage-error", command: "fleet", reason: parsed.error } : { kind: "fleet" };
 			}
-			// Words after the playbook name are a task typed the way /run takes one; a playbook reads it from --var.
-			if (parsed.error?.startsWith("Unexpected argument:") && parsed.positionals.length > 0)
-				return usageError("fleet", `${parsed.error}; a playbook takes its task as --var task="<text>"`, "run");
 			if (parsed.error) return usageError("fleet", parsed.error, "run");
 			const name = parsed.positionals[0] ?? "";
 			if (name.length === 0) return usageError("fleet", "Missing required argument: playbook", "run");
@@ -53,11 +56,20 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				if (key.length === 0) return usageError("fleet", "--var requires key=value", "run");
 				vars[key] = pair.slice(eq + 1);
 			}
+			const task = parsed.positionals[1];
+			const bound = bindPlaybookTask(vars, task);
+			if ("error" in bound) return usageError("fleet", bound.error, "run");
 			const resume = parsed.flagValues.get("--resume")?.[0];
 			if (resume !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resume)) {
 				return usageError("fleet", "--resume requires a fleet run id", "run");
 			}
-			return { kind: "fleet-run", name, vars, ...(resume !== undefined ? { resume } : {}) };
+			return {
+				kind: "fleet-run",
+				name,
+				vars: bound.vars,
+				...(task !== undefined ? { task } : {}),
+				...(resume !== undefined ? { resume } : {}),
+			};
 		},
 		handle(command, ctx) {
 			if (command.kind === "share") {
@@ -74,7 +86,10 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				ctx.notice("error", "/fleet run is not wired in this session");
 				return;
 			}
-			ctx.startFleetRun(command.name, command.vars, command.resume !== undefined ? { resume: command.resume } : {});
+			ctx.startFleetRun(command.name, command.vars, {
+				...(command.resume !== undefined ? { resume: command.resume } : {}),
+				...(command.task !== undefined ? { task: command.task } : {}),
+			});
 		},
 	},
 	{

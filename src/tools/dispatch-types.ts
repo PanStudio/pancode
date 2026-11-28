@@ -17,6 +17,7 @@ import type {
 import type { DispatchRejectedTask } from "./dispatch-arguments.js";
 import type { DispatchBackgroundRegistry } from "./dispatch-background.js";
 import type { DispatchPlanView, ResolvedDispatchPlanArtifact } from "./dispatch-plan.js";
+import type { DispatchPlaybookPort, PlaybookExecutionSnapshot } from "./dispatch-playbook.js";
 import type { DispatchRunEventRegistry } from "./dispatch-run-events.js";
 import type { DispatchSchemaComposition } from "./dispatch-schema.js";
 import type { DispatchReadRootTask, ToolInvokeOptions } from "./registry/contract.js";
@@ -110,7 +111,8 @@ export type DispatchExecutionSnapshot =
 	| DispatchRunExecutionSnapshot
 	| DispatchApplyWinnerExecutionSnapshot
 	| DispatchListExecutionSnapshot
-	| DispatchLandExecutionSnapshot;
+	| DispatchLandExecutionSnapshot
+	| PlaybookExecutionSnapshot;
 
 export interface DispatchToolDeps {
 	/** Active session workspace for external Scout admission (#433). */
@@ -157,4 +159,6 @@ export interface DispatchToolDeps {
 	 * active decisions' refs, sealed here and never from model arguments.
 	 */
 	getDecisionBoard?: () => ReadonlyArray<DecisionLedgerEntry>;
+	/** The session's playbook launcher; absent where no fleet run can start, so `dispatch(playbook)` refuses. */
+	playbooks?: DispatchPlaybookPort;
 }

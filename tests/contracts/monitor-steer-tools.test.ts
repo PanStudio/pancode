@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, doesNotMatch, match, strictEqual } from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { settleDispatchedRuns } from "../../src/cli/modes/headless-dispatched-runs.js";
+import { pricedUsd, sumPricing } from "../../src/core/telemetry/pricing.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import { fleetEndDocument } from "../../src/domains/dispatch/fleet-end-document.js";
+import { writeFleetResult, writeFleetRootRecord } from "../../src/domains/dispatch/fleet-root-record.js";
 import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
+import { fleetEndAnswer } from "../../src/tools/monitor-fleet.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
@@ -21,7 +25,7 @@ import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-e
  * records what the steer channel delivered and finishes when the test says so.
  */
 
-function controlledWorker() {
+function controlledWorker(outputText?: string) {
 	let resolve!: (value: SpawnedWorkerResult) => void;
 	const done = new Promise<SpawnedWorkerResult>((yes) => {
 		resolve = yes;
@@ -50,7 +54,7 @@ function controlledWorker() {
 					message: {
 						role: "assistant",
 						stopReason: "stop",
-						content: JSON.stringify({ confirmedFacts: [], missingEvidence: [], nextInspections: [] }),
+						content: outputText ?? JSON.stringify({ confirmedFacts: [], missingEvidence: [], nextInspections: [] }),
 					},
 				};
 		})(),
@@ -67,12 +71,12 @@ function controlledWorker() {
 /** Runs belong to the session that dispatched them, and monitor and steer act as that session. */
 const SESSION_ID = "session-monitor";
 
-async function fixture(scratch: IsolatedPancodeEnv) {
+async function fixture(scratch: IsolatedPancodeEnv, outputText?: string) {
 	const workers: ReturnType<typeof controlledWorker>[] = [];
 	const bundle = makeDispatchBundle(dispatchStubContext(), {
 		getSessionId: () => SESSION_ID,
 		spawnWorker: () => {
-			const worker = controlledWorker();
+			const worker = controlledWorker(outputText);
 			workers.push(worker);
 			return worker.worker;
 		},
@@ -331,6 +335,142 @@ describe("monitor tool", () => {
 		} finally {
 			t.mock.timers.reset();
 			t.mock.restoreAll();
+			await f.stop();
+		}
+	});
+
+	it("answers a fleet root from its durable record and collects its sealed fleet_end facts", async () => {
+		const f = await fixture(scratch);
+		try {
+			const rootId = "fleet-t4root00001";
+			const build = await f.contract.dispatch(f.request);
+			f.workers[0]?.finish();
+			strictEqual((await build.finalPromise).outcome, "succeeded");
+			writeFleetRootRecord({ rootId, playbook: "build-review", cwd: process.cwd() });
+			const running = okResult(await f.call(ToolNames.Monitor, { run_id: rootId }));
+			match(running.output, /fleet build-review root=fleet-t4root00001: running/);
+			const pending = okResult(await f.call(ToolNames.Monitor, { mode: "collect", run_id: rootId, timeout_ms: 20 }));
+			strictEqual(pending.details?.complete, false);
+			strictEqual(pending.details?.timedOut, true);
+			match(errorMessage(await f.call(ToolNames.Monitor, { mode: "record", run_id: rootId })), /has not sealed/);
+
+			const worktree = {
+				path: "/work/fleet-t4root00001",
+				branch: "pancode/fleet-t4root00001",
+				commit: "abc1234",
+				preview: "pancode fleet land fleet-t4root00001",
+				land: "pancode fleet land fleet-t4root00001 --yes",
+			};
+			const document = fleetEndDocument(
+				{
+					rootId,
+					playbook: "build-review",
+					planHash: "plan-hash",
+					started: true,
+					refusedBeforeStep: false,
+					steps: [
+						{ stepId: "build", runId: build.runId, outcome: "succeeded" },
+						{ stepId: "review", runId: "run-review", outcome: "failed" },
+					],
+					stopCause: null,
+					cleanRun: false,
+					notRunStepIds: [],
+					totalCost: sumPricing([pricedUsd("catalog", 0.25)]),
+					totalUsage: null,
+					worktree,
+					limits: {
+						maxCostUsd: null,
+						maxCostSource: null,
+						enforced: false,
+						overshootPossible: false,
+						timeoutMs: null,
+					},
+				},
+				1,
+				[{ code: "run_failed", message: "step review failed: tests red" }],
+			);
+			writeFleetResult(rootId, document);
+
+			const collected = okResult(await f.call(ToolNames.Monitor, { mode: "collect", run_ids: [rootId] }));
+			strictEqual(collected.details?.complete, true);
+			deepStrictEqual(collected.details?.fleetEnd, JSON.parse(JSON.stringify(document)));
+			match(collected.output, /completed verdict=partial exit=1/);
+			match(collected.output, /- review failed run=run-review/);
+			match(collected.output, /cause run_failed: step review failed: tests red/);
+			match(collected.output, /worktree kept: \/work\/fleet-t4root00001 on pancode\/fleet-t4root00001/);
+			match(collected.output, /cost: ~\$0\.25/);
+			const buildAnswer = new RegExp(`build answer \\(run=${build.runId}\\):\\n\\{"confirmedFacts":\\[\\]`);
+			match(collected.output, buildAnswer, "collect carries each sealed step answer");
+			doesNotMatch(collected.output, /review answer/, "a step without a sealed run record shows no answer");
+			match(fleetEndAnswer(document), buildAnswer, "a playbook call's answer carries its steps' answers");
+			match(okResult(await f.call(ToolNames.Monitor, { mode: "record", run_id: rootId })).output, /"type": "fleet_end"/);
+			match(errorMessage(await f.call(ToolNames.Monitor, { mode: "peek", run_id: rootId })), /names its step run ids/);
+
+			writeFleetRootRecord({ rootId: "fleet-t4other0001", playbook: "build-review", cwd: scratch.dir });
+			match(errorMessage(await f.call(ToolNames.Monitor, { run_id: "fleet-t4other0001" })), /belongs to another project/);
+			match(errorMessage(await f.call(ToolNames.Monitor, { run_id: "fleet-nosuchroot" })), /unknown fleet root/);
+		} finally {
+			await f.stop();
+		}
+	});
+
+	it("bounds sealed fleet step answers to 2KB each and 8KB total including cut markers", async () => {
+		const big = JSON.stringify({
+			confirmedFacts: ["x".repeat(3000)],
+			missingEvidence: [],
+			nextInspections: [],
+		});
+		const f = await fixture(scratch, big);
+		try {
+			const steps: Array<{ stepId: string; runId: string; outcome: "succeeded" }> = [];
+			for (let i = 0; i < 5; i++) {
+				const handle = await f.contract.dispatch(f.request);
+				f.workers[i]?.finish();
+				strictEqual((await handle.finalPromise).outcome, "succeeded");
+				steps.push({ stepId: `step${i}`, runId: handle.runId, outcome: "succeeded" });
+			}
+			const rootId = "fleet-t4budget001";
+			writeFleetRootRecord({ rootId, playbook: "big-answers", cwd: process.cwd() });
+			const document = fleetEndDocument(
+				{
+					rootId,
+					playbook: "big-answers",
+					planHash: "plan-hash",
+					started: true,
+					refusedBeforeStep: false,
+					steps,
+					stopCause: null,
+					cleanRun: true,
+					notRunStepIds: [],
+					totalCost: null,
+					totalUsage: null,
+					worktree: null,
+					limits: {
+						maxCostUsd: null,
+						maxCostSource: null,
+						enforced: false,
+						overshootPossible: false,
+						timeoutMs: null,
+					},
+				},
+				0,
+				[],
+			);
+			writeFleetResult(rootId, document);
+			const collected = okResult(await f.call(ToolNames.Monitor, { mode: "collect", run_ids: [rootId] }));
+			const sections = collected.output.split(/\nstep\d+ answer(?=[ (:])/u).slice(1);
+			strictEqual(sections.length, 5);
+			let totalAnswerBytes = 0;
+			for (const section of sections.slice(0, 4)) {
+				const body = section.slice(section.indexOf("\n") + 1);
+				const bytes = Buffer.byteLength(body, "utf8");
+				strictEqual(bytes <= 2048, true, `step answer exceeded 2048 bytes: ${bytes}`);
+				match(body, /\[answer cut; monitor\(mode="answer"/u);
+				totalAnswerBytes += bytes;
+			}
+			strictEqual(totalAnswerBytes <= 8192, true, `total step answers exceeded 8192 bytes: ${totalAnswerBytes}`);
+			match(sections[4] ?? "", /^: monitor\(mode="answer"/u, "fifth step past 8KB budget emits pointer only");
+		} finally {
 			await f.stop();
 		}
 	});

@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { runFleetCancel, runFleetStop } from "../../src/cli/fleet-cancel.js";
 import { runFleetWait } from "../../src/cli/fleet-wait.js";
+import type { PancodeSettings } from "../../src/core/config.js";
+import { telemetryContext } from "../../src/core/telemetry/context.js";
+import { sumPricing } from "../../src/core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { parsePlaybook } from "../../src/domains/agents/playbook.js";
 import { getStoredAssignment, registerAssignment } from "../../src/domains/dispatch/assignment-store.js";
@@ -17,19 +20,26 @@ import {
 	writeRootCancelRequest,
 	writeRunCancelRequest,
 } from "../../src/domains/dispatch/cancel-requests.js";
+import type { DispatchContract } from "../../src/domains/dispatch/contract.js";
 import { compileFleetExecutionPlan } from "../../src/domains/dispatch/fleet-plan.js";
 import { planFleetResume } from "../../src/domains/dispatch/fleet-resume.js";
 import {
 	fleetRootState,
 	matchFleetRootIds,
+	readFleetResult,
 	readFleetRootRecord,
 	writeFleetResult,
 	writeFleetRootRecord,
 } from "../../src/domains/dispatch/fleet-root-record.js";
 import { executeFleetRun } from "../../src/domains/dispatch/fleet-run.js";
+import { createFleetRunLauncher } from "../../src/domains/dispatch/fleet-run-launcher.js";
+import type { FleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
+import type { FleetRunOutcome } from "../../src/domains/dispatch/fleet-run-types.js";
 import { openLedger, readFleetRun, writeFleetRun } from "../../src/domains/dispatch/state.js";
 import type { RunLineage } from "../../src/domains/dispatch/types.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import { launchSessionId } from "../../src/entry/boot/fleet-runs.js";
 import { loadKeptTaskWorktree } from "../../src/tools/task-worktree-claims.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -381,4 +391,94 @@ describe("fleet cancel requests", () => {
 			strictEqual(takeRunCancelRequest(row.id), null);
 		});
 	}
+
+	it("seals a session-launched root with its fleet_end document and stops it on a durable stop request", async () => {
+		ensurePancodeState();
+		const step = { stepId: "build", kind: "agent", waveIndex: 0, assignmentId: "asg-build" } as const;
+		// A keypress or permission reply launches with no telemetry context; the run still binds the launching session.
+		const runSessions: Array<string | null | undefined> = [];
+		const launcher = createFleetRunLauncher({
+			dispatch: {} as DispatchContract,
+			agents: { getSpec: () => null },
+			workspaceRoot: () => scratch.dir,
+			sessionId: () => "session-launch",
+			run: (input) =>
+				new Promise<FleetRunOutcome>((_resolve, reject) => {
+					runSessions.push(telemetryContext()?.sessionId);
+					void Promise.resolve().then(() => runSessions.push(telemetryContext()?.sessionId));
+					input.onStarted?.();
+					input.onStepDispatched?.(step);
+					input.signal?.addEventListener("abort", () => {
+						input.onStepSettled?.({
+							...step,
+							succeeded: false,
+							failureReason: "stopped mid-step",
+							terminalRunId: "run-build",
+							pricing: sumPricing([]),
+						});
+						reject(new Error("the fleet was stopped"));
+					});
+				}),
+		});
+		const preview = {
+			name: "hello",
+			vars: {},
+			plan: { hash: "plan-hello" },
+			commands: null,
+			budget: { playbookUsd: null },
+		} as unknown as FleetRunPreview;
+		// A surface watching the session sees the main agent's run as it sees its own, through to the sealed settlement.
+		const watched: string[] = [];
+		launcher.watch(({ origin }) => ({
+			started: () => watched.push(`started:${origin}`),
+			stepDispatched: (_root, event) => watched.push(`dispatched:${event.stepId}`),
+			settled: (settlement) => watched.push(`settled:${settlement.stoppedBy}`),
+		}));
+		const launch = launcher.launch({ preview, origin: "model" });
+		if (launch.status !== "launched") throw new Error(launch.reason);
+		strictEqual(/^fleet-[0-9a-f]{12}$/.test(launch.rootId), true);
+		const second = launcher.launch({ preview, origin: "operator" });
+		strictEqual(second.status, "refused");
+		strictEqual(second.status === "refused" && second.reason.includes(`root=${launch.rootId}`), true);
+		deepStrictEqual(await launch.admitted, { status: "started" });
+		strictEqual(readFleetRootRecord(launch.rootId)?.state, "running");
+
+		writeRootCancelRequest(launch.rootId, "operator stop");
+		const settled = await launch.settled;
+		strictEqual(settled.stoppedBy, "fleet_stop");
+		strictEqual(settled.exitCode, 1);
+		const document = readFleetResult(launch.rootId);
+		deepStrictEqual(document?.completion, { state: "stopped", stopReason: "stopped" });
+		deepStrictEqual(document?.causes, [
+			{ code: "interrupted", signal: null, by: "fleet_stop" },
+			{ code: "run_failed", message: "step build failed: stopped mid-step" },
+		]);
+		deepStrictEqual(document?.verdict, {
+			aggregate: "fail",
+			steps: [{ stepId: "build", runId: "run-build", outcome: "failed" }],
+		});
+		strictEqual(readFleetRootRecord(launch.rootId)?.state, "sealed");
+		strictEqual(readRootCancelRequest(launch.rootId), null);
+		strictEqual(launcher.inFlight(), null);
+		deepStrictEqual(runSessions, ["session-launch", "session-launch"]);
+		deepStrictEqual(watched, ["started:model", "dispatched:build", "settled:fleet_stop"]);
+	});
+
+	it("opens the terminal's session for a run typed before its first turn, so the run never goes unbound", () => {
+		const opened: unknown[] = [];
+		let current: { id: string } | null = null;
+		const session = {
+			current: () => current,
+			create: (input: unknown) => {
+				opened.push(input);
+				current = { id: "session-opened" };
+				return current;
+			},
+		} as unknown as SessionContract;
+		const settings = { chat: { connection: "openai-codex", model: "gpt-6-luna" } } as PancodeSettings;
+		strictEqual(launchSessionId(session, settings), "session-opened");
+		strictEqual(launchSessionId(session, settings), "session-opened");
+		deepStrictEqual(opened, [{ cwd: process.cwd(), target: "openai-codex", model: "gpt-6-luna" }]);
+		strictEqual(launchSessionId(undefined, settings), null);
+	});
 });

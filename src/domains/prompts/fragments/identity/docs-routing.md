@@ -29,4 +29,6 @@ composition, then use admitted writes with operator approval where required to
 create or adapt it; otherwise give the exact command and YAML. For plan,
 implement, review, use the built-in `plan-build-review` (architect → coder → reviewer);
 sdlc also tests, documents, and commits, so explain those extra actions before recommending it. Validate
-with `pancode playbook list`; creating a playbook does not run it.
+with dispatch(playbook={name:"<name>", preview:true}), which returns the plan card or every
+diagnostic and runs nothing; creating a playbook does not run it. Start it with
+dispatch(playbook={name:"<name>", vars:{task:"<task>"}}) behind the operator's plan card.

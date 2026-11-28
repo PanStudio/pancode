@@ -9,7 +9,7 @@ import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
-import { listPlaybooks } from "../agents/playbook.js";
+import { listPlaybooks, playbookPromptVariables } from "../agents/playbook.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import { type AgentRecipeDiagnostic, discoverAgentRecipes } from "../agents/registry.js";
 import type { AgentAudience } from "../agents/spec.js";
@@ -683,6 +683,12 @@ function fromAgentDiagnostic(diagnostic: AgentRecipeDiagnostic, index: OwnerInde
 	};
 }
 
+/** The dispatch call that starts a playbook behind the operator's plan card, with `vars.task` only when its body uses it. */
+function playbookDispatchInvocation(name: string, body: string): string {
+	const task = playbookPromptVariables(body).includes("task") ? ', vars:{task:"<task>"}' : "";
+	return `dispatch(playbook={name:${JSON.stringify(name)}${task}})`;
+}
+
 function fromFleet(listing: ReturnType<typeof listPlaybooks>[number], index: OwnerIndex): HubComponent {
 	const { sourceId, owner } = agentSourceId({ source: listing.source, filepath: listing.path }, index);
 	const scope = agentScope(listing.source);
@@ -698,7 +704,7 @@ function fromFleet(listing: ReturnType<typeof listPlaybooks>[number], index: Own
 		kind: "playbook",
 		name,
 		description: clip(listing.playbook?.description ?? ""),
-		...(availability === "available" ? { invocation: `/fleet run ${name}` } : {}),
+		...(listing.playbook ? { invocation: playbookDispatchInvocation(name, listing.playbook.body) } : {}),
 		path: listing.path,
 		source: { class: sourceClassFor(sourceId), id: sourceId, scope },
 		...(owner ? { owner: ownerOf(owner) } : {}),

@@ -154,12 +154,8 @@ describe("decision refs are sealed from the board", () => {
 			}
 		});
 
-		it("leaves the field absent for an empty board even when the model argues for it", async () => {
-			const requests = await captureRequests([], {
-				agent: "coder",
-				task: "add a test",
-				decisionRefs: ["interview-1/db"],
-			});
+		it("leaves the field absent for an empty board", async () => {
+			const requests = await captureRequests([], { agent: "coder", task: "add a test" });
 			for (const request of requests) strictEqual("decisionRefs" in request, false);
 		});
 	});

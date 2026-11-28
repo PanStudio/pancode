@@ -33,6 +33,8 @@ export type SafetyDecision =
 			match?: DamageControlMatch;
 			rejection: RejectionMessage;
 			policy?: SafetyPolicyDecision;
+			/** The way forward a headless denial names, since nobody in that run can approve the call. */
+			recovery?: string;
 	  }
 	| {
 			kind: "block";

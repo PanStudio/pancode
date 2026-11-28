@@ -298,6 +298,7 @@ export const CARD_FACT_ROWS = { stack: "never" } as const;
 /** The section title over each approval artifact's text. */
 export const ARTIFACT_TITLES: Readonly<Record<NonNullable<ApprovalRequestView["artifact"]>["kind"], string>> = {
 	"dispatch-plan": "Resolved dispatch plan",
+	"fleet-run": "Playbook run plan",
 	"settings-change": "Settings change",
 	"mcp-skill": "MCP skill",
 };

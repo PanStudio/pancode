@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { DomainName } from "../../src/core/domain-loader.js";
+import { HEADLESS_PERMISSION_DENIED_REASON } from "../../src/core/headless-permission.js";
+import type { Playbook } from "../../src/domains/agents/playbook.js";
 import type { AgentSpec } from "../../src/domains/agents/spec.js";
 import {
 	admit,
@@ -32,7 +34,9 @@ import {
 	readCapacityStateUnsafe,
 	releaseMainCacheLanes,
 } from "../../src/domains/dispatch/capacity-lease.js";
-import type { AgentRoleFacts } from "../../src/domains/dispatch/execution-role.js";
+import { type AgentRoleFacts, agentRoleFactsResolver } from "../../src/domains/dispatch/execution-role.js";
+import type { FleetRunLauncher, FleetRunLaunchInput } from "../../src/domains/dispatch/fleet-run-launcher.js";
+import { compileFleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
 import {
 	isBoundedGateRolePrompt,
 	REVIEWER_GATE_PROMPT,
@@ -68,14 +72,18 @@ import copilotSdkRuntime from "../../src/domains/providers/runtimes/copilot/copi
 import { quotaSharedStatePath } from "../../src/domains/quota/shared-state.js";
 import { credentialFingerprint } from "../../src/domains/quota/types.js";
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { planFacts, planRouteSources, readDispatchPlan } from "../../src/interactive/dispatch-plan-summary.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import type { WorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { createDispatchAdmissionController } from "../../src/tools/dispatch-admission.js";
 import { dispatchRequestsFromArgs } from "../../src/tools/dispatch-arguments.js";
 import { normalizeDispatchAdmission } from "../../src/tools/dispatch-normalize.js";
 import { DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT, describeDispatchPlan } from "../../src/tools/dispatch-plan.js";
+import type { DispatchPlaybookPort } from "../../src/tools/dispatch-playbook.js";
 import type { DispatchToolDeps } from "../../src/tools/dispatch-types.js";
+import { createRegistry } from "../../src/tools/registry.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 
@@ -523,6 +531,360 @@ describe("dispatch admission boundary", () => {
 			match(notices.join("\n"), /^dispatch waves: the 6 tasks run as 2 waves of at most 4,/mu, JSON.stringify(notices));
 			admission.disposeAdmissionArguments(prepared);
 		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("seals a batch whose tasks name id and depends_on as one dependency plan, and refuses a shape it cannot run", async () => {
+		const context = dispatchStubContext();
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		try {
+			const admission = createDispatchAdmissionController({
+				dispatch: bundle.contract,
+				getAgentSpecs: () => context.getContract("agents")?.listSpecs() ?? [],
+				getAutonomy: () => "default",
+			} as DispatchToolDeps);
+			const tasks = [
+				{ id: "map", task: "Map the parser module." },
+				{ id: "tests", task: "Read the parser tests.", depends_on: ["map"] },
+				{ id: "docs", task: "Read the parser docs.", depends_on: ["map"] },
+			];
+			const prepared = admission.prepareAdmissionArguments({ agent: "scout", tasks });
+			strictEqual(prepared[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT], undefined, JSON.stringify(prepared));
+			deepStrictEqual(admission.state.trustedExecutionPlans.get(prepared)?.waves, [["map"], ["tests", "docs"]]);
+			const plan = describeDispatchPlan(prepared, true);
+			strictEqual(plan.topology, "fleet");
+			strictEqual(plan.taskCount, 3);
+			// A dependency plan always parks for the operator outside yolo, read-only steps included.
+			strictEqual(plan.planScale, true);
+			strictEqual(plan.readOnlyPlan, undefined);
+			match(plan.text, /^source: dependency-plan execution-plan=[0-9a-f]{64} /mu);
+			admission.disposeAdmissionArguments(prepared);
+			const refusal = (extra: Record<string, unknown>, planTasks: unknown[] = tasks) => {
+				const refused = admission.prepareAdmissionArguments({ agent: "scout", tasks: planTasks, ...extra });
+				admission.disposeAdmissionArguments(refused);
+				return String(refused[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT]);
+			};
+			match(
+				refusal({}, [
+					{ id: "a", task: "Read a.", depends_on: ["b"] },
+					{ id: "b", task: "Read b.", depends_on: ["a"] },
+				]),
+				/depends_on forms a cycle \(a -> b -> a\)/u,
+			);
+			match(refusal({}, [{ id: "a", task: "Read a.", depends_on: ["ghost"] }]), /depends on 'ghost', which no task/u);
+			match(refusal({ mode: "sequential" }), /drop mode=sequential/u);
+			match(refusal({ detach: true }), /runs attached.*drop detach/u);
+			// A8: a wrapped field is refused, never unwrapped or dropped; advanced:{review} once ran ungated.
+			match(refusal({ advanced: { review: { max_cycles: 2 } } }), /^dispatch: unknown field advanced; nothing/u);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("runs a dependency plan's first step before the steps that depend on it", async () => {
+		const started: string[] = [];
+		const context = dispatchStubContext();
+		const bundle = makeDispatchBundle(context, {
+			journalRunEvents: false,
+			spawnWorker: (spec) => {
+				started.push(spec.task.split(" ")[0] ?? "");
+				return {
+					pid: null,
+					heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+					abort() {},
+					promise: Promise.resolve({ exitCode: 0, signal: null }),
+					events: (async function* () {
+						const finding = { claim: "the package names itself", path: "package.json", line: 1 };
+						const content = JSON.stringify({ findings: [finding], needsSplit: false, proposedSubtasks: [] });
+						yield { type: "pancode_tool_finish", payload: { tool: "read", outcome: "ok" } };
+						yield { type: "message_end", message: { role: "assistant", stopReason: "stop", content } };
+						yield { type: "agent_end" };
+					})(),
+				};
+			},
+		});
+		await bundle.extension.start();
+		try {
+			const tool = createDispatchTool({
+				dispatch: bundle.contract,
+				getAutonomy: () => "yolo",
+				getAgentSpecs: () => context.getContract("agents")?.listSpecs() ?? [],
+			});
+			const prepared = tool.prepareAdmissionArguments?.({
+				agent: "scout",
+				tasks: [
+					{ id: "map", task: "map the parser module." },
+					{ id: "tests", task: "tests: read the parser tests.", depends_on: ["map"] },
+					{ id: "docs", task: "docs: read the parser docs.", depends_on: ["map"] },
+				],
+			});
+			ok(prepared);
+			strictEqual(prepared[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT], undefined, JSON.stringify(prepared));
+			const result = await tool.run(prepared);
+			strictEqual(result.kind, "ok", JSON.stringify(result));
+			strictEqual(started[0], "map");
+			deepStrictEqual(started.slice(1).sort(), ["docs:", "tests:"]);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("starts a playbook from dispatch: a preview answers with the card, a run parks once on it and launches the sealed plan (F1)", async () => {
+		const context = dispatchStubContext();
+		const agents = context.getContract("agents");
+		ok(agents);
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		const root = mkdtempSync(join(tmpdir(), "dispatch-playbook-"));
+		try {
+			const book = {
+				version: 3,
+				name: "survey",
+				description: "Survey fixture",
+				path: join(root, "survey.md"),
+				body: "Survey {{task}} and report.",
+				maxWorkers: 1,
+				budgetUsd: null,
+				onFailure: "stop",
+				steps: [{ kind: "agent", id: "survey", agent: "scout", scope: "readonly", dependencies: [] }],
+			} as unknown as Playbook;
+			const launched: FleetRunLaunchInput[] = [];
+			const port: DispatchPlaybookPort = {
+				launcher: {
+					launch: (input: FleetRunLaunchInput) => {
+						launched.push(input);
+						return { status: "refused", reason: "fixture: the launcher took the run" };
+					},
+				} as unknown as FleetRunLauncher,
+				workspaceRoot: () => root,
+				detachable: true,
+				preview: (name, vars) =>
+					compileFleetRunPreview({
+						workspaceRoot: root,
+						name,
+						vars,
+						getAgentSpec: (id) => agents.getSpec(id),
+						roleFacts: agentRoleFactsResolver((id) => agents.getSpec(id)),
+						load: () => ({ playbook: book, commands: null }),
+					}),
+			};
+			let autonomy: AutonomyLevel = "default";
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: root }), autonomy: () => autonomy });
+			registry.register(
+				createDispatchTool({
+					dispatch: bundle.contract,
+					getAgentSpecs: () => agents.listSpecs(),
+					getAutonomy: () => autonomy,
+					playbooks: port,
+				}),
+			);
+			const asks: string[] = [];
+			let answer: "approve" | "deny" | "headless" = "approve";
+			registry.onPermissionRequired((_call, decision, meta) => {
+				asks.push(decision.kind === "ask" ? decision.rejection.short : decision.kind);
+				if (answer === "approve") {
+					void registry.resumeParkedCalls({ actionClass: "dispatch", requestId: meta.requestId, requestedBy: "test" });
+				} else if (answer === "deny") {
+					registry.cancelParkedCalls("Operator denied this action.", { denied: true });
+				} else registry.cancelParkedCalls(HEADLESS_PERMISSION_DENIED_REASON);
+			});
+			const call = (playbook: Record<string, unknown>) =>
+				registry.invoke({
+					tool: "dispatch",
+					args: { playbook: { name: "survey", vars: { task: "the parser" }, ...playbook } },
+				});
+
+			// A preview is read-only: it answers with the card, parks nothing and starts nothing.
+			const preview = await call({ preview: true });
+			ok(preview.kind === "ok" && preview.result.kind === "ok", JSON.stringify(preview));
+			match(preview.result.output, /survey/u);
+			deepStrictEqual([asks.length, launched.length], [0, 0]);
+
+			// Declined or headless-denied, the run never reaches the launcher; headless names the CLI way forward.
+			answer = "deny";
+			strictEqual((await call({})).kind, "blocked");
+			answer = "headless";
+			const headless = await call({});
+			ok(headless.kind === "blocked");
+			match(JSON.stringify(headless.decision), /pancode fleet run survey \\"<task>\\"/u);
+			strictEqual(launched.length, 0);
+
+			// Approved once on the card, the launcher gets the sealed plan as the main agent's run.
+			answer = "approve";
+			const approved = await call({});
+			ok(approved.kind === "ok" && approved.result.kind === "error", JSON.stringify(approved));
+			match(approved.result.message, /fixture: the launcher took the run/u);
+			deepStrictEqual(asks, [
+				"playbook survey needs approval (1 step) at autonomy default",
+				"playbook survey needs approval (1 step) at autonomy default",
+				"playbook survey needs approval (1 step) at autonomy default",
+			]);
+			strictEqual(launched.length, 1);
+			strictEqual(launched[0]?.origin, "model");
+			const compiled = port.preview("survey", { task: "the parser" });
+			ok(compiled.ok);
+			strictEqual(launched[0]?.preview.planHash, compiled.preview.planHash);
+
+			// Yolo runs it with no ask.
+			autonomy = "yolo";
+			ok((await call({})).kind === "ok");
+			deepStrictEqual([asks.length, launched.length], [3, 2]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("refuses a playbook when its file or route drifts between approval card and launch, and enforces a read-only ceiling", async () => {
+		const context = dispatchStubContext();
+		const agents = context.getContract("agents");
+		ok(agents);
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		const root = mkdtempSync(join(tmpdir(), "dispatch-playbook-drift-"));
+		try {
+			let body = "Survey {{task}} carefully.";
+			let scope: "readonly" | "workspace" | "worktree" = "readonly";
+			let currentUsd = 0.0011;
+			let budgetVerdict: "under" | "at" | "over" = "under";
+			const launched: FleetRunLaunchInput[] = [];
+			const port: DispatchPlaybookPort = {
+				launcher: {
+					launch: (input: FleetRunLaunchInput) => {
+						launched.push(input);
+						return { status: "refused", reason: "fixture: launcher reached" };
+					},
+				} as unknown as FleetRunLauncher,
+				workspaceRoot: () => root,
+				detachable: true,
+				preview: (name, vars) =>
+					compileFleetRunPreview({
+						workspaceRoot: root,
+						name,
+						vars,
+						budget: { verdict: budgetVerdict, currentUsd, ceilingUsd: 5 },
+						getAgentSpec: (id) => agents.getSpec(id),
+						roleFacts: agentRoleFactsResolver((id) => agents.getSpec(id)),
+						load: () => ({
+							playbook: {
+								version: 3,
+								name: "survey",
+								description: "Survey fixture",
+								path: join(root, "survey.md"),
+								body,
+								maxWorkers: 1,
+								budgetUsd: null,
+								onFailure: "stop",
+								steps: [{ kind: "agent", id: "survey", agent: "scout", scope, dependencies: [] }],
+							} as unknown as Playbook,
+							commands: null,
+						}),
+					}),
+			};
+			let driftMode: "spend-under" | "spend-over" | "body" = "spend-under";
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: root }), autonomy: () => "default" });
+			registry.register(
+				createDispatchTool({
+					dispatch: bundle.contract,
+					getAgentSpecs: () => agents.listSpecs(),
+					getAutonomy: () => "default",
+					playbooks: port,
+				}),
+			);
+			registry.onPermissionRequired((_call, _decision, meta) => {
+				if (driftMode === "spend-under") {
+					// Simulate the proposing assistant turn finishing its spend fold while the card is open.
+					currentUsd = 0.0016;
+				} else if (driftMode === "spend-over") {
+					currentUsd = 5.01;
+					budgetVerdict = "over";
+				} else {
+					// Simulate the playbook changing on disk while the operator reads the approval card.
+					body = "Survey {{task}} and rewrite the repo.";
+				}
+				void registry.resumeParkedCalls({ actionClass: "dispatch", requestId: meta.requestId, requestedBy: "test" });
+			});
+			const spendTicked = await registry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(spendTicked.kind === "ok" && spendTicked.result.kind === "error", JSON.stringify(spendTicked));
+			match(spendTicked.result.message, /fixture: launcher reached/u);
+			strictEqual(launched.length, 1, "routine session spend ticking under the ceiling preserves the approval");
+
+			driftMode = "spend-over";
+			const overBudget = await registry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(overBudget.kind === "ok" && overBudget.result.kind === "error", JSON.stringify(overBudget));
+			match(overBudget.result.message, /budget ceiling crossed/u);
+			strictEqual(launched.length, 1, "crossing the budget ceiling while waiting on the card refuses launch");
+
+			currentUsd = 0.0016;
+			budgetVerdict = "under";
+			driftMode = "body";
+			const drifted = await registry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(drifted.kind === "ok" && drifted.result.kind === "error", JSON.stringify(drifted));
+			match(drifted.result.message, /changed since the approved card/u);
+			strictEqual(launched.length, 1, "a drifted playbook must never reach the launcher");
+			launched.length = 0;
+
+			// Under a read-only registry ceiling: preview is allowed, writing/worktree playbooks are refused,
+			// and a purely read-only playbook forwards readOnly: true into turnConstraints.
+			body = "Survey {{task}} carefully.";
+			const roRegistry = createRegistry({
+				safety: createWorkerSafety({ cwd: root }),
+				autonomy: () => "yolo",
+				readOnly: true,
+			});
+			roRegistry.register(
+				createDispatchTool({
+					dispatch: bundle.contract,
+					getAgentSpecs: () => agents.listSpecs(),
+					getAutonomy: () => "yolo",
+					playbooks: port,
+				}),
+			);
+			scope = "workspace";
+			const roPreview = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" }, preview: true } },
+			});
+			ok(roPreview.kind === "ok" && roPreview.result.kind === "ok", JSON.stringify(roPreview));
+			const roWrite = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(roWrite.kind === "ok" && roWrite.result.kind === "error", JSON.stringify(roWrite));
+			match(roWrite.result.message, /cannot run under a read-only ceiling/u);
+			strictEqual(launched.length, 0, "workspace-writing playbook refused under read-only");
+
+			scope = "worktree";
+			const roWorktree = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(roWorktree.kind === "ok" && roWorktree.result.kind === "error", JSON.stringify(roWorktree));
+			match(roWorktree.result.message, /worktree isolation and cannot run under a read-only ceiling/u);
+			strictEqual(launched.length, 0, "worktree playbook refused under read-only");
+
+			scope = "readonly";
+			const roReadonly = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(roReadonly.kind === "ok" && roReadonly.result.kind === "error", JSON.stringify(roReadonly));
+			match(roReadonly.result.message, /fixture: launcher reached/u);
+			strictEqual(launched.length, 1);
+			strictEqual(launched[0]?.turnConstraints?.readOnly, true);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 			await bundle.extension.stop?.();
 		}
 	});

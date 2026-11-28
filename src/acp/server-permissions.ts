@@ -32,6 +32,7 @@ import { askUserExposure } from "../tools/ask-user.js";
 import type { ToolRegistry } from "../tools/registry/contract.js";
 import { ACP_DISPATCH_PLAN_META_KEY, dispatchPlanTitle, projectDispatchPlanMeta } from "./dispatch-plan-meta.js";
 import { AcpTimeoutError } from "./errors.js";
+import { ACP_FLEET_META_KEY, projectFleetCard } from "./fleet-run.js";
 import { boundString, redactCallText, safeStoredIdentifier, safeStoredString } from "./server-bounds.js";
 import type { AcpClientSurface } from "./server-options.js";
 import type { AcpToolCallSnapshot } from "./server-tool-updates.js";
@@ -803,6 +804,10 @@ export function installPermissionBridge(input: {
 									// The plan admission rendered, whose hash a plan-scale run seals.
 									...(meta.dispatchPlan !== undefined
 										? { [ACP_DISPATCH_PLAN_META_KEY]: projectDispatchPlanMeta(meta.dispatchPlan) }
+										: {}),
+									// A model-started playbook carries the card the terminal approves.
+									...(meta.dispatchPlan?.fleetRun !== undefined
+										? { [ACP_FLEET_META_KEY]: projectFleetCard(meta.dispatchPlan.fleetRun) }
 										: {}),
 									...(withdrawable ? { [ACP_PERMISSION_ASK_META_KEY]: { version: 1, requestId: meta.requestId } } : {}),
 								},

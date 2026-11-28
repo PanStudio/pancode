@@ -239,9 +239,12 @@ function parseArgs(spec: CommandArgsSpec, argsLine: string): ParsedArgs {
 					skipWhitespace();
 				}
 				const restVal = text.join(" ").trim();
-				if (!restVal) return errorResult(`Missing required argument: ${currentPositionalSpec.name}`);
-				positionals.push(restVal);
-				rest = restVal;
+				if (restVal) {
+					positionals.push(restVal);
+					rest = restVal;
+				} else if (currentPositionalSpec.required) {
+					return errorResult(`Missing required argument: ${currentPositionalSpec.name}`);
+				}
 				positionalIndex++;
 				break;
 			}

@@ -10,6 +10,7 @@ import type { runCodeStep } from "./code-step.js";
 import type { DispatchContract } from "./contract.js";
 import type { ExecutionPlan, ExecutionPlanStep } from "./execution-plan.js";
 import type { ExecutionPlanResult, ExecutionStepResult } from "./execution-scheduler.js";
+import type { FleetRunPreviewRoute } from "./fleet-run-preview.js";
 import type { FleetKeptWorktree } from "./fleet-task-worktree.js";
 import type { FleetRunRecord } from "./state.js";
 import type { RunResult } from "./types.js";
@@ -106,6 +107,13 @@ export interface ExecuteFleetRunInput {
 	 * hands a playbook step write or bash (Z1).
 	 */
 	turnConstraints?: TurnConstraints;
+	/** The main agent's dispatch call that started the run, so each step reads as model-asked. */
+	parentToolCallId?: string;
+	/**
+	 * Routes sealed on the approval card per step id. When present, preflight and step dispatch refuse any route
+	 * drift instead of silently running a step on a different connection, model, or node.
+	 */
+	approvedRoutes?: ReadonlyMap<string, FleetRunPreviewRoute>;
 	/**
 	 * Fires once the workspace lock and the whole-plan reservation are held, so a run the lock or the admission gate
 	 * refuses never announces its minted root.

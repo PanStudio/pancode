@@ -102,10 +102,25 @@ describe("compact coordinator dispatch contract", () => {
 			validateEngineToolArguments(tool, { type: "toolCall", id: "granted", name: "dispatch", arguments: granted }),
 		);
 		deepStrictEqual(received.at(-1), granted, "a call carrying tags is still admitted");
+		// A grammar parser sends the off-schema depends_on as text; it reaches admission as the id list.
+		const dag = [
+			{ task: "map", id: "a" },
+			{ task: "read", id: "b", depends_on: '["a"]' },
+		];
+		await tool.execute(
+			"dag",
+			validateEngineToolArguments(tool, {
+				type: "toolCall",
+				id: "dag",
+				name: "dispatch",
+				arguments: { task: "", tasks: dag },
+			}),
+		);
+		deepStrictEqual(received.at(-1), { tasks: [dag[0], { ...dag[1], depends_on: ["a"] }] });
 		const invalid = { task: "", tasks: ["valid"], candidates: "many" };
 		ok(Value.Check(tool.parameters, invalid), "hidden fields reach canonical validation");
 		await rejects(tool.execute("invalid", invalid), /candidates/u);
-		strictEqual(received.length, 4, "invalid canonical arguments never execute");
+		strictEqual(received.length, 5, "invalid canonical arguments never execute");
 	});
 
 	it("runs a batch sent beside a top-level task as the batch", () => {
@@ -250,19 +265,22 @@ describe("compact coordinator dispatch contract", () => {
 		ok(verdict.kind === "ok" && verdict.result.kind === "ok");
 		const described = JSON.parse(verdict.result.output) as {
 			parameters: { properties: Record<string, unknown> };
-			advanced: { properties: Record<string, unknown> };
 			authority: string[];
 		};
 		const attached = resolveAgentTools({ registry });
-		deepStrictEqual(described.parameters, attached.find((tool) => tool.name === "dispatch")?.parameters);
-		// The compact attached schema stays small, but describe must still reach
-		// the canonical compete, council and review fields.
-		for (const field of ["candidates", "judge", "members", "review", "context", "routing"]) {
+		const attachedDispatch = attached.find((tool) => tool.name === "dispatch")?.parameters as {
+			properties: Record<string, unknown>;
+		};
+		// The compact attached schema stays small; describe shows every canonical field at the top level, with no
+		// wrapper a model could send: advanced:{review} once ran ungated (A8).
+		ok(!("advanced" in described));
+		for (const field of Object.keys(attachedDispatch.properties)) ok(field in described.parameters.properties, field);
+		for (const field of ["candidates", "judge", "members", "review", "context", "routing", "playbook"]) {
 			ok(!(field in compact.properties));
-			ok(!(field in described.parameters.properties));
-			ok(field in described.advanced.properties, field);
+			ok(field in described.parameters.properties, field);
 		}
-		match(JSON.stringify(described.advanced.properties.mode), /compete/u);
+		match(JSON.stringify(described.parameters.properties.mode), /compete/u);
+		match(described.authority.join(" "), /Every field listed is a top-level argument/u);
 		match(JSON.stringify(compact.properties.mode), /gateway describe dispatch/u);
 		match(described.authority.join(" "), /"dispatch" is a direct tool.*call it directly, not through the gateway/u);
 		const gatewayVerdict = await registry.invoke({ tool: "gateway", args: { op: "describe", capability: "gateway" } });
