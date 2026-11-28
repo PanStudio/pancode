@@ -38,14 +38,7 @@ import { type DenialLayer, repeatedDenialReason, type ToolDenial } from "../doma
 import { escapeScopeOptionConsequence, escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
 import type { GitHookDriftReport } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
-import {
-	EMPTY_INFORMATION_FLOW_POLICY,
-	flowEndpointIdentity,
-	flowTransferRefusal,
-	isFlowRestrictionSet,
-	mergeFlowRestrictions,
-	resolveToolDestination,
-} from "../domains/safety/information-flow.js";
+import { isFlowRestrictionSet, mergeFlowRestrictions } from "../domains/safety/information-flow.js";
 import { hashToolCall } from "../domains/safety/loop-detector.js";
 import {
 	OPERATOR_NAMED_RULE,
@@ -76,6 +69,7 @@ import {
 	readFanOutCapBytes,
 	readFanOutText,
 } from "./read-fan-out.js";
+import { createFlowGates } from "./registry/flow.js";
 import { createOperatorScopes } from "./registry/operator-scope.js";
 import type { ContainedRoots, ParkedCall, RegistryScope } from "./registry/scope.js";
 import {
@@ -135,7 +129,6 @@ import {
 	escapeScopeAskHint,
 	FLOW_BLOCK_REASON_CODE,
 	FLOW_RESTRICTIONS_DETAIL,
-	FLOW_SOURCE_TOOLS,
 	flowBlockedVerdict,
 	GUARD_BLOCK_REASON_CODE,
 	HOOK_APPROVAL_RULE_ID,
@@ -321,6 +314,16 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		get trueYolo() {
 			return trueYolo;
 		},
+
+		get outboundFlowViolation() {
+			return outboundFlowViolation;
+		},
+		get fileTargetFlowViolation() {
+			return fileTargetFlowViolation;
+		},
+		get sourceAdmissionRefusal() {
+			return sourceAdmissionRefusal;
+		},
 	};
 	const {
 		operatorYoloScope,
@@ -339,70 +342,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		return decision.match?.ruleId ?? decision.policy?.ruleId;
 	};
 
-	/**
-	 * Block reason when this call would carry the session's restricted content
-	 * to a destination its source rules do not admit, or null. Judged on the
-	 * requested identity; a fetch's redirect hops are judged again by the
-	 * fetch loop through `flowAdmitsUrl`.
-	 */
-	const outboundFlowViolation = (spec: ToolSpec, call: ClassifierCall): string | null => {
-		const destination = resolveToolDestination(spec.name, call.args, (tool) => deps.flow?.mcpTransport?.(tool) ?? null);
-		if (destination === null) return null;
-		const refusal = deps.flow?.refusal() ?? null;
-		if (refusal !== null) return refusal;
-		return flowTransferRefusal(
-			deps.safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
-			carriedWithFiles(spec, call),
-			destination,
-		);
-	};
-
-	/** What the context carries, plus the labels of each file the call sends off the host. */
-	const carriedWithFiles = (spec: ToolSpec, call: ClassifierCall): FlowRestrictionSet | null => {
-		const files = outboundFilesOf(spec, call.args);
-		const carried = deps.flow?.carried() ?? null;
-		if (files.length === 0) return carried;
-		return mergeFlowRestrictions(
-			carried,
-			...files.map((file) => deps.safety.policy?.flowRestrictionsFor?.(file.source) ?? null),
-		);
-	};
-
-	/**
-	 * Block reason when a storage URL an MCP call's files go to is not a
-	 * destination the carried labels and the files' own labels admit, or null.
-	 */
-	const fileTargetFlowViolation = (spec: ToolSpec, call: ClassifierCall, url: string): string | null => {
-		const refusal = deps.flow?.refusal() ?? null;
-		if (refusal !== null) return refusal;
-		const endpoint = flowEndpointIdentity(url);
-		const violation = flowTransferRefusal(
-			deps.safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
-			carriedWithFiles(spec, call),
-			{ kind: "tool", tool: spec.name, endpoint, ...(endpoint === null ? { endpointUnresolved: true } : {}) },
-		);
-		if (violation === null || endpoint === null) return violation;
-		const origin = URL.parse(url)?.origin ?? null;
-		return origin === null ? violation : violation.replaceAll(endpoint, origin);
-	};
-
-	/**
-	 * Tools whose result can carry a restricted source into the transcript: the
-	 * path readers the source rules name, every MCP tool, and the outbound
-	 * tools. While the policy cannot say what is restricted, running one would
-	 * persist content under no label, and a later resume would read it as
-	 * unrestricted. Refused with the policy's own reason, which names the
-	 * snapshot and the remedy and never the content.
-	 */
-	const sourceAdmissionRefusal = (spec: ToolSpec, call: ClassifierCall): string | null => {
-		const refusal = deps.safety.policy?.informationFlow?.().refusal ?? null;
-		if (refusal === null) return null;
-		const isSource =
-			FLOW_SOURCE_TOOLS.has(spec.name) ||
-			isMcpToolName(spec.name) ||
-			resolveToolDestination(spec.name, call.args) !== null;
-		return isSource ? `${spec.name} refused while the information-flow policy is unavailable: ${refusal}` : null;
-	};
+	const { outboundFlowViolation, fileTargetFlowViolation, sourceAdmissionRefusal } = createFlowGates(reg);
 
 	/** The turn whose first mutating call already took its snapshot, or is taking it. */
 	let snapshotTurn: { key: string; pending: Promise<WorkspaceSnapshotOutcome | null> } | null = null;

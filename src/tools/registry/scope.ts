@@ -15,6 +15,7 @@ import type {
 } from "../registry-contract.js";
 import type { createShellEgress, OperatorAskQueue } from "../registry-operator-asks.js";
 import type { ToolSpec } from "../tool-spec.js";
+import type { createFlowGates } from "./flow.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 
 export interface ParkedCall {
@@ -69,4 +70,7 @@ export interface RegistryScope {
 	readonly jobNeedsContainment: ReturnType<typeof createOperatorScopes>["jobNeedsContainment"];
 	readonly shellSandboxPolicy: ReturnType<typeof createOperatorScopes>["shellSandboxPolicy"];
 	readonly trueYolo: ReturnType<typeof createOperatorScopes>["trueYolo"];
+	readonly outboundFlowViolation: ReturnType<typeof createFlowGates>["outboundFlowViolation"];
+	readonly fileTargetFlowViolation: ReturnType<typeof createFlowGates>["fileTargetFlowViolation"];
+	readonly sourceAdmissionRefusal: ReturnType<typeof createFlowGates>["sourceAdmissionRefusal"];
 }
