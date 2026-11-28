@@ -10,7 +10,8 @@ const privateSegment =
  * A key whose last word names a secret, such as `githubToken`, `clientSecret` or `openaiApiKey`. The engine's
  * substring rule for tool arguments would also hide counts such as `maxTokens`, so settings match the last word only.
  */
-const secretSuffix = /(?:api[-_]?key|access[-_]?key|private[-_]?key|secret|password|credentials?|token)$/i;
+const secretSuffix =
+	/(?:api[-_]?key|access[-_]?key|private[-_]?key|secret[-_]?key|secret|pass(?:word|wd|phrase)|credentials?|token)$/i;
 export function projectSettingsRows(settings: unknown, sources: Record<string, SettingRow["source"]>): SettingRow[] {
 	const rows: SettingRow[] = [];
 	function visit(value: unknown, segments: readonly string[], arrayOrigin?: SettingRow["source"]) {
@@ -43,7 +44,7 @@ export function projectSettingsRows(settings: unknown, sources: Record<string, S
 					url.password = "";
 					url.search = "";
 					url.hash = "";
-					rows.push({ key, source, value: url.href, redacted: true });
+					rows.push({ key, source, value: redactSecretString(url.href).slice(0, 4096), redacted: true });
 					return;
 				}
 			} catch {
