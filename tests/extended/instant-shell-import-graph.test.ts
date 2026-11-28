@@ -190,10 +190,8 @@ test("fleet status answers from a module that does not load the fleet command, l
 	// 50 after the ledger stopped value-importing execution-role.ts, whose recipe rules (agent spec, result contracts,
 	// safety classifier) had grown it to 62. 0.9.0 measured 58 / 1,790,077 B after the migration modules and their
 	// import() sites left, against 53 / 1,846,544 B before: less code, regrouped by scripts/chunk-merge.ts into more files.
-	// 0.9.2 measured 63 after the research domain moved into its pack: removing its import() sites reordered the
-	// chunk-merge guard pass, so the same modules split across more launch-stage files. The merge now folds in an
-	// order fixed by the module graph and follows fleet-status.ts's import() sites into one exact path: 31 chunks /
-	// 1,516,385 B.
+	// 0.9.2 folds in an order fixed by the module graph and follows fleet-status.ts's import() sites into one exact path:
+	// 32 chunks / 1,516,888 B.
 	const rows = new Set(seen);
 	const rowsForbidden =
 		/^src\/(?:cli\/fleet\.ts|entry\/|session-control\/|interactive\/|domains\/[^/]+\/(?:extension|index)\.ts|domains\/session\/telemetry-source\.ts)$/u;
@@ -231,9 +229,7 @@ test("headless run refuses before boot from a closure without the composition ro
 	let totalBytes = 0;
 	for (const name of closure) totalBytes += statSync(chunkPath(name)).size;
 	// 0.8.5 measured 32 chunks / 867,066 B (126 / 10,994,573 B before run.ts loaded its boot graph lazily).
-	// 0.9.2 measured 50 chunks / 1,038,001 B after the research pack left (44 / 1,036,121 B before, the same 220 inputs
-	// regrouped by the chunk-merge guard pass); the pre-boot refusal measured no slowdown (83-87 ms median, 120-172 ms before).
-	// With the merge's fold order fixed by the module graph it measured 38 chunks / 1,062,705 B.
+	// 0.9.2 folds in an order fixed by the module graph: 39 chunks / 1,064,536 B.
 	ok(closure.size <= 48, `run pre-boot chunks: ${closure.size} > 48`);
 	ok(totalBytes <= 1_300_000, `run pre-boot bytes: ${totalBytes} > 1,300,000`);
 });

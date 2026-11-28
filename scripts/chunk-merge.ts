@@ -600,7 +600,8 @@ async function mergeChunks(options: MergeOptions): Promise<{ files: BuiltFile[];
 	}
 
 	const input: Record<string, string> = {};
-	for (const entry of [...entries].sort(compareText)) input[relative(prefix, entry).slice(0, -".js".length)] = resolve(entry);
+	for (const entry of [...entries].sort(compareText))
+		input[relative(prefix, entry).slice(0, -".js".length)] = resolve(entry);
 	// A merged file exports only what another file imports, so a symbol every importer was merged with would stop
 	// being reachable from outside. One more entry that imports every chunk export keeps each one exported from
 	// the file it lands in, as esbuild's chunks exported them; its own output is discarded.
