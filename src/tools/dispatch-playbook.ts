@@ -24,6 +24,7 @@ import { requestedWriteNone } from "../domains/dispatch/obligation.js";
 import { canonicalWriteRoots } from "../domains/dispatch/writer-set.js";
 import type { ToolCallDispatchLanding, ToolCallDispatchTask } from "../domains/middleware/types.js";
 import { fleetEndAnswer } from "./monitor-fleet.js";
+import type { ToolResult } from "./tool-spec.js";
 
 export interface PlaybookRef {
 	readonly name: string;
@@ -85,6 +86,15 @@ export function playbookRefFromArgs(
 		ok: true,
 		ref: { name: value.name.trim(), vars, preview: value.preview === true, detach: value.detach === true },
 	};
+}
+
+/** What admission seals for a playbook call: the preview its card showed, which is the plan the run executes. */
+export interface PlaybookExecutionSnapshot {
+	readonly kind: "playbook";
+	readonly ref: PlaybookRef;
+	readonly preview: FleetRunPreview;
+	/** The card text the operator approves; a preview call answers with it. */
+	readonly text: string;
 }
 
 /** Everything compiling a playbook needs from the session; the name and variables come from the call. */
@@ -234,4 +244,59 @@ export async function runApprovedPlaybook(input: {
 	} finally {
 		input.signal?.removeEventListener("abort", stopOnAbort);
 	}
+}
+
+/**
+ * The runner's playbook branch. A preview answers with the card. A run needs the operator's approval of this call
+ * or yolo, and the plan admission sealed must still be the card's: the launcher runs the sealed preview, never a
+ * fresh read of the playbook file.
+ */
+export async function runPlaybookCall(input: {
+	snapshot: PlaybookExecutionSnapshot;
+	launcher: FleetRunLauncher | undefined;
+	/** The planHash of the plan admission sealed for this call, or null when it sealed none. */
+	sealedPlanHash: string | null;
+	/** An operator approved this call, or the session runs in yolo. */
+	authorized: boolean;
+	headless: boolean;
+	turnConstraints?: TurnConstraints;
+	toolCallId?: string;
+	signal?: AbortSignal;
+}): Promise<ToolResult> {
+	const { ref, preview, text } = input.snapshot;
+	const details = { mode: "playbook", playbook: preview.name };
+	if (ref.preview) return { kind: "ok", output: playbookPreviewText(ref, text), details: { ...details, preview: true } };
+	if (input.launcher === undefined) {
+		return {
+			kind: "error",
+			message: `dispatch: playbooks cannot start here; the operator can start it with pancode fleet run ${preview.name} "<task>"`,
+			details,
+		};
+	}
+	if (input.sealedPlanHash !== preview.planHash) {
+		return { kind: "error", message: "dispatch: the playbook plan differs from the approved card", details };
+	}
+	if (!input.authorized) {
+		return {
+			kind: "error",
+			message: "dispatch: resolved plan requires a registry-authenticated operator approval",
+			details,
+		};
+	}
+	const result = await runApprovedPlaybook({
+		launcher: input.launcher,
+		preview,
+		detach: ref.detach,
+		headless: input.headless,
+		...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
+		...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
+		...(input.signal !== undefined ? { signal: input.signal } : {}),
+	});
+	if (!result.ok) return { kind: "error", message: result.message, details };
+	const ran = { ...details, root: result.rootId, ...(result.settlement === null ? { detached: true } : {}) };
+	if (result.settlement === null) return { kind: "ok", output: result.text, details: ran };
+	const settled = { ...ran, exitCode: result.settlement.exitCode };
+	return result.settlement.exitCode === 0
+		? { kind: "ok", output: result.text, details: settled }
+		: { kind: "error", message: result.text, details: settled };
 }

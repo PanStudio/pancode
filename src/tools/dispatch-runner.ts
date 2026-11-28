@@ -40,7 +40,7 @@ import { describeDispatchPlan, RESOLVED_DISPATCH_PLAN_ARGUMENT, withResolvedPlan
 import { REVIEW_SINGLE_TASK_MESSAGE, reviewGateResult, runReviewGated } from "./dispatch-review.js";
 import { createDispatchRunEventRegistry } from "./dispatch-run-events.js";
 import { dependencyPlanAuthorityGranted, runDependencyPlan } from "./dispatch-scout.js";
-import type { DispatchToolDeps } from "./dispatch-types.js";
+import type { DispatchLandExecutionSnapshot, DispatchToolDeps } from "./dispatch-types.js";
 import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult } from "./tool-spec.js";
 
@@ -59,6 +59,35 @@ export type {
 function dispatchErrorMessage(err: unknown): string {
 	const message = competeErrorMessage(err);
 	return message.startsWith("dispatch: ") ? message : `dispatch: ${message}`;
+}
+
+/** `dispatch land`: land a kept task branch the operator approved from its Land card. */
+async function runLandSnapshot(
+	deps: RegisteredDispatchToolDeps,
+	snapshot: DispatchLandExecutionSnapshot,
+	options: ToolInvokeOptions | undefined,
+): Promise<ToolResult> {
+	// Boot recovery settles a dead run's claim; until then fleet land reads its branch as running.
+	await deps.dispatch.awaitStartupRecovery?.();
+	if (deps.dispatch.landKeptTask === undefined) {
+		return {
+			kind: "error",
+			message: `dispatch: land is unavailable here; the operator can land it with \`pancode fleet land ${snapshot.ref}\``,
+		};
+	}
+	const landing = await deps.dispatch.landKeptTask({
+		ref: snapshot.ref,
+		cwd: snapshot.cwd,
+		...(options?.signal !== undefined ? { signal: options.signal } : {}),
+	});
+	const details = {
+		mode: "land",
+		outcome: landing.outcome,
+		...(landing.branch !== undefined ? { branch: landing.branch } : {}),
+	};
+	return landing.outcome === "refused"
+		? { kind: "error", message: `dispatch: land ${snapshot.ref}: ${landing.detail}`, details }
+		: { kind: "ok", output: `dispatch land ${landing.branch ?? snapshot.ref}: ${landing.detail}.`, details };
 }
 
 export async function runDispatchTool(
@@ -102,29 +131,7 @@ export async function runDispatchTool(
 		}
 		return { kind: "ok", output: catalog };
 	}
-	if (snapshot?.kind === "land") {
-		// Boot recovery settles a dead run's claim; until then fleet land reads its branch as running.
-		await deps.dispatch.awaitStartupRecovery?.();
-		if (deps.dispatch.landKeptTask === undefined) {
-			return {
-				kind: "error",
-				message: `dispatch: land is unavailable here; the operator can land it with \`pancode fleet land ${snapshot.ref}\``,
-			};
-		}
-		const landing = await deps.dispatch.landKeptTask({
-			ref: snapshot.ref,
-			cwd: snapshot.cwd,
-			...(options?.signal !== undefined ? { signal: options.signal } : {}),
-		});
-		const details = {
-			mode: "land",
-			outcome: landing.outcome,
-			...(landing.branch !== undefined ? { branch: landing.branch } : {}),
-		};
-		return landing.outcome === "refused"
-			? { kind: "error", message: `dispatch: land ${snapshot.ref}: ${landing.detail}`, details }
-			: { kind: "ok", output: `dispatch land ${landing.branch ?? snapshot.ref}: ${landing.detail}.`, details };
-	}
+	if (snapshot?.kind === "land") return runLandSnapshot(deps, snapshot, options);
 	// Gate evidence and compete recovery below must not race the boot's own recovery of the same groups.
 	await deps.dispatch.awaitStartupRecovery?.();
 	try {
