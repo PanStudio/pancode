@@ -224,10 +224,10 @@ export const WorkerGraph = memo(function WorkerGraph({
 						<dt>failed</dt>
 						<dd>{graph.failed}</dd>
 					</div>
-					{graph.stopped > 0 ? (
+					{graph.canceled > 0 ? (
 						<div>
-							<dt>stopped</dt>
-							<dd>{graph.stopped}</dd>
+							<dt>canceled</dt>
+							<dd>{graph.canceled}</dd>
 						</div>
 					) : null}
 				</dl>

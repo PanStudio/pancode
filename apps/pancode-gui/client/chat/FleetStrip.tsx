@@ -37,23 +37,23 @@ export interface RunSteering {
 }
 
 /**
- * Guide or stop one live worker. Stop is a two-press control because it discards the worker's
+ * Guide or cancel one live worker. Cancel is a two-press control because it discards the worker's
  * in-flight work and there is no undo. `accepted` only means the engine queued the request, so
  * the outcome sentence never claims the worker has read or obeyed it.
  */
 export function RunSteer({ run, steering }: { run: FleetRun; steering: RunSteering }) {
-	const [mode, setMode] = useState<"idle" | "guide" | "confirm-stop">("idle");
+	const [mode, setMode] = useState<"idle" | "guide" | "confirm-cancel">("idle");
 	const [text, setText] = useState("");
 	const [outcome, setOutcome] = useState<SteerOutcome | null>(null);
 	const field = useId();
 	// Leaving the form or the question puts focus back on the button that opened it, instead of
 	// dropping it on the page when that part of the row unmounts.
-	const opened = useRef<"guide" | "stop" | null>(null);
+	const opened = useRef<"guide" | "cancel" | null>(null);
 	const guideButton = useRef<HTMLButtonElement>(null);
-	const stopButton = useRef<HTMLButtonElement>(null);
+	const cancelButton = useRef<HTMLButtonElement>(null);
 	useEffect(() => {
 		if (mode !== "idle" || opened.current === null) return;
-		(opened.current === "guide" ? guideButton : stopButton).current?.focus();
+		(opened.current === "guide" ? guideButton : cancelButton).current?.focus();
 		opened.current = null;
 	}, [mode]);
 	const steer = useMutation({
@@ -111,21 +111,21 @@ export function RunSteer({ run, steering }: { run: FleetRun; steering: RunSteeri
 						</button>
 					</div>
 				</form>
-			) : mode === "confirm-stop" ? (
+			) : mode === "confirm-cancel" ? (
 				<div className="fleet-steer__actions">
-					<span>Stop this worker? Its unfinished work is discarded.</span>
+					<span>Cancel this worker? Its unfinished work is discarded.</span>
 					<button
 						type="button"
 						className="fleet-steer__stop"
 						disabled={steer.isPending}
 						onClick={() => steer.mutate({ action: "cancel" })}
 					>
-						Stop run
+						Cancel worker
 					</button>
 					<button
 						type="button"
 						onClick={() => setMode("idle")}
-						// biome-ignore lint/a11y/noAutofocus: the operator just pressed Stop; the safe answer takes focus.
+						// biome-ignore lint/a11y/noAutofocus: the operator just pressed Cancel; the safe answer takes focus.
 						autoFocus
 					>
 						Keep running
@@ -146,14 +146,14 @@ export function RunSteer({ run, steering }: { run: FleetRun; steering: RunSteeri
 					</button>
 					<button
 						type="button"
-						ref={stopButton}
+						ref={cancelButton}
 						onClick={() => {
-							opened.current = "stop";
-							setMode("confirm-stop");
+							opened.current = "cancel";
+							setMode("confirm-cancel");
 						}}
-						aria-label={`Stop ${run.agentId}`}
+						aria-label={`Cancel ${run.agentId}`}
 					>
-						Stop
+						Cancel
 					</button>
 				</div>
 			)}

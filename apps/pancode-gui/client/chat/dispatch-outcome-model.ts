@@ -31,7 +31,7 @@ export function dispatchRunIds(
 const SETTLED_WORDS: ReadonlyArray<readonly [FleetRunState, string]> = [
 	["done", "done"],
 	["failed", "failed"],
-	["stopped", "stopped"],
+	["canceled", "canceled"],
 	["ended", "ended without a final event"],
 ];
 

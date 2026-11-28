@@ -207,6 +207,7 @@ function exitFor(key: string): ManifestLeaf["exit"] {
 		case "fleet run":
 		case "fleet wait":
 			return { codes: [0, 1, 2, 4, 124, 129, 130, 141, 143] };
+		case "fleet stop":
 		case "fleet cancel":
 			return { codes: [0, 1, 2, 75] };
 		default:

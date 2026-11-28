@@ -97,11 +97,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"show the dispatch admission gate, or drain or open it",
 		"fleet admission [status|drain|open] [--json]",
 	],
-	[
-		"fleet cancel",
-		"cancel one running run from any terminal, or stop a fleet root",
-		"fleet cancel <runId|fleetRootId> [--json] [--reason <text>]",
-	],
+	["fleet cancel", "cancel one running worker run from any terminal", "fleet cancel <runId> [--json] [--reason <text>]"],
 	["fleet code-steps", "list the deterministic code steps one fleet root ran", "fleet code-steps <rootId> [--json]"],
 	[
 		"fleet decisions",
@@ -154,6 +150,11 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"fleet run <playbook> [task] [--var k=v ...] [--resume <runId>] [--output-format text|json|stream-json] [--cwd <dir>] [--timeout <duration>] [--max-cost-usd <usd>] [--detach]",
 	],
 	["fleet status", "show running, retrying, and total dispatch state", "fleet status [--json] [--all]"],
+	[
+		"fleet stop",
+		"stop a fleet root so it stays resumable with fleet run --resume",
+		"fleet stop <fleetRootId> [--json] [--reason <text>]",
+	],
 	[
 		"fleet verify",
 		"re-verify one run's sealed scope now and print its trust state",

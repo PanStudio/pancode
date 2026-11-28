@@ -1979,7 +1979,7 @@ test("a silent worker says whether its wait is usual for the route only from two
 	const late = { ...waiting, evidenceAtMs: now - 95_000 };
 	strictEqual(
 		workerSilenceWords(late, { now, history: null, room: 60 }),
-		"no output for 1m35s · x in /fleet stops it · usual unknown",
+		"no output for 1m35s · x in /fleet cancels it · usual unknown",
 	);
 	strictEqual(
 		workerSilenceWords(late, { now, history: { calls: 4, slowestMs: 400 }, room: 40 }),

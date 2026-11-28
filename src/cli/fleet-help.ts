@@ -42,11 +42,12 @@ Subcommands:
   admission [status|drain|open] [--json]
                                 show the dispatch admission gate, deny new execution starts for up
                                 to one hour (drain), or reopen it (open)
+  stop <fleetRootId> [--json] [--reason <text>]
+                                stop a fleet root: no further step starts and its running steps are canceled,
+                                leaving the root resumable with fleet run --resume; a root that already
+                                sealed exits 0 with its recorded outcome
   cancel <runId> [--json] [--reason <text>]
-                                cancel one running run from any terminal
-  cancel <fleetRootId> [--json] [--reason <text>]
-                                stop a fleet root: no further step starts and its running steps are canceled;
-                                a root that already sealed exits 0 with its recorded outcome
+                                cancel one running worker run from any terminal
   wait <fleetRootId> [--timeout <duration>] [--json]
                                 wait for a fleet root to seal and print its fleet result; exits with the
                                 root's exit code, 1 when its owner died unsealed, 75 when --timeout expires
@@ -63,10 +64,13 @@ Notes:
   admission drain preserves running work. Repeat it to renew the one-hour
   expiry; admission open clears it early. The expiry keeps an abandoned drain
   from wedging PanCode.
-  cancel asks the process that owns the run to abort it and waits up to 15s
-  for the run to seal canceled; it exits 1 while the request is still pending.
-  When the owning process is gone it terminates the orphaned worker's process
-  group and settles the ledger row itself.
+  cancel asks the process that owns the worker run to abort it and waits up to
+  15s for the run to seal canceled; it exits 75 while the request is still
+  pending. When the owning process is gone it terminates the orphaned worker's
+  process group and settles the ledger row itself.
+  stop asks a fleet root's owning process to stop admitting new steps and cancel
+  its running steps so the root seals stopped and stays resumable with
+  fleet run --resume; it exits 75 while the request is still pending.
   fleet run exits 0 when every required step succeeded and every loop converged,
   1 otherwise, and the signal's code when interrupted. With --output-format it
   exits 141 once the fleet has sealed if stdout's reader went away; the fleet is
@@ -96,18 +100,32 @@ Wait for a fleet root to seal and print the fleet result its owner persisted.
 Exit codes: the root's own exit code once it seals, 1 when its owner died
 unsealed, 2 usage, 75 when --timeout expires with the fleet still live.
 `,
-	cancel: `pancode fleet cancel <runId|fleetRootId> [--json] [--reason <text>]
+	stop: `pancode fleet stop <fleetRootId> [--json] [--reason <text>]
 
-Cancel one running run from any terminal, or stop a fleet root: no further
-step starts and its running steps are canceled.
+Stop a fleet root so no further step starts and its running steps are canceled.
+The stopped root stays resumable with pancode fleet run --resume <fleetRootId>.
+
+  --json           print the stop report
+  --reason <text>  record why the fleet root was stopped
+
+A root that already sealed reports its recorded outcome. To cancel one worker
+run instead, use pancode fleet cancel <runId>.
+
+Exit codes: 0 sealed (now or already), 75 stop accepted but still settling,
+1 the stop failed or nothing matched, 2 usage.
+`,
+	cancel: `pancode fleet cancel <runId> [--json] [--reason <text>]
+
+Cancel one running worker run from any terminal.
 
   --json           print the cancel report
   --reason <text>  record why the run was canceled
 
 A run's owning process aborts it and the command waits up to 15s for it to seal
 canceled. When the owner is gone it terminates the orphaned worker's process
-group and settles the run itself. A run or root that already sealed reports its
-recorded outcome.
+group and settles the run itself. A run that already sealed reports its
+recorded outcome. To stop a fleet root instead, use pancode fleet stop
+<fleetRootId>.
 
 Exit codes: 0 sealed (now or already), 75 cancel accepted but still settling,
 1 the cancel failed or nothing matched, 2 usage.

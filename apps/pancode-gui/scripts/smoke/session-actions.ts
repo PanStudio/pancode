@@ -298,8 +298,8 @@ export async function sessionActionSteps(run: SmokeRun) {
 		await page.getByRole("button", { name: "Interrupt", exact: true }).click();
 		await page.keyboard.press("Escape");
 		await page.getByText("A dispatched worker is attached; stop the turn instead.").waitFor();
-		// Stop takes two presses, and the question puts focus on the answer that keeps the work.
-		await workers.getByRole("button", { name: "Stop scout", exact: true }).click();
+		// Cancel takes two presses, and the question puts focus on the answer that keeps the work.
+		await workers.getByRole("button", { name: "Cancel scout", exact: true }).click();
 		assert.equal(
 			await page
 				.getByRole("button", { name: "Keep running", exact: true })
@@ -307,7 +307,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 			true,
 		);
 		await check("fleet-stop");
-		await page.getByRole("button", { name: "Stop run", exact: true }).click();
+		await page.getByRole("button", { name: "Cancel worker", exact: true }).click();
 		await page.getByText("The worker was stopped.", { exact: true }).waitFor();
 		assert.equal(await page.getByRole("button", { name: "Guide scout", exact: true }).count(), 0);
 		assert.equal(await page.locator(".live-workers").count(), 0, "a settled run leaves the live strip");

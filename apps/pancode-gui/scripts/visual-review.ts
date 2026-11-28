@@ -291,7 +291,7 @@ if (values.serve) {
 						await page.getByRole("button", { name: "Send guidance", exact: true }).click();
 						await page.getByText("Guidance queued. The worker reads it at its next step.", { exact: true }).waitFor();
 						await shot("fleet-guided");
-						await page.getByRole("button", { name: "Stop scout", exact: true }).click();
+						await page.getByRole("button", { name: "Cancel scout", exact: true }).click();
 						await shot("fleet-stop");
 						await page.getByRole("button", { name: "Keep running", exact: true }).click();
 					}
