@@ -61,7 +61,7 @@ SSH aborts escalate against the attested remote process group.
 Scout routing is advisory. After nine or more read-only exploration calls in
 one model round with no successful Scout dispatch in the user turn, middleware
 adds one model-only reminder at the end of the turn, at most once per user turn
-([dispatch-nudge.ts](../../src/domains/dispatch/nudges/dispatch-nudge.ts)). The reminder costs no extra model round and the operator
+([dispatch-nudge.ts](../../src/domains/middleware/dispatch-nudge.ts)). The reminder costs no extra model round and the operator
 does not see it. Direct reads remain allowed, and PanCode does not rewrite a broad
 request into a Scout run. A second rail adds one advisory transcript line when a
 final reply claims a worker or Scout result and no dispatch ran in the turn.
@@ -128,7 +128,7 @@ immutable envelope from the recipe policy, the request, the effective worker
 budget and every clamp or escalation reason, then records the envelope on the
 run ledger row and in the run's `run.settled`. `monitor`, `fleet status` and the live fleet card print the
 recipe policy, the requested envelope, the effective envelope and the clamp or
-escalation reason ([run-budget-envelope.ts](../../src/core/run-budget-envelope.ts)).
+escalation reason ([budget-envelope.ts](../../src/domains/dispatch/budget-envelope.ts)).
 
 The envelope is advisory for every recipe; [built-in-agents.md](built-in-agents.md) describes the recipe side.
 `toolCalls` is an estimate. At that count the worker gets
