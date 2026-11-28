@@ -488,24 +488,25 @@ describe("execution scheduler lifecycle", () => {
 		const path = new URL("../../src/domains/agents/playbooks/build-review.md", import.meta.url);
 		const playbook = parsePlaybook(readFileSync(path, "utf8"), path.pathname);
 		const vars = { task: "Add clamp(x, lo, hi) to src/math.js" };
+		const resolveAgent: Parameters<typeof compileFleetExecutionPlan>[0]["resolveAgent"] = (context) =>
+			context.gateRole === "reviewer"
+				? {
+						requestedAuthority: "read-only",
+						approvedAuthority: "read-only",
+						expectedResultContract: "review-verdict",
+						executionRole: "reviewer",
+					}
+				: {
+						requestedAuthority: "workspace-edit",
+						approvedAuthority: "workspace-edit",
+						expectedResultContract: "mutation-report",
+						executionRole: "builder",
+					};
 		const p = compileFleetExecutionPlan({
 			playbook,
 			vars,
 			task: renderPlaybookPrompt(playbook.body, vars),
-			resolveAgent: (context) =>
-				context.gateRole === "reviewer"
-					? {
-							requestedAuthority: "read-only",
-							approvedAuthority: "read-only",
-							expectedResultContract: "review-verdict",
-							executionRole: "reviewer",
-						}
-					: {
-							requestedAuthority: "workspace-edit",
-							approvedAuthority: "workspace-edit",
-							expectedResultContract: "mutation-report",
-							executionRole: "builder",
-						},
+			resolveAgent,
 		});
 		const task = (id: string): string => {
 			const found = p.steps.find((candidate) => candidate.id === id);
@@ -588,6 +589,26 @@ describe("execution scheduler lifecycle", () => {
 			ok(brief.includes(authors), brief);
 			ok(task(id).includes("`review-verdict`"));
 		}
+		// A loop's agent check carries the playbook's own instructions on every attempt; build and repair never do.
+		const fixPath = new URL("../../src/domains/agents/playbooks/review-fix.md", import.meta.url);
+		const fix = parsePlaybook(readFileSync(fixPath, "utf8"), fixPath.pathname);
+		const fixLoop = fix.steps[0];
+		const instructions = fixLoop?.kind === "loop" && fixLoop.check.kind === "agent" ? fixLoop.check.instructions : "";
+		ok(instructions?.includes("git diff HEAD"), instructions);
+		const fixed = compileFleetExecutionPlan({
+			playbook: fix,
+			vars,
+			task: renderPlaybookPrompt(fix.body, vars),
+			resolveAgent,
+		});
+		for (const step of fixed.steps) {
+			if (step.kind !== "agent") continue;
+			strictEqual(
+				fleetNodeTaskBrief(step.task).includes(instructions as string),
+				step.id.startsWith("review.check."),
+				step.id,
+			);
+		}
 	});
 
 	it("names every allowed value when a playbook refuses a scope or another literal", () => {
@@ -629,6 +650,25 @@ describe("execution scheduler lifecycle", () => {
 					"wt.md",
 				),
 			/step 'other' has scope 'worktree' but step 'build' has scope 'workspace'/,
+		);
+		// Check instructions belong to an agent check, are fixed text, and say something.
+		const looped = (check: string) =>
+			raw("worktree").replace(
+				"\nmaxWorkers",
+				`\n  - {kind: loop, id: review, maxAttempts: 2, dependencies: [build], check: ${check}, repair: {kind: agent, agent: coder, scope: worktree}}\nmaxWorkers`,
+			);
+		throws(
+			() => parsePlaybook(looped('{kind: code, command: test, scope: worktree, instructions: "x"}'), "wt.md"),
+			/: \/steps\/1\/check: must not have additional properties$/,
+		);
+		throws(
+			() =>
+				parsePlaybook(looped('{kind: agent, agent: reviewer, scope: readonly, instructions: "see {{task}}"}'), "wt.md"),
+			/loop 'review' check instructions take no \{\{placeholders\}\}$/,
+		);
+		throws(
+			() => parsePlaybook(looped('{kind: agent, agent: reviewer, scope: readonly, instructions: "  "}'), "wt.md"),
+			/loop 'review' check instructions are empty$/,
 		);
 	});
 

@@ -222,7 +222,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 	],
 	[
 		"playbook new",
-		"copy the build-review, build-test, sdlc, or seat-stretch playbook into .pancode/playbooks/",
+		"copy a built-in playbook into .pancode/playbooks/",
 		"playbook new <name> --from <builtin> [--json]",
 	],
 	[

@@ -7,7 +7,24 @@ import { pancodeProjectRoot } from "../core/project-root.js";
 import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
 
-const BUILTINS = ["build-review", "build-test", "sdlc", "seat-stretch"] as const;
+const BUILTINS = [
+	"build-review",
+	"build-test",
+	"build-test-review",
+	"build-verify",
+	"build-verify-review-fix",
+	"debug-fix",
+	"docs-review",
+	"plan-build",
+	"plan-build-review",
+	"review-fix",
+	"scout-build-review",
+	"sdlc",
+	"seat-stretch",
+	"tdd",
+	"test-fix",
+	"tests-add",
+] as const;
 const SAFE_STEM = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u;
 
 export function runPlaybookNew(argv: ReadonlyArray<string>): number {
