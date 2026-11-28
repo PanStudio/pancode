@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { formatElapsed } from "../core/format-time.js";
 import { type BoardFact, tierPolicy, tierRevision } from "../core/presentation-tier.js";
 import { USAGE_NOT_MEASURED, usageLineFigure } from "../core/views/usage-words.js";
 import { foregroundStreamUsage } from "../domains/providers/index.js";
@@ -58,16 +60,7 @@ import {
 } from "./overlay-frame.js";
 import { confirmOnceRail } from "./overlays/confirm-once.js";
 import type { PancodeTheme } from "./theme/index.js";
-import {
-	emptyState,
-	formatElapsed,
-	GLYPH,
-	padAnsi,
-	pancodeTheme,
-	positionRow,
-	sectionRule,
-	widthClass,
-} from "./theme/index.js";
+import { emptyState, GLYPH, padAnsi, pancodeTheme, positionRow, sectionRule, widthClass } from "./theme/index.js";
 import { keyName } from "./theme/labels.js";
 import { skinEpoch } from "./theme/tokens.js";
 import { compactQuantity, completedRunMark } from "./worker-activity.js";

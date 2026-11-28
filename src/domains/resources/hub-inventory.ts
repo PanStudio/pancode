@@ -205,7 +205,7 @@ export interface HubInventoryOptions {
 // Keys
 // ---------------------------------------------------------------------------
 
-export function hubComponentKey(kind: HubComponentKind, name: string, sourceId: string, relativePath: string): string {
+function hubComponentKey(kind: HubComponentKind, name: string, sourceId: string, relativePath: string): string {
 	return `${kind}:${name}@${sourceId}#${relativePath}`;
 }
 

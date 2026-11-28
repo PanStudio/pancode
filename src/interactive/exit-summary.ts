@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ExitSummaryStyle, OutputStyle } from "../core/defaults.js";
-import { formatCount } from "../core/format-time.js";
+import { formatCount, formatElapsed } from "../core/format-time.js";
 import { tierPolicy } from "../core/presentation-tier.js";
 import { USAGE_NOT_MEASURED } from "../core/views/usage-words.js";
 import { plainOutcomeLabel, refusedCallsWords } from "../domains/dispatch/failure-headline.js";
@@ -12,7 +12,6 @@ import type { ExitSpend, ExitSummarySnapshot } from "./exit-summary-collector.js
 import {
 	brandMark,
 	exactRouteLabel,
-	formatElapsed,
 	formatTargetLabel,
 	GLYPH,
 	type PancodeTheme,

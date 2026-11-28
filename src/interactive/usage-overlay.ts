@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { formatElapsed } from "../core/format-time.js";
 import { tierPolicy, type UsageSections } from "../core/presentation-tier.js";
 import type { FactMetric, Quantity, RunTelemetryV1 } from "../core/telemetry/dto.js";
 import { factRef } from "../core/telemetry/dto.js";
@@ -55,7 +57,6 @@ import {
 	renderWorkerUsage,
 } from "./quota-view.js";
 import {
-	formatElapsed,
 	GLYPH,
 	heightClass,
 	holdSpaces,

@@ -500,7 +500,7 @@ export function continuityReplayText(note: ProjectedContinuityNote): string {
 }
 
 /** The exact text replay projects for one inherited note. */
-export function inheritedContinuityReplayText(note: ContinuityRecallNote): string {
+function inheritedContinuityReplayText(note: ContinuityRecallNote): string {
 	return `${INHERITED_NOTE_PREFIX}${note.note}${INHERITED_NOTE_SUFFIX}`;
 }
 

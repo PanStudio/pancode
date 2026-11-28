@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { initializePancodeHome } from "../../../../src/core/init.js";
-import { installExtension } from "../../../../src/domains/extensions/manager.js";
+import { installExtension } from "../../../../src/domains/extensions/state.js";
 
 const cwd = process.argv[2];
 assert.ok(cwd);

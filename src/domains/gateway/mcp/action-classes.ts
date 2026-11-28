@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { isMcpResourceCapability } from "../../../core/tool-names.js";
-import type { McpToolDescriptor } from "./client.js";
+import type { McpToolDescriptor } from "./tool-results.js";
 import type { McpTrustActionClass, ResolvedMcpServer } from "./trust.js";
 
 /**

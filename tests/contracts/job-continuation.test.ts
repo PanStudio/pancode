@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { formatElapsed } from "../../src/core/format-time.js";
 import { type JobOwner, type JobRecord, TURN_CONTINUATION_CAP } from "../../src/core/job-types.js";
 import { renderFact } from "../../src/core/telemetry/render.js";
 import { createJobController } from "../../src/domains/scheduling/job-controller.js";
@@ -16,7 +17,6 @@ import type {
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createJobRuntime } from "../../src/entry/job-runtime.js";
 import { loopSegment } from "../../src/interactive/footer-panel.js";
-import { formatElapsed } from "../../src/interactive/theme/labels.js";
 import type { ChatLoop } from "../../src/session-control/chat-loop.js";
 import type { MachineTurnRequest } from "../../src/session-control/job-turn-types.js";
 import { loopJobDetail } from "../../src/session-control/loop-command.js";

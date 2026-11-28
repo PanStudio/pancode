@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-export { HOOK_BUDGET_STALL_FACTOR } from "./budget.js";
 export type { MiddlewareContract, MiddlewareHost, MiddlewareRegistrar } from "./contract.js";
 export {
 	batchesCollectedElsewhere,
@@ -19,7 +18,6 @@ export {
 } from "./hooks-io.js";
 export { createMarketplaceOfferRegistration } from "./marketplace-offer.js";
 export {
-	createReadStreakRegistration,
 	READ_STREAK_GATE_EVIDENCE,
 	READ_STREAK_REGISTRATION_ID,
 	READ_STREAK_SERIAL_EVIDENCE,
@@ -35,14 +33,12 @@ export type { MiddlewareDiagnostic, MiddlewareHookRegistration } from "./runtime
 export { formatRegistrationConflict, writeMiddlewareDiagnosticToStderr } from "./runtime.js";
 export { createExplorationNudgeRegistrations, SCOUT_NUDGE_REGISTRATION_ID } from "./scout-nudge.js";
 export { createSkillsReminderRegistration } from "./skills-reminder.js";
-export { createMiddlewareHostFromSnapshot } from "./snapshot.js";
 export { createMiddlewareToolChoiceControl, type MiddlewareToolChoiceControl } from "./tool-choice-control.js";
 export { createTurnPlanCueRegistration } from "./turn-plan-cue.js";
 export type {
 	CompletionFact,
 	MiddlewareEffect,
 	MiddlewareEffectKind,
-	MiddlewareHook,
 	MiddlewareHookInput,
 	MiddlewareHookResult,
 	MiddlewareMetadataValue,

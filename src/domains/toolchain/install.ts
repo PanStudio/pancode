@@ -320,7 +320,7 @@ function unpack(bytes: Buffer, download: PinnedToolDownload): Map<string, Archiv
 }
 
 /** The configured mirror, or null for upstream. */
-export function toolchainMirror(env: NodeJS.ProcessEnv = process.env): string | null {
+function toolchainMirror(env: NodeJS.ProcessEnv = process.env): string | null {
 	const value = env.PANCODE_TOOLCHAIN_MIRROR?.trim();
 	return value ? value : null;
 }

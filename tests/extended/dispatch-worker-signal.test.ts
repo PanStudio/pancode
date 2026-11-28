@@ -7,13 +7,10 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { isDeterministicOutcomeCode } from "../../src/domains/dispatch/backoff.js";
 import { capacityLeaseUsage } from "../../src/domains/dispatch/capacity-lease.js";
 
-import {
-	approvedIdentityForSpec,
-	CONTROL_FRAME_PREFIX,
-	WORKER_PROTOCOL_VERSION,
-} from "../../src/domains/dispatch/worker-protocol.js";
+import { approvedIdentityForSpec } from "../../src/domains/dispatch/worker-protocol.js";
 import { type SpawnedWorker, spawnWorkerProcess } from "../../src/domains/dispatch/worker-spawn.js";
 import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
+import { CONTROL_FRAME_PREFIX, WORKER_PROTOCOL_VERSION } from "../../src/worker/protocol.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

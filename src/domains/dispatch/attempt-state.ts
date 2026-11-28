@@ -5,6 +5,7 @@ import type { CheckoutSnapshot } from "../../tools/checkout-changes.js";
 import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import type { TaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type { TaskWorktreePreview } from "../../tools/task-worktree-preview.js";
+import type { WorkerHookResultFrame } from "../../worker/protocol.js";
 import type { FlowRestrictionSet } from "../safety/information-flow.js";
 import type { TelemetrySessionLease } from "../telemetry/session-journals.js";
 import type { AgentLedgerAttribution } from "./agent-ledger-store.js";
@@ -42,7 +43,6 @@ import type {
 	RunResultContractFact,
 	RunResultDraft,
 } from "./types.js";
-import type { WorkerHookResultFrame } from "./worker-protocol.js";
 import type { SpawnedWorker, WorkerSpec } from "./worker-spawn.js";
 
 /**

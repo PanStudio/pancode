@@ -9,6 +9,7 @@
  */
 
 import { AssistantProseProjection } from "../../core/assistant-prose.js";
+import { formatWaitClock } from "../../core/format-time.js";
 import { type Component, type OverlayHandle, type TUI, truncateToWidth, wrapTextWithAnsi } from "../../engine/tui.js";
 import {
 	redactFinalUrlCredentials,
@@ -16,7 +17,7 @@ import {
 	redactUrlCredentials,
 } from "../../lib/secrets/redaction.js";
 import { buildResponsiveHint, showPancodeOverlayFrame } from "../overlay-frame.js";
-import { activityCue, formatWaitClock, GLYPH, pancodeTheme, rule } from "../theme/index.js";
+import { activityCue, GLYPH, pancodeTheme, rule } from "../theme/index.js";
 
 export const SIDE_QUESTION_OVERLAY_TITLE = "Side question";
 

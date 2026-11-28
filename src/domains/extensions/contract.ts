@@ -7,7 +7,7 @@ import type {
 	ExtensionReloadPrepareResult,
 	ExtensionSnapshot,
 	InstalledExtension,
-} from "./manager.js";
+} from "./types.js";
 
 export interface ExtensionsContract extends DomainContract {
 	list(cwd?: string, options?: ExtensionListOptions): InstalledExtension[];

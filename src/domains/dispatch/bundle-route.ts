@@ -3,6 +3,7 @@
 
 import { type TelemetryContext, workerAgent } from "../../core/telemetry/context.js";
 import { type CheckoutRootLookup, checkoutRootLookup } from "../../tools/task-worktree.js";
+import { endpointIdentityHash } from "../../worker/protocol.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
 import { normalizeAgentSpec } from "../agents/spec.js";
 import { workspaceStoreTags } from "../store/index.js";
@@ -43,10 +44,10 @@ import {
 import type { RouteObservationHandle } from "./route-observer.js";
 import { defaultRoutingIntent } from "./routing-intent.js";
 import { fleetRootTelemetryContext } from "./run-telemetry.js";
+import { computeSettingsFingerprint } from "./settings-fingerprint.js";
 import { capabilityInfoForModel } from "./target-resolution.js";
 import type { RunNodeIdentity } from "./types.js";
 import type { DispatchFailoverCandidate } from "./validation.js";
-import { computeSettingsFingerprint, endpointIdentityHash } from "./worker-protocol.js";
 
 export function createRouteSelection(rt: DispatchRuntime) {
 	const { options } = rt;

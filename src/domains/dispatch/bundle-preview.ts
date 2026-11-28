@@ -6,7 +6,12 @@ import { sha256Hex } from "../../core/hash.js";
 import { UnsupportedResponseSchemaError } from "../../core/response-schema.js";
 import type { ToolName } from "../../core/tool-names.js";
 import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
-import { WORKER_EXTENSION_HOOKS_MAX } from "../../worker/protocol.js";
+import {
+	endpointIdentityHash,
+	toolSignatureOf,
+	WORKER_EXTENSION_HOOKS_MAX,
+	type WorkerExtensionHook,
+} from "../../worker/protocol.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import {
 	type AgentSpec,
@@ -52,17 +57,12 @@ import {
 	assertRuntimeCanHonorWorkerPermissionMode,
 	assertWriteRootsEnforceable,
 } from "./runtime-enforceability.js";
+import { computeSettingsFingerprint } from "./settings-fingerprint.js";
 import { enforceCapabilityGate, readWorkerTargets, resolveDispatchTarget } from "./target-resolution.js";
 import { assertTurnConstraintCompatibility } from "./tool-constraints.js";
 import { validateJobSpec } from "./validation.js";
 import { assertWorkerContextRequest, hasCallerPersonaOverride } from "./worker-dynamic-prompt.js";
 import { workerMcpRuntimeRefusal } from "./worker-mcp.js";
-import {
-	computeSettingsFingerprint,
-	endpointIdentityHash,
-	toolSignatureOf,
-	type WorkerExtensionHook,
-} from "./worker-protocol.js";
 import {
 	hookExtensionIds,
 	hooksMatchingTools,

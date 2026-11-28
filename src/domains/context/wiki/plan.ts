@@ -182,7 +182,7 @@ function areaSegments(area: string): string[] {
 }
 
 /** Turn an index area into a page path; nesting follows the repository's. */
-export function pagePathForArea(area: string): string {
+function pagePathForArea(area: string): string {
 	let stem = areaSegments(area)
 		.map(slugSegment)
 		.join("/")

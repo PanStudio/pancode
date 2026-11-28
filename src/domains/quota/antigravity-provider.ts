@@ -18,12 +18,19 @@
  * carries no usable bucket.
  */
 
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isRecord } from "../../core/type-guards.js";
 import { explicitAgentHome, interopDisabled, isPancodeHomeRelocated } from "../../core/xdg.js";
 import { accountPseudonym, namedWindowSeconds } from "./pool-reading.js";
+import {
+	asIsoString,
+	asNumber,
+	describeError,
+	discardBody,
+	readJsonCredentials,
+	snapshotFactory,
+} from "./provider-common.js";
 import type { QuotaProvider, UsageSnapshot, UsageWindow } from "./types.js";
 import { credentialFingerprint, formatPlan } from "./types.js";
 
@@ -81,20 +88,6 @@ function parseCredentials(raw: unknown): AntigravityCredentials | null {
 	};
 }
 
-async function readCredentialsFile(path: string): Promise<AntigravityCredentials | null> {
-	let text: string;
-	try {
-		text = await readFile(path, "utf8");
-	} catch {
-		return null;
-	}
-	try {
-		return parseCredentials(JSON.parse(text));
-	} catch {
-		return null;
-	}
-}
-
 /** Outcome of one endpoint round trip, keeping auth failure distinct from transport failure. */
 type PostResult = { kind: "ok"; data: Record<string, unknown> } | { kind: "auth" } | { kind: "error"; message: string };
 
@@ -108,24 +101,12 @@ export function createAntigravityQuotaProvider(options: AntigravityQuotaOptions 
 	const credentialsPath = options.credentialsPath ?? defaultCredentialsPath();
 	const readCredentials =
 		options.readCredentials ??
-		(() => (credentialsPath === null ? Promise.resolve(null) : readCredentialsFile(credentialsPath)));
+		(() => (credentialsPath === null ? Promise.resolve(null) : readJsonCredentials(credentialsPath, parseCredentials)));
 	const doFetch = options.fetch ?? globalThis.fetch;
 	const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 	const now = options.now ?? (() => new Date());
 
-	const snapshot = (
-		status: UsageSnapshot["status"],
-		message: string | null,
-		extra: Partial<UsageSnapshot> = {},
-	): UsageSnapshot => ({
-		providerId: ANTIGRAVITY_QUOTA_PROVIDER_ID,
-		displayName: DISPLAY_NAME,
-		status,
-		windows: [],
-		message,
-		fetchedAt: now().toISOString(),
-		...extra,
-	});
+	const snapshot = snapshotFactory(ANTIGRAVITY_QUOTA_PROVIDER_ID, DISPLAY_NAME, now);
 
 	const post = async (url: string, token: string, body: unknown): Promise<PostResult> => {
 		const controller = new AbortController();
@@ -338,38 +319,8 @@ function usedFromRemaining(raw: unknown): number | null {
 	return (1 - Math.min(1, Math.max(0, remaining))) * 100;
 }
 
-function asNumber(value: unknown): number | null {
-	if (typeof value === "number") return Number.isFinite(value) ? value : null;
-	if (typeof value === "string") {
-		const parsed = Number.parseFloat(value.trim());
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
-}
-
-function asIsoString(value: unknown): string | null {
-	if (typeof value !== "string" || value.trim().length === 0) return null;
-	const parsed = new Date(value);
-	return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
 function asEpochMs(value: unknown): number | null {
 	if (typeof value !== "string" || value.trim().length === 0) return null;
 	const parsed = Date.parse(value);
 	return Number.isNaN(parsed) ? null : parsed;
-}
-
-function describeError(error: unknown, timeoutMs: number): string {
-	if (error instanceof Error) {
-		return error.name === "AbortError" ? `timeout after ${timeoutMs}ms` : error.message;
-	}
-	return String(error);
-}
-
-async function discardBody(response: Response): Promise<void> {
-	try {
-		await response.body?.cancel();
-	} catch {
-		return;
-	}
 }

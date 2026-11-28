@@ -6,14 +6,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { canonicalJson } from "../../src/core/canonical-json.js";
 import type { DomainContext } from "../../src/core/domain-loader.js";
 import type {
-	AcceptedNote,
 	ContinuityAppendable,
 	ContinuityPersistencePorts,
 	ContinuityRetrySchedule,
 	HandoffIdentity,
-	HandoffPolicy,
 } from "../../src/domains/session/continuity/contract.js";
-import { validateContinuityNote } from "../../src/domains/session/continuity/note.js";
 import { persistContinuityGroup, reconcileContinuityEntry } from "../../src/domains/session/continuity/persistence.js";
 import {
 	createContinuityPersistencePorts,
@@ -22,6 +19,7 @@ import {
 import type { SessionContract } from "../../src/domains/session/contract.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import { CURRENT_SESSION_FORMAT_VERSION, sessionPaths } from "../../src/engine/session.js";
+import { admit, handoffPolicy } from "../harness/continuity-fixture.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**
@@ -36,25 +34,7 @@ import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-e
 const AT = "2026-09-21T09:00:00.000Z";
 const PREPARED_AT = 1_000_000;
 
-function admit(text: string): AcceptedNote {
-	const result = validateContinuityNote(text);
-	if (!result.ok) throw new Error(`fixture note rejected: ${result.reason}`);
-	return result.accepted;
-}
-
 const NOTE = admit("finish the reducer; the failing case is an empty tool batch");
-
-function policy(): HandoffPolicy {
-	return {
-		preparedAtMs: PREPARED_AT,
-		automaticDeadlineAtMs: PREPARED_AT + 600_000,
-		maxAttempts: 2,
-		maxSummaryCallsPerAttempt: 2,
-		additionalSummaryRetriesPerCall: 0,
-		maxSummaryStreamInvocations: 4,
-		flushRetryLimit: 3,
-	};
-}
 
 function identity(sessionId: string, over: Partial<HandoffIdentity> = {}): HandoffIdentity {
 	return {
@@ -80,7 +60,7 @@ function preparedRecord(sessionId: string): ContinuityAppendable {
 		schemaVersion: 1,
 		identity: identity(sessionId),
 		transition: { entryId: "h1-prep", prevEntryId: null, sequence: 0, attempt: 0 },
-		event: { phase: "prepared", accepted: NOTE, policy: policy() },
+		event: { phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) },
 	};
 }
 
@@ -239,7 +219,7 @@ describe("continuity persistence bound to the real session writer", () => {
 		const real = createContinuityPersistencePorts({ session: contract, origin: { sessionId, cwdHash } });
 		real.append({
 			...record,
-			event: { phase: "prepared", accepted: admit("a different accepted note"), policy: policy() },
+			event: { phase: "prepared", accepted: admit("a different accepted note"), policy: handoffPolicy(PREPARED_AT) },
 		});
 		const result = await persistContinuityGroup(
 			{ entries: [record], barrier: { kind: "flush" } },
@@ -261,7 +241,7 @@ describe("continuity persistence bound to the real session writer", () => {
 		strictEqual(readContinuityRecordExact({ sessionId, cwdHash }, record).status, "matching");
 		real.append({
 			...record,
-			event: { phase: "prepared", accepted: admit("a different accepted note"), policy: policy() },
+			event: { phase: "prepared", accepted: admit("a different accepted note"), policy: handoffPolicy(PREPARED_AT) },
 		});
 		// The old summary lookup returned at its first kind+id hit. Stopping there
 		// would call this ledger clean while it holds two different records under

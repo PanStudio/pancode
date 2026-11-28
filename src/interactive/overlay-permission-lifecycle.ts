@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { formatElapsed } from "../core/format-time.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { PermissionRequestedPayload } from "../core/telemetry/live-events.js";
 import { ToolNames } from "../core/tool-names.js";
@@ -29,7 +31,6 @@ import type { NoticeLevel } from "./command-output.js";
 import { createMutationInspector, type MutationInspector } from "./mutation-preview.js";
 import type { OverlayState } from "./overlay-key-routing.js";
 import type { PermissionAdvisoryReader, PermissionCountdownReader, WorkerWindowReader } from "./permission-overlay.js";
-import { formatElapsed } from "./theme/index.js";
 import { startUnattendedCountdown, type UnattendedCountdown, type UnattendedTimers } from "./unattended-countdown.js";
 
 /** Worker tools whose effect runs as a child the worker's exec seams spawn under its OS sandbox. */

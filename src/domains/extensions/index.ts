@@ -9,9 +9,15 @@ export type {
 	ExtensionToolHookLanding,
 } from "@pancode/sdk/extension";
 export type { ExtensionCapabilityEnvelope, ExtensionHookDeclaration } from "@pancode/sdk/pack";
-export { capabilityEnvelope, envelopeDigest, extensionToolName, RUNTIME_V2_LIMITS } from "@pancode/sdk/pack";
+export {
+	capabilityEnvelope,
+	type ExtensionDiagnostic,
+	envelopeDigest,
+	extensionToolName,
+	RUNTIME_V2_LIMITS,
+} from "@pancode/sdk/pack";
 export type { ExtensionsContract } from "./contract.js";
-export { loadManifestFromRoot } from "./discovery.js";
+export { discoverExtensionPackages, loadManifestFromRoot } from "./discovery.js";
 export { ENVELOPE_SEAT_BELT, envelopeLines, reviewExtensionEnvelope } from "./envelope-review.js";
 export type { McpToolOwnerLookup } from "./hook-tool-match.js";
 export { extensionHookToolMatcher } from "./hook-tool-match.js";
@@ -22,9 +28,24 @@ export {
 } from "./install-store.js";
 export { extensionBaseDir } from "./listing.js";
 export {
+	createExtensionRuntimeHookBridge,
+	type ExtensionRuntimeHookBridge,
+	type ExtensionRuntimeHookExecutor,
+} from "./runtime-hook-bridge.js";
+export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
+export {
+	assignExtensionModel,
+	auditExtensionInstallRecords,
 	disableExtension,
-	discoverExtensionPackages,
-	type ExtensionDiagnostic,
+	enableExtension,
+	installExtension,
+	installedExtensionClaims,
+	listInstalledExtensions,
+	readExtensionInstallRecord,
+	removeExtension,
+	repairExtensionInstallRecords,
+} from "./state.js";
+export {
 	type ExtensionReloadCandidate,
 	type ExtensionReloadCommitted,
 	type ExtensionReloadPrepareResult,
@@ -32,19 +53,10 @@ export {
 	type ExtensionScope,
 	type ExtensionSnapshot,
 	type ExtensionSnapshotDiagnostics,
-	enableExtension,
 	type InstalledExtension,
-	installExtension,
 	isLoadableExtension,
 	type LoadableExtension,
-	listInstalledExtensions,
-	removeExtension,
-} from "./manager.js";
-export {
-	createExtensionRuntimeHookBridge,
-	type ExtensionRuntimeHookBridge,
-	type ExtensionRuntimeHookExecutor,
-} from "./runtime-hook-bridge.js";
+} from "./types.js";
 /** Brings one extension's vendored binaries in line with its installed copies; loaded on demand off the barrel path. */
 export async function syncPackBinaries(
 	extensionId: string,
@@ -54,11 +66,3 @@ export async function syncPackBinaries(
 	const { syncPackBinaries: sync } = await import("./services/binaries.js");
 	return sync(extensionId, cwd, options);
 }
-export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
-export {
-	assignExtensionModel,
-	auditExtensionInstallRecords,
-	installedExtensionClaims,
-	readExtensionInstallRecord,
-	repairExtensionInstallRecords,
-} from "./state.js";

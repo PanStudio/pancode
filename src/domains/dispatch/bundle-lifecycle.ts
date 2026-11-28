@@ -7,6 +7,7 @@ import { workerEgressMode, workerMcpNoNetworkNotice } from "../../core/sandbox/w
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
 import { toolPromptHintsForNames } from "../../tools/builtin-tool-catalog.js";
 import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
+import { endpointIdentityHash, toolSignatureOf } from "../../worker/protocol.js";
 import { agentHasTrait } from "../agents/spec.js";
 import { workerHandbookAudience } from "../context/handbook-units.js";
 import {
@@ -87,7 +88,6 @@ import {
 } from "./worker-dynamic-prompt.js";
 import { type WorkerMcpNetworkWithheld, workerMcpRuntimeRefusal } from "./worker-mcp.js";
 import { prepareWorkerModelListing, prepareWorkerModelMetadata } from "./worker-model-metadata.js";
-import { endpointIdentityHash, toolSignatureOf } from "./worker-protocol.js";
 import { resolveEffectiveWorkerBudget, workerSandboxFor, workerSandboxPromptLine } from "./worker-spec.js";
 
 export function createLifecycleResolver(rt: DispatchRuntime) {

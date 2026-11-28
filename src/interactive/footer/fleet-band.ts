@@ -8,6 +8,7 @@
  * single quiet summary rule when the Herdr Watch pane is visible.
  */
 
+import { formatCount, formatElapsed } from "../../core/format-time.js";
 import type { JobRecord } from "../../core/job-types.js";
 import { jobPollFailure } from "../../core/job-types.js";
 import { presentationTier, tierPolicy, tierRevision } from "../../core/presentation-tier.js";
@@ -30,7 +31,7 @@ import { isHelperRun } from "../../session-control/worker-stream.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
 import type { HarnessFactsSource } from "../harness-facts.js";
 import { actionKeyLabel } from "../keybinding-manager.js";
-import { formatCount, formatElapsed, GLYPH, pancodeTheme } from "../theme/index.js";
+import { GLYPH, pancodeTheme } from "../theme/index.js";
 import { skinEpoch } from "../theme/tokens.js";
 import {
 	approvalWaitWords,

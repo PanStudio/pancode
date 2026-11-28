@@ -753,7 +753,7 @@ function validateWriteBoundaries(playbook: Pick<Playbook, "steps" | "version" | 
 }
 
 /** Transitive dependency closure per declared step id. */
-export function playbookStepAncestors(steps: ReadonlyArray<PlaybookStep>): ReadonlyMap<string, ReadonlySet<string>> {
+function playbookStepAncestors(steps: ReadonlyArray<PlaybookStep>): ReadonlyMap<string, ReadonlySet<string>> {
 	const direct = new Map(steps.map((step) => [step.id, step.dependencies]));
 	const closure = new Map<string, Set<string>>();
 	const resolve = (id: string, seen: Set<string>): Set<string> => {

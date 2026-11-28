@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { formatCount } from "../core/format-time.js";
+import { formatCount, formatElapsed } from "../core/format-time.js";
 /** The receipt row under a finished turn: outcome, duration, spend, cache and worker facts. */
 import { renderCalls } from "../core/telemetry/render.js";
 import { visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
@@ -19,7 +19,7 @@ import {
 } from "./chat-ink.js";
 import { type ChatPanelTurnUsage, reasoningFromTurnUsage } from "./chat-transcript-model.js";
 import { wallClockLocal } from "./format-time.js";
-import { formatElapsed, GLYPH, joinFacts, releaseSpaces } from "./theme/index.js";
+import { GLYPH, joinFacts, releaseSpaces } from "./theme/index.js";
 import { modelNickname } from "./theme/labels.js";
 import type { TranscriptDetailPolicy } from "./transcript-detail.js";
 import { turnWorkersFact } from "./turn-spend.js";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ContextOperationOutcome } from "../core/context-operation.js";
-import { formatCount } from "../core/format-time.js";
+import { formatCount, formatElapsed } from "../core/format-time.js";
 import { tierPolicy } from "../core/presentation-tier.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type {
@@ -20,7 +20,7 @@ import {
 	showsContextResult,
 	unchangedTokenLead,
 } from "./context-operation-view.js";
-import { animationStep, formatElapsed, GLYPH, padAnsi, pancodeTheme, spinnerFrame } from "./theme/index.js";
+import { animationStep, GLYPH, padAnsi, pancodeTheme, spinnerFrame } from "./theme/index.js";
 
 export interface ContextActivitySnapshot {
 	operation?: ContextActivityPayload["operation"];
