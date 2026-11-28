@@ -13,10 +13,14 @@ import { pancodeStateDir } from "../../src/core/xdg.js";
 import { AgentsDomainModule } from "../../src/domains/agents/module.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
 import { ConfigDomainModule } from "../../src/domains/config/module.js";
+import { createContextDomainModule } from "../../src/domains/context/module.js";
 import { createDispatchDomainModule } from "../../src/domains/dispatch/module.js";
 import { type Ledger, openLedger } from "../../src/domains/dispatch/state.js";
+import { ExtensionsDomainModule } from "../../src/domains/extensions/module.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
+import { InteropDomainModule } from "../../src/domains/interop/module.js";
 import { createMiddlewareDomain } from "../../src/domains/middleware/module.js";
+import { PluginsDomainModule } from "../../src/domains/plugins/module.js";
 import { createPromptsDomainModule } from "../../src/domains/prompts/module.js";
 import { ProvidersDomainModule } from "../../src/domains/providers/module.js";
 import { ResourcesDomainModule } from "../../src/domains/resources/module.js";
@@ -76,7 +80,11 @@ test("an open dispatch ledger follows config updates and effective session overr
 	let override: ReturnType<ConfigContract["get"]> | undefined;
 	const loaded = await loadDomains([
 		ConfigDomainModule,
+		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
 		ResourcesDomainModule,
+		createContextDomainModule({ noContextFiles: true }),
 		ProvidersDomainModule,
 		SafetyDomainModule,
 		AgentsDomainModule,

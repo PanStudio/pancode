@@ -23,13 +23,13 @@ import { type PromptRef, promptRefs } from "../domains/extensions/operator-comma
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import { bindExtensionOwnerNames, extensionOwnerLabel } from "../domains/extensions/owner-label.js";
 import { openDetachedBatchViews } from "../domains/middleware/index.js";
-import { createDockKeyGate } from "../domains/mux/dock-keys.js";
 import type { PanesWatchController } from "../domains/mux/operations.js";
 import { holdExitSummaryForLauncher } from "../domains/mux/workspace/exit-summary-handoff.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
 import { isArcadeTrigger } from "../domains/session/easter-eggs.js";
 import { setDiffusionFramesEnabled } from "../engine/apis/diffusion-frames.js";
 import { createAgentProgress, TuiAltScreen } from "../engine/tui.js";
+import { createDockKeyGate } from "../lib/panes/dock-keys.js";
 import type { ChatLoopEvent } from "../session-control/chat-loop.js";
 import { reportLoopChanges } from "../session-control/loop-command.js";
 import { BUILTIN_SLASH_NAMES } from "../session-control/slash-commands.js";

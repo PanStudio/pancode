@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { setShutdownTextWrapper } from "../core/termination.js";
 import { pancodeStateDir } from "../core/xdg.js";
+import { wrapTextWithAnsi } from "../engine/text-wrap.js";
 import type {
 	ApplicationInputTui,
 	Component,
@@ -245,6 +247,7 @@ export function createProcessInteractiveShell(
 		};
 	} = {},
 ): InteractiveShell<ProcessTerminal, ApplicationInputTui> {
+	setShutdownTextWrapper(wrapTextWithAnsi);
 	const tracePath = renderTracePath();
 	let restoreStdout: (() => void) | null = null;
 	let restoreFirstFrameStdout: (() => void) | null = null;
