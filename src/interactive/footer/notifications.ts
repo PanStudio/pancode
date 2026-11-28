@@ -25,8 +25,6 @@ import { fitFooterText } from "../footer-panel.js";
 import type { PancodeTheme, PancodeToken } from "../theme/index.js";
 import { GLYPH, pancodeTheme, sectionRule } from "../theme/index.js";
 
-export type { NotificationLevel };
-
 export interface NotificationInput {
 	level: NotificationLevel;
 	text: string;

@@ -61,7 +61,7 @@ import { synthesisLockoutDirective } from "./loop-guard-synthesis.js";
 
 export { stripDeadToolCallMarkup };
 
-export const LOOP_GUARD_REGISTRATION_ID = "guard.loop";
+const LOOP_GUARD_REGISTRATION_ID = "guard.loop";
 
 /**
  * Loop blocks tolerated per user turn before the turn is interrupted. Combined

@@ -22,9 +22,6 @@ import type { RouteCandidate } from "./route-decision.js";
 import { type RoutePrior, routePriorForLatencyClass } from "./route-policy.js";
 import type { RouteReadinessReport } from "./route-readiness.js";
 
-export type { AgentAutomationAuthority };
-export { AGENT_AUTOMATION_AUTHORITIES };
-
 /** Keeps decision evidence and the agent axis finite even when every recipe is hard-rejected. */
 const AGENT_CANDIDATE_LIMIT = 64;
 

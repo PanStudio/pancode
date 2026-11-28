@@ -378,7 +378,7 @@ function restrictThinkingLevelsByMechanism(
 	return levels;
 }
 
-export function effectiveThinkingLevel(
+function effectiveThinkingLevel(
 	configured: ThinkingLevel | undefined,
 	available: ReadonlyArray<ThinkingLevel>,
 ): ThinkingLevel {

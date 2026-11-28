@@ -297,9 +297,6 @@ export function gitRunsConfiguredHelpers(cwd: string, env: NodeJS.ProcessEnv = p
 	);
 }
 
-/** Reads where a check's output lands; `logs` are the call's check log targets ({@link checkLogTargets}). */
-export type { CheckOutputReader };
-
 /**
  * Where a check's output lands (x4-2): a `*.log`, outside the workspace, under the temp dir or a scratch root, or
  * git-ignored. `outside` asks only of any write whether it leaves `cwd` (x7-1): a temp dir or scratch root inside the

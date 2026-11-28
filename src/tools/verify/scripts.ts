@@ -11,7 +11,7 @@ import {
 	readOnlyMainSandboxPolicy,
 } from "../../core/sandbox/main-session.js";
 import type { ResourceLimits } from "../../core/sandbox/types.js";
-import { declaredVerificationScripts, VERIFICATION_SCRIPT_FAMILY_HINT } from "../../core/verification-scripts.js";
+import { declaredVerificationScripts } from "../../core/verification-scripts.js";
 import { runVectorTool } from "../safe-exec.js";
 import type { ToolResult } from "../tool-spec.js";
 import {
@@ -23,11 +23,7 @@ import {
 	PROJECT_VERIFIER_CATALOG_RELATIVE_PATH,
 	resolveProjectVerifierExecutionCwd,
 } from "./catalog.js";
-import {
-	type DeclaredCheckDiscoveryResult,
-	discoverDeclaredChecks,
-	discoverDeclaredChecksAtRoot,
-} from "./discovery.js";
+import { discoverDeclaredChecks, discoverDeclaredChecksAtRoot } from "./discovery.js";
 import {
 	compareNumeric,
 	extractNumericPayloadText,
@@ -52,12 +48,7 @@ import { type ReproduceReport, renderReproduceReport } from "./reproduce.js";
 import { checkoutState, type ReproduceOutcome, runReproduce } from "./reproduce-run.js";
 import { availableToolchainChecks } from "./resolve.js";
 import { taskGateBounds, taskGateFallbackHint, taskGates } from "./task-gates.js";
-import {
-	type DeclaredProjectEntry,
-	discoverDeclaredProjectEntriesAtRoot,
-	parsePackageJson,
-	readRegularFileText,
-} from "./toolchain.js";
+import { discoverDeclaredProjectEntriesAtRoot, parsePackageJson, readRegularFileText } from "./toolchain.js";
 import {
 	NO_CHECKS_DECLARED_NOTE,
 	TOOLCHAIN_DISCOVERY_SOURCES,
@@ -1229,12 +1220,4 @@ export async function runScriptCheck(
 	);
 }
 
-export {
-	type DeclaredCheckDiscoveryResult,
-	type DeclaredProjectEntry,
-	discoverDeclaredChecks,
-	discoverDeclaredChecksAtRoot,
-	discoverDeclaredProjectEntriesAtRoot,
-	extractNumericPayloadText,
-	VERIFICATION_SCRIPT_FAMILY_HINT,
-};
+export { discoverDeclaredChecksAtRoot, discoverDeclaredProjectEntriesAtRoot, extractNumericPayloadText };
