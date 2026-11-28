@@ -9,7 +9,7 @@ import type { ContextSnapshot } from "../../domains/session/context-accounting.j
 import { replaceEngineMessages } from "../../engine/agent.js";
 import type { AnthropicMessagesCompat } from "../../engine/types.js";
 import type { TurnControlRecord } from "../../lib/turn-control/index.js";
-import type { AskUserToolPolicy } from "../../tools/registry-contract.js";
+import type { AskUserToolPolicy } from "../../tools/registry/contract.js";
 import type { ChatSubmitOptions } from "../chat-loop.js";
 import type { ChatLoopScope } from "../chat-loop-scope.js";
 import type { SubmitEvidence } from "../run-evidence.js";

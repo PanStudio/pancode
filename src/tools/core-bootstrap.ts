@@ -47,7 +47,7 @@ import { lsTool } from "./ls.js";
 import { networkToolsDisabled } from "./network-policy.js";
 import { assertBuiltinToolPolicy } from "./policy.js";
 import { createReadTool } from "./read.js";
-import type { ToolRegistry } from "./registry-contract.js";
+import type { ToolRegistry } from "./registry/contract.js";
 import { createRestartSessionTool, restartSessionWorkspaceRefusal } from "./restart-session.js";
 import { runScriptToolSurface } from "./run-script.js";
 import { gitTool } from "./safe-exec.js";

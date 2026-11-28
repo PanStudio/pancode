@@ -10,7 +10,7 @@ import {
 	finalizeObservation,
 	releaseObservation,
 } from "../observation.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolResult } from "../tool-spec.js";
 
 export type ContextSemanticRequest = Pick<SemanticFilters, "kinds" | "runId" | "mediaType" | "after" | "before"> & {

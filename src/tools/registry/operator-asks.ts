@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import type { EgressOrigin } from "../core/sandbox/egress/policy.js";
-import { egressGrants, originKey } from "../core/sandbox/egress/policy.js";
-import type { MainSandboxPolicy } from "../core/sandbox/main-session.js";
-import { ToolNames } from "../core/tool-names.js";
-import { SHELL_EGRESS_RULE_ID } from "../core/views/approval-words.js";
-import type { ClassifierCall } from "../domains/safety/action-classifier.js";
-import { evaluateAdmission } from "../domains/safety/admission.js";
-import type { SafetyDecision } from "../domains/safety/contract.js";
-import type { PermissionRequiredMeta, RegistryDeps, RegistryVerdict, ToolInvokeOptions } from "./registry-contract.js";
-import { withRegistryScope } from "./registry-nested-calls.js";
-import { PARK_ABORT_REASON } from "./registry-verdicts.js";
+import type { EgressOrigin } from "../../core/sandbox/egress/policy.js";
+import { egressGrants, originKey } from "../../core/sandbox/egress/policy.js";
+import type { MainSandboxPolicy } from "../../core/sandbox/main-session.js";
+import { ToolNames } from "../../core/tool-names.js";
+import { SHELL_EGRESS_RULE_ID } from "../../core/views/approval-words.js";
+import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
+import { evaluateAdmission } from "../../domains/safety/admission.js";
+import type { SafetyDecision } from "../../domains/safety/contract.js";
+import type { PermissionRequiredMeta, RegistryDeps, RegistryVerdict, ToolInvokeOptions } from "./contract.js";
+import { withRegistryScope } from "./nested-calls.js";
+import { PARK_ABORT_REASON } from "./verdicts.js";
 
 const DENY_HINT = "Denying is remembered for this session.";
 

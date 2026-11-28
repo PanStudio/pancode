@@ -71,7 +71,7 @@ implemented, because fail-closed would violate the spec by blocking normal local
 edits.
 
 This signal should be derived before tool invocation, next to the existing
-`ToolInvokeOptions` / `buildToolHookInput()` path in `src/tools/registry-contract.ts` and `src/tools/registry-hook-effects.ts`.
+`ToolInvokeOptions` / `buildToolHookInput()` path in `src/tools/registry/contract.ts` and `src/tools/registry/hook-effects.ts`.
 The classifier cannot infer it from paths, action classes, or autonomy alone:
 those say what would be touched, not who initiated the intent.
 

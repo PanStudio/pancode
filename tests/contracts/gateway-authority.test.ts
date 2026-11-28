@@ -20,8 +20,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { createArtifactTool } from "../../src/tools/artifact.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
+import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { gitTool } from "../../src/tools/safe-exec.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

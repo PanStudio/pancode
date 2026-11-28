@@ -5,7 +5,7 @@ import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { PermissionResolvedPayload } from "../core/telemetry/live-events.js";
 import type { ActionClass } from "../domains/safety/action-classifier.js";
 import { UNATTENDED_DECIDED_BY } from "../domains/safety/unattended.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 
 interface PermissionResolution {
 	action: "grant" | "deny" | "stop" | "expire";

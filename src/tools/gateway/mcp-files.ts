@@ -20,7 +20,7 @@ import {
 	withMcpFileInputs,
 } from "../../domains/mcp/index.js";
 import { resolveToCwd } from "../path-utils.js";
-import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "../registry-contract.js";
+import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "../registry/contract.js";
 import { formatSize } from "../truncate.js";
 import type { McpHeldFile } from "./mcp-file-transfer.js";
 import {

@@ -69,7 +69,7 @@ import {
 	ensureDetailLedger,
 	promotedRuntimeTools,
 } from "../tools/extension-runtime-tools.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import { capturedHookSourcesFor } from "./extension-hook-sources.js";
 import {
 	buildExtensionPromptGate,

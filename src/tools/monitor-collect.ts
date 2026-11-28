@@ -20,7 +20,7 @@ import { mergeFlowRestrictions } from "../domains/safety/information-flow.js";
 import { readRunRecord, readVerifiedRun } from "../domains/telemetry/index.js";
 import { earlierFailedAttempts, flowRestrictionsOfRuns, recoveredAttemptLines } from "./dispatch-output.js";
 import type { MonitorToolDeps } from "./monitor.js";
-import { FLOW_RESTRICTIONS_DETAIL } from "./registry-verdicts.js";
+import { FLOW_RESTRICTIONS_DETAIL } from "./registry/verdicts.js";
 import type { ToolResult } from "./tool-spec.js";
 import {
 	compactAnswer,
