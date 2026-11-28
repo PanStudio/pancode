@@ -22,6 +22,7 @@ import {
 	MEMORY_LESSONS_MODES,
 	normalizeExitSummaryStyle,
 	normalizeOutputStyle,
+	SEMANTIC_MODALITIES,
 	THEME_NAMED_COLORS,
 	THINKING_LEVELS,
 	WORKER_PERMISSION_MODES,
@@ -888,12 +889,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 							issues.add("context.semantic.modalities", "expected a nonempty list");
 						} else {
 							const modalities = semantic.modalities.map((value, index) =>
-								expectEnum(issues, `context.semantic.modalities[${index}]`, value, [
-									"text",
-									"image",
-									"audio",
-									"mixed",
-								] as const),
+								expectEnum(issues, `context.semantic.modalities[${index}]`, value, SEMANTIC_MODALITIES),
 							);
 							if (
 								modalities.every((value) => value !== undefined) &&

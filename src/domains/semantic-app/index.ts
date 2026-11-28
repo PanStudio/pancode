@@ -17,6 +17,8 @@ import { canonicalMemoryRepositoryIdentity, loadMemoryRecordsSync } from "../mem
 import { openAuthStorage, resolveAuthTarget } from "../providers/auth/index.js";
 import {
 	createEmbeddingService,
+	EMBEDDING_AUDIO_MIME_TYPES,
+	EMBEDDING_IMAGE_MIME_TYPES,
 	type EmbeddingInput,
 	type EmbeddingProfile,
 	embeddingGemma2Q8Profile,
@@ -77,11 +79,11 @@ async function providerInput(
 	const bytes = input.dataBase64 ? Buffer.from(input.dataBase64, "base64") : await readFile(canonicalPath);
 	if (bytes.length > 8 * 1024 * 1024) throw new Error("Semantic media input exceeds 8 MiB");
 	if (input.kind === "image") {
-		if (!["image/png", "image/jpeg", "image/webp"].includes(input.mimeType))
+		if (!(EMBEDDING_IMAGE_MIME_TYPES as readonly string[]).includes(input.mimeType))
 			throw new Error("Unsupported image MIME type");
 		return { kind: "image", data: bytes.toString("base64"), mimeType: input.mimeType as "image/png" };
 	}
-	if (!["audio/wav", "audio/mpeg", "audio/flac", "audio/ogg"].includes(input.mimeType))
+	if (!(EMBEDDING_AUDIO_MIME_TYPES as readonly string[]).includes(input.mimeType))
 		throw new Error("Unsupported audio MIME type");
 	return { kind: "audio", data: bytes.toString("base64"), mimeType: input.mimeType as "audio/wav" };
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { pancodeStateDir } from "../../core/xdg.js";
-import type { ProjectPreloadClass } from "../prompts/preload.js";
+import { PROJECT_PRELOAD_MODES, type ProjectPreloadClass } from "../prompts/preload.js";
 import { readSessionPromptCompiles } from "../telemetry/index.js";
 import type { SessionMeta } from "./contract.js";
 
@@ -70,7 +70,7 @@ export function isProjectPreloadClass(value: unknown): value is ProjectPreloadCl
 			item[1] >= item[0]);
 	return (
 		typeof row.mode === "string" &&
-		["full", "partial", "synopsis", "none"].includes(row.mode) &&
+		(PROJECT_PRELOAD_MODES as readonly string[]).includes(row.mode) &&
 		integer(row.chars) &&
 		integer(row.lines) &&
 		(row.reason === null ||

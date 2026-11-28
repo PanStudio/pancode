@@ -714,6 +714,10 @@ interface MemorySettings {
 	timeoutMs: number;
 }
 
+/** What a semantic index can embed. */
+export const SEMANTIC_MODALITIES = ["text", "image", "audio", "mixed"] as const;
+export type SemanticModality = (typeof SEMANTIC_MODALITIES)[number];
+
 /** The optional local semantic index and its explicit ingestion roots. */
 interface SemanticSettings {
 	enabled: boolean;
@@ -722,7 +726,7 @@ interface SemanticSettings {
 	assetIdentity: string | null;
 	projectorIdentity: string | null;
 	canaryFingerprint: string | null;
-	modalities: Array<"text" | "image" | "audio" | "mixed">;
+	modalities: SemanticModality[];
 	background: boolean;
 	inboxes: Array<{ id: string; root: string; scope: "project" | "global"; project: string | null }>;
 }

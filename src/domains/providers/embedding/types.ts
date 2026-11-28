@@ -5,10 +5,12 @@
 // graph into the bundled declaration build of that API.
 
 export type EmbeddingTask = "query" | "document";
+export const EMBEDDING_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export const EMBEDDING_AUDIO_MIME_TYPES = ["audio/wav", "audio/mpeg", "audio/flac", "audio/ogg"] as const;
 export type EmbeddingPart =
 	| { kind: "text"; text: string }
-	| { kind: "image"; data: string; mimeType: "image/png" | "image/jpeg" | "image/webp" }
-	| { kind: "audio"; data: string; mimeType: "audio/wav" | "audio/mpeg" | "audio/flac" | "audio/ogg" };
+	| { kind: "image"; data: string; mimeType: (typeof EMBEDDING_IMAGE_MIME_TYPES)[number] }
+	| { kind: "audio"; data: string; mimeType: (typeof EMBEDDING_AUDIO_MIME_TYPES)[number] };
 export type EmbeddingInput =
 	| EmbeddingPart
 	| { kind: "mixed"; parts: readonly EmbeddingPart[] }

@@ -14,4 +14,4 @@ export type {
 	EmbeddingService,
 	EmbeddingTask,
 } from "./types.js";
-export { EmbeddingError } from "./types.js";
+export { EMBEDDING_AUDIO_MIME_TYPES, EMBEDDING_IMAGE_MIME_TYPES, EmbeddingError } from "./types.js";

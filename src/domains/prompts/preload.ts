@@ -17,7 +17,8 @@ import { safePrefixOffsets, sourceLineCount } from "./preload-prefix.js";
  */
 export const FULL_PROJECT_CONTEXT_MAX_CHARS = 24_000;
 export const FULL_PROJECT_CONTEXT_MAX_LINES = 220;
-export type ProjectPreloadMode = "full" | "partial" | "synopsis" | "none";
+export const PROJECT_PRELOAD_MODES = ["full", "partial", "synopsis", "none"] as const;
+export type ProjectPreloadMode = (typeof PROJECT_PRELOAD_MODES)[number];
 export type ProjectPreloadReason = "size" | "lines" | "no-pancode-md";
 export interface ProjectPreloadSource {
 	path: string;

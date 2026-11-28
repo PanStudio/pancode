@@ -10,9 +10,11 @@ export interface JobOwner {
 	readonly cwd: string;
 	readonly generation: string;
 }
+export const JOB_PREDICATE_OPS = ["eq", "ne", "lt", "lte", "gt", "gte", "exists"] as const;
+export type JobPredicateOp = (typeof JOB_PREDICATE_OPS)[number];
 export interface JobPredicate {
 	readonly path: readonly string[];
-	readonly op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "exists";
+	readonly op: JobPredicateOp;
 	readonly value?: string | number | boolean | null;
 }
 /** A further wait condition on a command job: its own pinned command and predicate, checked by the host each poll. */
