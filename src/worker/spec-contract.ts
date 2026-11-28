@@ -1185,6 +1185,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"unixSockets",
 	"maskSettings",
 	"backendExpected",
+	"probedBackend",
 	"egress",
 	"unconfined",
 ]);
@@ -1220,12 +1221,27 @@ function validateWorkerSandbox(value: unknown): void {
 		throw new Error("WorkerSpec.sandbox.maskSettings must be true when present");
 	if (sandbox.backendExpected !== undefined && sandbox.backendExpected !== true)
 		throw new Error("WorkerSpec.sandbox.backendExpected must be true when present");
+	if (sandbox.probedBackend !== undefined)
+		validateProbedBackend(sandbox.probedBackend, sandbox.backendExpected === true);
 	if (sandbox.egress !== undefined) {
 		if (sandbox.network !== true) throw new Error("WorkerSpec.sandbox.egress needs network true");
 		validateWorkerEgress(sandbox.egress);
 	}
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.mode === "required"))
 		throw new Error("WorkerSpec.sandbox.unconfined must be true when present and only under mode auto");
+}
+
+/** A host probe's working backend: only beside `backendExpected`, at an absolute binary. */
+function validateProbedBackend(value: unknown, backendExpected: boolean): void {
+	const source = "WorkerSpec.sandbox.probedBackend";
+	if (!backendExpected) throw new Error(`${source} needs backendExpected`);
+	const probed = readRecord(value, source);
+	exactKeys(probed, ["backend", "executable", "networkIsolation"], source);
+	const backend = readEnum(probed.backend, `${source}.backend`, ["bwrap", "seatbelt"] as const);
+	if (typeof probed.executable !== "string" || !isAbsolute(probed.executable) || probed.executable.includes("\0"))
+		throw new Error(`${source}.executable must be an absolute path`);
+	if (probed.networkIsolation !== undefined && (probed.networkIsolation !== true || backend !== "bwrap"))
+		throw new Error(`${source}.networkIsolation must be true when present and only for bwrap`);
 }
 
 /** The proxied worker's grants: canonical host:port origins, and the operator's upstream proxy only from this host. */
