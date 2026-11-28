@@ -1,36 +1,24 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ModelRunInfo } from "../../core/model-tier.js";
+import {
+	MIDDLEWARE_EFFECT_KINDS,
+	MIDDLEWARE_HOOKS,
+	MIDDLEWARE_REMINDER_SEVERITIES,
+	type MiddlewareEffectKind,
+	type MiddlewareHook,
+	type MiddlewareReminderSeverity,
+} from "../../core/telemetry/session-vocabulary.js";
 import type { ToolResultDigest } from "../../tools/result-disposition.js";
 
-/**
- * The five lifecycle events of the unified middleware layer (w3 cutover).
- * Every event has a live producer: the registry fires before_tool/after_tool
- * in runSpec, the chat-loop fires turn_start on prompt acceptance, turn_end
- * when the final assistant message of a run lands, and on_compaction
- * (observe-only) before each compaction stage.
- */
-export const MIDDLEWARE_HOOKS = ["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"] as const;
+export type { MiddlewareEffectKind, MiddlewareHook, MiddlewareReminderSeverity };
 
-export type MiddlewareHook = (typeof MIDDLEWARE_HOOKS)[number];
+/** The effect kinds a hooks file or a builtin rule may declare: every kind but a rewrite. */
+export const DECLARABLE_MIDDLEWARE_EFFECT_KINDS = MIDDLEWARE_EFFECT_KINDS.filter(
+	(kind): kind is DeclarableMiddlewareEffectKind => kind !== "rewrite_tool_input",
+);
 
-export const MIDDLEWARE_EFFECT_KINDS = [
-	"inject_reminder",
-	"annotate_tool_result",
-	"block_tool",
-	"protect_path",
-	"request_continuation",
-	"require_tool",
-	"lock_tools",
-	"notify_operator",
-	"request_approval",
-] as const;
-
-export type MiddlewareEffectKind = (typeof MIDDLEWARE_EFFECT_KINDS)[number];
-
-export const MIDDLEWARE_REMINDER_SEVERITIES = ["info", "advisory", "warn", "hard-block"] as const;
-
-export type MiddlewareReminderSeverity = (typeof MIDDLEWARE_REMINDER_SEVERITIES)[number];
+export type DeclarableMiddlewareEffectKind = Exclude<MiddlewareEffectKind, "rewrite_tool_input">;
 
 export const MIDDLEWARE_ANNOTATION_SEVERITIES = ["info", "warn"] as const;
 
@@ -146,7 +134,7 @@ export interface MiddlewareRule {
 	description: string;
 	enabled: boolean;
 	hooks: ReadonlyArray<MiddlewareHook>;
-	effectKinds: ReadonlyArray<MiddlewareEffectKind>;
+	effectKinds: ReadonlyArray<DeclarableMiddlewareEffectKind>;
 }
 
 export interface MiddlewareSnapshot {
@@ -317,8 +305,8 @@ export function isMiddlewareHook(value: string): value is MiddlewareHook {
 	return (MIDDLEWARE_HOOKS as ReadonlyArray<string>).includes(value);
 }
 
-export function isMiddlewareEffectKind(value: string): value is MiddlewareEffectKind {
-	return (MIDDLEWARE_EFFECT_KINDS as ReadonlyArray<string>).includes(value);
+export function isDeclarableMiddlewareEffectKind(value: string): value is DeclarableMiddlewareEffectKind {
+	return (DECLARABLE_MIDDLEWARE_EFFECT_KINDS as ReadonlyArray<string>).includes(value);
 }
 
 export function isMiddlewareReminderSeverity(value: string): value is MiddlewareReminderSeverity {

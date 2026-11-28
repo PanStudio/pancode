@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { vocabulary } from "./enums.js";
 import { CallIdSchema, ExistingId } from "./id-schemas.js";
 import { closed, count, duration, ObjectRefSchema, sha256Hex, UtcSchema as utc } from "./schemas.js";
+import { CONTEXT_SPLIT_SOURCES, CONTEXT_TOTAL_SOURCES } from "./session-vocabulary.js";
 
 /** One context reduction: which stage ran, the tokens it moved, and what it removed (#434). */
 export const ContextPrunedSchema = Type.Object(
@@ -221,7 +222,7 @@ export const ContextSnapshottedSchema = Type.Object(
 		runtimeId: Type.Union([ExistingId, Type.Null()]),
 		modelId: Type.Union([ExistingId, Type.Null()]),
 		promptSegments: Type.Optional(Type.Array(Type.Object({ id: ExistingId, tokenEstimate: count }, closed))),
-		splits: Type.Record(Type.String(), vocabulary(["estimated", "exact", "reconciled"])),
+		splits: Type.Record(Type.String(), vocabulary(CONTEXT_SPLIT_SOURCES)),
 		promptHash: Type.Optional(sha256Hex),
 		toolSignature: Type.Optional(Type.String()),
 		messageRange: Type.Optional(Type.Object({ start: count, end: count }, closed)),
@@ -243,7 +244,7 @@ export const ContextSnapshottedSchema = Type.Object(
 			closed,
 		),
 		window: Type.Object({ desired: count, effective: count, source: ExistingId }, closed),
-		source: vocabulary(["estimated", "exact", "reconciled", "streaming"]),
+		source: vocabulary(CONTEXT_TOTAL_SOURCES),
 		/** The chars/4 prompt-side total the snapshot was captured with. */
 		estimatedTokens: Type.Optional(count),
 		/** The provider's prompt tokens for the call it was reconciled against. */

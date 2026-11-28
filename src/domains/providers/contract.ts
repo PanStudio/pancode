@@ -16,8 +16,11 @@ import type { TargetDescriptor } from "./types/target-descriptor.js";
  */
 export type ContextWindowProvenance = "configured" | "discovered" | "catalog" | "runtime-default";
 
+export const TARGET_HEALTH_STATUSES = ["healthy", "degraded", "unknown", "down"] as const;
+export type TargetHealthStatus = (typeof TARGET_HEALTH_STATUSES)[number];
+
 export interface TargetHealth {
-	status: "healthy" | "degraded" | "unknown" | "down";
+	status: TargetHealthStatus;
 	lastCheckAt: string | null;
 	lastError: string | null;
 	latencyMs: number | null;

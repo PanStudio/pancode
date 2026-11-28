@@ -5,7 +5,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { ActionClass } from "./action-classifier.js";
+import { ACTION_CLASSES, type ActionClass } from "./action-classifier.js";
 import type {
 	FlowMcpBinding,
 	FlowSourceRuleInput,
@@ -53,16 +53,7 @@ export interface LoadedProjectSafetyPolicy {
 
 const POLICY_RELATIVE_PATH = path.join(".pancode", "safety.yaml");
 // Includes "unknown" because safety.yaml policy schema parsing accepts unclassified commands as valid policy targets.
-const ACTION_CLASSES = new Set<ActionClass>([
-	"read",
-	"write",
-	"execute",
-	"dispatch",
-	"system_modify",
-	"git_destructive",
-	"destructive",
-	"unknown",
-]);
+const ACTION_CLASS_SET: ReadonlySet<string> = new Set(ACTION_CLASSES);
 const PATH_POLICY_KEYS = ["zeroAccessPaths", "readOnlyPaths", "noWritePaths", "noDeletePaths"] as const;
 const ROOT_KEYS = new Set([
 	"version",
@@ -567,7 +558,7 @@ function parseActionClass(value: unknown, label: string, errors: string[]): Acti
 		errors.push(`${label}.actionClass must be a string`);
 		return undefined;
 	}
-	if (!ACTION_CLASSES.has(value as ActionClass)) {
+	if (!ACTION_CLASS_SET.has(value as ActionClass)) {
 		errors.push(`${label}.actionClass is not supported: ${value}`);
 		return undefined;
 	}

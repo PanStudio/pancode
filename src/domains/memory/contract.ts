@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { MemoryGuardianState } from "../../core/telemetry/session-vocabulary.js";
 import type { MemoryCommitScope, MemoryContentStamp } from "./commit-state.js";
 import type { RetentionStatus } from "./completion-retention.js";
 import type { TaskMemorySnapshot } from "./task-bank.js";
 import type { TaskMemoryPolicyDecision, TaskMemoryRoute, TaskMemoryStepUsage } from "./task-memory-policy.js";
-import type { TaskMemoryActivityEvent, TaskMemoryGuardianState } from "./task-memory-status.js";
+import type { TaskMemoryActivityEvent } from "./task-memory-status.js";
 
 /** Complete host-selected causal unit. Text excludes private reasoning and unseen attachments. */
 export interface ObservationSourceUnit {
@@ -149,7 +151,7 @@ export interface MemoryContract {
 		lastDecision: TaskMemoryPolicyDecision | null;
 		activity: readonly TaskMemoryActivityEvent[];
 	};
-	guardianState(): TaskMemoryGuardianState;
+	guardianState(): MemoryGuardianState;
 }
 
 /** Composition supplies ledger authority and durability through a separate command port. */

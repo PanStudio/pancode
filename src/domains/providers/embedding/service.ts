@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { SemanticModality } from "../../../core/defaults.js";
 import {
 	canonicalEndpointKey,
 	foregroundStreamUsage,
@@ -10,13 +12,13 @@ import type { TargetDescriptor } from "../types/target-descriptor.js";
 import { embeddingProfileIdentity } from "./profile.js";
 import { embedOpenAIInputs } from "./transport.js";
 import type { EmbeddingInput, EmbeddingRequest, EmbeddingService } from "./types.js";
-import { EmbeddingError } from "./types.js";
+import { EMBEDDING_AUDIO_MIME_TYPES, EMBEDDING_IMAGE_MIME_TYPES, EmbeddingError } from "./types.js";
 
 export interface EmbeddingRoute {
 	target: TargetDescriptor;
 	model: string;
 	/** Explicit qualified modalities; text is required. Video is intentionally unsupported. */
-	modalities: readonly ("text" | "image" | "audio" | "mixed")[];
+	modalities: readonly SemanticModality[];
 	authToken?: string;
 }
 
@@ -152,10 +154,7 @@ function validateInput(input: EmbeddingInput, route: EmbeddingRoute): number {
 			throw new EmbeddingError("invalid-input", "Embedding text must be nonempty");
 		return Buffer.byteLength(input.text);
 	}
-	const allowed =
-		input.kind === "image"
-			? ["image/png", "image/jpeg", "image/webp"]
-			: ["audio/wav", "audio/mpeg", "audio/flac", "audio/ogg"];
+	const allowed: readonly string[] = input.kind === "image" ? EMBEDDING_IMAGE_MIME_TYPES : EMBEDDING_AUDIO_MIME_TYPES;
 	if (
 		!allowed.includes(input.mimeType) ||
 		typeof input.data !== "string" ||

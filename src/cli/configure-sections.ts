@@ -4,7 +4,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readPancodeVersionLabel } from "../core/build-info.js";
 import { readSettings, settingsPath, updateSettings } from "../core/config.js";
-import type { OutputStyle, PanesSettings, SmoothStreaming, TuiMode, WorkerPermissionMode } from "../core/defaults.js";
+import {
+	type OutputStyle,
+	type PanesSettings,
+	type SmoothStreaming,
+	type TuiMode,
+	WORKER_PERMISSION_MODES,
+	type WorkerPermissionMode,
+} from "../core/defaults.js";
 import type { FundingBinding, FundingPool } from "../core/funding-config.js";
 import { FUNDING_ID_PATTERN, FUNDING_PAYERS, FUNDING_PERIODS, isInstitutionalPool } from "../core/funding-config.js";
 import { resolvePackageRoot } from "../core/package-root.js";
@@ -487,12 +494,12 @@ const CONTENT_PARTS = {
 			{
 				label: "Worker permission mode",
 				controlPath: "fleet.permissions.mode",
-				hint: "judge | deny | fail | escalate | main",
+				hint: WORKER_PERMISSION_MODES.join(" | "),
 				run: async (io) => {
 					await askChoice(
 						io,
 						"Worker permission mode",
-						["judge", "deny", "fail", "escalate", "main"],
+						WORKER_PERMISSION_MODES,
 						readSettings().fleet.permissions.mode,
 						(value) => {
 							updateSettings((draft) => {

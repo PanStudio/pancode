@@ -11,6 +11,7 @@ import { workerPermitDigest } from "../../worker/protocol.js";
 import { capabilityClassExcludes } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
 import type { McpAttestedSkill } from "../gateway/mcp/skill-catalog.js";
+import type { McpTrustActionClass } from "../gateway/mcp/trust.js";
 import type { RuntimeEnforcement } from "../providers/index.js";
 import { readOnlyWorkAdmitted } from "../providers/runtime-enforcement.js";
 import { classify } from "./action-classifier.js";
@@ -39,10 +40,6 @@ export interface WorkerPermissionDeclaration {
 	asks?: WorkerAskRoute;
 }
 
-/** The action classes an MCP trust record or declaration can give a tool. */
-const WORKER_MCP_ACTION_CLASSES = ["read", "execute", "destructive", "unknown"] as const;
-type WorkerMcpActionClass = (typeof WORKER_MCP_ACTION_CLASSES)[number];
-
 /**
  * One MCP tool as admission resolved it, without launching anything: the
  * declaration that owns the name, the digest that declaration had when it was
@@ -54,7 +51,7 @@ export interface WorkerMcpToolAttestation {
 	digest: string;
 	/** The server's own tool name; the capability is `mcp_<serverId>__<tool>`. */
 	tool: string;
-	actionClass: WorkerMcpActionClass;
+	actionClass: McpTrustActionClass;
 	/**
 	 * The tool surface digest the operator approved for this server, the same
 	 * on each of its entries. The worker refuses every call to a server whose

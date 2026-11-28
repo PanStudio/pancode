@@ -23,9 +23,9 @@ import {
 	type ProvidersContract,
 	type ResolvedThinkingCapability,
 	resolveModelRuntimeCapabilitiesForProviders,
+	THINKING_LEVELS,
 	type ThinkingLevel,
 	thinkingLevelDisplayWord,
-	VALID_THINKING_LEVELS,
 } from "../domains/providers/index.js";
 import type { ResourcesContract } from "../domains/resources/index.js";
 import { installSkill } from "../domains/resources/skills/marketplace.js";
@@ -739,7 +739,7 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 			// plain level names, which run through the same clamp a chat.thinkingLevel setting
 			// does (high on a model without high runs as xhigh, CLI-P29).
 			const listed = supported.find((candidate) => candidate === requested || labelFor(candidate) === requested);
-			const match = listed ?? VALID_THINKING_LEVELS.find((candidate) => candidate === requested);
+			const match = listed ?? THINKING_LEVELS.find((candidate) => candidate === requested);
 			// A model whose thinking cannot be switched (none, always-on) takes only its own level.
 			const fixed = !thinking || thinking.mechanism === "none" || thinking.mechanism === "always-on";
 			if (!match || (fixed && listed === undefined)) {

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { PancodeSettings } from "../../core/config.js";
-import { ACTIVE_ROUTING_POSTURES, ACTIVE_ROUTING_ROLES } from "../../core/defaults.js";
+import { ACTIVE_ROUTING_POSTURES, ACTIVE_ROUTING_ROLES, WORKER_PERMISSION_MODES } from "../../core/defaults.js";
 import { getAtPath, resolveMemoryRoute } from "../../core/session-routing.js";
 /** buildSettingItems: every row the settings center lists, with the fleet profile, agent binding and System 1 rows. */
 import {
@@ -124,7 +124,7 @@ export function buildSettingItems(
 			values: ["default", "yolo"],
 		}),
 		settingItem("fleet.permissions.mode", settings.fleet.permissions.mode ?? "judge", {
-			values: ["judge", "deny", "fail", "escalate", "main"],
+			values: WORKER_PERMISSION_MODES,
 		}),
 		settingItem("fleet.permissions.escalation.timeoutMs", String(escalation.timeoutMs), {
 			affordance: "free text",

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { RequestedThinkingLevel } from "./call-effort.js";
+import type { ThinkingLevel } from "../views/thinking-levels.js";
 import { captureAdmits, STANDARD_CAPTURE } from "./capture.js";
 import type { TelemetryContext } from "./context.js";
 import { telemetryContext, telemetryOwner, withTelemetryContext } from "./context.js";
@@ -32,7 +32,7 @@ export type PendingTelemetry<K extends JournalEventName = JournalEventName> = K 
 /** Erased engine callback; raw provider messages cross only into the host's fact adapter (#434). */
 export interface CallMessageObserver {
 	/** Opens the next attempt; `thinkingLevel` is the level the request asks for, journaled on its call.started (FX-49). */
-	startAttempt(request?: { thinkingLevel?: RequestedThinkingLevel }): void;
+	startAttempt(request?: { thinkingLevel?: ThinkingLevel }): void;
 	settle(message: unknown): void;
 	withContext<T>(work: () => T): T;
 }

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { HUB_COMPONENT_KINDS, type HubComponentKind } from "../../core/views/hub-words.js";
+
 /** PanHub distributes packs; kind describes the pack's public contents. */
 export type HubEntryKind = "skill" | "plugin" | "extension";
 export type HubRequirementRef = `${HubEntryKind}:${string}`;
@@ -14,13 +16,18 @@ export function isHubKind(value: unknown): value is HubEntryKind {
 	);
 }
 
-/** The four component kinds a plugin carries. A plugin owns components; it is never a fifth invocable kind. */
-export type HubComponentKind = "skill" | "agent" | "prompt" | "playbook";
-
-export const HUB_COMPONENT_KINDS: readonly HubComponentKind[] = ["skill", "agent", "prompt", "playbook"];
+export { HUB_COMPONENT_KINDS, type HubComponentKind };
 
 export function isHubComponentKind(value: unknown): value is HubComponentKind {
-	return typeof value === "string" && HUB_COMPONENT_KINDS.includes(value as HubComponentKind);
+	return typeof value === "string" && (HUB_COMPONENT_KINDS as readonly string[]).includes(value);
+}
+
+/** A package's published audit verdict. */
+export const HUB_AUDIT_STATES = ["pass", "warn", "fail", "unknown"] as const;
+export type HubAuditState = (typeof HUB_AUDIT_STATES)[number];
+
+export function isHubAuditState(value: unknown): value is HubAuditState {
+	return typeof value === "string" && (HUB_AUDIT_STATES as readonly string[]).includes(value);
 }
 
 /** What PanHub browses and filters by: a pack kind or a component kind. */
@@ -83,7 +90,7 @@ export interface HubPackageEntry {
 	/** Extension rows only: the `pancode <verb>` names it declares, so a verb typed before an install names its pack. */
 	verbs?: string[];
 	category?: string;
-	audit?: "pass" | "warn" | "fail" | "unknown";
+	audit?: HubAuditState;
 	triggers?: string[];
 	/** Absent means the package contents are unknown until explicit inspection. */
 	provides?: HubProvidedResource[];

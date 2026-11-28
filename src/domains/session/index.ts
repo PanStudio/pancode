@@ -78,7 +78,6 @@ export type {
 	ModelChangeEntry,
 	ProtectedArtifactEntry,
 	ProtectedArtifactEntryArtifact,
-	ProtectedArtifactEntrySource,
 	SessionEntry,
 	SessionEntryKind,
 	SessionFileEntry,

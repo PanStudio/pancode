@@ -45,6 +45,7 @@ import type { PinnedPromptPrefix } from "./apis/anthropic-system-split.js";
 import { filterAssistantProseStream } from "./assistant-prose-stream.js";
 import { pancodeClientIdentity } from "./client-identity.js";
 import { guardToolArgumentStream } from "./tool-argument-stream.js";
+import { LLM_MESSAGE_ROLES } from "./types.js";
 import { routeUnattachedToolCalls } from "./unattached-tool-call.js";
 
 export type EngineStreamFn = (...args: Parameters<typeof engineStreamSimple>) => ReturnType<StreamFn>;
@@ -576,8 +577,6 @@ export function engineInitialSystemPrompt(agent: Agent): string {
 		: agent.state.systemPrompt;
 }
 
-const PI_REQUEST_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
-
 /**
  * Pi's own count of the request these messages make when no usage anchors it:
  * the initial system message with its tool declarations, then every message the
@@ -589,7 +588,7 @@ export function estimateEngineRequestTokens(agent: Agent, messages: ReadonlyArra
 	const initial = createInitialSystemMessage(engineInitialSystemPrompt(agent), agent.state.tools.map(toToolDeclaration));
 	let tokens = initial ? estimateMessageTokens(initial) : 0;
 	for (const message of messages)
-		if (PI_REQUEST_ROLES.has(message.role)) tokens += estimateMessageTokens(message as Message);
+		if (LLM_MESSAGE_ROLES.has(message.role)) tokens += estimateMessageTokens(message as Message);
 	return tokens;
 }
 

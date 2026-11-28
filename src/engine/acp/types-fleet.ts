@@ -7,6 +7,8 @@
 
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { JOB_DELIVERY_STATES, JOB_OUTCOMES } from "../../core/job-types.js";
+import { literalUnion } from "../../core/telemetry/enums.js";
 import type { AgentMessage } from "../types.js";
 import { ACP_MAX_JOBS } from "./runtime.js";
 import type { AcpInitializeResponse } from "./types.js";
@@ -115,14 +117,7 @@ export const AcpJob = Type.Object(
 		last: Type.Union([
 			Type.Object(
 				{
-					outcome: Type.Union([
-						Type.Literal("succeeded"),
-						Type.Literal("failed"),
-						Type.Literal("noop"),
-						Type.Literal("canceled"),
-						Type.Literal("timed_out"),
-						Type.Literal("interrupted"),
-					]),
+					outcome: literalUnion(JOB_OUTCOMES),
 					summary: Type.String({ maxLength: 320 }),
 					truncated: Type.Boolean(),
 				},
@@ -134,13 +129,7 @@ export const AcpJob = Type.Object(
 			Type.Object(
 				{
 					kind: Type.Union([Type.Literal("notice"), Type.Literal("main_turn")]),
-					state: Type.Union([
-						Type.Literal("pending"),
-						Type.Literal("running"),
-						Type.Literal("delivered"),
-						Type.Literal("dropped"),
-						Type.Literal("failed"),
-					]),
+					state: literalUnion(JOB_DELIVERY_STATES),
 				},
 				closed,
 			),

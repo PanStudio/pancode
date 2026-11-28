@@ -7,19 +7,9 @@ import { Type } from "typebox";
 import { vocabulary } from "./enums.js";
 import { CallIdSchema, ExistingId } from "./id-schemas.js";
 import { closed, count, duration } from "./schemas.js";
+import { MIDDLEWARE_EFFECT_KINDS, MIDDLEWARE_HOOKS, MIDDLEWARE_REMINDER_SEVERITIES } from "./session-vocabulary.js";
 
-export const MIDDLEWARE_EFFECTS = vocabulary([
-	"inject_reminder",
-	"annotate_tool_result",
-	"block_tool",
-	"protect_path",
-	"request_continuation",
-	"require_tool",
-	"lock_tools",
-	"notify_operator",
-	"rewrite_tool_input",
-	"request_approval",
-]);
+export const MIDDLEWARE_EFFECTS = vocabulary(MIDDLEWARE_EFFECT_KINDS);
 export const SYSTEM_ONE_OUTCOME = vocabulary([
 	"answered",
 	"failed",
@@ -37,7 +27,7 @@ export const MiddlewareHookFailedSchema = Type.Object(
 	{
 		kind: vocabulary(["hook_failed", "budget_exceeded", "registration_conflict"]),
 		registrationId: ExistingId,
-		hook: vocabulary(["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"]),
+		hook: vocabulary(MIDDLEWARE_HOOKS),
 		elapsedMs: Type.Optional(duration),
 		budgetMs: Type.Optional(duration),
 		steadyStateWarn: Type.Optional(Type.Boolean()),
@@ -62,12 +52,12 @@ export const MiddlewareFiredSchema = Type.Object(
 		 * settles every firing (`nudge.read-streak`, `nudge.scout-survey`, `worker.thrash`; exploration design 3.4).
 		 */
 		firingId: Type.Optional(FiringIdSchema),
-		hook: vocabulary(["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"]),
+		hook: vocabulary(MIDDLEWARE_HOOKS),
 		phase: vocabulary(["sync", "async", "awaited"]),
 		ruleId: ExistingId,
 		effects: Type.Array(MIDDLEWARE_EFFECTS, { minItems: 1, maxItems: 32 }),
 		/** The strongest severity among its reminders. */
-		severity: Type.Optional(vocabulary(["info", "advisory", "warn", "hard-block"])),
+		severity: Type.Optional(vocabulary(MIDDLEWARE_REMINDER_SEVERITIES)),
 		/** What the rule matched, as `matcher:subject@scope`, for example `regex:PLAN_REQUEST@operator-request`. */
 		evidence: Type.Optional(
 			Type.String({ pattern: "^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9_.-]{1,64}(?:@[a-z][a-z0-9-]{0,31})?$" }),

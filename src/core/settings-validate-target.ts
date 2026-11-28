@@ -16,6 +16,7 @@ import {
 	isFundingInstant,
 	isInstitutionalPool,
 } from "./funding-config.js";
+import { BOOLEAN_CAPABILITY_KEYS } from "./runtime-vocabulary.js";
 import {
 	describe,
 	expectBoolean,
@@ -67,7 +68,7 @@ function validateCapabilities(issues: Issues, path: string, value: unknown): Tar
 		"maxTokens",
 	]);
 	const out: TargetCapabilities = {};
-	for (const key of ["chat", "tools", "reasoning", "vision", "audio", "embeddings", "rerank", "fim"] as const) {
+	for (const key of BOOLEAN_CAPABILITY_KEYS) {
 		if (key in value) {
 			const v = expectBoolean(issues, `${path}.${key}`, value[key]);
 			if (v !== undefined) out[key] = v;

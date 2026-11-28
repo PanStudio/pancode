@@ -17,13 +17,14 @@
  */
 
 import { type NoticeFloor, tierPolicy } from "../../core/presentation-tier.js";
+import type { NotificationLevel } from "../../core/views/notice-words.js";
 import { visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { fitFooterText } from "../footer-panel.js";
 import type { PancodeTheme, PancodeToken } from "../theme/index.js";
 import { formatElapsed, GLYPH, pancodeTheme, sectionRule } from "../theme/index.js";
 
-export type NotificationLevel = "info" | "success" | "warning" | "error";
+export type { NotificationLevel };
 
 export interface NotificationInput {
 	level: NotificationLevel;

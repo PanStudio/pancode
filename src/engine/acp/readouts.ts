@@ -7,6 +7,7 @@
  * clock is injected, so the throttle is deterministic and holds no timer.
  */
 
+import { RETRY_STATUS_PHASES } from "../../core/telemetry/session-vocabulary.js";
 import { autonomyModeReadout, autonomyWindowReadout } from "../../domains/safety/autonomy-readout.js";
 import type { AutonomyStatus } from "../../domains/safety/autonomy-window.js";
 import type { AutonomyLevel, YoloConfinement } from "../../lib/autonomy/autonomy.js";
@@ -65,15 +66,7 @@ const TRIGGERS: ReadonlySet<string> = new Set([
 	"tool_execution_end",
 	"retry_status",
 ]);
-const RETRY_PHASES: ReadonlySet<string> = new Set([
-	"scheduled",
-	"waiting",
-	"retrying",
-	"moved",
-	"cancelled",
-	"exhausted",
-	"recovered",
-]);
+const RETRY_PHASES: ReadonlySet<string> = new Set(RETRY_STATUS_PHASES);
 const SETTLED_RETRY_PHASES: ReadonlySet<string> = new Set(["cancelled", "exhausted", "recovered"]);
 const MAX_SKILLS = 16;
 const DOT = "·";

@@ -11,6 +11,7 @@ import { gatewayRoutingObservationFromRecord } from "../../core/gateway-routing.
 import { differingResponseModelId, responseModelIdObservationFromRecord } from "../../core/response-model-id.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
 import { type RunSpendSums, spendSumsOf } from "../../core/telemetry/pricing.js";
+import { CALL_STOP_REASONS } from "../../core/telemetry/run-vocabulary.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { ToolRoundRecord } from "../../engine/types.js";
@@ -184,7 +185,7 @@ export function foldToolDecision(
 	(guardBlock ? guardBlockedAttempts : permissionAsk ? permissionRequestedAttempts : blockedAttempts).push(attempt);
 }
 
-const CALL_STOP_REASONS: ReadonlySet<string> = new Set(["stop", "length", "toolUse", "error", "aborted"]);
+const STOP_REASONS: ReadonlySet<string> = new Set(CALL_STOP_REASONS);
 
 const CALL_ERROR_MESSAGE_MAX_CHARS = 512;
 
@@ -195,7 +196,7 @@ const CALL_ERROR_MESSAGE_MAX_CHARS = 512;
  */
 function callOutcome(message: Record<string, unknown>): Pick<RunResultUpstreamResponse, "stopReason" | "errorMessage"> {
 	const stopReason = typeof message.stopReason === "string" ? message.stopReason : null;
-	if (stopReason === null || !CALL_STOP_REASONS.has(stopReason)) return {};
+	if (stopReason === null || !STOP_REASONS.has(stopReason)) return {};
 	const errorMessage = readStringOrNull(message.errorMessage);
 	return {
 		stopReason: stopReason as NonNullable<RunResultUpstreamResponse["stopReason"]>,

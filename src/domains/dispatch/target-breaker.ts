@@ -26,6 +26,10 @@ export type TargetBreakerBlock =
 
 export type TargetBreakerOutcome = "success" | "failure" | "neutral";
 
+/** Where a breaker stands: counting failures, cooling down, letting one probe through, or ready to probe. */
+export const BREAKER_STATES = ["closed", "open", "probing", "half-open"] as const;
+export type BreakerState = (typeof BREAKER_STATES)[number];
+
 /**
  * One route's breaker state for operator surfaces. "half-open" means the
  * cooldown expired and the next dispatch will be admitted as the probe;
@@ -35,7 +39,7 @@ export type TargetBreakerOutcome = "success" | "failure" | "neutral";
  */
 export interface TargetBreakerRouteSnapshot {
 	key: string;
-	state: "open" | "half-open" | "probing" | "closed";
+	state: BreakerState;
 	remainingMs: number;
 	reason: string;
 	consecutiveFailures: number;

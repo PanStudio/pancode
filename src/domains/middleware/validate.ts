@@ -4,8 +4,8 @@
 import { isRecord } from "../../core/type-guards.js";
 import {
 	type DeclarableMiddlewareEffect,
+	isDeclarableMiddlewareEffectKind,
 	isMiddlewareAnnotationSeverity,
-	isMiddlewareEffectKind,
 	isMiddlewareReminderSeverity,
 	type MiddlewareEffect,
 } from "./types.js";
@@ -44,7 +44,7 @@ function readMiddlewareEffect(
 		return null;
 	}
 	const kindValue = value.kind;
-	if (typeof kindValue !== "string" || !isMiddlewareEffectKind(kindValue)) {
+	if (typeof kindValue !== "string" || !isDeclarableMiddlewareEffectKind(kindValue)) {
 		issues.push({ path: `${path}.kind`, message: "expected known middleware effect kind" });
 		return null;
 	}

@@ -15,7 +15,7 @@ import { capabilityRefusal } from "./composer-model.js";
 import {
 	JOB_ACTION_LABELS,
 	JOB_CONFIRMATIONS,
-	type JobAction,
+	type JobControlAction,
 	jobRowView,
 	liveJobsLabel,
 	visibleJobs,
@@ -33,14 +33,14 @@ function JobControls({
 	client: Client;
 	sessionId: string;
 	jobId: string;
-	actions: readonly JobAction[];
+	actions: readonly JobControlAction[];
 }) {
 	const [confirm, setConfirm] = useState<"stop" | "cancel" | null>(null);
 	const [outcome, setOutcome] = useState<Outcome | null>(null);
 	// Pause and resume go through the same `/loop` command the terminal types. Stop and cancel stay two
 	// distinct requests: stop lets the current run settle, cancel aborts it.
 	const control = useMutation({
-		mutationFn: (action: JobAction) =>
+		mutationFn: (action: JobControlAction) =>
 			client.call(routes.invokeSessionCommand, {
 				params: { id: sessionId },
 				query: {},

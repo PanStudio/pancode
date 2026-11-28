@@ -6,6 +6,7 @@
  * content, so it is made inert here before a `<pre>` shows it.
  */
 
+import { PROJECT_TRUST_SURFACES } from "../../../../src/core/views/trust-words.js";
 import type { TrustPreview, TrustPreviewFile, TrustSurface } from "../../contracts/review.js";
 import type { SessionTelemetry } from "../../contracts/session-telemetry.js";
 
@@ -85,9 +86,8 @@ export function ignoredSurfaces(
 	}
 	return [...groups.values()];
 }
-const SURFACES: readonly string[] = ["safety", "hooks", "settings", "extensions", "plugins", "handbook"];
 function isTrustSurface(value: string): value is TrustSurface {
-	return SURFACES.includes(value);
+	return (PROJECT_TRUST_SURFACES as readonly string[]).includes(value);
 }
 
 /**

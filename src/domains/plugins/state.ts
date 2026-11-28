@@ -57,7 +57,7 @@ import type {
 	PluginMutationResult,
 	PluginScope,
 } from "./types.js";
-import { isForeignPluginOrigin } from "./types.js";
+import { FOREIGN_PACKAGE_FORMATS, isForeignPluginOrigin } from "./types.js";
 import { verifiedPluginCandidate } from "./verified-tree.js";
 
 /** sourcePath is a prepared package root containing plugin.json for the declared kind. */
@@ -105,7 +105,7 @@ function readState(scope: PluginScope, cwd: string) {
 	return read;
 }
 
-const FOREIGN_FORMATS = new Set(["portable", "claude-code", "codex", "agent-skill"]);
+const FOREIGN_FORMATS: ReadonlySet<string> = new Set(FOREIGN_PACKAGE_FORMATS);
 /** Persisted provenance is validated on every read so a hand-edited record cannot invent an origin. */
 function validOrigin(origin: unknown): boolean {
 	if (!isRecord(origin) || typeof origin.source !== "string") return false;

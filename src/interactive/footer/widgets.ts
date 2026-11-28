@@ -3,6 +3,7 @@
 
 import { formatCount } from "../../core/format-time.js";
 import type { ContextActivityPhase } from "../../core/telemetry/live-events.js";
+import type { ContextActivityStatus, MemoryGuardianState } from "../../core/telemetry/session-vocabulary.js";
 import type { LiveBudgetView } from "../../domains/context/budget/live-view.js";
 import type { AutonomyStatus } from "../../domains/safety/autonomy-window.js";
 import type { LocalCapacity } from "../../domains/scheduling/local-capacity.js";
@@ -73,7 +74,7 @@ export interface SessionFacts {
 		stepInFlight?: boolean;
 		lastDecision?: string | null;
 		/** Always-on guardian state; absent on surfaces that do not run it. */
-		guardian?: "off" | "idle" | "reviewing" | "waiting-capacity" | "unavailable";
+		guardian?: MemoryGuardianState;
 	} | null;
 }
 
@@ -105,7 +106,7 @@ export interface AgentWorkFacts {
 	contextActivity?: {
 		message: string;
 		detail: string | null;
-		status: "started" | "running" | "completed" | "failed";
+		status: ContextActivityStatus;
 	} | null;
 	/** Metrics for the most recent completed turn, surfaced when the agent is idle. */
 	lastTurn: TurnSummary | null;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { initializePancodeHome } from "../core/init.js";
 import {
+	type PancodeDirRole,
 	pancodeDirLayoutProblems,
 	removablePancodeRootProblem,
 	resetXdgCache,
@@ -418,7 +419,7 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 			return 1;
 		}
 	}
-	const toRemove: Array<{ label: string; path: string; role?: "config" | "data" | "state" | "cache" }> = [];
+	const toRemove: Array<{ label: string; path: string; role?: PancodeDirRole }> = [];
 	if (args.all) {
 		toRemove.push(
 			{ label: "Config", path: dirs.config, role: "config" },

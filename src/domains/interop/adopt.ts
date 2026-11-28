@@ -14,7 +14,7 @@ import {
 	readPluginInstallRecord,
 	readPluginManifest,
 } from "../plugins/index.js";
-import type { PluginOrigin } from "../plugins/types.js";
+import type { ForeignPackageFormat, PluginOrigin } from "../plugins/types.js";
 import { validateHubPackage } from "../resources/hub-validation.js";
 import { loadPromptTemplates } from "../resources/prompts/loader.js";
 import { bareSkillIdentity, bareSkillManifest } from "../resources/skills/bare-skill.js";
@@ -59,7 +59,7 @@ export interface InteropAdoptionEntry {
 	omitted?: string[];
 	requirements?: string[];
 	/** Manifest format the package was read as; absent for loose resources. */
-	format?: "portable" | "claude-code" | "codex" | "agent-skill";
+	format?: ForeignPackageFormat;
 	/** Per-resource conversion results for foreign-format packages. */
 	outcomes?: ForeignResourceOutcome[];
 	/** Host features present in the source that adoption never activates. */
@@ -84,7 +84,7 @@ export interface PreparedAdoption {
 	note: string;
 	omitted: string[];
 	requirements: string[];
-	format?: "portable" | "claude-code" | "codex" | "agent-skill";
+	format?: ForeignPackageFormat;
 	outcomes?: ForeignResourceOutcome[];
 	unsupported?: string[];
 }

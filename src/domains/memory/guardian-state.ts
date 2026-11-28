@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
+import type { MemoryGuardianState } from "../../core/telemetry/session-vocabulary.js";
 import type { MemoryContract } from "./contract.js";
-import type { TaskMemoryGuardianState } from "./task-memory-status.js";
 
 export interface GuardianStatePublisher {
 	/**
@@ -10,7 +10,7 @@ export interface GuardianStatePublisher {
 	 * middleware launched counts as reviewing even though the guardian did not
 	 * start it.
 	 */
-	current(): TaskMemoryGuardianState;
+	current(): MemoryGuardianState;
 	/** Emit `memory.guardian_changed` when the projected state moved since the last emit. */
 	publish(): void;
 }
@@ -20,8 +20,8 @@ export function createGuardianStatePublisher(
 	bus: Pick<TelemetryHub, "emit">,
 	currentSessionId: () => string | null,
 ): GuardianStatePublisher {
-	let publishedGuardianState: TaskMemoryGuardianState | null = null;
-	const current = (): TaskMemoryGuardianState => {
+	let publishedGuardianState: MemoryGuardianState | null = null;
+	const current = (): MemoryGuardianState => {
 		const state = contract.guardianState();
 		return state !== "off" && contract.interventionStatus().stepInFlight ? "reviewing" : state;
 	};

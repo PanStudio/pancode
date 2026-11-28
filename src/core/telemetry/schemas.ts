@@ -8,7 +8,9 @@
 import type { Static, TSchema } from "typebox";
 import { Type } from "typebox";
 import { SURFACE_IDS } from "../side-surfaces.js";
-import { REQUESTED_THINKING_LEVELS, WIRE_EFFORT_PATTERN } from "./call-effort.js";
+import { THINKING_LEVELS } from "../views/thinking-levels.js";
+import { CACHE_VERDICTS } from "../views/usage-words.js";
+import { WIRE_EFFORT_PATTERN } from "./call-effort.js";
 import {
 	CallEconomicsSchema,
 	ChargeDiscrepancySchema,
@@ -27,6 +29,7 @@ import {
 } from "./enums.js";
 import { EstimateMethod, FactSumSchema, factSchema } from "./fact.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId } from "./id-schemas.js";
+import { CACHE_RECOVERY_OUTCOMES, COPILOT_SESSION_ORIGINS, QUOTA_STATUSES } from "./session-vocabulary.js";
 
 export const closed = { additionalProperties: false };
 /** Who bills a seat-billed call; a harness word, which a report bundle carries verbatim. */
@@ -162,7 +165,7 @@ const call = {
 	/** Present only when the request bound its reply to a JSON schema through `response_format`. */
 	responseFormat: Type.Optional(vocabulary(["json-schema"])),
 	/** The thinking level the call asked for, as PanCode names it; absent where the caller did not state one (FX-49). */
-	thinkingLevel: Type.Optional(vocabulary(REQUESTED_THINKING_LEVELS)),
+	thinkingLevel: Type.Optional(vocabulary(THINKING_LEVELS)),
 };
 const span = { start: duration, end: duration };
 export const sha256Hex = Type.String({ pattern: "^[0-9a-f]{64}$" });
@@ -265,7 +268,7 @@ export const CallSettledSchema = Type.Object(
 				/** Present only when the call's own connection counters were attributable to it (#434). */
 				connectionReused: Type.Optional(factSchema(Type.Boolean())),
 				/** The Copilot session a copilot-sdk call went to, from PanCode's own session pool (PV-2). */
-				session: Type.Optional(factSchema(vocabulary(["new", "spare", "continued", "resumed"]))),
+				session: Type.Optional(factSchema(vocabulary(COPILOT_SESSION_ORIGINS))),
 				/** WebSocket failures and SSE fallbacks inside this call, from the same attributable counters (#423). */
 				websocketFailures: Type.Optional(factSchema(count)),
 				sseFallbacks: Type.Optional(factSchema(count)),
@@ -275,7 +278,7 @@ export const CallSettledSchema = Type.Object(
 					Type.Object(
 						{
 							action: vocabulary(["cooldown_reset", "auth_reset"]),
-							outcome: vocabulary(["eligible", "recovered", "failed", "unknown"]),
+							outcome: vocabulary(CACHE_RECOVERY_OUTCOMES),
 						},
 						closed,
 					),
@@ -319,7 +322,7 @@ export const CallSettledSchema = Type.Object(
 				uncachedPrefillTokens: factSchema(count),
 				/** rePrefilledTokens priced at the input rate less the cache-read rate, fixed at settle, so also an upper bound (#434). */
 				bill: Type.Optional(PricingSchema),
-				verdict: vocabulary(["hot", "partial", "cold", "small", "unknown"]),
+				verdict: vocabulary(CACHE_VERDICTS),
 				/**
 				 * The request's structure as short digests, so a later process can name where a resumed request departs
 				 * from the last one journaled on its route. `entries` are `role:digest` past the first `base` entries of
@@ -460,7 +463,7 @@ export const QuotaReadSchema = Type.Object(
 		observedAt: utc,
 		windows: Type.Array(QuotaWindowSchema),
 		displayName: text,
-		status: vocabulary(["ok", "no_credentials", "expired", "error", "loading"]),
+		status: vocabulary(QUOTA_STATUSES),
 		plan: Type.Optional(text),
 		credits: Type.Optional(
 			Type.Object(

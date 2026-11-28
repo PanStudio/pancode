@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { THINKING_LEVELS } from "../core/defaults.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
 import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
-import type { JobThinkingLevel } from "../domains/dispatch/validation.js";
 import { type AutonomyLevel, autonomyFromUserInput } from "../lib/autonomy/autonomy.js";
 import { globalFlagPositionHint, parseMaxContextTokens } from "./argv.js";
 import { didYouMean } from "./kit/did-you-mean.js";
@@ -51,7 +50,7 @@ export interface RunCliArgs {
 	json: boolean;
 	target?: string;
 	model?: string;
-	thinking?: JobThinkingLevel;
+	thinking?: ThinkingLevel;
 	autonomy?: AutonomyLevel;
 	/** The one System One setting for this run: an engine name or `off`. */
 	systemOne?: string;
@@ -140,7 +139,7 @@ export interface InlineOutputSchema {
 	readonly label: string;
 }
 
-const VALID_THINKING: ReadonlyArray<JobThinkingLevel> = THINKING_LEVELS;
+const VALID_THINKING: ReadonlyArray<ThinkingLevel> = THINKING_LEVELS;
 
 const IMAGE_ATTACHMENT = /\.(?:png|jpe?g|gif|webp)$/i;
 
@@ -395,7 +394,7 @@ export function parseRunCliArgs(argv: ReadonlyArray<string>): RunCliArgs {
 		if (arg === "--thinking") {
 			const value = need(arg);
 			if (value !== null) {
-				if (VALID_THINKING.includes(value as JobThinkingLevel)) parsed.thinking = value as JobThinkingLevel;
+				if (VALID_THINKING.includes(value as ThinkingLevel)) parsed.thinking = value as ThinkingLevel;
 				else
 					parsed.diagnostics.push({
 						type: "error",

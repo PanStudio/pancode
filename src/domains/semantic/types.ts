@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-export type SemanticSourceKind = "code" | "wiki" | "memory" | "evidence" | "inbox" | "recording";
+export const SEMANTIC_SOURCE_KINDS = ["code", "wiki", "memory", "evidence", "inbox", "recording"] as const;
+export type SemanticSourceKind = (typeof SEMANTIC_SOURCE_KINDS)[number];
 
 export interface SemanticProfile {
 	id: string;

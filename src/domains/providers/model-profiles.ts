@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import type { PancodeSettings } from "../../core/config.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { parsePackagedYaml } from "../../core/packaged-yaml.js";
+import { BOOLEAN_CAPABILITY_KEYS } from "../../core/runtime-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { resolvePancodeDirs } from "../../core/xdg.js";
 import {
@@ -86,17 +87,7 @@ function positiveInteger(value: unknown, where: string): number {
 	return value;
 }
 
-const CAPABILITY_BOOLEANS: readonly string[] = [
-	"chat",
-	"tools",
-	"reasoning",
-	"vision",
-	"audio",
-	"embeddings",
-	"rerank",
-	"fim",
-	"decisions",
-];
+const CAPABILITY_BOOLEANS: readonly string[] = [...BOOLEAN_CAPABILITY_KEYS, "decisions"];
 
 const CAPABILITY_ENUMS: Readonly<Record<string, readonly string[]>> = {
 	toolCallFormat: TOOL_CALL_FORMATS,

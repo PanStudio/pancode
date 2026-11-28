@@ -6,6 +6,9 @@
  */
 
 import { Type } from "typebox";
+import { literalUnion } from "../../core/telemetry/enums.js";
+import { DRAFT_LABELS } from "../../core/views/draft-words.js";
+import { NOTICE_LEVELS, type NoticeLevel } from "../../core/views/notice-words.js";
 import type { ViewArtifactCategory, ViewArtifactFormat } from "../../domains/session/view-artifacts.js";
 import type { UserTask } from "../../domains/user-tasks/store.js";
 import { ACP_PROMPT_META_KEY, closed } from "./types.js";
@@ -247,7 +250,7 @@ export interface AcpCommandReportMeta {
 }
 
 export interface AcpCommandResult {
-	level: "info" | "success" | "warn" | "error";
+	level: NoticeLevel;
 	lines: string[];
 	/** Present only on a `/report` result, so a client can build its own dialog without parsing the lines. */
 	_meta?: { "pancode/report": AcpCommandReportMeta };
@@ -303,7 +306,7 @@ const wireAsideAnswer = Type.String({ maxLength: 66000 });
 
 const wireAsideReason = Type.String({ maxLength: 1100 });
 
-const wireAsideLabel = Type.Union([Type.Literal("A"), Type.Literal("B"), Type.Literal("C"), Type.Literal("D")]);
+const wireAsideLabel = literalUnion(DRAFT_LABELS);
 
 const wireAsideRefusedOrFailed = Type.Object(
 	{ status: Type.Union([Type.Literal("refused"), Type.Literal("failed")]), reason: wireAsideReason },
@@ -657,7 +660,7 @@ export const AcpCommandCatalogSchema = Type.Object(
 
 export const AcpCommandResultSchema = Type.Object(
 	{
-		level: Type.Union([Type.Literal("info"), Type.Literal("success"), Type.Literal("warn"), Type.Literal("error")]),
+		level: literalUnion(NOTICE_LEVELS),
 		lines: Type.Array(Type.String({ maxLength: 1024 }), { maxItems: 201 }),
 		_meta: Type.Optional(
 			Type.Object(

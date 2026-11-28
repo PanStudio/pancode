@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ThinkingLevel } from "../domains/providers/types/capability-flags.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
 /**
  * How much scaffolding a prompt should give the model that runs it. `small`
@@ -140,9 +140,6 @@ export function snapshotModelInfo(snapshot: ModelRunFacts & { capabilities: { co
 	return modelRunInfo(snapshot, snapshot.capabilities.contextWindow);
 }
 
-// The names of `VALID_THINKING_LEVELS`, repeated so the worker protocol's parser value-imports no domain module.
-const THINKING_LEVEL_NAMES: ReadonlyArray<string> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
 /** A `ModelRunInfo` read back from a worker's frame, or null when any field is malformed. */
 export function parseModelRunInfo(value: unknown): ModelRunInfo | null {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -155,7 +152,8 @@ export function parseModelRunInfo(value: unknown): ModelRunInfo | null {
 		(typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0)
 	)
 		return null;
-	if (typeof thinkingLevel !== "string" || !THINKING_LEVEL_NAMES.includes(thinkingLevel)) return null;
+	if (typeof thinkingLevel !== "string" || !(THINKING_LEVELS as ReadonlyArray<string>).includes(thinkingLevel))
+		return null;
 	if (typeof promptCaching !== "boolean" || !isModelTier(tier)) return null;
 	return { id, target, contextWindow, thinkingLevel: thinkingLevel as ThinkingLevel, promptCaching, tier };
 }

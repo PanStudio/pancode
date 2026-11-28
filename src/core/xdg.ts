@@ -36,7 +36,7 @@ export interface PancodeDirs {
 	cache: string;
 }
 
-type PancodeDirRole = keyof PancodeDirs;
+export type PancodeDirRole = keyof PancodeDirs;
 
 const PANCODE_DIR_ROLES: ReadonlyArray<PancodeDirRole> = ["config", "data", "state", "cache"];
 

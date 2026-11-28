@@ -35,6 +35,7 @@ import { ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { narrowTurnConstraints, snapshotTurnConstraints, turnAllowsTool } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
+import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
 import { missingRuntimeComponent } from "../../domains/lifecycle/components.js";
 import { PROVIDER_PROBE_TIMEOUT_MS } from "../../domains/providers/contract.js";
 import { resolveRuntimeTarget } from "../../domains/providers/runtime-resolution.js";
@@ -249,7 +250,7 @@ import {
 	telemetryRequestHandlers,
 } from "./telemetry-methods.js";
 import { trustResultMeta } from "./trust-notice.js";
-import type { AcpEmptyResult, AcpPromptResponse, AcpThinkingLevel, AcpToolCallStatus, AcpToolKind } from "./types.js";
+import type { AcpEmptyResult, AcpPromptResponse, AcpToolCallStatus, AcpToolKind } from "./types.js";
 import {
 	ACP_CEILING_META_KEY,
 	ACP_COMMANDS_INVOKE_METHOD,
@@ -2801,9 +2802,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				break;
 			}
 			case "thinkingLevel": {
-				if (!ACP_THINKING_LEVEL_SET.has(value as AcpThinkingLevel))
+				if (!ACP_THINKING_LEVEL_SET.has(value as ThinkingLevel))
 					throw new AcpRequestError(-32602, "invalid thinking level", { code: "invalid_params" });
-				const requested = value as AcpThinkingLevel;
+				const requested = value as ThinkingLevel;
 				// A level the model has runs; an unlisted one runs at the nearest listed level, returned as currentValue
 				// with a notice. A model with no thinking at all refuses any level but off rather than keep it silently.
 				const thinking = sessionThinking(options, session, session.model, requested);
@@ -2888,10 +2889,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					patch[key] = value === null ? null : requireBoundedClientString(value, key, ACP_MAX_MODEL_ID_BYTES);
 					break;
 				case "chat.thinkingLevel":
-					if (typeof value !== "string" || !ACP_THINKING_LEVEL_SET.has(value as AcpThinkingLevel)) {
+					if (typeof value !== "string" || !ACP_THINKING_LEVEL_SET.has(value as ThinkingLevel)) {
 						throw new AcpRequestError(-32602, "invalid thinking level", { code: "invalid_params" });
 					}
-					patch[key] = value as AcpThinkingLevel;
+					patch[key] = value as ThinkingLevel;
 					break;
 				case "safety.autonomy":
 					if (!isAutonomyLevel(value)) {

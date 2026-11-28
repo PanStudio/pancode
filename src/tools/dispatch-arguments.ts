@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { parseWorkerContextPolicy } from "../domains/context/worker/contract.js";
 
 /** Pure model-argument parsing; every returned DispatchRequest has a concrete agent id. */
 
 import { validateTagName } from "../core/store-paths.js";
 import { isRecord } from "../core/type-guards.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../core/views/thinking-levels.js";
 import { forbidsFileWrites } from "../core/write-prohibition.js";
 import { dispatchJobRecipe, dispatchJobWrites } from "../domains/agents/dispatch-jobs.js";
 import { parseResultSummaryMaxBytes } from "../domains/agents/result-contract-allowance.js";
 import type { AgentAutomationAuthority, AgentSpec } from "../domains/agents/spec.js";
+import { parseWorkerContextPolicy } from "../domains/context/worker/contract.js";
 import { classifyAgentTask } from "../domains/dispatch/agent-candidates.js";
 import { cloneDispatchBudgetRequest } from "../domains/dispatch/budget-envelope.js";
 import type { DispatchRequest } from "../domains/dispatch/contract.js";
@@ -24,7 +25,7 @@ import {
 import { mergeOperatorNamedChecks } from "../domains/dispatch/operator-checks.js";
 import { parseRoutingIntent } from "../domains/dispatch/routing-intent.js";
 import { repositorySpanRefusal, scoutReadWorkspace } from "../domains/dispatch/scout-workspace.js";
-import { DISPATCH_BRIEFING_MAX_BYTES, type JobThinkingLevel } from "../domains/dispatch/validation.js";
+import { DISPATCH_BRIEFING_MAX_BYTES } from "../domains/dispatch/validation.js";
 import { isToolProfileName, TOOL_PROFILE_NAMES } from "./profiles.js";
 
 /**
@@ -103,8 +104,7 @@ function jobBaselineAgentId(task: string, args: Record<string, unknown>, hasAgen
 }
 const DEFAULT_MAX_OUTPUT_BYTES = 20_000;
 const PERSONA_MAX_CHARS = 8_000;
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-const VALID_THINKING = new Set<JobThinkingLevel>(THINKING_LEVELS);
+const VALID_THINKING = new Set<ThinkingLevel>(THINKING_LEVELS);
 
 export interface DispatchArgumentParserOptions {
 	/** Host workspace used for repository-relative intent and Scout admission (#433). */
@@ -403,10 +403,10 @@ function dispatchRequestFromArgs(
 	}
 	const thinkingLevel = stringArg(args, "thinking_level");
 	if (thinkingLevel) {
-		if (!VALID_THINKING.has(thinkingLevel as JobThinkingLevel)) {
+		if (!VALID_THINKING.has(thinkingLevel as ThinkingLevel)) {
 			return { ok: false, message: "thinking_level must be one of off|minimal|low|medium|high|xhigh|max" };
 		}
-		request.thinkingLevel = thinkingLevel as JobThinkingLevel;
+		request.thinkingLevel = thinkingLevel as ThinkingLevel;
 	}
 	if (args.budget !== undefined) {
 		try {

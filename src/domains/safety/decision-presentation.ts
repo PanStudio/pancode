@@ -8,7 +8,7 @@ import {
 	SESSION_CODE_CONSENT_TIER_LABEL,
 } from "../../core/views/approval-words.js";
 import type { AutonomyExposure } from "../../lib/autonomy/autonomy.js";
-import type { ActionClass } from "./action-classifier.js";
+import { ACTION_CLASSES, type ActionClass } from "./action-classifier.js";
 
 /** Closed consequence categories used only to explain an already-made decision request. */
 const DECISION_TIERS = ["conversation", "workspace", "outward", "safety-net", "system", "worker"] as const;
@@ -84,20 +84,11 @@ export interface DecisionPresentation {
 	requiredActions: ReadonlyArray<DecisionPresentationAction>;
 }
 
-const ACTION_CLASSES = new Set<ActionClass>([
-	"read",
-	"write",
-	"execute",
-	"dispatch",
-	"system_modify",
-	"git_destructive",
-	"destructive",
-	"unknown",
-]);
+const ACTION_CLASS_SET: ReadonlySet<string> = new Set(ACTION_CLASSES);
 
 /** Unknown or malformed action classes classify conservatively as unknown. */
 export function decisionActionClass(value: unknown): ActionClass {
-	return typeof value === "string" && ACTION_CLASSES.has(value as ActionClass) ? (value as ActionClass) : "unknown";
+	return typeof value === "string" && ACTION_CLASS_SET.has(value as ActionClass) ? (value as ActionClass) : "unknown";
 }
 
 function actionConsequence(

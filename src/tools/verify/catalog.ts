@@ -6,6 +6,7 @@ import { parseDocument } from "yaml";
 import { sha256Hex } from "../../core/hash.js";
 import type { DeclaredProof } from "../../core/hoare.js";
 import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../../core/safe-exec.js";
+import { DECLARED_CHECK_KINDS, type DeclaredCheckKind } from "../../core/telemetry/session-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { isProjectVerifierCheckId } from "../../core/verification-scripts.js";
 import { compareCodepoints } from "../../domains/evidence/ordering.js";
@@ -43,27 +44,6 @@ export const PROJECT_VERIFIER_CATALOG_CAPS = Object.freeze({
 	/** Provenance probes of one judged check. */
 	provenanceProbes: 8,
 });
-
-/**
- * What a check proves. `command` reads the exit code. `numeric-compare` runs
- * the command, parses its stdout as `string -> number | number[]`, and judges
- * it against a reference file under a tolerance. `perf-budget` runs the
- * command and judges its wall time against a budget or a recorded baseline.
- * `reproduce` checks pinned input digests, runs the command in a clean
- * environment with a declared seed, and judges its metrics, their units and
- * their shapes against a reference file or a second clean run.
- * `browser` starts the command as a dev server in a hermetic browser session, loads a loopback URL, runs an optional
- * step file, and fails on console errors, uncaught exceptions, failed requests or, when asked, axe violations.
- */
-export type DeclaredCheckKind = "command" | "numeric-compare" | "perf-budget" | "reproduce" | "browser";
-
-export const DECLARED_CHECK_KINDS: ReadonlyArray<DeclaredCheckKind> = [
-	"command",
-	"numeric-compare",
-	"perf-budget",
-	"reproduce",
-	"browser",
-];
 
 export type BrowserCheckAssertion = "console" | "exceptions" | "requests" | "axe";
 export const BROWSER_CHECK_ASSERTIONS: ReadonlyArray<BrowserCheckAssertion> = [

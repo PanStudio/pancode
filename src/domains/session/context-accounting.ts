@@ -3,6 +3,7 @@
 
 import { sha256Hex } from "../../core/hash.js";
 import { isHostPolicyMessage } from "../../core/host-policy-message.js";
+import type { ContextSplitSource, ContextTotalSource } from "../../core/telemetry/session-vocabulary.js";
 import { ceilChars } from "../../core/token-split.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { AgentMessage, Usage } from "../../engine/types.js";
@@ -75,8 +76,8 @@ export interface ContextSnapshot {
 
 	// Source labels
 	sources: {
-		total: "estimated" | "exact" | "reconciled" | "streaming";
-		splits: Record<string, "estimated" | "exact" | "reconciled">;
+		total: ContextTotalSource;
+		splits: Record<string, ContextSplitSource>;
 	};
 
 	/**
@@ -455,8 +456,8 @@ const SNAPSHOT_SPLIT_KEYS = [
 	"toolResults",
 ] as const;
 
-function estimatedSplitSources(): Record<string, "estimated" | "exact" | "reconciled"> {
-	const splits: Record<string, "estimated" | "exact" | "reconciled"> = {};
+function estimatedSplitSources(): Record<string, ContextSplitSource> {
+	const splits: Record<string, ContextSplitSource> = {};
 	for (const key of SNAPSHOT_SPLIT_KEYS) splits[key] = "estimated";
 	return splits;
 }
@@ -597,7 +598,7 @@ export function reconcileSnapshot(snapshot: ContextSnapshot, usage: Usage): Cont
 			acc[k] = k === "messages" ? "reconciled" : "estimated";
 			return acc;
 		},
-		{} as Record<string, "estimated" | "exact" | "reconciled">,
+		{} as Record<string, ContextSplitSource>,
 	);
 
 	// The estimate this snapshot was captured with, kept whole across repeated

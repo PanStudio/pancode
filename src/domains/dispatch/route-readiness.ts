@@ -14,7 +14,8 @@
  * reproducible from a sealed decision.
  */
 
-import { ROUTE_POSTURES, type RouteEstimate, type RoutingPosture } from "./route-policy.js";
+import type { RoutingPosture } from "../../core/telemetry/run-vocabulary.js";
+import { ROUTE_POSTURES, type RouteEstimate } from "./route-policy.js";
 
 /**
  * The minimum labeled count in the plan of record. Six passes are exactly what
