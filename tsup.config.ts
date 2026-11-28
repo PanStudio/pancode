@@ -179,9 +179,7 @@ const GRAMMAR_NOTICES: Record<GrammarAssetSource, string[]> = {
 	"tree-sitter-wasms": ["LICENSE"],
 };
 
-/** Patched Pi JS is bundled; the pinned runtime package retains its native assets.
- * native-module-path resolves that installed package before package-relative fallbacks.
- */
+/** Pi TUI and its markdown dependencies are bundled (noExternal), so their license texts ship beside dist. */
 function vendorTuiNotices(): void {
 	const target = join("dist", "assets", "tui-notices");
 	mkdirSync(target, { recursive: true });
