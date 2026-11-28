@@ -1,0 +1,25 @@
+id: campaign
+name: Campaign
+version: 0.1.0
+description: Run one seeded project across a roster of models and report how each run ended, its gates, refusals and tokens.
+license: LicenseRef-PanCode-1.0
+runtime:
+  api: 2
+  entrypoint: runtime/extension.ts
+  commands:
+    - name: campaign
+      description: Model trials over one fixture; run (pancode campaign --help).
+      long: true
+      timeoutMs: 86400000
+  cli:
+    - verb: campaign
+      command: campaign
+      summary: Run one seeded project across a roster of models and compare how each run went.
+      paths:
+        - { flag: --fixture, access: read }
+        - { flag: --roster, access: read }
+        - { flag: --answers, access: read }
+        - { flag: --out, access: write }
+  services:
+    runs: { maxTimeoutSeconds: 86400, maxConcurrent: 1, autonomy: [default, yolo], commands: true }
+  permissions: { fs: { read: [], write: [] }, exec: false, net: false }

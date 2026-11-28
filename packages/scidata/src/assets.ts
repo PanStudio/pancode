@@ -90,8 +90,6 @@ export const SCIENTIFIC_READERS = {
 	},
 } as const satisfies Record<string, ScientificReader>;
 
-export type ScientificReaderId = keyof typeof SCIENTIFIC_READERS;
-
 /** One tarball download may hold a tool call this long, connect phase included. */
 export const READER_FETCH_TIMEOUT_MS = 20_000;
 

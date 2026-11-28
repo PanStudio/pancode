@@ -196,7 +196,8 @@ export interface RegistryDeps {
 	 * changed since the operator's baseline outside the sandbox asks the
 	 * operator under `git-hooks-changed`. The operator's allow accepts the
 	 * files the card named; an approved or judge-allowed `git-control-file`
-	 * write refreshes the file it wrote. Workers never carry it.
+	 * write, or an approved `startup-path-confirm` write, refreshes the file
+	 * it wrote. Workers never carry it.
 	 */
 	hookDrift?: GitHookDriftGuard;
 	/**

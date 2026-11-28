@@ -35,7 +35,7 @@ import {
 import { approvalAxisId } from "../domains/safety/approval-axis.js";
 import type { OpenDecisionKind } from "../domains/safety/autonomy-window.js";
 import { mainCallExposure } from "../domains/safety/call-consequence.js";
-import { GIT_CONTROL_FILE_RULE_ID } from "../domains/safety/containment.js";
+import { GIT_CONTROL_FILE_RULE_ID, STARTUP_PATH_RULE_ID } from "../domains/safety/containment.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { confirmationRuleOf } from "../domains/safety/decision-events.js";
 import { type DenialLayer, repeatedDenialReason, type ToolDenial } from "../domains/safety/denial.js";
@@ -186,6 +186,13 @@ const WORKSPACE_WRITING_TOOLS: ReadonlySet<string> = new Set([
 	// A run script has Node; it may write files.
 	ToolNames.Browser,
 ]);
+
+/**
+ * Approval rules after which a landed typed write refreshes the git hook drift baseline: git-control-file, which the
+ * operator approves or the judge allows, and startup-path-confirm, which only the operator approves. A hooks
+ * directory such as .husky is both, and the startup-path rule asks first.
+ */
+const HOOK_REFRESH_RAILS: ReadonlySet<string> = new Set([GIT_CONTROL_FILE_RULE_ID, STARTUP_PATH_RULE_ID]);
 
 /**
  * An escape the operator would decide on must say why, so the card has something to weigh (D9): the refusal of
@@ -1833,9 +1840,9 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	};
 
 	/**
-	 * A typed write the operator approved or the judge allowed under
-	 * git-control-file landed; the hook files it wrote join the drift baseline,
-	 * so the next git command does not ask about the change just approved.
+	 * A typed write approved under a HOOK_REFRESH_RAILS rule landed; the hook
+	 * files it wrote join the drift baseline, so the next git command does not
+	 * ask about the change just approved.
 	 */
 	const refreshHooksAfterGitControlWrite = (
 		call: ClassifierCall,
@@ -1843,7 +1850,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		verdict: RegistryVerdict,
 	): void => {
 		if (deps.hookDrift === undefined || verdict.kind !== "ok" || verdict.result.kind === "error") return;
-		if (approvalRailOf(decision) !== GIT_CONTROL_FILE_RULE_ID) return;
+		if (!HOOK_REFRESH_RAILS.has(approvalRailOf(decision) ?? "")) return;
 		const targets = [call.args?.path, call.args?.file_path]
 			.filter((target): target is string => typeof target === "string" && target.length > 0)
 			.map((target) => resolvePath(process.cwd(), target));

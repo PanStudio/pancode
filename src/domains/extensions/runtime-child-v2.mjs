@@ -58,6 +58,8 @@ let state;
 let store;
 let storeDir;
 let projectDir;
+/** The paths the operator named on a `pancode <verb>` command line; commands only. */
+let paths;
 /** Request caps the host sent with `init`; the host checks every request again. */
 let limits = {};
 
@@ -152,6 +154,10 @@ function runs(parentRequestId) {
 		wait: (id) => run("wait", { id }),
 		cancel: (id) => run("cancel", { id }),
 		refusal: (opts = {}) => run("refusal", opts),
+		digest: (id) => run("digest", { id }),
+		...(declaration.services.runs.commands === true
+			? { command: (request) => run("command", { command: request }) }
+			: {}),
 	});
 }
 function worktrees(parentRequestId) {
@@ -221,6 +227,8 @@ function operatorServices(message) {
 	const long =
 		message.kind === "command" && declaration.commands.some((entry) => entry.name === message.name && entry.long);
 	return {
+		...(message.kind === "command" && paths !== undefined ? { paths } : {}),
+		yaml: (text) => call("yaml", { value: text, parentRequestId: message.id }),
 		...(services.runs ? { runs: runs(message.id) } : {}),
 		...(services.worktrees ? { worktrees: worktrees(message.id) } : {}),
 		...(services.verify ? { verify: verify(message.id) } : {}),
@@ -309,6 +317,7 @@ async function initialize(message) {
 	limits = Object.freeze({ ...message.limits });
 	if (typeof message.storeDir === "string") storeDir = message.storeDir;
 	if (typeof message.projectDir === "string") projectDir = message.projectDir;
+	if (Array.isArray(message.paths)) paths = Object.freeze(message.paths.map((grant) => Object.freeze({ ...grant })));
 	state = keyValue("state", declaration.state.session === true);
 	store = keyValue("store", declaration.state.store === true);
 	const registration = createRuntimeRegistration(

@@ -13,6 +13,7 @@ import type {
 	ExtensionBinaryDownload,
 	ExtensionBinaryPlatform,
 	ExtensionCapabilityEnvelope,
+	ExtensionCliPathDeclaration,
 	ExtensionCliVerbDeclaration,
 	ExtensionCommandDeclarationV2,
 	ExtensionConfigField,
@@ -95,6 +96,8 @@ export const RUNTIME_V2_LIMITS = {
 	runTimeoutSecondsMax: 86_400,
 	runCostUsdMax: 1000,
 	cliVerbs: 4,
+	/** Path flags one verb may declare. */
+	cliPaths: 8,
 	/** Pinned programs one package may run outside the sandbox. */
 	binaries: 2,
 	binaryEnvKeys: 8,
@@ -607,7 +610,7 @@ function parseStoreService(value: unknown, policy: ManifestKeyPolicy): Extension
 function parseRunsService(value: unknown, policy: ManifestKeyPolicy): ExtensionRunsServiceDeclaration | undefined {
 	if (value === undefined) return undefined;
 	const path = "runtime.services.runs";
-	const raw = record(value, path, ["maxConcurrent", "autonomy", "maxCostUsd", "maxTimeoutSeconds"], policy);
+	const raw = record(value, path, ["maxConcurrent", "autonomy", "maxCostUsd", "maxTimeoutSeconds", "commands"], policy);
 	const autonomy = choices(raw.autonomy ?? ["default"], `${path}.autonomy`, ["default", "yolo"] as const);
 	if (!autonomy.includes("default")) autonomy.unshift("default");
 	let maxCostUsd: number | null = null;
@@ -622,6 +625,7 @@ function parseRunsService(value: unknown, policy: ManifestKeyPolicy): ExtensionR
 		autonomy,
 		maxCostUsd,
 		maxTimeoutSeconds: tokens(raw.maxTimeoutSeconds, `${path}.maxTimeoutSeconds`, RUNTIME_V2_LIMITS.runTimeoutSecondsMax),
+		...(flag(raw.commands, `${path}.commands`, false) ? { commands: true as const } : {}),
 	};
 }
 
@@ -633,14 +637,37 @@ function parseCliVerbs(
 	const verbs = new Set<string>();
 	return list(value, "runtime.cli", RUNTIME_V2_LIMITS.cliVerbs).map((item, index) => {
 		const path = `runtime.cli[${index}]`;
-		const raw = record(item, path, ["verb", "command", "summary"], policy);
+		const raw = record(item, path, ["verb", "command", "summary", "paths"], policy);
 		const verb = named(raw.verb, `${path}.verb`, /^[a-z][a-z0-9-]*$/, 32);
 		if (verbs.has(verb)) fail(`${path}.verb`, `repeats '${verb}'`);
 		verbs.add(verb);
 		const command = named(raw.command, `${path}.command`, /^[a-z][a-z0-9_-]*$/, 40);
 		if (!commands.some((entry) => entry.name === command && entry.replaces === undefined))
 			fail(`${path}.command`, `names no command '${command}' of this package`);
-		return { verb, command, summary: text(raw.summary, `${path}.summary`, 120) };
+		const paths = parseCliPaths(raw.paths, `${path}.paths`, policy);
+		return {
+			verb,
+			command,
+			summary: text(raw.summary, `${path}.summary`, 120),
+			...(paths.length > 0 ? { paths } : {}),
+		};
+	});
+}
+
+/** The flags `--cwd`, `--json` and `--help` keep their meaning for every verb, so none names a granted path. */
+const RESERVED_PATH_FLAGS = new Set(["--cwd", "--json", "--help"]);
+
+function parseCliPaths(value: unknown, path: string, policy: ManifestKeyPolicy): ExtensionCliPathDeclaration[] {
+	if (value === undefined) return [];
+	const flags = new Set<string>();
+	return list(value, path, RUNTIME_V2_LIMITS.cliPaths).map((item, index) => {
+		const at = `${path}[${index}]`;
+		const raw = record(item, at, ["flag", "access"], policy);
+		const flag = named(raw.flag, `${at}.flag`, /^--[a-z][a-z0-9-]*$/, 34);
+		if (RESERVED_PATH_FLAGS.has(flag)) fail(`${at}.flag`, `${flag} cannot name a path grant`);
+		if (flags.has(flag)) fail(`${at}.flag`, `repeats '${flag}'`);
+		flags.add(flag);
+		return { flag, access: choice(raw.access, `${at}.access`, ["read", "write"] as const) };
 	});
 }
 
@@ -816,7 +843,15 @@ export function capabilityEnvelope(
 		...(declaration.commands.some((command) => command.long)
 			? { long: declaration.commands.filter((command) => command.long).map((command) => command.name) }
 			: {}),
-		...(declaration.cli !== undefined ? { cli: declaration.cli.map(({ verb, command }) => ({ verb, command })) } : {}),
+		...(declaration.cli !== undefined
+			? {
+					cli: declaration.cli.map(({ verb, command, paths }) => ({
+						verb,
+						command,
+						...(paths !== undefined ? { paths } : {}),
+					})),
+				}
+			: {}),
 		...(aliases.length > 0 ? { aliases } : {}),
 		...(binaries.length > 0
 			? {
@@ -864,7 +899,15 @@ export function runsCeilingText(runs: ExtensionRunsServiceDeclaration): string {
 		`up to ${runs.maxTimeoutSeconds}s each`,
 		runs.maxCostUsd === null ? "no spend ceiling" : `at most $${runs.maxCostUsd} each`,
 		...(runs.autonomy.includes("yolo") ? ["yolo autonomy when contained"] : []),
+		...(runs.commands === true ? ["installed extensions' commands"] : []),
 	].join(", ");
+}
+
+/** A verb's path flags, for the consent card and its growth: `pancode <verb> --<flag> (read|write)`. */
+export function cliPathGrantTexts(cli: ReadonlyArray<Pick<ExtensionCliVerbDeclaration, "verb" | "paths">>): string[] {
+	return cli.flatMap((entry) =>
+		(entry.paths ?? []).map((grant) => `pancode ${entry.verb} ${grant.flag} (${grant.access})`),
+	);
 }
 
 /** Order-insensitive form: reordering a manifest list never changes the digest. */
@@ -1013,7 +1056,8 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 			runs.maxConcurrent > approvedRuns.maxConcurrent ||
 			runs.maxTimeoutSeconds > approvedRuns.maxTimeoutSeconds ||
 			(approvedRuns.maxCostUsd !== null && (runs.maxCostUsd === null || runs.maxCostUsd > approvedRuns.maxCostUsd)) ||
-			added(approvedRuns.autonomy, runs.autonomy).length > 0;
+			added(approvedRuns.autonomy, runs.autonomy).length > 0 ||
+			(runs.commands === true && approvedRuns.commands !== true);
 		if (wider) growth.push(`wider headless runs (${runsCeilingText(runs)}; approved ${runsCeilingText(approvedRuns)})`);
 	}
 	if (next.services?.worktrees && !approved.services?.worktrees)
@@ -1028,6 +1072,10 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 			(approved.cli ?? []).map((entry) => `${entry.verb} -> ${entry.command}`),
 			(next.cli ?? []).map((entry) => `${entry.verb} -> ${entry.command}`),
 		),
+	);
+	push(
+		"paths named on the command line",
+		added(cliPathGrantTexts(approved.cli ?? []), cliPathGrantTexts(next.cli ?? [])),
 	);
 	if (next.services?.pane && !approved.services?.pane) growth.push("may open a pane below PanCode");
 	for (const binary of next.binaries ?? []) {

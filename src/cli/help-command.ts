@@ -103,7 +103,6 @@ const LONG_RUNNING = new Set([
 	"gui",
 	"run",
 	"worker",
-	"campaign run",
 	"research start",
 	"research resume",
 	"fleet run",
@@ -111,7 +110,7 @@ const LONG_RUNNING = new Set([
 	"fleet events",
 ]);
 
-const MODEL_WORK = new Set(["run", "acp", "campaign run", "research start", "research resume", "fleet run"]);
+const MODEL_WORK = new Set(["run", "acp", "research start", "research resume", "fleet run"]);
 const READ_VERBS = new Set([
 	"list",
 	"show",
@@ -226,8 +225,6 @@ function exitFor(key: string): ManifestLeaf["exit"] {
 			return { codes: [0, 1, 2, 75], exitCodeMap: { verified: 0, failed: 1, unavailable: 1, pending: 75 } };
 		case "evidence inspect":
 			return { codes: [0, 1, 2], exitCodeMap: { sealed: 0, failedSeal: 1, unsettled: 1 } };
-		case "campaign run":
-			return { codes: [0, 1, 2], exitCodeMap: { pass: 0, partial: 1, fail: 1 } };
 		case "fleet run":
 		case "fleet wait":
 			return { codes: [0, 1, 2, 4, 124, 129, 130, 141, 143] };

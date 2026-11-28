@@ -41,6 +41,7 @@ export type OperatorExtensionsOptions = Pick<
 	| "surface"
 	| "pruneOrphanedSessionState"
 	| "work"
+	| "grants"
 	| "pane"
 	| "builtinCommandNames"
 > & {
