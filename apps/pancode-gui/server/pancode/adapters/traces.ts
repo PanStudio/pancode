@@ -9,7 +9,7 @@ import {
 	readRunHistoryEntries,
 	readRunHistoryEntry,
 	readRunInspection,
-} from "../../../../../src/domains/telemetry/index.js";
+} from "../../../../../src/domains/dispatch/index.js";
 import { Id } from "../../../contracts/common.js";
 import type { TraceIdentity, TraceRequest, TraceRun, TraceRunStatus } from "../../../contracts/traces.js";
 import { AppProblem } from "../../services/problem.js";

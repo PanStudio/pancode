@@ -46,16 +46,6 @@ export type {
 	SettledRunFacts,
 } from "./route-history.js";
 export { createRouteHistoryFold, routeSettledLabel } from "./route-history.js";
-export {
-	readDispatchHistory,
-	readFleetHistory,
-	readFleetHistoryRoot,
-	readRunHistoryEntries,
-	readRunHistoryEntry,
-	readRunInspection,
-	runHistoryCouncils,
-	runHistoryGates,
-} from "./run-history.js";
 export type { SettledRunRecord } from "./run-record.js";
 export {
 	readRunJournalRecords,

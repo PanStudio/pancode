@@ -112,6 +112,8 @@ const adapters = new Set([
 	"src/domains/telemetry/index.ts",
 	"src/domains/session/index.ts",
 	"src/domains/evidence/index.ts",
+	// The run-history read model the fleet and trace adapters page through.
+	"src/domains/dispatch/index.ts",
 	// The saved-task list row ACP `session/list` sends, so the ledger read redacts and bounds as the engine does.
 	"src/acp/session-list-row.ts",
 	"src/acp/server-bounds.ts",

@@ -853,6 +853,9 @@ async function runDispatch(
 
 	// The dispatch graph loads after the usage checks above, in the order these were once static imports.
 	const { readDispatchScopeNotice } = await import("../core/dispatch-scope-notice.js");
+	const { setShutdownTextWrapper } = await import("../core/termination.js");
+	const { wrapTextWithAnsi } = await import("../engine/text-wrap.js");
+	setShutdownTextWrapper(wrapTextWithAnsi);
 	const { AgentsDomainModule } = await import("../domains/agents/module.js");
 	const { audienceRefusalStandIn } = await import("../domains/agents/spec.js");
 	const { ConfigDomainModule } = await import("../domains/config/module.js");
@@ -862,6 +865,8 @@ async function runDispatch(
 	const { configureRunEventJournal } = await import("../domains/dispatch/run-event-journal.js");
 	const { WORKER_PROCESS_CLEANUP_BOUND_MS } = await import("../domains/dispatch/worker-spawn.js");
 	const { ExtensionsDomainModule } = await import("../domains/extensions/module.js");
+	const { InteropDomainModule } = await import("../domains/interop/module.js");
+	const { PluginsDomainModule } = await import("../domains/plugins/module.js");
 	const { ensurePancodeState } = await import("../domains/install/index.js");
 	const { buildDispatchMemorySection } = await import("../domains/memory/index.js");
 	const { createPromptsDomainModule } = await import("../domains/prompts/module.js");
@@ -885,6 +890,8 @@ async function runDispatch(
 	const loaded = await loadDomains([
 		ConfigDomainModule,
 		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
 		ResourcesDomainModule,
 		createContextDomainModule({
 			noContextFiles: options.noContextFiles === true,

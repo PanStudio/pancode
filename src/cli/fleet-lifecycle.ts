@@ -5,7 +5,8 @@ import {
 	SAFE_EXEC_GROUP_TEARDOWN_BOUND_MS,
 	SAFE_EXEC_PIPE_DRAIN_BOUND_MS,
 } from "../core/safe-exec.js";
-import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
+import { getTerminationCoordinator, resolveShutdownHookBudgetMs, setShutdownTextWrapper } from "../core/termination.js";
+import { wrapTextWithAnsi } from "../engine/text-wrap.js";
 
 type FleetTermination = Pick<
 	ReturnType<typeof getTerminationCoordinator>,
@@ -56,6 +57,7 @@ export async function runFleetWithShutdown<T>(
 		},
 		{ timeoutMs },
 	);
+	setShutdownTextWrapper(wrapTextWithAnsi);
 	termination.installSignalHandlers();
 	let outcome: { ok: true; value: T } | { ok: false; error: unknown } = { ok: false, error: undefined };
 	try {

@@ -13,8 +13,9 @@
 import type { PancodeSettings } from "../core/config.js";
 import { installDiagnosticSink } from "../core/diagnostics.js";
 import { incompleteInstallationAdvice } from "../core/incomplete-installation.js";
-import { getTerminationCoordinator } from "../core/termination.js";
+import { getTerminationCoordinator, setShutdownTextWrapper } from "../core/termination.js";
 import { writeCrashRecord } from "../domains/report/crash.js";
+import { wrapTextWithAnsi } from "../engine/text-wrap.js";
 import type { ApplicationInputTui } from "../engine/tui.js";
 import {
 	type Component,
@@ -381,6 +382,8 @@ export function createProcessTerminalLease(options: CreateProcessTerminalLeaseOp
 		((stream: "stdout" | "stderr", text: string): void => {
 			(stream === "stdout" ? process.stdout : process.stderr).write(text);
 		});
+	// Shutdown notices print after this TUI stops, so they wrap to the frame it hands back.
+	setShutdownTextWrapper(wrapTextWithAnsi);
 	termination.installSignalHandlers();
 	const restoreInterruptOwner = termination.releaseInterruptOwnership();
 	guardTerminalStreams(options.testing?.streams ?? [process.stdout, process.stderr, process.stdin], () => {
