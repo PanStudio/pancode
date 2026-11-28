@@ -5,6 +5,10 @@
  * the operator, and where a pack's bytes came from. Browser-safe: no imports at all.
  */
 
+/** The four component kinds a plugin carries. A plugin owns components; it is never a fifth invocable kind. */
+export const HUB_COMPONENT_KINDS = ["skill", "agent", "prompt", "playbook"] as const;
+export type HubComponentKind = (typeof HUB_COMPONENT_KINDS)[number];
+
 /** A copy state in words: "loadable" was the loader's term, not what the operator sees happen. */
 export function hubCopyStateWords(state: string): string {
 	switch (state) {

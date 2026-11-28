@@ -21,7 +21,13 @@ import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanePeerId, PanesOperations, PanesPresetId } from "../domains/mux/operations.js";
 import type { ProvidersContract, ResolvedModelRef } from "../domains/providers/index.js";
 import type { ReportTextDuplicate, ReportTextHost } from "../domains/report/text-flow.js";
-import type { HubCategory, PromptTemplate, PromptTemplateExpansion, ResourceList } from "../domains/resources/index.js";
+import type {
+	HubCategory,
+	HubOperation,
+	PromptTemplate,
+	PromptTemplateExpansion,
+	ResourceList,
+} from "../domains/resources/index.js";
 import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { ShareImportPlan } from "../domains/share/index.js";
@@ -69,7 +75,7 @@ export type SlashReportRequest =
 	| { kind: "security" };
 
 /** What `/hub <verb> <ref>` asks the browser to review once it is open. */
-export type HubBrowseIntent = "install" | "update" | "enable" | "disable" | "remove";
+export type HubBrowseIntent = HubOperation;
 
 /**
  * How a command opens PanHub.

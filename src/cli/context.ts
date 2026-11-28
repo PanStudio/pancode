@@ -5,6 +5,7 @@ import { refreshOperationFacts } from "../domains/context/operation-result.js";
 import type { BootstrapGenerationState } from "../domains/context/state.js";
 import type { RunWikiGenerateResult } from "../domains/context/wiki/generate.js";
 import type { WikiMeta } from "../domains/context/wiki/meta.js";
+import { isWikiDepth, type WikiDepth } from "../domains/context/wiki/plan.js";
 import { MAX_PAGE_ATTEMPTS } from "../domains/context/wiki/plan-store.js";
 import { createContextCliOperation, createContextCliProgress } from "./context-progress.js";
 
@@ -247,14 +248,9 @@ async function runWikiStatusCommand(): Promise<number> {
 	return 0;
 }
 
-type WikiCliDepth = "auto" | "simple" | "medium" | "detailed";
 type WikiCliThinking = "off" | "low" | "medium" | "high";
 
 const VALUE_FLAGS = new Set(["--target", "--model", "--thinking", "--depth", "--pages"]);
-
-function isWikiDepth(value: unknown): value is WikiCliDepth {
-	return value === "auto" || value === "simple" || value === "medium" || value === "detailed";
-}
 
 function isThinkingLevel(value: unknown): value is WikiCliThinking {
 	return value === "off" || value === "low" || value === "medium" || value === "high";
@@ -265,7 +261,7 @@ async function runWikiCommand(args: string[]): Promise<number> {
 	let retryPending = false;
 	let replan = false;
 	let status = false;
-	let depth: WikiCliDepth = "auto";
+	let depth: WikiDepth = "auto";
 	let target: string | undefined;
 	let model: string | undefined;
 	let thinkingLevel: WikiCliThinking | undefined;

@@ -32,6 +32,7 @@ import {
 } from "../../plugins/index.js";
 import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "../collision.js";
 import { readRootEntries, splitToolList, splitYamlFrontmatter, stringField } from "../common-loader.js";
+import type { HubAuditState } from "../hub-types.js";
 import { resolvePackageReferences } from "../package-references.js";
 import { installedSkillNames } from "./availability.js";
 import { normalizedSkillHash } from "./content-hash.js";
@@ -117,7 +118,7 @@ export interface SkillProvenance {
 	updatedAt?: string;
 	/** Content hash of the upstream SKILL.md at install time, provenance-stripped. */
 	installedHash?: string;
-	audit?: "pass" | "warn" | "fail" | "unknown";
+	audit?: HubAuditState;
 	/** Who ran the install: a dispatched worker, or (unmarked) the operator. */
 	installedBy?: "worker";
 }

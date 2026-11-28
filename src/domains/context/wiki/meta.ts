@@ -7,7 +7,7 @@ import { gitExecFileSync } from "../../../core/internal-git-run.js";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { type WikiPage, wikiDir, wikiMarkdownFilesInDir } from "./layout.js";
-import type { ResolvedWikiDepth, WikiDepth, WikiPlan } from "./plan.js";
+import { isWikiDepth, type ResolvedWikiDepth, type WikiDepth, type WikiPlan } from "./plan.js";
 import { sanitizeWikiPlan, withoutStaleCapMarkers } from "./plan-store.js";
 
 /**
@@ -57,9 +57,6 @@ function nonNegativeSafeInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-const REQUESTED_DEPTHS: ReadonlyArray<WikiDepth> = ["auto", "simple", "medium", "detailed"];
-const RESOLVED_DEPTHS: ReadonlyArray<ResolvedWikiDepth> = ["simple", "medium", "detailed"];
-
 /**
  * Parse the generation block, or drop it. It is a diagnostic record, so a
  * shape this version of PanCode does not recognize costs an operator a status
@@ -70,8 +67,9 @@ function parseGeneration(value: unknown): WikiMetaGeneration | undefined {
 	if (!isRecord(value)) return undefined;
 	const { requestedDepth, depth, sourceFiles, sourceLines, pagesPlanned, pagesWritten } = value;
 	if (
-		!REQUESTED_DEPTHS.includes(requestedDepth as WikiDepth) ||
-		!RESOLVED_DEPTHS.includes(depth as ResolvedWikiDepth) ||
+		!isWikiDepth(requestedDepth) ||
+		!isWikiDepth(depth) ||
+		depth === "auto" ||
 		!nonNegativeSafeInteger(sourceFiles) ||
 		!nonNegativeSafeInteger(sourceLines) ||
 		!nonNegativeSafeInteger(pagesPlanned) ||

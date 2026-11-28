@@ -29,6 +29,7 @@ export {
 } from "./hub.js";
 export {
 	applyHubLifecycle,
+	HUB_OPERATIONS,
 	type HubApplyResult,
 	type HubExpectedCopy,
 	type HubExtensionRefresh,
@@ -67,7 +68,6 @@ export {
 	type HubInventoryOptions,
 	type HubOrigin,
 	type HubOriginEvidence,
-	type HubPackageFormat,
 	type HubPackageRecord,
 	hubComponentKey,
 	hubCopyState,
@@ -87,9 +87,11 @@ export {
 } from "./hub-pairing.js";
 export {
 	HUB_COMPONENT_KINDS,
+	type HubAuditState,
 	type HubCategory,
 	type HubComponentKind,
 	type HubProvidedResource,
+	isHubAuditState,
 	isHubComponentKind,
 } from "./hub-types.js";
 export {

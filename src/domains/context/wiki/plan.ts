@@ -22,8 +22,13 @@ import type { Codewiki, CodewikiFile } from "../codewiki/schema.js";
 import { isGeneratedWikiFile } from "./layout.js";
 import type { WikiSourceContent } from "./source-content.js";
 
-export type WikiDepth = "auto" | "simple" | "medium" | "detailed";
+export const WIKI_DEPTHS = ["auto", "simple", "medium", "detailed"] as const;
+export type WikiDepth = (typeof WIKI_DEPTHS)[number];
 export type ResolvedWikiDepth = Exclude<WikiDepth, "auto">;
+
+export function isWikiDepth(value: unknown): value is WikiDepth {
+	return typeof value === "string" && (WIKI_DEPTHS as readonly string[]).includes(value);
+}
 
 export type WikiPageStatus = "pending" | "written";
 

@@ -18,6 +18,7 @@ import {
 	type HubRequirementRef,
 	type HubRowSource,
 	type HubTier,
+	isHubAuditState,
 	isHubComponentKind,
 	isHubKind,
 } from "../resources/hub-types.js";
@@ -420,9 +421,7 @@ export function parseHubIndexRows(
 				...(typeof item.envelopeDigest === "string" ? { envelopeDigest: item.envelopeDigest } : {}),
 				...(typeof item.mcpDigest === "string" ? { mcpDigest: item.mcpDigest } : {}),
 				...(typeof item.category === "string" ? { category: item.category } : {}),
-				...(["pass", "warn", "fail", "unknown"].includes(String(item.audit))
-					? { audit: item.audit as NonNullable<HubPackageEntry["audit"]> }
-					: {}),
+				...(isHubAuditState(item.audit) ? { audit: item.audit } : {}),
 				...(Array.isArray(item.triggers)
 					? { triggers: item.triggers.filter((value): value is string => typeof value === "string") }
 					: {}),
