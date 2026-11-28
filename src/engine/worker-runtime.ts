@@ -37,7 +37,6 @@ import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/
 import { telemetryHub } from "../core/telemetry/hub.js";
 import { hasTokenUsageCounts, normalizeTokenUsage } from "../core/token-split.js";
 import { ToolNames } from "../core/tool-names.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import { validateResultContract, validateStructuredHelperResult } from "../domains/agents/result-contract.js";
 import { nonBooleanBaselineReason } from "../domains/agents/result-contract-builder-report.js";
 import { nodeResultContractFilesystem } from "../domains/agents/result-contract-filesystem.js";
@@ -78,11 +77,7 @@ import {
 	resolveModelDestination,
 } from "../domains/safety/information-flow.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
-import {
-	createRunEffectsRecorder,
-	recordToolExecutionEffects,
-	sessionChangesTree,
-} from "../domains/safety/run-effects.js";
+import { sessionChangesTree } from "../domains/safety/run-effects.js";
 import { estimateAgentMessageTokens } from "../domains/session/context-accounting.js";
 import { seededWorkerMessages, seedRecallLineage } from "../lib/worker-wire/context-seed.js";
 import { permissionHoldBackstopAt } from "../lib/worker-wire/protocol.js";
@@ -137,15 +132,7 @@ import {
 import { createWorkerCallTelemetry } from "./worker-call-telemetry.js";
 import type { PancodeWorkerEvent } from "./worker-events.js";
 import { createWorkerExtensionHookRegistrations } from "./worker-extension-hooks.js";
-import {
-	chainStepVisibleText,
-	groundingRanges,
-	observedReadAnchors,
-	type ReadCitationRequest,
-	readCitationRequest,
-	recordObservedGrep,
-	recordObservedRead,
-} from "./worker-grounding.js";
+import { groundingRanges, observedReadAnchors } from "./worker-grounding.js";
 import { WORKER_REFUSAL_REPORT_BLOCK } from "./worker-refusals.js";
 import { boundWorkerResponse } from "./worker-response-stream.js";
 import {
@@ -155,18 +142,13 @@ import {
 	workerContractResponseFormatFor,
 	workerResponseFormatFor,
 } from "./worker-result-contract.js";
+import { createWorkerEvidence } from "./worker-run/evidence.js";
 import { finishWorkerRun, taskMessage } from "./worker-run/finish.js";
 import { createWorkerPermissions } from "./worker-run/permissions.js";
 import type { WorkerRunScope } from "./worker-run/scope.js";
 import { decodeWorkerSpec, prepareNativeWorker, workerProviderSupportsTools } from "./worker-run/spec.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput } from "./worker-run-types.js";
-import {
-	exhaustedChangesDetail,
-	THRASH_CONTEXT_FRACTION,
-	THRASH_RECALL_LIMIT,
-	thrashHostNote,
-} from "./worker-thrash-note.js";
-import { createThrashOutcome } from "./worker-thrash-outcome.js";
+import { exhaustedChangesDetail, THRASH_CONTEXT_FRACTION } from "./worker-thrash-note.js";
 import { createWorkerToolRegistry, INTERNAL_HELPER_RESULT_TOOL } from "./worker-tools.js";
 
 export { workerProviderSupportsTools };
@@ -293,20 +275,27 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		get workerTelemetry() {
 			return workerTelemetry;
 		},
+		get workerSettings() {
+			return workerSettings;
+		},
+		get workerCanWrite() {
+			return workerCanWrite;
+		},
+		get workerCanPlan() {
+			return workerCanPlan;
+		},
+		get helperToolAvailable() {
+			return helperToolAvailable;
+		},
+		get observeBoundReason() {
+			return observeBoundReason;
+		},
 	};
 	const workShare = (role: RunRole): number => input.limits?.context.workShare ?? HANDBACK_CONTEXT_SHARE[role];
 	const noteShare = input.limits?.context.noteShare ?? HANDBACK_NOTE_SHARE;
 	let responseRound = 0;
 	let lockedSynthesisReprompts = 0;
 
-	// CLI-H3: recalls of this run's evictions, the window the last request was fitted to, whether a request reached
-	// the thrash share of it, and whether the one host turn has gone out.
-	let evictedRecalls = 0;
-	const pendingRecallCalls = new Set<string>();
-	let thrashNudged = false;
-	// X3: the read-only streak a writer worker reached when the read-streak rule handed it the second step, whether
-	// the streak note went out, and whether it still stands (no progress since), which holds back the other causes.
-	let streakNudged = false;
 	// Status of the current round's own attempt; a stale status from an earlier
 	// round must not veto the message-based rejection check (#427).
 	let roundProviderHttpStatus: number | null = null;
@@ -531,19 +520,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			? unobservedExplorerReportReason(input.resultContract.kind, scope.toolExecutionsStarted)
 			: null;
 
-	/** Read tool call id -> what was asked for, pending that call's result. */
-	const pendingReadCitations = new Map<string, ReadCitationRequest>();
-	/** Grep call ids, direct or through gateway op=call, pending their results. */
-	const pendingGrepCalls = new Set<string>();
-	// The write-side equivalent: what this run changed and what it validated,
-	// so a mutation report is judged against the run instead of believed. Scratch roots read as the orchestrator's copy
-	// reads them, so a check logged under one is output in both recorders (x6-8).
-	// X4: the thrash note's settlement, from the request that carries it to the change or report that answers it.
-	const thrashOutcome = createThrashOutcome({ context: input.telemetryContext });
-	const runEffects = createRunEffectsRecorder(contractCwd, {
-		scratchRoots: workerSettings.safety.scratchRoots,
-		onWorkspaceChange: (toolCallId) => thrashOutcome.changed(toolCallId),
-	});
+	const { thrashOutcome, runEffects, onToolEvent } = createWorkerEvidence(scope);
 	// A tool route hands execute a schema-coerced copy; the arguments the model sent, by call id, keep a baseline honest.
 	const submittedHelperArguments = new Map<string, unknown>();
 	const acceptHelperResult = (data: unknown, submitted: unknown = data): string | null => {
@@ -578,29 +555,6 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			type: "pancode_helper_result_rejected",
 			payload: { reason, submitted: text.slice(0, REJECTED_HELPER_RESULT_MAX_CHARS) },
 		});
-	};
-
-	/**
-	 * The settled children of a chain, folded exactly as the direct calls
-	 * would have been. Only a child its own admission ran to success grounds
-	 * anything; a child refused by a run bound seals that bound. Pending and
-	 * unresolved steps never ran and are never in the receipt list.
-	 */
-	const observeChainChildren = (toolName: string, result: unknown): void => {
-		for (const child of gatewayChainReceipts(toolName, result)) {
-			if (child.admission.outcome === "blocked") {
-				if (child.admission.blockReason !== undefined) observeBoundReason(child.admission.blockReason);
-				continue;
-			}
-			if (child.admission.outcome !== "ok") continue;
-			const visibleText = chainStepVisibleText(child);
-			if (child.capability === ToolNames.Read) {
-				const request = readCitationRequest(child.args);
-				if (request !== null) recordObservedRead(contractCwd, scope.observedReadRanges, request, child.result, visibleText);
-			} else if (child.capability === ToolNames.Grep || child.capability === ToolNames.Bash) {
-				recordObservedGrep(scope.observedGrepLines, child.result.details, visibleText);
-			}
-		}
 	};
 
 	/** The run's next round is its handback round; the bound that triggered it is journaled as its kind (M3). */
@@ -1608,111 +1562,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			scope.toolExecutionsStarted += 1;
 			middlewareToolChoice.toolStarted(event.toolName, event.args);
 		}
-		// Read spans this run actually observed. They ground the terminal result
-		// (a cited line has to fall inside one) and they are handed back verbatim
-		// in a repair round, so re-emitting findings never invites invention.
-		// Effects and grounding come from the capability operations that
-		// settled: a gateway op=call as the capability it ran, a chain as each
-		// admitted child, once each. Provider replay keeps the wire records.
-		// The result submission is this run's handoff, never a workspace call, so it opens no write record (C-14).
-		if (
-			(event.type === "tool_execution_start" || event.type === "tool_execution_end") &&
-			!(helperToolAvailable && event.toolName === INTERNAL_HELPER_RESULT_TOOL)
-		) {
-			recordToolExecutionEffects(runEffects, event);
-		}
-		// After the effects, so a call that changed the workspace has settled the note under its own id first.
-		thrashOutcome.observe(event);
-		if (event.type === "tool_execution_start") {
-			const call = effectiveToolCall(event.toolName, event.args);
-			if (call.toolName === ToolNames.Read) {
-				const request = readCitationRequest(call.args);
-				if (request !== null) pendingReadCitations.set(event.toolCallId, request);
-			} else if (call.toolName === ToolNames.Grep || call.toolName === ToolNames.Bash) {
-				// A bash `grep -n` reports the lines it printed as observedLines, as the grep tool does (FL-12).
-				pendingGrepCalls.add(event.toolCallId);
-			} else if (
-				call.toolName === ToolNames.Context &&
-				call.args?.scope === "recall" &&
-				typeof call.args.ref === "string"
-			) {
-				pendingRecallCalls.add(event.toolCallId);
-			}
-		}
-		if (event.type === "tool_execution_end") {
-			const request = pendingReadCitations.get(event.toolCallId);
-			pendingReadCitations.delete(event.toolCallId);
-			const grepped = pendingGrepCalls.delete(event.toolCallId);
-			if (event.isError !== true) {
-				if (request !== undefined) recordObservedRead(contractCwd, scope.observedReadRanges, request, event.result);
-				if (grepped) recordObservedGrep(scope.observedGrepLines, (event.result as { details?: unknown } | null)?.details);
-			}
-			observeChainChildren(event.toolName, event.result);
-			// Only a recall that returned an archived observation brings evicted content back.
-			if (pendingRecallCalls.delete(event.toolCallId) && event.isError !== true) evictedRecalls += 1;
-			// One recall or context host turn per run and one streak turn per run, delivered after this tool batch, never
-			// once the run is answering or bound. A standing streak note holds back the other causes until progress.
-			const thrashCause =
-				evictedRecalls > THRASH_RECALL_LIMIT
-					? ("recall" as const)
-					: scope.contextPressureCrossed && runEffects.snapshot().mutatedPaths.size === 0
-						? ("context" as const)
-						: null;
-			const cause =
-				thrashCause !== null && !thrashNudged && !scope.streakNoteOpen
-					? thrashCause
-					: scope.readStreakEscalated > 0 && !streakNudged && !thrashNudged
-						? ("streak" as const)
-						: null;
-			if (
-				cause !== null &&
-				!phase.toolsLocked &&
-				!phase.resultForced &&
-				phase.sealedBy === null &&
-				phase.lastRound === null
-			) {
-				if (cause === "streak") {
-					streakNudged = true;
-					scope.streakNoteOpen = true;
-				} else thrashNudged = true;
-				agent.steer({
-					role: "user",
-					content: thrashHostNote(
-						cause,
-						cause === "streak" ? scope.readStreakEscalated : evictedRecalls,
-						workerCanWrite,
-						input.role !== undefined,
-						workerCanPlan,
-					),
-					timestamp: Date.now(),
-				});
-				process.stderr.write(
-					`[worker] thrash guard: ${cause === "recall" ? `${evictedRecalls} recalls of evicted observations` : cause === "streak" ? `${scope.readStreakEscalated} read-only calls in a row` : "context past the thrash share with no change"}; told the worker to write now or report\n`,
-				);
-				if (input.telemetryContext)
-					telemetryHub().emit(
-						"middleware.fired",
-						{
-							firingId: thrashOutcome.fire(),
-							hook: "after_tool",
-							phase: "sync",
-							ruleId: "worker.thrash",
-							effects: ["inject_reminder"],
-							severity: "warn",
-							evidence:
-								cause === "recall"
-									? "count:evicted-recall@worker"
-									: cause === "streak"
-										? "count:read-class-calls@worker"
-										: "share:context-window@worker",
-							...(cause === "recall" ? { tool: ToolNames.Context } : {}),
-						},
-						input.telemetryContext,
-					);
-			}
-			// The streak's second step is judged at the tool end that raised it, never carried to a later call.
-			scope.readStreakEscalated = 0;
-		}
+		onToolEvent(event);
 		// Synthesis-locked run: the round ships no tool surface, so a model that
 		// calls a tool anyway lands its chat template's tool-call syntax in the
 		// reply as plain text. Sanitize the finished message in place before it

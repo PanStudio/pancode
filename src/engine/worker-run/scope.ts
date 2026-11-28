@@ -83,4 +83,9 @@ export interface WorkerRunScope {
 	readonly unsubscribePermission: () => void;
 	readonly thrashOutcome: ReturnType<typeof createThrashOutcome>;
 	readonly workerTelemetry: ReturnType<typeof createWorkerCallTelemetry> | undefined;
+	readonly workerSettings: ReturnType<typeof prepareNativeWorker>["workerSettings"];
+	readonly workerCanWrite: boolean;
+	readonly workerCanPlan: boolean;
+	readonly helperToolAvailable: boolean;
+	readonly observeBoundReason: (reason: string) => void;
 }
