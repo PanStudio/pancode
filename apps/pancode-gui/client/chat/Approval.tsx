@@ -26,7 +26,7 @@ import {
 	approvalActions,
 	approvalAnnouncement,
 	bannerEyebrow,
-	CARD_EYEBROW,
+	cardEyebrow,
 	clampText,
 	decisionChips,
 	decisionRows,
@@ -35,7 +35,7 @@ import {
 	type GatedCall,
 	type GatedPreview,
 	gatedPreview,
-	KEYBOARD_HINT,
+	keyboardHint,
 	NO_DECISION_FACTS,
 	safetyFacts,
 	sessionScopeRows,
@@ -556,7 +556,7 @@ export function ApprovalBanner({ client, session }: { client: Client; session: S
 				call={call}
 				answer={answer}
 				eyebrow={`${bannerEyebrow(escalated)} · ${queue.position}`}
-				hint={permission.canStopTurn ? `${KEYBOARD_HINT} · Alt + X rejects and stops the turn` : KEYBOARD_HINT}
+				hint={keyboardHint(permission)}
 				variant="banner"
 			/>
 		</section>
@@ -595,7 +595,7 @@ export function AnchoredApproval({
 			permission={permission}
 			call={item}
 			answer={answer}
-			eyebrow={CARD_EYEBROW}
+			eyebrow={cardEyebrow(permission.decision)}
 			variant="anchored"
 		/>
 	);
