@@ -300,4 +300,25 @@ test("safety.resources takes positive bounded integers or null, and a project ma
 		layered.issues.filter((item) => item.origin === "project").map((item) => item.path),
 		["safety.resources.main.memoryMiB", "safety.resources.main.cpuPercent"],
 	);
+
+	// A project cannot clear operator ceilings with null maps or invalid floats that would fail schema validation.
+	for (const bypass of [
+		"safety:\n  resources: null\n",
+		"safety:\n  resources:\n    main: null\n    workers: null\n",
+		"safety:\n  resources:\n    main:\n      memoryMiB: 1.5\n      tasks: 0.5\n",
+	]) {
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), bypass);
+		const snap = captureProjectSurface(workspace, "settings");
+		if (!snap.contentHash) throw new Error("missing project settings hash");
+		recordProjectSurfaceTrust(workspace, "settings", snap.contentHash);
+		const result = readLayeredSettings(workspace);
+		deepStrictEqual(result.settings.safety.resources, {
+			main: { memoryMiB: 1024, tasks: null, cpuPercent: 200 },
+			workers: { memoryMiB: null, tasks: null, cpuPercent: null },
+		});
+		strictEqual(
+			result.issues.some((item) => item.origin === "project" && item.path.startsWith("safety.resources")),
+			true,
+		);
+	}
 });

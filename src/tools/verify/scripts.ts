@@ -1032,11 +1032,11 @@ async function runBrowserDeclaredCheck(
 	options?: VerifyRunOptions,
 ): Promise<ToolResult> {
 	const { runBrowserCheck } = await import("./browser.js");
+	// Browser checks run without safety.resources ceilings; they use their own loopback/container isolation.
 	const outcome = await runBrowserCheck(check, cwd, {
 		workspaceRoot: options?.workspaceRoot ?? process.cwd(),
 		...(options?.signal !== undefined ? { signal: options.signal } : {}),
 		...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
-		...(options?.resourceLimits !== undefined ? { resourceLimits: options.resourceLimits } : {}),
 	});
 	switch (outcome.kind) {
 		case "unavailable":

@@ -48,7 +48,7 @@ import {
 	noteProjectTargets,
 } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
-import { RESOURCE_LIMIT_KEYS } from "./sandbox/types.js";
+import { RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX } from "./sandbox/types.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
 import { type SettingsIssue, SettingsValidationError } from "./settings-issues.js";
@@ -450,30 +450,55 @@ function stripProjectResources(
 	issues: SettingsLayerIssue[],
 	userBlob: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-	if (!isRecord(blob.safety) || !isRecord(blob.safety.resources)) return blob;
+	if (!isRecord(blob.safety) || !Object.hasOwn(blob.safety, "resources")) return blob;
+	const rejectMessage = "a project may only set or lower a resource ceiling from user settings; project value ignored";
+	if (!isRecord(blob.safety.resources)) {
+		issues.push({ origin, path: "safety.resources", message: rejectMessage });
+		const safety: Record<string, unknown> = { ...blob.safety };
+		delete safety.resources;
+		return { ...blob, safety };
+	}
 	const operatorSafety = isRecord(userBlob?.safety) ? userBlob.safety : {};
 	const operatorResources = isRecord(operatorSafety.resources) ? operatorSafety.resources : {};
 	const resources: Record<string, unknown> = { ...blob.safety.resources };
 	let stripped = false;
 	for (const scope of ["main", "workers"] as const) {
+		if (!Object.hasOwn(resources, scope)) continue;
 		const project = resources[scope];
-		if (!isRecord(project)) continue;
+		if (!isRecord(project)) {
+			issues.push({ origin, path: `safety.resources.${scope}`, message: rejectMessage });
+			delete resources[scope];
+			stripped = true;
+			continue;
+		}
 		const operatorBlock = operatorResources[scope];
 		const operator = isRecord(operatorBlock) ? operatorBlock : {};
 		const block: Record<string, unknown> = { ...project };
 		for (const key of RESOURCE_LIMIT_KEYS) {
 			if (!Object.hasOwn(block, key)) continue;
 			const requested = block[key];
-			const operatorValue = typeof operator[key] === "number" ? operator[key] : null;
+			const operatorRaw = operator[key];
+			const operatorValue =
+				typeof operatorRaw === "number" &&
+				Number.isSafeInteger(operatorRaw) &&
+				operatorRaw >= 1 &&
+				operatorRaw <= RESOURCE_LIMIT_MAX[key]
+					? operatorRaw
+					: null;
+			const validRequested =
+				typeof requested === "number" &&
+				Number.isSafeInteger(requested) &&
+				requested >= 1 &&
+				requested <= RESOURCE_LIMIT_MAX[key];
 			const lower =
 				requested === null
 					? operatorValue === null
-					: typeof requested === "number" && requested > 0 && (operatorValue === null || requested <= operatorValue);
+					: validRequested && (operatorValue === null || requested <= operatorValue);
 			if (lower) continue;
 			issues.push({
 				origin,
 				path: `safety.resources.${scope}.${key}`,
-				message: "a project may only set or lower a resource ceiling from user settings; project value ignored",
+				message: rejectMessage,
 			});
 			delete block[key];
 			stripped = true;

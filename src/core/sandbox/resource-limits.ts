@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { execFile, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { untrustedBwrapReason } from "./availability.js";
 import {
 	RESOURCE_LIMIT_KEYS,
@@ -49,11 +50,23 @@ const CONTROLLER: Record<ResourceLimitKey, string> = { memoryMiB: "memory", task
 const BUS_VARIABLES = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] as const;
 /** The lines `systemd-run` writes when it cannot start the scope, before any command runs. */
 const SYSTEMD_RUN_FAILURE =
-	/^(Failed to (connect to bus|create bus connection|start transient scope unit|find executable|parse|set unit properties)|Unknown assignment|System has not been booted|See system logs)/u;
+	/^(Failed to (connect to (?:user scope )?bus|get D-Bus connection|create bus connection|start transient scope unit|find executable|parse|set unit properties)|Unknown assignment|System has not been booted|See system logs)/u;
 /** How often a scoped launch's leader is checked for having entered its scope. */
 const SCOPE_ENTRY_POLL_MS = 5;
+const SYSTEMD_BINARY_CANDIDATES = [
+	"/usr/bin/systemd-run",
+	"/bin/systemd-run",
+	"/usr/bin/systemctl",
+	"/bin/systemctl",
+] as const;
 
-let cached: ResourceCapability | null = null;
+interface CachedCapability {
+	stamp: string;
+	probeParentDir: string | null;
+	capability: ResourceCapability;
+}
+
+let cached: CachedCapability | null = null;
 let workerLimits: ResourceLimits | undefined;
 let unitSequence = 0;
 /** Scopes started and not yet settled, unit name to the systemctl that settles them. */
@@ -161,19 +174,124 @@ function swapIsActive(): boolean {
 }
 
 /**
- * The script the probe scope runs: each controller file of its own cgroup, as `name=value` lines. A controller the
- * user manager accepted a property for but does not delegate has no file there.
+ * The script the probe scope runs: its parent cgroup directory (for cheap delegation revalidation) and each
+ * controller file of its own cgroup, as `name=value` lines. A controller the user manager accepted a property for
+ * but does not delegate has no file there.
  */
 const PROBE_SCRIPT = [
 	"d=/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)",
+	`printf 'parent=%s\\n' "\${d%/*}"`,
 	"for f in memory.max memory.swap.max pids.max cpu.max; do",
 	'v=$(cat "$d/$f" 2>/dev/null) || v=missing',
 	`printf '%s=%s\\n' "$f" "$v"`,
 	"done",
 ].join("\n");
 
-/** Impure: probe this host once; a timeout is not cached, so a later launch probes again. */
-function detectResourceCapability(): { capability: ResourceCapability; transient: boolean } {
+/** Pure: filesystem socket paths referenced by `busEnv`, and whether the bus transport can be stat-observed. */
+export function busSocketPaths(busEnv: Record<string, string>): { paths: string[]; observable: boolean } {
+	const dbusPaths: string[] = [];
+	const address = busEnv.DBUS_SESSION_BUS_ADDRESS;
+	if (address !== undefined) {
+		for (const entry of address.split(";")) {
+			if (!entry.startsWith("unix:")) continue;
+			for (const param of entry.slice("unix:".length).split(",")) {
+				if (!param.startsWith("path=")) continue;
+				const raw = param.slice("path=".length);
+				if (raw.length === 0) continue;
+				try {
+					dbusPaths.push(decodeURIComponent(raw));
+				} catch {
+					dbusPaths.push(raw);
+				}
+			}
+		}
+	}
+	const paths = [...dbusPaths];
+	if (busEnv.XDG_RUNTIME_DIR !== undefined) {
+		paths.push(`${busEnv.XDG_RUNTIME_DIR}/bus`, `${busEnv.XDG_RUNTIME_DIR}/systemd/private`);
+	}
+	return {
+		paths: [...new Set(paths)],
+		observable: address === undefined || dbusPaths.length > 0,
+	};
+}
+
+function currentBusEnv(): Record<string, string> {
+	const busEnv: Record<string, string> = {};
+	for (const name of BUS_VARIABLES) {
+		const value = process.env[name];
+		if (value !== undefined && value.length > 0) busEnv[name] = value;
+	}
+	return busEnv;
+}
+
+function statStamp(path: string): string {
+	try {
+		const info = statSync(path);
+		return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+	} catch {
+		return "missing";
+	}
+}
+
+function readSmallFile(path: string): string {
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return "missing";
+	}
+}
+
+/**
+ * Cheap local fingerprint of the user bus, user systemd manager, binaries, cgroup delegation, and swap state.
+ * Any change (bus or user-manager restart, delegation drop, env change) invalidates the probe cache before the
+ * next limited launch without running a subprocess on a cache hit.
+ */
+function capabilityStamp(busEnv: Record<string, string>, probeParentDir: string | null): string {
+	if (process.platform !== "linux") return process.platform;
+	const uid = typeof process.getuid === "function" ? process.getuid() : null;
+	const userServiceDir = uid === null ? null : `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service`;
+	const cgroupDirs = [
+		...new Set(
+			[probeParentDir, probeParentDir === null ? null : dirname(probeParentDir), userServiceDir].filter(
+				(dir): dir is string => dir?.startsWith("/sys/fs/cgroup/") === true,
+			),
+		),
+	];
+	const { paths } = busSocketPaths(busEnv);
+	const parts = [
+		process.platform,
+		`xdg=${busEnv.XDG_RUNTIME_DIR ?? ""}`,
+		`dbus=${busEnv.DBUS_SESSION_BUS_ADDRESS ?? ""}`,
+		...paths.map((socketPath) => `sock:${socketPath}=${statStamp(socketPath)}`),
+		...SYSTEMD_BINARY_CANDIDATES.map((binary) => `bin:${binary}=${statStamp(binary)}`),
+		`root=${readSmallFile("/sys/fs/cgroup/cgroup.controllers")}`,
+		...cgroupDirs.map((dir) => `cg:${dir}=${readSmallFile(`${dir}/cgroup.controllers`)}`),
+		`swap=${swapIsActive() ? "1" : "0"}`,
+	];
+	return parts.join("\n");
+}
+
+function parseProbeParentDir(stdout: string): string | null {
+	for (const line of stdout.split("\n")) {
+		if (!line.startsWith("parent=")) continue;
+		const value = line.slice("parent=".length).trim();
+		return value.startsWith("/sys/fs/cgroup/") ? value : null;
+	}
+	return null;
+}
+
+/** Drop any cached capability probe so the next limited launch re-probes the host. */
+export function invalidateResourceCapabilityCache(): void {
+	cached = null;
+}
+
+/** Impure: probe this host once; a timeout or unobservable bus transport is not cached. */
+function detectResourceCapability(): {
+	capability: ResourceCapability;
+	probeParentDir: string | null;
+	transient: boolean;
+} {
 	const platform = process.platform;
 	if (platform !== "linux") {
 		const host = platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : platform;
@@ -187,23 +305,23 @@ function detectResourceCapability(): { capability: ResourceCapability; transient
 				systemctl: null,
 				busEnv: {},
 			},
+			probeParentDir: null,
 			transient: false,
 		};
 	}
 	if (!existsSync("/sys/fs/cgroup/cgroup.controllers"))
 		return {
 			capability: unavailableCapability("cgroup v2 is not mounted at /sys/fs/cgroup"),
+			probeParentDir: null,
 			transient: false,
 		};
 	const systemdRun = trustedSystemdBinary("systemd-run");
-	if ("reason" in systemdRun) return { capability: unavailableCapability(systemdRun.reason), transient: false };
+	if ("reason" in systemdRun)
+		return { capability: unavailableCapability(systemdRun.reason), probeParentDir: null, transient: false };
 	const systemctl = trustedSystemdBinary("systemctl");
-	if ("reason" in systemctl) return { capability: unavailableCapability(systemctl.reason), transient: false };
-	const busEnv: Record<string, string> = {};
-	for (const name of BUS_VARIABLES) {
-		const value = process.env[name];
-		if (value !== undefined && value.length > 0) busEnv[name] = value;
-	}
+	if ("reason" in systemctl)
+		return { capability: unavailableCapability(systemctl.reason), probeParentDir: null, transient: false };
+	const busEnv = currentBusEnv();
 	if (
 		busEnv.DBUS_SESSION_BUS_ADDRESS === undefined &&
 		(busEnv.XDG_RUNTIME_DIR === undefined || !existsSync(`${busEnv.XDG_RUNTIME_DIR}/bus`))
@@ -212,23 +330,37 @@ function detectResourceCapability(): { capability: ResourceCapability; transient
 			capability: unavailableCapability(
 				"no systemd user manager bus: $XDG_RUNTIME_DIR/bus does not exist and DBUS_SESSION_BUS_ADDRESS is unset",
 			),
+			probeParentDir: null,
 			transient: false,
 		};
-	const probe = spawnSync(
-		systemdRun.path,
-		[
-			...scopeArgs({ memoryMiB: PROBE_MEMORY_MIB, tasks: PROBE_TASKS, cpuPercent: 100 }, nextUnitName("probe")),
-			"/bin/sh",
-			"-c",
-			PROBE_SCRIPT,
-		],
-		{ encoding: "utf8", timeout: PROBE_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"] },
-	);
+	const probeUnit = nextUnitName("probe");
+	const probeArgs = scopeArgs({ memoryMiB: PROBE_MEMORY_MIB, tasks: PROBE_TASKS, cpuPercent: 100 }, probeUnit);
+	// The probe reads its own cgroup files internally and never queries systemctl show afterwards.
+	probeArgs.splice(2, 0, "--collect");
+	const probe = spawnSync(systemdRun.path, [...probeArgs, "/bin/sh", "-c", PROBE_SCRIPT], {
+		encoding: "utf8",
+		timeout: PROBE_TIMEOUT_MS,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
 	const timedOut = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+	if (timedOut) {
+		const cleanEnv = { ...busEnv, LC_ALL: "C" };
+		spawnSync(systemctl.path, ["--user", "kill", "--signal=SIGKILL", probeUnit], {
+			env: cleanEnv,
+			timeout: 1000,
+			stdio: "ignore",
+		});
+		spawnSync(systemctl.path, ["--user", "reset-failed", probeUnit], {
+			env: cleanEnv,
+			timeout: 1000,
+			stdio: "ignore",
+		});
+	}
+	const stdout = probe.stdout ?? "";
 	const states = capabilityFromProbe(
 		{
 			status: probe.error !== undefined && !timedOut ? -1 : probe.status,
-			stdout: probe.stdout ?? "",
+			stdout,
 			stderr: probe.error !== undefined && !timedOut ? probe.error.message : (probe.stderr ?? ""),
 			timedOut,
 		},
@@ -236,15 +368,26 @@ function detectResourceCapability(): { capability: ResourceCapability; transient
 	);
 	return {
 		capability: { ...states, systemdRun: systemdRun.path, systemctl: systemctl.path, busEnv },
-		transient: timedOut,
+		probeParentDir: timedOut || probe.status !== 0 ? null : parseProbeParentDir(stdout),
+		transient: timedOut || !busSocketPaths(busEnv).observable,
 	};
 }
 
-/** Impure: this host's capability, probed once per process (about 0.1 s) and only when asked. */
+/** Impure: this host's capability, probed when asked and re-probed whenever the bus or delegation changes. */
 function resourceCapability(): ResourceCapability {
-	if (cached !== null) return cached;
-	const { capability, transient } = detectResourceCapability();
-	if (!transient) cached = capability;
+	if (cached !== null) {
+		const stamp = capabilityStamp(currentBusEnv(), cached.probeParentDir);
+		if (cached.stamp === stamp) return cached.capability;
+		cached = null;
+	}
+	const { capability, probeParentDir, transient } = detectResourceCapability();
+	if (!transient) {
+		cached = {
+			stamp: capabilityStamp(currentBusEnv(), probeParentDir),
+			probeParentDir,
+			capability,
+		};
+	}
 	return capability;
 }
 
@@ -312,6 +455,7 @@ export interface ResourceScope {
 	args: string[];
 	env: NodeJS.ProcessEnv;
 	systemctl: string;
+	systemctlEnv: NodeJS.ProcessEnv;
 }
 
 export type ResourceScopePlan =
@@ -321,8 +465,9 @@ export type ResourceScopePlan =
 
 /**
  * Impure: wrap one planned spawn (the sandbox launcher or the direct command) in a scope with these ceilings, or
- * refuse it. No ceiling set is no scope. `systemd-run` needs the user bus variables; one the command's own
- * environment lacks is given to `systemd-run` alone and unset again before the command starts.
+ * refuse it. No ceiling set is no scope. `systemd-run` always sees PanCode's own user-bus variables; any bus
+ * variable that differed from the command's planned environment is restored (or unset) via `/usr/bin/env` before
+ * the command starts.
  */
 export function planResourceScope(
 	launch: { limits: ResourceLimits; scope: ResourceLimitScope } | undefined,
@@ -338,14 +483,25 @@ export function planResourceScope(
 			kind: "refused",
 			message: `safety.resources.${scope} is set but no systemd-run was found; the command was not run.`,
 		};
-	const added = Object.entries(capability.busEnv).filter(([name]) => command.env[name] === undefined);
+	const env: NodeJS.ProcessEnv = { ...command.env };
+	const unsetArgs: string[] = [];
+	const restoreArgs: string[] = [];
+	for (const name of BUS_VARIABLES) {
+		const hostVal = capability.busEnv[name];
+		const cmdVal = command.env[name];
+		if (hostVal === cmdVal) continue;
+		if (hostVal === undefined) delete env[name];
+		else env[name] = hostVal;
+		if (cmdVal === undefined) unsetArgs.push("-u", name);
+		else restoreArgs.push(`${name}=${cmdVal}`);
+	}
 	const payload =
-		added.length === 0
+		unsetArgs.length === 0 && restoreArgs.length === 0
 			? [command.file, ...command.args]
-			: ["/usr/bin/env", ...added.flatMap(([name]) => ["-u", name]), command.file, ...command.args];
+			: ["/usr/bin/env", ...unsetArgs, "--", ...restoreArgs, command.file, ...command.args];
 	const unit = nextUnitName("cmd");
-	const env = { ...command.env, ...Object.fromEntries(added) };
-	liveScopes.set(unit, { systemctl: capability.systemctl, env });
+	const systemctlEnv: NodeJS.ProcessEnv = { ...capability.busEnv, LC_ALL: "C" };
+	liveScopes.set(unit, { systemctl: capability.systemctl, env: systemctlEnv });
 	return {
 		kind: "scoped",
 		scope: {
@@ -356,6 +512,7 @@ export function planResourceScope(
 			args: [...scopeArgs(limits, unit), ...payload],
 			env,
 			systemctl: capability.systemctl,
+			systemctlEnv,
 		},
 	};
 }
@@ -401,7 +558,7 @@ function systemctl(scope: ResourceScope, args: ReadonlyArray<string>): Promise<s
 		execFile(
 			scope.systemctl,
 			["--user", ...args],
-			{ env: scope.env, timeout: SETTLE_TIMEOUT_MS, encoding: "utf8" },
+			{ env: scope.systemctlEnv, timeout: SETTLE_TIMEOUT_MS, encoding: "utf8" },
 			(_error, stdout) => resolve(typeof stdout === "string" ? stdout : ""),
 		);
 	});
@@ -454,7 +611,9 @@ export async function settleResourceScope(scope: ResourceScope): Promise<Resourc
 	const show = ["show", scope.unit, "-p", "LoadState", "-p", "ActiveState", "-p", "Result", "-p", "ControlGroup"];
 	let props = unitProperties(await systemctl(scope, show));
 	let memoryExceeded = false;
-	if (props.get("LoadState") === "not-found") {
+	const loadState = props.get("LoadState");
+	if (loadState === undefined) invalidateResourceCapabilityCache();
+	if (loadState === undefined || loadState === "not-found") {
 		liveScopes.delete(scope.unit);
 		return { memoryExceeded: false, launchUnconfirmed: watch?.entered !== true };
 	}
@@ -494,6 +653,7 @@ export function killLiveResourceScopes(): void {
 	if (liveScopes.size === 0) return;
 	for (const [unit, { systemctl: binary, env }] of liveScopes) {
 		spawnSync(binary, ["--user", "kill", "--signal=SIGKILL", unit], { env, timeout: 2000, stdio: "ignore" });
+		spawnSync(binary, ["--user", "reset-failed", unit], { env, timeout: 2000, stdio: "ignore" });
 	}
 	liveScopes.clear();
 }

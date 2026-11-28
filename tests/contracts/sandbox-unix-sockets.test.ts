@@ -25,14 +25,17 @@ import { sandboxAvailability, untrustedBwrapReason, wslKind } from "../../src/co
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
 import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
 import {
+	busSocketPaths,
 	capabilityFromProbe,
 	hostResourceStatus,
+	planResourceScope,
 	resourceLimitRefusal,
 	resourceStatus,
 	resourceStatusLine,
 	resourceStatusRefuses,
 	scopeArgs,
 	scopeLaunchFailure,
+	settleResourceScope,
 } from "../../src/core/sandbox/resource-limits.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
 import { sandboxFilterProgram } from "../../src/core/sandbox/seccomp.js";
@@ -892,10 +895,26 @@ test("resource ceilings: the probe, the refusal, the scope arguments, a launch f
 	// Only exit 1 with no output and nothing but systemd-run's own lines reads as a scope that never started.
 	const busFailure = "Failed to connect to bus: No medium found\n";
 	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: busFailure }), busFailure.trim());
+	const bus256Failure = "Failed to connect to user scope bus via local transport: Connection refused\n";
+	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: bus256Failure }), bus256Failure.trim());
+	assert.equal(
+		scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: "Failed to get D-Bus connection: No such file\n" }),
+		"Failed to get D-Bus connection: No such file",
+	);
 	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 3, stderr: busFailure }), null);
 	assert.equal(scopeLaunchFailure({ exitCode: 2, stdoutBytes: 0, stderr: busFailure }), null);
 	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: `${busFailure}make: *** Error 1\n` }), null);
 	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: "Failed to start: x\n" }), null);
+
+	// Bus socket extraction observes filesystem paths and flags abstract/non-file D-Bus transports as unobservable.
+	assert.deepEqual(
+		busSocketPaths({
+			XDG_RUNTIME_DIR: "/run/user/1000",
+			DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus,guid=abc",
+		}),
+		{ paths: ["/run/user/1000/bus", "/run/user/1000/systemd/private"], observable: true },
+	);
+	assert.equal(busSocketPaths({ DBUS_SESSION_BUS_ADDRESS: "unix:abstract=/tmp/dbus-xyz" }).observable, false);
 
 	const refused = resourceStatus(pidless, { main: { tasks: 8 }, workers: undefined });
 	assert.equal(resourceStatusRefuses(refused), true);
@@ -941,4 +960,50 @@ test("under a systemd user scope a command's ceilings hold and nothing of it out
 		},
 	);
 	assert.equal(units.stdout.trim(), "");
+
+	// A command overriding bus env vars does not break systemd-run and still receives its own env values.
+	const customEnv = await runCommandVector(
+		"sh",
+		["-c", 'printf "xdg=%s dbus=%s" "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS"'],
+		{
+			env: { XDG_RUNTIME_DIR: "/nonexistent/custom-xdg", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent/bus" },
+			resourceLimits: { cpuPercent: 50 },
+		},
+	);
+	assert.equal(customEnv.exitCode, 0, customEnv.stderr);
+	assert.equal(customEnv.stdout, "xdg=/nonexistent/custom-xdg dbus=unix:path=/nonexistent/bus");
+
+	// When systemctl cannot reach the user bus at settlement, the launch stays unconfirmed so bus errors refuse.
+	const planned = planResourceScope(
+		{ limits: { cpuPercent: 50 }, scope: "main" },
+		{ file: "/bin/true", args: [], env: {} },
+	);
+	assert.equal(planned.kind, "scoped");
+	if (planned.kind === "scoped") {
+		const deadSettlement = await settleResourceScope({
+			...planned.scope,
+			systemctlEnv: { XDG_RUNTIME_DIR: "/nonexistent/dead-bus", LC_ALL: "C" },
+		});
+		assert.equal(deadSettlement.launchUnconfirmed, true);
+	}
+
+	// Losing the user bus after a passing probe invalidates the cache and refuses before launch (exit 126).
+	const prevXdg = process.env.XDG_RUNTIME_DIR;
+	const prevDbus = process.env.DBUS_SESSION_BUS_ADDRESS;
+	const emptyRuntime = mkdtempSync(join(tmpdir(), "pancode-nobus-"));
+	t.after(() => {
+		if (prevXdg === undefined) delete process.env.XDG_RUNTIME_DIR;
+		else process.env.XDG_RUNTIME_DIR = prevXdg;
+		if (prevDbus === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS;
+		else process.env.DBUS_SESSION_BUS_ADDRESS = prevDbus;
+		rmSync(emptyRuntime, { recursive: true, force: true });
+	});
+	process.env.XDG_RUNTIME_DIR = emptyRuntime;
+	delete process.env.DBUS_SESSION_BUS_ADDRESS;
+	const refusedAfterLoss = await runCommandVector("sh", ["-c", "echo should-not-run"], {
+		resourceLimits: { memoryMiB: 64 },
+	});
+	assert.equal(refusedAfterLoss.launched, false);
+	assert.equal(refusedAfterLoss.exitCode, 126);
+	assert.match(refusedAfterLoss.stderr, /safety\.resources\.main\.memoryMiB/u);
 });

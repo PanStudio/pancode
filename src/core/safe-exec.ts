@@ -13,6 +13,8 @@ import { relativePathEscapes } from "./path-containment.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
 import {
+	forgetResourceScope,
+	invalidateResourceCapabilityCache,
 	launchResourceLimits,
 	launchResourceRefusal,
 	planResourceScope,
@@ -641,6 +643,7 @@ export function runCommandVector(
 						})
 					: null;
 				if (failure !== null) {
+					invalidateResourceCapabilityCache();
 					deliver({ ...notLaunched(scopeLaunchFailureMessage(scope, failure)), durationMs: result.durationMs });
 					return;
 				}
@@ -758,6 +761,16 @@ export function runCommandVector(
 			child.stderr?.destroy();
 			child.unref();
 			egress?.close();
+			if (scope !== null && spawnError !== undefined) {
+				forgetResourceScope(scope);
+				invalidateResourceCapabilityCache();
+				if (sandbox.kind === "sandboxed") sandbox.afterExit();
+				deliver({
+					...notLaunched(scopeLaunchFailureMessage(scope, spawnError.message)),
+					durationMs: Math.round(performance.now() - startedAtClock),
+				});
+				return;
+			}
 			const output = captured();
 			resolve({
 				file,
@@ -893,7 +906,9 @@ export interface StagingCommandOptions {
  * one is configured, a timeout and a bounded buffer, and a process group of its
  * own that is signalled after the leader ends so a clone's helpers do not
  * outlive it. A synchronous call cannot take an abort signal, so the timeout is
- * its only cancellation bound. Throws with the command's own stderr on failure.
+ * its only cancellation bound. It runs without `safety.resources` ceilings
+ * because settling a systemd scope is asynchronous. Throws with the command's
+ * own stderr on failure.
  */
 export function runStagingCommandSync(
 	file: string,

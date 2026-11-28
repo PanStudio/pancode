@@ -19,6 +19,7 @@ import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sand
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
 import {
 	forgetResourceScope,
+	invalidateResourceCapabilityCache,
 	killLiveResourceScopes,
 	launchResourceLimits,
 	launchResourceRefusal,
@@ -690,6 +691,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 						})
 					: null;
 				if (failure !== null) {
+					invalidateResourceCapabilityCache();
 					deliver(notSpawnedResult(scopeLaunchFailureMessage(scope, failure)));
 					return;
 				}
@@ -890,6 +892,13 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			egress?.close();
 			const finalOutput = output.settle();
 			options.signal?.removeEventListener("abort", onAbort);
+			if (scope !== null) {
+				forgetResourceScope(scope);
+				invalidateResourceCapabilityCache();
+				if (sandbox.kind === "sandboxed") sandbox.afterExit();
+				deliver(notSpawnedResult(scopeLaunchFailureMessage(scope, error.message)));
+				return;
+			}
 			resolveAfterCancellation({
 				error: error as NodeJS.ErrnoException,
 				...finalOutput,

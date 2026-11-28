@@ -605,6 +605,17 @@ test("worker resource ceilings are sealed into the spec's limits, checked on rea
 	ok(sealed.spec);
 	deepStrictEqual(sealed.spec.limits.resources, { memoryMiB: 512, tasks: 64 });
 	deepStrictEqual(parseWorkerSpec(structuredClone(sealed.spec)).limits.resources, { memoryMiB: 512, tasks: 64 });
+	// Resource ceilings are independent of the OS sandbox: safety.sandbox off still carries limits.resources.
+	const sandboxOffSettings = withCeilings();
+	sandboxOffSettings.safety.sandbox = "off";
+	const sandboxOff = await dispatched(
+		"pancode-worker-resources-sandbox-off-",
+		dispatchStubContext({ settings: sandboxOffSettings }),
+	);
+	ok(sandboxOff.spec);
+	strictEqual(sandboxOff.spec.sandbox, undefined);
+	deepStrictEqual(sandboxOff.spec.limits.resources, { memoryMiB: 512, tasks: 64 });
+	deepStrictEqual(parseWorkerSpec(structuredClone(sandboxOff.spec)).limits.resources, { memoryMiB: 512, tasks: 64 });
 	for (const [resources, refusal] of [
 		[{}, /must set at least one ceiling/u],
 		[{ memoryMiB: 0 }, /memoryMiB must be an integer from 1 to/u],
