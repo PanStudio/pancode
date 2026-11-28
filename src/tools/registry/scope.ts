@@ -17,6 +17,7 @@ import type { createShellEgress, OperatorAskQueue } from "../registry-operator-a
 import type { ToolSpec } from "../tool-spec.js";
 import type { createFlowGates } from "./flow.js";
 import type { createOperatorScopes } from "./operator-scope.js";
+import type { createSnapshotGate } from "./snapshot.js";
 
 export interface ParkedCall {
 	readRootApproval?: true;
@@ -73,4 +74,5 @@ export interface RegistryScope {
 	readonly outboundFlowViolation: ReturnType<typeof createFlowGates>["outboundFlowViolation"];
 	readonly fileTargetFlowViolation: ReturnType<typeof createFlowGates>["fileTargetFlowViolation"];
 	readonly sourceAdmissionRefusal: ReturnType<typeof createFlowGates>["sourceAdmissionRefusal"];
+	readonly snapshotBeforeBody: ReturnType<typeof createSnapshotGate>["snapshotBeforeBody"];
 }
