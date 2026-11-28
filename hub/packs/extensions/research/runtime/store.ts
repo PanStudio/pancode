@@ -7,11 +7,9 @@
  */
 import { randomBytes } from "node:crypto";
 import {
-	closeSync,
+	appendFileSync,
 	existsSync,
-	fsyncSync,
 	mkdirSync,
-	openSync,
 	readdirSync,
 	readFileSync,
 	renameSync,
@@ -19,7 +17,6 @@ import {
 	statSync,
 	utimesSync,
 	writeFileSync,
-	writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -68,36 +65,20 @@ export function samplesName(iteration: number | "aa"): string {
 	return iteration === "aa" ? "aa" : `it-${String(iteration).padStart(4, "0")}`;
 }
 
-function fsyncDirectory(dir: string): void {
-	let fd: number | undefined;
-	try {
-		fd = openSync(dir, "r");
-		fsyncSync(fd);
-	} catch {
-		// Some filesystems refuse a directory fsync; the rename already happened.
-	} finally {
-		if (fd !== undefined) closeSync(fd);
-	}
-}
-
-/** Write through a temporary sibling, fsync and rename, so a reader never sees half a file. */
+/**
+ * Write through a temporary sibling and rename, so a reader never sees half a file. The pack runs under Node's
+ * permission model, which disables fsync, so durability past a crash of the machine is the filesystem's.
+ */
 export function writeFileAtomic(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
 	const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		const fd = openSync(temporary, "wx", 0o600);
-		try {
-			writeSync(fd, text);
-			fsyncSync(fd);
-		} finally {
-			closeSync(fd);
-		}
+		writeFileSync(temporary, text, { flag: "wx", mode: 0o600 });
 		renameSync(temporary, path);
 	} catch (error) {
 		rmSync(temporary, { force: true });
 		throw error;
 	}
-	fsyncDirectory(dirname(path));
 }
 
 /** Write `campaign.json` once; a second write for the same id is refused. */
@@ -128,19 +109,9 @@ export function readCampaign(root: string, id: string): ResearchCampaign {
 	return parsed as ResearchCampaign;
 }
 
-/** Append one event to the journal and fsync it, so a crash keeps every step that completed. */
+/** Append one event to the journal, so a crash of the run keeps every step that completed. */
 export function appendJournal(root: string, id: string, event: ResearchJournalEvent): void {
-	const dir = campaignDir(root, id);
-	const path = join(dir, "journal.jsonl");
-	const created = !existsSync(path);
-	const fd = openSync(path, "a", 0o600);
-	try {
-		writeSync(fd, `${JSON.stringify(event)}\n`);
-		fsyncSync(fd);
-	} finally {
-		closeSync(fd);
-	}
-	if (created) fsyncDirectory(dir);
+	appendFileSync(join(campaignDir(root, id), "journal.jsonl"), `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
 
 export interface JournalRead {
