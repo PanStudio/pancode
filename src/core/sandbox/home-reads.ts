@@ -6,7 +6,12 @@ import path from "node:path";
 import { resolvePackageRoot } from "../package-root.js";
 import { isSameOrDescendant, isStrictDescendant } from "../path-containment.js";
 import { wslKind } from "./availability.js";
-import { HOME_READ_TOOLCHAIN_PATHS, type HomeReadsSetting, listedHomePaths } from "./home-read-roots.js";
+import {
+	HOME_READ_TOOLCHAIN_PATHS,
+	type HomeReadsSetting,
+	homeReadRootProblem,
+	listedHomePaths,
+} from "./home-read-roots.js";
 import { windowsDriveMounts, withMountAliases } from "./mount-aliases.js";
 import type { HomeReadList, SandboxBackend, SandboxMaskedPath, SandboxReadRestriction } from "./types.js";
 
@@ -102,6 +107,10 @@ export function planHomeReads(input: HomeReadPlanInput): HomeReadPlan | Error {
 		if (insideHidden(root)) exposed.add(root);
 	}
 	for (const own of pancodeOwnPaths()) if (insideHidden(own) && holdingHidden(own) === undefined) exposed.add(own);
+	for (const root of input.list.roots) {
+		const problem = homeReadRootProblem(root, realHome);
+		if (problem !== null) return new Error(`safety.homeReads root ${root} ${problem}; the command was not run`);
+	}
 	const named: Array<{ spelled: string; physical: string }> = [];
 	for (const entry of listedHomePaths(input.list, home)) {
 		// An absent root shows nothing; a dangling link the same.

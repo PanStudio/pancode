@@ -560,6 +560,7 @@ test("listed home reads refuse a plan that would show a hidden tree or run outsi
 		});
 	assert.ok(!(plan({}) instanceof Error));
 	assert.match(String(plan({ admitted: [scratch] })), /holds .*home/u);
+	assert.match(String(plan({ list: { roots: ["~"], toolchains: [] } })), /home directory/u);
 	assert.match(String(plan({ list: { roots: ["~/up"], toolchains: [] } })), /resolves to .* which holds/u);
 	assert.match(String(plan({ cwd: sibling })), /working directory/u);
 	assert.match(String(plan({ cwd: home })), /working directory .* holds/u);

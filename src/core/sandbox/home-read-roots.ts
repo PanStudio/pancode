@@ -37,6 +37,7 @@ export function homeReadList(setting: HomeReadsSetting, caller: "main" | "worker
 
 /** A configured root as a path: `~/` means the home of the host the command runs on. */
 function expandHomeReadRoot(root: string, home: string = homedir()): string {
+	if (root === "~") return home;
 	return root.startsWith("~/") ? path.join(home, root.slice(2)) : path.resolve(root);
 }
 
