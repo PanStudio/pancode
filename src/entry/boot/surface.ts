@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type * as AcpCommandsModule from "../../acp/commands.js";
+import type { AcpHostReport } from "../../acp/commands.js";
+import type {
+	bindBoardActions,
+	createHostToolEvents,
+	followWorkerRuns,
+	oracleBriefingFromEntries,
+	runHostDispatch,
+} from "../../acp/host-members.js";
+import type * as AcpServerModule from "../../acp/server.js";
+import type { AcpElicitationChannel, AcpHandoffControl, AcpInterviewChannel } from "../../acp/server-options.js";
+import type { createStdioServerTransport } from "../../acp/transport.js";
 import type { RunJsonMainSessionFrame } from "../../cli/modes/run-json-schema.js";
 import type { PancodeSettings } from "../../core/config.js";
 import type { DomainContractMap } from "../../core/domain-contracts.js";
@@ -28,6 +40,8 @@ import type { MuxContract } from "../../domains/mux/contract.js";
 import type { PanesOperations } from "../../domains/mux/operations.js";
 import type { PluginSnapshot } from "../../domains/plugins/types.js";
 import type { ProvidersContract } from "../../domains/providers/index.js";
+import type { ReportSessionFacts } from "../../domains/report/environment.js";
+import type { IdentitySettings } from "../../domains/report/scrub.js";
 import type { ResourcesContract } from "../../domains/resources/contract.js";
 import type { McpSubmitReader } from "../../domains/resources/submit-expansion.js";
 import type { AutonomyHalt, AutonomyWindow } from "../../domains/safety/autonomy-window.js";
@@ -35,15 +49,22 @@ import type { GitHookDriftGuard } from "../../domains/safety/hook-drift.js";
 import type { SessionContract, SessionMeta } from "../../domains/session/contract.js";
 import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
 import type { SessionEntry } from "../../domains/session/entries.js";
+import type { HandoffServiceDeps } from "../../domains/session/handoff-service.js";
 import type { TaskBoardStore } from "../../domains/session/task-board.js";
 import type { SystemOne } from "../../domains/system-one/types.js";
 import type { TelemetryContract, TelemetryRunReaderBinder } from "../../domains/telemetry/contract.js";
 import type { UserTasksStore } from "../../domains/user-tasks/store.js";
+import type { releasePancodeLoadedModelsOnExit } from "../../engine/apis/residency.js";
 import type * as InteractiveIndexModule from "../../interactive/index.js";
 import type { BootInteractivity } from "../../interactive/terminal-lease.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { ChatLoop } from "../../session-control/chat-loop.js";
 import type { answerExtensionLine, resolvePermission } from "../../session-control/index.js";
 import type { subscribeLoopGuardStop } from "../../session-control/loop-guard-interrupt.js";
+import type {
+	buildModelReplayAgentMessagesFromTurns,
+	continuityContextFromSession,
+} from "../../session-control/model-session-replay.js";
 import type { ReloadClassesController } from "../../session-control/reload-report.js";
 import type { RunIo } from "../../session-control/slash-command-types.js";
 import type { parseSlashCommand } from "../../session-control/slash-commands.js";
@@ -65,26 +86,40 @@ type SessionSettingsView = ReturnType<typeof createSessionSettingsView>;
  * surface that copied one would miss the later writes of the closures that share it.
  */
 export interface BootSurfaceCells {
+	activeAcpSessionAutonomy: "default" | "yolo" | null;
 	askUserHandler: AskUserHandler | null;
 	readonly creditedRunChecks: ReadonlySet<string>;
 	readonly lastAutonomyHalt: AutonomyHalt | null;
 	reportReviewOpener: ((draftId: string) => void) | null;
 	readonly resumedSessionAtBoot: boolean;
+	readonly unsubscribeDispatchShutdown: (() => void) | undefined;
 	readonly yoloHeldAtBoot: boolean;
 }
 
 /** What the surface tails (src/entry/boot/*-surface.ts) read from the wired session. */
 export interface BootSurfaceInput {
+	acpElicitationChannel: AcpElicitationChannel | undefined;
+	acpInterviewChannel: AcpInterviewChannel | undefined;
+	acpInterviews: boolean;
+	acpWorkerPermissions: boolean;
 	activePathEntries: () => readonly SessionEntry[];
 	agents: AgentsContract | undefined;
 	applySettingsBlob: SessionSettingsView["applySettingsBlob"];
+	askUserBridge: AskUserHandler;
 	autonomyWindow: AutonomyWindow;
 	beforeShellEntryRecorded: () => void;
+	beginChatSettlement: () => Promise<void>;
+	bindAcpHandoff: (deps: HandoffServiceDeps) => AcpHandoffControl;
 	bumpSessionState: SessionSettingsView["bump"];
 	bus: TelemetryHub;
+	captureRunIo: () => {
+		io: { stdout: (text: string) => void; stderr: (text: string) => void };
+		report: (fallback: string) => AcpHostReport;
+	};
 	chat: ChatLoop;
 	chatIdle: () => boolean;
 	clampAtScope: SessionSettingsView["clampAtScope"];
+	commitAcpSafeSettings: SessionSettingsView["commitAcpSafeSettings"];
 	commitExtensionHooks: () => ExtensionReloadOutcome;
 	commitSetting: SessionSettingsView["commitSetting"];
 	config: ConfigContract | undefined;
@@ -113,12 +148,23 @@ export interface BootSurfaceInput {
 	mux: MuxContract | undefined;
 	options: BootOptions;
 	panes: PanesOperations | null;
+	persistCurrentThinkingLevel: SessionSettingsView["persistCurrentThinkingLevel"];
 	printJsonSessionHeader: (meta: SessionMeta | null, active: PancodeSettings["chat"]) => RunJsonMainSessionFrame | null;
 	providers: ProvidersContract;
+	readAcpSafeSettings: SessionSettingsView["readAcpSafeSettings"];
 	readCurrentSessionEntries: () => ReadonlyArray<SessionEntry>;
+	readSessionEntriesForCompact: (sessionId: string) => SessionEntry[];
 	recordBoot: (interactivity?: BootInteractivity) => void;
 	reloadClasses: ReloadClassesController;
 	reloadPlugins: () => PluginSnapshot;
+	reportSession: {
+		stateDir: string;
+		cwd: () => string;
+		session: () => { id: string; cwd: string; facts: ReportSessionFacts } | null;
+		identitySettings: () => IdentitySettings;
+	};
+	resolveBaselineAutonomy: () => AutonomyLevel;
+	resolveEffectiveAutonomy: () => AutonomyLevel;
 	resources: ResourcesContract | undefined;
 	result: LoadResult<DomainContractMap>;
 	routingGestures: SessionSettingsView["routingGestures"];
@@ -158,6 +204,7 @@ export interface BootSurfaceInput {
 	timer: StartupTimer;
 	toolBootstrap: ToolBootstrapHandle;
 	toolRegistry: ToolRegistry;
+	unsubscribeChatShutdown: () => void;
 	userTasks: UserTasksStore;
 	withPanes: typeof import("../with-panes.js") | null;
 	worktreeRecovery: WorktreeBootRecovery;
@@ -171,8 +218,19 @@ export interface BootSurfaceInput {
  */
 export interface BootSurfaceSeams {
 	answerExtensionLine: typeof answerExtensionLine;
+	bindBoardActions: typeof bindBoardActions;
+	buildModelReplayAgentMessagesFromTurns: typeof buildModelReplayAgentMessagesFromTurns;
+	continuityContextFromSession: typeof continuityContextFromSession;
+	createHostToolEvents: typeof createHostToolEvents;
+	createStdioServerTransport: typeof createStdioServerTransport;
+	followWorkerRuns: typeof followWorkerRuns;
+	loadAcpCommands: () => Promise<typeof AcpCommandsModule>;
+	loadAcpServer: () => Promise<typeof AcpServerModule>;
 	loadInteractiveIndex: () => Promise<typeof InteractiveIndexModule>;
+	oracleBriefingFromEntries: typeof oracleBriefingFromEntries;
 	parseSlashCommand: typeof parseSlashCommand;
+	releasePancodeLoadedModelsOnExit: typeof releasePancodeLoadedModelsOnExit;
 	resolvePermission: typeof resolvePermission;
+	runHostDispatch: typeof runHostDispatch;
 	subscribeLoopGuardStop: typeof subscribeLoopGuardStop;
 }
