@@ -141,7 +141,7 @@ function cardStep(
 }
 
 /** The budget in one line: the session ceiling it is admitted under, the spend so far, the playbook's own ceiling. */
-export function fleetRunBudgetText(preview: Pick<FleetRunPreview, "budget">): string {
+function fleetRunBudgetText(preview: Pick<FleetRunPreview, "budget">): string {
 	const { budget } = preview;
 	const playbook =
 		budget.playbookUsd === null
@@ -202,7 +202,7 @@ export function fleetRunCard(preview: FleetRunPreview): FleetRunCard {
 }
 
 /** A step's id with its loop position: `repair 1` when the loop is named after its role. */
-export function fleetRunCardStepLabel(step: Pick<FleetRunCardStep, "stepId" | "loop">): string {
+function fleetRunCardStepLabel(step: Pick<FleetRunCardStep, "stepId" | "loop">): string {
 	if (step.loop === undefined) return step.stepId;
 	return step.loop.loopId === step.loop.role
 		? `${step.stepId} (${step.loop.role} ${step.loop.attempt})`
@@ -210,7 +210,7 @@ export function fleetRunCardStepLabel(step: Pick<FleetRunCardStep, "stepId" | "l
 }
 
 /** Who runs a step, as one word: the agent, the command, or the prior result a resume replays. */
-export function fleetRunCardStepRunner(
+function fleetRunCardStepRunner(
 	step: Pick<FleetRunCardStep, "replayed" | "kind" | "commandId" | "agentId">,
 ): string {
 	if (step.replayed === true) return "replay";
@@ -219,14 +219,14 @@ export function fleetRunCardStepRunner(
 }
 
 /** The declared boundary as one phrase: an empty allowlist is a claim, not an absence. */
-export function fleetRunWriteBoundary(writes: ReadonlyArray<string> | null): string {
+function fleetRunWriteBoundary(writes: ReadonlyArray<string> | null): string {
 	if (writes === null) return "writes unenforced";
 	if (writes.length === 0) return "writes nothing";
 	return `writes ${writes.join(", ")}`;
 }
 
 /** An argv as a shell would show it: bare words bare, anything else quoted exactly. */
-export function fleetRunArgvText(argv: ReadonlyArray<string>): string {
+function fleetRunArgvText(argv: ReadonlyArray<string>): string {
 	return argv.map((arg) => (/^[\w./:=@%+-]+$/u.test(arg) ? arg : JSON.stringify(arg))).join(" ");
 }
 

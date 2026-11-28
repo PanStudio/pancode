@@ -42,7 +42,7 @@ const PLAYBOOK_FIELDS: ReadonlySet<string> = new Set(["name", "vars", "preview",
 const SHAPE = 'playbook={"name":"<playbook>","vars":{"task":"<text>"}}';
 
 /** The `playbook` argument, decoded strictly: it stands alone and every key it carries is one dispatch reads. */
-export function playbookRefFromArgs(
+function playbookRefFromArgs(
 	args: Readonly<Record<string, unknown>>,
 ): { ok: true; ref: PlaybookRef | null } | { ok: false; message: string } {
 	if (!Object.hasOwn(args, "playbook")) return { ok: true, ref: null };
@@ -117,7 +117,7 @@ export type CompiledPlaybook =
 	| { readonly ok: false; readonly message: string };
 
 /** The preview `/fleet run` would show for this call, or every reason it cannot run. */
-export function compilePlaybookRun(ref: PlaybookRef, compile: DispatchPlaybookPort["preview"]): CompiledPlaybook {
+function compilePlaybookRun(ref: PlaybookRef, compile: DispatchPlaybookPort["preview"]): CompiledPlaybook {
 	const result = compile(ref.name, ref.vars);
 	if (!result.ok) {
 		// The compiler words a missing variable for the command line; dispatch takes variables in playbook.vars.
@@ -141,7 +141,7 @@ export function compilePlaybookRun(ref: PlaybookRef, compile: DispatchPlaybookPo
  * A detached run returns while the turn goes on, so a step writing the checkout would race the main agent the way
  * a detached checkout writer does. A worktree-isolated playbook writes its own task worktree and may detach.
  */
-export function playbookDetachRefusal(preview: FleetRunPreview): string | null {
+function playbookDetachRefusal(preview: FleetRunPreview): string | null {
 	if (preview.plan.isolation === "worktree") return null;
 	const writer = preview.plan.steps.find((step) => step.scope === "workspace");
 	if (writer === undefined) return null;
@@ -153,7 +153,7 @@ export function playbookDetachRefusal(preview: FleetRunPreview): string | null {
  * steps, workspace-writing steps, and dynamic plan steps (whose spliced steps can write); a capability allowlist
  * refuses worktree isolation and host code steps, which execute outside worker tool admission.
  */
-export function playbookCeilingRefusal(
+function playbookCeilingRefusal(
 	preview: FleetRunPreview,
 	turnConstraints: TurnConstraints | undefined,
 ): string | null {
@@ -282,7 +282,7 @@ export function playbookHookLanding(
 }
 
 /** What a preview call answers: the card the operator would approve, and the call that starts it. */
-export function playbookPreviewText(ref: PlaybookRef, text: string): string {
+function playbookPreviewText(ref: PlaybookRef, text: string): string {
 	const call = JSON.stringify({ name: ref.name, ...(Object.keys(ref.vars).length > 0 ? { vars: ref.vars } : {}) });
 	return [
 		`playbook ${ref.name}: preview only; nothing was started.`,
@@ -301,7 +301,7 @@ export type PlaybookRunResult =
  * with it; detached, it answers once the first step dispatches and names the root `monitor` collects. A headless
  * run is always attached: the in-process orchestrator ends with the process.
  */
-export async function runApprovedPlaybook(input: {
+async function runApprovedPlaybook(input: {
 	launcher: FleetRunLauncher;
 	preview: FleetRunPreview;
 	detach: boolean;
