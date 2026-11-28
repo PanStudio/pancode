@@ -599,9 +599,9 @@ export function runCommandVector(
 		const egress = egressPlan === undefined ? null : bridgeEgress(child, egressPlan);
 		// A spawn that fails (ENOENT, EACCES) leaves no pid and reports through `error` later.
 		const launched = child.pid !== undefined;
-		// The main-session sandbox removes git config and commondir files its command
-		// planted once the sandbox is gone, before the result resolves (#419).
-		if (containedPlan?.kind === "sandboxed") child.once("exit", containedPlan.afterExit);
+		// The sandbox removes git config and commondir files its command planted, and the mount points of absent
+		// startup paths, once the sandbox is gone, before the result resolves (#419).
+		if (sandbox.kind === "sandboxed") child.once("exit", sandbox.afterExit);
 
 		const onAbort = (): void => {
 			aborted = true;
@@ -849,6 +849,7 @@ export function runStagingCommandSync(
 		sandbox.kind === "sandboxed" ? sandbox.args : [...args],
 		spawnOptions,
 	);
+	if (sandbox.kind === "sandboxed") sandbox.afterExit();
 	// The leader is reaped, so what is left in its group is only what it started.
 	if (result.pid !== undefined && process.platform !== "win32") {
 		try {

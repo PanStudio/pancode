@@ -1030,6 +1030,7 @@ export async function runDoctorFleetChecks(
 		const mode = settings.safety.sandbox;
 		const sandboxUsable =
 			record.sandbox?.available === true &&
+			(mode !== "required" || record.sandbox.degraded === undefined) &&
 			(settings.safety.egress.workers.mode === "open" || record.sandbox.network === null);
 		const unsandboxedRefused =
 			!sandboxUsable && mode !== "off" && (mode === "required" || node?.allowUnsandboxed !== true);

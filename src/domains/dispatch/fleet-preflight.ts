@@ -82,6 +82,8 @@ export interface FleetNodeSandbox {
 	reason: string | null;
 	/** Null when the node's bubblewrap can also isolate the network, which a network-off command needs; else why not. */
 	network: string | null;
+	/** The node's bubblewrap runs without its seccomp baseline, and why; `required` refuses such a node. */
+	degraded?: string;
 }
 
 export interface FleetPreflightRecord {
@@ -294,6 +296,7 @@ export function fleetNodeSandboxAvailability(sandbox: FleetNodeSandbox | null, n
 		backend: available ? sandbox.backend : null,
 		executable: null,
 		reason: sandbox.reason,
+		...(available && sandbox.degraded !== undefined ? { degraded: sandbox.degraded } : {}),
 	};
 }
 
@@ -301,7 +304,11 @@ export function fleetNodeSandboxAvailability(sandbox: FleetNodeSandbox | null, n
 export function fleetNodeSandboxSummary(sandbox: FleetNodeSandbox | null): string {
 	if (sandbox === null) return "sandbox=unknown";
 	if (!sandbox.available || sandbox.backend === null) return `sandbox=none (${sandbox.reason ?? "no backend"})`;
-	return `sandbox=${sandbox.backend}${sandbox.network !== null ? ` (no network isolation: ${sandbox.network})` : ""}`;
+	const caveats = [
+		...(sandbox.degraded !== undefined ? [`partial, no seccomp baseline: ${sandbox.degraded}`] : []),
+		...(sandbox.network !== null ? [`no network isolation: ${sandbox.network}`] : []),
+	];
+	return `sandbox=${sandbox.backend}${caveats.length > 0 ? ` (${caveats.join("; ")})` : ""}`;
 }
 
 /** The build this client would install on a node: the completed build on disk. */
@@ -449,7 +456,13 @@ function parseNodeSandbox(lines: ReadonlyArray<string>, customEntry: boolean): F
 		(value.network !== null && typeof value.network !== "string")
 	)
 		return unreported("the node's PanCode does not report its OS sandbox");
-	return { available: value.available, backend, reason: value.reason, network: value.network };
+	return {
+		available: value.available,
+		backend,
+		reason: value.reason,
+		network: value.network,
+		...(typeof value.degraded === "string" ? { degraded: value.degraded } : {}),
+	};
 }
 
 function parseSemver(text: string): string | null {

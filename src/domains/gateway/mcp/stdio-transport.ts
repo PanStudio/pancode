@@ -408,6 +408,7 @@ export function createMcpStdioTransport(
 			return false;
 		}
 		child = proc;
+		if (sandbox.kind === "sandboxed") proc.once("exit", sandbox.afterExit);
 		if (proc.pid !== undefined) groupPhase = "live";
 		spawned = new Promise<boolean>((resolve) => {
 			proc.once("spawn", () => resolve(true));

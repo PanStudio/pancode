@@ -837,6 +837,12 @@ export interface SafetySettings {
 	 */
 	sandboxUnixSockets: UnixSocketMode;
 	/**
+	 * Lets a dispatched worker on this host run its commands with no OS sandbox when none is usable here under
+	 * `sandbox: auto`. Off refuses such a worker at admission; `required` ignores it. Fleet nodes keep their own
+	 * `allowUnsandboxed`. Read only from the operator's own settings file.
+	 */
+	sandboxUnconfinedLocalWorkers: boolean;
+	/**
 	 * Cap in GiB on the main-session sandbox's tool cache (`<cache dir>/sandbox-cache`). Once a day at startup, and
 	 * on `doctor --fix`, its least recently used top-level tool directories are removed until it fits, unless a
 	 * running process may still use it; 0 is no cap. Read only from the operator's own settings file.
@@ -1102,6 +1108,7 @@ export const DEFAULT_SETTINGS = {
 		sandboxPassEnv: [] as string[],
 		liveCheckTargets: [] as string[],
 		sandboxUnixSockets: "block" as UnixSocketMode,
+		sandboxUnconfinedLocalWorkers: false,
 		sandboxCacheMaxGiB: 4,
 		snapshots: "auto" as WorkspaceSnapshotMode,
 		validationWrappers: [] as string[],

@@ -85,6 +85,12 @@ const TOP_LEVEL_KEYS = [
 	"store",
 ] as const;
 
+function readSandboxBooleans(issues: Issues, safety: Record<string, unknown>, target: PancodeSettings["safety"]): void {
+	if (!("sandboxUnconfinedLocalWorkers" in safety)) return;
+	const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
+	if (parsed !== undefined) target.sandboxUnconfinedLocalWorkers = parsed;
+}
+
 export interface SettingsValidationResult {
 	settings: PancodeSettings;
 	issues: SettingsIssue[];
@@ -952,6 +958,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"sandboxPassEnv",
 				"liveCheckTargets",
 				"sandboxUnixSockets",
+				"sandboxUnconfinedLocalWorkers",
 				"sandboxCacheMaxGiB",
 				"snapshots",
 				"validationWrappers",
@@ -970,6 +977,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				if (parsed !== undefined) settings.safety.sandbox = parsed;
 			}
 			if ("egress" in safety) validateEgress(issues, safety.egress, settings);
+			readSandboxBooleans(issues, safety, settings.safety);
 			if ("snapshots" in safety) {
 				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
 				if (parsed !== undefined) settings.safety.snapshots = parsed;

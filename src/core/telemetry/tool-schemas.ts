@@ -226,8 +226,6 @@ export const SafetyJudgedSchema = Type.Object(
 		noVerdict: Type.Optional(ExistingId),
 		operatorMessages: Type.Optional(count),
 		screened: Type.Optional(vocabulary(["parked"])),
-		unnamedEscape: Type.Optional(vocabulary(["parked"])),
-		namedTarget: Type.Optional(vocabulary(["parked"])),
 		/** The judge's own provider call; its tokens are journaled under that id with role `safety-judge`. */
 		judgeCallId: Type.Optional(CallIdSchema),
 		/** The call the judged tool call came from, which the row's context also names. */

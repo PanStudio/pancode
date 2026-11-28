@@ -27,14 +27,16 @@ import {
 	pancodeDataPath,
 	pancodeStatePath,
 } from "../xdg.js";
-import { sandboxAvailability, sandboxNetworkIsolation } from "./availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable } from "./availability.js";
 import type { EgressBridgePlan } from "./egress/bridge.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
 import { mainSandboxEnvPolicy } from "./env-scrub.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
+import { missingBaselineLine } from "./seccomp.js";
 import { discoverSecretMasks, SECRET_SCAN_LIMITS } from "./secret-files.js";
+import { holdStartupMountPoints, startupPathProtection } from "./startup-paths.js";
 import type {
 	SandboxAvailability,
 	SandboxCommand,
@@ -44,9 +46,15 @@ import type {
 	SandboxMode,
 	UnixSocketMode,
 } from "./types.js";
-import { unixSocketHostState, unixSocketLaunch, unixSocketStateLine } from "./unix-sockets.js";
+import { sandboxLaunchFilters, unixSocketHostState, unixSocketStateLine } from "./unix-sockets.js";
 import { protectedInside } from "./worker-policy.js";
-import { pancodeConfigDirMask, physicalSandboxPath, settingsFileMasks, workerSandboxMasks } from "./worker-process.js";
+import {
+	pancodeConfigDirMask,
+	physicalSandboxPath,
+	SANDBOX_UNSET_ENV,
+	settingsFileMasks,
+	workerSandboxMasks,
+} from "./worker-process.js";
 
 /**
  * The main session's shell sandbox. At autonomy default every bash and
@@ -76,7 +84,7 @@ import { pancodeConfigDirMask, physicalSandboxPath, settingsFileMasks, workerSan
  */
 export function mainShellContained(mode: SandboxMode, availability: SandboxAvailability): boolean {
 	if (mode === "off") return false;
-	return availability.available && availability.backend !== null && availability.executable !== null;
+	return sandboxUsable(mode, availability);
 }
 
 /**
@@ -91,8 +99,7 @@ export type YoloScriptSandboxState = "sandboxed" | "unsandboxed" | "refused";
 
 export function yoloScriptSandboxState(mode: SandboxMode, availability: SandboxAvailability): YoloScriptSandboxState {
 	if (mode !== "required") return "unsandboxed";
-	if (availability.available && availability.backend !== null && availability.executable !== null) return "sandboxed";
-	return "refused";
+	return sandboxUsable(mode, availability) ? "sandboxed" : "refused";
 }
 
 /**
@@ -102,7 +109,7 @@ export function yoloScriptSandboxState(mode: SandboxMode, availability: SandboxA
  * script sandbox state above. Doctor reads this so its row matches what a
  * yolo run records and does (TC-1 Q2).
  */
-type YoloShellState = "contained-sandbox" | "contained-rails" | YoloScriptSandboxState;
+export type YoloShellState = "contained-sandbox" | "contained-rails" | YoloScriptSandboxState;
 
 export function yoloShellState(
 	confinement: YoloConfinement,
@@ -794,7 +801,7 @@ export function mainSandboxInvocationSpec(
 		readOnlyPaths: policy.readOnlyPaths,
 		network: policy.network,
 		maskedPaths,
-		unsetEnv: ["SSH_AUTH_SOCK"],
+		unsetEnv: SANDBOX_UNSET_ENV,
 		...(policy.readOnly === true
 			? {
 					privateTmp: true,
@@ -976,7 +983,7 @@ export function planMainSandboxSpawn(
 	// The command sees the host's network namespace, and outside a read-only
 	// run its /tmp, where a multiplexer, display or daemon socket runs code
 	// outside the sandbox.
-	const sockets = unixSocketLaunch(
+	const sockets = sandboxLaunchFilters(
 		policy.unixSockets,
 		availability,
 		{
@@ -1009,8 +1016,23 @@ export function planMainSandboxSpawn(
 		policy.readOnly !== true && physicalPolicy.sandboxCache !== undefined
 			? mainSandboxNpmUserConfig(physicalPolicy.sandboxCache, aliased, homedir(), physicalPolicy)
 			: undefined;
+	// Editor and agent startup files in the workspace and scratch roots stay read-only, present or not. A read-only
+	// run writes only its own fresh scratch directory, which no editor opens.
+	const startup =
+		policy.readOnly === true
+			? { readOnlyPaths: [], masks: [] }
+			: startupPathProtection(
+					[policy.secretRoots.workspace, ...policy.secretRoots.scratchRoots].map(physicalSandboxPath),
+					availability.backend,
+				);
 	const base: SandboxInvocationSpec = {
-		...mainSandboxInvocationSpec(physicalPolicy, command, physicalSandboxPath(cwd), aliased, npmUserConfig),
+		...mainSandboxInvocationSpec(
+			{ ...physicalPolicy, readOnlyPaths: [...physicalPolicy.readOnlyPaths, ...startup.readOnlyPaths] },
+			command,
+			physicalSandboxPath(cwd),
+			[...aliased, ...startup.masks],
+			npmUserConfig,
+		),
 		...sockets.fields,
 	};
 	const spec: SandboxInvocationSpec =
@@ -1023,11 +1045,15 @@ export function planMainSandboxSpawn(
 			: base;
 	const invocation = buildSandboxInvocation(spec, availability.backend, availability.executable);
 	const absentFiles = policy.absentGitFiles.filter((file) => !pathExists(file));
+	const releaseStartup = holdStartupMountPoints(startup.masks);
 	return {
 		kind: "sandboxed",
 		file: invocation.file,
 		args: invocation.args,
-		afterExit: () => sweepMainSandboxGitFiles(absentFiles),
+		afterExit: () => {
+			sweepMainSandboxGitFiles(absentFiles);
+			releaseStartup();
+		},
 		env: policy.env,
 		...(egress === "proxied" && policy.egress !== undefined ? { egress: policy.egress } : {}),
 	};
@@ -1235,7 +1261,7 @@ export function mainSandboxWriteHint(output: string, policy: MainSandboxPolicy):
 			: temp === null
 				? ""
 				: ` A tool cache outside these roots, such as uv's ~/.cache/uv or a UV_CACHE_DIR set elsewhere, stays read-only because the tool later runs code from it outside the sandbox: point it at a new directory under ${temp} for this command (UV_CACHE_DIR=${path.join(temp, "uv-cache")}).`;
-	return `sandbox: this command could write only to ${displayWritableRoots(policy.writableRoots)} (git hooks and config, scratch roots' .git and .pancode read-only; credentials, credential variables and secret files hidden).${cache} If it failed because of the sandbox, rerun it with unsandboxed: true and it is reviewed against the operator's request (PanCode's own settings and credentials are never changed from a shell: propose settings with configure_pancode and leave credentials to the operator); a directory scripts should always write belongs in safety.scratchRoots in the user settings.`;
+	return `sandbox: this command could write only to ${displayWritableRoots(policy.writableRoots)} (git hooks and config, scratch roots' .git and .pancode read-only; editor and agent startup files such as .vscode, .idea, .husky, .claude, .envrc, .mcp.json and .gitmodules read-only even when absent; credentials, credential variables and secret files hidden).${cache} If it failed because of the sandbox, including an edit to one of those startup files, rerun it with unsandboxed: true and unsandboxed_reason saying what the sandbox blocked; it runs only if the operator approves it on a card (PanCode's own settings and credentials are never changed from a shell: propose settings with configure_pancode and leave credentials to the operator); a directory scripts should always write belongs in safety.scratchRoots in the user settings.`;
 }
 
 /** The run's own temp directory when it is a writable root, else /tmp when that is one, else null. */
@@ -1337,6 +1363,7 @@ export function mainSandboxLine(
 		];
 		const masked = secretFiles === undefined ? "" : secretFilesLine(secretFiles);
 		if (masked) (secretFiles?.capped ? warnings : details).push(masked);
+		if (availability.degraded !== undefined) warnings.push(missingBaselineLine(availability.degraded));
 		const socketState = unixSocketHostState(unixSockets, availability);
 		(socketState.kind === "masks" ? warnings : details).push(unixSocketStateLine(socketState));
 		if (egress !== undefined) {
@@ -1346,6 +1373,11 @@ export function mainSandboxLine(
 		(yolo === "refused" ? warnings : details).push(yoloLine);
 		return [...warnings, ...details].join("; ");
 	}
-	const why = mode === "off" ? "safety.sandbox is off" : (availability.reason ?? "no sandbox backend");
-	return `${why}; ${yoloLine}; default-autonomy shell commands run uncontained and keep the approval rails`;
+	const why =
+		mode === "off"
+			? "safety.sandbox is off"
+			: availability.available && availability.degraded !== undefined
+				? `safety.sandbox is required and the sandbox is partial (${missingBaselineLine(availability.degraded)})`
+				: (availability.reason ?? "no sandbox backend");
+	return `not sandboxed: ${why}; ${yoloLine}; default-autonomy shell commands run uncontained and keep the approval rails`;
 }

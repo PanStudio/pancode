@@ -39,7 +39,7 @@ curl -fsSL https://pancode.dev/install.sh | sh
 
 On native Windows, run `irm https://pancode.dev/install.ps1 | iex` in
 PowerShell. Windows has no command sandbox and the test suites run on Linux
-only, so WSL is the recommended route.
+only, so WSL2 is the recommended route.
 
 The installer puts the launcher at `~/.local/bin/pancode`. If your shell
 cannot find `pancode`, follow the installer's `PATH` instruction, then run
@@ -117,7 +117,8 @@ pancode run --read-only "Summarize this repository and how to run its tests."
   GitHub Copilot, and a 32K local model gets the same tools and checks as a
   frontier API. [Connect a model](docs/guide/configuration-and-targets.md)
 - **Safety.** Commands run in an OS sandbox (bubblewrap on Linux,
-  `sandbox-exec` on macOS), and a floor that no autonomy level removes refuses
+  `sandbox-exec` on macOS) that only your approval lets them leave, and a
+  floor that no autonomy level removes refuses
   wiping your home directory or rewriting PanCode's own settings. [Sandbox and safety](docs/guide/sandbox-and-safety.md)
 - **Verification.** A finished task is a claim that PanCode checks against
   the commands that ran, and `pancode run --verify "<cmd>" --fail-on-verify`

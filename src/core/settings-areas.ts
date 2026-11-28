@@ -251,6 +251,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "safety.sandboxPassEnv":
 		case "safety.liveCheckTargets":
 		case "safety.sandboxUnixSockets":
+		case "safety.sandboxUnconfinedLocalWorkers":
 		case "safety.scratchRoots":
 		case "safety.sandboxCacheMaxGiB":
 			return place("safety", "Sandbox");

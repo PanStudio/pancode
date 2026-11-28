@@ -7,13 +7,15 @@ import { PANCODE_ARTIFACT_DIR, PANCODE_PROJECT_DIR } from "../artifact-paths.js"
 import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
 import { pancodeConfigPath } from "../xdg.js";
-import { sandboxAvailability, sandboxNetworkIsolation } from "./availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation, wslKind } from "./availability.js";
 import type { EgressBridgePlan } from "./egress/bridge.js";
 import { egressGrants } from "./egress/policy.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
+import { missingBaselineLine } from "./seccomp.js";
 import { discoverSecretMasks } from "./secret-files.js";
+import { holdStartupMountPoints, type StartupPathProtection, startupPathProtection } from "./startup-paths.js";
 import type {
 	SandboxAvailability,
 	SandboxBackend,
@@ -24,7 +26,7 @@ import type {
 	SandboxMaskedPath,
 	WorkerSandboxSpec,
 } from "./types.js";
-import { unixSocketHostState, unixSocketLaunch, unixSocketStateLine } from "./unix-sockets.js";
+import { sandboxLaunchFilters, unixSocketHostState, unixSocketStateLine } from "./unix-sockets.js";
 import { readTaskWorktreeGitLayout } from "./worktree-git.js";
 
 /**
@@ -129,6 +131,9 @@ export function workerSandboxApplies(): boolean {
  * daemon keeps several sockets there (libvirt's modular daemons, containerd's
  * ttrpc socket).
  */
+/** Variables naming a socket the sandbox masks; left set, they only produce confusing connection errors. */
+export const SANDBOX_UNSET_ENV = ["SSH_AUTH_SOCK", "WSL_INTEROP"] as const;
+
 const DAEMON_SOCKET_PATHS = [
 	"run/docker.sock",
 	"var/run/docker.sock",
@@ -153,22 +158,37 @@ const DAEMON_SOCKET_PATHS = [
 ];
 
 /**
+ * WSL2's Windows interop: the socket a Linux process asks to start a Windows
+ * program through (`WSL_INTEROP`), and WSLg's directory, whose sockets reach
+ * Windows-side services and whose `distro` entry is this distribution's root
+ * again. The seccomp baseline denies the vsock interop also uses.
+ */
+const WSL2_INTEROP_PATHS = ["run/WSL", "mnt/wslg"];
+
+/**
  * Sockets and runtime directories reachable through the read-only root that
  * would let a sandboxed command act outside it: the session bus, agent
- * sockets under the user runtime directory, and the container and
- * virtualization daemons. `root` exists for tests.
+ * sockets under the user runtime directory, the container and
+ * virtualization daemons, and WSL2's Windows interop. `root` and `wsl` exist for tests.
  */
-function runtimeEscapePaths(root = "/"): string[] {
+function runtimeEscapePaths(root = "/", wsl: "wsl1" | "wsl2" | null = hostWslKind()): string[] {
 	const uid = typeof process.getuid === "function" ? process.getuid() : null;
 	return [
 		...(uid === null ? [] : [path.join(root, "run", "user", String(uid))]),
 		...DAEMON_SOCKET_PATHS.map((entry) => path.join(root, entry)),
+		...(wsl === "wsl2" ? WSL2_INTEROP_PATHS.map((entry) => path.join(root, entry)) : []),
 	];
 }
 
+let hostWsl: "wsl1" | "wsl2" | null | undefined;
+function hostWslKind(): "wsl1" | "wsl2" | null {
+	hostWsl ??= process.platform === "linux" ? wslKind() : null;
+	return hostWsl;
+}
+
 /** The escape masks for a filesystem rooted at `root`, without the credential paths. */
-export function runtimeEscapeMasksUnder(root: string): SandboxMaskedPath[] {
-	return workerSandboxMaskedPaths(runtimeEscapePaths(root));
+export function runtimeEscapeMasksUnder(root: string, wsl: "wsl1" | "wsl2" | null = null): SandboxMaskedPath[] {
+	return workerSandboxMaskedPaths(runtimeEscapePaths(root, wsl));
 }
 
 /** Existing secret and escape paths, each with the mount kind that hides it. */
@@ -309,14 +329,16 @@ export function composeWorkerSandboxInvocation(
 	maskedPaths: ReadonlyArray<SandboxMaskedPath> = workerSandboxMasks(),
 	/** Bubblewrap, network off: run the egress setup that hands the proxy its listener. */
 	egressBridge = false,
+	startup: ((writableRoots: ReadonlyArray<string>, backend: SandboxBackend) => StartupPathProtection) | null = null,
 ): SandboxInvocation | null {
 	if (!availability.available || availability.backend === null || availability.executable === null) return null;
 	const writableRoots = policy.writableRoots.map((entry) =>
 		availability.backend === "bwrap" ? writableRoot(entry, policy.readableRoots[0] ?? cwd) : physicalSandboxPath(entry),
 	);
-	// Every launch refuses new Unix-domain sockets unless the operator allowed
-	// them: a socket the command can see may run code outside the sandbox.
-	const sockets = unixSocketLaunch(
+	// Every launch loads the baseline seccomp program and refuses new Unix-domain
+	// sockets unless the operator allowed them: a socket the command can see may
+	// run code outside the sandbox.
+	const sockets = sandboxLaunchFilters(
 		policy.unixSockets ?? "block",
 		availability,
 		{ workspaceRoots: [cwd, ...policy.readableRoots, ...writableRoots], privateTmp: true },
@@ -334,20 +356,18 @@ export function composeWorkerSandboxInvocation(
 			: masks;
 	if (aliased instanceof Error)
 		throw new Error(`sandbox: no worker sandbox is available (${aliased.message}); the command was not run`);
+	const protectedStartup = startup?.(writableRoots, availability.backend) ?? { readOnlyPaths: [], masks: [] };
 	const spec: SandboxInvocationSpec = {
 		command,
 		cwd: physicalSandboxPath(cwd),
 		writableRoots,
-		readOnlyPaths: policy.readOnlyPaths.map(physicalSandboxPath),
+		readOnlyPaths: [...policy.readOnlyPaths.map(physicalSandboxPath), ...protectedStartup.readOnlyPaths],
 		gitWritablePaths: policy.gitWritablePaths.map(physicalSandboxPath),
 		readableRoots: policy.readableRoots.map(physicalSandboxPath),
 		network: policy.network,
-		maskedPaths: aliased,
+		maskedPaths: [...aliased, ...protectedStartup.masks],
 		...sockets.fields,
-		// Agent sockets are masked; a dangling variable only produces confusing
-		// connection errors in tools that honor it. A proxied launch also drops
-		// the host's proxy bypass lists, which name hosts it cannot reach.
-		unsetEnv: ["SSH_AUTH_SOCK"],
+		unsetEnv: SANDBOX_UNSET_ENV,
 		...(egressBridge ? { egressBridge: { execPath: process.execPath, port: EGRESS_PROXY_PORT } } : {}),
 		// Under bubblewrap the private /tmp is the only scratch space outside the
 		// writable roots, and an inherited TMPDIR elsewhere would be read-only.
@@ -375,6 +395,8 @@ export type SandboxedSpawnPlan =
 			env: SandboxEnvPolicy;
 			/** Proxied: spawn with `egressStdio` and serve the launch with `bridgeEgress`. */
 			egress?: EgressBridgePlan;
+			/** Removes the mount points of absent startup paths once the sandbox has exited. */
+			afterExit: () => void;
 	  }
 	| { kind: "refused"; message: string };
 
@@ -517,14 +539,15 @@ export function settingsFileMasks(): SandboxMaskedPath[] {
 	return masks;
 }
 
-/** Once per worker, on stderr like the missing-backend line: the filter could not load and masks stand in. */
+/** Once per worker, on stderr like the unconfined line: the seccomp program could not load, so the sandbox is partial. */
 function reportSocketFallback(policy: WorkerSandboxSpec, availability: SandboxAvailability): void {
-	// Owned masks by choice, so only a blocking policy reports the fallback.
-	if (socketFallbackReported || policy.unixSockets !== undefined || availability.backend !== "bwrap") return;
-	const state = unixSocketHostState("block", availability);
-	if (state.kind !== "masks") return;
+	if (socketFallbackReported || availability.backend !== "bwrap" || availability.degraded === undefined) return;
 	socketFallbackReported = true;
-	process.stderr.write(`[worker] sandbox ${unixSocketStateLine(state)}\n`);
+	process.stderr.write(`[worker] sandbox partial: ${missingBaselineLine(availability.degraded)}\n`);
+	// Owned masks by choice, so only a blocking policy reports the socket fallback.
+	if (policy.unixSockets !== undefined) return;
+	const state = unixSocketHostState("block", availability);
+	if (state.kind === "masks") process.stderr.write(`[worker] sandbox ${unixSocketStateLine(state)}\n`);
 }
 
 /**
@@ -562,9 +585,11 @@ function withNetworkIsolation(availability: SandboxAvailability, network: boolea
 
 /**
  * Decide how one worker child process spawns. No policy means the host runs
- * it directly (orchestrator, or `safety.sandbox: off`). `auto` without a
- * backend runs directly and says so once on stderr, which the dispatcher keeps
- * as worker diagnostics; `required` without a backend refuses the command.
+ * it directly (orchestrator, or `safety.sandbox: off`). Without a backend the
+ * command runs directly only when admission sealed `unconfined` on the
+ * policy, and says so once on stderr, which the dispatcher keeps as worker
+ * diagnostics; otherwise it is refused. `required` also refuses a partial
+ * sandbox, one whose baseline seccomp filter cannot load.
  */
 export function planSandboxedSpawn(
 	command: SandboxCommand,
@@ -592,9 +617,16 @@ export function planSandboxedSpawn(
 	if (!availability.available && policy.backendExpected === true) availability = probe();
 	const mode = launchNetwork(policy, availability, options);
 	const network = mode === "open";
+	if (policy.mode === "required" && availability.available && availability.degraded !== undefined) {
+		return {
+			kind: "refused",
+			message: `sandbox: safety.sandbox is "required" but the worker sandbox is partial (${missingBaselineLine(availability.degraded)}); the command was not run`,
+		};
+	}
 	// v060 review F1: only the typed Git seam supplies metadata writes, scoped
 	// to this invocation; ordinary commands cannot inherit them from a spec.
 	let invocation: SandboxInvocation | null;
+	let startup: StartupPathProtection = { readOnlyPaths: [], masks: [] };
 	try {
 		invocation = composeWorkerSandboxInvocation(
 			// An attested MCP network grant opens only this one process's network;
@@ -605,6 +637,10 @@ export function planSandboxedSpawn(
 			availability,
 			availability.available ? workerSpawnMasks(policy, availability.backend, cwd) : workerSandboxMasks(),
 			mode === "proxied",
+			(roots, backend) => {
+				startup = startupPathProtection(roots, backend);
+				return startup;
+			},
 		);
 	} catch (error) {
 		return { kind: "refused", message: error instanceof Error ? error.message : String(error) };
@@ -617,6 +653,7 @@ export function planSandboxedSpawn(
 			args: invocation.args,
 			env: { passEnv: policy.passEnv ?? [], secretNames: policy.secretEnv ?? [] },
 			...(mode === "proxied" ? { egress: workerEgressPlan(policy) } : {}),
+			afterExit: holdStartupMountPoints(startup.masks),
 		};
 	}
 	const reason = availability.reason ?? "no sandbox backend";
@@ -632,9 +669,17 @@ export function planSandboxedSpawn(
 			message: `sandbox: the orchestrator found a worker sandbox on this host but this worker cannot start it (${reason}); the command was not run`,
 		};
 	}
+	if (policy.unconfined !== true) {
+		return {
+			kind: "refused",
+			message: `sandbox: no worker sandbox is available (${reason}) and admission did not allow this worker to run unconfined; the command was not run`,
+		};
+	}
 	if (!unavailableReported) {
 		unavailableReported = true;
-		process.stderr.write(`[worker] sandbox unavailable (${reason}); worker commands run unsandboxed\n`);
+		process.stderr.write(
+			`[worker] sandbox unavailable (${reason}); worker commands run unconfined because the operator allowed it\n`,
+		);
 	}
 	return { kind: "direct" };
 }

@@ -120,7 +120,12 @@ export interface WorkerEnvelope {
 	network: { shell: boolean; tools: ReadonlyArray<string>; mcp: ReadonlyArray<string> };
 	approval: EnvelopeApproval;
 	/** Host facts of the placement that runs the worker, computed once by the host (M6, M7). */
-	sandbox: { backend: EnvelopeSandboxBackend; confinesWrites: boolean };
+	/**
+	 * `unconfined`: no usable OS sandbox where the worker runs and the operator allowed its commands to run without
+	 * one there (`safety.sandboxUnconfinedLocalWorkers`, a fleet node's `allowUnsandboxed`). Absent, a worker with no
+	 * backend refuses its commands.
+	 */
+	sandbox: { backend: EnvelopeSandboxBackend; confinesWrites: boolean; unconfined?: true };
 	withheld: ReadonlyArray<WithheldCapability>;
 	/** `workerStaticHead` of the request head the worker sends; empty until the host compiles the prompt. */
 	staticHead: string;
@@ -220,6 +225,8 @@ export interface EnvelopeInput {
 		egress: EgressMode;
 		/** The run's contract forbids network for its commands (a Hoare proof). */
 		networkOff: boolean;
+		/** Admission let the worker's commands run with no OS sandbox; see {@link WorkerEnvelope.sandbox}. */
+		unconfined?: true;
 	};
 	approval: EnvelopeApproval;
 	permitDigest: string;
@@ -308,7 +315,11 @@ export function resolveWorkerEnvelope(input: EnvelopeInput): WorkerEnvelope {
 		write: { mode: input.write.mode, roots: [...input.write.roots], commandsBounded },
 		...resolveExecAndNetwork(input, surface),
 		approval: { ...input.approval },
-		sandbox: { backend: input.sandbox.backend, confinesWrites: input.host.confinesWrites },
+		sandbox: {
+			backend: input.sandbox.backend,
+			confinesWrites: input.host.confinesWrites,
+			...(input.sandbox.unconfined === true ? { unconfined: true as const } : {}),
+		},
 		withheld,
 		staticHead: "",
 		permitDigest: input.permitDigest,

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { sandboxUsable } from "./availability.js";
 import {
 	type EgressMode,
 	type SandboxAvailability,
@@ -106,6 +107,10 @@ export interface WorkerSandboxReceipt {
 	 */
 	available: boolean | null;
 	reason?: string;
+	/** The backend runs without its seccomp baseline, and why. */
+	degraded?: string;
+	/** No usable backend and the operator allowed this worker's commands to run without one. */
+	unconfined?: true;
 	writableRoots: ReadonlyArray<string>;
 	gitWritablePaths: ReadonlyArray<string>;
 	/** Whether the worker's commands could reach any network. */
@@ -123,7 +128,7 @@ export interface WorkerSandboxReceipt {
  * and a missing backend leave a network grant open.
  */
 export function workerEgressMode(spec: WorkerSandboxSpec, availability: SandboxAvailability): EgressMode {
-	if (!availability.available) return spec.mode === "auto" ? "open" : "off";
+	if (!sandboxUsable(spec.mode, availability)) return spec.unconfined === true ? "open" : "off";
 	if (!spec.network) return "off";
 	return spec.egress !== undefined && availability.backend === "bwrap" ? "proxied" : "open";
 }
@@ -143,14 +148,17 @@ export function workerSandboxReceipt(
 			egress: "open",
 		};
 	}
+	const usable = sandboxUsable(spec.mode, availability);
 	return {
 		mode: spec.mode,
-		backend: availability.available ? availability.backend : null,
+		backend: usable ? availability.backend : null,
 		available: availability.available,
 		...(availability.reason ? { reason: availability.reason } : {}),
+		...(availability.degraded !== undefined ? { degraded: availability.degraded } : {}),
+		...(!usable && spec.unconfined === true ? { unconfined: true as const } : {}),
 		writableRoots: [...spec.writableRoots],
 		gitWritablePaths: [...spec.gitWritablePaths],
-		network: spec.network || (spec.mode === "auto" && !availability.available),
+		network: spec.network || (!usable && spec.unconfined === true),
 		egress: workerEgressMode(spec, availability),
 	};
 }
@@ -206,10 +214,13 @@ export function workerMcpNoNetworkNotice(
 /** One sentence for the worker's dynamic safety line. */
 export function workerSandboxLine(spec: WorkerSandboxSpec | undefined, availability: SandboxAvailability): string {
 	if (spec === undefined) return "Shell sandbox: off.";
-	if (!availability.available) {
-		return spec.mode === "required"
-			? `Shell sandbox: unavailable (${availability.reason ?? "no backend"}); shell and verification commands are refused.`
-			: `Shell sandbox: unavailable (${availability.reason ?? "no backend"}); commands run unsandboxed.`;
+	if (!sandboxUsable(spec.mode, availability)) {
+		const why = availability.available
+			? `partial: ${availability.degraded ?? "no seccomp baseline"}`
+			: `unavailable (${availability.reason ?? "no backend"})`;
+		return spec.unconfined === true
+			? `Shell sandbox: ${why}; the operator allowed your commands to run unconfined, with this account's files and network, so keep them inside your task.`
+			: `Shell sandbox: ${why}; shell and verification commands are refused.`;
 	}
 	// Seatbelt has no private mount: its profile admits the shared system temp
 	// directories, and the profile is unverified on macOS (seatbelt.ts), so the
@@ -226,7 +237,9 @@ export function workerSandboxLine(spec: WorkerSandboxSpec | undefined, availabil
 			? ""
 			: ` These write-root files do not exist yet and shell commands cannot create them, so create each with the write tool before any command writes to it: ${missing.join(", ")}.`;
 	const backend = seatbelt ? "seatbelt (experimental, unverified macOS profile)" : availability.backend;
-	return `Shell sandbox: ${backend}. Commands you run can write ${writes}; .git and .pancode stay read-only; ${workerNetworkPhrase(spec, availability)}; credential variables are unset and secret files such as .env and private keys cannot be read, so name a command that needs one in your result instead of working around it.${seed}`;
+	const partial =
+		availability.degraded !== undefined ? ` It is partial: no seccomp baseline (${availability.degraded}).` : "";
+	return `Shell sandbox: ${backend}.${partial} Commands you run can write ${writes}; .git and .pancode stay read-only; ${workerNetworkPhrase(spec, availability)}; credential variables are unset and secret files such as .env and private keys cannot be read, so name a command that needs one in your result instead of working around it.${seed}`;
 }
 
 function workerNetworkPhrase(spec: WorkerSandboxSpec, availability: SandboxAvailability): string {

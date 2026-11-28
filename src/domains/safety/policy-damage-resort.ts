@@ -13,6 +13,7 @@ import {
 	outwardLineLeaves,
 	outwardShellReason,
 	SNAPSHOT_RECOVERABLE_GIT_RULE_IDS,
+	STARTUP_PATH_RULE_ID,
 } from "./containment.js";
 import type { DamageControlMatch } from "./damage-control.js";
 import { commandInvokesGit, describeGitHookChange } from "./hook-drift.js";
@@ -57,7 +58,11 @@ export const SCRATCH_DISPOSABLE_REASON =
 	"it deletes only inside scratch roots, whose contents are disposable; no workspace snapshot covers them, so /rewind does not undo it; it needs no approval";
 
 /** Asks only the operator answers; a deferred former block joins their reasons instead of replacing them. */
-export const OPERATOR_ONLY_ASKS: ReadonlySet<string> = new Set(["project-settings-confirm", "hub-confirm"]);
+export const OPERATOR_ONLY_ASKS: ReadonlySet<string> = new Set([
+	"project-settings-confirm",
+	"hub-confirm",
+	STARTUP_PATH_RULE_ID,
+]);
 
 /** A single git worktree discard with no global options, which runs nothing else. */
 export const LONE_GIT_DISCARD = /^git\s+(?:reset|checkout|restore|clean|stash)\s/u;

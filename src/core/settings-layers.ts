@@ -507,6 +507,11 @@ const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }>
 		key: "sandboxUnixSockets",
 		message: "sandbox unix-socket access is set only in user settings; project value ignored",
 	},
+	// A repository could otherwise run its own commands with no sandbox on a host that has none.
+	{
+		key: "sandboxUnconfinedLocalWorkers",
+		message: "unconfined local workers are allowed only in user settings; project value ignored",
+	},
 	// The cache is the home's, not a repository's, and a tiny cap would make every startup empty it.
 	{
 		key: "sandboxCacheMaxGiB",

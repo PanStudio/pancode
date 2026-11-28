@@ -355,7 +355,7 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 	writeFileSync(join(root, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
 	const unsandboxedWorktree = createTaskWorktree(root, "unsandboxed", undefined, "merge", externalParent);
 	const sandboxedWorktree = createTaskWorktree(root, "sandboxed", undefined, "merge", externalParent);
-	const baseEnvelope = (backend: "none" | "bwrap") =>
+	const baseEnvelope = (backend: "none" | "bwrap", unconfined?: true) =>
 		resolveWorkerEnvelope({
 			role: "builder",
 			capabilityClass: "builder",
@@ -369,7 +369,7 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 			host: { networkStripped: false, shellStripped: false, confinesWrites: backend === "bwrap", harnessTools: new Set() },
 			skills: { names: [], paths: [], disabled: true, contextAttached: () => false },
 			read: { roots: [root], outside: [] },
-			sandbox: { backend, applies: true, egress: "off", networkOff: false },
+			sandbox: { backend, applies: true, egress: "off", networkOff: false, ...(unconfined ? { unconfined } : {}) },
 			approval: { autonomy: "default", asks: "deny" },
 			permitDigest: "test",
 		});
@@ -396,6 +396,21 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 	});
 	assert.equal(existsSync(join(unsandboxedWorktree.path, "node_modules")), false);
 	assert.equal(unsandboxed.spec?.backendExpected, undefined);
+	assert.equal(
+		unsandboxed.spec?.unconfined,
+		undefined,
+		"no backend without consent seals a worker that refuses commands",
+	);
+	const consented = baseEnvelope("none", true);
+	assert.equal(consented.sandbox.unconfined, true);
+	const allowed = workerSandboxFor({
+		runtimeKind: "http",
+		req: { agentId: "coder", executionRole: "builder", task: "edit", cwd: root },
+		pathScope: emptyScope(root),
+		envelope: consented,
+		settings: undefined,
+	});
+	assert.equal(allowed.spec?.unconfined, true);
 
 	const sandboxed = workerSandboxFor({
 		runtimeKind: "http",

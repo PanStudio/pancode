@@ -97,6 +97,11 @@ export interface ApprovalRequestView {
 	 */
 	sandboxed?: true;
 	/**
+	 * Why the agent says a sandbox escape must leave the sandbox: its `unsandboxed_reason`, sanitized, scrubbed and
+	 * bounded. The agent's words, which the card labels as such; the operator weighs them, PanCode does not.
+	 */
+	escapeReason?: string;
+	/**
 	 * The session option of a sandbox escape (M-7): the label naming the scope it grants and what choosing it
 	 * does. Harness text read from the parked call, never the model's.
 	 */
