@@ -38,6 +38,8 @@ import {
 } from "./chat-entry-rows.js";
 import { PROSE_GUTTER_WIDTH } from "./chat-ink.js";
 import { renderTextSegmentLines } from "./chat-markdown.js";
+import { createChatCache, RENDERS_PER_ENTRY } from "./chat-panel/cache.js";
+import type { ChatPanelScope } from "./chat-panel/scope.js";
 import {
 	changeSettledCall,
 	finishedCall,
@@ -96,7 +98,6 @@ import { renderWorkerEntryLines, workerTelemetryDisplay } from "./renderers/work
 import { isGenerationGuardAbort } from "./status/index.js";
 import { GLYPH } from "./theme/index.js";
 import { modelNickname } from "./theme/labels.js";
-import { skinEpoch } from "./theme/tokens.js";
 import { type TranscriptDetailPolicy, transcriptDetail } from "./transcript-detail.js";
 import {
 	type EntryRun,
@@ -404,8 +405,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		if (seg.name !== "dispatch") return;
 		for (const card of dispatchGroups.get(seg.id) ?? []) invalidateEntryCache(card);
 	};
-	let dirty = true;
-	let renderedSkinEpoch = skinEpoch();
 	let runStartedAt: number | undefined;
 	// The prompt that opens the next run: its clock starts here, so a compaction the submit runs before the model
 	// call is inside the turn's duration, as its calls and tokens are.
@@ -470,19 +469,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	 * switch back to the style shown a moment earlier.
 	 */
 	const entryRenderCache = new Map<TranscriptEntry, Map<string, string[]>>();
-	const RENDERS_PER_ENTRY = 3;
-	/**
-	 * The cache follows the transcript instead of stopping at a fixed 256
-	 * entries, which re-rendered everything past the cap on every dirty frame
-	 * (10 ms/frame at 800 entries). The ceiling bounds worst-case memory at
-	 * roughly 4096 rendered entries; past it, the excess only re-renders on
-	 * full-rebuild events (width or style change), which the entry runs
-	 * below make rare rather than per-frame.
-	 */
-	const MIN_ENTRY_RENDER_CACHE = 256;
-	const MAX_ENTRY_RENDER_CACHE = 4096;
-	const entryCacheCapacity = (): number =>
-		Math.max(MIN_ENTRY_RENDER_CACHE, Math.min(MAX_ENTRY_RENDER_CACHE, transcript.length));
 	/**
 	 * Per-entry row regions: every stretch of settled entries between two live ones is joined once into a run, which
 	 * a frame hands on by identity, so a dirty frame renders only the live entries and walks one step per run. A live
@@ -495,49 +481,35 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	const runs = new EntryRuns();
 	/** Where the last frame's pieces sit, so a re-layout can find the entries around the viewport. */
 	let frameLayout: readonly PlacedPiece[] = [];
-	/**
-	 * A viewport-first re-layout under way (`deferRelayout`): runs laid out at an earlier key stay on screen while
-	 * idle steps lay out each one again at `key`, into `replacements`; the frame after the last one swaps them all
-	 * in. A newer key starts over. `building` is the run part way through.
-	 */
-	let relayout: {
-		key: string;
-		heightKey: string;
-		width: number;
-		terminalRows: number;
-		detail: TranscriptDetailPolicy;
-		replacements: Map<EntryRun, EntryRun>;
-		building: {
-			run: EntryRun;
-			next: number;
-			parts: (readonly string[])[];
-			starts: number[];
-			rows: number;
-			key: string;
-		} | null;
-		ready: boolean;
-		scheduled: boolean;
-	} | null = null;
 	const deferRelayout = options.deferRelayout === true && options.scheduleIdle !== undefined;
 	const unboundedToolBodies = options.unboundedToolBodies === true;
 	const bareFences = options.bareCodeFences === true;
 	const copyMarks = options.copyMarks === true && !bareFences;
-	/**
-	 * Settled entries are rendered ahead, in idle time, in the styles Alt+O
-	 * cycles to, into the same per-entry cache a revisit reads. A first visit to
-	 * a style used to render every entry on the keystroke: 195 ms at 2,000
-	 * entries, against about 1 ms for a style already shown. `next` is the first
-	 * entry not yet rendered ahead; an invalidation or an insertion behind it
-	 * moves it back. Each step spends at most a few milliseconds, and the
-	 * scheduler runs steps only while nothing streams.
-	 */
-	let prerender: { width: number; terminalRows: number; style: OutputStyle; next: number } | null = null;
 	let prerenderScheduled = false;
 	const PRERENDER_STEP_MS = 3;
 
-	const markDirty = (): void => {
-		dirty = true;
+	const scope: ChatPanelScope = {
+		options,
+		transcript,
+		entryRenderCache,
+		runs,
+		dirty: true,
+		relayout: null,
+		prerender: null,
+		get cache() {
+			return cache;
+		},
 	};
+	const cache = createChatCache(scope);
+	const {
+		entryCacheCapacity,
+		markDirty,
+		invalidateEntryCache,
+		clearRenderCaches,
+		syncSkin,
+		unfreezeTail,
+		rememberRender,
+	} = cache;
 	/**
 	 * An edit whose arguments have closed shows the diff it will make before its
 	 * result lands. The file is read off the event path; the frame that shows
@@ -555,16 +527,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			markDirty();
 			options.requestRender?.();
 		});
-	};
-	const invalidateEntryCache = (entry: TranscriptEntry): void => {
-		entryRenderCache.delete(entry);
-		if (runs.list.length === 0 && prerender === null) return;
-		// From the end: what changes is nearly always the live tail, and this runs per streamed delta.
-		const index = transcript.lastIndexOf(entry);
-		if (index >= 0) runs.release(index);
-		// A worker row's gap reads the entry above it (`spawnedAtTail`), so a change there lays the worker out again.
-		if (index >= 0 && entry.role === "assistant" && transcript[index + 1]?.role === "worker") runs.release(index + 1);
-		if (prerender !== null && index >= 0 && index < prerender.next) prerender.next = index;
 	};
 	/** Read one receipt's turn from the view; it stays live until the view holds all of the turn's spend. */
 	const readReceipt = (entry: Extract<TranscriptEntry, { role: "assistant" }>, view: TelemetryView): void => {
@@ -615,7 +577,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			if (shown === entry.telemetryShown) continue;
 			entry.telemetryShown = shown;
 			invalidateEntryCache(entry);
-			dirty = true;
+			scope.dirty = true;
 		}
 		// A view still merging its cold read holds a partial session; its turns are read once it has merged.
 		if (view === null || view.seeding) return;
@@ -626,26 +588,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		liveReceipts.add(entry);
 		const view = options.getTelemetry?.() ?? null;
 		if (view !== null && !view.seeding) readReceipt(entry, view);
-	};
-	/** Full drop of both render caches; used by the toggle paths that touch many entries. */
-	const clearRenderCaches = (): void => {
-		entryRenderCache.clear();
-		runs.clear();
-		relayout = null;
-		if (prerender !== null) prerender.next = 0;
-	};
-	const syncSkin = (): void => {
-		if (renderedSkinEpoch === skinEpoch()) return;
-		renderedSkinEpoch = skinEpoch();
-		clearRenderCaches();
-		dirty = true;
-	};
-	/**
-	 * A mutation is about to land on the tail entry without an explicit
-	 * invalidation. If a run covers that entry, the run gives up its rows.
-	 */
-	const unfreezeTail = (): void => {
-		if (transcript.length > 0) runs.release(transcript.length - 1);
 	};
 
 	const now = (): number => options.now?.() ?? Date.now();
@@ -926,7 +868,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		if (runStartIndex !== undefined && at <= runStartIndex) runStartIndex += 1;
 		// Runs are stretches of indices: the ones behind the cut move up by one, and one it lands inside splits there.
 		runs.insert(at);
-		if (prerender !== null && at < prerender.next) prerender.next = at;
+		if (scope.prerender !== null && at < scope.prerender.next) scope.prerender.next = at;
 		// The entry behind the new card has a new predecessor, which decides
 		// whether it stacks or opens a council group.
 		const behind = transcript[at + 1];
@@ -1191,10 +1133,10 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		for (const live of liveReplayBlocks) {
 			if (live()) continue;
 			liveReplayBlocks.delete(live);
-			dirty = true;
+			scope.dirty = true;
 		}
 		if (
-			!dirty &&
+			!scope.dirty &&
 			cachedWidth === width &&
 			cachedTerminalRows === terminalRows &&
 			cachedDetail === detail &&
@@ -1216,21 +1158,21 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		const valid = (run: EntryRun): boolean => run.key === baseKey || run.key === heightKey;
 		// The one switch for a layout change: viewport-first while idle steps can catch the rest up, else every entry.
 		const deferring = deferRelayout && !unboundedToolBodies;
-		if (!deferring || (relayout !== null && relayout.key !== baseKey)) relayout = null;
+		if (!deferring || (scope.relayout !== null && scope.relayout.key !== baseKey)) scope.relayout = null;
 		// The entries a re-layout renders in this frame; outside them, a run laid out at an earlier key stays.
 		let freshFrom = 0;
 		let freshTo = 0;
 		let anchor: { entry: number; offset: number; top: number } | null = null;
 		const around = (): ReturnType<typeof viewportWindow> =>
 			viewportWindow(frameLayout, cachedRegions.rows, transcript.length, viewport ?? { fromEnd: 0, rows: terminalRows });
-		if (deferring && relayout === null && runs.list.some((run) => !valid(run))) {
+		if (deferring && scope.relayout === null && runs.list.some((run) => !valid(run))) {
 			const window = around();
 			anchor = window.anchor;
 			freshFrom = window.lo;
 			freshTo = window.hi;
 			runs.splitAt(freshFrom);
 			runs.splitAt(freshTo);
-			relayout = {
+			scope.relayout = {
 				key: baseKey,
 				heightKey,
 				width,
@@ -1241,7 +1183,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				ready: false,
 				scheduled: false,
 			};
-		} else if (relayout?.ready === true) {
+		} else if (scope.relayout?.ready === true) {
 			// The swap: every row above the viewport takes its new layout at once.
 			anchor = around().anchor;
 		}
@@ -1314,8 +1256,8 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				i = run.to;
 				continue;
 			}
-			if (run !== undefined && run.from === i && relayout !== null && (run.to <= freshFrom || run.from >= freshTo)) {
-				const replacement = relayout.ready ? relayout.replacements.get(run) : undefined;
+			if (run !== undefined && run.from === i && scope.relayout !== null && (run.to <= freshFrom || run.from >= freshTo)) {
+				const replacement = scope.relayout.ready ? scope.relayout.replacements.get(run) : undefined;
 				if (replacement !== undefined && valid(replacement)) {
 					reuse(replacement);
 				} else {
@@ -1397,11 +1339,11 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			const span = entryRows(layout, anchor.entry);
 			if (span !== null) shift = span.start + Math.min(anchor.offset, Math.max(0, span.end - span.start - 1)) - anchor.top;
 		}
-		if (relayout !== null) {
-			if (!nextRuns.some((run) => !valid(run))) relayout = null;
+		if (scope.relayout !== null) {
+			if (!nextRuns.some((run) => !valid(run))) scope.relayout = null;
 			else {
 				// A run that changed since its replacement was laid out is laid out again.
-				relayout.ready = false;
+				scope.relayout.ready = false;
 				scheduleRelayout();
 			}
 		}
@@ -1414,7 +1356,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		cachedTick = tick;
 		cachedDay = day;
 		renderedRunningTool = sawRunningTool;
-		dirty = false;
+		scope.dirty = false;
 		options.onRenderMetrics?.({
 			durationMs: performance.now() - startedAt,
 			cacheHit: false,
@@ -1425,24 +1367,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		return cachedRegions;
 	};
 
-	/** Keep `rows` as `entry`'s render at `key`, within the cache's bounds. */
-	const rememberRender = (entry: TranscriptEntry, key: string, rows: string[]): void => {
-		const renders = entryRenderCache.get(entry);
-		const byKey = renders ?? new Map<string, string[]>();
-		byKey.set(key, rows);
-		if (byKey.size > RENDERS_PER_ENTRY) {
-			const oldestKey = byKey.keys().next().value;
-			if (oldestKey !== undefined) byKey.delete(oldestKey);
-		}
-		if (renders === undefined) entryRenderCache.set(entry, byKey);
-		const capacity = entryCacheCapacity();
-		while (entryRenderCache.size > capacity) {
-			const oldest = entryRenderCache.keys().next().value;
-			if (oldest === undefined) break;
-			entryRenderCache.delete(oldest);
-		}
-	};
-
 	/**
 	 * One idle step of a viewport-first re-layout: lay the runs still showing an earlier key out again at the job's,
 	 * a few milliseconds at a time, and ask for the frame that swaps them in once every one has its replacement.
@@ -1450,7 +1374,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	const relayoutStep = (): boolean => {
 		syncSkin();
 		refreshReceipts();
-		const job = relayout;
+		const job = scope.relayout;
 		if (job === null) return false;
 		const deadline = performance.now() + PRERENDER_STEP_MS;
 		const stale = (run: EntryRun): boolean => run.key !== job.key && run.key !== job.heightKey;
@@ -1502,13 +1426,13 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		}
 		job.ready = true;
 		job.scheduled = false;
-		dirty = true;
+		scope.dirty = true;
 		options.requestRender?.();
 		return false;
 	};
 	const scheduleRelayout = (): void => {
-		if (relayout === null || relayout.scheduled || options.scheduleIdle === undefined) return;
-		relayout.scheduled = true;
+		if (scope.relayout === null || scope.relayout.scheduled || options.scheduleIdle === undefined) return;
+		scope.relayout.scheduled = true;
 		options.scheduleIdle(relayoutStep);
 	};
 
@@ -1516,7 +1440,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		syncSkin();
 		// A card rendered ahead must read the view its cached siblings were checked against.
 		refreshReceipts();
-		const job = prerender;
+		const job = scope.prerender;
 		if (job === null) {
 			prerenderScheduled = false;
 			return false;
@@ -1575,13 +1499,13 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	const schedulePrerender = (width: number, terminalRows: number, style: OutputStyle): void => {
 		if (options.scheduleIdle === undefined || unboundedToolBodies) return;
 		if (
-			prerender === null ||
-			prerender.width !== width ||
-			prerender.terminalRows !== terminalRows ||
-			prerender.style !== style
+			scope.prerender === null ||
+			scope.prerender.width !== width ||
+			scope.prerender.terminalRows !== terminalRows ||
+			scope.prerender.style !== style
 		) {
-			prerender = { width, terminalRows, style, next: 0 };
-		} else if (prerender.next >= transcript.length) {
+			scope.prerender = { width, terminalRows, style, next: 0 };
+		} else if (scope.prerender.next >= transcript.length) {
 			return;
 		}
 		if (prerenderScheduled) return;
