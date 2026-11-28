@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { boundedExternalDiagnostic } from "../../../../core/external-diagnostic.js";
 import { runCommandVector, type SafeCommandResult } from "../../../../core/safe-exec.js";
+import { asRecord } from "../../../../core/type-guards.js";
 import type { Api, Model } from "../../../../engine/types.js";
-
 import { synthesizeCatalogBackedModel } from "../../catalog.js";
 import { UNMEDIATED_ENFORCEMENT } from "../../runtime-enforcement.js";
 import type { CapabilityFlags } from "../../types/capability-flags.js";
@@ -65,12 +65,6 @@ class AntigravityCatalogError extends Error {
 	}
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 export interface AntigravityModelCatalog {
 	models: string[];
 	labels: Record<string, string>;
@@ -87,9 +81,9 @@ export function parseAntigravityModelCatalogDetails(output: string): Antigravity
 			"agy returned an unreadable model catalog; update the Antigravity CLI and retry",
 		);
 	}
-	const envelope = record(decoded);
-	const command = record(envelope?.command);
-	const data = record(command?.data);
+	const envelope = asRecord(decoded);
+	const command = asRecord(envelope?.command);
+	const data = asRecord(command?.data);
 	if (envelope?.status !== "SUCCESS") {
 		const detail = boundedExternalDiagnostic(
 			typeof envelope?.error === "string"
@@ -124,7 +118,7 @@ export function parseAntigravityModelCatalogDetails(output: string): Antigravity
 	const labels: Record<string, string> = {};
 	const seen = new Set<string>();
 	for (const value of data.models) {
-		const model = record(value);
+		const model = asRecord(value);
 		const id = typeof model?.id === "string" ? model.id.trim() : "";
 		const label = typeof model?.label === "string" ? model.label.trim() : "";
 		if (id.length === 0 || id.length > MAX_MODEL_ID_CHARS || /[\r\n\0]/u.test(id)) {
