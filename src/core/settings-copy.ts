@@ -811,8 +811,8 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"While a turn waits on its own tools, such as an attached dispatch, refresh a hosted provider's prompt cache shortly before it expires when that is expected to save more than it costs. Applies to Anthropic, OpenAI and Codex routes.",
 	],
 	"chat.loopsUntilStopped": [
-		"Loops run until stopped",
-		"A /loop or job created without --count or --for keeps running until you run /loop stop, or its --until condition matches. The cost ceiling and loop guard still apply.",
+		"Loops run until canceled",
+		"A /loop or job created without --count or --for keeps running until you run /loop cancel, or its --until condition matches. The cost ceiling and loop guard still apply.",
 	],
 	"systemOne.use": [
 		"Decision engine",

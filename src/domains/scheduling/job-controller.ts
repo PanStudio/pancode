@@ -264,7 +264,7 @@ export function createJobController(options: JobControllerOptions): JobControlle
 		execution.forced = outcome;
 		execution.abort.abort(outcome === "timed_out" ? new JobClockExpired(reason) : new Error(reason));
 	}
-	function terminal(id: string, reason: "canceled" | "deadline" | "stopped"): JobRecord {
+	function terminal(id: string, reason: "canceled" | "deadline", abortNow = reason === "deadline"): JobRecord {
 		const job = current(id);
 		if (jobHasUnresolvedCleanup(job)) return job;
 		// Like running out of starts, the turn that made this job ended waiting on its match (#450).
@@ -285,14 +285,14 @@ export function createJobController(options: JobControllerOptions): JobControlle
 				draft.nextDueAt = null;
 				draft.pendingReason = null;
 				dropDelivery(draft, reason);
-				draft.cancelRequested = reason !== "stopped" && live.has(id);
-				if (reason !== "stopped") draft.generation += 1;
+				draft.cancelRequested = abortNow && live.has(id);
+				if (abortNow) draft.generation += 1;
 				const last = draft.history.at(-1);
 				if (wake && last?.evidence) queueContinuation(draft, last.id, "job_deadline", last.evidence);
 			});
 		} finally {
 			// A failed cancel receipt must not leave effects running (#411).
-			if (reason !== "stopped") abortLive(id, reason, reason === "deadline" ? "timed_out" : "canceled");
+			if (abortNow) abortLive(id, reason, reason === "deadline" ? "timed_out" : "canceled");
 		}
 		// Only the call that queued the wake announces it; a later cancel or close keeps the old delivery.
 		if (wake && result.delivery?.continuation === "job_deadline")
@@ -923,7 +923,7 @@ export function createJobController(options: JobControllerOptions): JobControlle
 				})(),
 			);
 		},
-		control(id, action, ownerInput) {
+		control(id, action, ownerInput, controlOptions) {
 			return track(
 				(async () => {
 					if (closed) throw new Error("job: controller closed");
@@ -934,9 +934,9 @@ export function createJobController(options: JobControllerOptions): JobControlle
 						return copy(job);
 					}
 					if (!owned(job)) throw new Error("job: another live host owns this job; recover only after it exits");
-					if (action === "cancel" || action === "stop") {
+					if (action === "cancel") {
 						if (jobIsComplete(job)) return copy(job);
-						job = terminal(id, action === "cancel" ? "canceled" : "stopped");
+						job = terminal(id, "canceled", controlOptions?.now === true);
 					} else if (action === "pause") {
 						if (jobIsComplete(job) || (job.state === "terminal" && job.reason !== "condition")) return copy(job);
 						job = commit(job, (draft) => {

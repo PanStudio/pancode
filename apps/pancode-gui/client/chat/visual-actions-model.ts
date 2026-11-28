@@ -56,7 +56,7 @@ const COMMAND_TITLES: Readonly<Record<string, string>> = {
 	"loop status": "Loop status",
 	"loop pause": "Pause a loop",
 	"loop resume": "Resume a loop",
-	"loop stop": "Stop a loop",
+	"loop cancel": "Cancel a loop",
 	mcp: "MCP servers",
 	"mcp list": "List MCP servers",
 	"mcp trust": "Trust an MCP server",

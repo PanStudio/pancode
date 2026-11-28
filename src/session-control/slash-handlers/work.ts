@@ -364,7 +364,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			injectsUserTurnExcept: LOOP_OBSERVE_VERBS,
 			reads: ["", "status"],
 			// Resume restarts jobs that fire turns, so a ceiling does not admit it.
-			sessionOnly: ["stop", "pause"],
+			sessionOnly: ["cancel", "pause"],
 		},
 		description: "Run a bounded recurring job: a main-context task or a typed command",
 		group: "Work",
@@ -388,7 +388,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				status: { positionals: [{ name: "id", required: false }] },
 				pause: { positionals: [{ name: "id", required: true }] },
 				resume: { positionals: [{ name: "id", required: true }] },
-				stop: { flags: [{ name: "--now" }], positionals: [{ name: "id", required: false }] },
+				cancel: { flags: [{ name: "--now" }], positionals: [{ name: "id", required: false }] },
 			},
 		},
 		subcommandDescriptions: LOOP_SUBCOMMAND_DESCRIPTIONS,
