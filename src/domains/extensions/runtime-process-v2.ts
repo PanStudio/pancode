@@ -45,6 +45,7 @@ import type { EmbeddingResponse } from "../providers/embedding/types.js";
 import { parseExtensionManifest } from "./discovery.js";
 import { extensionContentDigestWithCapture } from "./integrity.js";
 import {
+	assertPlainProjectDir,
 	type ExtensionSandboxReport,
 	extensionProjectDir,
 	planExtensionLaunch,
@@ -315,6 +316,8 @@ export class ExtensionRuntimeProcessV2 {
 					this.createdProject = prepareProjectDir(this.project);
 					// Data the runtime keeps in the project stays out of Git, as every other `.pancode/` state does.
 					ensureProjectIgnore(this.project.root);
+				} else {
+					assertPlainProjectDir(this.project);
 				}
 			}
 			cpSync(extension.provenance.canonicalRoot, copy, { recursive: true, dereference: false, verbatimSymlinks: true });
@@ -365,7 +368,7 @@ export class ExtensionRuntimeProcessV2 {
 					packageCopy: copy,
 					storeDir: options.storeDir,
 					bootstrap,
-					...(this.project?.writable ? { projectDir: this.project.dir } : {}),
+					...(this.project !== undefined ? { project: { dir: this.project.dir, writable: this.project.writable } } : {}),
 				},
 				argv: [
 					process.execPath,

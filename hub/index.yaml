@@ -36,7 +36,7 @@ entries:
       work blind, vote, and keep standings.
     version: 0.1.0
     sourceUrl: packs/extensions/arena
-    sha256: fa5b5e3ef30bb6aa820e5048937dc1aa0fc4ebb13d4a52df8ffc4f6b8db02b21
+    sha256: 41079852225ff939ac0fb5ca6cf9f8175e1425b282ba472e08f571d8c43ec548
     license: LicenseRef-PanCode-1.0
     tier: core
     envelopeDigest: 7e656e63c5f05e76e019d4a108aead6e5de6e8cf5ccd7aa1a25141b63738fc04

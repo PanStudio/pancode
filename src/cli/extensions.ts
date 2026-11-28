@@ -401,6 +401,7 @@ function verbWorkspace(argv: ReadonlyArray<string>): { dir: string } | { error: 
 		if (arg === "--") return null;
 		const value = arg === "--cwd" ? argv[i + 1] : arg.startsWith("--cwd=") ? arg.slice("--cwd=".length) : undefined;
 		if (value === undefined) continue;
+		if (value.trim().length === 0) return { error: "--cwd requires a directory" };
 		const dir = resolve(value);
 		return statSync(dir, { throwIfNoEntry: false })?.isDirectory() === true
 			? { dir }

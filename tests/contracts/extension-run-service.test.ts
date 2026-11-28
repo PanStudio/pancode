@@ -28,7 +28,11 @@ import type { RunCommandVectorOptions, SafeCommandResult } from "../../src/core/
 import { applyToolEnvControls, EXTENSION_RUN_DEPTH_ENV } from "../../src/core/tool-env-controls.js";
 import { extensionInvocation } from "../../src/domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
-import { extensionProjectDir, prepareProjectDir } from "../../src/domains/extensions/runtime-sandbox.js";
+import {
+	assertPlainProjectDir,
+	extensionProjectDir,
+	prepareProjectDir,
+} from "../../src/domains/extensions/runtime-sandbox.js";
 import {
 	createExtensionRunService,
 	type ExtensionRunCeilings,
@@ -349,15 +353,136 @@ describe("an extension's project directory", () => {
 		mkdirSync(join(root, "sub"));
 		const project = extensionProjectDir(join(root, "sub"), "arena");
 		assert.deepEqual(project, { root, dir: join(root, ".pancode", "data", "arena") });
+		assert.throws(() => extensionProjectDir(root, "../escape"), /invalid extension id/u);
+		assert.throws(() => extensionProjectDir(root, "a/b"), /invalid extension id/u);
+		assert.throws(() => extensionProjectDir(root, ".."), /invalid extension id/u);
+		// Read-only validation allows absent directories without creating them.
+		assert.doesNotThrow(() => assertPlainProjectDir(project));
+		assert.equal(existsSync(join(root, ".pancode")), false);
 		assert.deepEqual(prepareProjectDir(project), [
 			join(root, ".pancode"),
 			join(root, ".pancode", "data"),
 			join(root, ".pancode", "data", "arena"),
 		]);
 		assert.deepEqual(prepareProjectDir(project), []);
+		assert.doesNotThrow(() => assertPlainProjectDir(project));
 		rmSync(join(root, ".pancode", "data"), { recursive: true });
 		symlinkSync(tmpdir(), join(root, ".pancode", "data"));
 		assert.throws(() => prepareProjectDir(project), /not a plain directory/u);
+		assert.throws(() => assertPlainProjectDir(project), /not a plain directory/u);
+	});
+
+	it("isolates ctx.projectDir between two packs and enforces read-only sessions", async (t) => {
+		const env = await isolatePancodeEnv("pancode-ext-proj-iso-");
+		const previous = process.cwd();
+		const cleanup: Array<() => Promise<void>> = [];
+		t.after(async () => {
+			for (const step of cleanup.reverse()) await step();
+			process.chdir(previous);
+			env.restore();
+		});
+		const repo = join(env.dir, "repo");
+		const sub = join(repo, "sub");
+		mkdirSync(sub, { recursive: true });
+		execFileSync("git", ["init", "-q"], { cwd: repo });
+		process.env.HOME = env.dir;
+		const makePack = (id: string, readWorkspace: boolean) => {
+			const src = join(env.dir, `src-${id}`);
+			mkdirSync(src);
+			writeFileSync(
+				join(src, "pancode-extension.json"),
+				JSON.stringify({
+					id,
+					version: "1.0.0",
+					description: `Pack ${id}`,
+					runtime: {
+						api: 2,
+						entrypoint: "extension.mjs",
+						state: { project: true },
+						permissions: readWorkspace ? { fs: { read: ["workspace"] } } : {},
+						commands: [{ name: "probe", description: "probe projectDir" }],
+					},
+				}),
+			);
+			writeFileSync(
+				join(src, "extension.mjs"),
+				`import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+export default function (api) {
+  api.handle("probe", (args, ctx) => {
+    const [op, file, content] = args.split(" ");
+    if (op === "write") {
+      writeFileSync(join(ctx.projectDir, file), content);
+      return { text: "wrote:" + ctx.projectDir };
+    }
+    if (op === "read") return { text: readFileSync(join(ctx.projectDir, file), "utf8") };
+    if (op === "peek") {
+      try {
+        return { text: "leaked:" + readFileSync(file, "utf8") };
+      } catch (e) {
+        return { text: "blocked:" + (e && e.code ? e.code : String(e)) };
+      }
+    }
+    return { text: String(ctx.projectDir) };
+  });
+}
+`,
+			);
+			assert.ok(installExtension(src, { cwd: repo, scope: "user" }).extension?.loadable);
+		};
+		makePack("pack-alpha", false);
+		makePack("pack-beta", true);
+		process.chdir(repo);
+
+		const writer = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "s1", mode: "interactive" }),
+			isIdle: () => true,
+		});
+		cleanup.push(() => writer.dispose());
+		assert.equal((await writer.reload("startup")).status, "committed");
+
+		const wroteA = await writer.invoke(extensionInvocation("pack-alpha", "probe"), "write secret.txt alpha-secret");
+		assert.match(wroteA.text, /^wrote:/);
+		const alphaSecretPath = join(realpathSync(repo), ".pancode", "data", "pack-alpha", "secret.txt");
+		assert.equal(readFileSync(alphaSecretPath, "utf8"), "alpha-secret");
+
+		// Even with workspace read permission, pack-beta cannot read pack-alpha's projectDir.
+		const peekB = await writer.invoke(extensionInvocation("pack-beta", "probe"), `peek ${alphaSecretPath}`);
+		assert.match(peekB.text, /^blocked:/, `pack-beta unexpectedly read pack-alpha's file: ${peekB.text}`);
+
+		// In a read-only session from a subdirectory, pack-alpha reads its own projectDir but cannot write to it.
+		const reader = new OperatorExtensions({
+			context: () => ({ workspace: sub, sessionId: "s2", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "pack-alpha",
+			readOnly: () => true,
+		});
+		cleanup.push(() => reader.dispose());
+		assert.equal((await reader.reload("startup")).status, "committed");
+		const readA = await reader.invoke(extensionInvocation("pack-alpha", "probe"), "read secret.txt");
+		assert.equal(readA.text, "alpha-secret");
+		await assert.rejects(
+			() => reader.invoke(extensionInvocation("pack-alpha", "probe"), "write ro.txt nope"),
+			/Access to this API has been restricted|EACCES|EROFS|ERR_ACCESS_DENIED/u,
+		);
+
+		// A symlink planted along .pancode/data/pack-alpha is refused even in a read-only session.
+		await writer.dispose();
+		await reader.dispose();
+		rmSync(join(repo, ".pancode", "data", "pack-alpha"), { recursive: true });
+		symlinkSync(tmpdir(), join(repo, ".pancode", "data", "pack-alpha"));
+		const badReader = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "s3", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "pack-alpha",
+			readOnly: () => true,
+		});
+		cleanup.push(() => badReader.dispose());
+		await badReader.reload("startup");
+		await assert.rejects(
+			() => badReader.invoke(extensionInvocation("pack-alpha", "probe"), "read secret.txt"),
+			/not a plain directory/u,
+		);
 	});
 });
 

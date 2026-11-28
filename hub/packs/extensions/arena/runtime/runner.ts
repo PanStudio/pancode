@@ -164,6 +164,7 @@ async function runMatch(ctx: ExtensionContextV2, root: string, request: ArenaRun
 			// Worktrees are made in blind-slot order (A first), never by --contender position, so their order says
 			// nothing the label does not.
 			for (const index of match.order) {
+				if (ctx.signal.aborted) break;
 				const created = await worktrees.create({ base: base.sha });
 				const place = places[index] as Place;
 				place.worktree = created.id;

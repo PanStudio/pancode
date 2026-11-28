@@ -4,6 +4,26 @@ import { type CliCommand, commandPlan } from "../cli-commands.js";
 import { runPancodeCommand, stopPancodeCommand } from "../process-policy.js";
 import { AppProblem } from "./problem.js";
 
+/** Closed-set classifier for `pancode arena` exit 2 when `extension:arena` is absent, disabled, or failed to load. */
+export function arenaPackProblem(stderr: string): AppProblem | null {
+	if (stderr.includes("pancode arena: extension:arena is not installed;"))
+		return new AppProblem(
+			"unsupported",
+			"The arena extension (extension:arena) is not installed. Run pancode hub install extension:arena to install it.",
+		);
+	if (stderr.includes("pancode arena: extension:arena is disabled;"))
+		return new AppProblem(
+			"unsupported",
+			"The arena extension (extension:arena) is disabled. Run pancode extensions enable arena to enable it.",
+		);
+	if (stderr.includes("pancode arena: extension:arena is installed but does not load;"))
+		return new AppProblem(
+			"unsupported",
+			"The arena extension (extension:arena) is installed but did not load. Run pancode extensions list to see why.",
+		);
+	return null;
+}
+
 export class CliCancelled extends Error {}
 export class CliRunner {
 	private jobs = new Map<AbortController, Promise<unknown>>();
@@ -47,6 +67,8 @@ export class CliRunner {
 			let stdoutBytes = 0,
 				stderrBytes = 0;
 			const chunks: Buffer[] = [];
+			// Retained only for closed-set classification (never echoed raw to callers).
+			let stderrHead = "";
 			let kill: NodeJS.Timeout | undefined;
 			const stop = (error: Error) => {
 				failure ??= error;
@@ -71,6 +93,7 @@ export class CliRunner {
 			});
 			child.stderr.on("data", (chunk: Buffer) => {
 				stderrBytes += chunk.length;
+				if (stderrHead.length < 4096) stderrHead += chunk.toString("utf8").slice(0, 4096 - stderrHead.length);
 				if (stderrBytes > 256 * 1024)
 					stop(new AppProblem("operation_failed", "The pancode command printed more than 256 KiB of errors."));
 			});
@@ -89,6 +112,13 @@ export class CliRunner {
 				// research report whose recomputed grades disagree with the journal.
 				const recordOnOne = command.kind === "machines.check" || command.kind === "research.report";
 				if (code !== 0 && !(recordOnOne && code === 1)) {
+					if (code === 2 && command.kind.startsWith("arena.")) {
+						const pack = arenaPackProblem(stderrHead);
+						if (pack) {
+							reject(pack);
+							return;
+						}
+					}
 					reject(
 						new AppProblem(
 							"operation_failed",
