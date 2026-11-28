@@ -207,7 +207,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"integrations.externalAgents.defaults.turnTimeoutMs": "How long a single delegated turn may run.",
 	"integrations.externalAgents.defaults.permissionTimeoutMs":
 		"How long PanCode waits for your answer to an external agent's permission request.",
-	targets: "Inference targets available for chat and workers. Add one with `pancode targets add`.",
+	targets: "Inference targets available for chat and workers. Add one with `pancode configure`.",
 	funding:
 		"Optional user-owned fees, grants, payers and electricity facts for reports. Never grants spending authority.",
 	"interface.keybindings": "Custom key overrides layered on the defaults.",

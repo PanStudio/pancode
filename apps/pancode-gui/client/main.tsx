@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, isRouteErrorResponse, RouterProvider, useRouteError } from "react-router";
 import { machinePrefix } from "../contracts/pages.js";
-import { ApiProblem, createClient } from "./api/client.js";
+import { createClient, problemCode } from "./api/client.js";
 import { createCredentials } from "./api/credentials.js";
 import { launchSecret, listenForForget, listenForLaunchLink } from "./api/token.js";
 import { App } from "./app.js";
@@ -42,18 +42,11 @@ const queries = new QueryClient({
 			if (query.getObserversCount() === 0) return;
 			if (query.meta?.errorSurface === "inline") return;
 			// The project list explains unavailable saved history beside the affected tasks.
-			if (query.queryKey[0] === "session-history" && error instanceof ApiProblem && error.problem.code === "unsupported")
-				return;
+			if (query.queryKey[0] === "session-history" && problemCode(error) === "unsupported") return;
 			// A link to a saved task this server has not opened answers not_found on the first read, and
 			// the task page shows that state with its own way to resume. Only that first read is quiet:
 			// a snapshot that was loaded and then goes missing is still reported, as is everything else.
-			if (
-				query.queryKey[0] === "session" &&
-				query.state.data === undefined &&
-				error instanceof ApiProblem &&
-				error.problem.code === "not_found"
-			)
-				return;
+			if (query.queryKey[0] === "session" && query.state.data === undefined && problemCode(error) === "not_found") return;
 			reportProblem(error, query.queryHash);
 		},
 	}),

@@ -26,6 +26,7 @@ import type { PaneSection } from "./pane-context.js";
 import { useSessionTelemetry } from "./session-telemetry.js";
 import { livePlanView } from "./telemetry-model.js";
 import "./session-board.css";
+import { sessionBoardQuery } from "../api/queries.js";
 
 /**
  * The terminal's /tasks, /decisions and /memory views, read from the session board. The operator's own
@@ -60,13 +61,8 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 	const params = { params: { id: sessionId }, query: {}, body: {} };
 	const supported = !!capabilities?.board;
 	const board = useQuery({
-		queryKey: ["session-board", sessionId, settledTurns],
-		queryFn: () => client.call(routes.sessionBoard, params),
+		...sessionBoardQuery(client, sessionId, settledTurns),
 		enabled: sessionOpen && supported,
-		retry: false,
-		// The next settled turn changes the key; the last answer stays on screen until the new one lands,
-		// so rows (and the focus a row holds) do not vanish between the two reads.
-		placeholderData: (previous) => previous,
 	});
 	// The mutation is still pending inside onSuccess, so every row button is disabled there; a focus
 	// call from that callback (or a frame after it) can land before the enabled rows commit and is lost.

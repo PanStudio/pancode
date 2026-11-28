@@ -2,8 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
-import { type Client, emptyInput } from "../api/client.js";
+import type { Client } from "../api/client.js";
 import { THEME_COLORS } from "../design/navigation.js";
 import { AppPreferencesPanel } from "../design/pwa.js";
 import { Keycaps } from "../interaction/Keycaps.js";
@@ -13,6 +12,7 @@ import { settingsDestination } from "../shell/shell-model.js";
 import { setThemeChoice, type ThemeChoice, useTheme } from "../shell/theme.js";
 import { useWorkspaceSelection } from "./workspace-selection.js";
 import "./general.css";
+import { metaQuery } from "../api/queries.js";
 
 const THEME_CHOICES: readonly { id: ThemeChoice; label: string; hint: string }[] = [
 	{ id: "dark", label: "Dark", hint: "Black ground" },
@@ -35,7 +35,7 @@ export function GeneralPage({ client }: { client: Client }) {
 	const shell = useShell();
 	const selection = useWorkspaceSelection(client);
 	const theme = useTheme();
-	const meta = useQuery({ queryKey: ["meta"], queryFn: () => client.call(routes.meta, emptyInput) });
+	const meta = useQuery(metaQuery(client));
 	return (
 		<section className="general">
 			<div className="panel-heading">

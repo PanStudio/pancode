@@ -12,6 +12,7 @@ import {
 	type TrackedRequest,
 	terminalOperation,
 } from "./operation-request-model.js";
+import { freshMeta, metaQuery } from "./queries.js";
 
 type Store = ReturnType<typeof createRequestStore>;
 const clients = new WeakMap<Client, Map<string, Store>>();
@@ -40,8 +41,7 @@ export function useOperationRequest(
 	const state = useSyncExternalStore(store.subscribe, store.read, store.read);
 	const { request } = state;
 	const meta = useQuery({
-		queryKey: ["meta"],
-		queryFn: ({ signal }) => client.call(routes.meta, emptyInput, undefined, signal),
+		...metaQuery(client),
 		retry: false,
 		refetchOnMount: "always",
 		meta: { errorSurface: "inline" },
@@ -56,8 +56,7 @@ export function useOperationRequest(
 		refetchInterval: (query) => (query.state.error || epochChanged || store.read().request?.settled ? false : 1000),
 		queryFn: async ({ signal }) => {
 			if (!request?.operationId) throw new Error("No accepted operation to read.");
-			const currentMeta = await client.call(routes.meta, emptyInput, undefined, signal);
-			queries.setQueryData(["meta"], currentMeta);
+			const currentMeta = await freshMeta(client, queries, signal);
 			if (changedRequestEpoch(request, currentMeta.epoch))
 				throw new Error("The server restarted. This operation belongs to the previous server.");
 			const result = await client.call(
@@ -76,8 +75,7 @@ export function useOperationRequest(
 		if (!store.sending(sent.key)) return;
 		let error: string | null = null;
 		try {
-			const currentMeta = await client.call(routes.meta, emptyInput);
-			queries.setQueryData(["meta"], currentMeta);
+			const currentMeta = await freshMeta(client, queries);
 			if (changedRequestEpoch(sent, currentMeta.epoch))
 				throw new Error("The server restarted. The original request cannot be replayed safely.");
 			store.patch(sent.key, { epoch: currentMeta.epoch });

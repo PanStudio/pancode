@@ -539,3 +539,58 @@ test("a refetch after a read-only observer mounts never stores a snapshot older 
 	assert.equal(queries.getQueryData<{ revision: number }>(["session", id])?.revision, 5);
 	assert.equal(reader.getCurrentResult().data, 5);
 });
+
+test("saved history redacts URL credentials in names and previews and reports the current route after a model switch", {
+	timeout: 20000,
+}, async (t) => {
+	const h = await harness({});
+	t.after(h.close);
+	await mkdir(join(h.home.path, "sp1-history"));
+	const project = await realpath(join(h.home.path, "sp1-history"));
+	await seedHistory(h.home.path, project);
+	const ledger = join(h.home.path, "state", "sessions"),
+		[bucket = ""] = await readdir(ledger),
+		meta1Path = join(ledger, bucket, "seeded-1", "meta.json"),
+		meta2Path = join(ledger, bucket, "seeded-2", "meta.json");
+	const meta1 = JSON.parse(await readFile(meta1Path, "utf8")) as Record<string, unknown>;
+	const meta2 = JSON.parse(await readFile(meta2Path, "utf8")) as Record<string, unknown>;
+	await writeFile(
+		meta1Path,
+		JSON.stringify({
+			...meta1,
+			name: "Check https://alice:supersecret@api.example.com/v1",
+			target: "initial-target",
+			model: "initial-model",
+			currentTarget: "switched-target",
+			currentModel: "switched-model",
+		}),
+	);
+	await writeFile(
+		meta2Path,
+		JSON.stringify({
+			...meta2,
+			firstMessagePreview: "Inspect https://bob:topsecret@db.internal/query",
+		}),
+	);
+	const current2Path = join(ledger, bucket, "seeded-2", "current.jsonl");
+	const current2 = await readFile(current2Path, "utf8");
+	await writeFile(
+		current2Path,
+		current2.replace(
+			"Why does the reduction step drop the last sample of every run? Look at reduce.py and the tests.",
+			"Inspect https://bob:topsecret@db.internal/query",
+		),
+	);
+	const workspace = await json(await h.post("/api/workspaces", { path: project }), routes.openWorkspace.response);
+	const history = await json(
+		await h.request(`/api/workspaces/${workspace.id}/sessions`),
+		routes.sessionHistory.response,
+	);
+	const first = history.find((row) => row.id === "seeded-1");
+	const second = history.find((row) => row.id === "seeded-2");
+	assert.equal(first?.name, "Check https://alice:[redacted]@api.example.com/v1");
+	assert.equal(first?.target, "switched-target");
+	assert.equal(first?.model, "switched-model");
+	assert.equal(second?.firstMessagePreview, "Inspect https://bob:[redacted]@db.internal/query");
+	assert.doesNotMatch(JSON.stringify(history), /supersecret|topsecret/);
+});

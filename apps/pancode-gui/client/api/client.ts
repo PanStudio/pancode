@@ -13,6 +13,10 @@ export class ApiProblem extends Error {
 		super(problem.detail);
 	}
 }
+/** The server's problem code, or undefined for any other failure. */
+export function problemCode(error: unknown): string | undefined {
+	return error instanceof ApiProblem ? error.problem.code : undefined;
+}
 /**
  * `prefix` is `/m/<id>` while this client drives a registered node's own GUI through the app on this
  * machine, which proxies every call there; empty for this machine's own app. `credentials` is the

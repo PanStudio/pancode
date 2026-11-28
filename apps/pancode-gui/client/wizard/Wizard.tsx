@@ -7,9 +7,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
-import { emptyInput } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { notify } from "../design/notifications.js";
 import { announce, setPageTitle } from "../interaction/announcer.js";
@@ -47,6 +45,7 @@ import {
 	type WizardView,
 } from "./wizard-model.js";
 import "./wizard.css";
+import { workspacesQuery } from "../api/queries.js";
 
 /** Where the wizard hands the window back: home, the page it was opened from, or (first run) the pages that need no model. */
 export type WizardExit = "home" | "back" | "explore";
@@ -111,7 +110,7 @@ export default function Wizard({
 	onExit: (to: WizardExit) => void;
 }) {
 	const session = useSetupSession(client);
-	const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => client.call(routes.workspaces, emptyInput) });
+	const workspaces = useQuery(workspacesQuery(client));
 	const [needsWorkspace, setNeedsWorkspace] = useState<boolean | null>(null);
 	const [phase, setPhase] = useState<"setup" | "workspace">("setup");
 	// A first run starts the child behind its welcome screen. A returning user's route is found before they see

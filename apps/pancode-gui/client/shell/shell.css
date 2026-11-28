@@ -405,7 +405,7 @@
 .wb-task__main {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: var(--space-2);
 	flex: 1;
 	min-width: 0;
 	height: var(--wb-row);
@@ -439,7 +439,7 @@
 }
 .wb-task__menu {
 	position: absolute;
-	right: 4px;
+	right: var(--space-1);
 	opacity: 0;
 }
 .wb-task:hover .wb-task__menu,
@@ -658,9 +658,9 @@
 /* The rail's toggle, floating on the card while the rail is collapsed. */
 .wb-float {
 	position: absolute;
-	top: 8px;
-	left: 8px;
-	z-index: 4;
+	top: var(--space-2);
+	left: var(--space-2);
+	z-index: var(--layer-float);
 	display: none;
 }
 .wb[data-sidebar="collapsed"] .wb-stage[data-mode="settings"] .wb-float {
@@ -712,7 +712,7 @@
 /* A filled action in the bar is cut to the bar's control height. */
 .wb-bar > .primary {
 	min-height: 30px;
-	padding: 0 12px;
+	padding: 0 var(--space-3);
 	gap: var(--space-2);
 }
 .wb-bar > .primary .icon {
@@ -815,7 +815,7 @@ button.wb-chip:hover:not(:disabled) {
 	height: 30px;
 	/* The status chip is a paragraph; its default margin made the bar taller than its controls. */
 	margin: 0;
-	padding: 0 8px;
+	padding: 0 var(--space-2);
 	border-color: transparent;
 	border-radius: var(--radius-sm);
 	background: transparent;
@@ -979,7 +979,7 @@ button.wb-chip:hover:not(:disabled) {
 	.wb[data-sidebar="collapsed"] .wb-sidebar {
 		position: fixed;
 		inset: 0 auto 0 0;
-		z-index: 30;
+		z-index: var(--layer-modal);
 		width: min(86vw, 320px);
 		background: var(--surface);
 		border-right: 1px solid var(--line);
@@ -1001,7 +1001,7 @@ button.wb-chip:hover:not(:disabled) {
 		display: block;
 		position: fixed;
 		inset: 0;
-		z-index: 20;
+		z-index: var(--layer-scrim);
 		min-height: 0;
 		border: 0;
 		border-radius: 0;
@@ -1050,7 +1050,7 @@ button.wb-chip:hover:not(:disabled) {
 	position: absolute;
 	right: 0;
 	top: calc(100% + 6px);
-	z-index: 20;
+	z-index: var(--layer-menu);
 	display: grid;
 	gap: 1px;
 	/* As wide as its longest item, so each item is one line; the cap keeps a long project name on screen. */
@@ -1219,7 +1219,7 @@ button.wb-chip:hover:not(:disabled) {
 	display: inline-flex;
 	gap: 6px;
 	width: auto;
-	padding: 0 8px;
+	padding: 0 var(--space-2);
 }
 
 /* ---- Open workspace dialog ---------------------------------------------------------- */
@@ -1250,7 +1250,7 @@ button.wb-chip:hover:not(:disabled) {
 	min-width: 0;
 	height: 26px;
 	min-height: 0;
-	padding: 0 8px;
+	padding: 0 var(--space-2);
 	border: 1px solid var(--line-strong);
 	border-radius: var(--radius-sm);
 	background: var(--surface);
@@ -1301,7 +1301,7 @@ button.wb-chip:hover:not(:disabled) {
 	gap: var(--space-2);
 	min-width: 0;
 	height: var(--wb-row);
-	padding: 0 4px 0 12px;
+	padding: 0 var(--space-1) 0 var(--space-3);
 	font-size: var(--text-meta);
 }
 .wb-task__confirm span {
@@ -1326,7 +1326,7 @@ button.wb-chip:hover:not(:disabled) {
 .app-update-notice {
 	position: sticky;
 	top: 0;
-	z-index: 2;
+	z-index: var(--layer-sticky);
 	padding: var(--space-4);
 	border-bottom: 1px solid var(--line);
 	background: var(--paper);
@@ -1353,7 +1353,7 @@ button.wb-chip:hover:not(:disabled) {
 	}
 	.window-titlebar {
 		position: fixed;
-		z-index: 10;
+		z-index: var(--layer-titlebar);
 		top: env(titlebar-area-y, 0px);
 		left: env(titlebar-area-x, 0px);
 		width: env(titlebar-area-width, 100%);

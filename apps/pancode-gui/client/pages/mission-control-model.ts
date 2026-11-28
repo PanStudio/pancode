@@ -4,6 +4,7 @@ import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { Workspace } from "../../contracts/sessions.js";
 import type { StatusTone } from "../design/status.js";
 import { READY_LABEL, STATE_LABELS } from "../shell/shell-model.js";
+import { matchesText } from "./run-inspection-model.js";
 
 export const SESSION_FILTERS = ["all", "attention", "working", "ready", "closed"] as const;
 export type SessionFilter = (typeof SESSION_FILTERS)[number];
@@ -35,16 +36,20 @@ export function sessionInventory(
 	filter: SessionFilter,
 ) {
 	const projects = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
-	const words = query.toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
 	return items
 		.filter((item) => {
 			if (project && item.workspaceId !== project) return false;
 			if (filter !== "all" && ACTIVITY[item.activity].group !== filter) return false;
 			const workspace = projects.get(item.workspaceId);
-			const text = [item.title, item.id, item.model, item.target, workspace?.name, workspace?.path, ...item.nodes]
-				.join(" ")
-				.toLocaleLowerCase();
-			return words.every((word) => text.includes(word));
+			return matchesText(query, [
+				item.title,
+				item.id,
+				item.model,
+				item.target,
+				workspace?.name,
+				workspace?.path,
+				...item.nodes,
+			]);
 		})
 		.sort(
 			(left, right) =>

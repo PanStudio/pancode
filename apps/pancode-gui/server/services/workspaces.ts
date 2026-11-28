@@ -47,6 +47,10 @@ export class WorkspaceService {
 	installationPath() {
 		return this.files.neutral();
 	}
+	/** Where a workspace's work runs; `null` is the installation, where no project layer applies. */
+	async cwd(workspaceId: string | null) {
+		return workspaceId === null ? this.installationPath() : (await this.get(workspaceId)).path;
+	}
 	private pathHost() {
 		this.host ??= detectPathHost();
 		return this.host;

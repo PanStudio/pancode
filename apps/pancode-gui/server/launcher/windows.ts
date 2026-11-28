@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { isWsl, runWindowsPowerShell } from "../process-policy.js";
 import type { LaunchPaths } from "./desktop-entry.js";
+import { missing, sha256Hex } from "./fs-util.js";
 import { windowsAppScript, windowsIdentitySource } from "./windows-app.js";
 
 /**
@@ -60,9 +61,6 @@ type Manifest = {
 	folders?: WindowsFolders;
 };
 export type WindowsLauncherState = "unsupported" | "absent" | "installed" | "modified";
-
-const sha = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
-const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 async function publish(path: string, value: string | Buffer) {
 	const temp = `${path}.${randomUUID()}.tmp`;
@@ -224,12 +222,12 @@ export async function refreshWindowsAppScripts(directory: string) {
 	const files: Owned[] = [];
 	for (const file of manifest.files) {
 		const text = appScripts[basename(file.path)];
-		if (text === undefined || sha(text) === file.sha256 || (await bytes(file.path)) === null) {
+		if (text === undefined || sha256Hex(text) === file.sha256 || (await bytes(file.path)) === null) {
 			files.push(file);
 			continue;
 		}
 		await publish(file.path, text);
-		files.push({ path: file.path, sha256: sha(text) });
+		files.push({ path: file.path, sha256: sha256Hex(text) });
 		rewritten = true;
 	}
 	if (rewritten) await publish(join(directory, manifestName), `${JSON.stringify({ ...manifest, files }, null, 2)}\n`);
@@ -247,7 +245,8 @@ async function inspect(files: Owned[]) {
 		const current = await bytes(file.path);
 		const ours = appScripts[basename(file.path)];
 		if (current === null) missingAny = true;
-		else if (sha(current) !== file.sha256 && (ours === undefined || sha(current) !== sha(ours))) changed = true;
+		else if (sha256Hex(current) !== file.sha256 && (ours === undefined || sha256Hex(current) !== sha256Hex(ours)))
+			changed = true;
 	}
 	return { changed, missing: missingAny };
 }
@@ -277,7 +276,7 @@ export async function installWindowsLauncher(directory: string, launch: LaunchPa
 	const [programs, startup, local, pinFolder] =
 		folders ?? existing?.folders ?? (await runWindowsPowerShell(foldersScript)).trim().split("\n");
 	if (!programs || !startup || !local) throw new Error("Windows did not report its shortcut folders.");
-	const windowsDirectory = `${local}\\pancode\\gui\\${sha(`${distro}\n${user}\n${directory}`).slice(0, 16)}`;
+	const windowsDirectory = `${local}\\pancode\\gui\\${sha256Hex(`${distro}\n${user}\n${directory}`).slice(0, 16)}`;
 	const relaunch = `C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoP -W Hidden -EP Bypass -File "${windowsDirectory}\\open.ps1"`;
 	if (relaunch.length >= 260)
 		throw new Error(
@@ -286,7 +285,7 @@ export async function installWindowsLauncher(directory: string, launch: LaunchPa
 	const menuArgs = visibleWslArguments(`${windowsDirectory}\\open.ps1`),
 		startupArgs = visibleWslArguments(`${windowsDirectory}\\start.ps1`);
 	const target = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-	const launchKey = sha(`${target}\n${menuArgs}\n${startupArgs}`);
+	const launchKey = sha256Hex(`${target}\n${menuArgs}\n${startupArgs}`);
 	const menu = join(windowsToWsl(programs), menuName),
 		boot = join(windowsToWsl(startup), startupName);
 	await mkdir(dirname(menu), { recursive: true });
@@ -308,7 +307,7 @@ export async function installWindowsLauncher(directory: string, launch: LaunchPa
 	const identitySource = join(dirname(icon), "identity.cs"),
 		appScript = join(dirname(icon), "app.ps1"),
 		identityFile = join(dirname(icon), "app-id");
-	const appId = `dev.pancode.PanCode.${sha(`${distro}\n${user}\n${directory}`).slice(0, 16)}`;
+	const appId = `dev.pancode.PanCode.${sha256Hex(`${distro}\n${user}\n${directory}`).slice(0, 16)}`;
 	await publish(identitySource, appScripts["identity.cs"] as string);
 	await publish(appScript, appScripts["app.ps1"] as string);
 	await publish(identityFile, appId);
@@ -330,7 +329,7 @@ export async function installWindowsLauncher(directory: string, launch: LaunchPa
 	for (const path of [menu, boot, icon, openScript, startScript, identitySource, appScript, identityFile]) {
 		const written = await bytes(path);
 		if (written === null) throw new Error("Windows did not create the launcher shortcut.");
-		files.push({ path, sha256: sha(written) });
+		files.push({ path, sha256: sha256Hex(written) });
 	}
 	for (const old of existing?.files ?? []) {
 		if (!files.some((file) => file.path === old.path))

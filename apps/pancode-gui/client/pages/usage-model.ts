@@ -5,10 +5,12 @@
 // here and anything this module does not know about is handed back for <Facts> rather than dropped.
 // Pure, so the wording and the ordering are testable without a browser.
 
+import { countNoun } from "../../../../src/core/views/count-words.js";
 import { USAGE_NOT_MEASURED } from "../../../../src/core/views/usage-words.js";
 import type { UsageReport } from "../../contracts/reports.js";
 import type { CacheReportV1, CostReportV1, SessionTelemetryV1 } from "../../contracts/wire.js";
 import { formatDay } from "../api/clock.js";
+import { finite } from "../api/narrow.js";
 import { humanizeKey, scalarText } from "../design/facts-model.js";
 import {
 	countText,
@@ -18,6 +20,7 @@ import {
 	quantityParts,
 	quantityText,
 } from "../telemetry/quantity-model.js";
+import { matchesText } from "./run-inspection-model.js";
 
 interface UsageFigure extends Explainable {
 	label: string;
@@ -148,10 +151,9 @@ function costNote(total: CostReportV1["total"]): string {
 	return free > 0 && Object.values(priced).every((count) => count === 0) ? "Recorded as free" : "Recorded prices";
 }
 
-const number = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const single = (values: Record<string, unknown>): string | null => {
 	const keys = Object.keys(values);
-	const only = keys.length === 1 && keys[0] === "value" ? number(values.value) : null;
+	const only = keys.length === 1 && keys[0] === "value" ? finite(values.value) : null;
 	return only === null ? null : countText(only);
 };
 const text = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
@@ -340,7 +342,6 @@ export function economyView(report: UsageReport): EconomyView | null {
 	const economy = report.economy;
 	if (!economy) return null;
 	const { total } = economy;
-	const counted = (count: number, word: string) => `${countText(count)} ${word}${count === 1 ? "" : "s"}`;
 	return {
 		headline: [
 			{
@@ -405,16 +406,12 @@ export function economyView(report: UsageReport): EconomyView | null {
 			id: row.referenceRowId,
 			asOf: row.asOf,
 			basis: row.basis === "served-model" ? "served model" : "requested model",
-			contributions: counted(row.contributions, "contribution"),
+			contributions: countNoun(row.contributions, "contribution"),
 		})),
-		sources: `${counted(economy.sources.attempts, "attempt")} · ${counted(economy.sources.runs, "run")} · ${counted(economy.sources.gaps, "gap")}`,
+		sources: `${countNoun(economy.sources.attempts, "attempt")} · ${countNoun(economy.sources.runs, "run")} · ${countNoun(economy.sources.gaps, "gap")}`,
 	};
 }
 
 export function filterUsageFacts(facts: UsageReport["facts"], query: string): UsageReport["facts"] {
-	const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-	return facts.filter((fact) => {
-		const text = `${usageLabel(fact.name)} ${JSON.stringify(fact.values)}`.toLocaleLowerCase();
-		return terms.every((term) => text.includes(term));
-	});
+	return facts.filter((fact) => matchesText(query, [usageLabel(fact.name), JSON.stringify(fact.values)]));
 }

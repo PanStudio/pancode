@@ -73,7 +73,7 @@
 	display: block;
 	font-family: var(--font-mono);
 	font-size: var(--text-meta);
-	padding: 12px;
+	padding: var(--space-3);
 	border: 1px dashed var(--line-strong);
 	border-radius: var(--radius-sm);
 	background: var(--well);
@@ -222,7 +222,7 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
+	gap: var(--space-3);
 }
 .structured-settings__row-heading > strong {
 	font-size: var(--text-meta);
@@ -234,7 +234,7 @@
 .structured-settings__fields {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 12px;
+	gap: var(--space-3);
 }
 .structured-settings label,
 .structured-settings__field {
@@ -251,13 +251,13 @@
 }
 .structured-settings__members {
 	display: grid;
-	gap: 16px;
+	gap: var(--space-4);
 	padding: var(--space-3);
 	background: var(--paper);
 }
 .structured-settings__members > div {
 	display: grid;
-	gap: 12px;
+	gap: var(--space-3);
 }
 .structured-settings > button,
 .structured-settings__members > button {
@@ -317,7 +317,7 @@
 .settings-draft-note {
 	position: sticky;
 	top: 0;
-	z-index: 2;
+	z-index: var(--layer-sticky);
 	display: grid;
 	padding: var(--space-3) var(--space-4);
 	background: var(--status-warn-tint);

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { heldSessionQuery } from "../api/session-query.js";
 import { Icon } from "../design/icons.js";
@@ -33,6 +32,7 @@ import { needsTrustReview } from "./session-facts-model.js";
 import { selectSessionPanel } from "./session-panel-model.js";
 import "./pane.css";
 import "./pane-inspection.css";
+import { sessionCapabilitiesQuery } from "../api/queries.js";
 
 // Opening a conversation needs the chat, not every inspector's rendering code.
 const ArtifactsPanel = lazy(() => import("./ArtifactsPanel.js").then((view) => ({ default: view.ArtifactsPanel })));
@@ -113,8 +113,7 @@ export const SessionPane = memo(function SessionPane({
 	}).data;
 	const capabilities = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["session-capabilities", sessionId],
-		queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
+		...sessionCapabilitiesQuery(client, sessionId),
 		enabled: open && pane?.state === "open",
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
