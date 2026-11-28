@@ -108,14 +108,18 @@ export function addCallTotals(
 	addGroup(totals.usd, [settled?.pricing.usd ?? unknown, ...bound]);
 }
 
-/** All projections use these definitions: reasoning is included in output; cacheWrite1h is a cacheWrite subfield (#434). */
-export function foldCalls(attempts: readonly Pick<FoldedAttempt, "started" | "settled">[]): CallTotals {
+/** Fold attempts already sorted by attemptId without copying or re-sorting. */
+function foldOrderedCalls(attempts: readonly Pick<FoldedAttempt, "started" | "settled">[]): CallTotals {
 	const totals = emptyCallTotals();
 	totals.logicalCalls = new Set(attempts.map(({ started }) => started.callId)).size;
-	// Stable order makes independent consumers sum floating-point costs identically (#434).
-	for (const { settled } of [...attempts].sort((a, b) => a.started.attemptId.localeCompare(b.started.attemptId)))
-		addCallTotals(totals, settled);
+	for (const { settled } of attempts) addCallTotals(totals, settled);
 	return totals;
+}
+
+/** All projections use these definitions: reasoning is included in output; cacheWrite1h is a cacheWrite subfield (#434). */
+export function foldCalls(attempts: readonly Pick<FoldedAttempt, "started" | "settled">[]): CallTotals {
+	// Stable order makes independent consumers sum floating-point costs identically (#434).
+	return foldOrderedCalls([...attempts].sort((a, b) => a.started.attemptId.localeCompare(b.started.attemptId)));
 }
 
 export interface JournalFold {
@@ -268,7 +272,7 @@ export function callJournalFolder(callIds?: ReadonlySet<string>, options: FoldOp
 			const resolved = new Set(attempts.map(({ started }) => started.callId));
 			return {
 				attempts,
-				totals: foldCalls(attempts),
+				totals: foldOrderedCalls(attempts),
 				unresolvedCallIds: [...references].filter((id) => !resolved.has(id)).sort(),
 				coverage: { ...coverage },
 			};
@@ -294,6 +298,20 @@ function foldRunScope(records: Iterable<TelemetryRecord>, options: FoldOptions) 
 	return runScopeOf(foldCallJournal(rows, undefined, options), aggregates);
 }
 
+function attemptTokensUnknown(settled: CallSettled): boolean {
+	if (settled.disposition === "sent_unsettled") return true;
+	if (settled.usage?.total) return settled.usage.total.kind === "unknown";
+	if (settled.disposition === "never_sent") return false;
+	const usage = settled.usage;
+	if (!usage) return true;
+	return (
+		usage.input.kind === "unknown" ||
+		usage.cacheRead.kind === "unknown" ||
+		usage.cacheWrite.kind === "unknown" ||
+		usage.output.kind === "unknown"
+	);
+}
+
 function runScopeOf(calls: JournalFold, aggregates: readonly TelemetryRecord<"run.usage_reported">["data"][]) {
 	const revision = aggregates.reduce((maximum, row) => Math.max(maximum, row.revision), -1);
 	const latest = aggregates.filter((row) => row.revision === revision);
@@ -306,7 +324,9 @@ function runScopeOf(calls: JournalFold, aggregates: readonly TelemetryRecord<"ru
 	const fromFact = (fact: Fact<number>) => sumFacts([fact]);
 	const callTotals = calls.totals;
 	const apiCalls = callTotals.settled + callTotals.settledNoUsage + callTotals.sentUnsettled;
-	const missingCalls = foldCalls(calls.attempts.filter((attempt) => attempt.settled !== null)).totalTokens.unknownCount;
+	let missingCalls = 0;
+	for (const attempt of calls.attempts)
+		if (attempt.settled !== null && attemptTokensUnknown(attempt.settled)) missingCalls += 1;
 	// A snapshot's sums keep their own coverage; only a conflict between snapshots makes a quantity unknown (#434).
 	const choose = (sum: FactSum) => (conflict ? fromFact(unknown) : sum);
 	const known = (sum: FactSum) => sum.coverage.measured + sum.coverage.estimated > 0;

@@ -180,3 +180,89 @@ test("a live run another PanCode process owns becomes a board row fed from its r
 		env.restore();
 	}
 });
+
+test("ended and settled runs ignore late progress and keep settled outcome detail on contradicting failure", () => {
+	const bus = createTelemetryHub();
+	const projection = createTelemetryProjection(bus, {});
+	const identity = {
+		runId: "settled-run",
+		agentId: "coder",
+		targetId: "t",
+		wireModelId: "m",
+		runtimeId: "r",
+		runtimeKind: "http" as const,
+		requestOrigin: "user" as const,
+		lineage: { rootRunId: "settled-run", parentRunId: null, attempt: 0, depth: 0 },
+	};
+	try {
+		bus.emit("run.started", { ...identity, pid: null, assignmentId: "settled-run", attempt: 0 });
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "pancode_tool_start", payload: { tool: "read", toolCallId: "live-c1" } },
+		});
+		bus.emit(
+			"run.settled",
+			{
+				outcome: "succeeded",
+				terminalReason: "completed",
+				endedAt: "2026-06-11T00:00:01.000Z",
+				callIds: [],
+				facts: {
+					usage: unobservedRunUsageFacts().usage,
+					totalTokens: unobservedRunUsageFacts().totalTokens,
+					apiCalls: 0,
+					pricing: unobservedRunUsageFacts().pricing,
+					endedAt: "2026-06-11T00:00:01.000Z",
+					callIds: [],
+				},
+			} as never,
+			{ runId: "settled-run" },
+		);
+		// Late progress frames after settlement must not mutate progress fold or status.
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "pancode_tool_start", payload: { tool: "bash", toolCallId: "late-c1" } },
+		});
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "heartbeat_status", status: "stalled" },
+		});
+		// A contradicting live failure after run.settled must keep both the settled status and avoid stale outcomeDetail.
+		bus.emit("run.failed", {
+			...identity,
+			spend: unobservedRunUsageFacts(),
+			durationMs: 999,
+			exitCode: 1,
+			reason: "stale failure",
+			outcome: "failed",
+			outcomeCode: "stale",
+			outcomeDetail: "stale error detail",
+		});
+		const settled = projection.snapshot().runs.find((r) => r.runId === "settled-run");
+		assert.equal(settled?.status, "completed");
+		assert.equal(settled?.outcomeDetail ?? null, null);
+		assert.equal(settled?.progress?.currentAction?.tool, "read");
+
+		// A matching live completion after run.settled still fills in its outcomeDetail, while late progress after it is ignored.
+		bus.emit("run.completed", {
+			...identity,
+			spend: unobservedRunUsageFacts(),
+			durationMs: 120,
+			exitCode: 0,
+			toolActivity: null,
+			outcome: "succeeded",
+			outcomeCode: null,
+			outcomeDetail: "verified answer",
+		});
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "pancode_tool_start", payload: { tool: "grep", toolCallId: "late-c2" } },
+		});
+		const matched = projection.snapshot().runs.find((r) => r.runId === "settled-run");
+		assert.equal(matched?.status, "completed");
+		assert.equal(matched?.outcomeDetail, "verified answer");
+		assert.equal(matched?.progress?.currentAction ?? null, null);
+	} finally {
+		projection.stop();
+	}
+});
