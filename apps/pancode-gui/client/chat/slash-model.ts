@@ -370,7 +370,7 @@ const terminalOnly = (name: string): SlashAliasSpec => ({
 	},
 });
 
-/** Names follow `src/interactive/slash-commands.ts`; each one lands on the app's own control for it. */
+/** Names follow `src/session-control/slash-commands.ts`; each one lands on the app's own control for it. */
 export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	{
 		names: ["compact"],
