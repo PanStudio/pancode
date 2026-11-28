@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { settingsChangeKind } from "../domains/config/classify.js";
-import { isOrchestratorEligibleRuntime } from "../domains/providers/eligibility.js";
-import { getRuntimeRegistry } from "../domains/providers/registry.js";
-import { findBuiltinRuntimeBootMetadata } from "../domains/providers/runtimes/boot-manifest.js";
 import type { PancodeSettings } from "./config.js";
 import { semanticUsable } from "./config.js";
 import {
@@ -26,8 +23,23 @@ import {
 import { SettingsValidationError } from "./settings-issues.js";
 import { validateSettings } from "./settings-validate.js";
 
+/**
+ * The runtime facts a settings edit is checked against. Providers owns the runtime registry, so each editor passes
+ * `settingsRuntimeFacts()` from domains/providers/settings-facts.ts.
+ */
+export interface SettingsRuntimeFacts {
+	/** True when the runtime, registered or built in, is a local native runtime. */
+	localNative(runtimeId: string): boolean;
+	/** True when the runtime is registered and can only serve worker dispatch, not chat or memory. */
+	workerOnly(runtimeId: string): boolean;
+}
+
 /** Accepted settings can still be inactive on the configured route (#432). */
-export function settingInactiveNote(path: string, settings: Readonly<PancodeSettings>): string | null {
+export function settingInactiveNote(
+	path: string,
+	settings: Readonly<PancodeSettings>,
+	facts: SettingsRuntimeFacts,
+): string | null {
 	if (
 		path === "context.semantic.enabled" &&
 		settings.context.semantic.enabled &&
@@ -36,10 +48,8 @@ export function settingInactiveNote(path: string, settings: Readonly<PancodeSett
 		return "Inactive until target, model and assetIdentity are pinned with pancode semantic configure.";
 	if (path === "chat.prewarm" && settings.chat.prewarm) {
 		const target = settings.targets.find((entry) => entry.id === settings.chat.target);
-		const runtime = target
-			? (getRuntimeRegistry().get(target.runtime) ?? findBuiltinRuntimeBootMetadata(target.runtime))
-			: null;
-		if (runtime?.tier !== "local-native" && !(target?.runtime === "litellm" && target.cache?.deployment))
+		const localNative = target ? facts.localNative(target.runtime) : false;
+		if (!localNative && !(target?.runtime === "litellm" && target.cache?.deployment))
 			return "Inactive on this chat route; prompt pre-warm requires a local native runtime or a declared LiteLLM cache deployment.";
 	}
 	return null;
@@ -1147,7 +1157,12 @@ function parseControlValue(control: SettingControl, text: string): unknown {
 }
 
 /** Validate the whole proposed configuration so cross-field constraints are honored by both editors. */
-export function applyControlValue(settings: PancodeSettings, path: string, text: string): void {
+export function applyControlValue(
+	settings: PancodeSettings,
+	path: string,
+	text: string,
+	facts: SettingsRuntimeFacts,
+): void {
 	const control = settingControl(path);
 	if (!control) throw new Error(`Unknown settings control: ${path}`);
 	const candidate = structuredClone(settings);
@@ -1160,8 +1175,7 @@ export function applyControlValue(settings: PancodeSettings, path: string, text:
 		if (value !== null && !candidate.targets.some((target) => target.id === value))
 			throw new Error("Choose an existing connection id from Connections.");
 		const target = candidate.targets.find((target) => target.id === value);
-		const runtime = target ? getRuntimeRegistry().get(target.runtime) : null;
-		if (routeRoot !== "fleet.default" && runtime && !isOrchestratorEligibleRuntime(runtime))
+		if (routeRoot !== "fleet.default" && target && facts.workerOnly(target.runtime))
 			throw new Error("Chat and memory need an HTTP/native connection; this connection is for workers only.");
 		if (getAtPath(settings, path) !== value) setAtPath(candidate, `${routeRoot}.model`, null);
 	}

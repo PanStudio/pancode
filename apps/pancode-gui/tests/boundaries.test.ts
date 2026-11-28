@@ -105,6 +105,7 @@ const adapters = new Set([
 	"src/domains/config/classify.ts",
 	"src/domains/providers/registry.ts",
 	"src/domains/providers/runtimes/builtins.ts",
+	"src/domains/providers/settings-facts.ts",
 	"src/domains/providers/support.ts",
 	"src/domains/providers/auth/index.ts",
 	"src/domains/providers/auth/storage.ts",

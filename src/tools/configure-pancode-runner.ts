@@ -11,6 +11,7 @@ import { pancodeStateDir } from "../core/xdg.js";
 import { settingsChangeKind } from "../domains/config/classify.js";
 import { guidanceForSettings, renderGuidance } from "../domains/prompts/runtime-guidance.js";
 import { findBuiltinRuntimeBootMetadata } from "../domains/providers/runtimes/boot-manifest.js";
+import { settingsRuntimeFacts } from "../domains/providers/settings-facts.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 import { isFleetRoutingPath, ROUTING_PIN_HINT } from "../domains/safety/routing-settings.js";
 import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
@@ -208,7 +209,7 @@ function valueAt(settings: Readonly<PancodeSettings>, change: ConfigurePancodeCh
 
 function applyChange(settings: PancodeSettings, change: ConfigurePancodeChange): void {
 	if (change.kind === "control") {
-		applyControlValue(settings, change.path, change.value);
+		applyControlValue(settings, change.path, change.value, settingsRuntimeFacts());
 		return;
 	}
 	const index = settings.targets.findIndex((target) => target.id === change.id);

@@ -18,6 +18,7 @@ import { validateSettings } from "../../../../../src/core/settings-validate.js";
 import { settingsChangeKind } from "../../../../../src/domains/config/classify.js";
 import { getRuntimeRegistry } from "../../../../../src/domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../../../../../src/domains/providers/runtimes/builtins.js";
+import { settingsRuntimeFacts } from "../../../../../src/domains/providers/settings-facts.js";
 import type {
 	SettingControl,
 	SettingsControls,
@@ -263,7 +264,9 @@ export function writeSettingControl(cwd: string | null, write: SettingWrite): Se
 	)
 		throw new AppProblem("validation", `This change needs confirmation. ${control.confirm}`);
 	try {
-		updateLayeredSettings(cwd, (settings) => applyControlValue(settings, write.path, write.value));
+		updateLayeredSettings(cwd, (settings) =>
+			applyControlValue(settings, write.path, write.value, settingsRuntimeFacts()),
+		);
 	} catch (error) {
 		if (error instanceof SettingsValidationError)
 			throw new AppProblem(

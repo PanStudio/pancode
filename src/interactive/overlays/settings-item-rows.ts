@@ -25,6 +25,7 @@ import {
 	resolveModelRuntimeCapabilitiesForProviders,
 	thinkingLevelDisplayWord,
 } from "../../domains/providers/index.js";
+import { settingsRuntimeFacts } from "../../domains/providers/settings-facts.js";
 import { TURN_CONTROL_WORKFLOWS } from "../../domains/turn-control/index.js";
 import type { Component } from "../../engine/tui.js";
 import { Input } from "../../engine/tui.js";
@@ -246,7 +247,7 @@ function controlTextSubmenu(control: SettingControl, live: () => Readonly<Pancod
 		);
 		input.onSubmit = (value) => {
 			try {
-				applyControlValue(structuredClone(live()), control.path, value);
+				applyControlValue(structuredClone(live()), control.path, value, settingsRuntimeFacts());
 				keptSettingDrafts.delete(`control:${control.path}`);
 				done(value);
 			} catch (error) {

@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { applyControlValue } from "../../src/core/settings-controls.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
+import { settingsRuntimeFacts } from "../../src/domains/providers/settings-facts.js";
 import { autonomyFromUserInput } from "../../src/lib/autonomy/autonomy.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -70,14 +71,18 @@ test("no CLI flag or settings editor accepts a retired autonomy name", () => {
 		strictEqual(extractGlobalFlags(["--autonomy", retired]).error, "--autonomy must be default|yolo", retired);
 		strictEqual(autonomyFromUserInput(retired), null, retired);
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		throws(() => applyControlValue(settings, "safety.autonomy", retired), /default, yolo/u, retired);
+		throws(
+			() => applyControlValue(settings, "safety.autonomy", retired, settingsRuntimeFacts()),
+			/default, yolo/u,
+			retired,
+		);
 		strictEqual(settings.safety.autonomy, "default", retired);
 	}
 	for (const level of ["default", "yolo"] as const) {
 		strictEqual(parseRunCliArgs(["--autonomy", level, "task"]).autonomy, level);
 		strictEqual(autonomyFromUserInput(level), level);
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		applyControlValue(settings, "safety.autonomy", level);
+		applyControlValue(settings, "safety.autonomy", level, settingsRuntimeFacts());
 		strictEqual(settings.safety.autonomy, level);
 	}
 });

@@ -104,7 +104,12 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * src/domains/telemetry/run-journal-read.ts, the rows' run-journal reader, too:
  * after the dispatch and worker files split into smaller modules, guards alone
  * let src/domains/store/index.ts share the file of the safety domain's shell
- * scanners that reader's merged closure loads.
+ * scanners that reader's merged closure loads. It roots the two read-model
+ * modules and the budget envelope the rows load by `import()` as well: once
+ * src/core/settings-controls.ts stopped importing the providers domain, guards
+ * alone grouped them with telemetry call-fact and store modules the rows never
+ * run (61 files and 1,689,457 B against 57 and 1,654,992 B; 52 and 1,601,087 B
+ * rooted).
  */
 const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<string>]> = [
 	// The workspace launcher: the launch stage plus what starts the pane host and the session inside it.
@@ -152,6 +157,9 @@ const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<st
 			"src/cli/fleet-project-scope.ts",
 			"src/domains/dispatch/capacity-lease.ts",
 			"src/domains/telemetry/run-journal-read.ts",
+			"src/domains/telemetry/read-model-runs.ts",
+			"src/domains/telemetry/read-model-usage.ts",
+			"src/domains/dispatch/budget-envelope.ts",
 		],
 	],
 ];

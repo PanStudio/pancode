@@ -21,6 +21,7 @@ import { settingsChangeKind } from "../../domains/config/classify.js";
 import type { InteropAgentId } from "../../domains/interop/index.js";
 import { delegationEntryForKind, interopAgentKind } from "../../domains/interop/index.js";
 import { thinkingLevelFromChoiceLabel } from "../../domains/providers/index.js";
+import { settingsRuntimeFacts } from "../../domains/providers/settings-facts.js";
 import { visibleWidth } from "../../engine/tui.js";
 import { GLYPH } from "../theme/index.js";
 import {
@@ -71,7 +72,7 @@ function applySettingChange(settings: PancodeSettings, id: string, value: string
 		id === "fleet.concurrency" ||
 		["chat.modelPicker.favorites", "interface.keybindings", "fleet.adaptiveRouting.agentRoles"].includes(id)
 	) {
-		applyControlValue(settings, settingsPathForRow(id), value);
+		applyControlValue(settings, settingsPathForRow(id), value, settingsRuntimeFacts());
 		return;
 	}
 	if (applyEntrySettingChange(settings, id, value)) return;
