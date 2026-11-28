@@ -609,6 +609,37 @@ describe("execution scheduler lifecycle", () => {
 				step.id,
 			);
 		}
+		// Plan-backed reviews must depend directly on the plan (or commit-plan) step so handoffsFor attaches its report.
+		const pbrPath = new URL("../../src/domains/agents/playbooks/plan-build-review.md", import.meta.url);
+		const pbr = parsePlaybook(readFileSync(pbrPath, "utf8"), pbrPath.pathname);
+		const pbrPlan = compileFleetExecutionPlan({
+			playbook: pbr,
+			vars,
+			task: renderPlaybookPrompt(pbr.body, vars),
+			resolveAgent,
+		});
+		const pbrCheck1 = pbrPlan.steps.find((step) => step.id === "review.check.1");
+		ok(pbrCheck1?.dependencies.includes("plan"), JSON.stringify(pbrCheck1?.dependencies));
+		const pbrInstructions =
+			pbr.steps[2]?.kind === "loop" && pbr.steps[2].check.kind === "agent" ? pbr.steps[2].check.instructions : "";
+		for (const step of pbrPlan.steps) {
+			if (step.kind !== "agent") continue;
+			strictEqual(
+				fleetNodeTaskBrief(step.task).includes(pbrInstructions as string),
+				step.id.startsWith("review.check."),
+				step.id,
+			);
+		}
+		const sdlcPath = new URL("../../src/domains/agents/playbooks/sdlc.md", import.meta.url);
+		const sdlc = parsePlaybook(readFileSync(sdlcPath, "utf8"), sdlcPath.pathname);
+		const sdlcPlan = compileFleetExecutionPlan({
+			playbook: sdlc,
+			vars,
+			task: renderPlaybookPrompt(sdlc.body, vars),
+			resolveAgent,
+		});
+		const sdlcCheck1 = sdlcPlan.steps.find((step) => step.id === "review.check.1");
+		ok(sdlcCheck1?.dependencies.includes("commit-plan"), JSON.stringify(sdlcCheck1?.dependencies));
 	});
 
 	it("names every allowed value when a playbook refuses a scope or another literal", () => {
@@ -661,6 +692,22 @@ describe("execution scheduler lifecycle", () => {
 			() => parsePlaybook(looped('{kind: code, command: test, scope: worktree, instructions: "x"}'), "wt.md"),
 			/: \/steps\/1\/check: must not have additional properties$/,
 		);
+		const v5Gate = (extra: string) =>
+			[
+				"---",
+				"version: 5",
+				"name: gt",
+				"steps:",
+				"  - {kind: gate, id: accept, agent: tester, path: tests/a.test.js, run: gate, dependencies: []}",
+				"  - {kind: agent, id: build, agent: coder, scope: workspace, writes: [src/], dependencies: [accept]}",
+				`  - {kind: loop, id: review, maxAttempts: 2, dependencies: [build], check: {kind: gate, gate: accept${extra}}, repair: {kind: agent, agent: coder, scope: workspace, writes: [src/]}}`,
+				"maxWorkers: 1",
+				"onFailure: stop",
+				"---",
+				"{{task}}",
+			].join("\n");
+		strictEqual(parsePlaybook(v5Gate(""), "gt.md").steps.length, 3);
+		throws(() => parsePlaybook(v5Gate(', instructions: "x"'), "gt.md"), /: \/steps\/2\/check:/);
 		throws(
 			() =>
 				parsePlaybook(looped('{kind: agent, agent: reviewer, scope: readonly, instructions: "see {{task}}"}'), "wt.md"),

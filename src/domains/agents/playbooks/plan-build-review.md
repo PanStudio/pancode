@@ -16,12 +16,12 @@ steps:
   - kind: loop
     id: review
     maxAttempts: 2
-    dependencies: [build]
+    dependencies: [plan, build]
     check:
       kind: agent
       agent: reviewer
       scope: readonly
-      instructions: "The plan step wrote a plan artifact before the build; its report is attached. Judge the tree against both the request and that plan."
+      instructions: "The plan step wrote a plan artifact (.pancode/artifacts/PLAN.md) before the build; its report is attached on the first check. Read that plan and judge the tree against both the request and the plan."
     repair: {kind: agent, agent: coder, scope: worktree}
 maxWorkers: 1
 onFailure: stop

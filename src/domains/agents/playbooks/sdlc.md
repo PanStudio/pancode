@@ -28,12 +28,12 @@ steps:
   - kind: loop
     id: review
     maxAttempts: 2
-    dependencies: [suite]
+    dependencies: [commit-plan, suite]
     check:
       kind: agent
       agent: reviewer
       scope: readonly
-      instructions: "Grade the tree against the plan artifact the plan step committed; the commit-plan report names it."
+      instructions: "Grade the tree against the plan artifact the plan step committed (.pancode/artifacts/PLAN.md, named in the commit-plan report attached on the first check)."
     repair: {kind: agent, agent: coder, scope: workspace}
   - kind: code
     id: commit-code
