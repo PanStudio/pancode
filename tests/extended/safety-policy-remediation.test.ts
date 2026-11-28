@@ -188,7 +188,7 @@ test("S1-06 usage report reads journaled approvals and emits measured rate", asy
 	const { callJournalHeader } = await import("../../src/domains/telemetry/call-journal.js");
 	const { makeTelemetryRecord } = await import("../../src/core/telemetry/envelope.js");
 	const { encodeTelemetryLine } = await import("../../src/core/telemetry/segment.js");
-	const { telemetryJournalPath, telemetrySessionDirectory } = await import("../../src/domains/telemetry/paths.js");
+	const { telemetryJournalPath, telemetrySessionDirectory } = await import("../../src/core/telemetry/paths.js");
 	const journalDirectory = telemetrySessionDirectory(pancodeStateDir(), meta.id);
 	mkdirSync(journalDirectory, { recursive: true });
 	const ctx = { sessionId: meta.id, agent: { role: "main", id: meta.id } } as const;

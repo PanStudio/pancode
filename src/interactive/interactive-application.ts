@@ -13,6 +13,7 @@ import { isRestartHandoff } from "../core/restart-status.js";
 import { getTerminationCoordinator } from "../core/termination.js";
 import { immediateSequence } from "../core/timers.js";
 import { pancodeStateDir } from "../core/xdg.js";
+import { openDetachedBatchViews } from "../domains/dispatch/nudges/dispatch-nudge.js";
 import {
 	createChatTurnUsage,
 	createTurnObservations,
@@ -22,7 +23,6 @@ import { createExtensionHostServices } from "../domains/extensions/host-services
 import { type PromptRef, promptRefs } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import { bindExtensionOwnerNames, extensionOwnerLabel } from "../domains/extensions/owner-label.js";
-import { openDetachedBatchViews } from "../domains/middleware/index.js";
 import type { PanesWatchController } from "../domains/mux/operations.js";
 import { holdExitSummaryForLauncher } from "../domains/mux/workspace/exit-summary-handoff.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";

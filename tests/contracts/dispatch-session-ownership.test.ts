@@ -14,9 +14,9 @@ import {
 	preparePendingGateDecisionRecovery,
 	stagePendingGateOutput,
 } from "../../src/domains/dispatch/gate-decisions.js";
+import { finishedDetachedBatchIds, openDetachedBatchViews } from "../../src/domains/dispatch/nudges/dispatch-nudge.js";
 import { dispatchOwnership } from "../../src/domains/dispatch/ownership.js";
 import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
-import { finishedDetachedBatchIds, openDetachedBatchViews } from "../../src/domains/middleware/dispatch-nudge.js";
 import { grantEffectDescriptor, grantEffectDigest } from "../../src/domains/safety/grant-effect.js";
 import { DispatchArtifactProvider } from "../../src/domains/session/view-artifacts.js";
 import { seedForkCallJournal } from "../../src/domains/telemetry/call-journal.js";

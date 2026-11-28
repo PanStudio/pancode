@@ -3,10 +3,11 @@
 import { isPlanOnlyRequest } from "../../core/plan-request.js";
 import { requestProse } from "../../core/request-prose.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { turnCanCallTool } from "../../core/turn-constraints.js";
 import { forbidsFileWrites } from "../../core/write-prohibition.js";
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import { parallelPartsCount } from "./turn-plan-cue.js";
-import { type MiddlewareEffect, metadataNumber, metadataString, turnCanCallTool } from "./types.js";
+import { type MiddlewareEffect, metadataNumber, metadataString } from "./types.js";
 
 /**
  * Task-board reminder for explicitly enumerated multi-step requests. The

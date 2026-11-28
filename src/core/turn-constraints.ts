@@ -666,3 +666,24 @@ function listAllowsTool(allowed: readonly string[] | undefined, capability: stri
 export function turnAllowsContinuation(constraints: TurnConstraints | undefined): boolean {
 	return constraints?.mode !== "answer" && constraints?.mode !== "proposal" && constraints?.turnPolicy === undefined;
 }
+
+/** The per-turn metadata a host hands to a hook; only the string entries are read here. */
+export interface TurnMetadataSource {
+	readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+function turnMetadataString(input: TurnMetadataSource, key: string): string | null {
+	const value = input.metadata?.[key];
+	return typeof value === "string" ? value : null;
+}
+
+/**
+ * Whether the turn can call `tool`, read from the host's active capability
+ * list: the attached and gateway-reachable tools the turn's constraints admit
+ * (`turnAllowsTool`). A hook that was not told reads as available, so a host
+ * without the list keeps the behavior it had before the check.
+ */
+export function turnCanCallTool(input: TurnMetadataSource, tool: string): boolean {
+	const names = turnMetadataString(input, "activeCapabilityNames") ?? turnMetadataString(input, "activeToolNames");
+	return names === null || names.split(",").some((name) => name.trim() === tool);
+}

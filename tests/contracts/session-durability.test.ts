@@ -19,6 +19,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
+import { telemetryBundlePath, telemetryJournalPath, telemetryRunsDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
 	deferAppend,
@@ -47,11 +48,6 @@ import {
 } from "../../src/domains/session/protected-artifact-journal.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import {
-	telemetryBundlePath,
-	telemetryJournalPath,
-	telemetryRunsDirectory,
-} from "../../src/domains/telemetry/paths.js";
 import { createSession, readSessionFileEntries, resumeSession, sessionPaths } from "../../src/engine/session.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
