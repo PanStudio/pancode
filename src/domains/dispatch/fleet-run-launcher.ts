@@ -9,6 +9,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { PancodeSettings } from "../../core/config.js";
+import { ownerTelemetryContext, withTelemetryContext } from "../../core/telemetry/context.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import type { DecisionLedgerEntry } from "../session/entries.js";
 import { clearRootCancelRequest, readRootCancelRequest } from "./cancel-requests.js";
@@ -103,6 +104,12 @@ export interface FleetRunLauncherDeps {
 	/** Read once per launch, before the guard is taken. */
 	readonly getSettings?: () => PancodeSettings;
 	readonly getDecisionBoard?: () => ReadonlyArray<DecisionLedgerEntry>;
+	/**
+	 * The session that owns the runs this launcher starts, read at launch. The whole run executes in that session's
+	 * telemetry context, so the root journal and every step bind it even when the launch comes from a keypress or a
+	 * permission reply that carries no context. A standalone `pancode fleet run` has none.
+	 */
+	readonly sessionId?: () => string | null | undefined;
 	/** The runner; tests replace it. */
 	readonly run?: (input: ExecuteFleetRunInput) => Promise<FleetRunOutcome>;
 }
@@ -132,6 +139,7 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		// Read before the guard is taken: a throw here would otherwise refuse every later run in this session.
 		const settings = deps.getSettings?.();
 		const workspaceRoot = deps.workspaceRoot();
+		const sessionId = deps.sessionId?.() ?? null;
 		const rootId = `fleet-${randomBytes(6).toString("hex")}`;
 		try {
 			writeFleetRootRecord({ rootId, playbook: preview.name, cwd: workspaceRoot });
@@ -283,9 +291,11 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 			return { rootId, stoppedBy, exitCode, document, ...settledRun };
 		};
 
+		const execute = deps.run ?? executeFleetRun;
+		const owner = sessionId ? ownerTelemetryContext({ sessionId }) : undefined;
 		let run: Promise<FleetRunOutcome>;
 		try {
-			run = (deps.run ?? executeFleetRun)(args);
+			run = owner !== undefined ? withTelemetryContext(owner, () => execute(args)) : execute(args);
 		} catch (error) {
 			run = Promise.reject(error);
 		}

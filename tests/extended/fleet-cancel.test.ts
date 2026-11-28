@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { runFleetCancel } from "../../src/cli/fleet-cancel.js";
 import { runFleetWait } from "../../src/cli/fleet-wait.js";
+import { telemetryContext } from "../../src/core/telemetry/context.js";
 import { sumPricing } from "../../src/core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { getStoredAssignment, registerAssignment } from "../../src/domains/dispatch/assignment-store.js";
@@ -285,12 +286,17 @@ describe("fleet cancel requests", () => {
 	it("seals a session-launched root with its fleet_end document and stops it on a durable stop request", async () => {
 		ensurePancodeState();
 		const step = { stepId: "build", kind: "agent", waveIndex: 0, assignmentId: "asg-build" } as const;
+		// A keypress or permission reply launches with no telemetry context; the run still binds the launching session.
+		const runSessions: Array<string | null | undefined> = [];
 		const launcher = createFleetRunLauncher({
 			dispatch: {} as DispatchContract,
 			agents: { getSpec: () => null },
 			workspaceRoot: () => scratch.dir,
+			sessionId: () => "session-launch",
 			run: (input) =>
 				new Promise<FleetRunOutcome>((_resolve, reject) => {
+					runSessions.push(telemetryContext()?.sessionId);
+					void Promise.resolve().then(() => runSessions.push(telemetryContext()?.sessionId));
 					input.onStarted?.();
 					input.onStepDispatched?.(step);
 					input.signal?.addEventListener("abort", () => {
@@ -338,5 +344,6 @@ describe("fleet cancel requests", () => {
 		strictEqual(readFleetRootRecord(launch.rootId)?.state, "sealed");
 		strictEqual(readRootCancelRequest(launch.rootId), null);
 		strictEqual(launcher.inFlight(), null);
+		deepStrictEqual(runSessions, ["session-launch", "session-launch"]);
 	});
 });

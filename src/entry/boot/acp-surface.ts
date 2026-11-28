@@ -167,6 +167,7 @@ export async function runAcpSurface(
 				workspaceRoot: () => process.cwd(),
 				getSettings: getCurrentSettings,
 				getDecisionBoard: () => decisionBoard.snapshot(),
+				sessionId: () => session?.current()?.id ?? null,
 			})
 		: null;
 	const [{ acpCommandControl }, { servePancodeAcpAgent }] = await Promise.all([
