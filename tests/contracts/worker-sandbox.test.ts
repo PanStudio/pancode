@@ -44,7 +44,7 @@ import { formatControlValue, hasRedactedControlCredentials } from "../../src/cor
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
-import { settingsChangeKind } from "../../src/domains/config/classify.js";
+import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
 import { workerSandboxFor } from "../../src/domains/dispatch/worker-spec.js";
 import { createTaskWorktree } from "../../src/tools/task-worktree.js";
