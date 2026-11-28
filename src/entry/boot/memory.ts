@@ -101,7 +101,7 @@ export function wireBootMemory(input: BootMemoryInput) {
 	let deferredMemoryReminderSink: ((message: string, isCurrent?: () => boolean) => void) | null = null;
 	// The watchdog's findings are for the operator, not the model, so they take
 	// the transcript-notice path rather than the reminder buffer. Bound late for
-	// the same reason: the chat loop that owns the transcript is composed below.
+	// the same reason: the chat loop that owns the transcript is composed later in boot/chat.ts.
 	let deferredWatchdogNoticeSink: ((text: string) => void) | null = null;
 	// Content-bearing, so it records only under research capture with consent.
 	// The telemetry row says which silence

@@ -98,7 +98,7 @@ export function wireBootExtensions(input: BootExtensionsInput) {
 	// published here too (the extensions bundle publishes nothing at start),
 	// so no consumer ever sees extension resources paired with hooks from a
 	// different generation. The owner slot is anchored here, so user hooks
-	// keep evaluating before the protection consumer and assessors below.
+	// keep evaluating before the protection consumer and assessors registered later by orchestrator.ts.
 	let bootHookNotices = true;
 	const reloadPlugins = () =>
 		reloadPluginResourcesAndNotify(process.cwd(), (event) => bus.emit("plugin.reloaded", event));

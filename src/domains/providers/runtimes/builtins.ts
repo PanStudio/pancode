@@ -7,7 +7,7 @@
  * registry before the providers domain starts won't double-register.
  *
  * Third-party runtimes from ~/.config/pancode/runtimes/ or npm plugins are loaded
- * separately by `loadPluginRuntimes` in `./plugins.ts`.
+ * separately by `loadPluginRuntimes` in `../plugins.ts`.
  */
 
 import type { RuntimeRegistry } from "../registry.js";
