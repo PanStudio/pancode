@@ -13,6 +13,7 @@ import { MIDDLEWARE_HOOKS } from "../../core/telemetry/session-vocabulary.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import { headForRedaction } from "../../lib/secrets/redact.js";
 import { isRefusalToolResultError } from "../../tools/result-disposition.js";
 import type { MiddlewareEffect, MiddlewareHookInput } from "../middleware/types.js";
@@ -72,7 +73,6 @@ import {
 import { exercisesWork, fixPairOf, type MemoryNoteEvidence } from "./notes.js";
 import { sharesInvocationTarget } from "./recipes.js";
 import { lessonsForTask } from "./relevance.js";
-import { redactForMemoryRoute } from "./secret-text.js";
 import { TASK_MEMORY_DEFAULT_PROCEDURAL_CAP, type TaskMemoryEntry } from "./task-bank.js";
 import {
 	runTaskMemoryPolicy,

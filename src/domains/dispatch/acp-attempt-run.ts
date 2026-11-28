@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { sha256Hex } from "../../core/hash.js";
+import { detectRunIdentity } from "../../core/run-identity.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { SpawnedDelegation } from "./acp-attempt-state.js";
 import { renameStoredAssignment } from "./assignment-store.js";
@@ -13,7 +14,6 @@ import { startDispatchEventPump } from "./event-pump.js";
 import { withAttemptRole } from "./execution-role.js";
 import { runLedgerProjection } from "./path-scope.js";
 import { publishedLineage } from "./run-finish.js";
-import { detectRunIdentity } from "./run-identity.js";
 import type { RunEnvelope, RunLineage, RunResult } from "./types.js";
 
 export async function openAcpRun(rt: DispatchRuntime, delegation: SpawnedDelegation) {

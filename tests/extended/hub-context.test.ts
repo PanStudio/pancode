@@ -11,7 +11,7 @@ import { installPlugin, listInstalledPlugins, pluginContentDigest } from "../../
 import { readHubInventory } from "../../src/domains/resources/hub-inventory.js";
 import { createContextTool } from "../../src/tools/context/index.js";
 import { createPancodeHubTool } from "../../src/tools/gateway/pancode-context-tools.js";
-import type { ToolInvokeOptions } from "../../src/tools/registry-contract.js";
+import type { ToolInvokeOptions } from "../../src/tools/registry/contract.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
 
 /**

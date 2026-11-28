@@ -15,7 +15,7 @@ import { ToolNames } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import { councilShortfall, councilSkippedSeats, voteTally } from "../session-control/poll.js";
 import type { CouncilDispatchOutcome } from "../session-control/slash-command-types.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 
 /**
  * Invoke the dispatch tool with prepared council arguments and report the

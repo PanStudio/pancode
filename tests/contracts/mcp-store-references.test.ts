@@ -23,8 +23,8 @@ import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import type { McpStoreAccess } from "../../src/tools/gateway/mcp-store-references.js";
+import type { RegistryVerdict } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { RegistryVerdict } from "../../src/tools/registry-contract.js";
 import { createStoreTool } from "../../src/tools/store/store-tool.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

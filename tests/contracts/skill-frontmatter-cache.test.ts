@@ -15,7 +15,7 @@ const { resetXdgCache, pancodeCacheDir, pancodeCachePath, pancodeConfigDir } = a
 resetXdgCache();
 const { readPancodeVersion } = await import("../../src/core/package-root.js");
 const { loadSkills } = await import("../../src/domains/resources/skills/loader.js");
-const { withFrontmatterCacheReadOnly } = await import("../../src/domains/resources/skills/frontmatter-cache.js");
+const { withFrontmatterCacheReadOnly } = await import("../../src/domains/agents/frontmatter-cache.js");
 after(() => rmSync(home, { recursive: true, force: true }));
 
 const skillFile = join(pancodeConfigDir(), "skills", "probe", "SKILL.md");
@@ -108,7 +108,7 @@ describe("skill frontmatter cache", () => {
 		const { discoverAgentRecipes } = await import("../../src/domains/agents/registry.js");
 		const { resolvePackageRoot } = await import("../../src/core/package-root.js");
 		const recipe = join(resolvePackageRoot(), "src", "domains", "agents", "builtins", "scout.md");
-		const scout = () => discoverAgentRecipes(home).find((candidate) => candidate.id === "scout");
+		const scout = () => discoverAgentRecipes(loadSkills, home).find((candidate) => candidate.id === "scout");
 		const parsed = scout();
 		ok(parsed);
 		const persisted = JSON.parse(readFileSync(cacheFile(), "utf8")) as {

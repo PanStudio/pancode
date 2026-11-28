@@ -8,11 +8,11 @@
  * The browser, the lifecycle plan and the CLI all read the same answer.
  */
 
+import type { HubRequirementRef } from "../plugins/hub-types.js";
 import type { PluginScope } from "../plugins/types.js";
 import { discoverHub, type HubEntry } from "./hub.js";
 import { type HubCopyState, hubCopyState } from "./hub-inventory.js";
 import { type HubInstalledPackage, listInstalledHubPackages } from "./hub-packages.js";
-import type { HubRequirementRef } from "./hub-types.js";
 
 /** The other half of a pair, seen from one side. */
 export interface HubPair {

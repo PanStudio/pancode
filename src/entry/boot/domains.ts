@@ -8,7 +8,7 @@ import { type LoadResult, loadDomains } from "../../core/domain-loader.js";
 import type { StartupTimer } from "../../core/startup-timer.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import { type getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../../core/termination.js";
-import { AgentsDomainModule } from "../../domains/agents/module.js";
+import { createAgentsDomainModule } from "../../domains/agents/module.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../../domains/config/module.js";
 import { createContextDomainModule } from "../../domains/context/module.js";
 import type { WorktreeBootRecovery } from "../../domains/dispatch/boot-recovery.js";
@@ -23,6 +23,7 @@ import { PluginsDomainModule } from "../../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../../domains/prompts/module.js";
 import { createProvidersDomainModule } from "../../domains/providers/module.js";
 import { createResourcesDomainModule } from "../../domains/resources/module.js";
+import { loadSkills } from "../../domains/resources/skills/loader.js";
 import type { SafetyContract } from "../../domains/safety/contract.js";
 import type { GitHookDriftGuard } from "../../domains/safety/hook-drift.js";
 import { EMPTY_INFORMATION_FLOW_POLICY, type FlowRestrictionSet } from "../../domains/safety/index.js";
@@ -175,7 +176,7 @@ export async function loadBootDomains(input: BootDomainsInput) {
 				noContextFiles: options.noContextFiles === true,
 				noSkills: options.noSkills === true || options.headless?.noSkills === true,
 			}),
-			AgentsDomainModule,
+			createAgentsDomainModule({ loadSkills }),
 			middlewareDomain.module,
 			{
 				manifest: { name: "memory", dependsOn: [] },

@@ -9,7 +9,7 @@ export { ACP_ARTIFACTS_LIST_METHOD, ACP_ARTIFACTS_META_KEY, ACP_ARTIFACTS_READ_M
  * `/view` artifacts for an ACP client (ACP ask 03).
  *
  * Both read the providers the terminal overlay reads, from
- * src/domains/session/view-artifacts.ts, so a client lists the same rows with
+ * src/session-control/view-artifacts.ts, so a client lists the same rows with
  * the same titles and reads the same lines. Titles and subtitles pass through
  * the overlay's own sanitizer; bodies travel as loaded, as the overlay shows
  * them. A protected artifact's load renders its protection record, never the
@@ -25,7 +25,7 @@ import type {
 	ViewArtifact,
 	ViewArtifactCategory,
 	ViewArtifactFormat,
-} from "../domains/session/view-artifacts.js";
+} from "../session-control/view-artifacts.js";
 import { AcpRequestError } from "./errors.js";
 
 /**
@@ -62,8 +62,8 @@ export interface AcpArtifactsSource {
 	deps(sessionId: string): ArtifactProviderDeps | null;
 }
 
-const loadProviders = async (): Promise<typeof import("../domains/session/view-artifacts.js")> =>
-	await import("../domains/session/view-artifacts.js");
+const loadProviders = async (): Promise<typeof import("../session-control/view-artifacts.js")> =>
+	await import("../session-control/view-artifacts.js");
 
 function utf8Slice(value: string, maxBytes: number): string {
 	const buffer = Buffer.from(value, "utf8");

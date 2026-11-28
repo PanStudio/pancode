@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import { runFrontendCheck } from "./frontend.js";
 import { captureQualitySnapshot, loadQualityPolicy, type QualitySnapshot } from "./quality-policy.js";

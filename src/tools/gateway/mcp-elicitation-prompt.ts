@@ -25,7 +25,7 @@ import {
 	readTypedValue,
 } from "../../domains/mcp/index.js";
 import type { AskUserAnswer, AskUserHandler, AskUserQuestion, AskUserResult } from "../ask-user.js";
-import { createHarnessHold, type HarnessHold, type ToolInvokeOptions } from "../registry-contract.js";
+import { createHarnessHold, type HarnessHold, type ToolInvokeOptions } from "../registry/contract.js";
 
 const FIELDS_PER_STEP = 4;
 const LEAVE_UNSET = "Leave unset";

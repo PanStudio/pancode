@@ -18,7 +18,7 @@ import type { ChatLoop } from "../session-control/chat-loop.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import { createJobTool } from "../tools/job.js";
 import type { JobOperations } from "../tools/job-types.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import type { ToolSpec } from "../tools/tool-spec.js";
 import { createJobEventHub, jobEventRunResult, mcpEventJobRefusal } from "./job-events.js";
 import { createJobRuntime, jobAuthorityRefusal } from "./job-runtime.js";
