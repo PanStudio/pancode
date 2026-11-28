@@ -133,8 +133,6 @@ export interface FooterDashboardDeps {
 	fleetBand?: FleetBand;
 	/** Transient context-operation progress band mounted between the Fleet band and the Deck / Status bar. */
 	contextProgress?: Component;
-	/** Fallback visibility probe when `fleetBand` is mounted externally. */
-	isFleetBandVisible?: () => boolean;
 	/** True while `/fleet` owns the dock (auto-hides deck and suppresses footer worker count). */
 	isFleetBoardOpen?: () => boolean;
 	dismissKeyLabel?: string;
@@ -446,7 +444,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 			compactDoorCounted = true;
 			setImmediate(() => recordLessonShown("compact:keys"));
 		}
-		const fleetBandVisible = deps.fleetBand ? deps.fleetBand.isVisible() : deps.isFleetBandVisible?.() === true;
+		const fleetBandVisible = deps.fleetBand?.isVisible() === true;
 		const workspace = deps.getWorkspaceLine?.(width) ?? null;
 		const extensionFacts = deps.getExtensionFacts?.() ?? [];
 		const baseState = projectFooterRenderState(snapshot, {

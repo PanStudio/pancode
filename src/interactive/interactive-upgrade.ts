@@ -7,7 +7,6 @@ import { resolvePancodeDirs } from "../core/xdg.js";
 import { inspectInstallation } from "../domains/install/install-method.js";
 import { describeTracking } from "../domains/install/install-plan.js";
 import {
-	type DeferredUpgrade,
 	planSelfUpgrade,
 	prepareDeferredUpgrade,
 	runApprovedSelfUpgrade,
@@ -38,7 +37,6 @@ export interface InteractiveUpgradeFlowDeps {
 	 * /upgrade). Absent, a deferred plan cannot be armed (#436).
 	 */
 	armDeferredUpdate?(start: () => boolean): boolean;
-	prepareDeferred?: (plan: Extract<SelfUpgradePlan, { status: "deferred" }>) => DeferredUpgrade | null;
 }
 
 export interface InteractiveUpgradeFlow {
@@ -132,8 +130,7 @@ export function createInteractiveUpgradeFlow(deps: InteractiveUpgradeFlowDeps): 
 				}
 
 				if (plan.status === "deferred") {
-					const prepare = deps.prepareDeferred ?? ((p) => prepareDeferredUpgrade(p, resolvePancodeDirs().cache));
-					const first = prepare(plan);
+					const first = prepareDeferredUpgrade(plan, resolvePancodeDirs().cache);
 					const manager = first?.manager ?? plan.installation.kind;
 					const pendingNotice = () => {
 						const text = `A PanCode update for this ${manager} install is already pending; it installs after every session of it quits. Nothing new was started.`;
@@ -159,7 +156,7 @@ export function createInteractiveUpgradeFlow(deps: InteractiveUpgradeFlowDeps): 
 						return;
 					deps.signal.throwIfAborted();
 					// Judged again: the question may have stayed open while another session armed or ran.
-					const deferred = prepare(plan);
+					const deferred = prepareDeferredUpgrade(plan, resolvePancodeDirs().cache);
 					if (deferred === null || !deps.armDeferredUpdate)
 						throw new Error(`this ${manager} install can no longer be updated after quit`);
 					if (deferred.pending || !deps.armDeferredUpdate(deferred.start)) return pendingNotice();

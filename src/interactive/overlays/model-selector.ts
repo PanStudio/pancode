@@ -60,7 +60,6 @@ export interface OpenModelOverlayDeps {
 	switchCost?: (ref: ModelSelection) => string | null;
 	onToggleFavorite?: (ref: ModelSelection, favorite: boolean) => void;
 	onClose: () => void;
-	autoRefresh?: boolean;
 	/** What a pick would do to the turn in flight, asked on every frame so it stays true up to the Enter. */
 	turnEffect?: () => string | null;
 	/** The row to select on open, as `target/model`, when the picker reopens on a pick the operator backed out of. */
@@ -579,9 +578,7 @@ export function openModelOverlay(tui: TUI, deps: OpenModelOverlayDeps): OverlayH
 		title: "Models",
 		footerHint: (innerWidth) => view.railHint(innerWidth),
 	});
-	if (deps.autoRefresh !== false) {
-		view.refresh("all");
-	}
+	view.refresh("all");
 	return {
 		...handle,
 		hide(): void {
