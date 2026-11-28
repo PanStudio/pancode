@@ -261,16 +261,21 @@ function LiveLog({ client, live }: { client: Client; live: Live }) {
 						void client.call(routes.cancel, { params: { id: live.operationId }, query: {}, body: {} }, crypto.randomUUID())
 					}
 				>
-					Cancel campaign
+					Stop campaign
 				</button>
 			)}
 			{live.running && (
 				<p className="panel-note">
-					Canceling archives the current iteration as interrupted, journals the stop and removes the worktrees, the same as
-					Ctrl-C in the terminal.
+					Stopping archives the current iteration as interrupted, journals the stop and removes the worktrees, the same as
+					Ctrl-C in the terminal. Resume later with <code>pancode research resume</code>.
 				</p>
 			)}
-			{live.status === "cancelled" && <p role="status">The campaign was canceled; its journal stays readable here.</p>}
+			{live.status === "cancelled" && (
+				<p role="status">
+					The campaign was stopped; its journal stays readable here and can be resumed with{" "}
+					<code>pancode research resume</code>.
+				</p>
+			)}
 			{live.problem && (
 				<p className="research-error" role="alert">
 					{live.problem.detail || live.problem.title}
