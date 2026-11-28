@@ -18,7 +18,6 @@ import type { JobRecord } from "../core/job-types.js";
 import type {
 	BudgetAlertPayload,
 	CompactionPayload,
-	ContextActivityPayload,
 	ContextWarningPayload,
 	DispatchCompletedPayload,
 	DispatchEnqueuedPayload,
@@ -168,7 +167,6 @@ import type {
 	AcpBoardActions,
 	AcpForwardableEventKind,
 	AcpHandoffControl,
-	AcpHandoffDraft,
 	AcpPromptExpansion,
 	AcpQueuedEntryKind,
 	AcpRoutingSnapshot,
@@ -190,6 +188,7 @@ import {
 } from "./server-prompt-input.js";
 import type { PreparedAcpReplay } from "./server-replay.js";
 import { prepareAcpReplay, sessionResultMeta, withReplayUsage } from "./server-replay.js";
+import type { AcpServerScope } from "./server-scope.js";
 import type { AcpQueueEditOp, AcpSteeringMode } from "./server-session-input.js";
 import {
 	ACP_MAX_INTERRUPT_REASON_BYTES,
@@ -351,7 +350,6 @@ async function settleAcpWork(pending: readonly Promise<unknown>[]): Promise<void
 }
 
 export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Promise<number> {
-	const sessions = new Map<string, AcpServerSession>();
 	const handshake =
 		options.handshake ??
 		createAcpHandshake({
@@ -409,36 +407,19 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	 * board of the run an operator is actually watching.
 	 */
 	const dispatchProgress = new Map<string, DispatchRunTrack>();
-	let activeSessionId: string | null = null;
-	/**
-	 * The one session this process hosts, from the moment it is bound until it is
-	 * closed. Distinct from {@link activeSessionId}, which is only set while a
-	 * prompt is running: a detached dispatch run legitimately finishes after the
-	 * turn that started it, and a client keyed on the bound session still needs
-	 * that outcome so its board does not leave the run running forever.
-	 */
-	let boundSessionId: string | null = null;
 	/** The read model's live view of the bound session; null while it holds another session or is still seeding. */
 	const liveSessionView = (): TelemetryView | null => {
 		const view = options.telemetryReadModel?.live() ?? null;
-		return view !== null && !view.seeding && view.sessionId === boundSessionId ? view : null;
+		return view !== null && !view.seeding && view.sessionId === scope.boundSessionId ? view : null;
 	};
-	let activePromptState: ActivePrompt | null = null;
-	/**
-	 * The prompt state a scheduled main turn holds while it runs. Token-owned: only the lease's own
-	 * release clears it, and only while it is still the holder, so a stale release never touches a
-	 * successor turn (#411).
-	 */
-	let machineLease: { readonly jobId: string; readonly active: ActivePrompt } | null = null;
 	/** The newest record seen per job, so a turn bracket reuses the controller's own figures. Bounded. */
 	const lastJobs = new Map<string, JobRecord>();
-	let sessionCreated = false;
 	let sessionSlotReserved = false;
 	const withSessionSlot = async <T>(bind: () => Promise<T>): Promise<T> => {
 		// A close in flight frees the slot when it settles, and a client may send its next open without awaiting it.
-		if (closingSessions.size > 0) await Promise.allSettled([...closingSessions.values()]);
-		if (sessionCreated || sessionSlotReserved) {
-			const hosted = boundSessionId === null ? "" : `; close ${boundSessionId} first`;
+		if (scope.closingSessions.size > 0) await Promise.allSettled([...scope.closingSessions.values()]);
+		if (scope.sessionCreated || sessionSlotReserved) {
+			const hosted = scope.boundSessionId === null ? "" : `; close ${scope.boundSessionId} first`;
 			throw new AcpRequestError(ACP_SESSION_LIMIT_CODE, `this server hosts one session per process${hosted}`, {
 				code: "session_limit",
 			});
@@ -450,32 +431,49 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			sessionSlotReserved = false;
 		}
 	};
-	/** The one document awaiting review, keyed by the id its client holds. */
-	let pendingHandoff: { handoffId: string; sessionId: string; draft: AcpHandoffDraft } | null = null;
-	let handoffPreparing = false;
-	/** Counts prompts, so a draft drawn while a request started is known to be stale. */
-	let promptSerial = 0;
-	/** The session the startup notices went to; a load of a session that already took a prompt counts as shown. */
-	let startupHintsSessionId: string | null = null;
-	let promptSettled: Promise<void> | null = null;
-	/** The one operator shell line this process runs at a time, as the terminal runs one. */
-	let activeShell: { sessionId: string; abort: AbortController; settled: Promise<void> } | null = null;
-	const closedSessionIds = new Set<string>();
-	/** A forked parent's id, mapped to the child that took its place in this process. */
-	const replacedSessions = new Map<string, string>();
-	const closingSessions = new Map<string, Promise<Record<string, never>>>();
 	// The launch cwd is the process's one workspace identity: settings, project
 	// context, and the session ledger were all resolved against it during boot.
 	// It is canonicalized once here so a client that passes a symlinked path, a
 	// trailing slash, or a `/.` suffix is recognised rather than refused.
-	let contextActivity: ContextActivityPayload | null = null;
-	let contextCommandInFlight: Promise<unknown> | null = null;
 	const canonicalCwd = realpathSync(options.cwd ?? process.cwd());
 	const permissionTimeoutMs = options.permissionTimeoutMs ?? DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS;
+	const scope: AcpServerScope = {
+		options,
+		handshake,
+		canonicalCwd,
+		workspaceInstanceId,
+		now,
+		get telemetry() {
+			return telemetry;
+		},
+		get permission() {
+			return permission;
+		},
+		sessions: new Map<string, AcpServerSession>(),
+		closedSessionIds: new Set<string>(),
+		replacedSessions: new Map<string, string>(),
+		closingSessions: new Map<string, Promise<Record<string, never>>>(),
+		listingFallbacks: new Map<string, string>(),
+		activeSessionId: null,
+		boundSessionId: null,
+		activePromptState: null,
+		machineLease: null,
+		sessionCreated: false,
+		pendingHandoff: null,
+		handoffPreparing: false,
+		promptSerial: 0,
+		startupHintsSessionId: null,
+		promptSettled: null,
+		activeShell: null,
+		contextActivity: null,
+		contextCommandInFlight: null,
+		standingLimits: undefined,
+		asideRound: null,
+	};
 	const telemetry: AcpLiveTelemetry = createAcpLiveTelemetry({
 		notify: (sessionId, update) => options.transport.notify("session/update", { sessionId, update }),
-		sessionId: () => boundSessionId,
-		cwd: canonicalCwd,
+		sessionId: () => scope.boundSessionId,
+		cwd: scope.canonicalCwd,
 		...(options.contextLedger !== undefined ? { contextLedger: options.contextLedger } : {}),
 		...(options.telemetryReadModel
 			? {
@@ -486,10 +484,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		...(options.plan !== undefined ? { plan: options.plan } : {}),
 		...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
 		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
-		fullUsage: () => handshake.fullUsageEnabled,
+		fullUsage: () => scope.handshake.fullUsageEnabled,
 	});
 	const workspaceResultMeta = async (): Promise<Record<string, unknown>> => {
-		const view = await telemetry.workspace();
+		const view = await scope.telemetry.workspace();
 		return view === null ? {} : { [ACP_WORKSPACE_META_KEY]: view };
 	};
 	if (
@@ -502,30 +500,30 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	// A client's negotiated window replaces the configured default. The handshake
 	// already answers the operator's explicit --permission-timeout for one, so
 	// the flag still wins.
-	const permissionWindowMs = (): number => handshake.permissionRequestTimeoutMs ?? permissionTimeoutMs;
-	const interviewWindowMs = (): number => handshake.interviewTimeoutMs ?? permissionTimeoutMs;
+	const permissionWindowMs = (): number => scope.handshake.permissionRequestTimeoutMs ?? permissionTimeoutMs;
+	const interviewWindowMs = (): number => scope.handshake.interviewTimeoutMs ?? permissionTimeoutMs;
 	const permission = installPermissionBridge({
 		transport: options.transport,
 		toolRegistry: options.toolRegistry,
 		...(options.bus ? { bus: options.bus } : {}),
-		activeSessionId: () => activeSessionId,
+		activeSessionId: () => scope.activeSessionId,
 		resolveToolCallId: (engineToolCallId) =>
-			activePromptState === null ? null : openWireIdFor(activePromptState, engineToolCallId),
+			scope.activePromptState === null ? null : openWireIdFor(scope.activePromptState, engineToolCallId),
 		soleOpenToolCallId: () => {
-			if (activePromptState === null || activePromptState.openToolCalls.size !== 1) return null;
-			const [only] = activePromptState.openToolCalls;
+			if (scope.activePromptState === null || scope.activePromptState.openToolCalls.size !== 1) return null;
+			const [only] = scope.activePromptState.openToolCalls;
 			return only ?? null;
 		},
 		toolCallSnapshot: (wireId) =>
-			activePromptState === null ? null : (activePromptState.toolCallSnapshots.get(wireId) ?? null),
+			scope.activePromptState === null ? null : (scope.activePromptState.toolCallSnapshots.get(wireId) ?? null),
 		permissionTimeoutMs: permissionWindowMs,
-		clientSurface: () => handshake.clientSurface,
+		clientSurface: () => scope.handshake.clientSurface,
 		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
 		...(options.session !== undefined ? { session: options.session } : {}),
 		workerAskNotice: (sessionId, text) => {
-			const active = activePromptState;
+			const active = scope.activePromptState;
 			// Outside a turn there is no message to attach it to; the run's own outcome still says it.
-			if (active === null || activeSessionId !== sessionId) {
+			if (active === null || scope.activeSessionId !== sessionId) {
 				options.diagnostics?.(text.trim());
 				return;
 			}
@@ -540,10 +538,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		...(options.workerPermissions !== undefined
 			? {
 					workerAsks: {
-						enabled: () => handshake.initialized && handshake.workerPermissionsEnabled,
+						enabled: () => scope.handshake.initialized && scope.handshake.workerPermissionsEnabled,
 						resolve: options.workerPermissions.resolve,
 						bindToolCall: (runId: string) => {
-							const active = activePromptState;
+							const active = scope.activePromptState;
 							if (active === null) return null;
 							let attributed: string | null = null;
 							for (const wireId of active.openToolCalls) {
@@ -559,12 +557,12 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				}
 			: {}),
 		expireActivePrompt: () => {
-			if (activePromptState === null) return;
-			activePromptState.permissionExpired = true;
+			if (scope.activePromptState === null) return;
+			scope.activePromptState.permissionExpired = true;
 			options.chat.cancel();
 		},
 		cancelActivePrompt: (reason) => {
-			const session = activeSessionId === null ? undefined : sessions.get(activeSessionId);
+			const session = scope.activeSessionId === null ? undefined : scope.sessions.get(scope.activeSessionId);
 			if (session) cancelSession(session, reason);
 		},
 	});
@@ -581,13 +579,13 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		payload: Record<string, unknown>,
 		meta?: Record<string, unknown>,
 	): void => {
-		const sessionId = activeSessionId ?? boundSessionId;
-		if (!handshake.initialized || !handshake.enabledEventKinds.has(kind) || sessionId === null) return;
+		const sessionId = scope.activeSessionId ?? scope.boundSessionId;
+		if (!scope.handshake.initialized || !scope.handshake.enabledEventKinds.has(kind) || sessionId === null) return;
 		eventSequence += 1;
 		try {
 			options.transport.notify(ACP_EVENT_NOTIFICATION, {
 				version: 1,
-				workspaceInstanceId,
+				workspaceInstanceId: scope.workspaceInstanceId,
 				sessionId,
 				turnId,
 				sequence: eventSequence,
@@ -614,7 +612,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	);
 	if (options.bus !== undefined) {
 		const bus = options.bus;
-		const noticeSession = () => (handshake.initialized ? (activeSessionId ?? boundSessionId) : null);
+		const noticeSession = () => (scope.handshake.initialized ? (scope.activeSessionId ?? scope.boundSessionId) : null);
 		const sessionMeta = (owner: string | null, meta: Record<string, unknown>) => {
 			const sessionId = noticeSession();
 			if (sessionId === null || owner !== sessionId) return;
@@ -624,7 +622,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			});
 		};
 		unsubscribeEvents.push(
-			bus.subscribe("context.pruned", () => telemetry.contextFolded()),
+			bus.subscribe("context.pruned", () => scope.telemetry.contextFolded()),
 			subscribeAcpNotices(bus, runtimeNotices, noticeSession, (sessionId) => announceCommands(sessionId)),
 			bus.subscribe("session.eggs_changed", (event) =>
 				sessionMeta(event.sessionId, { [ACP_EGGS_META_KEY]: event.active }),
@@ -636,21 +634,21 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				// The stop parks the request inside the running prompt, so it crosses
 				// as that prompt's notice chunk, figures beside the text (#424). Between
 				// prompts nothing is parked and the alert has no turn to belong to.
-				const active = activePromptState;
-				const sessionId = activeSessionId ?? boundSessionId;
+				const active = scope.activePromptState;
+				const sessionId = scope.activeSessionId ?? scope.boundSessionId;
 				if (active === null || active.cancelled || sessionId === null) return;
 				const frame = budgetBlockFrame(payload);
 				if (frame === null) return;
 				sendUpdate(options.transport, sessionId, active, frame.update, { ...ORCHESTRATOR_UPDATE_META, ...frame.meta });
 			}),
 			bus.subscribe("turn.aborted", (payload) => {
-				const active = activePromptState;
+				const active = scope.activePromptState;
 				if (active !== null && !active.cancelled && payload.source === "loop_guard") active.guardStopped = true;
 			}),
 			bus.subscribe("safety.loop_blocked", (payload: LoopBlockedPayload) => {
 				// Loop blocks describe the turn that is running, so unlike a dispatch
 				// run they are meaningless outside one.
-				if (activePromptState === null) return;
+				if (scope.activePromptState === null) return;
 				if (
 					!Number.isSafeInteger(payload.repeatCount) ||
 					payload.repeatCount < 1 ||
@@ -792,11 +790,15 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		);
 		unsubscribeEvents.push(
 			bus.subscribe("context.activity_changed", (payload) => {
-				if (!payload.operation || payload.operation.sessionId !== boundSessionId || payload.operation.cwd !== canonicalCwd)
+				if (
+					!payload.operation ||
+					payload.operation.sessionId !== scope.boundSessionId ||
+					payload.operation.cwd !== scope.canonicalCwd
+				)
 					return;
 				const operation = readContextOperation(payload.operation);
 				if (!operation) return;
-				contextActivity = {
+				scope.contextActivity = {
 					kind: payload.kind,
 					phase: payload.phase,
 					status: payload.status,
@@ -809,7 +811,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					...(payload.stages === undefined ? {} : { stages: payload.stages }),
 					...(payload.timing === undefined ? {} : { timing: payload.timing }),
 				};
-				forwardEvent("context.activity_changed", null, operation.outcome !== undefined, { ...contextActivity });
+				forwardEvent("context.activity_changed", null, operation.outcome !== undefined, { ...scope.contextActivity });
 			}),
 		);
 		unsubscribeEvents.push(
@@ -850,7 +852,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			bus.subscribe("safety.tool_budget_exceeded", (payload: ToolBudgetExceededPayload) => {
 				// Bound to the turn that is running, like `safety.loop_blocked`: the
 				// budget it names is per-turn and means nothing outside one.
-				if (activePromptState === null) return;
+				if (scope.activePromptState === null) return;
 				const callsThisTurn = safeCount(payload.callsThisTurn);
 				const softBudget = safeCount(payload.softBudget);
 				const hardCeiling = safeCount(payload.hardCeiling);
@@ -886,7 +888,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	}
 	/** True only while this job's scheduled turn has sent its first frame and not yet released. */
 	const jobTurnOpen = (jobId: string): boolean =>
-		machineLease !== null && machineLease.jobId === jobId && machineLease.active.scheduled?.opened === true;
+		scope.machineLease !== null &&
+		scope.machineLease.jobId === jobId &&
+		scope.machineLease.active.scheduled?.opened === true;
 	/** Sends one job's canonical record. */
 	const forwardJob = (job: JobRecord, complete: boolean): void => {
 		const projected = jobEventPayload(job, complete, jobTurnOpen(job.id), options.commands?.jobSpend?.(job.id) ?? null);
@@ -904,7 +908,11 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				// A job belongs to the session and workspace that created it. The bus is
 				// process-wide, so a frame for any other owner is not this client's.
 				const owner = payload.job?.owner;
-				if (owner === undefined || owner.sessionId !== (activeSessionId ?? boundSessionId) || owner.cwd !== canonicalCwd) {
+				if (
+					owner === undefined ||
+					owner.sessionId !== (scope.activeSessionId ?? scope.boundSessionId) ||
+					owner.cwd !== scope.canonicalCwd
+				) {
 					return;
 				}
 				lastJobs.delete(payload.job.id);
@@ -929,8 +937,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	const unsubscribeQueueEvents = queueEditWired(options)
 		? options.chat.onEvent((raw) => {
 				if (eventRecord(raw).type !== "queue_update") return;
-				const sessionId = activeSessionId ?? boundSessionId;
-				if (!handshake.initialized || !handshake.queueEventsEnabled || sessionId === null) return;
+				const sessionId = scope.activeSessionId ?? scope.boundSessionId;
+				if (!scope.handshake.initialized || !scope.handshake.queueEventsEnabled || sessionId === null) return;
 				try {
 					options.transport.notify(ACP_QUEUE_CHANGED_NOTIFICATION, {
 						sessionId,
@@ -944,7 +952,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	// Readouts go to the session a queue change would name, and only to a client that opted in. The chat's
 	// events still reach the emitter without one, so its rate clock stays whole.
 	const readouts = createAcpReadoutsEmitter({
-		now,
+		now: scope.now,
 		send: (params) => {
 			try {
 				options.transport.notify(ACP_READOUTS_NOTIFICATION, params);
@@ -961,23 +969,29 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			: {}),
 	});
 	const readoutsSession = (id: string | null): AcpReadoutsSession | null => {
-		if (id === null || !handshake.initialized || !handshake.readoutsEnabled) return null;
-		const session = sessions.get(id);
-		return session === undefined ? null : { id, autonomy: session.autonomy, holdsPrompt: activeSessionId === id };
+		if (id === null || !scope.handshake.initialized || !scope.handshake.readoutsEnabled) return null;
+		const session = scope.sessions.get(id);
+		return session === undefined ? null : { id, autonomy: session.autonomy, holdsPrompt: scope.activeSessionId === id };
 	};
 	const publishReadouts = (id: string): void => {
 		const session = readoutsSession(id);
 		if (session !== null) readouts.publish(session);
 	};
 	const unsubscribeReadouts = options.chat.onEvent((raw) =>
-		readouts.chatEvent(raw, readoutsSession(activeSessionId ?? boundSessionId)),
+		readouts.chatEvent(raw, readoutsSession(scope.activeSessionId ?? scope.boundSessionId)),
 	);
 	// The judge's hold on a call the client already drew, as a non-terminal update of that row. The terminal
 	// update still arrives once, last, and these frames spend none of the call's progress budget.
 	const unsubscribeAdmission =
 		options.toolRegistry?.onAdmissionReview?.((event) => {
-			const active = activePromptState;
-			if (!handshake.initialized || !handshake.readoutsEnabled || active === null || activeSessionId === null) return;
+			const active = scope.activePromptState;
+			if (
+				!scope.handshake.initialized ||
+				!scope.handshake.readoutsEnabled ||
+				active === null ||
+				scope.activeSessionId === null
+			)
+				return;
 			const wireId = openWireIdFor(active, event.toolCallId);
 			if (wireId === null) return;
 			const admission: AcpAdmissionMeta =
@@ -988,7 +1002,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			const status: AcpToolCallStatus = event.state === "judging" ? "pending" : "in_progress";
 			if (status === "in_progress") active.runningToolCalls.add(wireId);
 			try {
-				sendUpdate(options.transport, activeSessionId, active, {
+				sendUpdate(options.transport, scope.activeSessionId, active, {
 					sessionUpdate: "tool_call_update",
 					toolCallId: wireId,
 					status,
@@ -1002,8 +1016,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	// and any approval. A body that starts before its `tool_call` is emitted makes that call announce itself running.
 	const unsubscribeToolBodyStart =
 		options.toolRegistry?.onToolBodyStart?.((engineId) => {
-			const active = activePromptState;
-			if (!handshake.initialized || active === null || activeSessionId === null) return;
+			const active = scope.activePromptState;
+			if (!scope.handshake.initialized || active === null || scope.activeSessionId === null) return;
 			if (active.permissionExpired || active.toolCallLimitReached) return;
 			const wireId = openWireIdFor(active, engineId);
 			if (wireId === null) {
@@ -1017,7 +1031,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			try {
 				sendUpdate(
 					options.transport,
-					activeSessionId,
+					scope.activeSessionId,
 					active,
 					{ sessionUpdate: "tool_call_update", toolCallId: wireId, status: "in_progress" satisfies AcpToolCallStatus },
 					toolCallUpdateMeta(snapshot),
@@ -1037,8 +1051,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		parentToolCallId: string | undefined,
 		identity: { runId: string; agentId: string; node: string | null },
 	): void {
-		const active = activePromptState;
-		if (active === null || activeSessionId === null) return;
+		const active = scope.activePromptState;
+		if (active === null || scope.activeSessionId === null) return;
 		if (parentToolCallId === undefined || parentToolCallId.length === 0) return;
 		const wireId = openWireIdFor(active, parentToolCallId);
 		if (wireId === null) return;
@@ -1057,7 +1071,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		snapshot.agents = agents;
 		sendUpdate(
 			options.transport,
-			activeSessionId,
+			scope.activeSessionId,
 			active,
 			{
 				sessionUpdate: "tool_call_update",
@@ -1071,7 +1085,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	}
 
 	const requireInitialized = (): void => {
-		if (!handshake.initialized)
+		if (!scope.handshake.initialized)
 			throw new AcpRequestError(-32600, "initialize must be called first", { code: "not_initialized" });
 	};
 
@@ -1093,7 +1107,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 
 	const canonicalSessionCwd = (requested: unknown): string => {
 		const mismatch = (): AcpRequestError =>
-			new AcpRequestError(-32602, `session cwd does not match bound workspace root ${canonicalCwd}`, {
+			new AcpRequestError(-32602, `session cwd does not match bound workspace root ${scope.canonicalCwd}`, {
 				code: "session_cwd_mismatch",
 			});
 		if (typeof requested !== "string" || requested.trim().length === 0 || !isAbsolute(requested)) throw mismatch();
@@ -1103,7 +1117,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		} catch {
 			throw mismatch();
 		}
-		if (sessionCwd !== canonicalCwd) throw mismatch();
+		if (sessionCwd !== scope.canonicalCwd) throw mismatch();
 		return sessionCwd;
 	};
 	const attachClientMcpServers = async (
@@ -1136,7 +1150,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return history.filter((meta) => {
 			if (safeStoredIdentifier(meta.id, ACP_MAX_SESSION_ID_BYTES) === null) return false;
 			try {
-				return realpathSync(resolvePath(meta.cwd)) === canonicalCwd;
+				return realpathSync(resolvePath(meta.cwd)) === scope.canonicalCwd;
 			} catch {
 				return false;
 			}
@@ -1156,23 +1170,19 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			model: safeConfiguredIdentifier(route.model, ACP_MAX_MODEL_ID_BYTES),
 		};
 	};
-
-	// The limits last applied to the chat. A slash command acts outside the tool
-	// calls these bound, so it is screened against them before it runs (Z1).
-	let standingLimits: TurnConstraints | undefined;
 	const applyCeilings = (
 		ceilings: ReadonlyArray<TurnConstraints | undefined>,
 		lifetime: "session" | "prompt" = "session",
 	): TurnConstraints | undefined => {
-		standingLimits = options.chat.setToolCeiling?.(ceilings, lifetime);
-		return standingLimits;
+		scope.standingLimits = options.chat.setToolCeiling?.(ceilings, lifetime);
+		return scope.standingLimits;
 	};
 	const assertCommandWithinCeiling = (control: AcpCommandControl, command: unknown, argv: unknown): void => {
-		if (!ceilingBinds(standingLimits)) return;
+		if (!ceilingBinds(scope.standingLimits)) return;
 		const refusal =
 			control.ceilingRefusal === undefined
 				? "this agent cannot screen commands against a ceiling"
-				: control.ceilingRefusal(command, argv, standingLimits);
+				: control.ceilingRefusal(command, argv, scope.standingLimits);
 		if (refusal !== null) throw new AcpRequestError(-32602, refusal, { code: "ceiling_refused" });
 	};
 	const assertCeilingEnforceable = (ceiling: TurnConstraints | undefined): void => {
@@ -1201,9 +1211,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	};
 	const getSession = (params: unknown): AcpServerSession => {
 		const id = sessionIdOf(params);
-		const session = sessions.get(id);
+		const session = scope.sessions.get(id);
 		if (session) return session;
-		const child = replacedSessions.get(id);
+		const child = scope.replacedSessions.get(id);
 		if (child !== undefined)
 			throw new AcpRequestError(-32002, `session ${id} was closed when its fork ${child} took this process`, {
 				code: "session_replaced",
@@ -1213,12 +1223,13 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	const notifyConfigOptions = (session: AcpServerSession) => {
 		options.transport.notify("session/update", {
 			sessionId: session.id,
-			update: { sessionUpdate: "config_option_update", configOptions: configOptions(options, listingFallbacks, session) },
+			update: {
+				sessionUpdate: "config_option_update",
+				configOptions: configOptions(options, scope.listingFallbacks, session),
+			},
 			_meta: { [ACP_SESSION_META_KEY]: { target: session.target, model: session.model } },
 		});
 	};
-	/** Why a target's model choices are its configured ones and not the account's live listing. */
-	const listingFallbacks = new Map<string, string>();
 	/**
 	 * A runtime whose listing carries each model's capabilities lists live when its cache is cold, stale or keeps no
 	 * capabilities, as `run` does, so the model choices and their thinking levels are the account's. The wait is the
@@ -1243,19 +1254,19 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const outcome = await Promise.race([probe, timedOut]);
 		clearTimeout(timer);
 		if (outcome === null) {
-			listingFallbacks.delete(targetId);
+			scope.listingFallbacks.delete(targetId);
 			return;
 		}
 		const reason =
 			outcome === "timeout"
 				? `the live model listing took longer than ${PROVIDER_PROBE_TIMEOUT_MS / 1_000} s`
 				: modelSelectionErrorText(outcome, 512);
-		listingFallbacks.set(targetId, reason);
+		scope.listingFallbacks.set(targetId, reason);
 		if (outcome !== "timeout") return;
 		void probe.then((late) => {
 			if (late !== null) return;
-			listingFallbacks.delete(targetId);
-			for (const session of sessions.values()) if (session.target === targetId) notifyConfigOptions(session);
+			scope.listingFallbacks.delete(targetId);
+			for (const session of scope.sessions.values()) if (session.target === targetId) notifyConfigOptions(session);
 		});
 	};
 	/**
@@ -1271,7 +1282,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const before = JSON.stringify(sessionThinking(options, session));
 		void providers.probeTarget(targetId).then(
 			() => {
-				if (sessions.get(session.id) !== session || session.target !== targetId) return;
+				if (scope.sessions.get(session.id) !== session || session.target !== targetId) return;
 				if (JSON.stringify(sessionThinking(options, session)) !== before) notifyConfigOptions(session);
 			},
 			() => {},
@@ -1333,8 +1344,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		});
 	};
 
-	options.transport.onRequest("initialize", (params) => handshake.initialize(params));
-	options.transport.onRequest("authenticate", (params) => handshake.authenticate(params));
+	options.transport.onRequest("initialize", (params) => scope.handshake.initialize(params));
+	options.transport.onRequest("authenticate", (params) => scope.handshake.authenticate(params));
 
 	options.transport.onRequest("session/new", async (params) => {
 		requireInitialized();
@@ -1378,18 +1389,18 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				activePrompt: null,
 				...(ceiling !== undefined ? { ceiling } : {}),
 			};
-			sessionCreated = true;
-			sessions.set(id, session);
-			boundSessionId = id;
+			scope.sessionCreated = true;
+			scope.sessions.set(id, session);
+			scope.boundSessionId = id;
 			options.bindTelemetrySession?.(id);
 			const ceilingEcho = applySessionCeiling(session);
 			announceCommands(id);
-			telemetry.bind(false);
+			scope.telemetry.bind(false);
 			await listTargetModels(session.target);
 			refreshThinkingOption(session);
 			const opened = {
 				sessionId: id,
-				...sessionConfig(options, listingFallbacks, session),
+				...sessionConfig(options, scope.listingFallbacks, session),
 				_meta: {
 					...ceilingEcho,
 					...modelsResultMeta(options, session),
@@ -1418,7 +1429,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	const prepareRestore = (
 		id: string,
 		leafTurnId: string | null,
-		scope: "leaf" | "upto",
+		replayScope: "leaf" | "upto",
 		replayToClient: boolean,
 	): PreparedRestore => {
 		if (options.readSessionEntries === undefined || options.buildReplayMessages === undefined) {
@@ -1427,13 +1438,13 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const entries = options.readSessionEntries(id);
 		return {
 			leafTurnId,
-			replayMessages: options.buildReplayMessages(entries, leafTurnId, scope),
+			replayMessages: options.buildReplayMessages(entries, leafTurnId, replayScope),
 			replay: replayToClient
 				? prepareAcpReplay(
 						entries,
 						leafTurnId,
 						id,
-						canonicalCwd,
+						scope.canonicalCwd,
 						options.session?.history().find((meta) => meta.id === id)?.target ?? null,
 					)
 				: undefined,
@@ -1446,7 +1457,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	): Promise<PreparedAcpReplay | undefined> => {
 		if (replay === undefined || replay.turns === 0 || options.telemetryReadModel === undefined) return replay;
 		try {
-			return withReplayUsage(replay, await options.telemetryReadModel.open(sessionId), handshake.fullUsageEnabled);
+			return withReplayUsage(replay, await options.telemetryReadModel.open(sessionId), scope.handshake.fullUsageEnabled);
 		} catch (error) {
 			options.diagnostics?.(`replay usage read failed: ${acpErrorMessage(error)}`);
 			return replay;
@@ -1454,8 +1465,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	};
 	/** Bind `session` as the one this process hosts, then replay its branch to the client. */
 	const bindRestored = (session: AcpServerSession, replay: PreparedAcpReplay | undefined): void => {
-		sessions.set(session.id, session);
-		boundSessionId = session.id;
+		scope.sessions.set(session.id, session);
+		scope.boundSessionId = session.id;
 		options.bindTelemetrySession?.(session.id);
 		announceCommands(session.id);
 		if (replay !== undefined) {
@@ -1463,7 +1474,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			replayDispatchTerminals(forwardEvent, replay.runs);
 		}
 		// A restored session's meter goes out even when no history replays (session/resume), as session/load sends it.
-		telemetry.bind(replay !== undefined, true);
+		scope.telemetry.bind(replay !== undefined, true);
 	};
 
 	/** Whether a live process other than this one holds the session's ledger now, read from its record. */
@@ -1502,10 +1513,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		) {
 			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
 		}
-		if (session.activePrompt !== null || options.chat.isStreaming() || contextCommandInFlight !== null) {
+		if (session.activePrompt !== null || options.chat.isStreaming() || scope.contextCommandInFlight !== null) {
 			throw new AcpRequestError(-32602, "this session already has an active prompt", { code: "prompt_active" });
 		}
-		if (activeShell !== null) {
+		if (scope.activeShell !== null) {
 			throw new AcpRequestError(-32602, "a shell line is running; wait for it or cancel it first", {
 				code: "shell_active",
 			});
@@ -1517,7 +1528,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					options.readSessionEntries(session.id),
 					options.session.leafId(session.id),
 					session.id,
-					canonicalCwd,
+					scope.canonicalCwd,
 					workspaceMeta(session.id).target,
 				);
 			} catch (error) {
@@ -1525,7 +1536,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			}
 		}
 		// The hosted session's live view, read in the same tick as the prompt check above.
-		if (replay !== undefined) replay = withReplayUsage(replay, liveSessionView(), handshake.fullUsageEnabled);
+		if (replay !== undefined) replay = withReplayUsage(replay, liveSessionView(), scope.handshake.fullUsageEnabled);
 		const ceilingEcho = applySessionCeiling(session);
 		announceCommands(session.id);
 		if (replay !== undefined) {
@@ -1533,7 +1544,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			replayDispatchTerminals(forwardEvent, replay.runs);
 		}
 		const reopened = {
-			...sessionConfig(options, listingFallbacks, session),
+			...sessionConfig(options, scope.listingFallbacks, session),
 			_meta: {
 				...ceilingEcho,
 				...modelsResultMeta(options, session),
@@ -1552,10 +1563,11 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	const restoreSession = async (params: unknown, replayToClient: boolean) => {
 		requireInitialized();
 		const hosted =
-			isRecord(params) && boundSessionId !== null && params.sessionId === boundSessionId
-				? sessions.get(boundSessionId)
+			isRecord(params) && scope.boundSessionId !== null && params.sessionId === scope.boundSessionId
+				? scope.sessions.get(scope.boundSessionId)
 				: undefined;
-		if (hosted !== undefined && !closingSessions.has(hosted.id)) return reopenHosted(params, hosted, replayToClient);
+		if (hosted !== undefined && !scope.closingSessions.has(hosted.id))
+			return reopenHosted(params, hosted, replayToClient);
 		return withSessionSlot(async () => {
 			const request = assertParamKeys(params, new Set(["sessionId", "cwd", "mcpServers", "additionalDirectories"]));
 			// Composed exactly like session/new; without one the operator's limits apply.
@@ -1585,7 +1597,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			try {
 				entries = options.readSessionEntries(id);
 				const leaf = options.session.leafId(id);
-				replay = replayToClient ? prepareAcpReplay(entries, leaf, id, canonicalCwd, stored.target) : undefined;
+				replay = replayToClient ? prepareAcpReplay(entries, leaf, id, scope.canonicalCwd, stored.target) : undefined;
 			} catch (error) {
 				throw loadFailure(error);
 			}
@@ -1602,7 +1614,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					id,
 				);
 				replay = replayToClient
-					? prepareAcpReplay(restored.entries, restored.leafTurnId, id, canonicalCwd, stored.target)
+					? prepareAcpReplay(restored.entries, restored.leafTurnId, id, scope.canonicalCwd, stored.target)
 					: undefined;
 			} catch (error) {
 				await options.mcpCapabilities?.detachClientServers();
@@ -1626,7 +1638,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			const autonomy = options.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL;
 			const session: AcpServerSession = {
 				id,
-				cwd: canonicalCwd,
+				cwd: scope.canonicalCwd,
 				autonomy,
 				autonomySource: "settings",
 				target: safeConfiguredIdentifier(recordedRoute.target, ACP_MAX_TARGET_ID_BYTES),
@@ -1636,16 +1648,16 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				activePrompt: null,
 				...(ceiling !== undefined ? { ceiling } : {}),
 			};
-			sessionCreated = true;
+			scope.sessionCreated = true;
 			// Its first prompt, in whichever process took it, carried the startup notices; a reload does not repeat them.
-			if (entries.some((entry) => entry.kind === "message" && entry.role === "user")) startupHintsSessionId = id;
+			if (entries.some((entry) => entry.kind === "message" && entry.role === "user")) scope.startupHintsSessionId = id;
 			const ceilingEcho = applySessionCeiling(session);
 			replay = await replayWithUsage(replay, id);
 			// The first usage frame and the ledger read the view the next request would publish, not the saved snapshot.
 			await options.chat.nextRequestReady?.();
 			bindRestored(session, replay);
 			const loaded = {
-				...sessionConfig(options, listingFallbacks, session),
+				...sessionConfig(options, scope.listingFallbacks, session),
 				_meta: {
 					...ceilingEcho,
 					...modelsResultMeta(options, session),
@@ -1680,7 +1692,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			} catch {
 				return { sessions: [] };
 			}
-			if (filterCwd !== canonicalCwd) return { sessions: [] };
+			if (filterCwd !== scope.canonicalCwd) return { sessions: [] };
 		}
 		let start = 0;
 		if (request.cursor !== undefined && request.cursor !== null) {
@@ -1694,7 +1706,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			}
 			if (
 				!isRecord(decoded) ||
-				decoded.workspace !== workspaceInstanceId ||
+				decoded.workspace !== scope.workspaceInstanceId ||
 				!Number.isSafeInteger(decoded.start) ||
 				(decoded.start as number) < 0 ||
 				Buffer.from(JSON.stringify(decoded)).toString("base64url") !== request.cursor
@@ -1711,7 +1723,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			const messageCount = safeCount(meta.messageCount);
 			const item = {
 				sessionId: meta.id,
-				cwd: canonicalCwd,
+				cwd: scope.canonicalCwd,
 				...(label.length > 0 ? { title: label } : {}),
 				updatedAt: safeIso(meta.lastActivityAt ?? meta.endedAt ?? meta.createdAt),
 				_meta: {
@@ -1742,7 +1754,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			...(start + projected.length < history.length
 				? {
 						nextCursor: Buffer.from(
-							JSON.stringify({ workspace: workspaceInstanceId, start: start + projected.length }),
+							JSON.stringify({ workspace: scope.workspaceInstanceId, start: start + projected.length }),
 						).toString("base64url"),
 					}
 				: {}),
@@ -1769,7 +1781,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
 		}
 		const session = getSession(request);
-		if (session.id !== boundSessionId) {
+		if (session.id !== scope.boundSessionId) {
 			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
 		}
 		// Live jobs first, then the newest finished ones, so the cap drops history rather than work in flight.
@@ -1809,12 +1821,12 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	};
 	/** A branch change rewrites the context a running turn is reading, so it waits for the turn. */
 	const requireIdle = (session: AcpServerSession, action: string): void => {
-		if (activeShell !== null)
+		if (scope.activeShell !== null)
 			throw new AcpRequestError(-32602, `cannot ${action} while a shell line is running`, { code: "shell_active" });
 		if (
-			contextCommandInFlight !== null ||
+			scope.contextCommandInFlight !== null ||
 			session.activePrompt !== null ||
-			activePromptState !== null ||
+			scope.activePromptState !== null ||
 			options.chat.isStreaming()
 		) {
 			throw new AcpRequestError(-32602, `cannot ${action} during an active prompt`, { code: "prompt_active" });
@@ -1835,7 +1847,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	};
 	/** The checkpoint yields, so a request that arrived meanwhile may have closed or started work on the session. */
 	const requireStillIdle = (session: AcpServerSession, action: string): void => {
-		if (sessions.get(session.id) !== session || closingSessions.has(session.id)) {
+		if (scope.sessions.get(session.id) !== session || scope.closingSessions.has(session.id)) {
 			throw new AcpRequestError(-32002, "unknown ACP session", { code: "session_unknown" });
 		}
 		requireIdle(session, action);
@@ -2046,10 +2058,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			activePrompt: null,
 			...(ceiling !== undefined ? { ceiling } : {}),
 		};
-		sessions.delete(bound.id);
-		closedSessionIds.add(bound.id);
-		replacedSessions.delete(meta.id);
-		replacedSessions.set(bound.id, meta.id);
+		scope.sessions.delete(bound.id);
+		scope.closedSessionIds.add(bound.id);
+		scope.replacedSessions.delete(meta.id);
+		scope.replacedSessions.set(bound.id, meta.id);
 		options.transport.notify("session/update", {
 			sessionId: bound.id,
 			update: {
@@ -2080,7 +2092,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			);
 			forkLeaf = restored.leafTurnId;
 			if (replayToClient)
-				replay = prepareAcpReplay(restored.entries, restored.leafTurnId, meta.id, canonicalCwd, meta.target);
+				replay = prepareAcpReplay(restored.entries, restored.leafTurnId, meta.id, scope.canonicalCwd, meta.target);
 		} catch (error) {
 			options.diagnostics?.(`fork replay failed: ${acpErrorMessage(error)}`);
 			resetForSession(forkLeaf, []);
@@ -2094,7 +2106,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return {
 			sessionId: forked.id,
 			...(replayToClient ? parent : {}),
-			...sessionConfig(options, listingFallbacks, forked),
+			...sessionConfig(options, scope.listingFallbacks, forked),
 			_meta: {
 				...ceilingEcho,
 				...modelsResultMeta(options, forked),
@@ -2159,9 +2171,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const bound = getSession(request);
 		requireIdle(bound, "hand off");
 		const goal = requireBoundedClientString(request.goal, "goal", ACP_MAX_HANDOFF_GOAL_BYTES, { allowEmpty: true });
-		if (handoffPreparing) return handoffRefusal("warn", "busy", "a handoff document is already being drawn up");
-		handoffPreparing = true;
-		const serial = promptSerial;
+		if (scope.handoffPreparing) return handoffRefusal("warn", "busy", "a handoff document is already being drawn up");
+		scope.handoffPreparing = true;
+		const serial = scope.promptSerial;
 		let outcome: Awaited<ReturnType<AcpHandoffControl["prepare"]>>;
 		try {
 			outcome = await control.prepare(goal);
@@ -2169,7 +2181,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			options.diagnostics?.(`handoff extraction failed: ${acpErrorMessage(error)}`);
 			return handoffRefusal("error", "extraction", "the extraction round failed");
 		} finally {
-			handoffPreparing = false;
+			scope.handoffPreparing = false;
 		}
 		if (!outcome.ok) {
 			// A failed round carries the provider's own words; those stay on the stderr tail.
@@ -2183,14 +2195,14 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			}
 			return handoffRefusal(outcome.level, outcome.code, outcome.reason);
 		}
-		if (serial !== promptSerial || sessions.get(bound.id) !== bound) {
+		if (serial !== scope.promptSerial || scope.sessions.get(bound.id) !== bound) {
 			return handoffRefusal("warn", "stale", "the conversation moved while the document was drawn; nothing was written");
 		}
 		if (utf8Bytes(outcome.draft.document) > ACP_MAX_HANDOFF_DOCUMENT_BYTES) {
 			return handoffRefusal("error", "too_large", "the handoff document is larger than a client can review");
 		}
 		const handoffId = randomUUID();
-		pendingHandoff = { handoffId, sessionId: bound.id, draft: outcome.draft };
+		scope.pendingHandoff = { handoffId, sessionId: bound.id, draft: outcome.draft };
 		return {
 			status: "ready" as const,
 			handoffId,
@@ -2211,7 +2223,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const ceiling = successorCeiling(bound, request);
 		const handoffId = requireBoundedClientString(request.handoffId, "handoffId", ACP_MAX_SESSION_ID_BYTES);
 		const document = handoffDocument(request.document);
-		const pending = pendingHandoff;
+		const pending = scope.pendingHandoff;
 		if (pending === null || pending.handoffId !== handoffId || pending.sessionId !== bound.id) {
 			return handoffRefusal(
 				"warn",
@@ -2224,7 +2236,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			await checkpointBeforeClose(bound.id, "handoff");
 			requireStillIdle(bound, "hand off");
 		}
-		if (pendingHandoff !== pending) {
+		if (scope.pendingHandoff !== pending) {
 			return handoffRefusal(
 				"warn",
 				"stale",
@@ -2234,10 +2246,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const outcome = control.commit(pending.draft, document);
 		if (!outcome.ok) {
 			// An empty review is the reviewer's to fix; every other refusal ends the draft.
-			if (outcome.code !== "empty") pendingHandoff = null;
+			if (outcome.code !== "empty") scope.pendingHandoff = null;
 			return handoffRefusal(outcome.level, outcome.code, outcome.reason);
 		}
-		pendingHandoff = null;
+		scope.pendingHandoff = null;
 		const toSessionId = outcome.toSessionId;
 		const current = session.current();
 		if (current?.id !== toSessionId || safeStoredIdentifier(toSessionId, ACP_MAX_SESSION_ID_BYTES) === null) {
@@ -2250,7 +2262,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			activePrompt: null,
 			...(ceiling !== undefined ? { ceiling } : {}),
 		};
-		sessions.delete(bound.id);
+		scope.sessions.delete(bound.id);
 		let replay: PreparedAcpReplay | undefined;
 		try {
 			const restore = prepareRestore(toSessionId, null, "leaf", true);
@@ -2268,7 +2280,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			sessionId: toSessionId,
 			fromSessionId: bound.id,
 			warnings: outcome.warnings.slice(0, 8).map((warning) => boundString(warning, ACP_MAX_HANDOFF_REASON_BYTES)),
-			...sessionConfig(options, listingFallbacks, successor),
+			...sessionConfig(options, scope.listingFallbacks, successor),
 			_meta: {
 				...ceilingEcho,
 				...modelsResultMeta(options, successor),
@@ -2283,8 +2295,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		requireHandoff();
 		const bound = getSession(request);
 		const handoffId = requireBoundedClientString(request.handoffId, "handoffId", ACP_MAX_SESSION_ID_BYTES);
-		const cancelled = pendingHandoff?.handoffId === handoffId && pendingHandoff.sessionId === bound.id;
-		if (cancelled) pendingHandoff = null;
+		const cancelled = scope.pendingHandoff?.handoffId === handoffId && scope.pendingHandoff.sessionId === bound.id;
+		if (cancelled) scope.pendingHandoff = null;
 		return { cancelled };
 	});
 
@@ -2306,11 +2318,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	// never a turn. The chat loop answers beside a turn in flight over a snapshot
 	// of its history (#415); a refusal it reports is an outcome, not a protocol
 	// error.
-	let asideRound: { sessionId: string; abort: AbortController; settled: Promise<void> } | null = null;
 	const runAside = async <T>(sessionId: string, round: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-		if (closingSessions.has(sessionId) || options.transport.closed)
+		if (scope.closingSessions.has(sessionId) || options.transport.closed)
 			throw new AcpRequestError(-32002, "unknown ACP session", { code: "session_unknown" });
-		if (asideRound !== null)
+		if (scope.asideRound !== null)
 			throw new AcpRequestError(-32602, "a side question or draft is already running", { code: "aside_active" });
 		const controller = new AbortController();
 		let settle: () => void = () => {};
@@ -2321,11 +2332,11 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				settle = resolve;
 			}),
 		};
-		asideRound = active;
+		scope.asideRound = active;
 		try {
 			return await round(controller.signal);
 		} finally {
-			if (asideRound === active) asideRound = null;
+			if (scope.asideRound === active) scope.asideRound = null;
 			settle();
 		}
 	};
@@ -2375,7 +2386,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const request = assertParamKeys(params, new Set(["sessionId"]));
 		requireAside();
 		getSession(request);
-		const round = asideRound;
+		const round = scope.asideRound;
 		round?.abort.abort();
 		return { cancelled: round !== null };
 	});
@@ -2431,16 +2442,19 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const request = assertParamKeys(params, new Set(["sessionId"]));
 		if (!options.contextLedger) throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
 		const session = getSession(request);
-		if (session.id !== boundSessionId)
+		if (session.id !== scope.boundSessionId)
 			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
 		const current =
-			contextActivity?.operation?.sessionId === session.id && contextActivity.operation.cwd === canonicalCwd
-				? contextActivity
+			scope.contextActivity?.operation?.sessionId === session.id &&
+			scope.contextActivity.operation.cwd === scope.canonicalCwd
+				? scope.contextActivity
 				: null;
 		const recorded = [...(options.readSessionEntries?.(session.id) ?? [])].reverse().flatMap((entry) => {
 			if (entry.kind !== "custom" || entry.customType !== CONTEXT_OPERATION_CUSTOM_TYPE) return [];
 			const operation = readContextOperation(entry.data);
-			return operation?.outcome && operation.sessionId === session.id && operation.cwd === canonicalCwd ? [operation] : [];
+			return operation?.outcome && operation.sessionId === session.id && operation.cwd === scope.canonicalCwd
+				? [operation]
+				: [];
 		});
 		return {
 			version: 1,
@@ -2534,7 +2548,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		// A playbook starts workers outside any tool call, so the session's limits
 		// screen it as they screen /run, and every worker it starts carries them (Z1).
-		const limits = standingLimits;
+		const limits = scope.standingLimits;
 		if (limits?.readOnly === true || !turnAllowsTool(limits, ToolNames.Dispatch)) {
 			throw new AcpRequestError(
 				-32602,
@@ -2613,7 +2627,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32602, "a correction needs the new direction", { code: "invalid_params" });
 		}
 		// Superseding writes the board's decision record, which a read-only ceiling denies.
-		if (standingLimits?.readOnly === true) {
+		if (scope.standingLimits?.readOnly === true) {
 			throw new AcpRequestError(-32602, "superseding a decision writes the board and the ceiling is read-only", {
 				code: "ceiling_refused",
 			});
@@ -2642,7 +2656,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32602, "scope must be repo or global", { code: "invalid_params" });
 		}
 		// A proposal writes a memory record, which a read-only ceiling denies.
-		if (standingLimits?.readOnly === true) {
+		if (scope.standingLimits?.readOnly === true) {
 			throw new AcpRequestError(-32602, "a memory proposal writes a record and the ceiling is read-only", {
 				code: "ceiling_refused",
 			});
@@ -2675,7 +2689,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		} catch {
 			throw new AcpRequestError(-32603, "session label could not be saved", { code: "internal_error" });
 		}
-		if (sessions.has(id)) {
+		if (scope.sessions.has(id)) {
 			options.transport.notify("session/update", {
 				sessionId: id,
 				update: { sessionUpdate: "session_info_update", title: label.length > 0 ? label : null },
@@ -2692,7 +2706,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		// Delete never closes a session for the client: the refusal names the step that comes first (bt-12).
 		const stillOpen =
 			"session is still open; close it first (session/close, or the close action in the client that has it open), then delete it";
-		if (sessions.has(id) || meta.endedAt === null) {
+		if (scope.sessions.has(id) || meta.endedAt === null) {
 			throw new AcpRequestError(-32602, stillOpen, { code: "session_open" });
 		}
 		if (options.session === undefined) {
@@ -2745,7 +2759,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			case "target":
 			case "model": {
 				if (request.configId === "model" && options.providers === undefined) {
-					const modelOption = configOptions(options, listingFallbacks, session).find((option) => option.id === "model");
+					const modelOption = configOptions(options, scope.listingFallbacks, session).find(
+						(option) => option.id === "model",
+					);
 					const models =
 						modelOption && Array.isArray(modelOption.options)
 							? modelOption.options.flatMap((option) =>
@@ -2756,7 +2772,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					if (session.model !== value) {
 						if (!options.setSessionRouting)
 							throw new AcpRequestError(-32601, "model selection is unavailable", { code: "method_not_found" });
-						options.setSessionRouting({ model: value }, handshake.clientSurface);
+						options.setSessionRouting({ model: value }, scope.handshake.clientSurface);
 						session.model = value;
 						notifyConfigOptions(session);
 					}
@@ -2785,7 +2801,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					const selected = selectModel(
 						options.providers,
 						{ target, model, thinkingLevel: session.thinkingLevel },
-						(selected) => options.setSessionRouting?.(selected, handshake.clientSurface),
+						(selected) => options.setSessionRouting?.(selected, scope.handshake.clientSurface),
 					);
 					session.target = selected.target;
 					session.model = selected.model;
@@ -2822,7 +2838,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 						throw new AcpRequestError(-32601, "thinking selection is unavailable", { code: "method_not_found" });
 					const thinkingLevel =
 						thinking?.effectiveLevel ?? clampThinkingLevel(options.providers, session.target, session.model, requested);
-					options.setSessionRouting({ thinkingLevel }, handshake.clientSurface);
+					options.setSessionRouting({ thinkingLevel }, scope.handshake.clientSurface);
 					session.thinkingLevel = requested;
 					notifyConfigOptions(session);
 				}
@@ -2831,7 +2847,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			default:
 				throw new AcpRequestError(-32602, "unknown configuration option", { code: "invalid_params" });
 		}
-		return { configOptions: configOptions(options, listingFallbacks, session) };
+		return { configOptions: configOptions(options, scope.listingFallbacks, session) };
 	};
 	options.transport.onRequest("session/set_config_option", setConfigOption);
 	options.transport.onRequest(ACP_SESSION_SET_MODEL_METHOD, async (params) => {
@@ -2858,7 +2874,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		if (!isRecord(request.patch)) {
 			throw new AcpRequestError(-32602, "patch must be an object", { code: "invalid_params" });
 		}
-		if (activePromptState !== null) {
+		if (scope.activePromptState !== null) {
 			throw new AcpRequestError(-32602, "cannot patch settings during an active prompt", { code: "prompt_active" });
 		}
 		if (options.settings === undefined) {
@@ -2910,8 +2926,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32602, "model requires a configured target", { code: "invalid_params" });
 		}
 		try {
-			const committed = options.settings.commit(patch, handshake.clientSurface);
-			const session = boundSessionId === null ? undefined : sessions.get(boundSessionId);
+			const committed = options.settings.commit(patch, scope.handshake.clientSurface);
+			const session = scope.boundSessionId === null ? undefined : scope.sessions.get(scope.boundSessionId);
 			if (
 				session &&
 				(patch["chat.target"] !== undefined ||
@@ -2955,7 +2971,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		// Jobs belong to the one session this process hosts. The generic path forwards only command and
 		// argv, so the requested identity is checked here, before anything is created, listed or stopped.
-		if (request.command === "loop" && session.id !== boundSessionId) {
+		if (request.command === "loop" && session.id !== scope.boundSessionId) {
 			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
 		}
 		// Four of the thirteen put a user turn into the session. Doing that while
@@ -2970,7 +2986,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				reason: "steer-instead",
 			});
 		}
-		if (activeShell !== null && options.commands.injectsUserTurn(request.command, request.argv)) {
+		if (scope.activeShell !== null && options.commands.injectsUserTurn(request.command, request.argv)) {
 			throw new AcpRequestError(-32602, "this command submits a user turn and a shell line is running", {
 				code: "shell_active",
 			});
@@ -2990,15 +3006,16 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				argv: request.argv,
 				askConsent: reportConsentAsk(options.transport, session.id),
 			});
-		if (session.id !== boundSessionId)
+		if (session.id !== scope.boundSessionId)
 			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
-		if (activeShell !== null) throw new AcpRequestError(-32602, "a shell line is running", { code: "shell_active" });
+		if (scope.activeShell !== null)
+			throw new AcpRequestError(-32602, "a shell line is running", { code: "shell_active" });
 		const command = Promise.resolve().then(() =>
 			options.commands?.invoke({ command: request.command, argv: request.argv }),
 		);
-		contextCommandInFlight = command;
+		scope.contextCommandInFlight = command;
 		return command.finally(() => {
-			if (contextCommandInFlight === command) contextCommandInFlight = null;
+			if (scope.contextCommandInFlight === command) scope.contextCommandInFlight = null;
 		});
 	});
 
@@ -3076,7 +3093,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			// records no health, so a cached answer read as unreachable on a working target.
 			const status = await options.providers.probeTarget(targetId, { reasoning: false, fresh: true });
 			if (status === null) return { targetId, healthy: false, latencyMs: null, reason: "probe-failed" };
-			for (const session of sessions.values()) if (session.target === targetId) notifyConfigOptions(session);
+			for (const session of scope.sessions.values()) if (session.target === targetId) notifyConfigOptions(session);
 			const reason = safeProbeReason(options.providers, status);
 			const latencyMs =
 				typeof status.health.latencyMs === "number" &&
@@ -3093,13 +3110,13 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 
 	const cancelSession = (session: AcpServerSession, reason: string, operationId?: string): boolean => {
 		if (operationId !== undefined) {
-			if (session.id !== boundSessionId) return false;
-			const operation = contextActivity?.operation;
+			if (session.id !== scope.boundSessionId) return false;
+			const operation = scope.contextActivity?.operation;
 			if (
 				!operation ||
 				operation.id !== operationId ||
 				operation.sessionId !== session.id ||
-				operation.cwd !== canonicalCwd ||
+				operation.cwd !== scope.canonicalCwd ||
 				operation.outcome !== undefined
 			)
 				return false;
@@ -3108,18 +3125,18 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				operation.kind === "context-refresh" ||
 				operation.kind === "context-clear"
 			) {
-				if (options.cancelContextOperation?.(session.id, canonicalCwd, operationId) !== true) return false;
+				if (options.cancelContextOperation?.(session.id, scope.canonicalCwd, operationId) !== true) return false;
 			} else if (operation.kind !== "compaction" && operation.kind !== "context-recover") return false;
-		} else if (session.id === boundSessionId) options.cancelContextOperation?.(session.id, canonicalCwd);
+		} else if (session.id === scope.boundSessionId) options.cancelContextOperation?.(session.id, scope.canonicalCwd);
 		// A shell line never runs beside a prompt, so this stops whichever of the two is running.
-		if (activeShell?.sessionId === session.id) activeShell.abort.abort();
-		if (activeSessionId === session.id || activeSessionId === null) permission.cancelPending(reason);
-		if ((activeSessionId ?? boundSessionId) === session.id) {
+		if (scope.activeShell?.sessionId === session.id) scope.activeShell.abort.abort();
+		if (scope.activeSessionId === session.id || scope.activeSessionId === null) scope.permission.cancelPending(reason);
+		if ((scope.activeSessionId ?? scope.boundSessionId) === session.id) {
 			options.interviews?.cancel();
 			options.elicitation?.cancel();
 		}
 		if (!session.activePrompt) {
-			if ((contextCommandInFlight !== null || operationId !== undefined) && session.id === boundSessionId)
+			if ((scope.contextCommandInFlight !== null || operationId !== undefined) && session.id === scope.boundSessionId)
 				options.chat.cancel();
 			return true;
 		}
@@ -3151,8 +3168,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	// `$/cancel_request` naming a running prompt stops it as session/cancel does, and the prompt answers `cancelled`.
 	const unsubscribePromptCancel =
 		options.transport.onRequestCancel?.("session/prompt", (params) => {
-			if (!handshake.initialized || !isRecord(params) || typeof params.sessionId !== "string") return false;
-			const session = sessions.get(params.sessionId);
+			if (!scope.handshake.initialized || !isRecord(params) || typeof params.sessionId !== "string") return false;
+			const session = scope.sessions.get(params.sessionId);
 			if (session === undefined || session.activePrompt === null) return false;
 			cancelSession(session, "prompt cancelled");
 			return true;
@@ -3161,17 +3178,17 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	// `cancelled: true` and closes its tool call as failed, so it never finishes and records after a -32800.
 	const unsubscribeShellCancel =
 		options.transport.onRequestCancel?.(ACP_SESSION_SHELL_METHOD, (params) => {
-			if (!handshake.initialized || !isRecord(params) || typeof params.sessionId !== "string") return false;
-			if (activeShell === null || activeShell.sessionId !== params.sessionId) return false;
-			activeShell.abort.abort();
+			if (!scope.handshake.initialized || !isRecord(params) || typeof params.sessionId !== "string") return false;
+			if (scope.activeShell === null || scope.activeShell.sessionId !== params.sessionId) return false;
+			scope.activeShell.abort.abort();
 			return true;
 		}) ?? (() => {});
 	options.transport.onNotification("session/cancel", (params) => {
 		// A notification has no reply channel, so an ordering or identity error
 		// has nowhere to go. Dropping it silently is the only conformant option.
-		if (!handshake.initialized) return;
+		if (!scope.handshake.initialized) return;
 		const id = isRecord(params) && typeof params.sessionId === "string" ? params.sessionId : null;
-		const session = id === null ? undefined : sessions.get(id);
+		const session = id === null ? undefined : scope.sessions.get(id);
 		if (session) {
 			try {
 				cancelSession(session, "prompt cancelled", contextCancellationId(params));
@@ -3405,16 +3422,16 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const excludeFromContext = request.excludeFromContext === true;
 		// The line runs outside any tool call, so the session's limits screen it
 		// as they screen the model's own bash.
-		if (standingLimits?.readOnly === true || !turnAllowsTool(standingLimits, ToolNames.Bash)) {
+		if (scope.standingLimits?.readOnly === true || !turnAllowsTool(scope.standingLimits, ToolNames.Bash)) {
 			throw new AcpRequestError(
 				-32602,
-				standingLimits?.readOnly === true
+				scope.standingLimits?.readOnly === true
 					? "a shell line can write and the ceiling is read-only. Nothing ran"
 					: "a shell line runs bash and the ceiling withholds it. Nothing ran",
 				{ code: "ceiling_refused" },
 			);
 		}
-		if (closingSessions.has(session.id)) {
+		if (scope.closingSessions.has(session.id)) {
 			throw new AcpRequestError(-32002, "unknown ACP session", { code: "session_unknown" });
 		}
 		// The terminal's two admission guards. A turn's context would change
@@ -3424,7 +3441,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				code: "prompt_active",
 			});
 		}
-		if (contextCommandInFlight !== null || activeShell !== null) {
+		if (scope.contextCommandInFlight !== null || scope.activeShell !== null) {
 			throw new AcpRequestError(-32602, "a shell line is already running; cancel it first", { code: "shell_active" });
 		}
 		if (durable.current()?.id !== session.id) durable.resume(session.id);
@@ -3433,7 +3450,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const settled = new Promise<void>((resolveSettled) => {
 			settle = resolveSettled;
 		});
-		activeShell = { sessionId: session.id, abort, settled };
+		scope.activeShell = { sessionId: session.id, abort, settled };
 		// The line is the operator's, not the agent's: its frames carry this key
 		// instead of agent attribution, and the same call shape a `bash` row has.
 		const meta = { [ACP_SHELL_META_KEY]: { version: 1, excludeFromContext } };
@@ -3453,7 +3470,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		let lastText = "";
 		const onUpdate = (progress: BashCommandProgress): void => {
 			const text = shellOutputTail(redactStreamingUrlCredentials(combineLiveBashOutput(progress)));
-			const sentAt = now();
+			const sentAt = scope.now();
 			if (
 				text.length === 0 ||
 				text === lastText ||
@@ -3488,7 +3505,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					parentTurnId,
 					signal: abort.signal,
 					label,
-					...(handshake.toolProgressEnabled ? { onUpdate } : {}),
+					...(scope.handshake.toolProgressEnabled ? { onUpdate } : {}),
 				});
 				if (run.unlabeled !== null) options.diagnostics?.(`shell output kept out of context: ${run.unlabeled}`);
 				options.beforeShellEntryRecorded?.();
@@ -3534,7 +3551,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			});
 			return { turnId: entry.turnId, ...settledResult, output, outputBytes: result.outputBytes };
 		} finally {
-			if (activeShell?.abort === abort) activeShell = null;
+			if (scope.activeShell?.abort === abort) scope.activeShell = null;
 			settle();
 		}
 	});
@@ -3617,40 +3634,40 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const id = sessionIdOf(params);
 		// Idempotent: a client tearing down cannot always know whether the server
 		// already dropped the session, and a second close is not an error.
-		if (!sessions.has(id) && closedSessionIds.has(id)) return {};
-		const inFlightClose = closingSessions.get(id);
+		if (!scope.sessions.has(id) && scope.closedSessionIds.has(id)) return {};
+		const inFlightClose = scope.closingSessions.get(id);
 		if (inFlightClose) return inFlightClose;
 		const session = getSession(params);
 		const close = (async (): Promise<Record<string, never>> => {
-			const aside = asideRound?.sessionId === session.id ? asideRound : null;
+			const aside = scope.asideRound?.sessionId === session.id ? scope.asideRound : null;
 			aside?.abort.abort();
 			// The prompt writer must settle before the durable session is closed.
 			cancelSession(session, "session closed");
 			if (session.activePrompt) {
-				if (promptSettled) await promptSettled;
+				if (scope.promptSettled) await scope.promptSettled;
 			}
-			if (contextCommandInFlight !== null && session.id === boundSessionId)
-				await contextCommandInFlight.catch(() => undefined);
+			if (scope.contextCommandInFlight !== null && session.id === scope.boundSessionId)
+				await scope.contextCommandInFlight.catch(() => undefined);
 			// The aborted line still appends its entry; the ledger must outlive that write.
-			if (activeShell?.sessionId === session.id) await activeShell.settled;
+			if (scope.activeShell?.sessionId === session.id) await scope.activeShell.settled;
 			if (aside !== null) await settleAcpWork([aside.settled]);
 			if (options.session?.current()?.id === session.id) {
 				await checkpointBeforeClose(session.id, "close");
 				await options.session.close();
 			}
 			await options.mcpCapabilities?.detachClientServers();
-			sessions.delete(session.id);
-			if (boundSessionId === session.id) boundSessionId = null;
-			sessionCreated = false;
-			closedSessionIds.add(session.id);
+			scope.sessions.delete(session.id);
+			if (scope.boundSessionId === session.id) scope.boundSessionId = null;
+			scope.sessionCreated = false;
+			scope.closedSessionIds.add(session.id);
 			// A reopened fork parent closes as itself, so a later request is no longer told a fork replaced it.
-			replacedSessions.delete(session.id);
+			scope.replacedSessions.delete(session.id);
 			return {};
 		})();
-		closingSessions.set(id, close);
+		scope.closingSessions.set(id, close);
 		void close.then(
-			() => closingSessions.delete(id),
-			() => closingSessions.delete(id),
+			() => scope.closingSessions.delete(id),
+			() => scope.closingSessions.delete(id),
 		);
 		return close;
 	});
@@ -3658,12 +3675,12 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	/** Streams a turn's chat events as frames. A prompt and a scheduled main turn share it, so neither forks the projection. */
 	const attachTurnObserver = (sessionId: string, active: ActivePrompt): (() => void) => {
 		const onTurnEvent = (event: AcpServerEvent) => {
-			handleChatEvent(event, options.transport, sessionId, active, canonicalCwd, options.diagnostics, () => {
-				permission.cancelPending("tool call limit exceeded");
+			handleChatEvent(event, options.transport, sessionId, active, scope.canonicalCwd, options.diagnostics, () => {
+				scope.permission.cancelPending("tool call limit exceeded");
 				options.toolRegistry?.cancelParkedCalls("tool call limit exceeded");
 				options.chat.cancel();
 			});
-			observeTelemetry(telemetry, event, active);
+			observeTelemetry(scope.telemetry, event, active);
 		};
 		const unsubscribeChat = options.chat.onEvent(onTurnEvent);
 		const unsubscribeHost = options.hostToolEvents?.onEvent(onTurnEvent);
@@ -3684,14 +3701,14 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	 */
 	const acquireMachineTurn = (request: MachineTurnProjectionRequest): MachineTurnProjectionAdmission => {
 		const deferred = (reason: string): MachineTurnProjectionAdmission => ({ status: "deferred", reason });
-		const session = boundSessionId === null ? undefined : sessions.get(boundSessionId);
+		const session = scope.boundSessionId === null ? undefined : scope.sessions.get(scope.boundSessionId);
 		const jobId = safeStoredIdentifier(request.jobId, ACP_MAX_DISPATCH_ID_BYTES);
-		if (!handshake.initialized || session === undefined || jobId === null) {
+		if (!scope.handshake.initialized || session === undefined || jobId === null) {
 			return deferred("This ACP connection has no bound session to show a scheduled turn in.");
 		}
 		if (
 			request.sessionId !== session.id ||
-			request.cwd !== canonicalCwd ||
+			request.cwd !== scope.canonicalCwd ||
 			options.session === undefined ||
 			options.session.current()?.id !== session.id
 		) {
@@ -3699,17 +3716,17 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		if (request.signal.aborted) return deferred("The occurrence was cancelled before its turn could be shown.");
 		if (
-			machineLease !== null ||
+			scope.machineLease !== null ||
 			session.activePrompt !== null ||
-			activePromptState !== null ||
-			contextCommandInFlight !== null ||
-			activeShell !== null ||
-			handoffPreparing ||
+			scope.activePromptState !== null ||
+			scope.contextCommandInFlight !== null ||
+			scope.activeShell !== null ||
+			scope.handoffPreparing ||
 			options.chat.isStreaming()
 		) {
 			return deferred("The conversation is busy; the job keeps its pending delivery.");
 		}
-		const active = createActivePromptState({ enabled: handshake.toolProgressEnabled, now });
+		const active = createActivePromptState({ enabled: scope.handshake.toolProgressEnabled, now: scope.now });
 		// A queue send-now would resubmit through this lease and strand the successor with no observer.
 		active.acceptsContinuation = false;
 		const scheduled: NonNullable<ActivePrompt["scheduled"]> = {
@@ -3722,20 +3739,20 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		};
 		active.scheduled = scheduled;
 		const lease = { jobId, active };
-		machineLease = lease;
+		scope.machineLease = lease;
 		session.activePrompt = active;
-		activePromptState = active;
-		activeSessionId = session.id;
+		scope.activePromptState = active;
+		scope.activeSessionId = session.id;
 		// A reviewed document describes the conversation as it stood; a scheduled turn moves it too.
-		pendingHandoff = null;
-		promptSerial++;
+		scope.pendingHandoff = null;
+		scope.promptSerial++;
 		let settle: () => void = () => {};
 		const settled = new Promise<void>((resolveSettled) => {
 			settle = resolveSettled;
 		});
-		promptSettled = settled;
+		scope.promptSettled = settled;
 		options.onActiveSessionAutonomyChange?.(session.autonomy);
-		telemetry.turnStarted(active.turn);
+		scope.telemetry.turnStarted(active.turn);
 		const detach = attachTurnObserver(session.id, active);
 		let released = false;
 		return {
@@ -3754,18 +3771,18 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					active.permissionExpired ? "permission approval expired" : active.cancelled ? "cancelled" : "turn ended",
 				);
 				// The last meter frame precedes the bracket that closes the turn; the state stays held until it lands.
-				void telemetry
+				void scope.telemetry
 					.turnSettled()
 					.catch(() => options.diagnostics?.("a scheduled turn's final telemetry frame failed"))
 					.then(() => {
-						if (machineLease === lease) machineLease = null;
+						if (scope.machineLease === lease) scope.machineLease = null;
 						if (session.activePrompt === active) session.activePrompt = null;
-						if (activePromptState === active) activePromptState = null;
-						if (activeSessionId === session.id && activePromptState === null) {
-							activeSessionId = null;
+						if (scope.activePromptState === active) scope.activePromptState = null;
+						if (scope.activeSessionId === session.id && scope.activePromptState === null) {
+							scope.activeSessionId = null;
 							options.onActiveSessionAutonomyChange?.(null);
 						}
-						if (promptSettled === settled) promptSettled = null;
+						if (scope.promptSettled === settled) scope.promptSettled = null;
 						if (scheduled.opened) forwardJobTurn(jobId);
 						settle();
 					});
@@ -3779,12 +3796,12 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const session = getSession(params);
 		const promptCeiling = requestCeiling(params, "ACP prompt ceiling");
 		assertCeilingEnforceable(promptCeiling);
-		if (contextCommandInFlight !== null || session.activePrompt || options.chat.isStreaming()) {
+		if (scope.contextCommandInFlight !== null || session.activePrompt || options.chat.isStreaming()) {
 			throw new AcpRequestError(-32602, "this session already has an active prompt", { code: "prompt_active" });
 		}
 		// The line rebuilds the chat's context when it settles, which aborts a
 		// run in flight, so a turn waits for it exactly as it waits for a turn.
-		if (contextCommandInFlight !== null || activeShell !== null) {
+		if (scope.contextCommandInFlight !== null || scope.activeShell !== null) {
 			throw new AcpRequestError(-32602, "a shell line is running; wait for it or cancel it first", {
 				code: "shell_active",
 			});
@@ -3799,7 +3816,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		// that looks like one is screened before it can reach the model.
 		const typed = /^\/([a-z][a-z0-9_-]*)(?:\s|$)/u.exec(text.trim())?.[1];
 		// Before the resume below: a job line for any other session must not move this process's current session first.
-		if (typed === "loop" && session.id !== boundSessionId) {
+		if (typed === "loop" && session.id !== scope.boundSessionId) {
 			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
 		}
 		const screened =
@@ -3823,16 +3840,16 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		if (options.session?.current()?.id !== session.id && options.session) options.session.resume(session.id);
 		// A reviewed document describes the conversation as it stood; a new request moves it.
-		pendingHandoff = null;
-		promptSerial++;
-		const active = createActivePromptState({ enabled: handshake.toolProgressEnabled, now });
+		scope.pendingHandoff = null;
+		scope.promptSerial++;
+		const active = createActivePromptState({ enabled: scope.handshake.toolProgressEnabled, now: scope.now });
 		session.activePrompt = active;
-		activePromptState = active;
-		activeSessionId = session.id;
+		scope.activePromptState = active;
+		scope.activeSessionId = session.id;
 		// Transport close waits on this so the session store never stops while the
 		// chat loop is still persisting an aborted turn.
 		let settle: () => void = () => {};
-		promptSettled = new Promise<void>((resolveSettled) => {
+		scope.promptSettled = new Promise<void>((resolveSettled) => {
 			settle = resolveSettled;
 		});
 		options.onActiveSessionAutonomyChange?.(session.autonomy);
@@ -3843,8 +3860,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				? ceilingMeta(applyCeilings([session.ceiling, promptCeiling], "prompt"))
 				: undefined;
 		const respond = (stopReason: string): AcpPromptResponse =>
-			promptResponse(stopReason, active, liveSessionView(), handshake.fullUsageEnabled, ceilingEcho);
-		telemetry.turnStarted(active.turn);
+			promptResponse(stopReason, active, liveSessionView(), scope.handshake.fullUsageEnabled, ceilingEcho);
+		scope.telemetry.turnStarted(active.turn);
 		const unsubscribe = attachTurnObserver(session.id, active);
 		try {
 			// Startup notices are operator advice about the project, not the
@@ -3853,8 +3870,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			// reply carrying only the model's text. They wait for the first prompt
 			// so the client has bound the session id, and they do not count toward
 			// admission: a refused prompt must still fail as prompt_not_admitted.
-			if (startupHintsSessionId !== session.id) {
-				startupHintsSessionId = session.id;
+			if (scope.startupHintsSessionId !== session.id) {
+				scope.startupHintsSessionId = session.id;
 				for (const hint of options.startupHints?.() ?? []) {
 					options.transport.notify("session/update", {
 						sessionId: session.id,
@@ -4008,17 +4025,17 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			active.acceptsContinuation = false;
 			unsubscribe();
 			// The last meter and plan frames precede the response they total, and the response repeats their usage.
-			active.settledUsage = await telemetry.turnSettled();
+			active.settledUsage = await scope.telemetry.turnSettled();
 			if (session.activePrompt === active) session.activePrompt = null;
-			if (activePromptState === active) activePromptState = null;
-			if (activeSessionId === session.id) {
+			if (scope.activePromptState === active) scope.activePromptState = null;
+			if (scope.activeSessionId === session.id) {
 				// The turn's closing frame follows its last update and reads the window while the session still holds it.
 				const closing = readoutsSession(session.id);
 				if (closing !== null) readouts.turnEnd(closing);
-				activeSessionId = null;
+				scope.activeSessionId = null;
 				options.onActiveSessionAutonomyChange?.(null);
 			}
-			promptSettled = null;
+			scope.promptSettled = null;
 			settle();
 		}
 		// Expiry is not a delayed denial or an operator cancellation. It aborts
@@ -4080,49 +4097,49 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	const unsubscribeTelemetryUpdates = options.telemetryReadModel
 		? subscribeTelemetryUpdates(
 				options.telemetryReadModel,
-				(sessionId) => handshake.initialized && sessions.has(sessionId),
+				(sessionId) => scope.handshake.initialized && scope.sessions.has(sessionId),
 				(update) => options.transport.notify(ACP_TELEMETRY_UPDATE_NOTIFICATION, update),
 			)
 		: undefined;
 	const detachInterviews = options.interviews?.attach({
 		transport: options.transport,
-		sessionId: () => activeSessionId ?? boundSessionId,
-		enabled: () => handshake.initialized && handshake.interviewsEnabled,
+		sessionId: () => scope.activeSessionId ?? scope.boundSessionId,
+		enabled: () => scope.handshake.initialized && scope.handshake.interviewsEnabled,
 		timeoutMs: interviewWindowMs,
 		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
 	});
 	const detachElicitation = options.elicitation?.attach({
 		transport: options.transport,
-		sessionId: () => activeSessionId ?? boundSessionId,
-		enabled: () => handshake.initialized && handshake.elicitationEnabled,
-		timeoutMs: () => handshake.elicitationTimeoutMs ?? permissionTimeoutMs,
+		sessionId: () => scope.activeSessionId ?? scope.boundSessionId,
+		enabled: () => scope.handshake.initialized && scope.handshake.elicitationEnabled,
+		timeoutMs: () => scope.handshake.elicitationTimeoutMs ?? permissionTimeoutMs,
 		...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
 	});
 	options.onReady?.();
 	return await new Promise<number>((resolve) => {
 		options.transport.onClose(() => {
-			telemetry.dispose();
+			scope.telemetry.dispose();
 			unsubscribeTelemetryUpdates?.();
 			detachInterviews?.();
 			detachElicitation?.();
 			// Unbound first: a scheduled turn must be refused, never run where no client can see it.
 			unbindMachineTurns?.();
-			permission.unregister();
+			scope.permission.unregister();
 			unsubscribeEventStream();
-			permission.cancelPending("ACP transport closed");
+			scope.permission.cancelPending("ACP transport closed");
 			unsubscribeQueueEvents();
 			unsubscribeReadouts();
 			unsubscribeAdmission();
 			unsubscribeToolBodyStart();
 			unsubscribePromptCancel();
 			unsubscribeShellCancel();
-			const aside = asideRound;
+			const aside = scope.asideRound;
 			aside?.abort.abort();
-			for (const session of sessions.values()) cancelSession(session, "ACP transport closed");
+			for (const session of scope.sessions.values()) cancelSession(session, "ACP transport closed");
 			const settling = [
-				promptSettled,
-				activeShell?.settled ?? null,
-				contextCommandInFlight,
+				scope.promptSettled,
+				scope.activeShell?.settled ?? null,
+				scope.contextCommandInFlight,
 				aside?.settled ?? null,
 			].filter((pending): pending is Promise<unknown> => pending !== null);
 			// Accepted out-of-turn work owns its finalization just as a prompt does.
