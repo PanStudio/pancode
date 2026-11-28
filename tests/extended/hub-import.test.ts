@@ -395,7 +395,7 @@ describe("hub import of foreign plugin packages", () => {
 		strictEqual(result.validation?.validation.resources.length, 3);
 		deepStrictEqual(result.admission, {
 			trust: "foreign",
-			gate: "integrations.projectResources.trustProjectImports",
+			gate: "integrations.hub.trustProjectImports",
 			gateEnabled: false,
 		});
 		deepStrictEqual(snapshot(root), before, "vendor source is never rewritten");

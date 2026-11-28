@@ -322,7 +322,7 @@ function recipeIssues(file: HarnessRecipeFile, input: HarnessInput): HarnessIssu
 		if (untrusted !== undefined) {
 			push(
 				"skills",
-				`names skill '${skillName}', which exists at ${displayPath(input.workspaceRoot, untrusted.filePath)} but is not trusted, so the recipe cannot bind it and is quarantined; move the skill under .pancode/skills/ or trust its root with integrations.projectResources.trustProjectImports`,
+				`names skill '${skillName}', which exists at ${displayPath(input.workspaceRoot, untrusted.filePath)} but is not trusted, so the recipe cannot bind it and is quarantined; move the skill under .pancode/skills/ or trust its root with integrations.hub.trustProjectImports`,
 			);
 			continue;
 		}
@@ -560,7 +560,7 @@ export function collectHarnessInput(workspaceRoot: string, options: CollectHarne
 	}
 	let trustProjectImports = false;
 	try {
-		trustProjectImports = readSettings().integrations.projectResources.trustProjectImports;
+		trustProjectImports = readSettings().integrations.hub.trustProjectImports;
 	} catch {
 		// Invalid user settings are reported by doctor's settings row; bind against untrusted imports.
 	}

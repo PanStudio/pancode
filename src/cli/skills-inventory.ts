@@ -165,7 +165,7 @@ function projectSkill(skill: Skill): SkillsInventorySkill {
 function skillsInventorySnapshot(now: () => number = Date.now, cwd: string = process.cwd()): SkillsInventorySnapshot {
 	const list = loadSkills({
 		cwd,
-		trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+		trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 	});
 	const validity = skillCatalogValidity(list);
 	const projected = list.items.map(projectSkill);

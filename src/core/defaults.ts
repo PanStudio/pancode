@@ -431,11 +431,6 @@ interface ModelSelectorSettings {
 	recentLimit: number;
 }
 
-interface ProjectResourcesSettings {
-	/** Admit explicitly imported foreign skills/prompts at either scope; loose compatibility roots stay inactive. */
-	trustProjectImports: boolean;
-}
-
 interface GitIntegrationSettings {
 	/** Evidence-aware role trailers on commits created through PanCode. */
 	commitAttribution: boolean;
@@ -995,7 +990,6 @@ export const WORKSPACE_SNAPSHOT_MODES: ReadonlyArray<WorkspaceSnapshotMode> = ["
 type ModelSettings = Record<string, { tier?: ModelTier }>;
 
 interface IntegrationsSettings {
-	projectResources: ProjectResourcesSettings;
 	externalAgents: ExternalAgentsSettings;
 	providerPackages: string[];
 	hub: {
@@ -1005,6 +999,8 @@ interface IntegrationsSettings {
 		sync: boolean;
 		/** Base URL of the signed hub index release; "" turns remote index refresh off. */
 		index: string;
+		/** Admit explicitly imported foreign skills/prompts at either scope; loose compatibility roots stay inactive. */
+		trustProjectImports: boolean;
 	};
 	git: GitIntegrationSettings;
 }
@@ -1212,7 +1208,6 @@ export const DEFAULT_SETTINGS = {
 		keybindings: {} as Record<string, string | string[]>,
 	} as InterfaceSettings,
 	integrations: {
-		projectResources: { trustProjectImports: false },
 		externalAgents: {
 			entries: [] as DelegationAgentConfig[],
 			defaults: {
@@ -1229,6 +1224,7 @@ export const DEFAULT_SETTINGS = {
 			confirmedRemote: null as string | null,
 			sync: false,
 			index: DEFAULT_HUB_INDEX_URL,
+			trustProjectImports: false,
 		},
 		git: { commitAttribution: true, commitAuthor: "auto" as GitCommitAuthorSetting },
 	} as IntegrationsSettings,

@@ -78,7 +78,7 @@ export interface HubImportApplyResult {
 	 */
 	admission: {
 		trust: "foreign";
-		gate: "integrations.projectResources.trustProjectImports";
+		gate: "integrations.hub.trustProjectImports";
 		gateEnabled: boolean | "unknown";
 	};
 	diagnostics: string[];
@@ -191,7 +191,7 @@ export function applyHubImport(
 ): HubImportApplyResult {
 	const admission = {
 		trust: "foreign" as const,
-		gate: "integrations.projectResources.trustProjectImports" as const,
+		gate: "integrations.hub.trustProjectImports" as const,
 		gateEnabled: options.trustProjectImports === undefined ? ("unknown" as const) : options.trustProjectImports,
 	};
 	const result: HubImportApplyResult = { published: false, admission, diagnostics: [] };

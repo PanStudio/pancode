@@ -594,7 +594,7 @@ export function expandPromptTemplateInput(
 	if (!template.trusted) {
 		const message =
 			template.sourceInfo.scope === "package"
-				? `prompt template ${template.name} is imported but untrusted; review it and enable integrations.projectResources.trustProjectImports to use it`
+				? `prompt template ${template.name} is imported but untrusted; review it and enable integrations.hub.trustProjectImports to use it`
 				: `prompt template ${template.name} is discovered from another agent; explicitly import it into PanCode with interop adopt or hub import before use. The trust setting does not import loose files`;
 		return {
 			expanded: false,

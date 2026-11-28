@@ -380,7 +380,7 @@ export function registerBootTools(input: BootToolsInput) {
 		...(config ? { getWorkerRosters: () => config.get().fleet.rosters } : {}),
 		...(config ? { getDispatchSchemaComposition: () => dispatchSchemaCompositionFor(config.get().fleet) } : {}),
 		getSkillLoaderOptions: () => ({
-			trustProjectCompatRoots: config?.get().integrations.projectResources.trustProjectImports === true,
+			trustProjectCompatRoots: config?.get().integrations.hub.trustProjectImports === true,
 			disableDiscovery: options.noSkills === true || options.headless?.noSkills === true,
 			...(options.skillPaths && options.skillPaths.length > 0
 				? { explicitSkillPaths: options.skillPaths }

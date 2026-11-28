@@ -550,7 +550,7 @@ function harness(
 			return {
 				published: true,
 				installed: "vendor-pack",
-				admission: { trust: "foreign", gate: "integrations.projectResources.trustProjectImports", gateEnabled: "unknown" },
+				admission: { trust: "foreign", gate: "integrations.hub.trustProjectImports", gateEnabled: "unknown" },
 				diagnostics: [],
 			} as never;
 		},

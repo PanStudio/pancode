@@ -142,7 +142,6 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	// The graphical app applies a change made in its settings to the next turn it admits; a change
 	// written elsewhere applies when the GUI server next starts.
 	"interface.guiTurnCapacity",
-	"integrations.projectResources",
 	"integrations.externalAgents",
 	"integrations.hub",
 	// Session journal writers read the capture before each batch and open a new

@@ -110,7 +110,7 @@ export async function runHubImport(args: ReadonlyArray<string>): Promise<number>
 		}
 		let trustProjectImports: boolean | undefined;
 		try {
-			trustProjectImports = readSettings().integrations.projectResources.trustProjectImports === true;
+			trustProjectImports = readSettings().integrations.hub.trustProjectImports === true;
 		} catch {
 			trustProjectImports = undefined;
 		}

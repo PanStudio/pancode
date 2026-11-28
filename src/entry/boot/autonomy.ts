@@ -182,7 +182,7 @@ export function buildBootAutonomy(input: BootAutonomyInput) {
 			cwd,
 			prompts.inputEpoch(),
 			skillDiscoveryEnabled,
-			config?.get().integrations.projectResources.trustProjectImports === true,
+			config?.get().integrations.hub.trustProjectImports === true,
 			options.skillPaths ?? options.headless?.skillPaths ?? [],
 		]);
 		if (readySkillSnapshot?.key === key) return readySkillSnapshot.count;

@@ -57,7 +57,7 @@ test("every existing settings control has exactly one home and canonical persist
 		["fleet.history.journal", "workers"],
 		["interface.smoothStreaming", "chat"],
 		["integrations.git.commitAttribution", "workspace"],
-		["integrations.projectResources.trustProjectImports", "workspace"],
+		["integrations.hub.trustProjectImports", "workspace"],
 		["fleet.permissions.mode", "safety"],
 		["integrations.externalAgents.defaults.toolGovernance", "safety"],
 		["safety.review.enabled", "safety"],

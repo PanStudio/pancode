@@ -80,8 +80,6 @@ interface:
   panes:
     layout: off
 integrations:
-  projectResources:
-    trustProjectImports: false
   git:
     commitAttribution: true
   externalAgents:
@@ -89,6 +87,7 @@ integrations:
   providerPackages: []
   hub:
     sync: false
+    trustProjectImports: false
 `;
 	writeFileSync(settingsFile, initialSettings, "utf8");
 

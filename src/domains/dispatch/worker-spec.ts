@@ -503,7 +503,7 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 	if (input.req.trustProjectCompatRoots !== undefined) {
 		spec.trustProjectCompatRoots = input.req.trustProjectCompatRoots;
 	} else if (settings) {
-		spec.trustProjectCompatRoots = settings.integrations.projectResources.trustProjectImports === true;
+		spec.trustProjectCompatRoots = settings.integrations.hub.trustProjectImports === true;
 	}
 	spec.gitCommitAttribution = settings?.integrations.git.commitAttribution ?? true;
 	spec.gitCommitAuthor = settings?.integrations.git.commitAuthor ?? "auto";

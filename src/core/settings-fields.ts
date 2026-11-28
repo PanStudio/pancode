@@ -210,7 +210,6 @@ export const SETTINGS_FIELD_NAMES = [
 	"project",
 	"projectContext",
 	"projectId",
-	"projectResources",
 	"projectorIdentity",
 	"protectLastSteps",
 	"protectLastTurns",

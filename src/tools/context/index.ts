@@ -720,7 +720,7 @@ function runSkillsScope(
 				);
 			if (unavailable.source === "plugin")
 				return skillRefusal(
-					`context: skill "${name}" is imported but untrusted. Review it in /hub, then enable integrations.projectResources.trustProjectImports to use it. Do not retry this load.`,
+					`context: skill "${name}" is imported but untrusted. Review it in /hub, then enable integrations.hub.trustProjectImports to use it. Do not retry this load.`,
 					{ name, kind: "untrusted" },
 				);
 			return skillRefusal(

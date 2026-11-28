@@ -134,11 +134,11 @@ for (const kind of ["skill", "prompt"] as const)
 					? loadSkills({
 							cwd,
 							home: env.dir,
-							trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+							trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 						}).items.find((e) => e.name === "example")?.trusted
 					: loadPromptTemplates({
 							cwd,
-							trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+							trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 						}).items.find((e) => e.name === "example")?.trusted;
 			equal(loaded(), false);
 			if (kind === "skill") {
@@ -152,11 +152,11 @@ for (const kind of ["skill", "prompt"] as const)
 			}
 
 			updateSettings((settings) => {
-				settings.integrations.projectResources.trustProjectImports = true;
+				settings.integrations.hub.trustProjectImports = true;
 			});
 			equal(loaded(), true);
 			updateSettings((settings) => {
-				settings.integrations.projectResources.trustProjectImports = false;
+				settings.integrations.hub.trustProjectImports = false;
 			});
 			equal(loaded(), false);
 			write(source, "host-executable.sh", "dangerous host hook\n");

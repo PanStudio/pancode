@@ -1039,7 +1039,7 @@ async function runDispatch(
 		dispatchReq.routingIntent = { ...defaultRoutingIntent(dispatchReq), maxCostUsd: parsed.maxCostUsd };
 	try {
 		const settings = effectiveSettings;
-		if (settings.integrations.projectResources?.trustProjectImports) {
+		if (settings.integrations.hub?.trustProjectImports) {
 			dispatchReq.trustProjectCompatRoots = true;
 		}
 	} catch {

@@ -1347,28 +1347,7 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 	if (!isRecord(value)) issues.add("integrations", `expected a map, got ${describe(value)}`);
 	else {
 		const integrations = value;
-		issues.unknownKeys("integrations", integrations, [
-			"projectResources",
-			"externalAgents",
-			"providerPackages",
-			"hub",
-			"git",
-		]);
-		if ("projectResources" in integrations) {
-			if (!isRecord(integrations.projectResources))
-				issues.add("integrations.projectResources", `expected a map, got ${describe(integrations.projectResources)}`);
-			else {
-				issues.unknownKeys("integrations.projectResources", integrations.projectResources, ["trustProjectImports"]);
-				if ("trustProjectImports" in integrations.projectResources) {
-					const parsed = expectBoolean(
-						issues,
-						"integrations.projectResources.trustProjectImports",
-						integrations.projectResources.trustProjectImports,
-					);
-					if (parsed !== undefined) settings.integrations.projectResources.trustProjectImports = parsed;
-				}
-			}
-		}
+		issues.unknownKeys("integrations", integrations, ["externalAgents", "providerPackages", "hub", "git"]);
 		if ("providerPackages" in integrations) {
 			const parsed = expectStringArray(issues, "integrations.providerPackages", integrations.providerPackages);
 			if (parsed !== undefined) settings.integrations.providerPackages = parsed;
@@ -1377,7 +1356,14 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 			if (!isRecord(integrations.hub)) issues.add("integrations.hub", `expected a map, got ${describe(integrations.hub)}`);
 			else {
 				const hub = integrations.hub;
-				issues.unknownKeys("integrations.hub", hub, ["catalog", "remote", "confirmedRemote", "sync", "index"]);
+				issues.unknownKeys("integrations.hub", hub, [
+					"catalog",
+					"remote",
+					"confirmedRemote",
+					"sync",
+					"index",
+					"trustProjectImports",
+				]);
 				for (const key of ["catalog", "remote", "confirmedRemote"] as const) {
 					if (!(key in hub)) continue;
 					const value = hub[key];
@@ -1393,6 +1379,10 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 					if (typeof hub.index !== "string")
 						issues.add("integrations.hub.index", `expected a string, got ${describe(hub.index)}`);
 					else settings.integrations.hub.index = hub.index.trim();
+				}
+				if ("trustProjectImports" in hub) {
+					const parsed = expectBoolean(issues, "integrations.hub.trustProjectImports", hub.trustProjectImports);
+					if (parsed !== undefined) settings.integrations.hub.trustProjectImports = parsed;
 				}
 			}
 		}

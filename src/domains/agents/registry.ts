@@ -94,13 +94,13 @@ function resolveBoundSkills(recipe: AgentRecipe, source: RecipeSource): AgentRec
 		source.source === "plugin"
 			? boundSkillCatalog({
 					cwd: source.cwd ?? process.cwd(),
-					trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+					trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 					disableDiscovery: true,
 					explicitSkillPaths: source.skillRoot === undefined ? [] : [source.skillRoot],
 				})
 			: boundSkillCatalog({
 					cwd: source.cwd ?? process.cwd(),
-					trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+					trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 					...(source.source === "builtin" && existsSync(packageSkills) ? { explicitSkillPaths: [packageSkills] } : {}),
 				});
 	if (source.source === "plugin" && source.skillRoot !== undefined) {

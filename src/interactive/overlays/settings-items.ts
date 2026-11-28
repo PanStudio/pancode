@@ -141,13 +141,9 @@ export function buildSettingItems(
 				values: ["pancode-policy", "agent-managed", "deny-all"],
 			},
 		),
-		settingItem(
-			"integrations.projectResources.trustProjectImports",
-			String(settings.integrations.projectResources.trustProjectImports),
-			{
-				values: ["false", "true"],
-			},
-		),
+		settingItem("integrations.hub.trustProjectImports", String(settings.integrations.hub.trustProjectImports), {
+			values: ["false", "true"],
+		}),
 		settingItem("safetyNet", "always on", {
 			affordance: "tuned in .pancode/safety.yaml",
 			readOnly: true,

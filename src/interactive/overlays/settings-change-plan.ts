@@ -92,9 +92,8 @@ function applySettingChange(settings: PancodeSettings, id: string, value: string
 		case "integrations.externalAgents.entries":
 			applyDelegationAgentChange(settings, value);
 			return;
-		case "integrations.projectResources.trustProjectImports":
-			if (value === "true" || value === "false")
-				settings.integrations.projectResources.trustProjectImports = value === "true";
+		case "integrations.hub.trustProjectImports":
+			if (value === "true" || value === "false") settings.integrations.hub.trustProjectImports = value === "true";
 			return;
 		case "integrations.git.commitAttribution":
 			if (value === "enabled" || value === "disabled") settings.integrations.git.commitAttribution = value === "enabled";

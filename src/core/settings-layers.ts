@@ -887,13 +887,13 @@ function stripProjectWidening(
 			delete integrations.providerPackages;
 			changed = true;
 		}
-		if (isRecord(integrations.projectResources) && Object.hasOwn(integrations.projectResources, "trustProjectImports")) {
+		if (isRecord(integrations.hub) && Object.hasOwn(integrations.hub, "trustProjectImports")) {
 			drop(
-				"integrations.projectResources.trustProjectImports",
+				"integrations.hub.trustProjectImports",
 				"project imports are trusted only in user settings; project value ignored",
 			);
-			const { trustProjectImports: _ignored, ...projectResources } = integrations.projectResources;
-			integrations.projectResources = projectResources;
+			const { trustProjectImports: _ignored, ...hub } = integrations.hub;
+			integrations.hub = hub;
 			changed = true;
 		}
 		if (changed) cleaned = { ...cleaned, integrations };

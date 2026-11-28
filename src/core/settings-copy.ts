@@ -12,7 +12,7 @@ export const SETTINGS_LABELS_BY_ID = {
 	"fleet.permissions.escalation.timeoutMs": "Time to answer a worker",
 	"fleet.permissions.escalation.fallback": "If you do not answer",
 	"integrations.externalAgents.defaults.toolGovernance": "External agent permissions",
-	"integrations.projectResources.trustProjectImports": "Trust project imports",
+	"integrations.hub.trustProjectImports": "Trust project imports",
 	"integrations.git.commitAttribution": "Credit in Git commits",
 	"integrations.git.commitAuthor": "Author of autonomous commits",
 	safetyNet: "Safety net",
@@ -111,7 +111,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"fleet.permissions.escalation.timeoutMs": "How long PanCode waits for your answer when a worker asks permission.",
 	"fleet.permissions.escalation.fallback": "What the worker does if you do not answer in time.",
 	"integrations.externalAgents.defaults.toolGovernance": "Tool policy for delegated external agents.",
-	"integrations.projectResources.trustProjectImports": "Allow explicitly imported foreign skills and prompts to run.",
+	"integrations.hub.trustProjectImports": "Allow explicitly imported foreign skills and prompts to run.",
 	"integrations.git.commitAttribution":
 		"Add evidence-backed assistance, testing, review, and contributor trailers to commits created through PanCode.",
 	"integrations.git.commitAuthor":
@@ -273,7 +273,7 @@ export const SETTINGS_HELP_BY_ID: Partial<Record<string, string>> = {
 		"Base URL holding signing.json, index.envelope.json and index.yaml. PanCode offers the remote rows only after their signatures verify against the root key it ships with. Blank keeps the bundled index only.",
 	"fleet.concurrency":
 		"Automatic chooses a limit from available CPU and memory, up to eight workers. Choose a number to set a fixed limit.",
-	"integrations.projectResources.trustProjectImports":
+	"integrations.hub.trustProjectImports":
 		"Applies to foreign packages explicitly imported into PanCode, at user or project scope. Loose skills/prompts in other agents' folders stay discovery-only; this setting never imports them.",
 	"integrations.git.commitAttribution":
 		"Role trailers are added only when PanCode has trusted evidence for that role. Disabling leaves subsequent commit messages entirely unchanged.",
@@ -371,7 +371,7 @@ export const SETTINGS_VALUE_HELP_BY_ID: Partial<Record<string, Record<string, st
 		true: "retry transient provider errors automatically",
 		false: "surface transient errors immediately without retrying",
 	},
-	"integrations.projectResources.trustProjectImports": {
+	"integrations.hub.trustProjectImports": {
 		true: "allow explicitly imported foreign skills and prompts",
 		false: "keep imported foreign skills and prompts inactive",
 	},

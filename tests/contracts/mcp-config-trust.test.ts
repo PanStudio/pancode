@@ -950,7 +950,7 @@ describe("plugin mcp.json declarations", () => {
 		strictEqual(foreign(pluginWithServer(env.dir, "zulip-kit", "zulipchat"))?.trust, "foreign");
 		deepStrictEqual(
 			resolveMcpServers({ cwd: project }).diagnostics.map((entry) => entry.message),
-			["foreign package zulip-kit declares no MCP servers until integrations.projectResources.trustProjectImports is on"],
+			["foreign package zulip-kit declares no MCP servers until integrations.hub.trustProjectImports is on"],
 		);
 	});
 

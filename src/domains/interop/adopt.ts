@@ -409,7 +409,7 @@ function unportedReason(item: InteropInventoryItem): string {
  * operator's own home (~/.claude, ~/.codex and their peers) is theirs, and
  * the reviewed plan is the consent, so it works at once. A repository's
  * agent directories are someone else's writing: those stay foreign behind
- * integrations.projectResources.trustProjectImports, whatever scope they
+ * integrations.hub.trustProjectImports, whatever scope they
  * are adopted into. The install record keeps the interop origin either way.
  */
 function adoptedPackageTrust(item: InteropInventoryItem): "trusted" | "foreign" {
@@ -769,7 +769,7 @@ export function renderInteropAdoptionPlan(plan: InteropAdoptionPlan, options: { 
 				entry.action === "install" && entry.item.scope === "project" && adoptedPackageTrust(entry.item) === "foreign",
 		)
 			? [
-					"Packages adopted from a project directory stay inactive until integrations.projectResources.trustProjectImports is on; packages from your own home are trusted.",
+					"Packages adopted from a project directory stay inactive until integrations.hub.trustProjectImports is on; packages from your own home are trusted.",
 				]
 			: []),
 		"Host files are never changed. Approval applies only to the displayed content.",

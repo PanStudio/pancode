@@ -674,7 +674,7 @@ const CONTENT_PARTS = {
 			const rows: Array<readonly [string, string]> = [
 				["Startup layout", settings.interface.panes.layout],
 				["Task worktree root", settings.fleet.worktrees.root],
-				["Trust project imports", settings.integrations.projectResources.trustProjectImports ? "trusted" : "untrusted"],
+				["Trust project imports", settings.integrations.hub.trustProjectImports ? "trusted" : "untrusted"],
 				["External ACP agents", String(settings.integrations.externalAgents.entries.length)],
 				["Provider packages", listOr(settings.integrations.providerPackages)],
 				["Hub remote sync", onOff(settings.integrations.hub.sync)],
@@ -701,14 +701,13 @@ const CONTENT_PARTS = {
 			},
 			{
 				label: "Trust project imports",
-				controlPath: "integrations.projectResources.trustProjectImports",
+				controlPath: "integrations.hub.trustProjectImports",
 				hint: "toggle",
 				run: async (io) => {
 					let next = false;
 					updateSettings((draft) => {
-						draft.integrations.projectResources.trustProjectImports =
-							!draft.integrations.projectResources.trustProjectImports;
-						next = draft.integrations.projectResources.trustProjectImports;
+						draft.integrations.hub.trustProjectImports = !draft.integrations.hub.trustProjectImports;
+						next = draft.integrations.hub.trustProjectImports;
 					});
 					io.ok(`Project imports ${next ? "trusted" : "untrusted"}`);
 				},
@@ -836,7 +835,7 @@ const GUIDED_CONTROL_PATHS = new Set([
 	"interface.mode",
 	"interface.outputDetail",
 	"interface.desktopNotifications",
-	"integrations.projectResources.trustProjectImports",
+	"integrations.hub.trustProjectImports",
 	"integrations.hub.sync",
 	"integrations.git.commitAttribution",
 ]);

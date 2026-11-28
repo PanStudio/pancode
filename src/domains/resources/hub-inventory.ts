@@ -564,7 +564,7 @@ function fromSkill(skill: Skill, index: OwnerIndex): HubComponent {
 		? skill.diagnostics.find((item) => item.type === "error" || item.type === "collision")?.message
 		: !skill.trusted
 			? skill.source === "plugin"
-				? "imported pack is untrusted; review it and enable integrations.projectResources.trustProjectImports"
+				? "imported pack is untrusted; review it and enable integrations.hub.trustProjectImports"
 				: "discovered only; explicitly import into PanCode with interop adopt or hub import"
 			: undefined;
 	const scope = skill.scope === "cli" ? "user" : skill.scope;
@@ -600,7 +600,7 @@ function fromPrompt(template: PromptTemplate, index: OwnerIndex): HubComponent {
 		? template.unavailable
 		: !template.trusted
 			? scope === "package"
-				? "imported pack is untrusted; review it and enable integrations.projectResources.trustProjectImports"
+				? "imported pack is untrusted; review it and enable integrations.hub.trustProjectImports"
 				: "discovered only; explicitly import into PanCode with interop adopt or hub import"
 			: undefined;
 	return {
@@ -895,7 +895,7 @@ function audienceAdmits(resource: HubComponent, options: HubInventoryOptions): b
 function trustSetting(explicit: boolean | undefined): boolean {
 	if (explicit !== undefined) return explicit;
 	try {
-		return readSettings().integrations.projectResources.trustProjectImports;
+		return readSettings().integrations.hub.trustProjectImports;
 	} catch {
 		return false;
 	}

@@ -266,7 +266,6 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 	if (under(path, "interface.panes")) return place("workspace", "Panes");
 	if (under(path, "integrations.git")) return place("workspace", "Git");
 	if (under(path, "store")) return place("workspace", "Store");
-	if (under(path, "integrations.projectResources")) return place("workspace", "Hub");
 	if (under(path, "integrations.hub")) return place("workspace", "Hub");
 	if (under(path, "turnControl")) return place("workers", "Before PanCode answers");
 	if (under(path, "fleet.agentProfiles")) return place("workers", "Agent routes");
