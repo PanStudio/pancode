@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Councils, DispatchRuns, FleetGates, FleetRootDetail, FleetRoots, FleetRunRecord } from "../contracts/fleet.js";
 import { harness, json } from "./harness/app.js";
-import { seedFleet } from "./harness/fleet-fixture.js";
+import { seedFleet } from "./harness/hub-fixture.js";
 
 test("fleet REST: every durable root paginates once beyond 64 entries, corrupt rows and escaping links stay isolated", async () => {
 	const h = await harness();

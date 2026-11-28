@@ -2,50 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { doesNotMatch, match, ok } from "node:assert/strict";
 import { test } from "node:test";
-import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { ModelOverlayView } from "../../src/interactive/overlays/model-selector.js";
-import type { ModelRow } from "../../src/interactive/overlays/model-selector-model.js";
 import { GLYPH, pancodeTheme } from "../../src/interactive/theme/index.js";
-
-function selectableModelRow(): ModelRow {
-	const caps = { ...EMPTY_CAPABILITIES, chat: true, tools: true };
-	return {
-		value: "next-target/next-model",
-		target: "next-target",
-		model: "next-model",
-		runtimeName: "Contract runtime",
-		runtimeShortName: "Contract",
-		runtimeId: "contract-runtime",
-		apiFamily: "openai-completions",
-		bucket: "local",
-		source: "configured",
-		authText: "ready",
-		available: true,
-		reason: "",
-		healthToken: "success",
-		healthText: "healthy",
-		caps,
-		capabilityDecisions: {
-			chat: true,
-			tools: true,
-			reasoning: false,
-			vision: false,
-			streaming: true,
-			contextWindow: 32768,
-			maxTokens: 8192,
-		},
-		thinking: "off",
-		streaming: true,
-		badges: "T",
-		context: "32kctx",
-		maxTokens: "8k",
-		active: false,
-		scoped: false,
-		visibleByDefault: true,
-		selectable: true,
-	};
-}
+import { selectableModelRow } from "../harness/packaged-model-catalog.js";
 
 test("model picker uses state marks and target health without origin or health glyphs", () => {
 	const models = [

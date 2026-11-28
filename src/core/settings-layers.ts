@@ -665,13 +665,40 @@ function stripProjectOperatorSafety(
 	return cleaned;
 }
 
+/**
+ * A project may hide the operator's home from its commands (`listed`) but
+ * never show it back: an `open` mode and any root or toolchain it names are
+ * dropped, since each would widen what the operator's own settings hide.
+ */
+function projectHomeReads(raw: unknown, drop: (path: string, message: string) => void): unknown {
+	if (!isRecord(raw)) {
+		drop("safety.homeReads", "a project may only set listed home reads, as a map; project value ignored");
+		return undefined;
+	}
+	const kept: Record<string, unknown> = { ...raw };
+	for (const caller of ["main", "workers"]) {
+		if (!Object.hasOwn(kept, caller) || kept[caller] === "listed") continue;
+		drop(`safety.homeReads.${caller}`, "a project may only set listed home reads; project value ignored");
+		delete kept[caller];
+	}
+	for (const key of ["roots", "toolchains"]) {
+		if (!Object.hasOwn(kept, key)) continue;
+		drop(
+			`safety.homeReads.${key}`,
+			"home read roots and toolchains are set only in user settings; project value ignored",
+		);
+		delete kept[key];
+	}
+	return Object.keys(kept).length === 0 ? undefined : kept;
+}
+
 const SANDBOX_RANK: Record<string, number> = { off: 0, auto: 1, required: 2 };
 // Lower is tighter: deny and fail refuse, escalate asks the operator, judge and main let PanCode decide.
 const FLEET_MODE_RANK: Record<string, number> = { deny: 0, fail: 0, escalate: 1, judge: 2, main: 3 };
 
 /**
  * Trusted project settings may tighten containment, never widen it: the
- * sandbox, snapshots and the fleet ask route only move toward the
+ * sandbox, home reads, snapshots and the fleet ask route only move toward the
  * stricter side of the operator's value, and project layers cannot load code
  * into PanCode or trust their own imports.
  */
@@ -693,6 +720,14 @@ function stripProjectWidening(
 			if (requested === undefined || requested < operator) {
 				drop("safety.sandbox", "a project may only tighten the sandbox from user settings; project value ignored");
 				delete safety.sandbox;
+				changed = true;
+			}
+		}
+		if (Object.hasOwn(safety, "homeReads")) {
+			const homeReads = projectHomeReads(safety.homeReads, drop);
+			if (!isDeepStrictEqual(homeReads, safety.homeReads)) {
+				if (homeReads === undefined) delete safety.homeReads;
+				else safety.homeReads = homeReads;
 				changed = true;
 			}
 		}

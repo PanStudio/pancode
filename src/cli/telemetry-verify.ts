@@ -5,7 +5,7 @@ import { pancodeStateDir } from "../core/xdg.js";
 import { telemetryImportedStateDir } from "../domains/telemetry/paths.js";
 import type { SealVerdict } from "../domains/telemetry/seal.js";
 import { describeSealMismatch, readTelemetryScopeFiles, verifyTelemetryScope } from "../domains/telemetry/seal.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 import { resolveTelemetryTarget } from "./telemetry-target.js";
 
 const HELP = `pancode telemetry verify <session | scope-dir | archive> [--imported <install-id>] [--json]

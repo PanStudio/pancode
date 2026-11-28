@@ -204,8 +204,6 @@ export interface PluginMutationResult {
 	diagnostics: PluginDiagnostic[];
 }
 
-export type PluginInstallResult = PluginMutationResult;
-
 interface PluginInstallFacts {
 	installedAt: string;
 	source: string;

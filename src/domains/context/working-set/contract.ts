@@ -22,24 +22,9 @@ import type {
 	ContextRecallEntry,
 	EvictedItem,
 	EvictionReason,
-	EvictionTrigger,
-	RecallTrigger,
 	SessionEntry,
 	WorkingSetRef,
 } from "../../session/entries.js";
-
-export { EVICTION_REASONS, EVICTION_TRIGGERS, RECALL_TRIGGERS } from "../../session/entries.js";
-export type {
-	ContextEvictionEntry,
-	ContextRecallEntry,
-	EvictedItem,
-	EvictionReason,
-	EvictionTrigger,
-	RecallTrigger,
-	WorkingSetPolicyId,
-	WorkingSetRef,
-	WorkingSetSettings,
-};
 
 /**
  * What the fold knows about one evicted unit. Keyed in `WorkingSetView.evicted`

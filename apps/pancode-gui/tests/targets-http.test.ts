@@ -12,7 +12,7 @@ import { ConfigGraph, SettingsReport } from "../contracts/settings.js";
 import { Interop } from "../contracts/system.js";
 import { CliTargets, Routing } from "../contracts/targets-cli.js";
 import { harness, json } from "./harness/app.js";
-import { seedSettings } from "./harness/settings-fixture.js";
+import { seedSettings } from "./harness/hub-fixture.js";
 
 async function finished(h: Awaited<ReturnType<typeof harness>>, id: string) {
 	const deadline = performance.now() + 30_000;

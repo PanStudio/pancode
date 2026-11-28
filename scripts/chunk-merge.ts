@@ -215,7 +215,7 @@ function isExternalPackage(specifier: string): boolean {
  * Outputs left out keep a file of their own; `entries` (the build's real entry
  * outputs) always are.
  */
-export function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<string, string> {
+function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<string, string> {
 	// A package left external loads as its own tree of files the first time anything imports it, so each one is a
 	// node of the graph too: a file of its own that no group absorbs, weighed by EXTERNAL_PACKAGE_BYTES.
 	const packageOf = (specifier: string): string | undefined =>
@@ -513,7 +513,7 @@ export interface BuiltFile {
 	text: string;
 }
 
-export interface MergeOptions {
+interface MergeOptions {
 	files: ReadonlyArray<BuiltFile>;
 	metafile: Metafile;
 	/** Absolute output directory the files and the metafile's output names live under. */
@@ -541,7 +541,7 @@ const EXPECTED_NOTES = new Set(["THIS_IS_UNDEFINED", "EVAL"]);
  * source inputs of every chunk it absorbed, so byte budgets and the release
  * artifact keep reading true numbers.
  */
-export async function mergeChunks(options: MergeOptions): Promise<{ files: BuiltFile[]; metafile: Metafile }> {
+async function mergeChunks(options: MergeOptions): Promise<{ files: BuiltFile[]; metafile: Metafile }> {
 	const { metafile, outdir, entries, banner } = options;
 	const stray = options.files.find((file) => !file.path.endsWith(".js"));
 	// Source maps would need composing through the merge; the build ships none.

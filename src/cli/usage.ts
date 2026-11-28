@@ -7,7 +7,7 @@ import { COST_NOT_MEASURED } from "../core/telemetry/render.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { usageReport } from "../domains/telemetry/read-model-usage.js";
 import { emptyUsageDiagnostics, usageWindow } from "../domains/telemetry/usage-window.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 import { economyLines } from "./telemetry-read.js";
 
 const HELP = `pancode usage [report] [--repo <path>] [--days <n>] [--json]

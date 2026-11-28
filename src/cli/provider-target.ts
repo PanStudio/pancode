@@ -21,7 +21,7 @@ import {
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.js";
 import { registerPancodeOAuthProviders } from "../engine/oauth.js";
-import { columnWidths, formatColumnRow } from "./shared.js";
+import { columnWidths, formatColumnRow } from "./argv.js";
 
 /**
  * What the connectable listing is a listing of.

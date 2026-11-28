@@ -71,7 +71,7 @@ const EPOCH_MS_MAX = 1e13;
 const TIME_KEY = /(?:At|Ms|Time|Ts|Epoch)$|^(?:wall|ts|time)$/u;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u;
 
-export interface IndexLine {
+interface IndexLine {
 	reportId: string;
 	sha256: string;
 	scopes: string[];
@@ -430,7 +430,7 @@ cannot be recalled.
 `;
 }
 
-export interface BuildOptions {
+interface BuildOptions {
 	store: string;
 	release: string;
 	out: string;

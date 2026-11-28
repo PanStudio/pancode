@@ -127,6 +127,9 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	// The main registry reads the session shell's egress at each call; dispatch seals the workers' into each new
 	// WorkerSpec. A running command keeps the grants it launched with.
 	"safety.egress",
+	// The main registry reads the session's mode and list for each contained call; dispatch seals the workers' into
+	// each new WorkerSpec. A running command keeps what it launched with.
+	"safety.homeReads",
 	"interface.terminalProgress",
 	"interface.desktopNotifications",
 	// The graphical app applies a change made in its settings to the next turn it admits; a change

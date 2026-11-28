@@ -37,17 +37,6 @@ import { renderToolArguments } from "./renderers/tool-arguments.js";
 import { factRows, GLYPH, pancodeTheme, positionRow, rule, sectionRule } from "./theme/index.js";
 import { skinEpoch } from "./theme/tokens.js";
 
-export { type AskAxis, askAxis } from "../domains/safety/approval-axis.js";
-export { describeCallTarget, sanitizeCallTargetText } from "../lib/call-target/call-target.js";
-export type { ApprovalRequestView } from "../session-control/approval-request-view.js";
-export {
-	MUTATION_PREVIEW_KEY,
-	PERMISSION_TERMS_KEY,
-	type PermissionInspectionHint,
-	type PermissionTermsHint,
-	permissionHintEntries,
-} from "./permission-hint.js";
-
 /** A boxed frame for the card: the card's own columns plus the frame's borders and padding. */
 export const PERMISSION_OVERLAY_WIDTH = CARD_CALLOUT_MAX_WIDTH + 4;
 
