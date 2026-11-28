@@ -22,6 +22,7 @@ import type { createRequestStructures } from "../../engine/request-structure.js"
 import type { AgentMessage, EngineModel } from "../../engine/types.js";
 import type { ToolFinishEvent } from "../../tools/agent-tools.js";
 import type { AttemptReceipt, RequestCursor } from "../attempt-receipt.js";
+import type { BackendCacheVerdict } from "../chat-loop-messages.js";
 import type { ExpectedColdReason } from "../turn-context.js";
 import type { RunningCallWait, TurnRuntime, TurnRuntimeDeps } from "../turn-runtime-types.js";
 import type { AgentRuntime, ChatLoopTarget, PreInvocationStage } from "../turn-state.js";
@@ -149,6 +150,12 @@ export interface AgentBuildScope {
 	admittedMessages: readonly AgentMessage[];
 	admittedSystemPrompt: string;
 	getCurrentAgentSignal: () => AbortSignal | undefined;
+	/** The turn identity the run started under; an event from an older run is not this run's. */
+	runIdentity: unknown;
+	// First call of the run is the one whose verdict says whether the
+	// backend reused the session prefix; later calls in a tool loop are
+	// trivially warm.
+	runFirstCallVerdict: BackendCacheVerdict | null;
 	/** The reminder for a tool the next round must call; a pending one carries the run on at finishTurn. */
 	requiredToolReminder: string | null;
 	turnEndFiredFor: AgentMessage | null;
