@@ -7,6 +7,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { sandboxAvailability } from "./availability.js";
 import type { HostLaunchLabel } from "./host-launch.js";
 import {
 	labelLaunch,
@@ -18,20 +19,28 @@ import {
 	type SandboxPlanFacts,
 	sandboxLaunchRecord,
 } from "./launch-record.js";
-import type { SandboxLaunchOutcome } from "./types.js";
+import type { EgressMode, SandboxLaunchOutcome } from "./types.js";
 import { workerSandboxConfigured } from "./worker-process.js";
 
-/** The facts of a launch: the planner's under the label's launcher and integration, or the label's on the host. */
-export function hostLaunchFacts(label: HostLaunchLabel, plan?: SandboxPlanFacts): SandboxLaunchFacts {
+/**
+ * The facts of a launch: the planner's under the label's launcher and integration, or the label's own. A sandboxed
+ * label with no plan at hand (a pane the terminal starts) names the host's backend and its policy's network.
+ */
+export function hostLaunchFacts(
+	label: HostLaunchLabel,
+	plan?: SandboxPlanFacts,
+	sandboxedNetwork: EgressMode = "off",
+): SandboxLaunchFacts {
 	if (plan !== undefined) return labelLaunch({ ...plan, launcher: label.launcher }, label);
+	const sandboxed = label.confinement === "sandboxed";
 	return {
 		caller: workerSandboxConfigured() ? "worker" : "main",
 		launcher: label.launcher,
 		...(label.integration !== undefined ? { integration: label.integration } : {}),
 		confinement: label.confinement,
 		why: label.why,
-		backend: null,
-		network: "open",
+		backend: sandboxed ? sandboxAvailability().backend : null,
+		network: sandboxed ? sandboxedNetwork : "open",
 	};
 }
 

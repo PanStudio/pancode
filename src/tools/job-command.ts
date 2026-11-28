@@ -9,6 +9,7 @@ import type { JobCondition, JobPredicate, JobRunner } from "../core/job-types.js
 import { relativePathEscapes } from "../core/path-containment.js";
 import { runCommandVector } from "../core/safe-exec.js";
 import { type HostLaunchLabel, sandboxedLabel } from "../core/sandbox/host-launch.js";
+import { seamLaunchLabel, seamOrHostLaunch } from "../core/sandbox/host-launch-record.js";
 import { confinedIntegrationPolicy, type MainSandboxPolicy, optInLaunch } from "../core/sandbox/main-session.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
 import { shellQuote } from "../core/shell-quote.js";
@@ -130,6 +131,12 @@ export function attestJobCommand(runner: Extract<JobRunner, { kind: "command" }>
 	}
 }
 
+/** Where one job occurrence's commands run (P8): their label, and the policy that holds them when one does. */
+export interface JobLaunch {
+	label: HostLaunchLabel;
+	policy?: MainSandboxPolicy;
+}
+
 /**
  * Where one job occurrence's commands run (P8). Admission ran them contained
  * when only their sandboxed bash form was admitted; otherwise they run in the
@@ -140,7 +147,7 @@ export function jobLaunch(
 	admitted: MainSandboxPolicy | undefined,
 	confine: ReadonlyArray<string>,
 	cwd: string,
-): { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string } {
+): JobLaunch | { refused: string } {
 	if (admitted !== undefined) {
 		return { label: sandboxedLabel("job", "main-policy", "jobs"), policy: admitted };
 	}
@@ -208,8 +215,9 @@ async function pollCommand(
 	context: JobExecutionContext,
 	autonomy: AutonomyLevel | undefined,
 	envPolicy: SandboxEnvPolicy,
-	shellSandbox: MainSandboxPolicy | undefined,
+	launch: JobLaunch | undefined,
 ): Promise<CommandPoll> {
+	const shellSandbox = launch?.policy;
 	const result = await runCommandVector(argv[0] as string, argv.slice(1), {
 		cwd: context.job.owner.cwd,
 		workspaceRoot: context.job.owner.cwd,
@@ -220,7 +228,9 @@ async function pollCommand(
 		signal: context.signal,
 		// Admission ran the command contained when only its sandboxed bash form is admitted (XR-12).
 		...(shellSandbox === undefined ? {} : { shellSandbox }),
+		...(launch !== undefined ? { launchLabel: seamLaunchLabel(launch.label) } : {}),
 	});
+	if (launch !== undefined) seamOrHostLaunch(result.sandbox, launch.label, result);
 	let json: unknown = null;
 	let jsonComplete = false;
 	if (!result.outputCapped && result.stdoutRetained !== false) {
@@ -269,7 +279,7 @@ export async function executeJobCommand(
 	context: JobExecutionContext,
 	autonomy?: AutonomyLevel,
 	envPolicy: SandboxEnvPolicy = { passEnv: [], secretNames: [] },
-	shellSandbox?: MainSandboxPolicy,
+	launch?: JobLaunch,
 ): Promise<JobRunResult> {
 	const runner = context.job.spec.runner;
 	if (runner.kind !== "command") throw new Error("Command job runner received a main occurrence.");
@@ -277,7 +287,7 @@ export async function executeJobCommand(
 	if (!context.start()) return { outcome: "deferred", summary: "Job execution is no longer admitted." };
 	const also = runner.also;
 	if (also === undefined) {
-		const poll = await pollCommand(runner.argv, context, autonomy, envPolicy, shellSandbox);
+		const poll = await pollCommand(runner.argv, context, autonomy, envPolicy, launch);
 		return {
 			outcome: poll.failed ? "failed" : "succeeded",
 			summary: JSON.stringify(poll.report),
@@ -297,7 +307,7 @@ export async function executeJobCommand(
 		if (context.signal.aborted) break;
 		polls.push({
 			condition: index + 1,
-			poll: await pollCommand(condition.argv, context, autonomy, envPolicy, shellSandbox),
+			poll: await pollCommand(condition.argv, context, autonomy, envPolicy, launch),
 		});
 		if (polls.at(-1)?.poll.cleanupUnresolved === true) break;
 	}

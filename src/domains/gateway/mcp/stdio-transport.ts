@@ -27,8 +27,12 @@ import { performance } from "node:perf_hooks";
 import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../../core/safe-exec.js";
 import { bridgeEgress, egressStdio } from "../../../core/sandbox/egress/bridge.js";
+import type { HostLaunchLabel } from "../../../core/sandbox/host-launch.js";
+import { settleHostLaunch } from "../../../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../../core/sandbox/launch-record.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "../../../core/sandbox/main-session.js";
 import { signalSandboxPayload } from "../../../core/sandbox/signal.js";
+import type { SandboxLaunchOutcome } from "../../../core/sandbox/types.js";
 import { planSandboxedSpawn } from "../../../core/sandbox/worker-process.js";
 import { sleep } from "../../../core/timers.js";
 import { createLineFramer, encodeJsonRpcMessage, McpError } from "./protocol.js";
@@ -66,6 +70,14 @@ export interface McpStdioTransportOptions {
 	sandboxNetwork: boolean;
 	/** The operator confined this orchestrator server (`safety.confine`): it runs under this policy or not at all. */
 	hostSandbox?: MainSandboxPolicy;
+	/** Labels each launch of the server (P8) and hands its settled record back. */
+	launch?: McpLaunchReport;
+}
+
+/** How a server's launch is labelled, and who receives its record once it ran, was refused or failed to start. */
+export interface McpLaunchReport {
+	label: HostLaunchLabel;
+	onSettled: (record: SandboxLaunchRecord) => void;
 }
 
 interface OutboundEntry {
@@ -388,7 +400,12 @@ export function createMcpStdioTransport(
 			options.hostSandbox !== undefined
 				? planMainSandboxSpawn(options.hostSandbox, { argv }, cwd, undefined, { bridge: true })
 				: planSandboxedSpawn({ argv }, cwd, [], { network: options.sandboxNetwork });
+		const report = options.launch;
+		const settleLaunch = (outcome: SandboxLaunchOutcome): void => {
+			if (report !== undefined) report.onSettled(settleHostLaunch(report.label, { outcome }, sandbox.launch));
+		};
 		if (sandbox.kind === "refused") {
+			settleLaunch("refused");
 			fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${sandbox.message}`), true);
 			return false;
 		}
@@ -414,6 +431,7 @@ export function createMcpStdioTransport(
 			// A confined server's network is PanCode's proxy for its own grants, served for as long as it runs.
 			if (egressPlan !== undefined) bridgeEgress(proc, egressPlan);
 		} catch (error) {
+			settleLaunch("launch-failed");
 			fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${errorMessage(error)}`), true);
 			return false;
 		}
@@ -421,8 +439,12 @@ export function createMcpStdioTransport(
 		if (sandbox.kind === "sandboxed") proc.once("exit", sandbox.afterExit);
 		if (proc.pid !== undefined) groupPhase = "live";
 		spawned = new Promise<boolean>((resolve) => {
-			proc.once("spawn", () => resolve(true));
+			proc.once("spawn", () => {
+				settleLaunch("ran");
+				resolve(true);
+			});
 			proc.once("error", (error) => {
+				if (proc.pid === undefined) settleLaunch("launch-failed");
 				fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${error.message}`), true);
 				resolve(false);
 			});

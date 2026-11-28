@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { HostLaunchLabel } from "../../core/sandbox/host-launch.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import type {
 	McpClient,
@@ -450,8 +451,10 @@ export interface OwnedConnection {
 }
 
 export interface ServerState {
-	/** Where this server's process ran at its last launch (P8), for each call's `details.sandbox`. */
+	/** Where this server's process runs (P8), as its last launch was labelled. */
 	launchLabel?: HostLaunchLabel;
+	/** That launch's record, each call's `details.sandbox`. */
+	launchRecord?: SandboxLaunchRecord;
 	recovery?: Promise<void>;
 	refreshing?: Promise<void>;
 	listed?: boolean;

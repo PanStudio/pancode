@@ -5,6 +5,7 @@ import path from "node:path";
 import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
 import { hostLaunchPhrase, sandboxedLabel, uncontainedLabel } from "../../core/sandbox/host-launch.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
 import {
 	confinedIntegrationPolicy,
 	type MainSandboxPolicy,
@@ -989,7 +990,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						tool: tool.name,
 						contentTypes,
 						textTruncated: rendered.truncated,
-						...(state.launchLabel !== undefined ? { sandbox: state.launchLabel } : {}),
+						...(state.launchRecord !== undefined ? { sandbox: state.launchRecord } : {}),
 						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
 						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
 						...(result.elicitations !== undefined ? { elicitations: result.elicitations } : {}),
@@ -1273,6 +1274,16 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
 						...(decision?.confined === true ? { hostSandbox: confinedServerPolicy(declaration) } : {}),
+						...(decision !== null
+							? {
+									launch: {
+										label: decision.label,
+										onSettled: (record: SandboxLaunchRecord) => {
+											state.launchRecord = record;
+										},
+									},
+								}
+							: {}),
 						...(fileTransfersPermitted(declaration.id) ? { fileTransfers: true } : {}),
 						...(elicitationHost !== undefined
 							? {

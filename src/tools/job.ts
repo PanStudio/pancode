@@ -10,6 +10,7 @@ import {
 	type JobRecord,
 	type JobRunner,
 } from "../core/job-types.js";
+import { collectHostLaunches } from "../core/sandbox/host-launch-record.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
 import { layeredConfineList } from "../core/settings-layers.js";
 import { ToolNames } from "../core/tool-names.js";
@@ -377,11 +378,14 @@ export function createJobTool(deps: JobToolDeps): {
 					const cwd = artifact.context.job.owner.cwd;
 					const launch = jobLaunch(options?.shellSandbox, (deps.confine ?? (() => layeredConfineList(cwd)))(), cwd);
 					if ("refused" in launch) return { kind: "error", message: `job: ${launch.refused}` };
-					const result = await executeJobCommand(artifact.context, deps.autonomy?.(), deps.sandboxEnv?.(), launch.policy);
+					const { value: result, launches } = await collectHostLaunches(() =>
+						executeJobCommand(artifact.context, deps.autonomy?.(), deps.sandboxEnv?.(), launch),
+					);
+					const record = launches.at(-1);
 					return {
 						kind: "ok",
 						output: result.summary ?? result.outcome,
-						details: { jobRunResult: result, sandbox: launch.label },
+						details: { jobRunResult: result, ...(record !== undefined ? { sandbox: record } : {}) },
 					};
 				}
 				const nowOwner = deps.owner();

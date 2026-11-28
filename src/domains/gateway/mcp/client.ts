@@ -48,7 +48,12 @@ import type {
 	McpResourceRead,
 } from "./resources.js";
 import type { McpSkillsTransport } from "./skills.js";
-import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "./stdio-transport.js";
+import {
+	containedCwd,
+	createMcpStdioTransport,
+	type McpLaunchReport,
+	type McpStdioServerSpec,
+} from "./stdio-transport.js";
 import type { McpToolCallResult, McpToolDescriptor } from "./tool-results.js";
 import type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
@@ -115,6 +120,8 @@ export interface McpClientOptions {
 	sandboxNetwork?: boolean;
 	/** The operator confined this orchestrator server (`safety.confine`); its stdio process runs under this policy. */
 	hostSandbox?: MainSandboxPolicy;
+	/** Labels the stdio process's launch (P8) and receives its record. */
+	launch?: McpLaunchReport;
 	/**
 	 * Answers the server's elicitations. Only its presence declares the
 	 * `elicitation` capability; without it the client declares none, so a
@@ -391,6 +398,7 @@ export function createMcpStdioClient(spec: McpStdioServerSpec, options: McpClien
 					teardownBoundMs: clampTimerDelayMs(options.teardownBoundMs ?? DEFAULT_TEARDOWN_BOUND_MS),
 					sandboxNetwork: options.sandboxNetwork === true,
 					...(options.hostSandbox !== undefined ? { hostSandbox: options.hostSandbox } : {}),
+					...(options.launch !== undefined ? { launch: options.launch } : {}),
 				},
 				events,
 			),

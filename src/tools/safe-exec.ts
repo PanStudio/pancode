@@ -16,6 +16,7 @@ import {
 	sandboxedLabel,
 	uncontainedLabel,
 } from "../core/sandbox/host-launch.js";
+import { seamLaunchLabel, seamOrHostLaunch, settleHostLaunch } from "../core/sandbox/host-launch-record.js";
 import {
 	confinedIntegrationPolicy,
 	type MainSandboxPolicy,
@@ -108,6 +109,8 @@ export async function runVectorTool(
 		shellSandbox?: MainSandboxPolicy;
 		/** The root `cwd` must stay inside; the process working directory when absent. */
 		workspaceRoot?: string;
+		/** Where the program runs (P8); its settled launch record rides on `details.sandbox`. */
+		launchLabel?: HostLaunchLabel;
 		/**
 		 * When true, `args.max_output_bytes` only trims the returned text
 		 * (head, dropped-byte marker, tail); the child runs under the default
@@ -129,12 +132,17 @@ export async function runVectorTool(
 		if (options?.typedGitWritablePaths !== undefined) runOptions.typedGitWritablePaths = options.typedGitWritablePaths;
 		if (options?.shellSandbox !== undefined) runOptions.shellSandbox = options.shellSandbox;
 		if (options?.workspaceRoot !== undefined) runOptions.workspaceRoot = options.workspaceRoot;
+		const label = options?.launchLabel;
+		if (label !== undefined) runOptions.launchLabel = seamLaunchLabel(label);
 		const result = await runCommandVector(file, vectorArgs, runOptions);
 		const combined = combineSafeOutput(result);
 		const output = truncateOnly
 			? trimOutputHeadTail(combined, requestedMaxOutputBytes)
 			: truncateUtf8(combined, requestedMaxOutputBytes, TRUNCATION_MARKER);
-		const details = resultDetails(result);
+		const details: ToolResultDetails = {
+			...resultDetails(result),
+			...(label !== undefined ? { sandbox: seamOrHostLaunch(result.sandbox, label, result) } : {}),
+		};
 		if (result.aborted) return { kind: "error", message: `${action}: aborted`, details };
 		if (result.timedOut) {
 			const status =
@@ -167,7 +175,10 @@ export async function runVectorTool(
 		}
 		return { kind: "ok", output, details };
 	} catch (err) {
-		return { kind: "error", message: `${action}: ${err instanceof Error ? err.message : String(err)}` };
+		const message = `${action}: ${err instanceof Error ? err.message : String(err)}`;
+		if (options?.launchLabel === undefined) return { kind: "error", message };
+		const sandbox = settleHostLaunch(options.launchLabel, { outcome: "launch-failed" });
+		return { kind: "error", message, details: { sandbox } };
 	}
 }
 
@@ -203,10 +214,6 @@ export function typedGitLaunch(
 	};
 }
 
-function withLaunchLabel(result: ToolResult, label: HostLaunchLabel): ToolResult {
-	return { ...result, details: { ...(result.details ?? {}), sandbox: label } } as ToolResult;
-}
-
 /**
  * Run a typed add or commit. Admission already judged the exact argv; for a
  * worker admitted by its standing allowance rather than an approval, the
@@ -218,8 +225,9 @@ async function runTypedGitMutation(
 	op: "add" | "commit",
 	args: Record<string, unknown>,
 	options: ToolInvokeOptions | undefined,
-	policy: MainSandboxPolicy | undefined,
+	launch: { label: HostLaunchLabel; policy?: MainSandboxPolicy },
 ): Promise<ToolResult> {
+	const policy = launch.policy;
 	let cwd: string;
 	try {
 		cwd = resolveSafeCwd(cwdArg(args));
@@ -265,6 +273,7 @@ async function runTypedGitMutation(
 			? { typedGitWritablePaths: context.taskWorktree.typedGitWritablePaths }
 			: {}),
 		...(policy !== undefined ? { shellSandbox: policy } : {}),
+		launchLabel: launch.label,
 		env,
 	});
 }
@@ -337,19 +346,14 @@ export const gitTool: ToolSpec = {
 			const inspect = {
 				...(options?.signal !== undefined ? { signal: options.signal } : {}),
 				...(launch.policy !== undefined ? { shellSandbox: launch.policy } : {}),
+				launchLabel: launch.label,
 				env: typedGitInspectEnv(),
 			};
-			return withLaunchLabel(
-				await runVectorTool("git", "git", gitInspectArgv(check.op, check.args), check.args, inspect),
-				launch.label,
-			);
+			return runVectorTool("git", "git", gitInspectArgv(check.op, check.args), check.args, inspect);
 		}
 		const built = typedGitMutationArgv(check.op, check.args);
 		if (built === null) return { kind: "error", message: `git: op ${check.op} has no argv; nothing ran` };
 		if (!built.ok) return { kind: "error", message: built.error };
-		return withLaunchLabel(
-			await runTypedGitMutation(built.argv, built.op, check.args, options, launch.policy),
-			launch.label,
-		);
+		return runTypedGitMutation(built.argv, built.op, check.args, options, launch);
 	},
 };

@@ -94,6 +94,30 @@ function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, set
 	}
 	if ("egress" in safety) validateEgress(issues, safety.egress, settings);
 	if ("homeReads" in safety) validateHomeReads(issues, safety.homeReads, settings);
+	if ("scratchRoots" in safety) {
+		const parsed = expectStringArray(issues, "safety.scratchRoots", safety.scratchRoots);
+		if (parsed !== undefined) {
+			settings.safety.scratchRoots = parsed.filter((root) => {
+				const problem = scratchRootProblem(root);
+				if (problem !== null) issues.add("safety.scratchRoots", `${root}: ${problem}`);
+				return problem === null;
+			});
+		}
+	}
+	if ("confine" in safety) {
+		const parsed = expectStringArray(issues, "safety.confine", safety.confine);
+		if (parsed !== undefined) {
+			settings.safety.confine = [
+				...new Set(
+					parsed.filter((entry) => {
+						const problem = confineEntryProblem(entry);
+						if (problem !== null) issues.add("safety.confine", `${JSON.stringify(entry)}: ${problem}`);
+						return problem === null;
+					}),
+				),
+			];
+		}
+	}
 	if ("sandboxUnconfinedLocalWorkers" in safety) {
 		const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
 		if (parsed !== undefined) settings.safety.sandboxUnconfinedLocalWorkers = parsed;
@@ -992,16 +1016,6 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
 				if (parsed !== undefined) settings.safety.snapshots = parsed;
 			}
-			if ("scratchRoots" in safety) {
-				const parsed = expectStringArray(issues, "safety.scratchRoots", safety.scratchRoots);
-				if (parsed !== undefined) {
-					settings.safety.scratchRoots = parsed.filter((root) => {
-						const problem = scratchRootProblem(root);
-						if (problem !== null) issues.add("safety.scratchRoots", `${root}: ${problem}`);
-						return problem === null;
-					});
-				}
-			}
 			if ("liveCheckTargets" in safety) {
 				const parsed = expectStringArray(issues, "safety.liveCheckTargets", safety.liveCheckTargets);
 				if (parsed !== undefined) {
@@ -1016,20 +1030,6 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 											? null
 											: `runtime ${target.runtime} has no login file PanCode can reveal (only ${[...LIVE_CHECK_LOGIN_RUNTIMES].join(", ")})`;
 								if (problem !== null) issues.add("safety.liveCheckTargets", `${id}: ${problem}`);
-								return problem === null;
-							}),
-						),
-					];
-				}
-			}
-			if ("confine" in safety) {
-				const parsed = expectStringArray(issues, "safety.confine", safety.confine);
-				if (parsed !== undefined) {
-					settings.safety.confine = [
-						...new Set(
-							parsed.filter((entry) => {
-								const problem = confineEntryProblem(entry);
-								if (problem !== null) issues.add("safety.confine", `${JSON.stringify(entry)}: ${problem}`);
 								return problem === null;
 							}),
 						),

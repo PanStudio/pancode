@@ -33,6 +33,7 @@ import {
 } from "../../core/git-commit-attribution.js";
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
 import { type HostLaunchLabel, hostAuthorityLabel } from "../../core/sandbox/host-launch.js";
+import { settleHostLaunch } from "../../core/sandbox/host-launch-record.js";
 import {
 	confinedIntegrationPolicy,
 	type MainSandboxPolicy,
@@ -285,8 +286,10 @@ export function spawnSyncCommandRunner(
 		if ("refused" in launch) return { code: null, timedOut: false, stdout: "", stderr: launch.refused };
 		const cwd = options.cwd ?? process.cwd();
 		const planned = launch.policy !== undefined ? planMainSandboxSpawn(launch.policy, { argv }, cwd) : undefined;
-		if (planned?.kind === "refused")
-			return { code: null, timedOut: false, stdout: "", stderr: planned.message, launch: launch.label };
+		if (planned?.kind === "refused") {
+			const record = settleHostLaunch(launch.label, { outcome: "refused" }, planned.launch);
+			return { code: null, timedOut: false, stdout: "", stderr: planned.message, launch: record };
+		}
 		const [command, ...args] = planned !== undefined ? [planned.file, ...planned.args] : argv;
 		// A user hook is operator automation, not PanCode work: the environment is
 		// normalized so a nested seam sees consistent state, but no role is claimed.
@@ -307,13 +310,18 @@ export function spawnSyncCommandRunner(
 			env: attribution.env,
 		});
 		planned?.afterExit();
+		const record = settleHostLaunch(
+			launch.label,
+			{ outcome: result.pid === undefined || result.pid === 0 ? "launch-failed" : "ran", exitCode: result.status },
+			planned?.launch,
+		);
 		const timedOut = result.error !== undefined && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
 		return {
 			code: result.status,
 			timedOut,
 			stdout: typeof result.stdout === "string" ? result.stdout : "",
 			stderr: typeof result.stderr === "string" ? result.stderr : "",
-			launch: launch.label,
+			launch: record,
 		};
 	};
 }

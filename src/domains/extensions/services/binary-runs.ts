@@ -10,6 +10,8 @@ import { recordPackageActivity } from "../../../core/package-activity.js";
 import type { PackageIdentity } from "../../../core/package-identity.js";
 import { runCommandVector } from "../../../core/safe-exec.js";
 import { type HostLaunchLabel, notConfinedLabel } from "../../../core/sandbox/host-launch.js";
+import { seamLaunchLabel, seamOrHostLaunch, settleHostLaunch } from "../../../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../../core/sandbox/launch-record.js";
 import {
 	confinedIntegrationPolicy,
 	type MainSandboxPolicy,
@@ -131,8 +133,8 @@ function shownArgs(args: ReadonlyArray<string>): string[] {
 
 interface PackBinaryOutcome {
 	outcome: "ok" | "failed" | "timeout" | "refused";
-	/** Where the program ran; absent when it was refused before a launch was decided. */
-	launch?: HostLaunchLabel;
+	/** Where the program ran and how its launch settled; absent when it was refused before a launch was decided. */
+	launch?: SandboxLaunchRecord;
 	reasonCode?: PackBinaryRefusalCode | undefined;
 	reason?: string;
 	exitCode?: number | null;
@@ -265,13 +267,14 @@ export async function runPackBinary(
 			env: request.env,
 			timeoutMs: request.timeoutMs,
 			maxOutputBytes: BINARY_RUN_LIMITS.outputBytes * 2,
+			launchLabel: seamLaunchLabel(label),
 			...(policy !== undefined ? { shellSandbox: policy } : {}),
 			...(signal ? { signal } : {}),
 		});
 	} catch (error) {
 		recordPackBinaryRun(caller, binary, "run", request.args, {
 			outcome: "failed",
-			launch: label,
+			launch: settleHostLaunch(label, { outcome: "launch-failed" }),
 			durationMs: performance.now() - started,
 			reason: error instanceof Error ? error.message : String(error),
 		});
@@ -279,7 +282,7 @@ export async function runPackBinary(
 	}
 	recordPackBinaryRun(caller, binary, "run", request.args, {
 		outcome: result.timedOut ? "timeout" : result.exitCode === 0 ? "ok" : "failed",
-		launch: label,
+		launch: seamOrHostLaunch(result.sandbox, label, result),
 		exitCode: result.exitCode,
 		durationMs: performance.now() - started,
 		...(result.launched === false && typeof result.failure === "string" ? { reason: result.failure } : {}),
@@ -322,14 +325,14 @@ export async function servePackPane(
 		const state = await call(policy);
 		recordPackBinaryRun(caller, binary, "pane", args, {
 			outcome: "ok",
-			launch: label,
+			launch: settleHostLaunch(label, { outcome: "ran" }),
 			durationMs: performance.now() - started,
 		});
 		return state;
 	} catch (error) {
 		recordPackBinaryRun(caller, binary, "pane", args, {
 			outcome: "failed",
-			launch: label,
+			launch: settleHostLaunch(label, { outcome: "launch-failed" }),
 			durationMs: performance.now() - started,
 			reason: error instanceof Error ? error.message : String(error),
 		});

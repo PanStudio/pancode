@@ -25,7 +25,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { canonicalJson } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
-import type { HostLaunchLabel } from "../../core/sandbox/host-launch.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
 import type { SandboxConfinement } from "../../core/sandbox/types.js";
 import { MIDDLEWARE_HOOKS } from "../../core/telemetry/session-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
@@ -474,7 +474,7 @@ export interface UserHookCommandResult {
 	stdout: string;
 	stderr: string;
 	/** Where the command ran (P8); absent from a runner that does not say. */
-	launch?: HostLaunchLabel;
+	launch?: SandboxLaunchRecord;
 }
 
 export type UserHookCommandRunner = (
