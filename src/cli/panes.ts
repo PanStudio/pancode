@@ -76,7 +76,7 @@ export async function runPanesCommand(argv: ReadonlyArray<string> = []): Promise
 		);
 	}
 	if (rest.includes("--if-missing")) {
-		const { resolveVendoredBinary } = await import("../domains/toolchain/index.js");
+		const { resolveVendoredBinary } = await import("../lib/programs/index.js");
 		const vendored = resolveVendoredBinary("herdr");
 		if (vendored !== null) {
 			// The warm path prints the same document a cold install does, with

@@ -3,14 +3,14 @@
 import { resolve } from "node:path";
 import { pancodeStateDir } from "../core/xdg.js";
 import { listRunEvidence } from "../domains/evidence/index.js";
-import type { ChangeManifestSummary, ManifestValidationIssue } from "../domains/evolution/index.js";
+import { printError, printOk } from "./argv.js";
+import type { ChangeManifestSummary, ManifestValidationIssue } from "./dev/evolution/index.js";
 import {
 	createChangeManifestTemplate,
 	loadChangeManifestJson,
 	summarizeChangeManifest,
 	validateChangeManifest,
-} from "../domains/evolution/index.js";
-import { printError, printOk } from "./argv.js";
+} from "./dev/evolution/index.js";
 
 const HELP = `pancode dev evolve manifest init
 pancode dev evolve manifest validate <path>

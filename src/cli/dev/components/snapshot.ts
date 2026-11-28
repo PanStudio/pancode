@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readFile } from "node:fs/promises";
-import { isRecord } from "../../core/type-guards.js";
+import { isRecord } from "../../../core/type-guards.js";
 import {
 	COMPONENT_AUTHORITIES,
 	COMPONENT_KINDS,

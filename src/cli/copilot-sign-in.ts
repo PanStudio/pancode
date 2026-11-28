@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { spawnSync } from "node:child_process";
-import { findExecutableOnPath } from "../domains/toolchain/resolve.js";
+import { findExecutableOnPath } from "../lib/programs/resolve.js";
 
 interface SignInPrompt {
 	confirm(question: string): Promise<boolean>;

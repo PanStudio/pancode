@@ -26,7 +26,7 @@ import {
 	type ToolPlatform,
 	type ToolResolution,
 	toolchainRoot,
-} from "../../toolchain/index.js";
+} from "../../../lib/programs/index.js";
 import { listInstalledExtensions } from "../state.js";
 
 /** A call's arguments, environment and output stay small: this is a control channel, not a shell. */

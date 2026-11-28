@@ -29,8 +29,8 @@ import { resolveClaudeLaunchCredential } from "../../domains/providers/auth/inde
 import { getCatalogModelForRuntime } from "../../domains/providers/catalog.js";
 import { resolveModelRuntimeCapabilitiesForModel } from "../../domains/providers/model-runtime-capabilities.js";
 import { mainGrantsUnavailable } from "../../domains/safety/worker-permit.js";
-import { findExecutableOnPath } from "../../domains/toolchain/resolve.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { findExecutableOnPath } from "../../lib/programs/resolve.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { toolCallFacts } from "../../tools/agent-tools.js";
 import { WORKER_EXIT_PERMISSION_REQUIRED, type WorkerBudget } from "../../worker/spec-contract.js";

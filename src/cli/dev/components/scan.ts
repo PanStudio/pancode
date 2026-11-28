@@ -5,10 +5,10 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { canonicalJson } from "../../core/canonical-json.js";
-import { sha256Hex } from "../../core/hash.js";
-import { listPackedSources, readPackedSource, sourceIsPacked } from "../../core/source-pack.js";
-import { isRecord } from "../../core/type-guards.js";
+import { canonicalJson } from "../../../core/canonical-json.js";
+import { sha256Hex } from "../../../core/hash.js";
+import { listPackedSources, readPackedSource, sourceIsPacked } from "../../../core/source-pack.js";
+import { isRecord } from "../../../core/type-guards.js";
 import type {
 	ComponentAuthority,
 	ComponentKind,

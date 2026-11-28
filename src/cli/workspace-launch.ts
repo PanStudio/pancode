@@ -112,7 +112,7 @@ function hadPaneHost(versionDir: string): boolean {
  */
 async function vendoredHerdr(): Promise<{ binaryPath: string; version: string } | null> {
 	const { currentToolPlatform, findPinnedTool, installTool, resolveVendoredBinary, toolVersionDir } = await import(
-		"../domains/toolchain/index.js"
+		"../lib/programs/index.js"
 	);
 	const present = resolveVendoredBinary("herdr");
 	if (present !== null) return present;

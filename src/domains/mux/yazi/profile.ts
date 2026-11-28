@@ -20,8 +20,8 @@ import { readPancodeVersion, resolvePackageRoot } from "../../../core/package-ro
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { parseTomlDocument } from "../../../core/toml.js";
 import { pancodeCacheDir, resolvePancodeDirs } from "../../../core/xdg.js";
-import { findPinnedTool } from "../../toolchain/registry.js";
-import { resolveToolBinary } from "../../toolchain/resolve.js";
+import { findPinnedTool } from "../../../lib/programs/registry.js";
+import { resolveToolBinary } from "../../../lib/programs/resolve.js";
 import { renderYaziTheme } from "./theme.js";
 
 const PROFILE_FILES = ["yazi.toml", "keymap.toml", "theme.toml", "init.lua"] as const;

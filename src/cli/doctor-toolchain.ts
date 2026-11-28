@@ -17,7 +17,7 @@ import {
 	resolveVendoredBinary,
 	type ToolStatus,
 	toolStatuses,
-} from "../domains/toolchain/index.js";
+} from "../lib/programs/index.js";
 import { popplerInstallHint } from "../tools/read-documents/pdf.js";
 
 export interface ToolchainFindingOptions {

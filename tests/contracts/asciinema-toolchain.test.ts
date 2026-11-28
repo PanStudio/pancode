@@ -12,8 +12,8 @@ import {
 	executeFleetToolInstall,
 	prepareFleetToolInstall,
 } from "../../src/domains/dispatch/fleet-tool-install.js";
-import { installPinnedTool } from "../../src/domains/toolchain/install.js";
-import { findPinnedTool } from "../../src/domains/toolchain/registry.js";
+import { installPinnedTool } from "../../src/lib/programs/install.js";
+import { findPinnedTool } from "../../src/lib/programs/registry.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let env: Awaited<ReturnType<typeof isolatePancodeEnv>>;

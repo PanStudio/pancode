@@ -585,7 +585,7 @@ export async function runHomes(): Promise<NonNullable<ExtensionWorkOptions["home
 		{ loadRunDigest },
 	] = await Promise.all([
 		import("../domains/lifecycle/components.js"),
-		import("../domains/toolchain/paths.js"),
+		import("../lib/programs/paths.js"),
 		import("../domains/session/run-digest.js"),
 	]);
 	return {

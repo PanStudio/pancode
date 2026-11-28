@@ -67,7 +67,7 @@ import {
 } from "../../src/domains/lifecycle/copilot-sdk-install.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { foldRunDigest } from "../../src/domains/session/run-digest.js";
-import { findPinnedTool, resolveVendoredBinary } from "../../src/domains/toolchain/index.js";
+import { findPinnedTool, resolveVendoredBinary } from "../../src/lib/programs/index.js";
 import { runParkedInterview } from "../../src/tools/extension-interview.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

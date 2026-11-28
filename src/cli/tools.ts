@@ -31,7 +31,7 @@ import {
 	type ToolStatus,
 	toolStatus,
 	toolStatuses,
-} from "../domains/toolchain/index.js";
+} from "../lib/programs/index.js";
 import { formatColumns, printError, printOk } from "./argv.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";

@@ -34,7 +34,7 @@ import { pluginContentDigest } from "../../src/domains/plugins/index.js";
 import { clearPluginSnapshots } from "../../src/domains/plugins/resources.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
-import { PINNED_TOOLS } from "../../src/domains/toolchain/registry.js";
+import { PINNED_TOOLS } from "../../src/lib/programs/registry.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));

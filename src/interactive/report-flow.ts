@@ -99,7 +99,7 @@ export function createReportHost(deps: ReportHostDeps): ReportHost {
 
 	const findGh = async (): Promise<string | null> => {
 		if (deps.findGh) return deps.findGh();
-		const { resolveToolBinary } = await import("../domains/toolchain/index.js");
+		const { resolveToolBinary } = await import("../lib/programs/index.js");
 		return resolveToolBinary("gh").binaryPath;
 	};
 

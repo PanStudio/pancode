@@ -22,7 +22,7 @@ import { isRecord } from "../../core/type-guards.js";
 import type { HeartbeatStamp } from "../../domains/dispatch/heartbeat.js";
 import { isBuiltinClaudeAcp } from "../../domains/providers/auth/index.js";
 import type { SafetyContract } from "../../domains/safety/contract.js";
-import { findExecutableOnPath } from "../../domains/toolchain/resolve.js";
+import { findExecutableOnPath } from "../../lib/programs/resolve.js";
 import { externalUsageFacts, reportedUsageSums } from "../external-call-telemetry.js";
 import type { AgentEvent } from "../types.js";
 import type { PancodeWorkerEvent } from "../worker-events.js";

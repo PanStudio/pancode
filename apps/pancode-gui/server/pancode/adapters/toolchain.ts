@@ -15,7 +15,7 @@ import {
 	toolchainRoot,
 	toolStatus,
 	toolStatuses,
-} from "../../../../../src/domains/toolchain/index.js";
+} from "../../../../../src/lib/programs/index.js";
 import { AppProblem } from "../../services/problem.js";
 
 /** Check the requested URL before invoking the fetcher (including injected fetchers). */

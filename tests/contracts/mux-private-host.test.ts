@@ -50,8 +50,8 @@ import {
 	posixRuntimeDirPlan,
 	renderPosixShellShim,
 } from "../../src/domains/mux/workspace/platform-posix.js";
-import { installPinnedTool, mirroredSources } from "../../src/domains/toolchain/install.js";
-import { findPinnedTool } from "../../src/domains/toolchain/registry.js";
+import { installPinnedTool, mirroredSources } from "../../src/lib/programs/install.js";
+import { findPinnedTool } from "../../src/lib/programs/registry.js";
 
 const SESSION = "pancode-0123456789ab";
 /** The hashed name the short fallbacks carry: the uid and PanCode's state root. */

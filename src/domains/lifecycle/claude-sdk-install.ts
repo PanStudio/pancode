@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withStateFileLock } from "../../core/state-file-lock.js";
 import { pancodeDataDir } from "../../core/xdg.js";
-import { findExecutableOnPath } from "../toolchain/resolve.js";
+import { findExecutableOnPath } from "../../lib/programs/resolve.js";
 import {
 	componentInstallDir,
 	componentNpmEnv,

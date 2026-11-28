@@ -78,11 +78,11 @@ import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
-import { currentToolPlatform } from "../../src/domains/toolchain/index.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { startExtensionHost } from "../../src/entry/extension-host.js";
 import { createKeybindingManagerForTesting } from "../../src/interactive/keybinding-manager.js";
 import { settleExtensionKeys } from "../../src/interactive/surfaces/extension-pane-keys.js";
+import { currentToolPlatform } from "../../src/lib/programs/index.js";
 import { resolveExtensionLine } from "../../src/session-control/extension-line.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

@@ -110,7 +110,7 @@ const adapters = new Set([
 	"src/domains/providers/auth/storage.ts",
 	"src/cli/config-inspect.ts",
 	"src/core/package-root.ts",
-	"src/domains/toolchain/index.ts",
+	"src/lib/programs/index.ts",
 	"src/core/xdg.ts",
 	"src/core/cwd-hash.ts",
 	"src/core/workspace-files.ts",
@@ -143,7 +143,7 @@ const testModules = new Set([
 	"src/core/workspace-trust.ts",
 	"src/cli/config-inspect.ts",
 	"src/domains/providers/auth/index.ts",
-	"src/domains/toolchain/index.ts",
+	"src/lib/programs/index.ts",
 	"tests/harness/openai-compat-fixture.ts",
 	"tests/harness/telemetry-view.ts",
 	"tests/harness/telemetry-lies.ts",
@@ -299,7 +299,7 @@ test("source import targets, shim exports, worker ownership, and process chokepo
 
 test("boundary checker rejects representative bypasses", () => {
 	for (const source of [
-		'import { toolStatuses } from "../../../../src/domains/toolchain/index.js";',
+		'import { toolStatuses } from "../../../../src/lib/programs/index.js";',
 		'import { Worker as Thread } from "node:worker_threads";',
 		'export * from "../pancode/adapters/toolchain.js";',
 		"const module = await import(path);",
