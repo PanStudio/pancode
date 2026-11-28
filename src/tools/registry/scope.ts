@@ -9,7 +9,6 @@ import type { GitHookDriftReport } from "../../domains/safety/hook-drift.js";
 import type { DispatchPlanView } from "../dispatch-plan.js";
 import type {
 	AdmissionReviewEvent,
-	OneShotGrant,
 	PermissionRequiredMeta,
 	RegistryDeps,
 	RegistryVerdict,
@@ -18,6 +17,7 @@ import type {
 } from "../registry-contract.js";
 import type { createShellEgress, OperatorAskQueue } from "../registry-operator-asks.js";
 import type { ToolSpec } from "../tool-spec.js";
+import type { createRegistryAdmission } from "./admission.js";
 import type { createRegistryAttempts } from "./attempts.js";
 import type { createRegistryDenials } from "./denials.js";
 import type { createFlowGates } from "./flow.js";
@@ -118,5 +118,7 @@ export interface RegistryScope {
 	readonly admitRewrite: ReturnType<typeof createRegistryHooks>["admitRewrite"];
 	readonly judgeRewrite: ReturnType<typeof createRegistryHooks>["judgeRewrite"];
 	readonly runAwaitedToolHook: ReturnType<typeof createRegistryHooks>["runAwaitedToolHook"];
-	readonly admit: (call: ClassifierCall, grant?: OneShotGrant, options?: ToolInvokeOptions) => AdmitOutcome;
+	readonly evaluateCallAdmission: ReturnType<typeof createRegistryAdmission>["evaluateCallAdmission"];
+	readonly admit: ReturnType<typeof createRegistryAdmission>["admit"];
+	readonly deniedVerdict: ReturnType<typeof createRegistryAdmission>["deniedVerdict"];
 }
