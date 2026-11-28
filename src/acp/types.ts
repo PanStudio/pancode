@@ -123,7 +123,7 @@ export const ACP_MEMORY_META_KEY = "pancode/memory";
  * A client draws the chip from it; its actions are `remember scope <scope> <captureId>` and `remember undo <captureId>`
  * through `_pancode/commands/invoke`.
  */
-export const ACP_MEMORY_CAPTURE_META_KEY = "pancode/memory-capture";
+export const ACP_MEMORY_CAPTURE_META_KEY = "pancode/memoryCapture";
 export const ACP_TURN_META_KEY = "pancode/turn";
 /**
  * `{ durationMs }` on a terminal `tool_call_update`: the engine's own span for
@@ -134,7 +134,7 @@ export const ACP_TURN_META_KEY = "pancode/turn";
 export const ACP_TOOL_TIMING_META_KEY = "pancode/toolTiming";
 export const ACP_TRUNCATED_META_KEY = "pancode/truncated";
 export const ACP_TOOLS_META_KEY = "pancode/tools";
-export const ACP_RUN_RESULT_META_KEY = "pancode/run-result";
+export const ACP_RUN_RESULT_META_KEY = "pancode/runResult";
 export const ACP_DISPATCH_PLAN_META_KEY = "pancode/dispatchPlan";
 export const ACP_WORKSPACE_META_KEY = "pancode/workspace";
 export const ACP_PLAN_META_KEY = "pancode/plan";

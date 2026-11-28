@@ -103,7 +103,7 @@ export type BudgetBlock = Static<typeof BudgetBlock>;
 
 /**
  * The latest operator memory capture ("remember that ...", `# ...`, `/remember`), as the ACP notice chunk
- * carries it under `_meta["pancode/memory-capture"]`. The chip's actions are `remember undo <captureId>`
+ * carries it under `_meta["pancode/memoryCapture"]`. The chip's actions are `remember undo <captureId>`
  * and `remember scope <scope> <captureId>` through the session command route.
  */
 export const MemoryCapture = Type.Object(
