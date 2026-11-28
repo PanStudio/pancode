@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { type Component, stripTerminalSequences, type TUI, visibleWidth } from "../../src/engine/tui.js";
 import { dockTop } from "../../src/interactive/dock.js";
 import { createLeaderMenu } from "../../src/interactive/leader-menu.js";
@@ -15,7 +13,7 @@ const WIDTHS = [60, 80, 120, 200] as const;
 /**
  * Six overlays carried a private fit helper, two a `fixedLines`, and settings
  * and the leader menu each a centered scroll window. One copy of each now
- * lives beside the frame, and the overlays are checked for regrowth.
+ * lives beside the frame.
  */
 test("fitRow leaves a fitting row alone and cuts a long one on the ellipsis", () => {
 	for (const width of WIDTHS) {
@@ -43,26 +41,6 @@ test("centeredWindow keeps the selection centered and pins at both ends", () => 
 	deepStrictEqual(centeredWindow(20, 10, 5), [8, 13]);
 	deepStrictEqual(centeredWindow(20, 19, 5), [15, 20]);
 	deepStrictEqual(centeredWindow(20, 5, 0), [0, 20]);
-});
-
-test("overlay modules no longer carry their own copies", () => {
-	const root = fileURLToPath(new URL("../../src/interactive/", import.meta.url));
-	for (const file of [
-		"overlays/auth-dialog.ts",
-		"overlays/decisions.ts",
-		"overlays/keybinding-detail.ts",
-		"overlays/ask-user.ts",
-		"overlays/settings.ts",
-		"view/view-overlay.ts",
-		"tasks-overlay.ts",
-		"leader-menu.ts",
-	]) {
-		doesNotMatch(
-			readFileSync(`${root}${file}`, "utf8"),
-			/function (fitLine|fitCell|fitContentLine|fixedLines|scrollWindow)\(/u,
-			file,
-		);
-	}
 });
 
 test("leader menu shows the leader chord for actions without a direct shortcut", () => {

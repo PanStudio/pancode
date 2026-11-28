@@ -5,7 +5,7 @@ import type { AcpCommandHost } from "../../src/engine/acp/commands.js";
 import { type AcpJsonRpcPeerTransport, createStdioServerTransport } from "../../src/engine/acp/transport.js";
 
 /** A JSON-RPC error frame the server wrote, thrown by `stdioPeer().call`. */
-export class AcpWireError extends Error {
+class AcpWireError extends Error {
 	constructor(
 		readonly code: number,
 		readonly data: Record<string, unknown> | undefined,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { MiddlewareHookInput } from "../../src/domains/middleware/types.js";
 import { hashToolCall } from "../../src/domains/safety/loop-detector.js";
-import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
+import { createLoopGuardRegistration, type OrchTurnToolCallBudget } from "../../src/engine/loop-guard.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { readTool } from "../../src/tools/read.js";
 
@@ -325,6 +325,23 @@ describe("loop guard identical-call epoch", () => {
 				);
 			}
 		}
+	});
+
+	it("reads a changed orchestrator turn budget on the next attempt", () => {
+		let budget: OrchTurnToolCallBudget = { soft: 1, hard: 2 };
+		const guard = createLoopGuardRegistration({
+			safety: createWorkerSafety({ cwd: process.cwd() }),
+			turnToolCallBudget: () => budget,
+		});
+		const attempt = () => guard.evaluate({ hook: "before_tool", toolName: "read", turnId: "turn-1" });
+		deepStrictEqual(attempt(), []);
+		const firstBlocked = attempt();
+		match(firstBlocked[0]?.kind === "block_tool" ? firstBlocked[0].reason : "", /soft budget 1/);
+		budget = { soft: 3, hard: 4 };
+		deepStrictEqual(attempt(), []);
+		const blocked = attempt();
+		strictEqual(blocked[0]?.kind, "block_tool");
+		match(blocked[0]?.kind === "block_tool" ? blocked[0].reason : "", /soft budget 3/);
 	});
 });
 

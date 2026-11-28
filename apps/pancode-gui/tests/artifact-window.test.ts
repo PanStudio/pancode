@@ -14,8 +14,7 @@ import { EvidencePage } from "../contracts/evidence.js";
 import { DispatchRuns, FleetRoots } from "../contracts/fleet.js";
 import { ArtifactWindow } from "../server/services/artifact-window.js";
 import { harness, json } from "./harness/app.js";
-import { seedEvidence } from "./harness/evidence-fixture.js";
-import { seedFleet } from "./harness/fleet-fixture.js";
+import { seedEvidence, seedFleet } from "./harness/hub-fixture.js";
 
 test("the window refuses malformed, unserved and aged-out references before any lookup", () => {
 	const artifacts = new ArtifactWindow();

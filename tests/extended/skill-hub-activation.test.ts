@@ -4,6 +4,7 @@ import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { it } from "node:test";
+import { parse as parseYaml } from "yaml";
 import { skillActivationFromToolDetails, withModelSkillActivation } from "../../src/core/skill-activation.js";
 import { clearPluginSnapshots, pluginSnapshotFor, reloadPluginResources } from "../../src/domains/plugins/index.js";
 import { discoverHub } from "../../src/domains/resources/hub.js";
@@ -36,15 +37,18 @@ it("activates every bundled skill from its native package in a workspace with pe
 			recursive: true,
 		});
 		const catalog = discoverHub({ cwd }).entries;
-		// 44 = 39 local packages + 5 community rows (wtfp plugin and extension,
-		// zulipchat, autotldr, cite-nexus; be4807251), each pinned to a GitHub
-		// commit. Installing a community row fetches it over the network, which
-		// this offline test lane must not depend on, so those entries are excluded
-		// from the install loop below and their skills are not counted in the
-		// `skills.length` assertion.
-		strictEqual(catalog.length, 44);
+		// The catalog is hub/index.yaml: local rows name a pack directory by sourceUrl, community rows
+		// pin a GitHub commit. Installing a community row fetches it over the network, which this
+		// offline test lane must not depend on, so only the local rows are installed and counted.
+		const index = (
+			parseYaml(readFileSync(new URL("../../hub/index.yaml", import.meta.url), "utf8")) as {
+				entries: Array<{ name: string; sourceUrl?: string; provides?: Array<{ kind: string; name: string }> }>;
+			}
+		).entries;
+		const localRows = index.filter((entry) => entry.sourceUrl !== undefined);
+		strictEqual(catalog.length, index.length);
 		const installableCatalog = catalog.filter((entry) => !/^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(entry.sourceUrl));
-		strictEqual(installableCatalog.length, 39);
+		deepStrictEqual(installableCatalog.map((entry) => entry.name).sort(), localRows.map((entry) => entry.name).sort());
 		const refresh = (project: string) => reloadPluginResources(project);
 		refresh(cwd);
 		// Skills first: a pack such as hpc requires a bundled skill, and a plan without requirements refuses it.
@@ -59,10 +63,12 @@ it("activates every bundled skill from its native package in a workspace with pe
 		}
 		refresh(cwd);
 		const skills = loadSkills({ cwd }).items;
-		// 52 since hpc-sweep (4556475b1) and hypothesis-workflow (c461e6204) joined their packs
-		// and the hoare pack (#454) added hoare-verification; 53 since web-debug (9d0e7201b);
-		// 51 since slurm-jobs and hpc-sweep left PanHub; 43 since the materials plugin and the hoare pack left it.
-		strictEqual(skills.length, 43);
+		const provided = new Set(
+			localRows.flatMap((entry) =>
+				(entry.provides ?? []).filter((item) => item.kind === "skill").map((item) => item.name),
+			),
+		);
+		deepStrictEqual(skills.map((skill) => skill.name).sort(), [...provided].sort());
 		const context = createContextTool({ getCwd: () => cwd });
 		for (const skill of skills) {
 			strictEqual(skill.source, "plugin", skill.name);

@@ -3,89 +3,18 @@
 import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
-import { buildContextLedger } from "../../src/domains/session/context-ledger.js";
 import { createWorkerProgressFold } from "../../src/domains/telemetry/worker-progress.js";
 import { getKeybindings, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import type { FooterDashboardRenderState } from "../../src/interactive/footer/dashboard.js";
 import { buildFooterDashboard } from "../../src/interactive/footer/dashboard.js";
 import { footerKeyHint } from "../../src/interactive/footer/key-hints.js";
 import { dashboardPageViewport, renderCompactDashboard } from "../../src/interactive/footer/pages.js";
-import { footerTelemetry } from "../../src/interactive/footer/spend.js";
 import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
 import { renderToolExecution, renderToolPreview } from "../../src/interactive/renderers/tool-execution.js";
 import { renderToolSubline } from "../../src/interactive/renderers/tool-subline.js";
 import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
-import { runUsageOf, telemetryViewOf } from "../harness/telemetry-view.js";
+import { footerState as state } from "../harness/footer-fixture.js";
 
-function state(): FooterDashboardRenderState {
-	const ledger = buildContextLedger({
-		provider: "blade",
-		model: "dynamo/qwopus",
-		contextWindow: 262144,
-		systemPromptTokens: 3700,
-		toolSchemaTokens: 8200,
-		messageTokens: 55300,
-		agentsTokens: 915,
-		skillsTokens: 361,
-		compactionThreshold: 0.9,
-		compactionAuto: true,
-	});
-	const row = {
-		runId: "scout-run",
-		agentId: "scout",
-		agentAudience: "shadow" as const,
-		runtimeKind: "http" as const,
-		runtimeId: "litellm",
-		targetId: "blade",
-		wireModelId: "mini/qwopus",
-		taskSummary: "Explore the dispatch architecture and explain worker handoffs",
-		status: "running" as const,
-		elapsedMs: 12000,
-		usage: runUsageOf("scout-run", [{ usage: { input: 68000, output: 2000 }, usd: null }]),
-		ttft: "300ms",
-		lastContextTokens: 17000,
-		contextWindow: 262144,
-	};
-	return {
-		workspace: {
-			cwd: "~/pancode",
-			branch: "v050",
-			dirty: false,
-			projectType: "typescript",
-			remote: "PanStudio/pancode",
-		},
-		session: {
-			target: "blade · dynamo/qwopus3.8-27b-flash@q4_k_m",
-		},
-		context: {
-			label: null,
-			used: ledger.usedTokens,
-			contextWindow: ledger.contextWindow,
-			toolSchemaTokens: 8200,
-			compactionThreshold: 0.9,
-			compactionAuto: true,
-			pancodeMd: "PANCODE.md none",
-			memory: null,
-			extensions: null,
-			ledger,
-		},
-		agent: {
-			statusText: "exploring",
-			dispatchSummary: "helpers scout 1 running",
-			toolTally: "19 available",
-			dispatchRows: [row],
-			lastTurn: null,
-		},
-		notices: [],
-		status: { phase: "idle", since: 0, lastMeaningfulAt: 0, watchdogTier: 0, watchdogPeak: 0, localRuntime: false },
-		toolCounts: { tools: {}, errors: 0 },
-		dispatchRows: [row],
-		throughput: null,
-		telemetry: footerTelemetry(telemetryViewOf("fixture-session", [])),
-		tick: 0,
-		now: 12000,
-	};
-}
 const plain = (rows: string[]) => rows.map(stripTerminalSequences).join("\n");
 /** The dashboard is one fixed glance panel; it never scrolls, so one render holds every row it shows. */
 function page(snapshot: FooterDashboardRenderState, width: number, rows: number): string[] {
