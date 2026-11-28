@@ -79,7 +79,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 	["extensions disable", "", "extensions disable <id> [--user|--project] [--json]"],
 	["extensions discover", "", "extensions discover <path> [--json]"],
 	["extensions enable", "", "extensions enable <id> [--user|--project] [--json]"],
-	["extensions init", "", "extensions init <id> [--template status|hook|panel|tool|workspace] [--dir <path>]"],
+	["extensions init", "", "extensions init <id> [--template status|hook|panel|tool|workspace] [--out <path>]"],
 	["extensions install", "", "extensions install <path> [--user|--project] [--force] [--json]"],
 	["extensions list", "", "extensions list [--all] [--json] [--user|--project]"],
 	["extensions remove", "", "extensions remove <id> [--user|--project] [--json]"],

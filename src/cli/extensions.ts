@@ -43,7 +43,7 @@ const HELP = `pancode extensions <command>
 Manage PanCode extension packages.
 
 Commands:
-  pancode extensions init <id> [--template status|hook|panel|tool|workspace] [--dir <path>]
+  pancode extensions init <id> [--template status|hook|panel|tool|workspace] [--out <path>]
   pancode extensions validate <path> [--json]
   pancode extensions test <path>
   pancode extensions view --watch <frame-file> [--dock-taps <tap-file>]
