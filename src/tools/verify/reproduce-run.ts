@@ -10,6 +10,7 @@ import { gitExecFile } from "../../core/internal-git-run.js";
 import { readPancodeVersion } from "../../core/package-root.js";
 import { resolveSafeCwd, runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { type MainSandboxPolicy, mainSandboxWriteHint } from "../../core/sandbox/main-session.js";
+import type { ResourceLimits } from "../../core/sandbox/types.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { currentProcessLease, ownerIsAlive, type ProcessLease, validProcessLease } from "../process-lease.js";
 import { extractNumericPayloadText, type NumericReferenceProvenance, payloadSpread } from "./numeric.js";
@@ -125,6 +126,8 @@ export interface ReproduceRunInput {
 	 * write, because PanCode's state directory is read-only inside it.
 	 */
 	shellSandbox?: MainSandboxPolicy;
+	/** `safety.resources.main` ceilings for the check's runs and its interpreter probe. */
+	resourceLimits?: ResourceLimits;
 	/**
 	 * The reference digest dispatch admission sealed (null: absent then). When
 	 * given, a reference whose text now differs fails the check before any run.
@@ -203,6 +206,7 @@ async function pythonVersion(
 	interpreter: string,
 	workspaceRoot: string,
 	shellSandbox: MainSandboxPolicy | undefined,
+	resourceLimits: ResourceLimits | undefined,
 ): Promise<string | undefined> {
 	try {
 		// The interpreter may be the workspace's own .venv, so it runs where the check does.
@@ -211,6 +215,7 @@ async function pythonVersion(
 			workspaceRoot,
 			timeoutMs: PYTHON_VERSION_TIMEOUT_MS,
 			...(shellSandbox !== undefined ? { shellSandbox } : {}),
+			...(resourceLimits !== undefined ? { resourceLimits } : {}),
 		});
 		const text = `${result.stdout}${result.stderr}`.trim();
 		return result.exitCode === 0 && text.length > 0 ? text.split("\n")[0] : undefined;
@@ -430,7 +435,8 @@ function runFailure(result: SafeCommandResult, timeoutMs: number, shellSandbox?:
 		const tail = `${result.stdout}${result.stderr}`.trim().slice(-2_000);
 		const hint =
 			shellSandbox === undefined ? null : mainSandboxWriteHint(`${result.stdout}\n${result.stderr}`, shellSandbox);
-		return `exited with code ${result.exitCode ?? "?"} before judgement${tail.length > 0 ? `: ${tail}` : ""}${hint === null ? "" : `\n${hint}`}`;
+		const notes = [result.resourceNote ?? null, hint].filter((line): line is string => line !== null);
+		return `exited with code ${result.exitCode ?? "?"} before judgement${tail.length > 0 ? `: ${tail}` : ""}${notes.map((line) => `\n${line}`).join("")}`;
 	}
 	return null;
 }
@@ -550,7 +556,12 @@ async function runReproduceIn(input: ReproduceRunInput, scratchRoot: string): Pr
 	};
 	if (argvResolution.interpreter !== undefined) {
 		platform.interpreter = argvResolution.interpreter;
-		const version = await pythonVersion(argvResolution.interpreter, workspaceRoot, input.shellSandbox);
+		const version = await pythonVersion(
+			argvResolution.interpreter,
+			workspaceRoot,
+			input.shellSandbox,
+			input.resourceLimits,
+		);
 		if (version !== undefined) platform.pythonVersion = version;
 	}
 	const conditions: ReproduceConditions = {
@@ -575,6 +586,7 @@ async function runReproduceIn(input: ReproduceRunInput, scratchRoot: string): Pr
 			cwd: resolveSafeCwd(input.cwd, workspaceRoot),
 			workspaceRoot,
 			...(input.shellSandbox !== undefined ? { shellSandbox: input.shellSandbox } : {}),
+			...(input.resourceLimits !== undefined ? { resourceLimits: input.resourceLimits } : {}),
 			...(input.signal !== undefined ? { signal: input.signal } : {}),
 		});
 	}
@@ -619,6 +631,7 @@ async function runReproduceIn(input: ReproduceRunInput, scratchRoot: string): Pr
 				...(spec.seed !== undefined ? { env: { [spec.seed.env]: spec.seed.value } } : {}),
 				...(input.signal !== undefined ? { signal: input.signal } : {}),
 				...(input.shellSandbox !== undefined ? { shellSandbox: input.shellSandbox } : {}),
+				...(input.resourceLimits !== undefined ? { resourceLimits: input.resourceLimits } : {}),
 			});
 		} catch (error) {
 			return {

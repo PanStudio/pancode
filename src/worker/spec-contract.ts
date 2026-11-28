@@ -11,7 +11,12 @@ import {
 	RUNTIME_AUTHS,
 	RUNTIME_KINDS,
 } from "../core/runtime-vocabulary.js";
-import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
+import {
+	RESOURCE_LIMIT_KEYS,
+	RESOURCE_LIMIT_MAX,
+	WORKER_SANDBOX_SPEC_VERSION,
+	type WorkerSandboxSpec,
+} from "../core/sandbox/types.js";
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
@@ -650,7 +655,11 @@ function shareOf(value: unknown, source: string): number {
 /** Strict shape of the sealed run limits, and their agreement with the budget's tool ceiling (fleet M8). */
 function validateRunLimits(value: unknown, budget: WorkerBudget): void {
 	const limits = readRecord(value, "WorkerSpec.limits");
-	exactKeys(limits, ["version", "context", "time", "tools", "retries", "refusals", "depth"], "WorkerSpec.limits");
+	exactKeys(
+		limits,
+		["version", "context", "time", "tools", "retries", "refusals", "depth", "resources"],
+		"WorkerSpec.limits",
+	);
 	if (limits.version !== 1) throw new Error("WorkerSpec.limits.version must be 1");
 	if (limits.depth !== 1) throw new Error("WorkerSpec.limits.depth must be 1: workers never dispatch");
 	const context = readRecord(limits.context, "WorkerSpec.limits.context");
@@ -674,6 +683,20 @@ function validateRunLimits(value: unknown, budget: WorkerBudget): void {
 		throw new Error("WorkerSpec.limits.retries.max must be a non-negative integer");
 	if (!Number.isSafeInteger(limits.refusals) || (limits.refusals as number) < 1)
 		throw new Error("WorkerSpec.limits.refusals must be a positive integer");
+	if (limits.resources !== undefined) validateResourceLimits(limits.resources);
+}
+
+/** Present only with a ceiling set: each a positive integer within its bound (D13). */
+function validateResourceLimits(value: unknown): void {
+	const resources = readRecord(value, "WorkerSpec.limits.resources");
+	exactKeys(resources, RESOURCE_LIMIT_KEYS, "WorkerSpec.limits.resources");
+	const set = RESOURCE_LIMIT_KEYS.filter((key) => resources[key] !== undefined);
+	if (set.length === 0) throw new Error("WorkerSpec.limits.resources must set at least one ceiling");
+	for (const key of set) {
+		const limit = resources[key];
+		if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > RESOURCE_LIMIT_MAX[key])
+			throw new Error(`WorkerSpec.limits.resources.${key} must be an integer from 1 to ${RESOURCE_LIMIT_MAX[key]}`);
+	}
 }
 
 /** Strict shape and seal of the envelope; its agreement with the permit is checked with the permit. */

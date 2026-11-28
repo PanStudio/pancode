@@ -16,8 +16,21 @@ import {
 import { SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
 import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import {
+	forgetResourceScope,
+	killLiveResourceScopes,
+	launchResourceLimits,
+	launchResourceRefusal,
+	planResourceScope,
+	type ResourceScopeSettlement,
+	resourceLimitNote,
+	scopeLaunchFailure,
+	scopeLaunchFailureMessage,
+	settleResourceScope,
+	watchResourceScopeLeader,
+} from "./sandbox/resource-limits.js";
 import { signalSandboxPayload } from "./sandbox/signal.js";
-import type { SandboxEnvPolicy } from "./sandbox/types.js";
+import type { ResourceLimits, SandboxEnvPolicy } from "./sandbox/types.js";
 import { planSandboxedSpawn } from "./sandbox/worker-process.js";
 import { clampTimerDelayMs } from "./timers.js";
 import { applyToolEnvControls, GENERATED_TOOL_ENV_KEYS } from "./tool-env-controls.js";
@@ -53,6 +66,8 @@ export interface BashCommandResult extends Partial<BashStreamByteCounts> {
 	 * when the deadline had already passed before spawn, and then the command never started.
 	 */
 	timeoutLimit?: BashTimeoutLimit;
+	/** A resource ceiling that ended the command (`safety.resources`), as one line for the tool result. */
+	resourceNote?: string;
 }
 
 export interface BashTimeoutLimit {
@@ -93,6 +108,8 @@ export interface RunBashCommandOptions {
 	 * `/proc` shows it, no CPU in the shell's process tree. Absent or 0 is off (FX-32).
 	 */
 	idleMs?: number;
+	/** The main session's `safety.resources.main` ceilings for an agent command; a worker's come from its spec. */
+	resourceLimits?: ResourceLimits;
 }
 
 type BashOutputListener = (target: "stdout" | "stderr", text: string) => void;
@@ -590,6 +607,8 @@ export function killLiveCommandGroups(): void {
 		}
 	}
 	liveCommandGroups.clear();
+	// A limited command's scope also holds what it moved out of its group.
+	killLiveResourceScopes();
 }
 
 export async function runBashCommand(command: string, options: RunBashCommandOptions = {}): Promise<BashCommandResult> {
@@ -603,6 +622,10 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 	// verification receipts cannot report success merely because the filter
 	// succeeded. A caller can explicitly opt out with `set +o pipefail`.
 	const shellArgv = [shell, "-o", "pipefail", plan.mode, command];
+	// A set resource ceiling this host cannot enforce refuses before the sandbox is planned (D13).
+	const resourceLaunch = launchResourceLimits(options.resourceLimits);
+	const resourceRefusal = launchResourceRefusal(resourceLaunch);
+	if (resourceRefusal !== null) return notSpawnedResult(resourceRefusal);
 	// Inside a dispatched worker the command runs under the worker's OS
 	// sandbox (decision Q8), and a contained main-session call runs under the
 	// main-session sandbox; everywhere else the plan is a
@@ -625,9 +648,48 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		enabled: gitCommitAttributionEnabled(process.env),
 	});
 	reportCommitAttributionDiagnostic(attribution.diagnostic);
-	const spawnFile = sandbox.kind === "sandboxed" ? sandbox.file : shell;
-	const spawnArgs = sandbox.kind === "sandboxed" ? sandbox.args : shellArgv.slice(1);
-	return new Promise<BashCommandResult>((resolve) => {
+	const plannedFile = sandbox.kind === "sandboxed" ? sandbox.file : shell;
+	const plannedArgs = sandbox.kind === "sandboxed" ? sandbox.args : shellArgv.slice(1);
+	// A limited command starts in its own systemd scope, which execs the planned launch in place.
+	const resources = planResourceScope(resourceLaunch, { file: plannedFile, args: plannedArgs, env: attribution.env });
+	if (resources.kind === "refused") {
+		if (sandbox.kind === "sandboxed") sandbox.afterExit();
+		return notSpawnedResult(resources.message);
+	}
+	const scope = resources.kind === "scoped" ? resources.scope : null;
+	const spawnFile = scope?.file ?? plannedFile;
+	const spawnArgs = scope?.args ?? plannedArgs;
+	return new Promise<BashCommandResult>((deliver) => {
+		// The scope is settled once the leader exits, which also ends what the command left running; the result
+		// waits for it and carries what a ceiling did.
+		let settling: Promise<ResourceScopeSettlement> | null = null;
+		const settleScope = (): Promise<ResourceScopeSettlement> | null => {
+			if (scope === null) return null;
+			settling ??= settleResourceScope(scope);
+			return settling;
+		};
+		const resolve = (result: BashCommandResult): void => {
+			const pending = settleScope();
+			if (pending === null || scope === null) {
+				deliver(result);
+				return;
+			}
+			void pending.then((settlement) => {
+				const failure = settlement.launchUnconfirmed
+					? scopeLaunchFailure({
+							exitCode: result.exitCode,
+							stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+							stderr: result.stderr,
+						})
+					: null;
+				if (failure !== null) {
+					deliver(notSpawnedResult(scopeLaunchFailureMessage(scope, failure)));
+					return;
+				}
+				const note = resourceLimitNote(scope, settlement);
+				deliver(note === null ? result : { ...result, resourceNote: note });
+			});
+		};
 		const timeout = clampTimerDelayMs(options.timeoutMs ?? 300_000);
 		let aborted = false;
 		let timedOut = false;
@@ -641,14 +703,15 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		let pendingClose: (() => void) | null = null;
 		// Checked immediately before spawn: a run deadline spent by preparation starts no command (XR-12).
 		if (armedTimeoutLimit(timeout, options.deadlineAt)?.ms === 0) {
-			resolve(deadlinePassedResult());
+			if (scope !== null) forgetResourceScope(scope);
+			deliver(deadlinePassedResult());
 			return;
 		}
 		const output = createBashOutputProgressController(options.onUpdate, undefined, options.onOutput);
 
 		const child = spawn(spawnFile, spawnArgs, {
 			...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-			env: attribution.env,
+			env: scope?.env ?? attribution.env,
 			detached: process.platform !== "win32",
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -662,6 +725,10 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		// The sandbox removes git config and commondir files its command planted, and the mount points of absent
 		// startup paths, once the sandbox is gone, before the result resolves (#419).
 		if (sandbox.kind === "sandboxed") child.once("exit", sandbox.afterExit);
+		if (scope !== null) {
+			watchResourceScopeLeader(scope, child.pid);
+			child.once("exit", () => void settleScope());
+		}
 
 		output.start();
 

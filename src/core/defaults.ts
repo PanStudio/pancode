@@ -16,7 +16,7 @@ import type { AutonomyLevel, YoloConfinement } from "../lib/autonomy/autonomy.js
 import type { FundingDefinitions } from "./funding-config.js";
 import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
-import type { SandboxMode, UnixSocketMode } from "./sandbox/types.js";
+import type { ResourceLimitSettings, SandboxMode, UnixSocketMode } from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
 import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
 import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
@@ -806,6 +806,12 @@ export interface SafetySettings {
 	/** Let sandboxed worker commands reach the network even without web_fetch. */
 	sandboxNetwork: boolean;
 	/**
+	 * Strict per-command ceilings on Linux (D13): memory, process count and CPU for the main session's agent
+	 * commands and for a dispatched worker's. Each runs in its own systemd user scope; a set limit this host cannot
+	 * enforce refuses the command, and all null bounds nothing. A project may only lower them.
+	 */
+	resources: { main: ResourceLimitSettings; workers: ResourceLimitSettings };
+	/**
 	 * Absolute trees the main session's sandbox may write and its deletes may
 	 * clean as it does in the workspace, beside the built-in temp roots ($TMPDIR,
 	 * /tmp, /var/tmp, and /var/folders on macOS) (#419). Read only from the
@@ -1079,6 +1085,10 @@ export const DEFAULT_SETTINGS = {
 		review: { enabled: false } as ReviewSettings,
 		sandbox: "auto" as SandboxMode,
 		sandboxNetwork: false,
+		resources: {
+			main: { memoryMiB: null, tasks: null, cpuPercent: null },
+			workers: { memoryMiB: null, tasks: null, cpuPercent: null },
+		},
 		scratchRoots: [] as string[],
 		sandboxPassEnv: [] as string[],
 		liveCheckTargets: [] as string[],

@@ -48,6 +48,7 @@ import {
 	noteProjectTargets,
 } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
+import { RESOURCE_LIMIT_KEYS } from "./sandbox/types.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
 import { type SettingsIssue, SettingsValidationError } from "./settings-issues.js";
@@ -436,7 +437,55 @@ function stripProjectLimits(
 		else next.limits = limits;
 		cleaned = { ...cleaned, [block]: next };
 	}
-	return stripProjectReview(cleaned, origin, issues, userBlob);
+	return stripProjectResources(stripProjectReview(cleaned, origin, issues, userBlob), origin, issues, userBlob);
+}
+
+/**
+ * Resource ceilings bound the operator's machine against the commands a session runs, so a repository may set or
+ * lower one and never raise or clear one the operator set (D13).
+ */
+function stripProjectResources(
+	blob: Record<string, unknown>,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	if (!isRecord(blob.safety) || !isRecord(blob.safety.resources)) return blob;
+	const operatorSafety = isRecord(userBlob?.safety) ? userBlob.safety : {};
+	const operatorResources = isRecord(operatorSafety.resources) ? operatorSafety.resources : {};
+	const resources: Record<string, unknown> = { ...blob.safety.resources };
+	let stripped = false;
+	for (const scope of ["main", "workers"] as const) {
+		const project = resources[scope];
+		if (!isRecord(project)) continue;
+		const operatorBlock = operatorResources[scope];
+		const operator = isRecord(operatorBlock) ? operatorBlock : {};
+		const block: Record<string, unknown> = { ...project };
+		for (const key of RESOURCE_LIMIT_KEYS) {
+			if (!Object.hasOwn(block, key)) continue;
+			const requested = block[key];
+			const operatorValue = typeof operator[key] === "number" ? operator[key] : null;
+			const lower =
+				requested === null
+					? operatorValue === null
+					: typeof requested === "number" && requested > 0 && (operatorValue === null || requested <= operatorValue);
+			if (lower) continue;
+			issues.push({
+				origin,
+				path: `safety.resources.${scope}.${key}`,
+				message: "a project may only set or lower a resource ceiling from user settings; project value ignored",
+			});
+			delete block[key];
+			stripped = true;
+		}
+		if (Object.keys(block).length === 0) delete resources[scope];
+		else resources[scope] = block;
+	}
+	if (!stripped) return blob;
+	const safety: Record<string, unknown> = { ...blob.safety };
+	if (Object.keys(resources).length === 0) delete safety.resources;
+	else safety.resources = resources;
+	return { ...blob, safety };
 }
 
 /**

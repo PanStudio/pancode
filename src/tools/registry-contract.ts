@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ModelRunInfo } from "../core/model-tier.js";
 import type { MainSandboxPolicy, YoloScriptSandboxState } from "../core/sandbox/main-session.js";
-import type { SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
+import type { ResourceLimits, SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -290,6 +290,8 @@ export interface ToolInvokeOptions {
 	steerInterrupted?: () => boolean;
 	/** Main session: `safety.limits.bashIdleSeconds` in ms. A foreground bash call idle this long ends as timed out. */
 	bashIdleMs?: number;
+	/** Main session: `safety.resources.main` ceilings for each command bash, run_script and verify start. */
+	resourceLimits?: ResourceLimits;
 	/** Registry-owned filter bound to the active compiled safety policy. */
 	allowsObservationPath?: (path: string) => boolean;
 	/** Registry-owned write-root check the typed mutation seam repeats right before it publishes (F3). */

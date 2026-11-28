@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import {
@@ -260,4 +261,43 @@ test("fleet.nodes[].allowUnsandboxed is set only in user settings; project layer
 		(item) => item.origin === "project" && item.path === "fleet.nodes[0].allowUnsandboxed",
 	);
 	match(issue?.message ?? "", /allowUnsandboxed is set only in user settings/u);
+});
+
+test("safety.resources takes positive bounded integers or null, and a project may only set or lower a ceiling", async (t) => {
+	const parsed = validateSettings({
+		version: 2,
+		safety: { resources: { main: { memoryMiB: 0, tasks: null, cpuPercent: 100001, disk: 5 }, workers: { tasks: 64 } } },
+	});
+	deepStrictEqual(
+		parsed.issues.map((issue) => issue.path),
+		["safety.resources.main.disk", "safety.resources.main.memoryMiB", "safety.resources.main.cpuPercent"],
+	);
+	deepStrictEqual(parsed.settings.safety.resources.workers, { memoryMiB: null, tasks: 64, cpuPercent: null });
+
+	const home = await isolatePancodeEnv("pancode-resource-ceiling-authority-");
+	t.after(() => home.restore());
+	const workspace = join(home.dir, "workspace");
+	const projectDir = join(workspace, ".pancode");
+	mkdirSync(projectDir, { recursive: true });
+	mkdirSync(join(home.dir, "config"), { recursive: true });
+	writeFileSync(
+		join(home.dir, "config", "settings.yaml"),
+		"version: 2\nsafety:\n  resources:\n    main:\n      memoryMiB: 1024\n      cpuPercent: 200\n",
+	);
+	writeFileSync(
+		join(projectDir, "settings.yaml"),
+		"safety:\n  resources:\n    main:\n      memoryMiB: 2048\n      tasks: 64\n      cpuPercent: null\n    workers:\n      memoryMiB: 512\n",
+	);
+	const snapshot = captureProjectSurface(workspace, "settings");
+	if (!snapshot.contentHash) throw new Error("missing project settings hash");
+	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+	const layered = readLayeredSettings(workspace);
+	deepStrictEqual(layered.settings.safety.resources, {
+		main: { memoryMiB: 1024, tasks: 64, cpuPercent: 200 },
+		workers: { memoryMiB: 512, tasks: null, cpuPercent: null },
+	});
+	deepStrictEqual(
+		layered.issues.filter((item) => item.origin === "project").map((item) => item.path),
+		["safety.resources.main.memoryMiB", "safety.resources.main.cpuPercent"],
+	);
 });

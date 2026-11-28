@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { sandboxUsable } from "./availability.js";
 import {
+	type ResourceLimits,
 	type SandboxAvailability,
 	type SandboxBackend,
 	type SandboxEnvPolicy,
@@ -102,14 +103,26 @@ export interface WorkerSandboxReceipt {
 	writableRoots: ReadonlyArray<string>;
 	gitWritablePaths: ReadonlyArray<string>;
 	network: boolean;
+	/** The sealed `safety.resources.workers` ceilings each command ran under, or was refused for (D13). */
+	resources?: { mechanism: "systemd-scope" } & ResourceLimits;
 }
 
 export function workerSandboxReceipt(
 	spec: WorkerSandboxSpec | undefined,
 	availability: SandboxAvailability,
+	resources?: ResourceLimits,
 ): WorkerSandboxReceipt {
+	const ceilings = resources === undefined ? {} : { resources: { mechanism: "systemd-scope" as const, ...resources } };
 	if (spec === undefined) {
-		return { mode: "off", backend: null, available: null, writableRoots: [], gitWritablePaths: [], network: true };
+		return {
+			mode: "off",
+			backend: null,
+			available: null,
+			writableRoots: [],
+			gitWritablePaths: [],
+			network: true,
+			...ceilings,
+		};
 	}
 	const usable = sandboxUsable(spec.mode, availability);
 	return {
@@ -122,6 +135,7 @@ export function workerSandboxReceipt(
 		writableRoots: [...spec.writableRoots],
 		gitWritablePaths: [...spec.gitWritablePaths],
 		network: spec.network || (!usable && spec.unconfined === true),
+		...ceilings,
 	};
 }
 

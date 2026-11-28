@@ -11,6 +11,7 @@ import {
 	type SafeCommandResult,
 } from "../core/safe-exec.js";
 import { type MainSandboxPolicy, mainSandboxWriteHint } from "../core/sandbox/main-session.js";
+import type { ResourceLimits } from "../core/sandbox/types.js";
 import { ToolNames } from "../core/tool-names.js";
 import { gitArgvCommand } from "../domains/safety/git-policy.js";
 import { StringEnum } from "../engine/ai.js";
@@ -92,6 +93,8 @@ export async function runVectorTool(
 		typedGitWritablePaths?: ReadonlyArray<string>;
 		/** The main-session sandbox a contained call runs in (verify's checks). */
 		shellSandbox?: MainSandboxPolicy;
+		/** `safety.resources.main` ceilings for a verify check's command. */
+		resourceLimits?: ResourceLimits;
 		/** The root `cwd` must stay inside; the process working directory when absent. */
 		workspaceRoot?: string;
 		/**
@@ -114,6 +117,7 @@ export async function runVectorTool(
 		if (options?.env !== undefined) runOptions.env = options.env;
 		if (options?.typedGitWritablePaths !== undefined) runOptions.typedGitWritablePaths = options.typedGitWritablePaths;
 		if (options?.shellSandbox !== undefined) runOptions.shellSandbox = options.shellSandbox;
+		if (options?.resourceLimits !== undefined) runOptions.resourceLimits = options.resourceLimits;
 		if (options?.workspaceRoot !== undefined) runOptions.workspaceRoot = options.workspaceRoot;
 		const result = await runCommandVector(file, vectorArgs, runOptions);
 		const combined = combineSafeOutput(result);
@@ -145,9 +149,10 @@ export async function runVectorTool(
 		if (result.exitCode !== 0) {
 			const sandboxHint =
 				options?.shellSandbox === undefined ? null : mainSandboxWriteHint(combined, options.shellSandbox);
+			const hints = [result.resourceNote ?? null, sandboxHint].filter((hint): hint is string => hint !== null);
 			return {
 				kind: "error",
-				message: `${action}: exited with code ${result.exitCode ?? "?"}: ${output.trim()}${sandboxHint === null ? "" : `\n${sandboxHint}`}`,
+				message: `${action}: exited with code ${result.exitCode ?? "?"}: ${output.trim()}${hints.map((hint) => `\n${hint}`).join("")}`,
 				details,
 			};
 		}

@@ -14,6 +14,7 @@ import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { withWorkerGitHookPaths } from "../../core/sandbox/git-hooks-fingerprint.js";
+import { resourceLimitsFromSettings } from "../../core/sandbox/resource-limits.js";
 import type { SandboxAvailability, WorkerSandboxSpec } from "../../core/sandbox/types.js";
 import { resolveWorkerSandboxSpec, workerSandboxLine } from "../../core/sandbox/worker-policy.js";
 import type { SharedStoreGrant } from "../../core/store-shared-grant.js";
@@ -325,6 +326,15 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		maxRetries: limitSettings.fleet.retry.maxRetries,
 		refusals: WORKER_REFUSAL_LIMIT,
 	});
+	const resources = resourceLimitsFromSettings(limitSettings.safety.resources.workers);
+	if (resources !== undefined) {
+		// D13: a ceiling PanCode cannot apply refuses rather than runs unbounded.
+		if (input.target.runtime.kind !== "http")
+			throw new Error(
+				`dispatch: safety.resources.workers is set but the ${input.target.runtime.kind} runtime ${input.target.runtime.id} runs its own commands, which PanCode cannot bound; unset the worker ceilings or dispatch to a target PanCode runs the tools for.`,
+			);
+		limits.resources = resources;
+	}
 	const spec: WorkerSpec = {
 		...(input.req.runIdHint
 			? {
