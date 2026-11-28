@@ -18,13 +18,6 @@ import { callPosition, entryLabel, runModelSpend, runSpan, runSpend, stageBars }
 export function object(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
-export function parseJson(value: string | null) {
-	try {
-		return value ? (JSON.parse(value) as unknown) : null;
-	} catch {
-		return value;
-	}
-}
 export function Json({ value }: { value: unknown }) {
 	return <RecordFacts value={value} empty="Nothing was recorded for this field." />;
 }

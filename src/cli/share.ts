@@ -12,8 +12,8 @@ import {
 	type ShareScope,
 	writeShareArchive,
 } from "../domains/share/index.js";
+import { printError, printOk } from "./argv.js";
 import { writeCliFailure } from "./kit/json-out.js";
-import { printError, printOk } from "./shared.js";
 
 const HELP = `pancode share <command>
 

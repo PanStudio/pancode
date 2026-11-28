@@ -297,7 +297,6 @@ import {
 	readOrchTurnToolCallBudget,
 } from "../engine/loop-guard.js";
 import { cwdHash, openSession, readSessionTailTurns, sessionCurrentPath, sessionPaths } from "../engine/session.js";
-import type { RunIo } from "../interactive/index.js";
 import {
 	type AutonomyLevel,
 	admissionAutonomy,
@@ -318,6 +317,7 @@ import {
 	continuityContextFromSession,
 } from "../session-control/model-session-replay.js";
 import type { ReloadTarget } from "../session-control/reload-report.js";
+import type { RunIo } from "../session-control/slash-command-types.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
 import { surfaceSpecPlacement } from "../tools/surface.js";
