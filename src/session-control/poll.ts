@@ -20,10 +20,10 @@ import {
 } from "../domains/agents/index.js";
 
 /** Council member bounds the dispatch tool admits; a poll seats the same. */
-export const POLL_MIN_PARTICIPANTS = 2;
-export const POLL_MAX_PARTICIPANTS = 5;
+const POLL_MIN_PARTICIPANTS = 2;
+const POLL_MAX_PARTICIPANTS = 5;
 
-export interface PollSeat {
+interface PollSeat {
 	target: string;
 	model?: string;
 }
@@ -39,7 +39,7 @@ export interface PollCommandOptions {
 }
 
 /** `target` or `target/model`, split at the first slash so a model id may itself hold slashes. */
-export function parsePollSeat(entry: string): PollSeat | undefined {
+function parsePollSeat(entry: string): PollSeat | undefined {
 	const trimmed = entry.trim();
 	if (trimmed.length === 0) return undefined;
 	const slash = trimmed.indexOf("/");
@@ -86,7 +86,7 @@ export function renderPollQuestion(options: PollCommandOptions): string {
 	return parts.join("\n");
 }
 
-export type PollDispatchArgs = { ok: true; args: Record<string, unknown> } | { ok: false; reason: string };
+type PollDispatchArgs = { ok: true; args: Record<string, unknown> } | { ok: false; reason: string };
 
 /**
  * The dispatch-tool arguments this poll becomes. Seats cycle over `--models`;

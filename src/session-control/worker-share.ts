@@ -38,7 +38,7 @@ export interface WorkerShareFacts {
  * note carries exactly what the receipt sealed and the model is never handed
  * more of a worker's answer than the worker's answer.
  */
-export const WORKER_SHARE_MAX_BYTES = WORKER_OUTPUT_MAX_BYTES;
+const WORKER_SHARE_MAX_BYTES = WORKER_OUTPUT_MAX_BYTES;
 
 const SHARE_TRUNCATION_MARKER = "\n[worker output truncated]";
 
@@ -51,7 +51,7 @@ function outcomeWord(outcome: string): string {
 export const WORKER_SHARE_NOTE_PREFIX = "[worker result]";
 
 /** The origin the header names, so a model with a compacted context still sees who put the note there. */
-export const WORKER_SHARE_ORIGIN = "shared by the operator";
+const WORKER_SHARE_ORIGIN = "shared by the operator";
 
 /**
  * The operator note a shared run becomes:

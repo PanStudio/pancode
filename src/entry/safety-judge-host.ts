@@ -41,7 +41,7 @@ import { effectiveToolCall, expandChainMessages } from "../tools/surface.js";
 import { capturedJudgeCallId, withJudgeCallCapture, withSidePurpose } from "./side-request-admission.js";
 
 /** Ledger entry type of a judge block or escalation; recorded, never shown or sent to a model. */
-export const SAFETY_JUDGE_NOTE_CUSTOM_TYPE = "pancode.safety-judge";
+const SAFETY_JUDGE_NOTE_CUSTOM_TYPE = "pancode.safety-judge";
 
 /**
  * The operator's own words on the session's active path, oldest first, so the

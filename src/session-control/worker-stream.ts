@@ -176,7 +176,7 @@ export type WorkerStreamChange =
 	| { kind: "created"; entry: WorkerEntryState }
 	| { kind: "updated"; entry: WorkerEntryState };
 
-export interface WorkerStreamOptions {
+interface WorkerStreamOptions {
 	/**
 	 * Sealed terminal facts for a finished run. The result is the terminal
 	 * truth; the bus payload is only the fallback for when it cannot be read.

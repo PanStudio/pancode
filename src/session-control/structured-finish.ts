@@ -14,7 +14,7 @@ import type { TurnConstraints } from "../core/turn-constraints.js";
 export const OUTPUT_SCHEMA_REFUSAL_PREFIX = "pancode run: --output-schema: ";
 
 /** A refused schema is C17 `schema_unsupported` (SPEC 6.8), refused before any model call. */
-export type OutputSchemaLoad =
+type OutputSchemaLoad =
 	| { ok: true; schema: Record<string, unknown> }
 	| { ok: false; slug: "schema_unsupported"; reason: string };
 

@@ -15,7 +15,7 @@ export function ordinal(n: number): string {
 	return `${n}${tail}`;
 }
 
-export interface RetryStatusTextOptions {
+interface RetryStatusTextOptions {
 	modelName: (modelId: string) => string;
 	errorText?: (errorMessage: string) => string;
 }

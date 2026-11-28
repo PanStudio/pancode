@@ -25,7 +25,7 @@ const MIN_UNIT_CHARS = 30;
 const MIN_REPEATS = 5;
 const MIN_COVERAGE = 0.6;
 
-export type RepetitionAssessment = { kind: "ok" } | { kind: "repeating"; unit: string; repeats: number };
+type RepetitionAssessment = { kind: "ok" } | { kind: "repeating"; unit: string; repeats: number };
 
 /** Assess only a stream long enough to loop, and only after it grew a step since the last check. */
 export function shouldAssessRepetition(length: number, assessedChars: number): boolean {
@@ -120,9 +120,7 @@ const FLOOD_MIN_REPEATS = 5;
 const FLOOD_ARGUMENT_CHARS = 200;
 const TOOL_CALL_FLOOD_REASON_PREFIX = "[PanCode] stopped a model response that kept repeating one tool call";
 
-export type ToolCallFloodAssessment =
-	| { kind: "ok" }
-	| { kind: "flooding"; toolName: string; repeats: number; path?: string };
+type ToolCallFloodAssessment = { kind: "ok" } | { kind: "flooding"; toolName: string; repeats: number; path?: string };
 
 /**
  * Judge the first `completeBlocks` content blocks of a streamed message, the ones whose arguments are final. A call
@@ -163,7 +161,7 @@ export function toolCallFloodAbortReason(assessment: Extract<ToolCallFloodAssess
 	return `${TOOL_CALL_FLOOD_REASON_PREFIX} ("${assessment.toolName}" ${assessment.repeats} times ${basis} in one response).`;
 }
 
-export const REPETITION_REPROMPT_TOOL = "pancode_repetition_reprompt";
+const REPETITION_REPROMPT_TOOL = "pancode_repetition_reprompt";
 export const REPETITION_REPROMPT_NOTICE_KEY = "turn.repetition-reprompt";
 
 /**
@@ -174,7 +172,7 @@ export const REPETITION_REPROMPT_NOTICE_KEY = "turn.repetition-reprompt";
  */
 const REPETITION_RECOVERY_STAGES = 2;
 
-export type RepetitionRecoveryStage = 1 | 2;
+type RepetitionRecoveryStage = 1 | 2;
 
 /** The recovery a stopped repetition gets next in this operator turn, or null when there is none to run. */
 export function repetitionRecoveryStage(state: {

@@ -53,7 +53,7 @@ import type { QueuedMessageKind } from "./turn-queues.js";
 import type { RetryStatusPayload } from "./turn-recovery.js";
 import type { AgentRuntime, ChatLoopTarget, TurnPersistenceState } from "./turn-state.js";
 
-export interface TurnPersistenceDeps {
+interface TurnPersistenceDeps {
 	/** Runs before any turn is written, so a ledger fact can precede the text it describes. */
 	beforeTurnRecorded?: (session: SessionContract) => void;
 	getToolOwner?: (name: string) => PackageIdentity | undefined;

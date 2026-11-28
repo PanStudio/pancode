@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { formatCount } from "../core/format-time.js";
 
-export interface CompactionSummaryLineInput {
+interface CompactionSummaryLineInput {
 	/**
 	 * How many provider messages the summary replaced, the unit a context snapshot's `messageRange` counts. Not the
 	 * ledger entry count, which also holds tool-call rows and bookkeeping.
@@ -49,9 +49,9 @@ export function renderCompactionSummaryLine(input: CompactionSummaryLineInput): 
 }
 
 /** Why the non-destructive stage had nothing to do before a summary ran. */
-export type EvictionSkipReason = "all-protected" | "nothing-evictable" | "disabled";
+type EvictionSkipReason = "all-protected" | "nothing-evictable" | "disabled";
 
-export interface EvictionSkipLineInput {
+interface EvictionSkipLineInput {
 	reason: EvictionSkipReason;
 	/** Turn starts in the visible slice the policy was offered; 0 when a cut left it starting inside a turn. */
 	turns: number;

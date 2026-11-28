@@ -32,7 +32,7 @@ import type { TurnContext } from "./turn-context.js";
 import type { AgentRuntime, TurnPrewarmState } from "./turn-state.js";
 
 /** Why a pre-warm did not run. Returned for contracts; never shown to the operator. */
-export type PrewarmSkipReason =
+type PrewarmSkipReason =
 	| "disabled"
 	| "flow"
 	| "surface"
@@ -55,7 +55,7 @@ export type PrewarmOutcome =
 			unbound?: { targetId: string; backend: WarmableBackend };
 	  };
 
-export interface TurnPrewarmDeps {
+interface TurnPrewarmDeps {
 	state: TurnPrewarmState;
 	getSettings: () => Readonly<PancodeSettings>;
 	providers: ProvidersContract;
@@ -123,7 +123,7 @@ export interface TurnPrewarmDeps {
 	isAttended?: () => boolean;
 }
 
-export interface TurnPrewarm {
+interface TurnPrewarm {
 	/**
 	 * Queue a pre-warm for the next tick. Repeated calls before it fires collapse
 	 * onto one round: boot and a boot-time resume both land in the same tick, and

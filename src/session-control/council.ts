@@ -19,11 +19,11 @@
  * operator declares it the same way they declare any other one, and a project
  * with no roster called `default` gets the refusal rather than a guess.
  */
-export const COUNCIL_DEFAULT_ROSTER = "default";
+const COUNCIL_DEFAULT_ROSTER = "default";
 
 /** Synthesis modes the dispatch tool declares, in the order the usage line lists them. */
 export const COUNCIL_SYNTHESIS_MODES = ["judge", "vote", "none"] as const;
-export type CouncilSynthesisMode = (typeof COUNCIL_SYNTHESIS_MODES)[number];
+type CouncilSynthesisMode = (typeof COUNCIL_SYNTHESIS_MODES)[number];
 
 /** Rounds the dispatch tool admits. The command enforces the same bound where the operator typed it. */
 export const COUNCIL_MAX_ROUNDS = 3;
@@ -60,7 +60,7 @@ export function isCouncilSynthesisMode(value: string): value is CouncilSynthesis
 }
 
 /** What the command needs to know about a configured roster: that it exists and how many members it seats. */
-export interface CouncilRosterFacts {
+interface CouncilRosterFacts {
 	members: ReadonlyArray<unknown>;
 }
 
@@ -76,14 +76,14 @@ export interface CouncilCommandOptions {
 	memberDeadlineMs?: number;
 }
 
-export type CouncilRosterResolution = { ok: true; roster: string } | { ok: false; reason: string };
+type CouncilRosterResolution = { ok: true; roster: string } | { ok: false; reason: string };
 
 /**
  * The notice a session with no roster and no `--roster` gets. It names the
  * setting rather than the failure, because an operator who types `/council`
  * without a roster has not made a mistake. They have not declared one yet.
  */
-export const COUNCIL_NO_ROSTER_NOTICE =
+const COUNCIL_NO_ROSTER_NOTICE =
 	`/council needs a roster. Declare one under fleet.rosters in settings.yaml, for example ` +
 	`fleet.rosters.${COUNCIL_DEFAULT_ROSTER} with two to five members, each with a label and a target, ` +
 	`then run /council <task> or name another roster with --roster <name>.`;

@@ -121,7 +121,7 @@ export interface TurnRecoveryDeps {
 	compactCommand?: () => string;
 }
 
-export interface TurnRecovery {
+interface TurnRecovery {
 	runCompactAndRetry(
 		agentRuntime: AgentRuntime,
 		text: string,
