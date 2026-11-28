@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { resolveRole, type SemanticRole, STRUCTURAL_ROLES, TEXT_ROLES } from "./theme-roles.js";
+import { resolveRole, type SemanticRole, STRUCTURAL_ROLES, TEXT_ROLES } from "../../core/theme-roles.js";
 import {
 	contrastRatio,
 	type PaletteColor,
 	type Rgb,
 	TERMINAL_PALETTE,
 	type ThemeBackground,
-} from "./theme-token-hex.js";
+} from "../../core/theme-token-hex.js";
 
 /**
  * Contrast rules for the palette, solved against the background the terminal

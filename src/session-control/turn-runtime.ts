@@ -9,7 +9,7 @@
  */
 
 import { performance } from "node:perf_hooks";
-import { replySegment } from "../cli/modes/answer-segments.js";
+import { replySegment } from "../core/answer-segments.js";
 import { outputLimitCutOffToolCallIds } from "../core/assistant-output.js";
 import type { BackendCompletionTimings, CacheRequestStructure } from "../core/cache-telemetry.js";
 import { classifyCallFailure, trackCallFetch } from "../core/call-failure.js";

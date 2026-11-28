@@ -3,8 +3,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pancodeProjectRoot } from "../core/project-root.js";
-import { discoverDeclaredProjectCommands } from "../tools/verify/authoring.js";
 import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { discoverDeclaredProjectCommands } from "./verifier-authoring.js";
 
 function quoted(value: string): string {
 	return JSON.stringify(value);

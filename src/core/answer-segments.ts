@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { readTrailingWrittenCalls, stripDeadToolCallMarkup } from "../../core/tool-call-markup.js";
-import { ToolNames } from "../../core/tool-names.js";
+import { readTrailingWrittenCalls, stripDeadToolCallMarkup } from "./tool-call-markup.js";
+import { ToolNames } from "./tool-names.js";
 
 /**
  * A headless run's answer is every reply of its final user turn, in order (CLI-P43): a reply is the text of an

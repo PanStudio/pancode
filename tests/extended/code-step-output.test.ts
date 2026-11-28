@@ -23,6 +23,12 @@ import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import { mainSandboxPolicy } from "../../src/core/sandbox/main-session.js";
 import { parseCodeReport } from "../../src/domains/agents/result-contract-code-report.js";
 import {
+	changedCheckoutPaths,
+	RACY_DIGEST_MAX_FILES,
+	snapshotCheckoutSince,
+	takeCheckoutBaseline,
+} from "../../src/domains/dispatch/checkout-changes.js";
+import {
 	CODE_STEP_CAPTURE_MAX_BYTES,
 	CODE_STEP_EXCERPT_MAX_BYTES,
 	commitPointSnapshot,
@@ -31,13 +37,7 @@ import {
 	workspaceChangeSnapshot,
 	writeCommitBaseline,
 } from "../../src/domains/dispatch/code-step.js";
-import {
-	changedCheckoutPaths,
-	RACY_DIGEST_MAX_FILES,
-	snapshotCheckoutSince,
-	takeCheckoutBaseline,
-} from "../../src/tools/checkout-changes.js";
-import { resolveTestFileChecks } from "../../src/tools/verify/test-files.js";
+import { resolveTestFileChecks } from "../../src/domains/dispatch/verify-test-files.js";
 
 const roots: string[] = [];
 

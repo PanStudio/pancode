@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { gitExecFileAsync } from "../core/internal-git-run.js";
+import { gitExecFileAsync } from "../../core/internal-git-run.js";
 
 /**
  * Resolve the current git branch name for `cwd` (default: process.cwd()).

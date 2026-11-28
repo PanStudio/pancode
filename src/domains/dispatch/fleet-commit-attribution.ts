@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import type { CommitAttributionEvidence } from "../../core/commit-attribution.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
-import { testRunExecutes } from "../../tools/verify/test-files.js";
 import type { ExecutionPlan, ExecutionPlanCodeStep } from "./execution-plan.js";
+import { testRunExecutes } from "./verify-test-files.js";
 
 export interface FleetCommitPriorResult {
 	succeeded: boolean;

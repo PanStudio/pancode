@@ -15,7 +15,6 @@ export const LAYER_EXEMPTIONS: {
 } = {
 	core: new Map([
 		["src/core/file-references.ts -> src/tools", 4],
-		["src/core/file-references.ts -> src/utils", 1],
 		["src/core/settings-controls.ts -> src/domains/config", 1],
 		["src/core/settings-controls.ts -> src/domains/providers", 3],
 		["src/core/settings-validate-sections.ts -> src/domains/system-one", 1],

@@ -5,12 +5,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isMap, isSeq, parseDocument, stringify, type YAMLMap } from "yaml";
-import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../../core/safe-exec.js";
-import type { DeclaredCheckKind } from "../../core/telemetry/session-vocabulary.js";
-import { parseTomlDocument, tomlTableAt } from "../../core/toml.js";
-import { compareCodepoints } from "../../domains/evidence/ordering.js";
-import { loadValidationContract, VALIDATION_CONTRACT_MARKDOWN_PATH } from "../../domains/safety/validation-contract.js";
-import type { ToolResult } from "../tool-spec.js";
+import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../core/safe-exec.js";
+import type { DeclaredCheckKind } from "../core/telemetry/session-vocabulary.js";
+import { parseTomlDocument, tomlTableAt } from "../core/toml.js";
+import { compareCodepoints } from "../domains/evidence/ordering.js";
+import { loadValidationContract, VALIDATION_CONTRACT_MARKDOWN_PATH } from "../domains/safety/validation-contract.js";
+import type { ToolResult } from "../tools/tool-spec.js";
 import {
 	BROWSER_CATALOG_FIELDS,
 	type DeclaredBrowserCheck,
@@ -21,8 +21,8 @@ import {
 	PROJECT_VERIFIER_CATALOG_RELATIVE_PATH,
 	PROJECT_VERIFIER_CATALOG_VERSION,
 	parseProjectVerifierCatalogText,
-} from "./catalog.js";
-import { verifyTool } from "./index.js";
+} from "../tools/verify/catalog.js";
+import { verifyTool } from "../tools/verify/index.js";
 import {
 	cargoProposals,
 	cmakeProposals,
@@ -36,13 +36,13 @@ import {
 	slug,
 	type VerifierProvenance,
 	type VerifierSignalKind,
-} from "./toolchain.js";
+} from "../tools/verify/toolchain.js";
 
-export type { VerifierProposalAuthority, VerifierProvenance, VerifierSignalKind } from "./toolchain.js";
+export type { VerifierProposalAuthority, VerifierProvenance, VerifierSignalKind } from "../tools/verify/toolchain.js";
 
-import { type NumericTolerance, normalizeNumericTolerance } from "./numeric.js";
-import { type DeclaredReproduce, REPRODUCE_CATALOG_FIELDS, reproduceCatalogFields } from "./reproduce.js";
-import { discoverDeclaredChecksAtRoot, discoverDeclaredProjectEntriesAtRoot } from "./scripts.js";
+import { type NumericTolerance, normalizeNumericTolerance } from "../tools/verify/numeric.js";
+import { type DeclaredReproduce, REPRODUCE_CATALOG_FIELDS, reproduceCatalogFields } from "../tools/verify/reproduce.js";
+import { discoverDeclaredChecksAtRoot, discoverDeclaredProjectEntriesAtRoot } from "../tools/verify/scripts.js";
 
 export interface AuthoringCheck {
 	id: string;

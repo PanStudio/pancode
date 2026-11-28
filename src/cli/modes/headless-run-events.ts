@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import {
+	answerAfterCitationCheck,
+	replySegment,
+	type TurnAnswerEntry,
+	turnAnswer,
+} from "../../core/answer-segments.js";
 import { modelRouteRefusalOf } from "../../core/response-model-id.js";
 import { skillActivationFromToolDetails } from "../../core/skill-activation.js";
 import { type BuiltinToolName, ToolNames } from "../../core/tool-names.js";
@@ -26,7 +33,6 @@ import { completionOfToolResult } from "../../tools/finish.js";
 import { TOOL_PLANES } from "../../tools/policy.js";
 import { toolResultText } from "../../tools/result-disposition.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../tools/surface.js";
-import { answerAfterCitationCheck, replySegment, type TurnAnswerEntry, turnAnswer } from "./answer-segments.js";
 import type { HeadlessMainAgentResult, HeadlessMainAgentRunStats } from "./headless-run-types.js";
 import {
 	currentPlacementChangedPaths,

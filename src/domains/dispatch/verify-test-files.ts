@@ -5,11 +5,11 @@ import path from "node:path";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { resolveSafeCwd } from "../../core/safe-exec.js";
 import { shellLikeChain } from "../../core/shell-argv.js";
-import type { DeclaredCheck } from "./catalog.js";
-import { discoverDeclaredChecksAtRoot } from "./discovery.js";
-import { resolveVerifyCall, verifyResolutionArgv } from "./resolve.js";
-import { parsePackageJson, shellLikeArgv } from "./toolchain.js";
-import { discoverToolchainChecks } from "./toolchain-checks.js";
+import type { DeclaredCheck } from "../../tools/verify/catalog.js";
+import { discoverDeclaredChecksAtRoot } from "../../tools/verify/discovery.js";
+import { resolveVerifyCall, verifyResolutionArgv } from "../../tools/verify/resolve.js";
+import { parsePackageJson, shellLikeArgv } from "../../tools/verify/toolchain.js";
+import { discoverToolchainChecks } from "../../tools/verify/toolchain-checks.js";
 
 export interface TestFileCheck {
 	check: DeclaredCheck;

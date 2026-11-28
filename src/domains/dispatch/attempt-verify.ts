@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isTestFilePath } from "../../core/test-paths.js";
-import { addedUntrackedPaths, changedCheckoutDiff, snapshotCheckoutSince } from "../../tools/checkout-changes.js";
 import { taskWorktreeBaseDiff } from "../../tools/task-worktree.js";
 import { taskWorktreeHoldsWork } from "../../tools/task-worktree-claims.js";
 import type { TaskWorktreePreview } from "../../tools/task-worktree-preview.js";
 import { bindHostVerificationHypotheses } from "../claims/index.js";
 import type { FinalizingAttempt, GradedSettlement } from "./attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
+import { addedUntrackedPaths, changedCheckoutDiff, snapshotCheckoutSince } from "./checkout-changes.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { grade } from "./grading.js";
 import {

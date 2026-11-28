@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readlinkSync, readSync, realpathSync } from "node:fs";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
-import { gitExecFileAsync, gitExecFileSync } from "../core/internal-git-run.js";
+import { gitExecFileAsync, gitExecFileSync } from "../../core/internal-git-run.js";
 
 export interface CheckoutSnapshot {
 	root: string;

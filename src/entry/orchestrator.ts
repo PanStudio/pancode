@@ -304,6 +304,7 @@ import {
 	effectiveYoloConfinement,
 	modelMayActivateSkills,
 } from "../lib/autonomy/autonomy.js";
+import { resizeImage } from "../lib/image/image-resize.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
 	answerExtensionLine,
@@ -321,7 +322,6 @@ import type { RunIo } from "../session-control/slash-command-types.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
 import { surfaceSpecPlacement } from "../tools/surface.js";
-import { resizeImage } from "../utils/image-resize.js";
 import type { BootOptions } from "./boot-options.js";
 import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import {

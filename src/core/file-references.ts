@@ -4,9 +4,9 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { open } from "node:fs/promises";
 import path from "node:path";
 import type { ImageContent } from "../engine/types.js";
+import { formatDimensionNote, resizeImage } from "../lib/image/image-resize.js";
 import type { DocumentKind } from "../tools/read-documents/index.js";
 import { formatSize } from "../tools/truncate.js";
-import { formatDimensionNote, resizeImage } from "../utils/image-resize.js";
 import { expandConfigPath } from "./resolve-config-value.js";
 
 interface FileReferenceDiagnostic {

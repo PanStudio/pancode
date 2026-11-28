@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { type CheckoutSnapshot, takeCheckoutBaseline } from "../../tools/checkout-changes.js";
 import { restoreTaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type {
 	AgentLedgerBody,
@@ -23,6 +22,7 @@ import {
 import type { AdmittedAttempt } from "./attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import { GRANT_DEADLINE_MARGIN_MS, operatorContainedYolo } from "./bundle-support.js";
+import { type CheckoutSnapshot, takeCheckoutBaseline } from "./checkout-changes.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { envelopeForPermit } from "./envelope.js";
 import { operatorAdmissionAutonomy } from "./envelope-stage.js";
