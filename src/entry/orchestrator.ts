@@ -18,7 +18,7 @@ import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
 import type { RunJsonMainSessionFrame } from "../cli/modes/run-json-schema.js";
 import { RUN_JSON_SCHEMA_VERSION } from "../cli/modes/run-json-schema.js";
 import { noteMainRunV2, writeRunDiagnostic } from "../cli/run-failure.js";
-import { setToolEnvAutonomy, startLoginEnvCapture } from "../core/bash-exec.js";
+import { startLoginEnvCapture } from "../core/bash-exec.js";
 import { formatBootTrace } from "../core/boot-trace.js";
 import { readPancodeVersionLabel } from "../core/build-info.js";
 import { type PancodeSettings, readSettings } from "../core/config.js";
@@ -27,24 +27,17 @@ import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { setAutonomousCommitProcess } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
-import { installInternalGitPolicy } from "../core/internal-git.js";
 import { flushPackageActivities } from "../core/package-activity.js";
 import { ensureProjectIgnore } from "../core/project-root.js";
 import { consumeRestartIntent } from "../core/restart-intent.js";
-import { createGitHooksFingerprinter } from "../core/sandbox/git-hooks-fingerprint.js";
 import { StartupTimer } from "../core/startup-timer.js";
 import { captureAdmits } from "../core/telemetry/capture.js";
-import { sessionTelemetryContext } from "../core/telemetry/context.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
 import { registerResearchTraceSink } from "../core/telemetry/research-trace.js";
 import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
 import { yieldToEventLoop } from "../core/timers.js";
-import { ToolNames } from "../core/tool-names.js";
-import { surfaceSpecPlacement } from "../core/tool-surface.js";
-import { turnAllowsTool } from "../core/turn-constraints.js";
 import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/workspace-trust.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
-import { autonomyCeilingRefusal, launchAutonomyRefusal, yoloRootRefusal } from "../core/yolo-host.js";
 import { AgentsDomainModule } from "../domains/agents/module.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/module.js";
 import { liveHistoryBudget } from "../domains/context/budget/inspection.js";
@@ -85,14 +78,8 @@ import {
 	saveTaskBankSnapshot,
 } from "../domains/memory/task-bank-store.js";
 import { createHistoryReviewActivity } from "../domains/memory/task-memory-status.js";
-import { type CapabilityMatch, capabilityCorpus, createCapabilityGate } from "../domains/middleware/capability-gate.js";
-import {
-	createMarketplaceOfferRegistration,
-	createMiddlewareToolChoiceControl,
-	createSkillsReminderRegistration,
-	formatRegistrationConflict,
-	writeMiddlewareDiagnosticToStderr,
-} from "../domains/middleware/index.js";
+import { createCapabilityGate } from "../domains/middleware/capability-gate.js";
+import { formatRegistrationConflict, writeMiddlewareDiagnosticToStderr } from "../domains/middleware/index.js";
 import { createLocalClockReminderRegistration } from "../domains/middleware/local-clock-reminder.js";
 import { createMiddlewareDomain } from "../domains/middleware/module.js";
 import { createStaleBuildReminderRegistration } from "../domains/middleware/stale-build-reminder.js";
@@ -112,23 +99,16 @@ import { resolveModelReference } from "../domains/providers/resolver.js";
 import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../domains/providers/side-call-auth.js";
 import { resolveTarget } from "../domains/providers/unpriced-routes.js";
 import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota } from "../domains/quota/index.js";
-import {
-	discoverMarketplaceSkills,
-	installedSkillNames,
-	installSkill,
-	suggestableSkills,
-} from "../domains/resources/index.js";
 import { createResourcesDomainModule } from "../domains/resources/module.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
-import { createGitHookDriftGuard, type GitHookDriftGuard, gitHookDriftNotice } from "../domains/safety/hook-drift.js";
+import type { GitHookDriftGuard } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/index.js";
 import { EMPTY_INFORMATION_FLOW_POLICY, resolveModelDestination } from "../domains/safety/index.js";
 import { workerFlowPolicyInput } from "../domains/safety/information-flow.js";
-import { createInternalGitPolicy } from "../domains/safety/internal-git-policy.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
-import { SAFETY_JUDGE_CONSECUTIVE_BLOCKS, type SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
+import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
 import { createSessionCodeConsent } from "../domains/safety/session-code-consent.js";
 import { unattendedWindowMs } from "../domains/safety/unattended.js";
 import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
@@ -169,13 +149,7 @@ import {
 	readOrchTurnToolCallBudget,
 } from "../engine/loop-guard.js";
 import { cwdHash, openSession, readSessionTailTurns, sessionCurrentPath, sessionPaths } from "../engine/session.js";
-import {
-	type AutonomyLevel,
-	admissionAutonomy,
-	containedYolo,
-	effectiveYoloConfinement,
-	modelMayActivateSkills,
-} from "../lib/autonomy/autonomy.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
 	answerExtensionLine,
@@ -189,7 +163,6 @@ import {
 	continuityContextFromSession,
 } from "../session-control/model-session-replay.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
-import { effectiveToolNames } from "../tools/agent-tools.js";
 import type { BootOptions } from "./boot-options.js";
 import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import { closedSessionLessonSource, createFlowLedger, FLOW_RESTRICTION_ENTRY_TYPE } from "./flow-ledger.js";
@@ -198,19 +171,10 @@ import { resolvePanesEnablement } from "./panes-activation.js";
 import { reloadPluginResourcesAndNotify } from "./plugin-reload.js";
 import { createReloadClasses } from "./reload-classes.js";
 import { applyRouteOverlay } from "./route-overlay.js";
-import { createJudgeScreen, createSafetyJudgeCompletion, createSafetyJudgeHost } from "./safety-judge-host.js";
 import { bindTaskMemoryLifecycle } from "./task-memory-lifecycle.js";
 
 export type { BootOptions, HeadlessSamplingOverrides } from "./boot-options.js";
 
-import {
-	type AutonomyHalt,
-	autonomousCaps,
-	autonomyHaltNotice,
-	autonomyHaltReason,
-	createAutonomyWindow,
-	settledCallTokens,
-} from "../domains/safety/autonomy-window.js";
 import {
 	actionKeyLabel,
 	detectPlatformKeybindingWarnings,
@@ -232,6 +196,7 @@ import { runWatchdogReview } from "../session-control/watchdog-run.js";
 import { createFileMutationObserver, createSkillActivationObserver } from "../tools/observers.js";
 import { startToolOffloadSweep } from "../tools/result-shaping.js";
 import { runAcpSurface } from "./boot/acp-surface.js";
+import { buildBootAutonomy } from "./boot/autonomy.js";
 import { startBootChat } from "./boot/chat.js";
 import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
@@ -1364,300 +1329,60 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	if (lease) await import("../interactive/index.js");
 	// A lease closed during that load stops boot here, before anything builds against it.
 	await bootPhaseBoundary?.();
-	// Autonomy is hot-reloaded for interactive and headless admissions. ACP
-	// server prompts use the snapshot captured at session/new.
-	let activeAcpSessionAutonomy: AutonomyLevel | null = null;
-	// Root outside a container never runs yolo (#407). The uid and the
-	// container do not change while the process runs, so it is read once.
-	const yoloRefusal =
-		yoloRootRefusal() ?? launchAutonomyRefusal(options.acp?.autonomyCeiling) ?? autonomyCeilingRefusal();
-	// The one effective-autonomy resolution. Every admission surface (registry
-	// admission, dispatch plan provenance, ACP session snapshot) resolves
-	// through these two functions so a fallback added to one surface cannot
-	// silently skip another. The root refusal is enforced here too, so no
-	// surface that reaches yolo some other way (a hot-reloaded settings file)
-	// runs it.
-	const resolveBaselineAutonomy = (): AutonomyLevel => {
-		const level =
-			effectiveSettingsForDispatch?.().safety.autonomy ??
-			(options.headless !== undefined ? (options.headless.autonomy ?? "default") : undefined) ??
-			options.autonomy ??
-			(config?.get() ?? readSettings()).safety.autonomy ??
-			"default";
-		return level === "yolo" && yoloRefusal !== null ? "default" : level;
-	};
-	const resolveEffectiveAutonomy = (): AutonomyLevel => {
-		const level = activeAcpSessionAutonomy ?? resolveBaselineAutonomy();
-		return level === "yolo" && yoloRefusal !== null ? "default" : level;
-	};
-	// Contained yolo (ob-yolo D1) admits, judges and permits workers exactly as
-	// default does; only where a call would wait for a person does it differ,
-	// which `unattendedAsks` tells the registry. Prompts, auto-continuation and
-	// the footer keep the operator's level.
-	const resolveAdmissionAutonomy = (): AutonomyLevel =>
-		admissionAutonomy(resolveEffectiveAutonomy(), effectiveYoloConfinement(getCurrentSettings().safety));
-	const unattendedYolo = (): boolean =>
-		containedYolo(resolveEffectiveAutonomy(), effectiveYoloConfinement(getCurrentSettings().safety));
-	// Every bash command this session runs carries its live level as an autonomy ceiling, and the contained pin while
-	// it runs contained yolo, so a pancode it starts cannot take more autonomy or less confinement than it has.
-	setToolEnvAutonomy(resolveEffectiveAutonomy, unattendedYolo);
-	const skillDiscoveryEnabled = options.noSkills !== true && options.headless?.noSkills !== true;
-	let readySkillSnapshot: { key: string; count: number; skills: ReturnType<typeof suggestableSkills> } | undefined;
-	const getReadySkillCount = (): number => {
-		if (!resources) return 0;
-		const cwd = process.cwd();
-		// Skill loading reads and hashes the filesystem. Reuse the count across
-		// warm/real requests and reminders until the same source epoch that
-		// invalidates prompt composition changes (/reload hub, config, etc.).
-		// Descriptions from here reach models through the [Skills] reminder and the
-		// relevance ranker, so this reads verified trees, never the display listing.
-		if (!prompts) {
-			const skills = suggestableSkills(resources.skills(cwd).items);
-			readySkillSnapshot = { key: cwd, count: skills.length, skills };
-			return skills.length;
-		}
-		const key = JSON.stringify([
-			cwd,
-			prompts.inputEpoch(),
-			skillDiscoveryEnabled,
-			config?.get().integrations.projectResources.trustProjectImports === true,
-			options.skillPaths ?? options.headless?.skillPaths ?? [],
-		]);
-		if (readySkillSnapshot?.key === key) return readySkillSnapshot.count;
-		const skills = suggestableSkills(resources.skills(cwd).items);
-		const count = skills.length;
-		readySkillSnapshot = { key, count, skills };
-		return count;
-	};
-	// FW-1: task-ranked advice is cheap enough for attended and headless turns;
-	// it names loadable workflows directly and preserves the activation policy.
-	if (resources && skillDiscoveryEnabled) {
-		const rankReminderCapabilities = (task: string): ReadonlyArray<CapabilityMatch> => {
-			const constraints = chat.currentTurnConstraints?.();
-			if (!turnAllowsTool(constraints, "gateway")) return [];
-			const surface = new Set(
-				effectiveToolNames({ registry: toolRegistry, ...(constraints ? { turnConstraints: constraints } : {}) }),
-			);
-			return capabilityGate.rank({
-				kind: "capabilities",
-				task,
-				limit: 3,
-				...capabilityCorpus(
-					toolRegistry.listAll().filter((spec) => surface.has(spec.name)),
-					(spec) => surfaceSpecPlacement(spec, surface) === "gateway",
-				),
-			});
-		};
-		const rankReminderSkills = (task: string): ReadonlyArray<CapabilityMatch> => {
-			getReadySkillCount();
-			return capabilityGate.rank({
-				kind: "skills",
-				task,
-				workspace: process.cwd(),
-				candidates: (readySkillSnapshot?.skills ?? []).map((skill) => ({
-					id: skill.name,
-					description: skill.description,
-					triggers: Array.isArray(skill.metadata.triggers)
-						? skill.metadata.triggers.filter((value): value is string => typeof value === "string")
-						: [],
-				})),
-			});
-		};
-		middlewareRegistrar.registerHook(
-			createSkillsReminderRegistration({
-				getTurnConstraints: () => chat.currentTurnConstraints?.(),
-				contextPlacement: () => {
-					const spec = toolRegistry.get(ToolNames.Context);
-					return spec ? surfaceSpecPlacement(spec, null) : "direct";
-				},
-				countModelVisibleSkills: getReadySkillCount,
-				loadedSkillNames: () => (session?.current()?.skillActivations ?? []).map((activation) => activation.name),
-				rankCapabilities: rankReminderCapabilities,
-				rankSkills: rankReminderSkills,
-				// The snapshot is verified per epoch and a revocation takes effect on the
-				// next read, so what is about to print is checked again. Only the shown
-				// skills' trees are walked. An unverifiable match is simply not offered.
-				verifyRankedSkills: (matches) => {
-					try {
-						const skills = readySkillSnapshot?.skills ?? [];
-						const shown = skills.filter((skill) => matches.some((match) => match.id === skill.name));
-						const verified = new Set(resources.skillsStillVerified(shown, process.cwd()).map((skill) => skill.name));
-						return matches.filter((match) => verified.has(match.id));
-					} catch {
-						return [];
-					}
-				},
-				// Same lookup context(scope="skills") lists under its Marketplace
-				// heading, minus what is already installed, so the count the
-				// reminder quotes is the count the listing will show.
-				countInstallableSkills: () => {
-					if (!skillDiscoveryEnabled) return 0;
-					const installed = installedSkillNames(resources.skillsForDisplay(process.cwd()).items, process.cwd());
-					return discoverMarketplaceSkills({ cwd: process.cwd() }).skills.filter((skill) => !installed.has(skill.name))
-						.length;
-				},
-				modelMayActivateSkills: () => modelMayActivateSkills(),
-			}),
-		);
-	}
-	// Marketplace self-promotion: coordinator-only by this wiring (never a dispatch worker), local matcher, no offer
-	// under yolo, operator-consented installs only, each offer and outcome journaled as `skill.offer`. The
-	// registration also checks the own-marketplace source gate before installing.
-	if (resources && skillDiscoveryEnabled) {
-		middlewareRegistrar.registerHook(
-			createMarketplaceOfferRegistration({
-				interactive,
-				askAllowed: () => resolveEffectiveAutonomy() !== "yolo",
-				record: (payload) => bus.emit("skill.offer", payload, sessionTelemetryContext(session?.current()?.id)),
-				listInstalledSkills: () => resources.skillsForDisplay(process.cwd()).items,
-				getTurnConstraints: () => chat.currentTurnConstraints?.(),
-				listInstalledSkillNames: () => [
-					...installedSkillNames(resources.skillsForDisplay(process.cwd()).items, process.cwd()),
-				],
-				listMarketplaceEntries: () => discoverMarketplaceSkills({ cwd: process.cwd() }).skills,
-				installEntry: (entry, scope) => {
-					const installed = installSkill({ source: `skill:${entry.name}`, scope, name: entry.name, cwd: process.cwd() });
-					return {
-						path: installed.path,
-						sourceUrl: installed.sourceUrl,
-						installedHash: installed.installedHash,
-						warnings: installed.warnings,
-					};
-				},
-			}),
-		);
-	}
-	const middlewareToolChoice = createMiddlewareToolChoiceControl();
-	// The autonomous window (ob-yolo D6): at yolo, how far PanCode runs on its own
-	// before it pauses for the operator. A halt cancels the turn and latches
-	// until the operator speaks; `chat` is built further down, and nothing
-	// halts before the first turn runs.
-	let lastAutonomyHalt: AutonomyHalt | null = null;
-	const autonomyWindow = createAutonomyWindow({
-		caps: () => autonomousCaps(resolveEffectiveAutonomy(), getCurrentSettings().safety.limits),
-		session: () => session?.current()?.id ?? null,
-		confinement: () => effectiveYoloConfinement(getCurrentSettings().safety),
-		emit: (name, payload, sessionId) => bus.emit(name, payload, sessionTelemetryContext(sessionId)),
-		onHalt: (halt) => {
-			lastAutonomyHalt = halt;
-			const prefix = autonomyHaltReason(halt);
-			// Synchronous, inside the call that crossed the line: the cancel can only reach the turn that halted.
-			chat.cancel({
-				reason: `[PanCode] ${autonomyHaltNotice(
-					halt,
-					options.headless !== undefined ? "headless" : "interactive",
-					autonomyWindow.openDecisions(true),
-				)}`,
-				source: "autonomy",
-				auditReason: `${prefix}: ${halt.detail}`,
-				// A cap lets a started tool call finish and stops before the next request (F-C16); a judge halt is immediate.
-				...(halt.kind === "judge" ? {} : { atToolBoundary: true }),
-			});
-		},
-	});
-	// After the drain hooks settled the chat, before persist closes the journal: the end carries the final usage.
-	bus.subscribe("shutdown.drained", () => autonomyWindow.end());
-	bus.subscribe("tool.settled", (payload, context) => {
-		if (context?.agent.role === "main" && payload.inner !== true) autonomyWindow.toolCall();
-	});
-	bus.subscribe("call.settled", (payload, context) => {
-		if (context?.agent.role === "main") autonomyWindow.tokens(settledCallTokens(payload.usage));
-	});
-	// The safety judge reviews what autonomy default would park for the operator
-	// against the operator's own messages. Its round goes through System One's
-	// one-shot port and request admission, built further down; nothing calls the
-	// judge before the first tool call.
-	const safetyJudge = createSafetyJudgeHost({
-		settings: () => getCurrentSettings(),
-		complete: createSafetyJudgeCompletion({
-			providers,
-			oneShot: () => safetyJudgeOneShot,
-			flowRefusal: (destination) => admitModelFlow(destination),
-		}),
-		session: () => session,
+	const {
+		autonomyWindow,
+		getReadySkillCount,
+		hookDrift,
+		middlewareToolChoice,
+		operatorReturned,
+		resolveAdmissionAutonomy,
+		resolveBaselineAutonomy,
+		resolveEffectiveAutonomy,
+		safetyJudge,
+		unattendedYolo,
+		yoloRefusal,
+		autonomyState,
+	} = buildBootAutonomy({
+		admitModelFlow,
+		bus,
+		capabilityGate,
+		config,
+		flowLedger,
+		interactive,
+		middlewareRegistrar,
+		options,
+		prompts,
+		providers,
+		resources,
 		safety,
-		// Past either threshold every later review would refuse in silence, so contained yolo ends the run (D4).
-		// A main-session escalation fires inside the review of the block that crossed the line; the window halts once the
-		// registry records that block, still inside the call. A worker's block has no such record and halts at once.
-		onEscalation: (note) => {
-			if (!unattendedYolo()) return;
-			autonomyWindow.haltFor(
-				"judge",
-				note.consecutiveBlocks >= SAFETY_JUDGE_CONSECUTIVE_BLOCKS
-					? `blocks under ${note.consecutiveBlocks} different rules in a row`
-					: `${note.totalBlocks} blocks this session`,
-				note.workerRunId === undefined,
-			);
+		session,
+		cells: {
+			get chat() {
+				return chat;
+			},
+			get effectiveSettingsForDispatch() {
+				return effectiveSettingsForDispatch;
+			},
+			get getCurrentSettings() {
+				return getCurrentSettings;
+			},
+			get safetyJudgeOneShot() {
+				return safetyJudgeOneShot;
+			},
+			get systemOne() {
+				return systemOne;
+			},
+			get toolRegistry() {
+				return toolRegistry;
+			},
+			get workerAskJudgeForDispatch() {
+				return workerAskJudgeForDispatch;
+			},
+			set workerAskJudgeForDispatch(value) {
+				workerAskJudgeForDispatch = value;
+			},
 		},
-		// `systemOne` and `chat` are built further down; nothing calls the judge before the first tool call.
-		screen: createJudgeScreen({
-			systemOne: () => systemOne,
-			providers,
-			liveWindow: () => chat.screenWindow(),
-			flow: flowLedger,
-		}),
 	});
-	// The git hook drift guard takes its baseline now, at session start: a hook
-	// file added or changed later, however it got there, makes the next git
-	// command that would run it outside the sandbox an operator-only ask.
-	const hookFingerprinter = createGitHooksFingerprinter(process.cwd());
-	const hookDrift = createGitHookDriftGuard({
-		workspace: process.cwd(),
-		fingerprint: () => hookFingerprinter.fingerprint(),
-		// The cheap path PanCode's own status and diff probes check before each run.
-		config: (dir) => hookFingerprinter.config(dir),
-		onDrift: (changes) =>
-			bus.emit("safety.git_hooks_changed", {
-				message: gitHookDriftNotice(changes, process.cwd()),
-				changes: changes.map(({ path, kind, key, size, firstLine }) => ({
-					path,
-					kind,
-					...(key !== undefined ? { key } : {}),
-					size,
-					firstLine,
-				})),
-			}),
-	});
-	// Git PanCode runs itself (task worktrees, landing worker results) runs
-	// outside any sandbox, so after drift it runs with hooks off at default
-	// (src/domains/safety/internal-git-policy.ts, src/core/internal-git.ts).
-	installInternalGitPolicy(
-		createInternalGitPolicy({
-			workspace: process.cwd(),
-			guard: hookDrift,
-			autonomy: resolveAdmissionAutonomy,
-			emptyHooksDir: join(pancodeStateDir(), "git", "no-hooks"),
-			onDrift: (record) =>
-				bus.emit("safety.internal_git_drifted", {
-					message: record.message,
-					announce: record.announce,
-					operation: record.operation,
-					hardened: record.hardened,
-					outcome: record.outcome,
-					changes: record.changes.map(({ path, kind, key }) => ({
-						path,
-						kind,
-						...(key !== undefined ? { key } : {}),
-					})),
-				}),
-		}),
-	);
-	// The same seat answers dispatched workers' asks, so worker and main-session
-	// blocks share one session's escalation counts.
-	workerAskJudgeForDispatch = {
-		seat: () => safetyJudge,
-		autonomy: resolveAdmissionAutonomy,
-		operatorAutonomy: resolveEffectiveAutonomy,
-		hookDrift: () => hookDrift,
-	};
-	// The operator spoke, typed or on an ask_user round: a fresh autonomy window.
-	const operatorReturned = (): void => {
-		const cleared = autonomyWindow.reopen();
-		if (cleared === null) return;
-		lastAutonomyHalt = null;
-		// Resuming after a block streak is the operator's approval to review again.
-		if (cleared.kind === "judge") safetyJudge.operatorApproved();
-	};
 	const {
 		askUserBridge,
 		decisionBoard,
@@ -2047,10 +1772,10 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// closures here still assign, and `seams` carries what only this file may import (rule6).
 	const cells: BootSurfaceCells = {
 		get activeAcpSessionAutonomy() {
-			return activeAcpSessionAutonomy;
+			return autonomyState.activeAcpSessionAutonomy;
 		},
 		set activeAcpSessionAutonomy(value) {
-			activeAcpSessionAutonomy = value;
+			autonomyState.activeAcpSessionAutonomy = value;
 		},
 		get askUserHandler() {
 			return registryState.askUserHandler;
@@ -2062,7 +1787,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			return turnHookState.creditedRunChecks;
 		},
 		get lastAutonomyHalt() {
-			return lastAutonomyHalt;
+			return autonomyState.lastAutonomyHalt;
 		},
 		get reportReviewOpener() {
 			return registryState.reportReviewOpener;
