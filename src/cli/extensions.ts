@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import type { ExtensionCliPathDeclaration } from "@pancode/sdk/pack";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { readLayeredSettings } from "../core/settings-layers.js";
 import { approveOperatorProjectInstall, captureProjectInstallBaseline } from "../core/workspace-trust.js";
+import { pancodeConfigDir } from "../core/xdg.js";
 import { envelopeReviewLines, reviewExtensionEnvelope } from "../domains/extensions/envelope-review.js";
 import { assignExtensionServiceModel, createExtensionHostServices } from "../domains/extensions/host-services.js";
 import {
@@ -23,6 +25,14 @@ import {
 } from "../domains/extensions/index.js";
 import { extensionInvocation } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import type { ResolvedPathGrant } from "../domains/extensions/path-grants.js";
+import {
+	createWriteRoots,
+	PathGrantError,
+	releaseCreatedRoots,
+	resolvePathGrants,
+} from "../domains/extensions/path-grants.js";
+import type { ExtensionWorkOptions } from "../domains/extensions/services/work.js";
 import { bundledPluginCatalog } from "../domains/plugins/catalog.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { formatColumns, printError, printOk } from "./argv.js";
@@ -365,6 +375,8 @@ interface PackVerb {
 	verb: string;
 	extensionId: string;
 	command: string;
+	/** The flags whose values the operator grants the command as paths. */
+	paths: ReadonlyArray<ExtensionCliPathDeclaration>;
 }
 
 /** The verbs installed, loadable extensions declare; a verb two extensions both claim is left out of both. */
@@ -374,7 +386,7 @@ function installedPackVerbs(workspace: string): { verbs: PackVerb[]; contested: 
 		if (!entry.loadable || !entry.runtimeV2?.cli) continue;
 		for (const verb of entry.runtimeV2.cli) {
 			const list = claimed.get(verb.verb) ?? [];
-			list.push({ verb: verb.verb, extensionId: entry.id, command: verb.command });
+			list.push({ verb: verb.verb, extensionId: entry.id, command: verb.command, paths: verb.paths ?? [] });
 			claimed.set(verb.verb, list);
 		}
 	}
@@ -446,7 +458,30 @@ export async function runPackVerb(
 		process.stderr.write(`pancode ${verb}: ${cwd.error}\nsee: pancode ${verb} --help\n`);
 		return 2;
 	}
-	return runHeadlessCommand(found.extensionId, found.command, [...argv], { workspace, wrap: false, verb });
+	if (found.paths.length === 0)
+		return runHeadlessCommand(found.extensionId, found.command, [...argv], { workspace, wrap: false, verb });
+	let grants: ResolvedPathGrant[];
+	let created: string[];
+	try {
+		grants = resolvePathGrants(found.paths, argv, workspace);
+		created = createWriteRoots(grants);
+	} catch (error) {
+		if (!(error instanceof PathGrantError)) throw error;
+		process.stderr.write(
+			`pancode ${verb}: ${error.flag} ${error.value}: ${error.message}\nsee: pancode ${verb} --help\n`,
+		);
+		return 2;
+	}
+	try {
+		return await runHeadlessCommand(found.extensionId, found.command, [...argv], {
+			workspace,
+			wrap: false,
+			verb,
+			grants,
+		});
+	} finally {
+		releaseCreatedRoots(created);
+	}
 }
 
 /**
@@ -479,11 +514,12 @@ async function runHeadlessCommand(
 	id: string,
 	command: string,
 	args: string[],
-	options: { workspace: string; wrap: boolean; verb?: string },
+	options: { workspace: string; wrap: boolean; verb?: string; grants?: ReadonlyArray<ResolvedPathGrant> },
 ): Promise<number> {
-	const { workspace, verb } = options;
+	const { workspace, verb, grants } = options;
 	const services = cliServiceDomains();
 	const runtime = new OperatorExtensions({
+		...(grants !== undefined && grants.length > 0 ? { grants, work: { homes: await runHomes() } } : {}),
 		services: createExtensionHostServices({ providers: services.providers }),
 		// The layered read keeps a broken user file from failing the command; the key is user-layer only.
 		sandboxUnixSockets: () => readLayeredSettings(workspace).settings.safety.sandboxUnixSockets,
@@ -535,6 +571,34 @@ async function runHeadlessCommand(
 		await runtime.dispose();
 		await services.stop();
 	}
+}
+
+/**
+ * How a run the command starts gets its own home: data, state and cache under it, beside the operator's config, and
+ * the operator's installed components and vendored tools, which it reads and never installs into. Loaded only for a
+ * verb the operator granted paths, since the readers pull in the session domain.
+ */
+export async function runHomes(): Promise<NonNullable<ExtensionWorkOptions["homes"]>> {
+	const [
+		{ OPERATOR_COMPONENTS_ENV, operatorComponentsDir },
+		{ OPERATOR_TOOLS_ENV, operatorToolchainRoot },
+		{ loadRunDigest },
+	] = await Promise.all([
+		import("../domains/lifecycle/components.js"),
+		import("../domains/toolchain/paths.js"),
+		import("../domains/session/run-digest.js"),
+	]);
+	return {
+		env: (home) => ({
+			PANCODE_CONFIG_DIR: pancodeConfigDir(),
+			PANCODE_DATA_DIR: join(home, "data"),
+			PANCODE_STATE_DIR: join(home, "state"),
+			PANCODE_CACHE_DIR: join(home, "cache"),
+			[OPERATOR_COMPONENTS_ENV]: operatorComponentsDir(),
+			[OPERATOR_TOOLS_ENV]: operatorToolchainRoot(),
+		}),
+		digest: loadRunDigest,
+	};
 }
 
 /** The domains a model call from a shell needs, loaded on first use: config, routes and the process journal. */

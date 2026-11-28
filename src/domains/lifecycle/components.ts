@@ -4,9 +4,9 @@ import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { resolvePancodeDirs } from "../../core/xdg.js";
 
 /**
- * The operator's components directory, set by `campaign run` for each entry. A component is an installation
- * artifact, not session data, so an entry whose own data root is empty and thrown away resolves the operator's
- * installed components from here, read-only: nothing installs into it.
+ * The operator's components directory, set by the extension runs service for a run started with its own home. A
+ * component is an installation artifact, not session data, so a run whose own data root starts empty resolves the
+ * operator's installed components from here, read-only: nothing installs into it.
  */
 export const OPERATOR_COMPONENTS_ENV = "PANCODE_OPERATOR_COMPONENTS_DIR";
 

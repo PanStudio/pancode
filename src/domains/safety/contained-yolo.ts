@@ -5,7 +5,7 @@ import { autonomyCeilingRefusal, yoloRootRefusal } from "../../core/yolo-host.js
 import { effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 
 /**
- * Why `research`, `campaign` or an extension's run service cannot hand its agent runs yolo here, or null
+ * Why `research` or an extension's run service cannot hand its agent runs yolo here, or null
  * when they can. Each runs every agent as a headless `pancode run --autonomy yolo`, which takes its confinement from
  * the operator's user settings; these surfaces promise contained yolo (sandbox, safety judge, autonomous caps, open
  * decisions), so an operator whose settings choose unconfined yolo is refused rather than handed it. Root outside a

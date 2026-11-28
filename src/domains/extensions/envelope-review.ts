@@ -8,7 +8,14 @@
  */
 
 import type { ExtensionCapabilityEnvelope } from "@pancode/sdk/pack";
-import { capabilityEnvelope, envelopeDigest, envelopeGrowth, hookPowers, runsCeilingText } from "@pancode/sdk/pack";
+import {
+	capabilityEnvelope,
+	cliPathGrantTexts,
+	envelopeDigest,
+	envelopeGrowth,
+	hookPowers,
+	runsCeilingText,
+} from "@pancode/sdk/pack";
 import { loadManifestFromRoot } from "./discovery.js";
 import { extensionInvocation } from "./operator-commands.js";
 
@@ -63,6 +70,9 @@ export function envelopeLines(envelope: ExtensionCapabilityEnvelope, extensionId
 		...(envelope.long?.length ? [`Long-running commands (up to 24 hours): ${list(envelope.long)}`] : []),
 		...(envelope.cli?.length
 			? [`Top-level verbs: ${list(envelope.cli.map((verb) => `pancode ${verb.verb} (${verb.command})`))}`]
+			: []),
+		...(envelope.cli !== undefined && cliPathGrantTexts(envelope.cli).length > 0
+			? [`Paths you name on the command line, opened for that invocation: ${list(cliPathGrantTexts(envelope.cli))}`]
 			: []),
 		`Events: ${list([...envelope.events, ...(envelope.tickMs !== undefined ? [`tick ${envelope.tickMs / 1000}s`] : [])])}`,
 		`Hooks: ${list(hooks)}`,
