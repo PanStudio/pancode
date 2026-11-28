@@ -13,11 +13,14 @@
 
 import type { trackCallFetch } from "../../core/call-failure.js";
 import type { StructuredHelperResult } from "../../domains/agents/result-contract-types.js";
+import type { MiddlewareToolChoiceControl } from "../../domains/middleware/tool-choice-control.js";
+import type { ThinkingLevel } from "../../domains/providers/index.js";
 import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
 import type { RunEffectsRecorder } from "../../domains/safety/run-effects.js";
 import type { McpCapabilitySource } from "../../tools/gateway/index.js";
 import type { createEngineAgent } from "../agent.js";
 import type { createRunPhase } from "../run-phase.js";
+import type { AgentEvent } from "../types.js";
 import type { createWorkerCallTelemetry } from "../worker-call-telemetry.js";
 import type { ActiveEscalation } from "../worker-escalation.js";
 import type { WorkerEventEmit, WorkerRunInput } from "../worker-run-types.js";
@@ -93,4 +96,11 @@ export interface WorkerRunScope {
 	readonly activeWorkerTools: ReturnType<typeof prepareNativeWorker>["activeWorkerTools"];
 	readonly model: ReturnType<typeof prepareNativeWorker>["model"];
 	readonly runEffects: RunEffectsRecorder;
+	readonly middlewareToolChoice: MiddlewareToolChoiceControl;
+	readonly terminalHandoffActive: (api: string) => boolean;
+	readonly workerResponseFormat: Record<string, unknown> | undefined;
+	readonly effectiveThinkingLevel: ThinkingLevel;
+	readonly onAssistantBatch: (event: AgentEvent) => void;
+	readonly onToolEvent: (event: AgentEvent) => void;
+	readonly onMessageEnd: (event: AgentEvent) => void;
 }

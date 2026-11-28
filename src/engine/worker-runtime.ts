@@ -22,7 +22,7 @@ import {
 	type Tool,
 } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import { classifyCallFailure, trackCallFetch } from "../core/call-failure.js";
+import { trackCallFetch } from "../core/call-failure.js";
 import { isWorkerToolCallCapExceededReason, isWorkerToolCallCapSynthesisReason } from "../core/guardrails.js";
 import { createHostPolicyMessage } from "../core/host-policy-message.js";
 import { snapshotModelInfo } from "../core/model-tier.js";
@@ -32,7 +32,7 @@ import { isResponseSchemaRejection } from "../core/response-schema.js";
 import { requestedThinking } from "../core/telemetry/call-effort.js";
 import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/context.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
-import { hasTokenUsageCounts, normalizeTokenUsage } from "../core/token-split.js";
+import { hasTokenUsageCounts } from "../core/token-split.js";
 import { ToolNames } from "../core/tool-names.js";
 import { resultContractReminder, resultContractShape } from "../domains/agents/result-contract-repair.js";
 import { createWorkerContextGuard, WorkerContextExhaustedError } from "../domains/context/worker/pressure.js";
@@ -102,7 +102,6 @@ import {
 } from "./provider-payload.js";
 import { createRunPhase, type HandbackTrigger } from "./run-phase.js";
 import type { AgentMessage, EngineModel } from "./types.js";
-import { hostWrittenExchange, isAssistantMessage } from "./worker-assistant-reply.js";
 import { createWorkerCallTelemetry } from "./worker-call-telemetry.js";
 import type { PancodeWorkerEvent } from "./worker-events.js";
 import { createWorkerExtensionHookRegistrations } from "./worker-extension-hooks.js";
@@ -112,6 +111,7 @@ import {
 	workerContractResponseFormatFor,
 	workerResponseFormatFor,
 } from "./worker-result-contract.js";
+import { subscribeWorkerEvents } from "./worker-run/events.js";
 import { createWorkerEvidence } from "./worker-run/evidence.js";
 import { finishWorkerRun, taskMessage } from "./worker-run/finish.js";
 import { createWorkerPermissions } from "./worker-run/permissions.js";
@@ -266,6 +266,27 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		},
 		get runEffects() {
 			return runEffects;
+		},
+		get middlewareToolChoice() {
+			return middlewareToolChoice;
+		},
+		get terminalHandoffActive() {
+			return terminalHandoffActive;
+		},
+		get workerResponseFormat() {
+			return workerResponseFormat;
+		},
+		get effectiveThinkingLevel() {
+			return effectiveThinkingLevel;
+		},
+		get onAssistantBatch() {
+			return onAssistantBatch;
+		},
+		get onToolEvent() {
+			return onToolEvent;
+		},
+		get onMessageEnd() {
+			return onMessageEnd;
 		},
 	};
 	const workShare = (role: RunRole): number => input.limits?.context.workShare ?? HANDBACK_CONTEXT_SHARE[role];
@@ -1226,89 +1247,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					Math.max(0, wallLimits.handbackAt - Date.now()),
 				);
 	wallTimer?.unref();
-	const unsubscribe = agent.subscribe(async (event) => {
-		if (
-			event.type === "message_end" &&
-			isAssistantMessage(event.message) &&
-			!phase.toolsLocked &&
-			phase.sealedBy === null &&
-			phase.lastRound === null
-		) {
-			const reminder = middlewareToolChoice.completeRound(event.message);
-			if (reminder !== null) {
-				if (!hostWrittenExchange(event.message)) workerTelemetry?.settle(event.message);
-				// This answer is a request the thrash note may have ridden, though the round ends here.
-				thrashOutcome.observe(event);
-				// The middleware round must run before this answer can seal a terminal result (#423).
-				const tail: AgentMessage = { role: "user", content: reminder, timestamp: Date.now() };
-				if (event.message.content.some((block) => block.type === "toolCall")) agent.steer(tail);
-				else agent.followUp(tail);
-				emit(event);
-				return;
-			}
-		}
-		if (event.type === "turn_start") {
-			const choice = middlewareToolChoice.current();
-			const handoff = terminalHandoffActive(model.api);
-			workerTelemetry?.begin({
-				roundKind: handoff
-					? "required"
-					: phase.toolsLocked
-						? "tools-removed"
-						: choice.kind === "none"
-							? "text-only"
-							: choice.kind === "required"
-								? "required"
-								: "normal",
-				toolChoice: handoff
-					? { name: INTERNAL_HELPER_RESULT_TOOL }
-					: phase.toolsLocked || choice.kind === "none"
-						? "none"
-						: choice.kind === "required"
-							? { name: choice.toolName }
-							: "auto",
-				// The same predicate streamFn applies to this round's request.
-				...(workerResponseFormat !== undefined ||
-				(scope.contractResponseFormat !== undefined && phase.toolsLocked && !helperToolAvailable)
-					? { responseFormat: "json-schema" as const }
-					: {}),
-				...requestedThinking(effectiveThinkingLevel),
-			});
-			scope.callTracking = null;
-			scope.callUsageReported = false;
-			scope.workerModelRound += 1;
-			scope.helperTurnFailure = null;
-		}
-		if (
-			event.type === "message_end" &&
-			isAssistantMessage(event.message) &&
-			(event.message.usage as unknown as Record<string, unknown>).callInvoked !== false
-		) {
-			const message = event.message as unknown as Record<string, unknown>;
-			const usage = event.message.usage as unknown as Record<string, unknown>;
-			const reported = scope.callUsageReported || normalizeTokenUsage(usage).observed;
-			const failed = event.message.stopReason === "error" || event.message.stopReason === "aborted";
-			const failure = failed
-				? (scope.callTracking?.failure(event.message, event.message.stopReason === "aborted", reported) ??
-					classifyCallFailure(event.message, { invoked: false }))
-				: undefined;
-			if (failure !== undefined) message.failure = failure;
-			usage.callInvoked = failure?.invoked ?? true;
-			usage.usageReported = reported;
-		}
-		// A repair exchange PanCode wrote into the conversation reached no provider: the round's attempt belongs to the request
-		// that follows it, so it settles no attempt of its own (C-28).
-		if (event.type === "message_end" && isAssistantMessage(event.message) && !hostWrittenExchange(event.message))
-			workerTelemetry?.settle(event.message);
-		onAssistantBatch(event);
-		if (event.type === "tool_execution_start" && event.toolName !== INTERNAL_HELPER_RESULT_TOOL) {
-			scope.toolExecutionsStarted += 1;
-			middlewareToolChoice.toolStarted(event.toolName, event.args);
-		}
-		onToolEvent(event);
-		onMessageEnd(event);
-		emit(event);
-	});
+	const unsubscribe = subscribeWorkerEvents(scope);
 
 	const {
 		escalationConfig,
