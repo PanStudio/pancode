@@ -11,7 +11,7 @@
 
 import { canonicalJson } from "../../../core/canonical-json.js";
 import { sha256Hex } from "../../../core/hash.js";
-import type { McpToolDescriptor } from "./client.js";
+import type { McpToolDescriptor } from "./tool-results.js";
 
 /** The fields of one served tool that its approval covers. */
 export type McpSurfaceTool = Pick<McpToolDescriptor, "name" | "inputSchema"> & {

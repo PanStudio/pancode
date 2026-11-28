@@ -13,6 +13,7 @@
  * round and nothing else.
  */
 
+import { formatWaitClock } from "../../core/format-time.js";
 import {
 	isKeyRelease,
 	Markdown,
@@ -37,7 +38,6 @@ import {
 	chipRows,
 	choiceRows,
 	factRows,
-	formatWaitClock,
 	GLYPH,
 	keyCap,
 	markdownTheme,

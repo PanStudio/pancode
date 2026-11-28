@@ -3,7 +3,6 @@
 import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
 import type { ExtensionsContract } from "./contract.js";
 import type { ExtensionSessionOverlay } from "./listing.js";
-import { listInstalledExtensions } from "./manager.js";
 import {
 	type BuildExtensionSnapshotInput,
 	buildExtensionSnapshot,
@@ -11,7 +10,7 @@ import {
 	EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP,
 } from "./snapshot.js";
 import { bindExtensionSnapshotStore, createExtensionSnapshotStore } from "./snapshot-store.js";
-import { listInstalledExtensionRecords } from "./state.js";
+import { listInstalledExtensionRecords, listInstalledExtensions } from "./state.js";
 import type {
 	ExtensionReloadCandidate,
 	ExtensionReloadRejection,

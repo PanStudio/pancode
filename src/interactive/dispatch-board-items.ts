@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { formatElapsed } from "../core/format-time.js";
 /** The board's items: council member folding, earlier-session grouping, and the selectable rows. */
 import { parseCouncilReport } from "../domains/agents/index.js";
 import { NEVER_STARTED_WORDS, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
@@ -28,7 +29,7 @@ import {
 	presentWorkerContractAnswer,
 } from "./renderers/worker-answer.js";
 import type { PancodeTheme } from "./theme/index.js";
-import { animationStep, formatElapsed, formatTargetLabel, GLYPH } from "./theme/index.js";
+import { animationStep, formatTargetLabel, GLYPH } from "./theme/index.js";
 import { completedRunMark } from "./worker-activity.js";
 
 /** The route as the run's detail card words it, so the dock and the board never name one route two ways. */

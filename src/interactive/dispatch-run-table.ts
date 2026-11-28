@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { formatCount, formatElapsed } from "../core/format-time.js";
 /** The run table: columns by tier and width, the status and activity cells, and the table rows. */
 import { type BoardColumn, tierPolicy } from "../core/presentation-tier.js";
 import { USAGE_NOT_MEASURED } from "../core/views/usage-words.js";
@@ -31,8 +32,6 @@ import type { QuotaProviders } from "./quota-view.js";
 import { routeWeeklyQuota } from "./quota-view.js";
 import type { PancodeTheme } from "./theme/index.js";
 import {
-	formatCount,
-	formatElapsed,
 	GLYPH,
 	padAnsi,
 	pancodeTheme,

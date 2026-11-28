@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { formatElapsed } from "../../core/format-time.js";
 import type { ModelAdmissionWait } from "../../core/model-admission.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { ordinal } from "../../session-control/retry-status-text.js";
 import type { AgentStatus, RetryOverlay } from "../../session-control/status-types.js";
-import { formatElapsed, GLYPH, spinnerFrame as themeSpinnerFrame } from "../theme/index.js";
+import { GLYPH, spinnerFrame as themeSpinnerFrame } from "../theme/index.js";
 
 export interface VerbRender {
 	text: string;

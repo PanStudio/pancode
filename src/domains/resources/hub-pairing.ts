@@ -39,7 +39,7 @@ function copiesOf(installed: ReadonlyArray<HubInstalledPackage>, kind: "plugin" 
  * Pairs for every plugin and extension the catalog or this machine knows. A row
  * appears under both ends of its pair, so either side finds the other by ref.
  */
-export function hubPairsFrom(
+function hubPairsFrom(
 	catalog: ReadonlyArray<Pick<HubEntry, "kind" | "name" | "plugin">>,
 	installed: ReadonlyArray<HubInstalledPackage>,
 ): HubPairs {

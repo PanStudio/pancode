@@ -57,21 +57,6 @@ import {
 import type { McpToolCallResult, McpToolDescriptor } from "./tool-results.js";
 import type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
-export { MCP_INSTRUCTIONS_BYTES } from "./client-init.js";
-export { MCP_CLIENT_NAME } from "./client-session.js";
-export { MCP_TOOL_LIST_CAP } from "./client-tools.js";
-
-export {
-	DEFAULT_RESULT_TEXT_BYTES,
-	type McpContentBlock,
-	type McpElicitationOutcome,
-	type McpToolCallResult,
-	type McpToolDescriptor,
-	renderMcpContent,
-	resourceLinkLine,
-} from "./tool-results.js";
-export type { McpTeardownOutcome, McpTransportEvents } from "./transport.js";
-
 export const DEFAULT_STDERR_TAIL_BYTES = 16 * 1024;
 export const DEFAULT_KILL_GRACE_MS = 3_000;
 /** Bytes accepted for the server's stdin but not yet flushed before the client fails with `overload`. */

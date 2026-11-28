@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { RetrySettings } from "../../core/defaults.js";
+import { formatElapsed } from "../../core/format-time.js";
 import type { RuntimeTier } from "../../domains/providers/index.js";
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
 import { firstTokenStallLimitMs } from "../../session-control/chat-loop-policy.js";
 import type { AgentStatus } from "../../session-control/status-types.js";
 import { computeWatchdogTier } from "../status/index.js";
-import { formatElapsed, GLYPH } from "../theme/index.js";
+import { GLYPH } from "../theme/index.js";
 
 /** What this session's settled calls of one role say about how long a route takes to its first output. */
 export interface RouteFirstOutput {

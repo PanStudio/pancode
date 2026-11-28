@@ -706,7 +706,7 @@ function reviewSteps(
 // ---------------------------------------------------------------------------
 
 /** Read back one copy: tree, record, inventory state, actual component admission and the surviving effective copy. */
-export function verifyHubStep(
+function verifyHubStep(
 	identity: HubPackageIdentity,
 	cwd: string,
 	evidence: HubStepVerification["evidence"] = "pre-refresh",

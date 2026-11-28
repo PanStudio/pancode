@@ -3,6 +3,7 @@
 
 /** The dispatch board's row model and the shared presentation of one run: status, origin, usage, evidence, and card key-value lines. */
 
+import { formatElapsed } from "../core/format-time.js";
 import type { Quantity, RunTelemetryV1 } from "../core/telemetry/dto.js";
 import type { HostVerificationStatus } from "../core/telemetry/run-vocabulary.js";
 import type { AgentAudience } from "../domains/agents/spec.js";
@@ -21,15 +22,7 @@ import type { FleetPlanRunView } from "./fleet-plan-runs.js";
 import type { RouteFirstOutput } from "./footer/silence-note.js";
 import type { CommitPlacement } from "./renderers/worker-answer.js";
 import type { PancodeTheme, PancodeToken } from "./theme/index.js";
-import {
-	fitUnits,
-	formatElapsed,
-	functionText,
-	GLYPH,
-	pancodeTheme,
-	spinnerFrame,
-	toolFunction,
-} from "./theme/index.js";
+import { fitUnits, functionText, GLYPH, pancodeTheme, spinnerFrame, toolFunction } from "./theme/index.js";
 import { finishedActionFault, workerActionParts } from "./worker-activity.js";
 
 export type DispatchBoardStatus = TelemetryRunSummary["status"];
