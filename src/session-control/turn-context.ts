@@ -14,7 +14,6 @@ import { readSessionContextSnapshots } from "../domains/telemetry/index.js";
 import {
 	engineCodexUserTurn,
 	engineInitialSystemPrompt,
-	estimateEngineRequestTokens,
 	setEngineCodexConfiguration,
 	setEngineCodexUserTurn,
 	setEngineProviderCheckpointObserver,
@@ -77,10 +76,8 @@ import {
 	captureContextSnapshot,
 	ceilChars,
 	contextUsageSnapshot,
-	estimateAgentContextBreakdown,
-	estimateAgentMessageTokens,
+	type estimateAgentContextBreakdown,
 	snapshotInputTokens,
-	usageAnchoredTokens,
 } from "../domains/session/context-accounting.js";
 import { buildContextLedger, type ContextLedger, type PrewarmStats } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
@@ -109,6 +106,7 @@ import { contextFloorRefusal, resolveFitOutputReserve, turnAdmissionRemedy } fro
 import { extractTurnText } from "./session-replay-messages.js";
 import { createTurnContextAnchor } from "./turn-context/anchor.js";
 import { createTurnContextCache } from "./turn-context/cache.js";
+import { createTurnContextFit } from "./turn-context/fit.js";
 import {
 	capturedBreakdown,
 	continuationContextUpdate,
@@ -586,18 +584,10 @@ export const OVERSIZED_RESULT_STOP = "PancodeOversizedResultStop";
 const oversizedResultStop = (message: string): Error =>
 	Object.assign(new Error(message), { name: OVERSIZED_RESULT_STOP });
 
-/** A tool result cut to fit keeps at least this much, so what the model reads still says what to ask for next. */
-const BOUNDED_RESULT_MIN_CHARS = 2_048;
-/** Room the cut leaves beyond the overflow for the note it inserts and estimate rounding. */
-const BOUNDED_RESULT_SLACK_CHARS = 1_024;
-
-/** What bounding the latest tool batch came to: it fits, there was nothing to cut, or even the cut floor overflows. */
 /** What a compaction trigger reads of a route: a built runtime, or the route in settings before one is built. */
 export type CompactionRouteView = Pick<AgentRuntime, "targetId" | "wireModelId" | "runtimeResolution"> & {
 	agent: { state: { model: AgentRuntime["agent"]["state"]["model"] } };
 };
-
-type BoundBatchOutcome = { kind: "fit" } | { kind: "none" } | { kind: "short"; stop: string };
 
 export function createTurnContext(deps: TurnContextDeps): TurnContext {
 	const { state, middleware } = deps;
@@ -699,13 +689,13 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return routing.routeCompaction;
 		},
 		get liveContextEstimate() {
-			return liveContextEstimate;
+			return fitting.liveContextEstimate;
 		},
 		get overflowFitTokens() {
-			return overflowFitTokens;
+			return fitting.overflowFitTokens;
 		},
 		get pinOverflowFit() {
-			return pinOverflowFit;
+			return fitting.pinOverflowFit;
 		},
 		get liveBudgetInput() {
 			return liveBudgetInput;
@@ -797,6 +787,13 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return controller;
 		},
 		pendingColdReasons,
+		pendingPolicyText,
+		get routeTokenRatio() {
+			return anchors.routeTokenRatio;
+		},
+		get measuredAnchor() {
+			return anchors.measuredAnchor;
+		},
 	};
 
 	const cache = createTurnContextCache(shared);
@@ -931,309 +928,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 	const anchors = createTurnContextAnchor(shared);
 
-	const liveContextEstimate = (
-		agentRuntime: AgentRuntime,
-		pendingUserText?: string,
-		replayMessages?: ReadonlyArray<AgentMessage>,
-		history?: MessageListDigests,
-	): LiveContextEstimate => {
-		const contextWindow = agentRuntime.runtimeResolution.contextWindowDetails.effectiveContextWindow;
-		const observed = replayMessages === undefined ? (history ?? observeHistory(agentRuntime)) : undefined;
-		const estimateInput = {
-			systemPrompt: engineInitialSystemPrompt(agentRuntime.agent),
-			messages:
-				observed?.messages ??
-				(replayMessages ?? []).filter((message) => message.role !== "system" || isHostPolicyMessage(message)),
-			...(observed ? { messageTokens: observed.messageTokens } : {}),
-			tools: agentRuntime.agent.state.tools,
-			...(pendingUserText !== undefined ? { pendingUserText, pendingUserImages: shared.pendingUserImages } : {}),
-		};
-		const breakdown = estimateAgentContextBreakdown(estimateInput);
-		const policyText = pendingUserText === undefined ? null : pendingPolicyText();
-		const pendingPolicyTokens =
-			policyText === null ? 0 : estimateAgentMessageTokens({ role: "system", content: policyText });
-		breakdown.pendingUserTokens += pendingPolicyTokens;
-		const historyTokens = observed ? anchors.reconciledHistoryTokens(agentRuntime, observed) : null;
-		const anchor = shared.reconciledAnchor;
-		// Provider usage already includes the old system prompt and schemas.
-		// Price only positive growth, separately: shrinking one must not hide
-		// growth in the other when the measured prompt exceeds chars/4.
-		const reconciledTokens =
-			historyTokens !== null && anchor
-				? historyTokens +
-					breakdown.pendingUserTokens +
-					Math.max(0, breakdown.systemPromptTokens - anchor.systemPromptTokens) +
-					Math.max(0, breakdown.toolSchemaTokens - anchor.toolSchemaTokens)
-				: null;
-		// The structural projection (pending policy included) and, with no live anchor (a resume, or an anchor a
-		// rewrite dropped), the newest usable usage plus the delta since that call, each walked once.
-		const projection =
-			breakdown.systemPromptTokens + breakdown.messageTokens + breakdown.pendingUserTokens + breakdown.toolSchemaTokens;
-		const usageFloor = reconciledTokens === null ? usageAnchoredTokens(estimateInput, breakdown) : null;
-		const estimatedTokens = usageFloor === null ? projection : Math.max(projection, usageFloor);
-		const ratio = anchors.routeTokenRatio(agentRuntime, observed);
-		const priced = (tokens: number): number => (ratio === 1 ? tokens : Math.ceil(tokens * ratio));
-		// The usage floor is already a provider count, so only the chars/4 projection takes the ratio (FX-31).
-		return {
-			// The estimate is a floor, not a competing verdict: it prices material
-			// the attested call never saw, so a provider count below it would be
-			// answering about a smaller conversation. It is priced at the route's
-			// measured chars per token when the route has one, else at chars/4.
-			tokens:
-				usageFloor === null
-					? Math.max(priced(estimatedTokens), reconciledTokens ?? 0)
-					: Math.max(priced(projection), usageFloor),
-			estimatedTokens,
-			reconciledTokens,
-			contextWindow,
-			breakdown,
-		};
-	};
-
-	/**
-	 * The request priced at this route's measured anchor (bt3 drv-rv5): the anchor, the messages after it and the
-	 * pending ask with its policy text each at max(fold estimate, Pi's chars/3.5), and positive growth of the system
-	 * prompt and tool schemas, as the reconciled count prices it. Null without a measured anchor.
-	 */
-	const anchoredFitCount = (
-		agentRuntime: AgentRuntime,
-		observed: MessageListDigests,
-		live: LiveContextEstimate,
-		pending: ReadonlyArray<AgentMessage>,
-	): number | null => {
-		const anchor = anchors.measuredAnchor(agentRuntime, observed);
-		if (!anchor) return null;
-		let foldTail = 0;
-		for (let index = anchor.covered; index < observed.messages.length; index += 1)
-			foldTail += observed.messageTokens[index] ?? 0;
-		// Pi's count of the bare system message and tools, subtracted so only the messages are priced.
-		const statics = estimateEngineRequestTokens(agentRuntime.agent, []);
-		const piTail = estimateEngineRequestTokens(agentRuntime.agent, observed.messages.slice(anchor.covered)) - statics;
-		const piPending = estimateEngineRequestTokens(agentRuntime.agent, pending) - statics;
-		const { breakdown } = live;
-		return (
-			anchor.tokens +
-			Math.max(foldTail, piTail) +
-			Math.max(breakdown.pendingUserTokens, piPending) +
-			Math.max(0, breakdown.systemPromptTokens - anchor.systemPromptTokens) +
-			Math.max(0, breakdown.toolSchemaTokens - anchor.toolSchemaTokens)
-		);
-	};
-
-	/**
-	 * The overflow path's one count (A4): the live estimate or Pi's chars/3.5
-	 * count of the same request, whichever is larger. The fold evicts until it
-	 * fits and the next main request pins it, so admission and Pi's clamp size
-	 * the request the fold fitted. With a provider-measured anchor on this
-	 * route the count is the anchored one instead, and neither the chars/4
-	 * floor over the measured prefix nor the caller's `floor` applies; without
-	 * one it is max(floor, A4).
-	 */
-	const overflowFitTokens = (
-		agentRuntime: AgentRuntime,
-		pendingUserText?: string,
-		floor = 0,
-		history?: MessageListDigests,
-	): number => {
-		const observed = history ?? observeHistory(agentRuntime);
-		const live = liveContextEstimate(agentRuntime, pendingUserText, undefined, observed);
-		const pending: AgentMessage[] = [];
-		if (pendingUserText !== undefined) {
-			pending.push({
-				role: "user",
-				content: [{ type: "text", text: pendingUserText }, ...shared.pendingUserImages],
-				timestamp: 0,
-			} as AgentMessage);
-			const policy = pendingPolicyText();
-			if (policy !== null) pending.push({ role: "user", content: policy, timestamp: 0 });
-		}
-		const anchored = anchoredFitCount(agentRuntime, observed, live, pending);
-		if (anchored !== null) return anchored;
-		const pi = estimateEngineRequestTokens(agentRuntime.agent, [...observed.messages, ...pending]);
-		return Math.max(floor, live.tokens, pi);
-	};
-
-	/**
-	 * The part of the next request no compaction removes, on the A4 terms: the system prompt, tool schemas and pending
-	 * ask, at the larger of PanCode's estimate and Pi's chars/3.5 count.
-	 */
-	const fixedRequestTokens = (agentRuntime: AgentRuntime, pendingUserText?: string): number => {
-		const { breakdown } = liveContextEstimate(agentRuntime, pendingUserText, []);
-		const pending: AgentMessage[] = [];
-		if (pendingUserText !== undefined) {
-			pending.push({
-				role: "user",
-				content: [{ type: "text", text: pendingUserText }, ...shared.pendingUserImages],
-				timestamp: 0,
-			} as AgentMessage);
-			const policy = pendingPolicyText();
-			if (policy !== null) pending.push({ role: "user", content: policy, timestamp: 0 });
-		}
-		return Math.max(
-			breakdown.systemPromptTokens + breakdown.toolSchemaTokens + breakdown.pendingUserTokens,
-			estimateEngineRequestTokens(agentRuntime.agent, pending),
-		);
-	};
-
-	/**
-	 * The anchored count of the next request with nothing pending, or null when this route has no measured anchor.
-	 * `history`, when given, is an observation of the same runtime nothing has changed since.
-	 */
-	const anchoredInputTokens = (agentRuntime: AgentRuntime, history?: MessageListDigests): number | null => {
-		const observed = history ?? observeHistory(agentRuntime);
-		const live = liveContextEstimate(agentRuntime, undefined, undefined, observed);
-		return anchoredFitCount(agentRuntime, observed, live, []);
-	};
-
-	/** After an overflow fold or the requireFit summary: a request that fits on the A4 count pins it for the next main request. */
-	const pinOverflowFit = (agentRuntime: AgentRuntime, pendingUserText?: string): boolean => {
-		const fitAfter = overflowFitTokens(agentRuntime, pendingUserText);
-		const window = liveContextEstimate(agentRuntime, pendingUserText).contextWindow;
-		if (!requestFits(fitAfter, resolveFitOutputReserve(agentRuntime, fitAfter), window)) return false;
-		shared.overflowInputPin = { sessionId: deps.session?.current()?.id };
-		return true;
-	};
-
-	/**
-	 * Null while the request fits on the A4 count. Otherwise what the overflow fold and the requireFit summary could
-	 * not clear: the A4 count, and the sentence naming the largest tool result the request still carries and its size,
-	 * left empty unless that result alone is larger than the overflow.
-	 */
-	const overflowOversize = (
-		agentRuntime: AgentRuntime,
-		pendingUserText?: string,
-	): { tokens: number; reserve: number; window: number; largest: string } | null => {
-		const window = liveContextEstimate(agentRuntime, pendingUserText).contextWindow;
-		if (!(window > 0)) return null;
-		const tokens = overflowFitTokens(agentRuntime, pendingUserText);
-		const reserve = resolveFitOutputReserve(agentRuntime, tokens);
-		if (requestFits(tokens, reserve, window)) return null;
-		const messages = agentRuntime.agent.state.messages;
-		let largest: { id: string; tool: string; chars: number } | null = null;
-		for (const message of messages) {
-			if (message.role !== "toolResult") continue;
-			const chars = message.content.reduce((sum, block) => sum + (block.type === "text" ? block.text.length : 0), 0);
-			if (largest === null || chars > largest.chars) largest = { id: message.toolCallId, tool: message.toolName, chars };
-		}
-		if (largest === null || Math.ceil(largest.chars / 3.5) < tokens + reserve - window)
-			return { tokens, reserve, window, largest: "" };
-		const call = messages
-			.flatMap((message) => (message.role === "assistant" ? message.content : []))
-			.find((block) => block.type === "toolCall" && block.id === largest.id);
-		const target = call?.type === "toolCall" && typeof call.arguments.path === "string" ? ` ${call.arguments.path}` : "";
-		return {
-			tokens,
-			reserve,
-			window,
-			largest: `The ${largest.tool}${target} result alone is ${largest.chars} characters (about ${Math.ceil(largest.chars / 3.5)} tokens); ask for a narrower ${largest.tool} (an offset and limit).`,
-		};
-	};
-
-	/**
-	 * The turn's last word once the overflow fold and the requireFit summary are spent and one tool result is what
-	 * still overflows. Phrased so overflow recovery does not read it as a provider overflow and compact again.
-	 */
-	const overflowStop = (agentRuntime: AgentRuntime): string | null => {
-		const over = overflowOversize(agentRuntime);
-		if (over === null || !over.largest) return null;
-		return `[PanCode] This turn stopped: after compaction about ${over.tokens} input tokens plus ${over.reserve} reserved for the reply do not fit the ${over.window}-token window. ${over.largest} The session stays usable; send a smaller request.`;
-	};
-
-	/**
-	 * After compaction, cut the latest tool batch's largest text results (head and tail kept, a note between them) until
-	 * the continuation fits, so the model can ask for a narrower range instead of the turn ending on one oversized
-	 * observation. Only the outgoing messages change; the session record keeps the full result. Restores the messages and
-	 * returns false when no cut makes the request fit, so the guard's stop stands.
-	 */
-	const boundBatchToFit = (agentRuntime: AgentRuntime): BoundBatchOutcome => {
-		const before = agentRuntime.agent.state.messages;
-		const batch: number[] = [];
-		for (let index = before.length - 1; index >= 0; index -= 1) {
-			const message = before[index];
-			if (message?.role === "assistant") break;
-			if (message?.role === "toolResult") batch.push(index);
-		}
-		if (batch.length === 0) return { kind: "none" };
-		const textChars = (message: AgentMessage): number =>
-			message.role === "toolResult"
-				? message.content.reduce((sum, block) => sum + (block.type === "text" ? block.text.length : 0), 0)
-				: 0;
-		const excessTokens = (): number => {
-			const window = liveContextEstimate(agentRuntime).contextWindow;
-			if (!(window > 0)) return 0;
-			const input = overflowFitTokens(agentRuntime);
-			return input + resolveFitOutputReserve(agentRuntime, input) - window;
-		};
-		const window = liveContextEstimate(agentRuntime).contextWindow;
-		// A cut result by its message index: the text block cut, its full text, and how much of it the model sees.
-		const cuts = new Map<number, { tool: string; block: number; text: string; chars: number; kept: number }>();
-		const shown = (index: number): number =>
-			cuts.get(index)?.kept ?? textChars(agentRuntime.agent.state.messages[index] as AgentMessage);
-		// Each pass cuts the largest result still above the floor from its full text, priced at Pi's 3.5 characters a token
-		// plus slack for the note, until the request fits or every result of the batch is at the floor. Every pass shows
-		// one result less, so the loop ends.
-		for (;;) {
-			const excess = excessTokens();
-			if (excess <= 0) break;
-			const messages = agentRuntime.agent.state.messages;
-			const index = batch.filter((i) => shown(i) > BOUNDED_RESULT_MIN_CHARS).sort((a, b) => shown(b) - shown(a))[0];
-			const message = index === undefined ? undefined : messages[index];
-			if (index === undefined || message?.role !== "toolResult") break;
-			const blocks = message.content;
-			let entry = cuts.get(index);
-			if (entry === undefined) {
-				const largest = blocks.reduce<number>(
-					(best, block, i) =>
-						block.type === "text" && (best < 0 || block.text.length > (blocks[best] as { text: string }).text.length)
-							? i
-							: best,
-					-1,
-				);
-				const block = blocks[largest];
-				if (block?.type !== "text") break;
-				const call = messages
-					.flatMap((item) => (item.role === "assistant" ? item.content : []))
-					.find((item) => item.type === "toolCall" && item.id === message.toolCallId);
-				const target =
-					call?.type === "toolCall" && typeof call.arguments.path === "string" ? ` ${call.arguments.path}` : "";
-				const chars = block.text.length;
-				entry = { tool: `${message.toolName}${target}`, block: largest, text: block.text, chars, kept: chars };
-			}
-			const keep = Math.max(BOUNDED_RESULT_MIN_CHARS, entry.kept - Math.ceil(excess * 3.5) - BOUNDED_RESULT_SLACK_CHARS);
-			if (keep >= entry.kept) break;
-			const { tool, text: full, chars } = entry;
-			const head = Math.ceil(keep / 2);
-			const note = `\n\n[PanCode cut this ${tool} result from ${chars} to ${keep} characters, keeping its start and end, so the request fits the ${window}-token context window. Ask for the part you need in narrower ranges (an offset and limit, or filtered output) instead of repeating this call.]\n\n`;
-			const text = `${full.slice(0, head)}${note}${full.slice(chars - (keep - head))}`;
-			const next = [...messages];
-			next[index] = {
-				...message,
-				content: blocks.map((item, i) => (i === entry.block && item.type === "text" ? { ...item, text } : item)),
-			};
-			agentRuntime.agent.state.messages = next;
-			cuts.set(index, { ...entry, kept: keep });
-		}
-		const cut = [...cuts.values()];
-		if (cut.length === 0) return { kind: "none" };
-		if (excessTokens() > 0) {
-			// Even the floor overflows: what is left is the fixed request, which no cut of this batch can shrink.
-			const tokens = overflowFitTokens(agentRuntime);
-			const reserve = resolveFitOutputReserve(agentRuntime, tokens);
-			agentRuntime.agent.state.messages = before;
-			const cuts = cut.map((entry) => `the ${entry.tool} result cut to ${entry.kept} characters`).join(" and ");
-			return {
-				kind: "short",
-				stop: `[PanCode] This turn stopped: the context window is too small for it. Even with ${cuts}, about ${tokens} input tokens plus ${reserve} reserved for the reply do not fit the ${window}-token window. ${turnAdmissionRemedy(agentRuntime, tokens)} The session stays usable.`,
-			};
-		}
-		for (const entry of cut) {
-			deps.emitNotice(
-				`[PanCode] The ${entry.tool} result (${entry.chars} characters) did not fit the ${window}-token window after compaction; the model sees ${entry.kept} of them, from its start and end, and was told to read narrower ranges. The session keeps the full result.`,
-				"warning",
-			);
-		}
-		return { kind: "fit" };
-	};
+	const fitting = createTurnContextFit(shared);
 
 	/** The system prompt rarely changes between publications; hash it again only when it does. */
 	const systemPromptDigest = (prompt: string | null): string => {
@@ -1314,12 +1009,12 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		history?: MessageListDigests,
 		computed?: LiveContextEstimate,
 	): LiveBudgetAccounting => {
-		const estimate = computed ?? liveContextEstimate(agentRuntime, pendingUserText, undefined, history);
+		const estimate = computed ?? fitting.liveContextEstimate(agentRuntime, pendingUserText, undefined, history);
 		const details = agentRuntime.runtimeResolution.contextWindowDetails;
 		// After an overflow fold that fit, the view publishes the A4 count it fitted, so the card, admission and Pi's
 		// clamp read one figure until the request that carries it goes out.
 		const inputTokens = overflowPinArmed()
-			? overflowFitTokens(agentRuntime, pendingUserText, estimate.tokens)
+			? fitting.overflowFitTokens(agentRuntime, pendingUserText, estimate.tokens)
 			: estimate.tokens;
 		return {
 			targetId: agentRuntime.targetId,
@@ -1680,18 +1375,18 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 		captureRuntimeContextSnapshot,
 		persistContextSnapshot,
-		liveContextEstimate,
+		liveContextEstimate: fitting.liveContextEstimate,
 
 		refreshLiveBudget,
 		takeOverflowInputPin(): void {
 			shared.overflowInputPin = null;
 		},
-		overflowFitTokens,
-		anchoredInputTokens,
+		overflowFitTokens: fitting.overflowFitTokens,
+		anchoredInputTokens: fitting.anchoredInputTokens,
 		contextFloorRefusal: (runtime: AgentRuntime, pendingUserText?: string) =>
-			contextFloorRefusal(runtime, fixedRequestTokens(runtime, pendingUserText)),
+			contextFloorRefusal(runtime, fitting.fixedRequestTokens(runtime, pendingUserText)),
 		oversizedResult: (runtime: AgentRuntime, pendingUserText?: string) =>
-			overflowOversize(runtime, pendingUserText)?.largest || null,
+			fitting.overflowOversize(runtime, pendingUserText)?.largest || null,
 		refreshAgentMessagesFromSession,
 		runAutoCompact,
 		runStepCheckpoint,
@@ -1830,13 +1525,13 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			const settled = (): MessageListDigests | undefined => (attemptStarted ? undefined : history);
 			// The A4 count (overflowFitTokens) decides whether the request fits; the fit line's reserve is A5's, read at that count.
 			const a4Fits = (view: LiveBudgetView): boolean => {
-				const input = overflowFitTokens(agentRuntime, undefined, view.inputTokens ?? 0, settled());
+				const input = fitting.overflowFitTokens(agentRuntime, undefined, view.inputTokens ?? 0, settled());
 				const reserve = view.outputReserveTokens === null ? null : resolveFitOutputReserve(agentRuntime, input);
 				return requestFits(input, reserve, view.effectiveWindow);
 			};
 			// The view's figures, or with a measured anchor the anchored count admission sends on (bt3 drv-rv5).
 			const fitFigures = (view: LiveBudgetView): { input: number | null; reserve: number | null } => {
-				const anchored = anchoredInputTokens(agentRuntime, settled());
+				const anchored = fitting.anchoredInputTokens(agentRuntime, settled());
 				if (anchored === null) return { input: view.inputTokens, reserve: view.outputReserveTokens };
 				const reserve = view.outputReserveTokens === null ? null : resolveFitOutputReserve(agentRuntime, anchored);
 				return { input: anchored, reserve };
@@ -1861,7 +1556,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 				} catch (err) {
 					const reason = err instanceof Error ? err.message : String(err);
 					const aborted = signal?.aborted || (err instanceof Error && err.name === "AbortError");
-					const oversize = requireFit && !aborted ? overflowStop(agentRuntime) : null;
+					const oversize = requireFit && !aborted ? fitting.overflowStop(agentRuntime) : null;
 					// One tool result is what overflows: finish() bounds it, or stops naming it when no cut fits.
 					if (oversize !== null) return;
 					if (requireFit || aborted) {
@@ -1882,14 +1577,14 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			const finish = (afterView: LiveBudgetView): ReturnType<typeof continuationContextUpdate> | undefined => {
 				let view = afterView;
 				// Compaction is spent and the latest batch is what overflows: bound it rather than end the turn, on every surface.
-				const overflowing = (mustFit && overflowStop(agentRuntime) !== null) || (knownWindow && !viewFits(view));
-				const bound = overflowing ? boundBatchToFit(agentRuntime) : null;
+				const overflowing = (mustFit && fitting.overflowStop(agentRuntime) !== null) || (knownWindow && !viewFits(view));
+				const bound = overflowing ? fitting.boundBatchToFit(agentRuntime) : null;
 				if (bound?.kind === "short") throw oversizedResultStop(bound.stop);
 				if (bound?.kind === "fit") {
 					attemptStarted = true;
 					view = refreshLiveBudget();
 				}
-				const oversize = mustFit ? overflowStop(agentRuntime) : null;
+				const oversize = mustFit ? fitting.overflowStop(agentRuntime) : null;
 				if (oversize !== null) throw oversizedResultStop(oversize);
 				const after = fitFigures(view);
 				if (knownWindow && !requestFits(after.input, after.reserve, view.effectiveWindow)) {
@@ -1910,7 +1605,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			// touches the messages, so the first publication already describes the context and the tail runs in it too.
 			const decision = withSettledHistory(() => {
 				history = observeHistory(agentRuntime);
-				const before = liveContextEstimate(agentRuntime, undefined, undefined, history);
+				const before = fitting.liveContextEstimate(agentRuntime, undefined, undefined, history);
 				const beforeView =
 					agentRuntime === state.runtime ? refreshLiveBudget(undefined, history, before) : refreshLiveBudget();
 				knownWindow = before.contextWindow > 0;

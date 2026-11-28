@@ -40,6 +40,12 @@ export interface TurnContextScope {
 	readonly memoryOrigin: (runtime: AgentRuntime) => string;
 	readonly classifyCall: ClassifyCall;
 	readonly budgetProducer: LiveBudgetProducer;
+	readonly pendingPolicyText: () => string | null;
+	readonly routeTokenRatio: (agentRuntime: AgentRuntime, observed?: MessageListDigests) => number;
+	readonly measuredAnchor: (
+		agentRuntime: AgentRuntime,
+		observed: MessageListDigests,
+	) => { tokens: number; covered: number; systemPromptTokens: number; toolSchemaTokens: number } | null;
 	readonly pendingColdReasons: Set<ExpectedColdReason>;
 	readonly loadCacheCallBaseline: () => void;
 	readonly resetCacheCallBaseline: () => void;
