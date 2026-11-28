@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { lstatSync, mkdirSync, rmdirSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
@@ -228,21 +228,6 @@ export function assertPlainProjectDir(project: { root: string; dir: string }): v
  */
 export function assertPlainWorktreeParent(parent: { root: string; dir: string }): void {
 	assertPlainDir(parent.root, parent.dir, "the worktree directory");
-}
-
-/**
- * Remove the directories `prepareDeclaredWriteRoots` created, deepest first, when
- * they are still empty, so a runtime leaves no empty roots behind in the
- * workspace. A non-recursive rmdir never removes content or a pre-existing root.
- */
-export function releaseDeclaredWriteRoots(created: ReadonlyArray<string>): void {
-	for (const directory of [...created].reverse()) {
-		try {
-			rmdirSync(directory);
-		} catch {
-			/* Not empty, already gone, or replaced: leave it. */
-		}
-	}
 }
 
 /**

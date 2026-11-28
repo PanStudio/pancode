@@ -12,7 +12,7 @@ import {
 } from "../../core/sandbox/main-session.js";
 import type { ResourceLimits } from "../../core/sandbox/types.js";
 import { declaredVerificationScripts } from "../../core/verification-scripts.js";
-import { runVectorTool } from "../safe-exec.js";
+import { runVectorTool, safeCommandDetails } from "../safe-exec.js";
 import type { ToolResult } from "../tool-spec.js";
 import {
 	type DeclaredCheck,
@@ -768,20 +768,6 @@ function judgePerfBudget(
 	return judgePerfTexts(measuredMs, perf, baselineText, `baseline '${perf.baseline ?? ""}'`);
 }
 
-function commandFacts(result: SafeCommandResult): Record<string, unknown> {
-	return {
-		command: [result.file, ...result.args].join(" "),
-		argv: [result.file, ...result.args],
-		cwd: result.cwd,
-		launched: result.launched === true,
-		exitCode: result.exitCode,
-		durationMs: result.durationMs,
-		aborted: result.aborted,
-		timedOut: result.timedOut,
-		outputCapped: result.outputCapped,
-	};
-}
-
 /**
  * Run a numeric-compare or perf-budget check: the command through the same
  * safe-exec spine as a command check, then the pure judgement. A command that
@@ -860,7 +846,7 @@ async function runJudgedCheck(
 			return { kind: "error", message: `verify: ${runLabel}${error instanceof Error ? error.message : String(error)}` };
 		}
 		execution = executionOutcome(result);
-		const facts = { ...commandFacts(result), judgement: judgement(execution, "not-run") };
+		const facts = { ...safeCommandDetails(result), judgement: judgement(execution, "not-run") };
 		if (result.aborted) return { kind: "error", message: `verify: ${runLabel}aborted`, details: facts };
 		if (result.timedOut) {
 			const seconds = Number((check.timeoutMs / 1000).toFixed(3));
