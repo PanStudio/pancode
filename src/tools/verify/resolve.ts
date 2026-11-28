@@ -223,7 +223,7 @@ export type SweepRunResolution = { ok: true; check: DeclaredCheck; run: string }
  * gains that directory as its last argument, written relative to the check's cwd. The run directory is part of the
  * argv, so the safety scan, the approval card and the claim the result records all name the run that was judged.
  */
-export function resolveSweepRun(workspaceRoot: string, check: DeclaredCheck, run: string): SweepRunResolution {
+function resolveSweepRun(workspaceRoot: string, check: DeclaredCheck, run: string): SweepRunResolution {
 	if (check.runs === undefined) {
 		return {
 			ok: false,

@@ -103,7 +103,7 @@ Project and PanHub:
   pancode agents|tasks|verifiers|memory|claims|store  recipes, tasks, checks, memory, claims, store
   pancode hub|extensions|mcp|share  packs, extension authoring, MCP servers, archives
   pancode tools|interop|panes  pinned programs, external coding agents, the pane host
-  pancode campaign|research|semantic  model trials, metric climbs, search
+  pancode campaign|semantic    model trials, search
   pancode report|usage         reports to the maintainers, cross-session usage facts
   pancode <verb> [--json]      a verb an installed extension declares; built-in names always win
 
@@ -453,7 +453,6 @@ const COMMAND_HANDLERS = new Map<string, CommandHandler>([
 	["memory", async (subArgs) => (await import("./memory.js")).runMemoryCommand(subArgs)],
 	["claims", async (subArgs) => (await import("./claims.js")).runClaimsCommand(subArgs)],
 	["campaign", async (subArgs) => (await import("./campaign.js")).runCampaignCommand(subArgs)],
-	["research", async (subArgs) => (await import("./research.js")).runResearchCommand(subArgs)],
 	["semantic", async (subArgs) => (await import("./semantic.js")).runSemanticCommand(subArgs)],
 	["usage", async (subArgs) => (await import("./usage.js")).runUsageCommand(subArgs)],
 	["telemetry", async (subArgs) => (await import("./telemetry.js")).runTelemetryCommand(subArgs)],

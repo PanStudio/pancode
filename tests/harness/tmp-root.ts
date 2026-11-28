@@ -262,7 +262,7 @@ if (inherited !== null) {
 	// pane host its tests abandoned running. End the run here too, then re-raise
 	// the signal. Only when this is the sole listener: otherwise something else
 	// handles the signal and the process lives on, as when a test emits SIGTERM
-	// to exercise its own stop handler (research-campaign), and ending the run
+	// to exercise its own stop handler, and ending the run
 	// would delete the root under the tests still using it.
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 		const onSignal = (): void => {

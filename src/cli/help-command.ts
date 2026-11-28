@@ -84,7 +84,6 @@ const DEFAULT_ACTION_GROUPS = new Set([
 	"agents",
 	"tasks",
 	"claims",
-	"research",
 	"components",
 	"semantic",
 	"auth",
@@ -104,14 +103,12 @@ const LONG_RUNNING = new Set([
 	"run",
 	"worker",
 	"campaign run",
-	"research start",
-	"research resume",
 	"fleet run",
 	"fleet wait",
 	"fleet events",
 ]);
 
-const MODEL_WORK = new Set(["run", "acp", "campaign run", "research start", "research resume", "fleet run"]);
+const MODEL_WORK = new Set(["run", "acp", "campaign run", "fleet run"]);
 const READ_VERBS = new Set([
 	"list",
 	"show",

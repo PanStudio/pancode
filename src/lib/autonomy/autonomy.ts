@@ -55,8 +55,8 @@ export const DEFAULT_YOLO_CONFINEMENT: YoloConfinement = "contained";
 
 /**
  * Pins a run, and every pancode its commands start, to contained yolo.
- * `research` and an extension's run service promise contained yolo, so each
- * child they launch at yolo carries it rather than reading the operator's settings, which could
+ * An extension's run service promises contained yolo, so each
+ * child it launches at yolo carries it rather than reading the operator's settings, which could
  * turn unconfined mid-campaign. The pin only narrows: any value at all,
  * `unconfined` included, reads as `contained`, so a nested run cannot widen
  * it by overwriting the value. Only removing the variable escapes it.

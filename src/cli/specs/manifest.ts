@@ -246,15 +246,6 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 	["report show", "", "report show <id> [--bundle]"],
 	["report status", "", "report status [--refresh] [--json]"],
 	["report sweep", "", "report sweep [--json]"],
-	["research list", "", "research list [--json]"],
-	["research report", "", "research report <id> [--json]"],
-	["research resume", "", "research resume <id> [--json]"],
-	[
-		"research start",
-		"",
-		"research start --check <id> --metric <key> --direction min|max --max-iterations <N> [options]",
-	],
-	["research status", "", "research status [<id>] [--json]"],
 	[
 		"semantic configure",
 		"",

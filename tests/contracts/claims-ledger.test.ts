@@ -44,6 +44,8 @@ import {
 } from "../../src/domains/claims/index.js";
 import { runHostVerification } from "../../src/domains/dispatch/host-verification.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
+import { createExtensionClaimsService } from "../../src/domains/extensions/services/claims.js";
+import { createExtensionCheckReceipts } from "../../src/domains/extensions/services/verify.js";
 import {
 	approveMemoryRecord,
 	loadMemoryRecords,
@@ -53,9 +55,6 @@ import {
 } from "../../src/domains/memory/index.js";
 import { memoryRecordEligible } from "../../src/domains/memory/operations.js";
 import { insertMemoryRecordIfAbsent } from "../../src/domains/memory/store.js";
-import { runGateIn } from "../../src/domains/research/measure.js";
-import { finishIterationRecord } from "../../src/domains/research/record.js";
-import type { ResearchCampaign } from "../../src/domains/research/types.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/run-record.js";
 import type { DeclaredReproduce } from "../../src/tools/verify/reproduce.js";
 import { runProjectCheck } from "../../src/tools/verify/scripts.js";
@@ -1220,7 +1219,7 @@ describe("claims ledger (#406)", () => {
 		}
 	});
 
-	it("regresses memory on the research iteration that records a contradiction, not on a later append", async () => {
+	it("regresses memory on the extension claims run that records a contradiction, not on a later append", async () => {
 		const env = await isolatePancodeEnv("pancode-claims-");
 		try {
 			const repo = join(env.dir, "repo");
@@ -1248,17 +1247,25 @@ describe("claims ledger (#406)", () => {
 			};
 			await insertMemoryRecordIfAbsent(pancodeDataDir(), memory);
 			assert.equal((await loadMemoryRecords(pancodeDataDir())).length, 1);
-			const campaign = { id: "r1", project } as unknown as ResearchCampaign;
-			const iterate = (iteration: number, passed: boolean, at: string) =>
-				finishIterationRecord({
-					campaign,
-					iteration,
+			const receipts = createExtensionCheckReceipts();
+			let clock = "";
+			const claims = createExtensionClaimsService({
+				extensionId: "research",
+				workspace: repo,
+				sessionId: null,
+				receipts,
+				now: () => new Date(clock),
+			});
+			const iterate = (iteration: number, passed: boolean, at: string) => {
+				clock = at;
+				const receipt = receipts.put({
+					check: "stats",
+					result: { kind: "ok", output: "", details: details(passed) },
+					checkout: repo,
 					at,
-					bindings: new Map(),
-					outcomes: [
-						{ check: "stats", execution: "succeeded", result: { kind: "ok", output: "", details: details(passed) } },
-					],
 				});
+				return claims.finish(`r1/${iteration}`, [{ check: "stats", receipt }]);
+			};
 			await iterate(1, false, "2026-11-06T00:00:02.000Z");
 			// The iteration itself carried the contradiction into memory; nothing else was appended.
 			const [regressed] = await loadMemoryRecords(pancodeDataDir());
@@ -1306,36 +1313,6 @@ describe("claims ledger (#406)", () => {
 			// Approving a record with nothing to clear records nothing.
 			await approveMemoryRecord(pancodeDataDir(), approved.id);
 			assert.equal(readClearedMemoryRegressions(pancodeDataDir()).length, 1);
-		} finally {
-			env.restore();
-		}
-	});
-
-	it("runs a research gate in its worktree without changing the process working directory", async () => {
-		const env = await isolatePancodeEnv("pancode-claims-");
-		try {
-			const worktree = join(env.dir, "worktree");
-			mkdirSync(worktree, { recursive: true });
-			const before = process.cwd();
-			const pending = runGateIn(worktree, {
-				id: "where",
-				description: "print the cwd",
-				command: [process.execPath, "-e", "process.stdout.write(process.cwd())"],
-				cwd: ".",
-				timeoutMs: 10_000,
-				tags: [],
-				source: { kind: "project-catalog", path: ".pancode/verifiers.json" },
-				kind: "command",
-			});
-			// Claim capture keys on process.cwd(); it must never observe the worktree while the gate runs.
-			assert.equal(process.cwd(), before);
-			const result = await pending;
-			assert.equal(process.cwd(), before);
-			assert.equal(result.kind, "ok", result.kind === "error" ? result.message : "");
-			match(
-				result.kind === "ok" ? result.output : "",
-				new RegExp(realpathSync(worktree).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")),
-			);
 		} finally {
 			env.restore();
 		}
