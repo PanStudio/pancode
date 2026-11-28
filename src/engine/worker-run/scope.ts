@@ -17,8 +17,10 @@ import type { FlowRestrictionSet } from "../../domains/safety/information-flow.j
 import type { McpCapabilitySource } from "../../tools/gateway/index.js";
 import type { createEngineAgent } from "../agent.js";
 import type { createRunPhase } from "../run-phase.js";
+import type { createWorkerCallTelemetry } from "../worker-call-telemetry.js";
 import type { ActiveEscalation } from "../worker-escalation.js";
 import type { WorkerEventEmit, WorkerRunInput } from "../worker-run-types.js";
+import type { createThrashOutcome } from "../worker-thrash-outcome.js";
 import type { createWorkerToolRegistry } from "../worker-tools.js";
 import type { prepareNativeWorker } from "./spec.js";
 
@@ -72,4 +74,13 @@ export interface WorkerRunScope {
 	readonly safety: ReturnType<typeof prepareNativeWorker>["safety"];
 	readonly contractCwd: string;
 	readonly helperForcedChoiceAvailable: boolean;
+	readonly helperSchema: Record<string, unknown> | null;
+	readonly unsubscribe: () => void;
+	readonly inheritedCount: number;
+	readonly synthesisTimer: ReturnType<typeof setTimeout> | undefined;
+	readonly wallTimer: ReturnType<typeof setTimeout> | undefined;
+	readonly clearActiveEscalation: () => void;
+	readonly unsubscribePermission: () => void;
+	readonly thrashOutcome: ReturnType<typeof createThrashOutcome>;
+	readonly workerTelemetry: ReturnType<typeof createWorkerCallTelemetry> | undefined;
 }
