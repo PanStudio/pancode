@@ -60,6 +60,21 @@ export interface FleetRunObserver {
 	readonly notice?: (text: string, kind?: "gate" | "write-boundary") => void;
 }
 
+/** What a surface that shows the session's runs sees of one of them, through to its sealed settlement. */
+export interface FleetRunWatch extends FleetRunObserver {
+	readonly settled?: (settlement: FleetRunSettlement) => void;
+}
+
+/**
+ * A surface that shows every run this session starts, whoever started it, so the main agent's run reaches the same
+ * board and notices as the operator's. It answers each launch with the hooks it wants, or nothing.
+ */
+export type FleetRunSurface = (run: {
+	readonly rootId: string;
+	readonly preview: FleetRunPreview;
+	readonly origin: FleetRunOrigin;
+}) => FleetRunWatch | undefined;
+
 export interface FleetRunLaunchInput {
 	readonly preview: FleetRunPreview;
 	readonly origin: FleetRunOrigin;
@@ -136,6 +151,8 @@ export interface FleetRunLauncher {
 	uncollected(): ReadonlyArray<FleetRunUncollected>;
 	/** The root's sealed result reached the main agent; it no longer waits to be collected. */
 	markCollected(rootId: string): void;
+	/** Show every later launch on a surface; the returned function stops it. */
+	watch(surface: FleetRunSurface): () => void;
 }
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -143,9 +160,10 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
 export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLauncher {
 	let running: FleetRunInFlight | null = null;
 	const uncollected = new Map<string, FleetRunUncollected>();
+	const surfaces = new Set<FleetRunSurface>();
 
 	const launch = (input: FleetRunLaunchInput): FleetRunLaunch => {
-		const { preview, observer = {} } = input;
+		const { preview } = input;
 		// No root is minted for a run that never starts; the running root is named in the reason.
 		if (running !== null) {
 			return {
@@ -170,6 +188,8 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		}
 		running = { name: preview.name, rootId, origin: input.origin };
 		if (input.detached === true) uncollected.set(rootId, { rootId, name: preview.name, sealed: false });
+		const watches = [...surfaces].flatMap((surface) => surface({ rootId, preview, origin: input.origin }) ?? []);
+		const observer = joinedObserver([...(input.observer !== undefined ? [input.observer] : []), ...watches]);
 
 		const abort = new AbortController();
 		let stoppedBy: FleetRunStopper | null = null;
@@ -324,9 +344,19 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		} catch (error) {
 			run = Promise.reject(error);
 		}
+		const tell = (settlement: FleetRunSettlement): FleetRunSettlement => {
+			for (const watch of watches) {
+				try {
+					watch.settled?.(settlement);
+				} catch (error) {
+					observer.notice?.(`a fleet surface failed to show the settled run ${rootId}: ${errorText(error)}`);
+				}
+			}
+			return settlement;
+		};
 		const settled: Promise<FleetRunSettlement> = run.then(
-			(outcome) => seal({ ok: true, outcome }),
-			(error: unknown) => seal({ ok: false, error }),
+			(outcome) => tell(seal({ ok: true, outcome })),
+			(error: unknown) => tell(seal({ ok: false, error })),
 		);
 		return { status: "launched", rootId, stop, admitted, settled };
 	};
@@ -338,5 +368,33 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		markCollected: (rootId) => {
 			uncollected.delete(rootId);
 		},
+		watch: (surface) => {
+			surfaces.add(surface);
+			return () => {
+				surfaces.delete(surface);
+			};
+		},
+	};
+}
+
+function joinedObserver(observers: ReadonlyArray<FleetRunObserver>): FleetRunObserver {
+	if (observers.length <= 1) return observers[0] ?? {};
+	return {
+		started: (run) => {
+			for (const observer of observers) observer.started?.(run);
+		},
+		stepDispatched: (rootId, event) => {
+			for (const observer of observers) observer.stepDispatched?.(rootId, event);
+		},
+		stepSettled: (rootId, outcome) => {
+			for (const observer of observers) observer.stepSettled?.(rootId, outcome);
+		},
+		...(observers.some((observer) => observer.notice !== undefined)
+			? {
+					notice: (text: string, kind?: "gate" | "write-boundary") => {
+						for (const observer of observers) observer.notice?.(text, kind);
+					},
+				}
+			: {}),
 	};
 }

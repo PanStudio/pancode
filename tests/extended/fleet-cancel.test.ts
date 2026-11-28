@@ -318,6 +318,13 @@ describe("fleet cancel requests", () => {
 			commands: null,
 			budget: { playbookUsd: null },
 		} as unknown as FleetRunPreview;
+		// A surface watching the session sees the main agent's run as it sees its own, through to the sealed settlement.
+		const watched: string[] = [];
+		launcher.watch(({ origin }) => ({
+			started: () => watched.push(`started:${origin}`),
+			stepDispatched: (_root, event) => watched.push(`dispatched:${event.stepId}`),
+			settled: (settlement) => watched.push(`settled:${settlement.stoppedBy}`),
+		}));
 		const launch = launcher.launch({ preview, origin: "model" });
 		if (launch.status !== "launched") throw new Error(launch.reason);
 		strictEqual(/^fleet-[0-9a-f]{12}$/.test(launch.rootId), true);
@@ -345,5 +352,6 @@ describe("fleet cancel requests", () => {
 		strictEqual(readRootCancelRequest(launch.rootId), null);
 		strictEqual(launcher.inFlight(), null);
 		deepStrictEqual(runSessions, ["session-launch", "session-launch"]);
+		deepStrictEqual(watched, ["started:model", "dispatched:build", "settled:fleet_stop"]);
 	});
 });
