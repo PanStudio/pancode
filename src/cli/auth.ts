@@ -440,7 +440,7 @@ async function runLogin(args: ReadonlyArray<string>): Promise<number> {
 	if (apiKey === undefined) {
 		const read = await readApiKey(`API key for ${resolved.runtime.displayName}`);
 		if (read === null) {
-			printError("login cancelled");
+			printError("login canceled");
 			return 1;
 		}
 		apiKey = read;

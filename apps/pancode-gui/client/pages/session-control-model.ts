@@ -42,7 +42,7 @@ export function observedControlOutcome(request: SessionControlRequest, snapshot:
 	return {
 		succeeded: "The original turn finished before this refresh. It is no longer running.",
 		failed: "The original turn failed. Open the session to review its result.",
-		cancelled: "The original turn is stopped.",
+		cancelled: "The original turn is canceled.",
 	}[turn.status];
 }
 

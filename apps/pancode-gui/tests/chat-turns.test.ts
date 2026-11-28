@@ -777,7 +777,7 @@ test("compaction attempts report their outcome without inferring success for fra
 		["completed", "Context compacted", "neutral"],
 		["unchanged", "Context unchanged", "neutral"],
 		["failed", "Compaction failed", "fail"],
-		["cancelled", "Compaction stopped", "neutral"],
+		["cancelled", "Compaction canceled", "neutral"],
 		[undefined, "Compaction attempt ended", "unverified"],
 	] as const) {
 		const projected = fleetEvent(

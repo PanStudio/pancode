@@ -714,7 +714,7 @@ export function viewTitle(view: WizardView): string {
 	if (view.kind === "working") return view.label;
 	if (view.kind === "saved") return "Connection saved";
 	if (view.kind === "failed") return "Setup stopped";
-	if (view.kind === "cancelled") return "Setup cancelled";
+	if (view.kind === "cancelled") return "Setup canceled";
 	return view.prompt.heading[0] || "Continue setup";
 }
 

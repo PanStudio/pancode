@@ -237,7 +237,7 @@ export async function runPancodeCommand(
 			startupSettings = configuredLayers.settings;
 			const configuredVerdict = classifyDefaultTarget(startupSettings);
 			if (configuredVerdict.kind !== "usable" && configuredVerdict.kind !== "missing-credential") {
-				process.stderr.write(`${describeVerdict(configuredVerdict)} Configuration did not complete; startup cancelled.\n`);
+				process.stderr.write(`${describeVerdict(configuredVerdict)} Configuration did not complete; startup canceled.\n`);
 				return 2;
 			}
 		}

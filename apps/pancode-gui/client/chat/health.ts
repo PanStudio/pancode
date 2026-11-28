@@ -83,7 +83,7 @@ const COMPACTION_OUTCOMES: Readonly<Record<string, { label: string; detail: stri
 	completed: { label: "Context compacted", detail: "Context was compacted to make room.", tone: "neutral" },
 	unchanged: { label: "Context unchanged", detail: "Compaction left context unchanged.", tone: "neutral" },
 	failed: { label: "Compaction failed", detail: "Compaction did not complete.", tone: "fail" },
-	cancelled: { label: "Compaction stopped", detail: "Compaction was cancelled.", tone: "neutral" },
+	cancelled: { label: "Compaction canceled", detail: "Compaction was canceled.", tone: "neutral" },
 };
 
 function providerDetail(status: string, available: boolean, latencyMs: number | null): string {

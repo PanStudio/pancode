@@ -900,7 +900,7 @@ const OUTCOME: Readonly<Record<Turn["status"], { tone: OutcomeTone; glyph: strin
 	succeeded: { tone: "success", glyph: "✓", label: "Done" },
 	failed: { tone: "fail", glyph: "✕", label: "Failed" },
 	// Stopping is not failing, and it is not waiting either: a stopped turn is a neutral report.
-	cancelled: { tone: "neutral", glyph: "–", label: "Stopped" },
+	cancelled: { tone: "neutral", glyph: "–", label: "Canceled" },
 };
 
 // A succeeded row whose stop reason says the answer is not whole: never a success mark.

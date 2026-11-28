@@ -318,7 +318,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			// The same receipt /rewind gives, so a cancelled reset is told apart from one that did nothing.
 			onCancel: () => {
 				deps.closeOverlay();
-				deps.notify("info", "context reset cancelled; no files changed", "context-reset:outcome");
+				deps.notify("info", "context reset canceled; no files changed", "context-reset:outcome");
 			},
 		});
 		deps.requestRender();
@@ -807,7 +807,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			},
 			onCancel: () => {
 				deps.closeOverlay();
-				deps.notify("info", `plan ${name}: cancelled; nothing was started`, "fleet-run:cancelled");
+				deps.notify("info", `plan ${name}: canceled; nothing was started`, "fleet-run:cancelled");
 			},
 		});
 		deps.requestRender();
@@ -884,7 +884,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				if (plan?.state === "cancelled") {
 					deps.notify(
 						"info",
-						`plan ${preview.name}: cancelled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
+						`plan ${preview.name}: canceled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
 						"fleet-run:settled",
 					);
 					return;
@@ -905,7 +905,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				const failed = deps.fleetPlans?.fail(fleetRootId, error instanceof Error ? error.message : String(error));
 				if (failed?.state === "cancelled") {
 					appendPlanCard(failed);
-					deps.notify("info", `plan ${preview.name}: cancelled before every step settled`, "fleet-run:settled");
+					deps.notify("info", `plan ${preview.name}: canceled before every step settled`, "fleet-run:settled");
 					return;
 				}
 				if (error instanceof WriterSetBusyError) {

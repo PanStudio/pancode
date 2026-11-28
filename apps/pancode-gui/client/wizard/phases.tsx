@@ -219,7 +219,7 @@ export function EndStep({
 	return (
 		<section className="wizard-step" ref={root} aria-labelledby={id}>
 			<h1 id={id} tabIndex={-1}>
-				{kind === "failed" ? "Setup stopped." : "Setup cancelled."}
+				{kind === "failed" ? "Setup stopped." : "Setup canceled."}
 			</h1>
 			<p className="wizard-step__lede" role={kind === "failed" ? "alert" : undefined}>
 				{kind === "failed" ? problem : "Nothing was saved, except a browser sign-in you had already finished."}

@@ -155,7 +155,7 @@ async function storeLogin(cwd: string): Promise<number> {
 	}
 	const key = await readApiKey(`Secret key for S3 access key ${bucket.accessKeyId} (${bucket.endpoint})`);
 	if (key === null || key.length === 0) {
-		printError(key === null ? "login cancelled" : "empty secret key");
+		printError(key === null ? "login canceled" : "empty secret key");
 		return 1;
 	}
 	try {

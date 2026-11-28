@@ -53,7 +53,7 @@ export function planProgressText(plan: FleetPlanRunView, statusShown = false, wi
 		return `${count}${SEP}${stopping.length > 0 ? `stopping ${stopping.join(", ")}` : "stopping before the next step"}`;
 	}
 	// Where a status cell already reads cancelled, repeating it on the count only doubles the word.
-	if (plan.state === "cancelled") return statusShown ? count : `${count}${SEP}cancelled`;
+	if (plan.state === "cancelled") return statusShown ? count : `${count}${SEP}canceled`;
 	if (plan.failure !== undefined) return withFailure ? `${count}${SEP}${planFailureWords(plan)}` : count;
 	if (failed !== undefined) return `${count}${SEP}${failed.stepId} failed`;
 	const warned = planWarnedStepCount(plan);

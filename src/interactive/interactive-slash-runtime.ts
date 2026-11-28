@@ -563,7 +563,7 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 					const answer = res.answers[0]?.answer;
 					if (res.cancelled || (answer !== "Install and run" && answer !== "Install for this project and run")) {
 						if (captured) throw new Error("queued boot skill installation cancelled; preserving it for recovery");
-						deps.io.stderr("Installation cancelled.\n");
+						deps.io.stderr("Installation canceled.\n");
 						return;
 					}
 					deps.io.stdout(`Installing skill "${uninstalled.name}"...\n`);

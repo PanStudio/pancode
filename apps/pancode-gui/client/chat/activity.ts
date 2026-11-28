@@ -157,7 +157,7 @@ const TOOL_STATUS_LABELS: Readonly<Record<string, string>> = {
 	pending: "queued",
 	in_progress: "running",
 	completed: "done",
-	cancelled: "stopped",
+	cancelled: "canceled",
 	failed: "failed",
 	unknown: "outcome not reported",
 	escalated: "waiting",

@@ -479,7 +479,7 @@ test("research page follows a campaign the server still runs after the page was 
 		],
 	});
 	const html = render(cache, `/research?workspace=workspace-a&campaign=${campaign}`, <ResearchPage client={client} />);
-	assert.match(html, /Stop campaign/);
+	assert.match(html, /Cancel campaign/);
 	assert.match(html, /iteration 1: agent run in it-0001/);
 	assert.match(html, /<button[^>]*class="primary"[^>]*disabled=""[^>]*>New campaign/);
 });

@@ -401,8 +401,8 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 		if (!confirmed) {
 			// Exit 0 is the v1 contract for a declined prompt; convention C8's exit 1
 			// waits for a versioned opt-in because it changes an exit code.
-			presenter.warn("Reset cancelled");
-			presenter.done("Cancelled");
+			presenter.warn("Reset canceled");
+			presenter.done("Canceled");
 			return 0;
 		}
 	}

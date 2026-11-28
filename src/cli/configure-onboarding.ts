@@ -375,7 +375,7 @@ function cancel(
 			"PanCode cannot start until a model is set up. When you are ready, run:",
 			"pancode configure",
 		);
-	presenter.done("Cancelled; nothing was saved");
+	presenter.done("Canceled; nothing was saved");
 	return answers.mode === "first" || options.quit === true ? 130 : 0;
 }
 

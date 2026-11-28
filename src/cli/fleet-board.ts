@@ -720,7 +720,7 @@ export function verdictText(paint: BoardPaint, card: WorkerCard, width: number):
 			rank: 0,
 		});
 	} else if (record.outcome === "canceled") {
-		parts.push({ text: paint.fg("metadata", `${GLYPH.cancelled} cancelled`), rank: 0 });
+		parts.push({ text: paint.fg("metadata", `${GLYPH.cancelled} canceled`), rank: 0 });
 	} else {
 		parts.push({
 			text: paint.fg("error", `${GLYPH.error} ${clean(plainOutcomeLabel(record.outcomeCode ?? record.outcome))}`),

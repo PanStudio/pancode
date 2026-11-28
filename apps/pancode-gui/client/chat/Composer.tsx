@@ -1199,7 +1199,7 @@ export const Composer = memo(function Composer({
 					)}
 					{stopArmed && running ? (
 						<p className="composer__notice" role="status">
-							Press <Keycaps chord="Esc" /> again to stop this turn.
+							Press <Keycaps chord="Esc" /> again to cancel this turn.
 						</p>
 					) : null}
 					{steerNote ? (
@@ -1326,12 +1326,14 @@ export const Composer = memo(function Composer({
 									type="button"
 									disabled={!!stopping}
 									onClick={() => stopTurn()}
-									aria-label={stopping ? (stopping.stage === "unresolved" ? "Review stop request" : "Stopping…") : "Stop turn"}
+									aria-label={
+										stopping ? (stopping.stage === "unresolved" ? "Review cancel request" : "Canceling…") : "Cancel turn"
+									}
 									title="End this turn now. Nothing further is run."
 								>
 									<Icon name="stop" />
 									<span aria-hidden="true">
-										{stopping ? (stopping.stage === "unresolved" ? "Check request" : "Stopping") : "Stop"}
+										{stopping ? (stopping.stage === "unresolved" ? "Check request" : "Canceling") : "Cancel"}
 									</span>
 								</button>
 							) : null}

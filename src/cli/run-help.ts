@@ -178,7 +178,7 @@ file and the entry. Rules never match the model's ordinary ask_user questions:
 such a call is refused as having no operator, as in a run without the file, and
 the model goes on from its stated defaults. An author question no entry
 matches, or whose matching choice is not offered, is never answered for you:
-its round is cancelled as "unscripted", the turn stops, and the run exits 5
+its round is canceled as "unscripted", the turn stops, and the run exits 5
 with outcome "failed" and outcomeDetail "unscripted", naming the question's
 header or id so the file can be extended. Permission asks stay denied. A file
 that cannot be read or fails validation is a usage error (exit 2) naming the

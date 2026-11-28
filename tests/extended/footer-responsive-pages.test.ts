@@ -163,7 +163,7 @@ test("compact tier stays at most 2 rows even when busy with alerts, and ASCII id
 		state.notices = [];
 		const busyRows = renderCompactDashboard(state, 96);
 		strictEqual(busyRows.length, 2);
-		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc stops/);
+		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc cancels/);
 		match(stripTerminalSequences(busyRows[1] ?? ""), /▐∀▌/);
 	} finally {
 		setPresentationTier(prevTier);

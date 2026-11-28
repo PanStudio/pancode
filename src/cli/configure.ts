@@ -303,7 +303,7 @@ const SECTION_IDS: ReadonlyArray<string> = SECTIONS.map((section) => section.id)
  * such as the bare `pancode` launch that nothing was configured.
  */
 function firstRunCancelled(): number {
-	printNote("configuration cancelled; no target saved. Run `pancode configure` when you are ready.");
+	printNote("configuration canceled; no target saved. Run `pancode configure` when you are ready.");
 	return 130;
 }
 

@@ -223,7 +223,7 @@ export function isSelfExplainingAbort(view: { stopReason: unknown; errorMessage:
 }
 
 /** What the model and the ledger are told when the operator cancels a streaming turn. */
-export const OPERATOR_CANCEL_REASON = "Cancelled at your request.";
+export const OPERATOR_CANCEL_REASON = "Canceled at your request.";
 
 export function isOperatorCancelReason(value: unknown): boolean {
 	return value === OPERATOR_CANCEL_REASON;

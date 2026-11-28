@@ -410,7 +410,7 @@ const MESSAGE_WAIT_WORDS = {
 	interrupt: "an interrupt",
 	"prompt-not-started": "a prompt that never started",
 	"session-move": "a session move",
-	"run-cancelled": "a cancelled run",
+	"run-cancelled": "a canceled run",
 } as const;
 const MESSAGE_REMOVAL_WORDS = {
 	removed: "removed by the operator",

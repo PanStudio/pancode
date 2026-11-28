@@ -522,7 +522,7 @@ function terminalFacts(details: Record<string, unknown> | undefined): ToolFact[]
 function terminalNote(details: Record<string, unknown> | undefined): string | null {
 	if (details === undefined) return null;
 	if (details.timedOut === true) return "The command timed out and was stopped.";
-	if (details.aborted === true) return "The command was cancelled before it finished.";
+	if (details.aborted === true) return "The command was canceled before it finished.";
 	if (details.outputCapped === true) return "Output hit the byte cap and the command was stopped.";
 	return null;
 }
@@ -766,7 +766,7 @@ const STATUS_LABEL: Readonly<Record<string, string>> = {
 	in_progress: "Running",
 	completed: "Done",
 	failed: "Failed",
-	cancelled: "Cancelled",
+	cancelled: "Canceled",
 	unknown: "Outcome not reported",
 };
 

@@ -489,7 +489,7 @@ export async function runSemanticCommand(argv: readonly string[], dependencies: 
 		return 0;
 	} catch (error) {
 		errorOut(
-			`error: ${controller.signal.aborted ? "Semantic operation cancelled" : error instanceof Error ? error.message : String(error)}\n`,
+			`error: ${controller.signal.aborted ? "Semantic operation canceled" : error instanceof Error ? error.message : String(error)}\n`,
 		);
 		return controller.signal.aborted ? 130 : 1;
 	} finally {

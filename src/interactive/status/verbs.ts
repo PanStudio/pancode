@@ -125,7 +125,7 @@ function coreVerb(status: AgentStatus): { text: string; toneHint: VerbRender["to
 		case "stuck":
 			return { text: "No output", toneHint: "error" };
 		case "cancelling":
-			return { text: "Cancelling", toneHint: "muted" };
+			return { text: "Canceling", toneHint: "muted" };
 		case "ended": {
 			const stop = status.summary?.stopReason ?? "stop";
 			const elapsed = status.summary
@@ -133,7 +133,7 @@ function coreVerb(status: AgentStatus): { text: string; toneHint: VerbRender["to
 				: "";
 			if (stop === "generation_guard") return { text: `${GLYPH.warn} Generation stopped${elapsed}`, toneHint: "warn" };
 			if (stop === "cancelled" || stop === "aborted")
-				return { text: `${GLYPH.cancelled} Cancelled${elapsed}`, toneHint: "muted" };
+				return { text: `${GLYPH.cancelled} Canceled${elapsed}`, toneHint: "muted" };
 			if (stop === "error") return { text: `${GLYPH.error} Failed${elapsed}`, toneHint: "error" };
 			if (stop === "length") return { text: `${GLYPH.warn} Output limit${elapsed}`, toneHint: "warn" };
 			if (stop === "no_answer") return { text: `${GLYPH.warn} No answer${elapsed}`, toneHint: "warn" };

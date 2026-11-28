@@ -599,7 +599,7 @@ function NewMatch({
 				</p>
 			)}
 			{operation.data?.status === "cancelled" && (
-				<p role="status">The match was cancelled; its partial record stays in the list.</p>
+				<p role="status">The match was canceled; its partial record stays in the list.</p>
 			)}
 		</form>
 	);

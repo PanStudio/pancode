@@ -883,7 +883,7 @@ describe("contracts/configure-onboarding", () => {
 			ok(screen.slice(reopened).includes(server.url), `step 2 reopened without its answer:\n${screen.slice(reopened)}`);
 			ok(screen.slice(0, reopened).includes("A model server or gateway"), `step 1's answer was lost:\n${screen}`);
 			ok(/❯ A model server or gateway/u.test(screen.slice(reopened)), `step 1 reopened off its answer:\n${screen}`);
-			ok(screen.includes("Cancelled; nothing was saved"), `no closing line:\n${screen}`);
+			ok(screen.includes("Canceled; nothing was saved"), `no closing line:\n${screen}`);
 			strictEqual(existsSync(testEnv.settingsFile), false, "a cancelled wizard creates no settings file");
 		} finally {
 			await server.close();
@@ -922,7 +922,7 @@ describe("contracts/configure-onboarding", () => {
 			strictEqual(result.code, 130);
 			// A user cancel is said once, on the rail, and is not an error.
 			strictEqual(result.stderr, "");
-			ok(plainText(result.transcript()).includes("Cancelled; nothing was saved"));
+			ok(plainText(result.transcript()).includes("Canceled; nothing was saved"));
 			strictEqual(existsSync(testEnv.settingsFile), false);
 		} finally {
 			testEnv.cleanup();
@@ -1042,7 +1042,7 @@ describe("contracts/configure-onboarding", () => {
 			// replaced is still the only way to answer, so it must still be there.
 			const res = await captureConfigure([], testEnv.env, ["q\n"]);
 			strictEqual(res.code, 130, res.stderr);
-			match(res.stderr, /configuration cancelled/u);
+			match(res.stderr, /configuration canceled/u);
 			match(res.stdout, /Selection \[1\]/u);
 			ok(!res.stdout.includes("Welcome to PanCode"), "the arrow-key wizard must not open on a pipe");
 		} finally {

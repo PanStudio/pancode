@@ -308,7 +308,7 @@ export async function runQuickConnect(prompts: ConfigurePrompts): Promise<"conne
 				continue;
 			}
 			if (error.kind === "quit" || step === "url") {
-				presenter.done("Quick Connect cancelled; connection settings not saved.");
+				presenter.done("Quick Connect canceled; connection settings not saved.");
 				return error.kind;
 			}
 			step =

@@ -368,7 +368,7 @@ export function openHelpOverlay(
 				"**Enter**: toggles the inline worker-progress detail on any run, and Esc folds an open detail before it closes the board.",
 				"**Watch**: press `w` on a live run in a `--with-panes` session to take the workers dock over for that run (opening it, or bringing back a hidden one, without moving the keyboard); the arrow keys then move it between runs.",
 				"**Steer**: press `m` (message) on a live native run to close the board and prefill `@<runId> `. Add guidance and submit it normally. The first notice means queued; a received notice confirms worker delivery.",
-				"**Cancel**: press `x` on a running, stale, queued, or retry-waiting run. The row changes to cancelling while the worker or retry is being stopped.",
+				"**Cancel**: press `x` on a running, stale, queued, or retry-waiting run. The row changes to canceling while the worker or retry is being stopped.",
 				"**Capabilities**: ACP delegation runs cannot accept live steering. The board footer only advertises actions supported by the selected row.",
 				"**Tasks versus runs**: `/tasks` shows the agent's plan steps. Fleet runs are concrete delegated worker executions and remain in this board as recent terminal history.",
 			],

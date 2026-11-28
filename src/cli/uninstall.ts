@@ -613,8 +613,8 @@ async function uninstallInactive(
 		return 0;
 	}
 	if (!args.yes && !(await presenter.confirm("Remove these inactive installs?", false))) {
-		presenter.warn("Cancelled");
-		presenter.done("Cancelled");
+		presenter.warn("Canceled");
+		presenter.done("Canceled");
 		return 0;
 	}
 	const failures: RemovalFailure[] = [];
@@ -974,8 +974,8 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	if (!args.yes) {
 		const confirmed = await presenter.confirm("Are you sure you want to uninstall?", false);
 		if (!confirmed) {
-			presenter.warn("Uninstall cancelled");
-			presenter.done("Cancelled");
+			presenter.warn("Uninstall canceled");
+			presenter.done("Canceled");
 			return 0;
 		}
 	}

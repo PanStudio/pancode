@@ -114,7 +114,7 @@ export class ArenaService {
 		progress: (message: string) => void,
 		signal: AbortSignal,
 	): Promise<ProgramResult> {
-		if (signal.aborted) throw new AppProblem("operation_failed", "Arena match was cancelled before it started.");
+		if (signal.aborted) throw new AppProblem("operation_failed", "Arena match was canceled before it started.");
 		const { child, birthToken } = await runPancodeCommand({ kind: "arena.run", request }, cwd, this.env);
 		progress(`PanCode is running ${request.contenders.length} contenders on one prompt.`);
 		return new Promise((resolve, reject) => {
@@ -133,7 +133,7 @@ export class ArenaService {
 					if (alive()) stopPancodeCommand(child, birthToken, "SIGKILL");
 				}, KILL_GRACE_MS);
 			};
-			const abort = () => stop(new AppProblem("operation_failed", "Arena match was cancelled."));
+			const abort = () => stop(new AppProblem("operation_failed", "Arena match was canceled."));
 			const timer = setTimeout(
 				() => stop(new AppProblem("operation_failed", "Arena match exceeded its time limit.")),
 				request.timeoutSeconds * 1000 + SETTLE_MS,

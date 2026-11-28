@@ -72,7 +72,7 @@ const OUTCOMES: Readonly<Record<NonNullable<ContextOperation["outcome"]>, { labe
 	completed: { label: "Complete", tone: "success" },
 	previewed: { label: "Preview", tone: "neutral" },
 	unchanged: { label: "Unchanged", tone: "neutral" },
-	cancelled: { label: "Stopped", tone: "neutral" },
+	cancelled: { label: "Canceled", tone: "neutral" },
 	failed: { label: "Failed", tone: "fail" },
 };
 

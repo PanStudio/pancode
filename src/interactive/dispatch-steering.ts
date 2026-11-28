@@ -13,9 +13,9 @@ import {
 const STEER_REFUSAL_STATE: Partial<Record<DispatchBoardStatus, string>> = {
 	completed: "has finished",
 	failed: "has failed",
-	aborted: "was cancelled",
+	aborted: "was canceled",
 	dead: "stopped responding",
-	cancelling: "is being cancelled",
+	cancelling: "is being canceled",
 	retrying: "is waiting to retry",
 };
 
@@ -124,7 +124,7 @@ export function createDispatchSteering(deps: DispatchSteeringDeps): DispatchStee
 			case "stopping":
 				deps.notify(
 					"info",
-					`cancelling plan ${plan.name}: ${running.length > 0 ? `stopping ${running.join(", ")}` : "no step starts after this"}`,
+					`canceling plan ${plan.name}: ${running.length > 0 ? `stopping ${running.join(", ")}` : "no step starts after this"}`,
 					key,
 				);
 				break;

@@ -360,7 +360,7 @@ export function dispatchStatusPresentation(
 			// The watchdog stopped a worker whose heartbeat went silent: the inline card's words, not the ledger's.
 			return { glyph: GLYPH.error, label: "stopped responding", token: "error" };
 		case "aborted":
-			return { glyph: GLYPH.cancelled, label: "cancelled", token: "annotation" };
+			return { glyph: GLYPH.cancelled, label: "canceled", token: "annotation" };
 		case "stale":
 			return { glyph: GLYPH.warnInline, label: "not responding", token: "warning" };
 		case "enqueued":

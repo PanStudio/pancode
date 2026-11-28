@@ -180,7 +180,7 @@ export class ResearchService {
 		progress: (message: string) => void,
 		signal: AbortSignal,
 	): Promise<ProgramResult> {
-		if (signal.aborted) throw new AppProblem("operation_failed", "Research campaign was cancelled before it started.");
+		if (signal.aborted) throw new AppProblem("operation_failed", "Research campaign was canceled before it started.");
 		const { child, birthToken } = await runPancodeCommand({ kind: "research.start", request }, cwd, this.env);
 		progress(`PanCode is opening a campaign on ${request.check}/${request.metric}.`);
 		return new Promise((resolve, reject) => {
@@ -199,7 +199,7 @@ export class ResearchService {
 					if (alive()) stopPancodeCommand(child, birthToken, "SIGKILL");
 				}, KILL_GRACE_MS);
 			};
-			const abort = () => stop(new AppProblem("operation_failed", "Research campaign was cancelled."));
+			const abort = () => stop(new AppProblem("operation_failed", "Research campaign was canceled."));
 			const timer = setTimeout(
 				() => stop(new AppProblem("operation_failed", "Research campaign exceeded its time limit.")),
 				(request.maxWallMinutes ?? DEFAULT_CEILING_MINUTES) * 60_000 + SETTLE_MS,

@@ -75,7 +75,7 @@ function planState(status: string): [StatusTone, string] {
 		case "blocked":
 			return ["warn", "Blocked"];
 		case "cancelled":
-			return ["neutral", "Cancelled"];
+			return ["neutral", "Canceled"];
 		default:
 			return ["unverified", status];
 	}

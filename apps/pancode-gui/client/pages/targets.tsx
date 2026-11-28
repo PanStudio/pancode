@@ -127,7 +127,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 							{operation.data.status === "succeeded" && <p>{operation.data.result.message}</p>}
 							{busy && !operation.error && operation.data.cancellable && (
 								<button type="button" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
-									{cancel.isPending ? "Cancelling…" : "Cancel probe"}
+									{cancel.isPending ? "Canceling…" : "Cancel probe"}
 								</button>
 							)}
 							{cancel.error && <p role="alert">{cancel.error.message}</p>}

@@ -408,7 +408,7 @@ function renderWorkIsland(
 	}
 
 	const rightMeta =
-		busy && state.status.phase !== "cancelling" ? theme.style("warning", "Esc stops", { bold: true }) : "";
+		busy && state.status.phase !== "cancelling" ? theme.style("warning", "Esc cancels", { bold: true }) : "";
 	return boxIsland(baseTheme, {
 		title: "Work",
 		borderToken: busy ? "transcriptRule" : "border",

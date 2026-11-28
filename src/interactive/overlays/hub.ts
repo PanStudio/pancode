@@ -383,7 +383,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 				child = null;
 				deps.lifecycle.release(plan);
 				restore();
-				deps.notice("info", `${refWords(ref)}: cancelled; nothing was written.`);
+				deps.notice("info", `${refWords(ref)}: canceled; nothing was written.`);
 				review.hide();
 			},
 			onDone: (result) => {
@@ -451,7 +451,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 				// reviewed bytes leave no trace, not merely that nothing was installed.
 				releaseHubImport(plan);
 				restore();
-				deps.notice("info", `Import of ${plan.id ?? source} cancelled; nothing was written.`);
+				deps.notice("info", `Import of ${plan.id ?? source} canceled; nothing was written.`);
 				review.hide();
 			},
 			onDone: (result) => {
