@@ -10,7 +10,12 @@ import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import { foldWorkingSet } from "../domains/context/working-set/fold.js";
 import { type FleetStepCounts, fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
-import type { DispatchContract, FleetRunPreview, FleetRunPreviewInput } from "../domains/dispatch/index.js";
+import type {
+	DispatchContract,
+	FleetRunOutcome,
+	FleetRunPreview,
+	FleetRunPreviewInput,
+} from "../domains/dispatch/index.js";
 import {
 	agentRoleFactsResolver,
 	compileFleetRunPreview,
@@ -238,6 +243,37 @@ export interface OverlayGeneralOpeners {
 	openDraft(request: string, count: number): void;
 	/** `/fleet run <playbook> [--var k=v ...]`: preview the plan, then dispatch on approval. */
 	startFleetRun(name: string, vars: Readonly<Record<string, string>>, options?: FleetRunStartOptions): void;
+}
+
+/**
+ * The settled notice states the card's own counts, so the two never give one run two different numbers. An unpriced
+ * run keeps the total a lower bound, never a measured $0.00 nobody put a number on, and steps whose worker finished
+ * with a warning say so, as their rows on the card do.
+ */
+function fleetSettledNotice(
+	name: string,
+	outcome: FleetRunOutcome,
+	plan: FleetPlanRunView | null | undefined,
+	warned: number,
+): { level: "info" | "success" | "warning"; text: string } {
+	const counts: FleetStepCounts = plan
+		? planStepCounts(plan)
+		: {
+				ran: outcome.ranStepCount,
+				planned: outcome.plannedStepCount,
+				succeeded: outcome.succeededStepCount,
+				required: outcome.requiredStepCount,
+			};
+	if (plan?.state === "cancelled") {
+		return { level: "info", text: `plan ${name}: cancelled ${GLYPH.sep} ${fleetStepCountText(counts)} before the stop` };
+	}
+	const steps = `${fleetStepCountText(counts, warned === 0 ? "succeeded" : "finished")}${warned === 0 ? "" : `, ${warned} with warnings`}`;
+	const loops = counts.loops === undefined ? "" : `${fleetLoopText(counts.loops)}, `;
+	const cost = plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`;
+	return {
+		level: outcome.cleanRun && warned === 0 ? "success" : "warning",
+		text: `plan ${name}: ${steps}, ${loops}${cost}`,
+	};
 }
 
 export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): OverlayGeneralOpeners {
@@ -882,30 +918,8 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				for (const key of [...progressNoticeKeys(fleetRootId), "fleet-run:in-flight"]) deps.dismissNotification?.(key);
 				const plan = deps.fleetPlans?.settle(fleetRootId, outcome);
 				const warned = plan ? planWarnedStepCount(appendPlanCard(plan)) : 0;
-				// The notice states the card's own counts, so the two never give one run two different numbers.
-				const counts: FleetStepCounts = plan
-					? planStepCounts(plan)
-					: {
-							ran: outcome.ranStepCount,
-							planned: outcome.plannedStepCount,
-							succeeded: outcome.succeededStepCount,
-							required: outcome.requiredStepCount,
-						};
-				if (plan?.state === "cancelled") {
-					deps.notify(
-						"info",
-						`plan ${preview.name}: cancelled ${GLYPH.sep} ${fleetStepCountText(counts)} before the stop`,
-						"fleet-run:settled",
-					);
-					return;
-				}
-				deps.notify(
-					outcome.cleanRun && warned === 0 ? "success" : "warning",
-					// An unpriced run keeps the total a lower bound, never a measured $0.00 nobody put a number on. Steps whose
-					// worker finished with a warning say so, as their rows on the card do.
-					`plan ${preview.name}: ${fleetStepCountText(counts, warned === 0 ? "succeeded" : "finished")}${warned === 0 ? "" : `, ${warned} with warnings`}, ${counts.loops === undefined ? "" : `${fleetLoopText(counts.loops)}, `}${plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`}`,
-					"fleet-run:settled",
-				);
+				const settled = fleetSettledNotice(preview.name, outcome, plan, warned);
+				deps.notify(settled.level, settled.text, "fleet-run:settled");
 			})
 			.catch((error: unknown) => {
 				fleetInFlight = null;
