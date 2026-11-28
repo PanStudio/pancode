@@ -11,13 +11,10 @@ import { readWorkerTelemetryFrame } from "../../src/core/telemetry/forwarder.js"
 import type { ContextFoldPayload } from "../../src/core/telemetry/live-events.js";
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type {
-	AcceptedNote,
 	ContinuityCheckpointPayload,
 	HandoffEvent,
 	HandoffIdentity,
-	HandoffPolicy,
 } from "../../src/domains/session/continuity/contract.js";
-import { validateContinuityNote } from "../../src/domains/session/continuity/note.js";
 import { resolveContinuityProjection } from "../../src/domains/session/continuity/projection.js";
 import type { SessionEntryInput } from "../../src/domains/session/contract.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
@@ -38,6 +35,7 @@ import {
 	tapEngineApi,
 	wireElements,
 } from "../harness/context-capture.js";
+import { admit, handoffPolicy } from "../harness/continuity-fixture.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**
@@ -295,24 +293,7 @@ describe("P1: a text-only route with a historical image; a locked round then an 
 const AT = "2026-09-21T09:00:00.000Z";
 const PREPARED_AT = Date.parse(AT);
 
-function admit(text: string): AcceptedNote {
-	const result = validateContinuityNote(text);
-	if (!result.ok) throw new Error(`fixture note rejected: ${result.reason}`);
-	return result.accepted;
-}
 const NOTE = admit("A: finish the parser rewrite; the failing case is a nested fence");
-
-function policy(): HandoffPolicy {
-	return {
-		preparedAtMs: PREPARED_AT,
-		automaticDeadlineAtMs: PREPARED_AT + 600_000_000_000,
-		maxAttempts: 2,
-		maxSummaryCallsPerAttempt: 2,
-		additionalSummaryRetriesPerCall: 0,
-		maxSummaryStreamInvocations: 4,
-		flushRetryLimit: 3,
-	};
-}
 
 /** A ready handoff on the parent, anchored on m2, whose resume is still due: the parent may still execute it. */
 function readyHandoff(sessionId: string): SessionEntryInput[] {
@@ -343,7 +324,7 @@ function readyHandoff(sessionId: string): SessionEntryInput[] {
 		schemaVersion: 1,
 		identity,
 		accepted: NOTE,
-		policy: policy(),
+		policy: handoffPolicy(PREPARED_AT, { automaticDeadlineAtMs: PREPARED_AT + 600_000_000_000 }),
 		commit: {
 			outcome: "summarized",
 			entry: { turnId: "a-commit-entry", parentTurnId: "m2", timestamp: AT },
@@ -355,7 +336,11 @@ function readyHandoff(sessionId: string): SessionEntryInput[] {
 		state: { transition, event: { phase: "ready" }, activeResume: null, delivery: null },
 	} as unknown as ContinuityCheckpointPayload;
 	return [
-		tx("a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() }),
+		tx("a-prep", null, 0, 0, {
+			phase: "prepared",
+			accepted: NOTE,
+			policy: handoffPolicy(PREPARED_AT, { automaticDeadlineAtMs: PREPARED_AT + 600_000_000_000 }),
+		}),
 		tx("a-reduce", "a-prep", 1, 1, { phase: "reducing" }),
 		{
 			kind: "compactionSummary",
