@@ -1,8 +1,6 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { renderCompactCount, renderUsdSum } from "../../core/telemetry/render.js";
-import { matchLabels } from "./blind.js";
-import { readContenderDiff } from "./store.js";
+import { matchLabels } from "./blind.ts";
+import { renderCompactCount, renderUsdSum } from "./render.ts";
+import { readContenderDiff } from "./store.ts";
 import type {
 	ArenaCheckFact,
 	ArenaChoice,
@@ -12,7 +10,7 @@ import type {
 	ArenaMatch,
 	ArenaMatchStatus,
 	ArenaVote,
-} from "./types.js";
+} from "./types.ts";
 
 /** What a voter may see before voting: the work and its outcome, not who did it or what it cost. */
 export interface ArenaEntryView {
@@ -75,10 +73,10 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 /**
  * Everything a contender wrote is shown before the vote: its answer, its diff,
  * its check output and any error. Any of it can name the contender, by target
- * or model id, by session id (often inside a session file path), or by a compete
- * worktree or branch path. Worktrees are numbered by blind slot, so such a path
- * only repeats the label, but the absolute prefix and branch are still replaced.
- * The raw text returns with the reveal.
+ * or model id, by session id (often inside a session file path), or by its
+ * worktree path. Worktree ids are random and made in blind-slot order, so such a
+ * path names no one, but the absolute prefix is still replaced. The raw text
+ * returns with the reveal.
  */
 function blindRedactor(match: ArenaMatch): (text: string) => string {
 	const names = new Set<string>();
@@ -104,9 +102,8 @@ function blindRedactor(match: ArenaMatch): (text: string) => string {
 			: new RegExp(`(?<![A-Za-z0-9_.-])(?:${alternation(names)})(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`, "g");
 	return (text) => {
 		let out = text
-			.replace(/[^\s'"`]*?\.pancode[\\/]worktrees[\\/](?:[^\s'"`\\/]+[\\/])+?candidate-\d+/g, "[worktree]")
+			.replace(/[^\s'"`]*?\.pancode[\\/]worktrees[\\/]ext-arena[\\/][tk]-[0-9a-f]+/g, "[worktree]")
 			.replace(/\.pancode[\\/]worktrees[\\/][^\s'"`]*/g, `.pancode/worktrees/${HIDDEN}`)
-			.replace(/pancode\/compete\/[^\s'"`]*/g, `pancode/compete/${HIDDEN}`)
 			.replace(/\b(candidate|contender)[- ]\d+/gi, `$1 ${HIDDEN}`);
 		if (session !== null) out = out.replace(session, HIDDEN);
 		if (named !== null) out = out.replace(named, HIDDEN);
@@ -186,4 +183,40 @@ export function arenaMatchView(
 		vote: vote === null ? null : { choice: vote.choice, note: vote.note, votedAt: vote.votedAt },
 		entries,
 	};
+}
+
+/** What an answer may weigh as the host measures it, JSON-escaped, under the 1 MiB a command may print. */
+export const ARENA_ANSWER_BUDGET_BYTES = 1000 * 1024;
+const FINAL_CUT = "\n[final text cut to fit the answer; the contender's stream file has all of it]";
+
+/**
+ * Render `view`, cutting the longest diffs (then the longest final texts) until the answer fits `budget`. A cut diff
+ * sets `diffTruncated`, as one cut at the 256 KiB read limit does. The view is changed in place.
+ */
+export function fitArenaView(
+	view: ArenaMatchView,
+	render: (view: ArenaMatchView) => string,
+	budget = ARENA_ANSWER_BUDGET_BYTES,
+): string {
+	for (;;) {
+		const text = render(view);
+		const over = Buffer.byteLength(JSON.stringify(text)) - budget;
+		if (over <= 0) return text;
+		const step = Math.max(over, 4096);
+		const diff = longest(view.entries, (entry) => entry.diff?.length ?? 0);
+		if (diff !== undefined && diff.diff !== null) {
+			diff.diff = diff.diff.slice(0, Math.max(0, diff.diff.length - step));
+			diff.diffTruncated = true;
+			continue;
+		}
+		const final = longest(view.entries, (entry) => (entry.finalText.endsWith(FINAL_CUT) ? 0 : entry.finalText.length));
+		if (final === undefined) return text;
+		final.finalText = `${final.finalText.slice(0, Math.max(0, final.finalText.length - step))}${FINAL_CUT}`;
+	}
+}
+
+function longest(entries: ArenaEntryView[], size: (entry: ArenaEntryView) => number): ArenaEntryView | undefined {
+	let best: ArenaEntryView | undefined;
+	for (const entry of entries) if (size(entry) > 0 && (best === undefined || size(entry) > size(best))) best = entry;
+	return best;
 }

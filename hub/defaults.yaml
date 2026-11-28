@@ -4,3 +4,4 @@
 # the operator removes is never installed again by default.
 defaults:
   - extension:music
+  - extension:arena

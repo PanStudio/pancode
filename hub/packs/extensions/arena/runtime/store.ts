@@ -1,21 +1,25 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { readJsonFile } from "../../core/json-file.js";
-import { pancodeProjectRoot } from "../../core/project-root.js";
-import { safeResourceWrite } from "../../core/safe-resource-write.js";
-import { withStateFileLockSync } from "../../core/state-file-lock.js";
-import { choiceFitsMatch } from "./blind.js";
-import { ARENA_SCHEMA_VERSION, type ArenaChoice, type ArenaMatch, type ArenaVote } from "./types.js";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { choiceFitsMatch } from "./blind.ts";
+import { ARENA_SCHEMA_VERSION, type ArenaChoice, type ArenaMatch, type ArenaVote } from "./types.ts";
 
 const MATCH_ID = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$/;
 const DIFF_READ_LIMIT_BYTES = 256 * 1024;
-
-/** `<project>/.pancode/arena/`, the one place matches, streams, diffs and votes live. */
-export function arenaRoot(cwd: string): string {
-	return join(pancodeProjectRoot(cwd, "arena"), ".pancode", "arena");
-}
+/** A vote lock older than this belongs to a voter that died holding it. */
+const STALE_LOCK_MS = 30_000;
+const LOCK_WAIT_MS = 20_000;
 
 export function isArenaMatchId(id: string): boolean {
 	return MATCH_ID.test(id);
@@ -43,8 +47,29 @@ export function contenderDiffPath(dir: string, index: number): string {
 	return join(dir, `contender-${index + 1}.diff`);
 }
 
+/** Write through a temporary sibling and rename, so a reader never sees half a file. */
+export function writeFileAtomic(path: string, text: string): void {
+	mkdirSync(dirname(path), { recursive: true });
+	const temporary = `${path}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
+	try {
+		writeFileSync(temporary, text, { flag: "wx" });
+		renameSync(temporary, path);
+	} catch (error) {
+		rmSync(temporary, { force: true });
+		throw error;
+	}
+}
+
 function writeJson(path: string, value: unknown): void {
-	safeResourceWrite(path, `${JSON.stringify(value, null, 2)}\n`);
+	writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function readJson(path: string): unknown {
+	try {
+		return JSON.parse(readFileSync(path, "utf8"));
+	} catch {
+		return null;
+	}
 }
 
 export function writeMatch(root: string, match: ArenaMatch): void {
@@ -69,12 +94,12 @@ function isVote(value: unknown): value is ArenaVote {
 }
 
 export function readMatch(root: string, id: string): ArenaMatch | null {
-	const value = readJsonFile(join(matchDir(root, id), "match.json"));
+	const value = readJson(join(matchDir(root, id), "match.json"));
 	return isMatch(value) ? value : null;
 }
 
 export function readVote(root: string, id: string): ArenaVote | null {
-	const value = readJsonFile(join(matchDir(root, id), "vote.json"));
+	const value = readJson(join(matchDir(root, id), "vote.json"));
 	return isVote(value) ? value : null;
 }
 
@@ -105,21 +130,53 @@ export function listMatches(root: string): Array<{ match: ArenaMatch; vote: Aren
 
 export class ArenaVoteError extends Error {}
 
+function tryLock(lockPath: string): boolean {
+	try {
+		closeSync(openSync(lockPath, "wx"));
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+	}
+	let age: number;
+	try {
+		age = Date.now() - statSync(lockPath).mtimeMs;
+	} catch {
+		return false;
+	}
+	if (age <= STALE_LOCK_MS) return false;
+	rmSync(lockPath, { force: true });
+	return false;
+}
+
+async function withLock<T>(path: string, fn: () => T): Promise<T> {
+	const lockPath = `${path}.lock`;
+	const deadline = Date.now() + LOCK_WAIT_MS;
+	for (let attempt = 1; !tryLock(lockPath); attempt += 1) {
+		if (Date.now() > deadline) throw new ArenaVoteError(`timed out waiting for ${lockPath}; another vote holds it`);
+		await new Promise((resolve) => setTimeout(resolve, Math.min(100, 5 * 2 ** Math.min(attempt, 5))));
+	}
+	try {
+		return fn();
+	} finally {
+		rmSync(lockPath, { force: true });
+	}
+}
+
 /**
  * Record the human's preference. One vote per match: a second needs `replace`,
  * and every vote, replaced or not, stays in the append-only `votes.jsonl`. The
  * check, the journal append and the snapshot run under one cross-process lock on
  * the match's vote file, so two voters at once cannot both land a first vote.
  */
-export function recordVote(
+export async function recordVote(
 	root: string,
 	id: string,
 	input: { choice: ArenaChoice; note: string | null; replace: boolean },
 	now = new Date(),
-): ArenaVote {
+): Promise<ArenaVote> {
 	const votePath = join(matchDir(root, id), "vote.json");
 	if (readMatch(root, id) === null) throw new ArenaVoteError(`no arena match ${id}`);
-	return withStateFileLockSync(votePath, () => {
+	return withLock(votePath, () => {
 		const match = readMatch(root, id);
 		if (match === null) throw new ArenaVoteError(`no arena match ${id}`);
 		if (match.status !== "complete") throw new ArenaVoteError(`match ${id} is ${match.status}; vote once it completes`);

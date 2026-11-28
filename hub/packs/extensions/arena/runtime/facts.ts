@@ -1,9 +1,5 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { FactSum } from "../../core/telemetry/fact.js";
-import type { PricingSum } from "../../core/telemetry/pricing.js";
-import { isRecord } from "../../core/type-guards.js";
-import type { ArenaAutonomyFact, ArenaDiffStat } from "./types.js";
+import type { FactSum, PricingSum } from "./render.ts";
+import type { ArenaAutonomyFact, ArenaDiffStat } from "./types.ts";
 
 /** What one contender's `run --json-events full` stream says, read frame by frame. */
 export interface ArenaStreamFacts {
@@ -21,6 +17,10 @@ export interface ArenaStreamFacts {
 }
 
 type Frame = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Frame {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function isFactSum(value: unknown): value is FactSum {
 	return (

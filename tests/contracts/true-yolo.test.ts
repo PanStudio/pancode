@@ -18,7 +18,6 @@ import {
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { before, test } from "node:test";
-import { runArenaCommand } from "../../src/cli/arena.js";
 import { scratchRootFindings, shellSandboxFinding } from "../../src/cli/doctor.js";
 import { runResearchCommand } from "../../src/cli/research.js";
 import { runPancodeRun } from "../../src/cli/run.js";
@@ -2729,7 +2728,7 @@ test("a worker permit that inherited yolo compiles the yolo worker safety fragme
 // A delegated run never gets more autonomy than its dispatcher: a session below
 // yolo marks its live level in every bash command's environment, and a
 // pancode started there refuses yolo above it.
-test("the autonomy ceiling reaches bash commands below yolo and refuses yolo above it in run, research and arena", async (t) => {
+test("the autonomy ceiling reaches bash commands below yolo and refuses yolo above it in run and research", async (t) => {
 	const home = await isolatePancodeEnv("pancode-yolo-ceiling-");
 	const inherited = process.env[AUTONOMY_CEILING_ENV];
 	t.after(() => {
@@ -2758,12 +2757,8 @@ test("the autonomy ceiling reaches bash commands below yolo and refuses yolo abo
 	strictEqual(await runPancodeRun(["--autonomy", "yolo", "Inspect"], { noContextFiles: true }), 2);
 	const research = ["start", "--check", "score", "--metric", "score", "--direction", "min", "--max-iterations", "1"];
 	strictEqual(await runResearchCommand([...research, "--autonomy", "yolo"]), 2);
-	strictEqual(
-		await runArenaCommand(["run", "--contender", "a/m1", "--contender", "b/m2", "--autonomy", "yolo", "Inspect"]),
-		2,
-	);
 	const refusals = errors.join("").split(AUTONOMY_CEILING_ENV).length - 1;
-	strictEqual(refusals, 3, errors.join(""));
+	strictEqual(refusals, 2, errors.join(""));
 	delete process.env[AUTONOMY_CEILING_ENV];
 	strictEqual(autonomyCeilingRefusal(), null);
 });

@@ -143,7 +143,7 @@ function nearestTsconfig(entry: string): string | undefined {
 
 /**
  * The variables of `source` one contender is given; the safe-exec allowlist is added when it starts. Reads only the
- * runtime's own configuration. `targetId` null is the arena's own `verifiers dry-run`, which needs no credentials.
+ * runtime's own configuration. `targetId` null is a check's `verifiers dry-run`, which needs no credentials.
  */
 export function runEnv(
 	source: Readonly<Record<string, string>>,

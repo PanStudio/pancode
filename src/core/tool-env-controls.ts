@@ -12,7 +12,7 @@ import {
 
 /**
  * Names the autonomy a `pancode` started from a tool command may take at most, so a delegated run never gets more
- * autonomy than the session that started it. `run`, `research` and `arena` refuse `--autonomy yolo` under it.
+ * autonomy than the session that started it. `run`, `research` and an extension's run service refuse `--autonomy yolo` under it.
  */
 export const AUTONOMY_CEILING_ENV = "PANCODE_AUTONOMY_CEILING";
 

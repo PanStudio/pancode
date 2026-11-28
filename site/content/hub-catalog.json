@@ -1,11 +1,26 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "c3ef3988599541f5db80990820942b4eae8ff52f43ddd1ae624fe8a7a2e9cbf4",
-		"rows": 45,
+		"sha256": "e257b6c1308724f2a490b06f90d1055d1a851c400022721d72ac84f289f04a25",
+		"rows": 46,
 		"revoked": 0
 	},
 	"rows": [
+		{
+			"kind": "extension",
+			"name": "arena",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "Run one prompt on 2 to 4 target/models side by side, compare their work blind, vote, and keep standings.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/extensions/arena"
+			},
+			"sha256": "918d65847df2aa1e1aadbfbffa75a761ee13dc2f6a9ff9b78cc0d61e879988e2",
+			"install": "pancode hub install extension:arena"
+		},
 		{
 			"kind": "extension",
 			"name": "local-status",
