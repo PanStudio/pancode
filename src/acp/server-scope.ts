@@ -9,6 +9,7 @@ import type { ContextActivityPayload } from "../core/telemetry/live-events.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { AcpLiveTelemetry } from "./live-telemetry.js";
 import type { AcpServerCommands } from "./server-commands.js";
+import type { AcpServerConfig } from "./server-config.js";
 import type { AcpServerControl } from "./server-control.js";
 import type { AcpServerEvents } from "./server-events.js";
 import type { AcpServerGuards } from "./server-guards.js";
@@ -94,4 +95,5 @@ export interface AcpServerScope {
 	readonly control: AcpServerControl;
 	readonly events: AcpServerEvents;
 	readonly readoutFeed: AcpServerReadouts;
+	readonly config: AcpServerConfig;
 }
