@@ -80,6 +80,8 @@ export interface HubPackageEntry {
 	requires?: HubRequirementRef[];
 	/** Extension rows only: the one plugin this extension serves, so a plugin and its extension pair without reading package trees. */
 	plugin?: string;
+	/** Extension rows only: the `pancode <verb>` names it declares, so a verb typed before an install names its pack. */
+	verbs?: string[];
 	category?: string;
 	audit?: "pass" | "warn" | "fail" | "unknown";
 	triggers?: string[];

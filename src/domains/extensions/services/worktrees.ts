@@ -89,8 +89,9 @@ const REFUSED_OPTION =
 const REVISION = /^(?![-/])(?!.*\.\.)[A-Za-z0-9._/@{}^~:+-]{1,200}$/u;
 const REF_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/u;
 const WORKTREE_ID = /^[kt]-[0-9a-f]{16}$/u;
-const MAX_COPY_FILES = 256;
-const MAX_COPY_BYTES = 32 * 1024 * 1024;
+/** What one `create` or `copy` call copies in at most. */
+export const MAX_COPY_FILES = 256;
+export const MAX_COPY_BYTES = 32 * 1024 * 1024;
 const MAX_GIT_OUTPUT = 64 * 1024 * 1024;
 
 function isWithin(rootReal: string, candidateReal: string): boolean {

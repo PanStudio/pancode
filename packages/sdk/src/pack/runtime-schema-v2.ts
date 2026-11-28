@@ -55,7 +55,15 @@ export const RUNTIME_V2_LIMITS = {
 	configOptions: 16,
 	/** Regions, islands and a panel can each carry a full view. */
 	outputBytes: 256 * 1024,
+	/** Text a command answers the operator with; a tool, hook or observation keeps 32768 chars under `outputBytes`. */
+	commandTextChars: 1024 * 1024,
+	/** A command's `stderr` diagnostics. */
+	commandStderrChars: 64 * 1024,
+	/** A command's whole answer, which only the operator reads. */
+	commandOutputBytes: 1280 * 1024,
 	messageBytes: 320 * 1024,
+	/** The IPC message that carries a command's answer. */
+	commandMessageBytes: 1344 * 1024,
 	messagesPerSecond: 256,
 	concurrentRequests: 8,
 	observationMs: 2000,
@@ -673,7 +681,7 @@ export function parseExtensionRuntimeV2(
 		containedPath(glob, `runtime.watch[${index}]`),
 	);
 	if (new Set(watch).size !== watch.length) fail("runtime.watch", "lists a glob twice");
-	const state = record(raw.state ?? {}, "runtime.state", ["session", "store"], policy);
+	const state = record(raw.state ?? {}, "runtime.state", ["session", "store", "project"], policy);
 	const services = record(
 		raw.services ?? {},
 		"runtime.services",
@@ -709,6 +717,7 @@ export function parseExtensionRuntimeV2(
 		state: {
 			session: flag(state.session, "runtime.state.session", false),
 			store: flag(state.store, "runtime.state.store", false),
+			project: flag(state.project, "runtime.state.project", false),
 		},
 		services: {
 			embedding: flag(services.embedding, "runtime.services.embedding", false),
@@ -778,7 +787,16 @@ export function capabilityEnvelope(
 	return {
 		commands: declaration.commands.map((command) => command.name),
 		...(takesOver.length > 0 ? { takesOver } : {}),
-		...(declaration.state.session || declaration.state.store ? { state: declaration.state } : {}),
+		...(declaration.state.session || declaration.state.store || declaration.state.project
+			? {
+					state: {
+						session: declaration.state.session,
+						store: declaration.state.store,
+						// Only when declared, so an envelope approved before project state existed keeps its digest.
+						...(declaration.state.project ? { project: true } : {}),
+					},
+				}
+			: {}),
 		...(hasService(declaration.services) ? { services: declaration.services } : {}),
 		events: declaration.events,
 		...(declaration.tickMs !== undefined ? { tickMs: declaration.tickMs } : {}),
@@ -960,7 +978,9 @@ export function envelopeGrowth(approved: ExtensionCapabilityEnvelope, next: Exte
 	);
 	push(
 		"keeps host state",
-		(["session", "store"] as const).filter((kind) => next.state?.[kind] === true && approved.state?.[kind] !== true),
+		(["session", "store", "project"] as const).filter(
+			(kind) => next.state?.[kind] === true && approved.state?.[kind] !== true,
+		),
 	);
 	if (next.services?.embedding && !approved.services?.embedding)
 		growth.push("may request embeddings from the configured model");

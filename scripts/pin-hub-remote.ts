@@ -112,7 +112,10 @@ export function buildRegistryRow(
 		.slice(0, HUB_PROVIDES_LIMITS.entries);
 	const kind = manifest.pancode.kind ?? "plugin";
 	// An extension row names the plugin it serves, so a plugin and its extension pair without reading package trees.
-	const serves = kind === "extension" ? loadManifestFromRoot(root).manifest?.plugin : undefined;
+	const extension = kind === "extension" ? loadManifestFromRoot(root).manifest : undefined;
+	const serves = extension?.plugin;
+	// The `pancode <verb>` names it declares, so a verb typed before the pack is installed can name the pack.
+	const verbs = (extension?.runtimeV2?.cli ?? []).map((entry) => entry.verb).sort();
 	const license = trust.license ?? packLicense(root, result);
 	const envelopeDigest = kind === "extension" ? hubEnvelopeDigest(root) : undefined;
 	const mcpDigest = hubMcpDigest(root, result.contentDigest);
@@ -131,6 +134,7 @@ export function buildRegistryRow(
 		...(mcpDigest ? { mcpDigest } : {}),
 		...(manifest.pancode.requires ? { requires: manifest.pancode.requires } : {}),
 		...(serves ? { plugin: serves } : {}),
+		...(verbs.length ? { verbs } : {}),
 		...(provides.length ? { provides } : {}),
 	};
 }

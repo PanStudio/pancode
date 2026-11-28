@@ -15,14 +15,19 @@ export interface StopSignals {
  * its children, waits for them and cleans up, and remember the first signal for the exit code. A closed terminal
  * sends SIGHUP, and children that lead their own process groups never see it, so the abort is their only stop.
  */
-export function installStopSignals(controller: AbortController, onFirst?: (signal: StopSignal) => void): StopSignals {
+export function installStopSignals(
+	controller: AbortController,
+	onFirst?: (signal: StopSignal) => void,
+	/** Every signal after the first: a command that still owes an answer after the abort stops waiting for it here. */
+	onAgain?: (signal: StopSignal) => void,
+): StopSignals {
 	let received: StopSignal | null = null;
 	const handlers = (Object.keys(STOP_SIGNALS) as StopSignal[]).map((name) => {
 		const handler = (): void => {
 			if (received === null) {
 				received = name;
 				onFirst?.(name);
-			}
+			} else onAgain?.(name);
 			controller.abort();
 		};
 		process.on(name, handler);

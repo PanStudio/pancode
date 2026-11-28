@@ -36,7 +36,7 @@ export function envelopeLines(envelope: ExtensionCapabilityEnvelope, extensionId
 		...(envelope.takesOver ? [`Takes over prompts: ${list(envelope.takesOver.map((name) => `/${name}`))}`] : []),
 		...(envelope.state
 			? [
-					`Kept by the host: ${list([...(envelope.state.session ? ["session state"] : []), ...(envelope.state.store ? ["cross-session store"] : [])])}`,
+					`Kept by the host: ${list([...(envelope.state.session ? ["session state"] : []), ...(envelope.state.store ? ["cross-session store"] : []), ...(envelope.state.project ? ["project data in .pancode/data/<id>/"] : [])])}`,
 				]
 			: []),
 		...(envelope.services?.embedding ? ["Host services: embedding requests to the configured model"] : []),

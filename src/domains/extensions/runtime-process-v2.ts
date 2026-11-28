@@ -36,6 +36,7 @@ import {
 } from "@pancode/sdk/pack";
 import { parse as parseYaml } from "yaml";
 import { resolvePackageRoot } from "../../core/package-root.js";
+import { ensureProjectIgnore } from "../../core/project-root.js";
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
 import type { SandboxMode, UnixSocketMode } from "../../core/sandbox/types.js";
 import type { ToolName } from "../../core/tool-names.js";
@@ -45,8 +46,10 @@ import { parseExtensionManifest } from "./discovery.js";
 import { extensionContentDigestWithCapture } from "./integrity.js";
 import {
 	type ExtensionSandboxReport,
+	extensionProjectDir,
 	planExtensionLaunch,
 	prepareDeclaredWriteRoots,
+	prepareProjectDir,
 	readOnlyRuntimeDeclaration,
 	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
@@ -103,6 +106,8 @@ export interface RuntimeRoots {
 	workspace: string;
 	storeDir: string;
 	home: string;
+	/** The `runtime.state.project` directory, and whether this session may write it. */
+	project?: { dir: string; writable: boolean };
 }
 
 /** A request the runtime did not answer in time. The runtime stays up; the caller decides what a miss costs. */
@@ -134,6 +139,10 @@ function runtimePermissionArgs(declaration: ExtensionRuntimeDeclarationV2, roots
 	const write = new Set<string>(storeFiles ? [directory(roots.storeDir)] : []);
 	for (const entry of declaration.permissions.fs.write)
 		if (entry !== "store") write.add(directory(path.join(roots.workspace, entry)));
+	if (roots.project !== undefined) {
+		read.add(directory(roots.project.dir));
+		if (roots.project.writable) write.add(directory(roots.project.dir));
+	}
 	return [
 		"--permission",
 		...[...read].map((root) => `--allow-fs-read=${root}`),
@@ -279,6 +288,8 @@ export class ExtensionRuntimeProcessV2 {
 	private exited: Promise<void>;
 	private diagnosticBytes = 0;
 	private createdRoots: string[] = [];
+	private project: { root: string; dir: string; writable: boolean } | undefined;
+	private createdProject: string[] = [];
 	private messageWindow = Date.now();
 	private messages = 0;
 	private unhandled = new Set<string>();
@@ -298,6 +309,14 @@ export class ExtensionRuntimeProcessV2 {
 			// A declared write root may not reach PanCode's own installed resources, state, trust or policy,
 			// and exists as a plain directory before launch so the sandbox binds exactly it.
 			this.createdRoots = prepareDeclaredWriteRoots(confined, options.snapshot.workspace);
+			if (this.declaration.state.project) {
+				this.project = { ...extensionProjectDir(options.snapshot.workspace, extension.id), writable: !options.readOnly };
+				if (this.project.writable) {
+					this.createdProject = prepareProjectDir(this.project);
+					// Data the runtime keeps in the project stays out of Git, as every other `.pancode/` state does.
+					ensureProjectIgnore(this.project.root);
+				}
+			}
 			cpSync(extension.provenance.canonicalRoot, copy, { recursive: true, dereference: false, verbatimSymlinks: true });
 			const manifestName = path.basename(extension.manifestPath);
 			const verified = extensionContentDigestWithCapture(copy, { capture: [manifestName] });
@@ -327,6 +346,7 @@ export class ExtensionRuntimeProcessV2 {
 		} catch (error) {
 			rmSync(temporary, { recursive: true, force: true });
 			releaseDeclaredWriteRoots(this.createdRoots);
+			releaseDeclaredWriteRoots(this.createdProject);
 			throw error;
 		}
 		this.staged = new Promise((resolve, reject) => {
@@ -340,7 +360,13 @@ export class ExtensionRuntimeProcessV2 {
 		try {
 			launch = planExtensionLaunch({
 				declaration: confined,
-				roots: { workspace: options.snapshot.workspace, packageCopy: copy, storeDir: options.storeDir, bootstrap },
+				roots: {
+					workspace: options.snapshot.workspace,
+					packageCopy: copy,
+					storeDir: options.storeDir,
+					bootstrap,
+					...(this.project?.writable ? { projectDir: this.project.dir } : {}),
+				},
 				argv: [
 					process.execPath,
 					...runtimePermissionArgs(confined, {
@@ -349,6 +375,7 @@ export class ExtensionRuntimeProcessV2 {
 						workspace: options.snapshot.workspace,
 						storeDir: options.storeDir,
 						home: os.homedir(),
+						...(this.project !== undefined ? { project: { dir: this.project.dir, writable: this.project.writable } } : {}),
 					}),
 					bootstrap,
 				],
@@ -358,6 +385,7 @@ export class ExtensionRuntimeProcessV2 {
 		} catch (error) {
 			rmSync(temporary, { recursive: true, force: true });
 			releaseDeclaredWriteRoots(this.createdRoots);
+			releaseDeclaredWriteRoots(this.createdProject);
 			throw error;
 		}
 		this.sandbox = launch.report;
@@ -407,6 +435,7 @@ export class ExtensionRuntimeProcessV2 {
 			snapshot: options.snapshot,
 			options: options.options,
 			...(this.declaration.permissions.fs.write.includes("store") ? { storeDir: options.storeDir } : {}),
+			...(this.project !== undefined ? { projectDir: this.project.dir } : {}),
 			limits: {
 				completionMessages: RUNTIME_V2_LIMITS.completionMessages,
 				completionRequestChars: RUNTIME_V2_LIMITS.completionRequestChars,
@@ -431,6 +460,8 @@ export class ExtensionRuntimeProcessV2 {
 	private cleanCopy(): void {
 		releaseDeclaredWriteRoots(this.createdRoots);
 		this.createdRoots = [];
+		releaseDeclaredWriteRoots(this.createdProject);
+		this.createdProject = [];
 		try {
 			rmSync(this.copyRoot, { recursive: true, force: true });
 		} catch (error) {
@@ -642,6 +673,11 @@ export class ExtensionRuntimeProcessV2 {
 			reply({ error: extensionPlainText(error instanceof Error ? error.message : String(error)).slice(0, 512) });
 		}
 	}
+	/** A command's answer, which alone may use `commandMessageBytes`, since it reaches only the operator. */
+	private answersCommand(value: unknown): boolean {
+		const m = value as { kind?: unknown; id?: unknown } | null;
+		return m?.kind === "result" && typeof m.id === "string" && this.pending.get(m.id)?.kind === "command";
+	}
 	private receive(value: unknown): void {
 		if (this.state === "disposed" || this.state === "failed") return;
 		try {
@@ -650,7 +686,11 @@ export class ExtensionRuntimeProcessV2 {
 				this.messages = 0;
 			}
 			if (++this.messages > RUNTIME_V2_LIMITS.messagesPerSecond) throw new Error("runtime IPC rate exceeded");
-			if (Buffer.byteLength(JSON.stringify(value)) > RUNTIME_V2_LIMITS.messageBytes)
+			const bytes = Buffer.byteLength(JSON.stringify(value));
+			if (
+				bytes > RUNTIME_V2_LIMITS.messageBytes &&
+				!(bytes <= RUNTIME_V2_LIMITS.commandMessageBytes && this.answersCommand(value))
+			)
 				throw new Error("runtime IPC message too large");
 			if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid runtime IPC message");
 			const m = value as Record<string, unknown>;
@@ -762,6 +802,7 @@ export class ExtensionRuntimeProcessV2 {
 		parse: (output: unknown) => T,
 		signal?: AbortSignal,
 		progress?: (text: string) => void,
+		interrupt?: AbortSignal,
 	): Promise<T> {
 		if (this.state !== "ready") return Promise.reject(new Error(this.failure ?? "runtime not ready"));
 		if (this.pending.size >= RUNTIME_V2_LIMITS.concurrentRequests) return Promise.reject(new Error("runtime is busy"));
@@ -776,6 +817,10 @@ export class ExtensionRuntimeProcessV2 {
 				else reject(error);
 			};
 			const cancel = (): void => abandon(new Error(`extension ${message.kind} cancelled`));
+			// An interrupt aborts the handler's `ctx.signal` and waits for the answer it still owes.
+			const stop = (): void => {
+				if (this.pending.has(id)) this.send({ kind: "interrupt", id });
+			};
 			const timer = setTimeout(() => abandon(new ExtensionRequestTimeout(message.kind)), timeoutMs);
 			this.pending.set(id, {
 				kind: message.kind,
@@ -793,30 +838,38 @@ export class ExtensionRuntimeProcessV2 {
 				cleanup: () => {
 					clearTimeout(timer);
 					signal?.removeEventListener("abort", cancel);
+					interrupt?.removeEventListener("abort", stop);
 				},
 			});
 			signal?.addEventListener("abort", cancel, { once: true });
 			this.send({ ...message, id });
+			if (interrupt?.aborted) stop();
+			else interrupt?.addEventListener("abort", stop, { once: true });
 		});
 	}
 	private output(origin: OutputOrigin): (value: unknown) => ExtensionOutputV2 {
 		return (value) => parseExtensionOutputV2(value, this.declaration, origin);
 	}
-	/** `progress` hears a `long` command's `ctx.progress` lines; any other command reports none. */
+	/**
+	 * `progress` hears a `long` command's `ctx.progress` lines; any other command reports none. `argv` reaches the
+	 * handler as `ctx.argv`; `interrupt` aborts its `ctx.signal` while the answer is still awaited.
+	 */
 	command(
 		name: string,
 		args: string,
 		signal?: AbortSignal,
 		progress?: (text: string) => void,
+		options: { argv?: ReadonlyArray<string>; interrupt?: AbortSignal } = {},
 	): Promise<ExtensionOutputV2> {
 		const declared = this.declaration.commands.find((command) => command.name === name);
 		if (!declared) return Promise.reject(new Error(`runtime declares no command '${name}'`));
 		return this.request(
-			{ kind: "command", name, args },
+			{ kind: "command", name, args, ...(options.argv !== undefined ? { argv: [...options.argv] } : {}) },
 			declared.timeoutMs,
 			this.output("command"),
 			signal,
 			declared.long ? progress : undefined,
+			options.interrupt,
 		);
 	}
 	observe(event: ExtensionObservationV2): Promise<ExtensionOutputV2 | undefined> {

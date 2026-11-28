@@ -437,6 +437,11 @@ export interface ExtensionOutputV2 {
 	prompt?: { fill: string } | { submit: string };
 	/** A command's exit status, 0-125, used as the process exit code when the command runs as a `pancode <verb>`. */
 	exitCode?: number;
+	/**
+	 * A command's diagnostics, at most 64 KiB: written to standard error when the command runs as a `pancode <verb>`
+	 * or `pancode extensions run`, and not shown in a session.
+	 */
+	stderr?: string;
 }
 
 export interface ExtensionHookResult {
@@ -623,6 +628,17 @@ export interface ExtensionContextV2 {
 	readonly blobs?: ExtensionBlobs;
 	/** Absolute path of the files directory `permissions.fs.write: [store]` opens; absent without it. */
 	readonly storeDir?: string;
+	/**
+	 * Absolute path of this extension's directory in the project, `<repository root>/.pancode/data/<id>/` (the
+	 * workspace's own `.pancode/data/<id>/` outside a repository), present when `runtime.state.project` is declared.
+	 * Read-only in a read-only session, where it may not exist yet.
+	 */
+	readonly projectDir?: string;
+	/**
+	 * The command's arguments as the shell split them, present when it runs as a `pancode <verb>` or
+	 * `pancode extensions run`. The handler's `args` string joins them with spaces.
+	 */
+	readonly argv?: ReadonlyArray<string>;
 	/**
 	 * Present when runtime.binaries is declared, in a host that runs them. Runs only from a command, an action or a
 	 * tool call, never in a read-only turn; elsewhere a call throws the reason.

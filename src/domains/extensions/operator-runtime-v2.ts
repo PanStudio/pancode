@@ -1026,7 +1026,8 @@ export class OperatorExtensionRuntimeV2 {
 
 	/**
 	 * `progress` hears a `long` command's lines; without it they replace the extension's status line when it
-	 * declares one.
+	 * declares one. `argv` reaches the handler as `ctx.argv`; `interrupt` aborts its `ctx.signal` and still awaits
+	 * the answer, where `signal` abandons it.
 	 */
 	async invoke(
 		invocation: string,
@@ -1034,6 +1035,7 @@ export class OperatorExtensionRuntimeV2 {
 		promptNames: ReadonlyArray<string | PromptRef> = [],
 		signal?: AbortSignal,
 		progress?: (text: string) => void,
+		options: { argv?: ReadonlyArray<string>; interrupt?: AbortSignal } = {},
 	): Promise<ExtensionOutputV2> {
 		this.reconcile();
 		// The first command after a turn that created the session is what starts
@@ -1042,7 +1044,11 @@ export class OperatorExtensionRuntimeV2 {
 		while (this.reloading && this.reloadTask && !this.closed) await this.reloadTask;
 		if (this.closed) throw new Error("extension runtimes have shut down");
 		if (!this.options.isIdle()) throw new Error("PanCode is busy; run it again once the current turn finishes");
-		if (Buffer.byteLength(args) > RUNTIME_LIMITS.argumentBytes) throw new Error("extension arguments exceed 16 KiB");
+		if (
+			Buffer.byteLength(args) > RUNTIME_LIMITS.argumentBytes ||
+			(options.argv !== undefined && Buffer.byteLength(JSON.stringify(options.argv)) > RUNTIME_LIMITS.argumentBytes)
+		)
+			throw new Error("extension arguments exceed 16 KiB");
 		const row = this.commands(promptNames).find((candidate) => candidate.invocation === invocation);
 		if (!row?.available) throw new Error(row?.reason ?? `/${invocation} is not an available extension command`);
 		this.refuseFenced(row.extensionId);
@@ -1056,7 +1062,7 @@ export class OperatorExtensionRuntimeV2 {
 		try {
 			const output = await this.operator(
 				entry,
-				(process, abort) => process.command(name, args, abort, progress ?? this.statusProgress(process)),
+				(process, abort) => process.command(name, args, abort, progress ?? this.statusProgress(process), options),
 				(process, output) => this.apply(process, output, "command"),
 				signal,
 			);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { readLayeredSettings } from "../core/settings-layers.js";
@@ -22,8 +23,10 @@ import {
 } from "../domains/extensions/index.js";
 import { extensionInvocation } from "../domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import { bundledPluginCatalog } from "../domains/plugins/catalog.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { formatColumns, printError, printOk } from "./shared.js";
+import { installStopSignals } from "./stop-signals.js";
 
 const HELP = `pancode extensions <command>
 
@@ -354,7 +357,7 @@ async function runOperatorCommand(parsed: Parsed): Promise<number> {
 		printError(`extension ${id} has no eligible operator command '${command}'`);
 		return 1;
 	}
-	return runHeadlessCommand(id, command, args, parsed.json);
+	return runHeadlessCommand(id, command, args, { workspace: process.cwd(), wrap: parsed.json });
 }
 
 /** A top-level verb an installed extension declares, resolved only after every built-in command name missed. */
@@ -362,7 +365,6 @@ interface PackVerb {
 	verb: string;
 	extensionId: string;
 	command: string;
-	summary: string;
 }
 
 /** The verbs installed, loadable extensions declare; a verb two extensions both claim is left out of both. */
@@ -372,7 +374,7 @@ function installedPackVerbs(workspace: string): { verbs: PackVerb[]; contested: 
 		if (!entry.loadable || !entry.runtimeV2?.cli) continue;
 		for (const verb of entry.runtimeV2.cli) {
 			const list = claimed.get(verb.verb) ?? [];
-			list.push({ verb: verb.verb, extensionId: entry.id, command: verb.command, summary: verb.summary });
+			list.push({ verb: verb.verb, extensionId: entry.id, command: verb.command });
 			claimed.set(verb.verb, list);
 		}
 	}
@@ -390,15 +392,36 @@ function installedPackVerbs(workspace: string): { verbs: PackVerb[]; contested: 
 }
 
 /**
- * `pancode <verb> [--json] [arguments]` for a verb an installed extension declares. Returns null when no
- * extension declares the verb, so the caller reports an unknown subcommand.
+ * `--cwd <dir>` or `--cwd=<dir>` before `--`: the workspace a verb runs in, as every built-in command reads it. The
+ * argument stays in the command's argv. Null when absent; a value that is no directory is an error.
+ */
+function verbWorkspace(argv: ReadonlyArray<string>): { dir: string } | { error: string } | null {
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i] as string;
+		if (arg === "--") return null;
+		const value = arg === "--cwd" ? argv[i + 1] : arg.startsWith("--cwd=") ? arg.slice("--cwd=".length) : undefined;
+		if (value === undefined) continue;
+		const dir = resolve(value);
+		return statSync(dir, { throwIfNoEntry: false })?.isDirectory() === true
+			? { dir }
+			: { error: `--cwd ${value}: not a directory` };
+	}
+	return null;
+}
+
+/**
+ * `pancode <verb> [arguments]` for a verb an installed extension declares: its arguments, `--json` and `--help`
+ * included, reach the command as `ctx.argv`, and its `text` and `stderr` reach standard output and standard error
+ * as they are. Returns null when no extension declares the verb, so the caller reports an unknown subcommand.
  */
 export async function runPackVerb(
 	verb: string,
 	argv: ReadonlyArray<string>,
 	unhonoredBootFlagMessage?: string | null,
 ): Promise<number | null> {
-	const { verbs, contested } = installedPackVerbs(process.cwd());
+	const cwd = verbWorkspace(argv);
+	const workspace = cwd !== null && "dir" in cwd ? cwd.dir : process.cwd();
+	const { verbs, contested } = installedPackVerbs(workspace);
 	const owners = contested.get(verb);
 	if (owners) {
 		printError(
@@ -408,41 +431,62 @@ export async function runPackVerb(
 		return 2;
 	}
 	const found = verbs.find((entry) => entry.verb === verb);
-	if (!found) return null;
+	if (!found) {
+		const absent = absentPackVerb(verb, workspace);
+		if (absent === null) return null;
+		process.stderr.write(`pancode ${verb}: ${absent}\n`);
+		return 2;
+	}
 	if (unhonoredBootFlagMessage) {
 		printError(unhonoredBootFlagMessage);
 		return 2;
 	}
-	let json = false;
-	const args: string[] = [];
-	for (let i = 0; i < argv.length; i++) {
-		const arg = argv[i] as string;
-		if (arg === "--") {
-			args.push(...argv.slice(i + 1));
-			break;
-		}
-		if (arg === "--json") json = true;
-		else if (args.length === 0 && (arg === "--help" || arg === "-h")) {
-			process.stdout.write(
-				`pancode ${verb} [--json] [arguments]\n\n${found.summary}\nRuns the ${found.command} command of extension ${found.extensionId}.\n`,
-			);
-			return 0;
-		} else args.push(arg);
+	if (cwd !== null && "error" in cwd) {
+		process.stderr.write(`pancode ${verb}: ${cwd.error}\nsee: pancode ${verb} --help\n`);
+		return 2;
 	}
-	return runHeadlessCommand(found.extensionId, found.command, args, json);
+	return runHeadlessCommand(found.extensionId, found.command, [...argv], { workspace, wrap: false, verb });
 }
 
 /**
- * Run one extension operator command with no session. Progress from a long command goes to stderr, one line
- * each; the output's exit code, when it sets one, becomes the process exit status.
+ * Why a verb a known extension declares does not run: its installed copy is disabled or does not load, or the bundled
+ * PanHub index lists it and it is not installed. Null when no extension PanCode knows declares the verb.
  */
-async function runHeadlessCommand(id: string, command: string, args: string[], json: boolean): Promise<number> {
+function absentPackVerb(verb: string, workspace: string): string | null {
+	const installed = listInstalledExtensions(workspace, { all: true }).find((entry) =>
+		entry.runtimeV2?.cli?.some((declared) => declared.verb === verb),
+	);
+	if (installed !== undefined)
+		return installed.enabled
+			? `extension:${installed.id} is installed but does not load; pancode extensions list shows why`
+			: `extension:${installed.id} is disabled; pancode extensions enable ${installed.id} enables it`;
+	const row = bundledPluginCatalog([]).find((entry) => entry.kind === "extension" && entry.verbs?.includes(verb));
+	return row !== undefined
+		? `extension:${row.name} is not installed; pancode hub install extension:${row.name} installs it`
+		: null;
+}
+
+const withNewline = (text: string): string => (text.endsWith("\n") ? text : `${text}\n`);
+
+/**
+ * Run one extension operator command with no session. Progress from a long command goes to stderr, one line
+ * each; the output's exit code, when it sets one, becomes the process exit status. `wrap` prints the answer as
+ * `extensions run --json` does. For a `verb`, the first SIGINT, SIGTERM or SIGHUP aborts the command's `ctx.signal`
+ * and its answer is still printed before the process exits 130, 143 or 129; a second one stops waiting.
+ */
+async function runHeadlessCommand(
+	id: string,
+	command: string,
+	args: string[],
+	options: { workspace: string; wrap: boolean; verb?: string },
+): Promise<number> {
+	const { workspace, verb } = options;
 	const services = cliServiceDomains();
 	const runtime = new OperatorExtensions({
 		services: createExtensionHostServices({ providers: services.providers }),
 		// The layered read keeps a broken user file from failing the command; the key is user-layer only.
-		sandboxUnixSockets: () => readLayeredSettings(process.cwd()).settings.safety.sandboxUnixSockets,
-		context: () => ({ workspace: process.cwd(), sessionId: null, mode: "headless" }),
+		sandboxUnixSockets: () => readLayeredSettings(workspace).settings.safety.sandboxUnixSockets,
+		context: () => ({ workspace, sessionId: null, mode: "headless" }),
 		isIdle: () => true,
 		onlyId: id,
 		onDiagnostic: (line) => process.stderr.write(`pancode: ${line}\n`),
@@ -452,24 +496,39 @@ async function runHeadlessCommand(id: string, command: string, args: string[], j
 		controller.abort();
 		void runtime.dispose();
 	};
-	process.once("SIGINT", cancel);
-	process.once("SIGTERM", cancel);
+	const interrupt = new AbortController();
+	const stops = verb !== undefined ? installStopSignals(interrupt, undefined, cancel) : undefined;
+	if (stops === undefined) {
+		process.once("SIGINT", cancel);
+		process.once("SIGTERM", cancel);
+	}
 	try {
 		const reload = await runtime.reload("startup");
 		if (reload.status !== "committed") throw new Error(reload.message);
 		const provenance = runtime.entries().find((entry) => entry.id === id && entry.state === "ready")?.provenance;
-		const output = await runtime.invoke(extensionInvocation(id, command), args.join(" "), [], controller.signal, (text) =>
-			process.stderr.write(`${text}\n`),
+		const output = await runtime.invoke(
+			extensionInvocation(id, command),
+			args.join(" "),
+			[],
+			controller.signal,
+			(text) => process.stderr.write(verb !== undefined ? `pancode ${verb}: ${text}\n` : `${text}\n`),
+			{ argv: args, interrupt: interrupt.signal },
 		);
 		if (!provenance) throw new Error("extension result has no activated provenance");
-		const generation = runtime.entries().find((entry) => entry.id === id)?.generation ?? reload.generation;
-		if (json) process.stdout.write(`${JSON.stringify({ extensionId: id, command, generation, provenance, output })}\n`);
-		else process.stdout.write(`${output.text}\n`);
+		if (output.stderr) process.stderr.write(withNewline(output.stderr));
+		if (options.wrap) {
+			const generation = runtime.entries().find((entry) => entry.id === id)?.generation ?? reload.generation;
+			process.stdout.write(`${JSON.stringify({ extensionId: id, command, generation, provenance, output })}\n`);
+		} else if (verb !== undefined) {
+			if (output.text.length > 0) process.stdout.write(withNewline(output.text));
+		} else process.stdout.write(`${output.text}\n`);
+		if (stops?.received() != null) return stops.exitCode();
 		return output.exitCode ?? 0;
 	} catch (error) {
 		printError(error instanceof Error ? error.message : String(error));
-		return 1;
+		return stops?.received() != null ? stops.exitCode() : 1;
 	} finally {
+		stops?.dispose();
 		process.off("SIGINT", cancel);
 		process.off("SIGTERM", cancel);
 		await runtime.dispose();

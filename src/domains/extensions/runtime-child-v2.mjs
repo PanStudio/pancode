@@ -17,6 +17,8 @@ const interviews = new Map();
 const disposers = [];
 /** Host requests in flight, by id. A v2 runtime may hold several at once. */
 const requests = new Map();
+/** Requests the operator interrupted: their handlers see `ctx.signal` abort and still answer. */
+const interrupted = new Set();
 /** This runtime's own calls to host-held state and store, by id. */
 const calls = new Map();
 let identity;
@@ -55,6 +57,7 @@ function keyValue(scope, declared) {
 let state;
 let store;
 let storeDir;
+let projectDir;
 /** Request caps the host sent with `init`; the host checks every request again. */
 let limits = {};
 
@@ -148,6 +151,7 @@ function runs(parentRequestId) {
 		frames: (id, opts = {}) => run("frames", { id, ...opts }),
 		wait: (id) => run("wait", { id }),
 		cancel: (id) => run("cancel", { id }),
+		refusal: (opts = {}) => run("refusal", opts),
 	});
 }
 function worktrees(parentRequestId) {
@@ -172,6 +176,7 @@ function verify(parentRequestId) {
 	const run = service("verify", parentRequestId);
 	return Object.freeze({
 		list: (place) => run("list", place === undefined ? {} : { place }),
+		resolve: (id, place) => run("resolve", { id, ...(place === undefined ? {} : { place }) }),
 		check: (id, place) => run("check", { id, ...(place === undefined ? {} : { place }) }),
 		measure: (id, metric, place) => run("measure", { id, metric, ...(place === undefined ? {} : { place }) }),
 	});
@@ -296,6 +301,7 @@ async function initialize(message) {
 	options = Object.freeze({ ...message.options });
 	limits = Object.freeze({ ...message.limits });
 	if (typeof message.storeDir === "string") storeDir = message.storeDir;
+	if (typeof message.projectDir === "string") projectDir = message.projectDir;
 	state = keyValue("state", declaration.state.session === true);
 	store = keyValue("store", declaration.state.store === true);
 	const registration = createRuntimeRegistration(
@@ -365,20 +371,25 @@ async function serve(message) {
 			: {}),
 		...(declaration.services?.store ? { blobs: blobs(message.id) } : {}),
 		...(storeDir !== undefined ? { storeDir } : {}),
+		...(projectDir !== undefined ? { projectDir } : {}),
+		...(message.kind === "command" && Array.isArray(message.argv) ? { argv: Object.freeze([...message.argv]) } : {}),
 		...(declaration.binaries?.length ? { binaries: binaries(message.id) } : {}),
 		...(declaration.services?.pane ? { pane: pane(message.id) } : {}),
 		...operatorServices(message),
 	});
+	// An interrupted request still owes its answer; a cancelled one does not.
+	const answers = () => !disposing && (!controller.signal.aborted || interrupted.has(message.id));
 	const input =
 		message.kind === "command" ? message.args : message.kind === "tool" ? message.input : Object.freeze(message.event);
 	try {
 		const output = await handler(input, context);
 		// A cancelled request has no authority; its late answer is dropped here and again by the host.
-		if (!controller.signal.aborted && !disposing) send({ kind: "result", id: message.id, output: output ?? null });
+		if (answers()) send({ kind: "result", id: message.id, output: output ?? null });
 	} catch (error) {
-		if (!controller.signal.aborted && !disposing) send({ kind: "error", id: message.id, error: errorText(error) });
+		if (answers()) send({ kind: "error", id: message.id, error: errorText(error) });
 	} finally {
 		requests.delete(message.id);
+		interrupted.delete(message.id);
 	}
 }
 
@@ -400,7 +411,13 @@ process.on("message", async (message) => {
 				await dispose(message.reason);
 				return;
 			case "cancel":
+				interrupted.delete(message.id);
 				requests.get(message.id)?.abort();
+				return;
+			case "interrupt":
+				if (!requests.has(message.id)) return;
+				interrupted.add(message.id);
+				requests.get(message.id).abort();
 				return;
 			case "snapshot":
 				snapshot = Object.freeze(message.snapshot);

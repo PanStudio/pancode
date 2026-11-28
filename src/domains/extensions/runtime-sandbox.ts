@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
+import { repositoryRoot } from "../../core/project-root.js";
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { discoverSecretMasks } from "../../core/sandbox/secret-files.js";
 import {
@@ -65,6 +66,8 @@ export interface ExtensionLaunchRoots {
 	packageCopy: string;
 	storeDir: string;
 	bootstrap: string;
+	/** The writable project directory of a runtime that declares `runtime.state.project`, in a writable session. */
+	projectDir?: string;
 }
 
 export interface ExtensionLaunch {
@@ -117,22 +120,48 @@ export function prepareDeclaredWriteRoots(declaration: ExtensionRuntimeDeclarati
 	const created: string[] = [];
 	for (const entry of declaration.permissions.fs.write) {
 		if (entry === "store") continue;
-		let current = home;
-		for (const segment of entry.split("/")) {
-			if (segment === ".") continue;
-			current = path.join(current, segment);
-			try {
-				mkdirSync(current);
-				created.push(current);
-			} catch (error) {
-				// An existing component is checked below; any other failure leaves the root unusable.
-				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			}
-			if (!lstatSync(current).isDirectory())
-				throw new Error(`declared write root ${entry} passes through ${current}, which is not a plain directory`);
-		}
+		created.push(...plainDirectories(home, entry.split("/"), `declared write root ${entry}`));
 	}
 	return created;
+}
+
+/** Create `segments` below `base` one component at a time, refusing a component that is not a plain directory. */
+function plainDirectories(base: string, segments: ReadonlyArray<string>, label: string): string[] {
+	const created: string[] = [];
+	let current = base;
+	for (const segment of segments) {
+		if (segment === ".") continue;
+		current = path.join(current, segment);
+		try {
+			mkdirSync(current);
+			created.push(current);
+		} catch (error) {
+			// An existing component is checked below; any other failure leaves the root unusable.
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		if (!lstatSync(current).isDirectory())
+			throw new Error(`${label} passes through ${current}, which is not a plain directory`);
+	}
+	return created;
+}
+
+/**
+ * The project directory `runtime.state.project` grants: `<repository root>/.pancode/data/<id>/`, or the workspace's
+ * own `.pancode/data/<id>/` outside a repository. The default `.pancode/.gitignore` already keeps `data/` untracked.
+ */
+export function extensionProjectDir(workspace: string, extensionId: string): { root: string; dir: string } {
+	const home = canonicalizeExistingPath(workspace);
+	const root = repositoryRoot(home) ?? home;
+	return { root, dir: path.join(root, ".pancode", "data", extensionId) };
+}
+
+/** Create the project directory before launch so the sandbox binds exactly it; the components it created. */
+export function prepareProjectDir(project: { root: string; dir: string }): string[] {
+	return plainDirectories(
+		project.root,
+		path.relative(project.root, project.dir).split(path.sep),
+		"the project directory",
+	);
 }
 
 /**
@@ -245,7 +274,8 @@ function planLaunch(input: {
 				// Re-bound read-only after the writable roots, so a root that is a parent of the
 				// project cannot rewrite Git metadata, installed resources, state or policy.
 				readOnlyPaths: [path.join(workspace, ".git"), ...managedPaths(workspace)],
-				gitWritablePaths: [],
+				// The project directory sits under a managed `.pancode/`, so it is bound writable after those.
+				gitWritablePaths: roots.projectDir !== undefined ? [roots.projectDir] : [],
 				readableRoots: [workspace, path.dirname(roots.packageCopy), path.dirname(roots.bootstrap)],
 				network: net,
 				...(input.unixSockets !== undefined && input.unixSockets !== "block" ? { unixSockets: input.unixSockets } : {}),
