@@ -18,6 +18,7 @@ import type { TranscriptEntry, WorkerTranscriptEntry } from "../chat-transcript-
 import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
+import type { createChatFrame } from "./frame.js";
 import type { createChatReceipts } from "./receipts.js";
 import type { createChatRunSettle } from "./run-settle.js";
 import type { createChatSegments } from "./segments.js";
@@ -55,6 +56,7 @@ export interface ChatPanelScope {
 	runTurnId: string | undefined;
 	/** The latest settled receipt eligible for the turn's post-settlement prewarm record. */
 	lastSettledReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null;
+	readonly liveReplayBlocks: Set<() => boolean>;
 	dirty: boolean;
 	/**
 	 * A viewport-first re-layout under way (`deferRelayout`): runs laid out at an earlier key stay on screen while
@@ -108,4 +110,5 @@ export interface ChatPanelScope {
 	readonly segments: ReturnType<typeof createChatSegments>;
 	readonly toolEvents: ReturnType<typeof createChatToolEvents>;
 	readonly runSettle: ReturnType<typeof createChatRunSettle>;
+	readonly frame: ReturnType<typeof createChatFrame>;
 }
