@@ -93,9 +93,8 @@ export {
 	SECRET_MASK_ID,
 	scrubText,
 } from "./scrub.js";
-export { reportBundleDigest, type ShareDigest, telemetryShareDigest } from "./share/digest.js";
+export { type ShareDigest, telemetryShareDigest } from "./share/digest.js";
 export {
-	newShareId,
 	openShare,
 	type SealedShare,
 	SHARE_ID,

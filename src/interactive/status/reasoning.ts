@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-
-import { formatCount } from "../../core/format-time.js";
-import { GLYPH } from "../../core/glyphs.js";
 import type { Quantity } from "../../core/telemetry/dto.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
 import type { ReasoningTokenProvenance } from "../../session-control/status-types.js";
@@ -45,17 +40,4 @@ export function reasoningFromQuantity(quantity: Quantity | null): ReasoningUsage
 	const provenance: ReasoningTokenProvenance =
 		estimated === 0 && fact.unknownCount === 0 ? "provider" : measured === 0 ? "estimated" : "mixed";
 	return { tokens: factKnownValue(fact), provenance };
-}
-
-/**
- * `reasoning 123` for a provider-attested count, `reasoning ≈123` for anything
- * PanCode inferred. A provider-measured zero is shown as `reasoning 0`; an unmeasured
- * turn has no chip (#434).
- */
-export function formatReasoningChip(
-	view: ReasoningUsageView,
-	format: (value: number) => string = formatCount,
-): string | null {
-	if (view.provenance === "unmeasured" || (view.tokens <= 0 && view.provenance !== "provider")) return null;
-	return `reasoning ${view.provenance === "provider" ? "" : GLYPH.estimate}${format(view.tokens)}`;
 }

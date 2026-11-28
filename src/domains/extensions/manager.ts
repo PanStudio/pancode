@@ -31,7 +31,6 @@ export type {
 	ExtensionReloadPrepareResult,
 	ExtensionReloadRejection,
 	ExtensionReloadRejectionReason,
-	ExtensionReloadResult,
 	ExtensionScope,
 	ExtensionSnapshot,
 	ExtensionSnapshotDiagnostics,

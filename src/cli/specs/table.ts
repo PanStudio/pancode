@@ -63,5 +63,3 @@ export const COMMAND_SPECS = {
 	help: () => import("./help.js"),
 	schema: () => import("./schema.js"),
 } as const satisfies Readonly<Record<string, () => Promise<CommandSpecModule>>>;
-
-export type CommandName = keyof typeof COMMAND_SPECS;
