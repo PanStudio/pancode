@@ -10,12 +10,12 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { DomainContext } from "../../src/core/domain-loader.js";
+import { detectRunIdentity } from "../../src/core/run-identity.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { AgentsContract } from "../../src/domains/agents/contract.js";
 import type { ConfigContract } from "../../src/domains/config/contract.js";
 import { createContextBundle } from "../../src/domains/context/extension.js";
 import { type ContextContract, renderPromptContext, serializePancodeMd } from "../../src/domains/context/index.js";
-import { detectRunIdentity } from "../../src/domains/dispatch/run-identity.js";
 import { createPromptsBundle } from "../../src/domains/prompts/extension.js";
 import type { PromptsContract } from "../../src/domains/prompts/index.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";

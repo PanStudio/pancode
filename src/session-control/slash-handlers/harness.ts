@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
 import { mcpCommandOutput, mcpSkillApprovalOutput, mcpSkillRevokeOutput } from "../../cli/mcp.js";
-import { isHubKind } from "../../domains/resources/hub-types.js";
+import { isHubKind } from "../../domains/plugins/hub-types.js";
 import { type HubCategory, parseSkillCommand, SKILL_SURFACE_CLEAR_ARG } from "../../domains/resources/index.js";
 import type {
 	BuiltinSlashCommand,

@@ -1827,7 +1827,7 @@ function harnessFindings(workspaceRoot: string): DoctorFinding[] {
 	let input: HarnessInput;
 	let issues: HarnessIssue[];
 	try {
-		input = collectHarnessInput(workspaceRoot);
+		input = collectHarnessInput(workspaceRoot, { loadSkills });
 		issues = validateHarness(input);
 	} catch (err) {
 		return [

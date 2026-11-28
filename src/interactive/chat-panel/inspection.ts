@@ -7,10 +7,10 @@
  */
 
 import { sanitizeAssistantProse } from "../../core/assistant-prose.js";
-import type { ViewArtifact } from "../../domains/session/view-artifacts.js";
 import { stripTerminalSequences, truncateToWidth } from "../../engine/tui.js";
 import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
 import { holdUnresolvedStrings, holdUnresolvedUserinfo, redactSecretString } from "../../lib/secrets/redaction.js";
+import type { ViewArtifact } from "../../session-control/view-artifacts.js";
 import { finishedCall, shownArgs } from "../chat-tool-rows.js";
 import { providerErrorEvidence } from "../renderers/provider-error.js";
 import { renderRetryStatus } from "../renderers/retry-status.js";

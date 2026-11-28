@@ -7,7 +7,7 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
 import { evaluatePancodeCompatibility, isSemanticVersion } from "../extensions/compatibility.js";
-import { type HubRequirementRef, isHubComponentKind, isHubKind } from "../resources/hub-types.js";
+import { type HubRequirementRef, isHubComponentKind, isHubKind } from "./hub-types.js";
 import { pluginContentDigestWithCapture } from "./integrity.js";
 import type {
 	PancodePluginConfiguration,

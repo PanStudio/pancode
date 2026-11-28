@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+export { foreignAgentDirs, INTEROP_AGENT_KINDS, interopAgentKind } from "../../core/interop-agents.js";
 export type { AdoptionKind, InteropAdoptionPlan } from "./adopt.js";
 export {
 	ADOPTION_KINDS,
@@ -32,7 +34,6 @@ export {
 	type PeerModeCapability,
 	peerModeCapabilities,
 } from "./peer-modes.js";
-export { foreignAgentDirs, INTEROP_AGENT_KINDS, interopAgentKind } from "./registry.js";
 export { readInteropReport } from "./state.js";
 export type {
 	InteropAgentId,

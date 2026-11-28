@@ -33,7 +33,6 @@ import { classifyFailure } from "../../src/domains/dispatch/failure-classificati
 import { prepareWorkerModelListing } from "../../src/domains/dispatch/worker-model-metadata.js";
 import type { WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
 import { createBackgroundMemoryModelClient } from "../../src/domains/memory/background-route.js";
-import type { MemoryRouteText } from "../../src/domains/memory/secret-text.js";
 import { prepareListedModelCapabilities } from "../../src/domains/providers/background-model-metadata.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { copilotAuthState, detectCopilotLogin, prepareCopilotSdk } from "../../src/domains/providers/copilot-setup.js";
@@ -74,6 +73,7 @@ import { getEngineEnvApiKey } from "../../src/engine/env-api-keys.js";
 import { getEngineOAuthProvider } from "../../src/engine/oauth.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { createSideRequestAdmission } from "../../src/entry/side-request-admission.js";
+import type { MemoryRouteText } from "../../src/lib/secrets/memory-route.js";
 import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { assessToolCallFlood } from "../../src/session-control/repetition-detector.js";
 import { runOutOfTurnRound } from "../../src/session-control/side-question.js";

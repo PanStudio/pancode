@@ -3,9 +3,9 @@
 import { stringify as stringifyYaml } from "yaml";
 import { type PancodeSettings, readSettings, updateSettings } from "../../core/config.js";
 import type { DelegationAgentConfig } from "../../core/defaults.js";
+import { interopAgentKind } from "../../core/interop-agents.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { resolveOnPath } from "./detect.js";
-import { interopAgentKind } from "./registry.js";
 import { interopStatePath, readInteropReport, writeInteropReport } from "./state.js";
 import type {
 	InteropAgentId,

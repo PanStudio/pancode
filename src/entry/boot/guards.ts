@@ -145,18 +145,18 @@ export function buildBootGuards(input: BootGuardsInput) {
 	);
 
 	// Install guardrail policy before any guard registration or tool reads it.
-	// The effective session view replaces this boot projection below.
+	// The effective session view (session-settings-view.ts) replaces this boot projection once initialized.
 	const resolvedSettings = config?.get() ?? readSettings();
 	configureGuardrails(guardrailValuesFromSettings(resolvedSettings));
 
 	// The journal sink sits on the dispatch event path, where reading settings
-	// would be both a cost and a throw site. The effective session view replaces
-	// this boot projection below.
+	// would be both a cost and a throw site. The effective session view
+	// (session-settings-view.ts) replaces this boot projection once initialized.
 	configureRunEventJournal(resolvedSettings.fleet.history.journal);
 
 	// Register the loop and dispatch guards first. The protected-artifact guard
-	// is constructed here but registered after user hooks below, so it can
-	// absorb their protect_path effects. Workers register their own guards in
+	// is constructed here but registered by orchestrator.ts after user hooks load,
+	// so it can absorb their protect_path effects. Workers register their own guards in
 	// worker-runtime.ts; these instances carry the bus and session persistence.
 	const loopGuard = createLoopGuardRegistration({
 		safety,

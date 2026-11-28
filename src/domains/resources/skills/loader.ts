@@ -15,6 +15,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 import { sha256Hex } from "../../../core/hash.js";
+import { INTEROP_AGENT_KINDS, interopSourceRank, interopUserRoot } from "../../../core/interop-agents.js";
 import { detectPancodeRepo, PANCODE_SELF_DEVELOPMENT_SKILLS } from "../../../core/pancode-repo.js";
 import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { pancodeProjectRoot } from "../../../core/project-root.js";
@@ -22,7 +23,8 @@ import type { PendingSkillRequest } from "../../../core/skill-activation.js";
 import { isToolLimitName } from "../../../core/tool-limit-flags.js";
 import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../../core/tool-names.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
-import { INTEROP_AGENT_KINDS, interopSourceRank, interopUserRoot } from "../../interop/registry.js";
+import { cachedFrontmatterParser, resolvePackageReferences, withFrontmatterCache } from "../../agents/index.js";
+import type { HubAuditState } from "../../plugins/hub-types.js";
 import {
 	committedPluginResourceRoots,
 	enabledPluginResourceRoots,
@@ -32,11 +34,8 @@ import {
 } from "../../plugins/index.js";
 import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "../collision.js";
 import { readRootEntries, splitToolList, splitYamlFrontmatter, stringField } from "../common-loader.js";
-import type { HubAuditState } from "../hub-types.js";
-import { resolvePackageReferences } from "../package-references.js";
 import { installedSkillNames } from "./availability.js";
 import { normalizedSkillHash } from "./content-hash.js";
-import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
 import { getMarketplaceSkills } from "./marketplace.js";
 import { type McpServedSkill, type McpSkillSourceInput, servedMcpSkills } from "./mcp-source.js";
 

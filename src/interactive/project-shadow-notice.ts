@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pancodeProjectRoot } from "../core/project-root.js";
 import { type PlaybookSource, shadowedPlaybooks } from "../domains/agents/playbook.js";
 import { type AgentRecipeDiagnostic, discoverAgentRecipes } from "../domains/agents/registry.js";
+import { loadSkills } from "../domains/resources/skills/loader.js";
 
 interface ProjectShadow {
 	kind: "agent" | "playbook";
@@ -31,7 +32,7 @@ function projectShadows(cwd: string): ProjectShadow[] {
 	if (!["agents", "playbooks"].some((entry) => existsSync(join(pancodeProjectRoot(cwd, entry), ".pancode", entry))))
 		return [];
 	const diagnostics: AgentRecipeDiagnostic[] = [];
-	discoverAgentRecipes(cwd, diagnostics);
+	discoverAgentRecipes(loadSkills, cwd, diagnostics);
 	const agents = diagnostics.flatMap((diagnostic): ProjectShadow[] =>
 		diagnostic.kind === "overridden" && diagnostic.by === "project" && diagnostic.id !== undefined
 			? [{ kind: "agent", name: diagnostic.id, replaces: diagnostic.source }]

@@ -4,10 +4,10 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { sha256Hex } from "../../core/hash.js";
+import { INTEROP_AGENT_KINDS, interopAgentUserDir } from "../../core/interop-agents.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { interopUserHome } from "../../core/xdg.js";
 import { discoverInteropInventory } from "./inventory.js";
-import { INTEROP_AGENT_KINDS, interopAgentUserDir } from "./registry.js";
 import { readInteropReport } from "./state.js";
 import type {
 	InteropAgentFacts,

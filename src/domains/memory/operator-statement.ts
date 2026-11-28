@@ -9,8 +9,8 @@
  * model text here.
  */
 import { randomBytes } from "node:crypto";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import { canonicalMemoryRepositoryIdentity, cloneMemoryRecord } from "./operations.js";
-import { redactForMemoryRoute } from "./secret-text.js";
 import { mutateMemoryRecords } from "./store.js";
 import type { TaskMemoryModelClient } from "./task-memory-policy.js";
 import { type MemoryRecord, OPERATOR_STATED_KINDS, type OperatorStatedKind } from "./types.js";
