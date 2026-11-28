@@ -9,7 +9,7 @@ import type { ActionClass, ClassifierCall } from "../domains/safety/action-class
 import type { ImageContent } from "../engine/types.js";
 import type { DispatchPlanView } from "./dispatch-plan.js";
 import type { ToolPresentationPolicy } from "./presentation.js";
-import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "./registry-contract.js";
+import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResultDisposition } from "./result-disposition.js";
 
 export type ToolExecutionMode = "sequential" | "parallel";

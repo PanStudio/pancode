@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
 import { createArtifactTool } from "../../src/tools/artifact.js";
-import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry/contract.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

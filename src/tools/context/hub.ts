@@ -12,7 +12,7 @@ import type {
 	HubPackageRecord,
 } from "../../domains/resources/hub-inventory.js";
 import { finalizeObservation, type ObservationReservation } from "../observation.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolResult } from "../tool-spec.js";
 import { byteLength } from "../truncate-utf8.js";
 

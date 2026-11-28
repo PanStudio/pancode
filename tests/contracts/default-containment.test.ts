@@ -65,8 +65,8 @@ import {
 	grantBrowserHosts,
 } from "../../src/tools/browser/surface.js";
 import { editTool } from "../../src/tools/edit.js";
+import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry-contract.js";
 import { createRunScriptTool } from "../../src/tools/run-script.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { verifyTool } from "../../src/tools/verify/index.js";

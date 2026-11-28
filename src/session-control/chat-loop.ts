@@ -60,7 +60,7 @@ import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import { createEngineAgent } from "../engine/agent.js";
 import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry/contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
 import { createChatLoopAdmission } from "./chat-loop/admission.js";

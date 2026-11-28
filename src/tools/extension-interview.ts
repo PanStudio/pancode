@@ -11,8 +11,8 @@ import type {
 import { validateInterview, validateInterviewStep } from "@pancode/sdk/pack";
 import type { ParkedInterviewResult } from "../domains/extensions/runtime-hook-bridge.js";
 import type { AskUserHandler, AskUserQuestion, AskUserResult } from "./ask-user.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
-import { createHarnessHold } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
+import { createHarnessHold } from "./registry/contract.js";
 
 function stepToQuestions(step: InterviewStep): AskUserQuestion[] {
 	return step.questions.map((question) => {

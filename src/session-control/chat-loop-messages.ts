@@ -45,7 +45,7 @@ import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
 import { ceilChars } from "../domains/session/context-accounting.js";
 import type { AgentMessage } from "../engine/types.js";
-import type { AskUserToolPolicy, ToolRegistry } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy, ToolRegistry } from "../tools/registry/contract.js";
 import { attachedToolSchemaBytes, attachedToolSchemasFromState } from "./prompt-cache-identity.js";
 
 /** Minimal structural view of the engine agent used by state-inspection helpers. */

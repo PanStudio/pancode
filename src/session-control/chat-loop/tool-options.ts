@@ -15,7 +15,7 @@ import { absentOutputs, namedOutputs } from "../../domains/session/output-obliga
 import type { RetrySettings } from "../../domains/session/retry.js";
 import { activePath } from "../../domains/session/tree/active-path.js";
 import { createHeadlessObservationPool } from "../../tools/observation.js";
-import type { ToolInvokeOptions } from "../../tools/registry-contract.js";
+import type { ToolInvokeOptions } from "../../tools/registry/contract.js";
 import type { CreateChatLoopDeps } from "../chat-loop.js";
 import { normalizeRetrySettings } from "../chat-loop-policy.js";
 import type { ChatLoopScope } from "../chat-loop-scope.js";

@@ -11,7 +11,7 @@ import { attestedToolSignature, createWorkerSafety, createWorkerToolRegistry } f
 import { toolSignatureOf } from "../../src/lib/worker-wire/protocol.js";
 import { effectiveToolNames, resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";

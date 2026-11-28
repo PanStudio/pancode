@@ -10,7 +10,7 @@ import { ToolNames } from "../../core/tool-names.js";
 import { CHAIN_OUTPUT_TRUNCATED_MARKER } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
 import { settleObservationCharge } from "../observation.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import { boundedToolResultExcerpt, toolResultContextText } from "../result-disposition.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import { byteLength, truncateUtf8 } from "../truncate-utf8.js";

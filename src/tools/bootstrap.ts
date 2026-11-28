@@ -37,7 +37,7 @@ import { createMemoryNoteTool, type MemoryNoteDeps } from "./memory-note.js";
 import { createMemoryRecallTool, type MemoryRecallDeps } from "./memory-recall.js";
 import { monitorToolSurface } from "./monitor-surface.js";
 import { panesToolSurface } from "./panes-surface.js";
-import type { RegistryDeps, ToolRegistry } from "./registry-contract.js";
+import type { RegistryDeps, ToolRegistry } from "./registry/contract.js";
 import type { ReportToolDeps } from "./report.js";
 import { reportToolSurface } from "./report-surface.js";
 import { createSelfCompactTool, type RequestSelfCompact } from "./self-compact.js";
@@ -220,8 +220,8 @@ export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps
 			getWorkspaceRoot: () => deps.session?.current()?.cwd,
 			approveExternalRead: (
 				root: string,
-				options?: import("./registry-contract.js").ToolInvokeOptions,
-				task?: import("./registry-contract.js").DispatchReadRootTask,
+				options?: import("./registry/contract.js").ToolInvokeOptions,
+				task?: import("./registry/contract.js").DispatchReadRootTask,
 			) => registry.requestReadRootApproval?.(root, options, task) ?? Promise.resolve(null),
 			...(deps.captureWorkerContext ? { captureWorkerContext: deps.captureWorkerContext } : {}),
 			runEvents: dispatchRunEvents,

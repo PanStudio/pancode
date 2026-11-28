@@ -9,7 +9,7 @@ import type { RetrySettings } from "../domains/session/retry.js";
 import type { EngineAgentHandle, EngineAgentOptions } from "../engine/agent.js";
 import type { TurnFailureRecord } from "../lib/turn-control/outcome.js";
 import type { HeadlessObservationPool } from "../tools/observation.js";
-import type { AskUserToolPolicy, ToolInvokeOptions } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy, ToolInvokeOptions } from "../tools/registry/contract.js";
 import type {
 	ChatCancelOptions,
 	ChatLoop,

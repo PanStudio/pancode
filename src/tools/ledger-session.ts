@@ -6,7 +6,7 @@ import { appendAgentLedgerEntry, readAgentLedger } from "../domains/dispatch/age
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
 import { createLedgerTool } from "./ledger.js";
-import type { RegistryDeps } from "./registry-contract.js";
+import type { RegistryDeps } from "./registry/contract.js";
 import type { ToolSpec } from "./tool-spec.js";
 
 export function createSessionLedgerTool(dispatch: DispatchContract, flow?: RegistryDeps["flow"]): ToolSpec {
