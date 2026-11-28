@@ -288,7 +288,15 @@ export function createExtensionVerifyService(deps: ExtensionVerifyServiceDeps): 
 			const resolution = resolveVerifyCall(cwd, { check: name });
 			if (resolution.kind === "unresolved") return { ok: false, message: resolution.message };
 			const inputs = checkInputs(cwd, resolution.kind === "catalog" ? resolution.check : null);
-			return Array.isArray(inputs) ? { ok: true, kind: resolution.kind, inputs } : { ok: false, message: inputs.error };
+			if (!Array.isArray(inputs)) return { ok: false, message: inputs.error };
+			if (resolution.kind !== "catalog") return { ok: true, kind: resolution.kind, inputs };
+			return {
+				ok: true,
+				kind: resolution.kind,
+				inputs,
+				check: structuredClone(resolution.check) as unknown as Record<string, unknown>,
+				...(resolution.run !== undefined ? { run: resolution.run } : {}),
+			};
 		},
 
 		async check(id, place = "workspace", scope) {

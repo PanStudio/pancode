@@ -21,6 +21,7 @@ import {
 	settingsFileMasks,
 	workerSandboxMasks,
 } from "../../core/sandbox/worker-process.js";
+import { taskWorktreeClaimParent } from "../../core/task-worktree-claim.js";
 import { workspaceTrustDirectory } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isExtensionId } from "./discovery.js";
@@ -68,7 +69,11 @@ export interface ExtensionLaunchRoots {
 	storeDir: string;
 	bootstrap: string;
 	/** The project directory of a runtime that declares `runtime.state.project`, and whether this session may write it. */
-	project?: { dir: string; writable: boolean };
+	project?: {
+		dir: string;
+		writable: boolean;
+	} /** The worktree parent of a runtime that declares `services.worktrees`, which it may read. */;
+	worktrees?: string;
 }
 
 export interface ExtensionLaunch {
@@ -159,6 +164,25 @@ export function extensionProjectDir(workspace: string, extensionId: string): { r
 	if (path.dirname(dir) !== dataRoot || path.basename(dir) !== extensionId)
 		throw new Error(`project directory for '${extensionId}' escapes .pancode/data/`);
 	return { root, dir };
+}
+
+/**
+ * The worktree parent a runtime that declares `services.worktrees` may read: `<repository root>/.pancode/worktrees/
+ * ext-<id>/`, where the worktrees service makes its worktrees, or undefined outside a repository.
+ */
+export function extensionWorktreeParent(
+	workspace: string,
+	extensionId: string,
+): { root: string; dir: string } | undefined {
+	if (!isExtensionId(extensionId)) throw new Error(`invalid extension id '${extensionId}' for worktree directory`);
+	const root = repositoryRoot(canonicalizeExistingPath(workspace));
+	if (root === null) return undefined;
+	return { root, dir: path.join(taskWorktreeClaimParent(root), `ext-${extensionId}`) };
+}
+
+/** Create the worktree parent before launch, since Node grants reads only below a directory that exists then. */
+export function prepareWorktreeParent(parent: { root: string; dir: string }): string[] {
+	return plainDirectories(parent.root, path.relative(parent.root, parent.dir).split(path.sep), "the worktree directory");
 }
 
 /** Create the project directory before launch so the sandbox binds exactly it; the components it created. */
@@ -344,6 +368,7 @@ function planLaunch(input: {
 					path.dirname(roots.packageCopy),
 					path.dirname(roots.bootstrap),
 					...(roots.project !== undefined ? [roots.project.dir] : []),
+					...(roots.worktrees !== undefined ? [roots.worktrees] : []),
 				],
 				network: net,
 				...(input.unixSockets !== undefined && input.unixSockets !== "block" ? { unixSockets: input.unixSockets } : {}),

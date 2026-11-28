@@ -122,8 +122,13 @@ function clampRequest(request: ExtensionRunRequest, ceilings: ExtensionRunCeilin
 		throw new ExtensionRunError("invalid", "runs.start: prompt must be non-empty text");
 	if (Buffer.byteLength(request.prompt) > MAX_PROMPT_BYTES)
 		throw new ExtensionRunError("invalid", "runs.start: prompt exceeds 1 MiB");
-	const target = routeWord("target", request.target);
-	const model = routeWord("model", request.model);
+	const routed = request.target !== undefined || request.model !== undefined;
+	if (routed && (request.target === undefined || request.model === undefined))
+		throw new ExtensionRunError("invalid", "runs.start: target and model go together, or neither");
+	const target = routed ? routeWord("target", request.target) : null;
+	const model = routed ? routeWord("model", request.model) : null;
+	if (request.delegate !== undefined && request.delegate !== false)
+		throw new ExtensionRunError("invalid", "runs.start: delegate may only be false");
 	const thinking = request.thinking === undefined ? null : routeWord("thinking", request.thinking);
 	const autonomy = request.autonomy ?? "default";
 	if (autonomy !== "default" && autonomy !== "yolo")
@@ -153,6 +158,7 @@ function clampRequest(request: ExtensionRunRequest, ceilings: ExtensionRunCeilin
 		thinking,
 		autonomy,
 		readOnly: request.readOnly === true,
+		delegate: request.delegate !== false,
 		answers: request.answers ?? null,
 		timeout,
 		maxCostUsd,
@@ -302,10 +308,8 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				"run",
 				"--cwd",
 				place.cwd,
-				"--target",
-				run.target,
-				"--model",
-				run.model,
+				...(run.delegate ? [] : ["--no-delegate"]),
+				...(run.target !== null && run.model !== null ? ["--target", run.target, "--model", run.model] : []),
 				...(run.thinking !== null ? ["--thinking", run.thinking] : []),
 				...(answersPath !== null ? ["--answers", answersPath] : []),
 				"--timeout",
@@ -319,7 +323,7 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				run.prompt,
 			];
 			const env = {
-				...runEnv(deps.sourceEnv, deps.envPolicy, run.target),
+				...runEnv(deps.sourceEnv, deps.envPolicy, run.target ?? deps.envPolicy.defaultTarget ?? null),
 				...deps.launch.env,
 				// standingRefusal already refused an invalid or too-deep value.
 				[EXTENSION_RUN_DEPTH_ENV]: String((parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]) as number) + 1),

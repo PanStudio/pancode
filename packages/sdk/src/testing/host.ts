@@ -112,6 +112,7 @@ export async function createExtensionTestHost(
 		generation: 1,
 		mode: "interactive" as const,
 		activeWorkspace: null as string | null,
+		pancodeVersion: "0.0.0-test",
 	};
 	const memory = (services.keyValue ?? createMemoryKeyValueHost)();
 	let disposed = false;

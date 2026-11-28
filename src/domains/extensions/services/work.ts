@@ -61,7 +61,7 @@ export function createExtensionWork(
 	const settings = () => readLayeredSettings(binding.workspace).settings;
 	const envPolicy = () => {
 		const current = settings();
-		return { targets: current.targets, passEnv: current.safety.sandboxPassEnv };
+		return { targets: current.targets, passEnv: current.safety.sandboxPassEnv, defaultTarget: current.chat.target };
 	};
 	let launch: PancodeLaunch | undefined = options.launch;
 	const pancode = (): PancodeLaunch => {

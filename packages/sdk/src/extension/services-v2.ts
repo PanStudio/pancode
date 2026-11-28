@@ -11,14 +11,17 @@ export type ExtensionWorkPlace = "workspace" | { worktree: string; sub?: string 
 
 export interface ExtensionRunRequest {
 	prompt: string;
-	target: string;
-	model: string;
+	/** With `model`, or neither: then `run` resolves the operator's default target and model as a headless run would. */
+	target?: string;
+	model?: string;
 	thinking?: string;
 	/** Defaults to the workspace. */
 	cwd?: ExtensionWorkPlace;
 	/** Must be one the manifest's `runs.autonomy` lists; defaults to `default`. */
 	autonomy?: "default" | "yolo";
 	readOnly?: boolean;
+	/** `false` runs with `--no-delegate`: the run's agent dispatches no workers of its own. */
+	delegate?: false;
 	/** The text of a `run --answers` file, at most 64 KiB. */
 	answers?: string;
 	/** At most the manifest's `runs.maxTimeoutSeconds`. */
@@ -150,6 +153,13 @@ export type ExtensionCheckResolution =
 			 * that are untracked or changed since HEAD. At most 256 files and 32 MiB, else `ok: false`.
 			 */
 			inputs: ReadonlyArray<string>;
+			/**
+			 * A catalog check's declared definition as `check` and `measure` run it in this place, the verifier catalog's
+			 * entry as JSON; a sweep run's has the run directory on its argv. Absent for a derived check.
+			 */
+			check?: Readonly<Record<string, unknown>>;
+			/** A sweep run's directory, relative to the place, as the check's `runs` names it. */
+			run?: string;
 	  }
 	| { ok: false; message: string };
 

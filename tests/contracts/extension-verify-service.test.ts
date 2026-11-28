@@ -93,17 +93,42 @@ describe("extension verify service", () => {
 	it("resolves a check with the uncommitted files it names, and refuses one the project cannot run", async () => {
 		const { repo, verify, cleanup } = project();
 		try {
-			assert.deepEqual(await verify.resolve("sane"), {
-				ok: true,
+			const declared = await verify.resolve("sane");
+			assert.deepEqual(declared.ok && { kind: declared.kind, inputs: declared.inputs, run: declared.run }, {
 				kind: "catalog",
 				inputs: [".pancode/verifiers.yaml"],
+				run: undefined,
 			});
+			assert.equal(declared.ok && (declared.check?.numeric as { reference?: string } | undefined)?.reference, "ref.json");
+			assert.deepEqual(declared.ok && declared.check?.command, ["node", "score.js"]);
 			writeFileSync(join(repo, "ref.json"), '{"score":99}\n');
 			writeFileSync(join(repo, "value.txt"), "99\n");
 			const sane = await verify.resolve("sane");
 			assert.deepEqual(sane.ok && sane.inputs, [".pancode/verifiers.yaml", "ref.json"]);
 			const unknown = await verify.resolve("nope/never");
 			assert.equal(unknown.ok, false);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("resolves one run of a sweep to the declared check with the run directory on its argv", async () => {
+		const { repo, verify, cleanup } = project();
+		try {
+			const reading = ["node", "-e", "process.stdout.write('{}')"];
+			writeFileSync(
+				join(repo, ".pancode/verifiers.yaml"),
+				JSON.stringify({ version: 2, checks: [check("sweep", reading, { runs: "runs" })] }),
+			);
+			mkdirSync(join(repo, "runs/a"), { recursive: true });
+			const run = await verify.resolve("sweep/a");
+			assert.equal(run.ok && run.run, "runs/a");
+			assert.deepEqual(run.ok && run.check?.command, [...reading, "runs/a"]);
+			assert.equal(run.ok && run.check?.id, "sweep");
+			assert.equal(run.ok && run.check?.runs, "runs");
+			const derived = await verify.resolve("test");
+			assert.equal(derived.ok && derived.kind, "package");
+			assert.equal(derived.ok && derived.check, undefined);
 		} finally {
 			cleanup();
 		}

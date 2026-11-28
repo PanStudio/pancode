@@ -35,7 +35,7 @@ import {
 	resolveExtensionEntrypoint,
 } from "@pancode/sdk/pack";
 import { parse as parseYaml } from "yaml";
-import { resolvePackageRoot } from "../../core/package-root.js";
+import { readPancodeVersion, resolvePackageRoot } from "../../core/package-root.js";
 import { ensureProjectIgnore } from "../../core/project-root.js";
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
 import type { SandboxMode, UnixSocketMode } from "../../core/sandbox/types.js";
@@ -48,9 +48,11 @@ import {
 	assertPlainProjectDir,
 	type ExtensionSandboxReport,
 	extensionProjectDir,
+	extensionWorktreeParent,
 	planExtensionLaunch,
 	prepareDeclaredWriteRoots,
 	prepareProjectDir,
+	prepareWorktreeParent,
 	readOnlyRuntimeDeclaration,
 	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
@@ -60,8 +62,11 @@ import type { ExtensionWorkHost, ExtensionWorkKind } from "./services/host.js";
 import { createExtensionRequestScope, type OwnedExtensionRequestScope } from "./services/scope.js";
 import type { LoadableExtension } from "./types.js";
 
+/** A snapshot as a session host builds it; the runtime process adds the host's version. */
+export type HostRuntimeSnapshotV2 = Omit<ExtensionRuntimeSnapshotV2, "pancodeVersion">;
+
 export interface RuntimeProcessV2Options {
-	snapshot: ExtensionRuntimeSnapshotV2;
+	snapshot: HostRuntimeSnapshotV2;
 	/** Resolved values of the manifest's config fields. */
 	options: Readonly<Record<string, string | number | boolean>>;
 	keyValue: ExtensionKeyValueHost;
@@ -108,7 +113,11 @@ export interface RuntimeRoots {
 	storeDir: string;
 	home: string;
 	/** The `runtime.state.project` directory, and whether this session may write it. */
-	project?: { dir: string; writable: boolean };
+	project?: {
+		dir: string;
+		writable: boolean;
+	} /** The worktree parent of a runtime that declares `services.worktrees`, which it may read. */;
+	worktrees?: string;
 }
 
 /** A request the runtime did not answer in time. The runtime stays up; the caller decides what a miss costs. */
@@ -140,6 +149,7 @@ function runtimePermissionArgs(declaration: ExtensionRuntimeDeclarationV2, roots
 	const write = new Set<string>(storeFiles ? [directory(roots.storeDir)] : []);
 	for (const entry of declaration.permissions.fs.write)
 		if (entry !== "store") write.add(directory(path.join(roots.workspace, entry)));
+	if (roots.worktrees !== undefined) read.add(directory(roots.worktrees));
 	if (roots.project !== undefined) {
 		read.add(directory(roots.project.dir));
 		if (roots.project.writable) write.add(directory(roots.project.dir));
@@ -291,6 +301,8 @@ export class ExtensionRuntimeProcessV2 {
 	private createdRoots: string[] = [];
 	private project: { root: string; dir: string; writable: boolean } | undefined;
 	private createdProject: string[] = [];
+	private worktrees: string | undefined;
+	private createdWorktrees: string[] = [];
 	private messageWindow = Date.now();
 	private messages = 0;
 	private unhandled = new Set<string>();
@@ -318,6 +330,13 @@ export class ExtensionRuntimeProcessV2 {
 					ensureProjectIgnore(this.project.root);
 				} else {
 					assertPlainProjectDir(this.project);
+				}
+			}
+			if (this.declaration.services?.worktrees === true) {
+				const parent = extensionWorktreeParent(options.snapshot.workspace, extension.id);
+				if (parent !== undefined) {
+					this.worktrees = parent.dir;
+					if (!options.readOnly) this.createdWorktrees = prepareWorktreeParent(parent);
 				}
 			}
 			cpSync(extension.provenance.canonicalRoot, copy, { recursive: true, dereference: false, verbatimSymlinks: true });
@@ -350,6 +369,7 @@ export class ExtensionRuntimeProcessV2 {
 			rmSync(temporary, { recursive: true, force: true });
 			releaseDeclaredWriteRoots(this.createdRoots);
 			releaseDeclaredWriteRoots(this.createdProject);
+			releaseDeclaredWriteRoots(this.createdWorktrees);
 			throw error;
 		}
 		this.staged = new Promise((resolve, reject) => {
@@ -369,6 +389,7 @@ export class ExtensionRuntimeProcessV2 {
 					storeDir: options.storeDir,
 					bootstrap,
 					...(this.project !== undefined ? { project: { dir: this.project.dir, writable: this.project.writable } } : {}),
+					...(this.worktrees !== undefined ? { worktrees: this.worktrees } : {}),
 				},
 				argv: [
 					process.execPath,
@@ -379,6 +400,7 @@ export class ExtensionRuntimeProcessV2 {
 						storeDir: options.storeDir,
 						home: os.homedir(),
 						...(this.project !== undefined ? { project: { dir: this.project.dir, writable: this.project.writable } } : {}),
+						...(this.worktrees !== undefined ? { worktrees: this.worktrees } : {}),
 					}),
 					bootstrap,
 				],
@@ -389,6 +411,7 @@ export class ExtensionRuntimeProcessV2 {
 			rmSync(temporary, { recursive: true, force: true });
 			releaseDeclaredWriteRoots(this.createdRoots);
 			releaseDeclaredWriteRoots(this.createdProject);
+			releaseDeclaredWriteRoots(this.createdWorktrees);
 			throw error;
 		}
 		this.sandbox = launch.report;
@@ -435,7 +458,7 @@ export class ExtensionRuntimeProcessV2 {
 			kind: "init",
 			entrypoint: path.join(copy, this.declaration.entrypoint),
 			declaration: this.declaration,
-			snapshot: options.snapshot,
+			snapshot: { ...options.snapshot, pancodeVersion: readPancodeVersion() },
 			options: options.options,
 			...(this.declaration.permissions.fs.write.includes("store") ? { storeDir: options.storeDir } : {}),
 			...(this.project !== undefined ? { projectDir: this.project.dir } : {}),
@@ -465,6 +488,8 @@ export class ExtensionRuntimeProcessV2 {
 		this.createdRoots = [];
 		releaseDeclaredWriteRoots(this.createdProject);
 		this.createdProject = [];
+		releaseDeclaredWriteRoots(this.createdWorktrees);
+		this.createdWorktrees = [];
 		try {
 			rmSync(this.copyRoot, { recursive: true, force: true });
 		} catch (error) {
@@ -796,8 +821,9 @@ export class ExtensionRuntimeProcessV2 {
 		});
 	}
 	/** The active workspace and generation change without a restart; handlers read the latest on their next request. */
-	updateSnapshot(snapshot: ExtensionRuntimeSnapshotV2): void {
-		if (this.state === "ready") this.send({ kind: "snapshot", snapshot });
+	updateSnapshot(snapshot: HostRuntimeSnapshotV2): void {
+		if (this.state === "ready")
+			this.send({ kind: "snapshot", snapshot: { ...snapshot, pancodeVersion: readPancodeVersion() } });
 	}
 	private request<T>(
 		message: Record<string, unknown> & { kind: string },
