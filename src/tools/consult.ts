@@ -53,7 +53,7 @@ import {
 	reserveObservation,
 } from "./observation.js";
 import { resolveReadPath, toPosixPath } from "./path-utils.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import { isSessionOffloadPath } from "./result-shaping.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 

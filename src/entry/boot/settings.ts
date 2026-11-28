@@ -90,7 +90,7 @@ export function buildBootSettings(input: BootSettingsInput) {
 			yoloHeldAtBoot = true;
 		}
 	}
-	// Yolo is contained (ob-yolo D1): the lifecycle domain says so once per home (interactive after accepting yolo,
+	// Yolo is contained (ob-yolo D1): the install domain says so once per home (interactive after accepting yolo,
 	// headless on a yolo run), remembered in its own state and never in the operator's settings.
 	const yoloNotice =
 		yoloRefusal === null && (interactive ? savedSafety.yoloAccepted === true : startupAutonomy === "yolo")

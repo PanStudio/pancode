@@ -54,8 +54,8 @@ import {
 import { redactSecretString } from "../lib/secrets/redaction.js";
 import { OBSERVATION_BUDGET_NOT_EXECUTED } from "./observation.js";
 import { applyToolProfile, type ToolProfileName } from "./profiles.js";
-import { prepareToolArgs } from "./registry-call-prep.js";
-import type { ToolInvokeOptions, ToolRegistry } from "./registry-contract.js";
+import { prepareToolArgs } from "./registry/call-prep.js";
+import type { ToolInvokeOptions, ToolRegistry } from "./registry/contract.js";
 import {
 	isDispositionedToolResultError,
 	isRefusalToolResultError,

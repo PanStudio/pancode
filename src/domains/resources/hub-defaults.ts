@@ -15,6 +15,7 @@ import path from "node:path";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { ENVELOPE_SEAT_BELT, envelopeLines } from "../extensions/index.js";
+import type { HubPackageEntry } from "../plugins/hub-types.js";
 import { bundledPluginCatalog } from "../plugins/index.js";
 import { hubEntryRef } from "./hub.js";
 import {
@@ -25,7 +26,6 @@ import {
 	syncHubPackBinaries,
 } from "./hub-actions.js";
 import { listInstalledHubPackages, readHubInstallRecord } from "./hub-packages.js";
-import type { HubPackageEntry } from "./hub-types.js";
 
 /** Where post-install reports. The upgrade presenter satisfies it. */
 export interface DefaultPackOutput {

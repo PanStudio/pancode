@@ -45,8 +45,8 @@ import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import { mcpSubmitReader } from "../../src/tools/gateway/mcp-submit-reader.js";
+import type { RegistryDeps, ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { RegistryDeps, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { toolResultContextText } from "../../src/tools/result-disposition.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

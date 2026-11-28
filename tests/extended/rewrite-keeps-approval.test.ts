@@ -17,8 +17,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { dispatchRewriteNarrows } from "../../src/tools/dispatch-narrowing.js";
 import type { DispatchExecutionSnapshot } from "../../src/tools/dispatch-types.js";
+import type { RegistryDeps } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { RegistryDeps } from "../../src/tools/registry-contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { isolateDispatchState, restoreDispatchState } from "../harness/dispatch.js";
 

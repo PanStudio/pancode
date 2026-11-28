@@ -18,11 +18,11 @@ import { finishedDetachedBatchIds, openDetachedBatchViews } from "../../src/doma
 import { dispatchOwnership } from "../../src/domains/dispatch/ownership.js";
 import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
 import { grantEffectDescriptor, grantEffectDigest } from "../../src/domains/safety/grant-effect.js";
-import { DispatchArtifactProvider } from "../../src/domains/session/view-artifacts.js";
 import { seedForkCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createTurnControlRunner } from "../../src/session-control/turn-control-runner.js";
+import { DispatchArtifactProvider } from "../../src/session-control/view-artifacts.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { loadVerifiedScoutSource } from "../../src/tools/dispatch-scout-admission.js";
 import { createRegistry } from "../../src/tools/registry.js";

@@ -24,8 +24,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { bashTool } from "../../src/tools/bash.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
 import type { IsolatedPancodeEnv } from "../harness/scratch-env.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

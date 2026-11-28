@@ -3,16 +3,16 @@
 import { doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
+import { getKeybindings, Input, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
+import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
+import { ViewOverlayView } from "../../src/interactive/view/view-overlay.js";
 import {
 	type ArtifactProviderDeps,
 	type ViewArtifact,
 	type ViewArtifactLoadResult,
 	WorkspaceArtifactProvider,
-} from "../../src/domains/session/view-artifacts.js";
-import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
-import { getKeybindings, Input, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
-import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
-import { ViewOverlayView } from "../../src/interactive/view/view-overlay.js";
+} from "../../src/session-control/view-artifacts.js";
 
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 const plain = (view: ViewOverlayView, width = 92) => view.render(width).map(stripTerminalSequences).join("\n");

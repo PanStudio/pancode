@@ -35,8 +35,8 @@
 
 import { type DispatchJob, dispatchJobRecipe, dispatchJobWrites } from "../agents/dispatch-jobs.js";
 import type { ResultContract } from "../agents/result-contract-types.js";
-import { capabilityClassWritesNothing } from "../agents/role-class.js";
 import type { AgentCapabilityClass, AgentSpec } from "../agents/spec.js";
+import { capabilityClassWritesNothing } from "../safety/index.js";
 import { type AgentTaskType, asksForMutation, classifyAgentTask } from "./agent-candidates.js";
 import type { DispatchIntent } from "./intent.js";
 

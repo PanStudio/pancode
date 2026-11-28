@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
+import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../core/interop-agents.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { canonicalizePath, canonicalizeRawPath, type PathWalkMemo } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
@@ -9,7 +10,6 @@ import { telemetryRunsDirectory } from "../../core/telemetry/paths.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { pancodeConfigDir, pancodeStateDir } from "../../core/xdg.js";
 import { expandPath, readPathVariants } from "../../tools/path-utils.js";
-import { INTEROP_AGENT_KINDS, interopUserRoot } from "../interop/registry.js";
 
 /**
  * The read-class tools that take a path from the model. Each opens whatever

@@ -19,6 +19,7 @@ import {
 } from "../../src/domains/context/bootstrap-prompt.js";
 import { fitGeneratedHandbook, normalizeHandbookRule } from "../../src/domains/context/handbook-budget.js";
 import { parsePancodeMd, serializePancodeMd } from "../../src/domains/context/pancode-md.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { resolveDeliveryTools } from "../../src/engine/loop-guard.js";
 import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { createContextActivityStore, formatContextActivityRailLines } from "../../src/interactive/context-activity.js";
@@ -299,7 +300,7 @@ it("hides internal run id from context activity rail at standard tier and shows 
 });
 
 it("bootstrap navigation cannot bypass the exploration budget as an orientation delivery tool", () => {
-	const recipe = loadRecipesFromDir({
+	const recipe = loadRecipesFromDir(loadSkills, {
 		source: "builtin",
 		dir: join(import.meta.dirname, "../../src/domains/agents/builtins"),
 	}).find((entry) => entry.id === "context-bootstrap");

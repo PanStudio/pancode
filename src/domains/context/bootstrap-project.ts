@@ -4,10 +4,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, parse, resolve } from "node:path";
 import { isReleaseOnlyWorkflow, readCiFileRuns } from "../../core/ci-commands.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { readJsonFile } from "../../core/json-file.js";
 import { type TomlFileReader, tomlTableAt } from "../../core/toml.js";
 import { pythonProposals } from "../../tools/verify/toolchain.js";
-import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
 import { type ProjectPreloadClass, selectProjectPreload } from "../prompts/preload.js";
 import type { ProjectType } from "../session/workspace/project-type.js";
 import { type AdoptionScanResult, RULE_KEYWORDS } from "./adoption.js";

@@ -37,10 +37,10 @@ import {
 	uniqueSibling,
 	writeInstallState,
 } from "../extensions/install-store.js";
-import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
-import { isHubKind } from "../resources/hub-types.js";
 import { readPluginManifest } from "./discovery.js";
 import { passPluginCandidate } from "./discovery-pass.js";
+import type { HubEntryKind, HubRequirementRef } from "./hub-types.js";
+import { isHubKind } from "./hub-types.js";
 import { pluginContentDigest } from "./integrity.js";
 import { pluginBaseDir, pluginDataDir } from "./paths.js";
 import type {

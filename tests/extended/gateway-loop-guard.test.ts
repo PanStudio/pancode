@@ -9,7 +9,7 @@ import { ToolNames } from "../../src/core/tool-names.js";
 import { formatModelRejection } from "../../src/domains/safety/rejection-feedback.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 
 /**
  * The loop guard judges a capability the same way however the model reached

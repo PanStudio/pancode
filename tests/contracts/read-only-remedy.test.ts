@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { acpHostReadOnlySource, HOST_READ_ONLY_SOURCES } from "../../src/tools/registry-verdicts.js";
+import { acpHostReadOnlySource, HOST_READ_ONLY_SOURCES } from "../../src/tools/registry/verdicts.js";
 
 test("a run --read-only refusal tells the operator to rerun without the flag", () => {
 	const remedy = HOST_READ_ONLY_SOURCES.run.remedy;

@@ -12,8 +12,8 @@ import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**

@@ -10,7 +10,6 @@ import {
 	createBackgroundMemoryRouting,
 } from "../../src/domains/memory/background-route.js";
 import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
-import type { MemoryRouteText } from "../../src/domains/memory/secret-text.js";
 import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
 import {
 	runTaskMemoryPolicy,
@@ -23,6 +22,7 @@ import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
 import { appendEntry, appendTurn, readCurrentEntries, startSession } from "../../src/domains/session/manager.js";
 import { createProductionAutoCompact } from "../../src/entry/orchestrator.js";
+import type { MemoryRouteText } from "../../src/lib/secrets/memory-route.js";
 import { syntheticCompactionSummary } from "../harness/compaction-summary.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { startGatewayThinkingFixture } from "../harness/gateway-thinking-fixture.js";

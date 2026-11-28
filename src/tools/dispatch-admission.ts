@@ -77,7 +77,7 @@ import type {
 	DispatchReviewSettings,
 	DispatchToolDeps,
 } from "./dispatch-types.js";
-import type { HostEffectCall } from "./registry-contract.js";
+import type { HostEffectCall } from "./registry/contract.js";
 import { gitCheckoutRoot, gitHeadIsUnborn, WORKTREE_UNBORN_HEAD_MESSAGE } from "./task-worktree.js";
 import { runnableChecksAtRoot } from "./verify/resolve.js";
 import { judgedFileSha256, readJudgedFile } from "./verify/scripts.js";
