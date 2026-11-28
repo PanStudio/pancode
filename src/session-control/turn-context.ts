@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { isHostPolicyMessage } from "../core/host-policy-message.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
 import type { SuccessfulMemoryContextCommit } from "../domains/memory/commit-state.js";

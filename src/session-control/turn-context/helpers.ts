@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { isHostPolicyMessage } from "../../core/host-policy-message.js";
 import type { LiveBudgetBreakdown } from "../../domains/context/budget/live-view.js";
 import type { ContextWindowSource } from "../../domains/providers/index.js";
