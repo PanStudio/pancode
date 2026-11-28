@@ -81,8 +81,8 @@ skills:
     sha256: ed8291a5c2ec9d15ad0d7cde05a09562db3e34fdc486b2efe6a350fcd03838d4
   - name: pancode-test
     path: meta/pancode-test
-    version: 0.5.3
-    sha256: 576bbb0573c9f7a3d96eaf4ca69e45c01fd7b9562ea01ed3c615aeed03bcf864
+    version: 0.5.4
+    sha256: 1efa0aaa3050acc39f3744005feaf54d8ba61e7759683f736add6e28497aad3a
   - name: skill-authoring
     path: meta/skill-authoring
     version: 0.4.4
