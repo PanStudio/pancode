@@ -973,21 +973,21 @@ describe("dispatch admission boundary", () => {
 				),
 			/node 'netbox'.*safety\.sandbox is required/u,
 		);
-		// With safety.sandboxNetwork enabled, non-Hoare workers do not need --unshare-net, so required admits them.
+		// With safety.egress.workers.mode open, non-Hoare workers do not need --unshare-net, so required admits them.
 		const withNet = await previewWith(
 			(s) => {
 				s.safety.sandbox = "required";
-				s.safety.sandboxNetwork = true;
+				s.safety.egress.workers.mode = "open";
 			},
 			{ agentId: "verifier", executionRole: "checker", task: "Verify tests pass.", cwd: tmpdir() },
 		);
 		strictEqual(withNet.node.id, "netbox");
-		// A Hoare verifier still forces network off even when safety.sandboxNetwork is true, so it is refused.
+		// A Hoare verifier still forces network off even when safety.egress.workers.mode is open, so it is refused.
 		await rejects(
 			() =>
 				previewWith(
 					(s) => {
-						s.safety.sandboxNetwork = true;
+						s.safety.egress.workers.mode = "open";
 						if (s.fleet.nodes[0]) s.fleet.nodes[0].allowUnsandboxed = true;
 					},
 					{
@@ -1000,14 +1000,22 @@ describe("dispatch admission boundary", () => {
 				),
 			/node 'netbox'.*assurance level needs one/u,
 		);
-		// A worker whose tools already include web_fetch runs bwrap with host network, so required admits it.
-		const coderWithWeb = await previewWith(
-			(s) => {
-				s.safety.sandbox = "required";
-			},
-			{ agentId: "coder", executionRole: "builder", task: "Inspect files.", cwd: tmpdir() },
-		);
-		strictEqual(coderWithWeb.node.id, "netbox");
+		// Holding web_fetch no longer brings shell network, so a default coder still needs --unshare-net and is refused,
+		// and a proxied worker needs it too, since its only route out is the bridge into the namespace.
+		for (const mode of ["off", "proxied"] as const) {
+			await rejects(
+				() =>
+					previewWith(
+						(s) => {
+							s.safety.sandbox = "required";
+							s.safety.egress.workers.mode = mode;
+							if (s.fleet.nodes[0]) s.fleet.nodes[0].allowUnsandboxed = true;
+						},
+						{ agentId: "coder", executionRole: "builder", task: "Inspect files.", cwd: tmpdir() },
+					),
+				/node 'netbox'/u,
+			);
+		}
 		// A node whose bwrap runs without its seccomp baseline is partial: auto admits it, required refuses it.
 		const partial = { ...netBrokenSandbox, network: null, degraded: "bubblewrap did not load the seccomp filter" };
 		const checker = { agentId: "verifier", executionRole: "checker" as const, task: "Verify tests pass.", cwd: tmpdir() };

@@ -310,7 +310,7 @@ export function commonControlItem(control: SettingControl, live: () => Readonly<
 		currentValue: "",
 		affordance: control.readOnly ? "Managed by its confirmation flow" : "Enter to edit",
 		scope: settingsChangeKind(control.path) === "restartRequired" ? "restart" : "live",
-		defaultValue: formatControlValue(getAtPath(DEFAULT_SETTINGS, control.path)),
+		defaultValue: formatControlValue(getAtPath(DEFAULT_SETTINGS, control.path), control.path),
 		readOnly: control.readOnly,
 		presentationKind: "setting",
 		valueSegments: [],

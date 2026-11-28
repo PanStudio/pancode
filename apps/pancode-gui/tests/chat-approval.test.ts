@@ -12,6 +12,7 @@ import {
 	BUDGET_SECONDS,
 	bannerEyebrow,
 	CARD_EYEBROW,
+	cardEyebrow,
 	callDecisions,
 	clampText,
 	decisionChips,
@@ -23,6 +24,7 @@ import {
 	formatLocations,
 	gatedPreview,
 	isAwaitingAnswer,
+	keyboardHint,
 	PREVIEW_MAX_LINES,
 	RESOLUTION_SUMMARY,
 	resolutionSummary,
@@ -278,6 +280,33 @@ test("an engine that announced no decision facts still yields a usable card", ()
 		"quantum tunnel",
 		"elsewhere",
 	]);
+});
+
+test("a shell-egress ask describes a session network grant rather than a one-time file read", () => {
+	const egressDecision = {
+		...DECISION,
+		actionClass: "read",
+		affectedScope: "external",
+		axis: { kind: "safety-net" as const, ruleId: "shell-egress" },
+	};
+	assert.deepEqual(decisionChips(egressDecision), ["Workspace", "connects to the network", "external"]);
+	assert.equal(cardEyebrow(egressDecision), "Approval needed · this session");
+	assert.equal(cardEyebrow(DECISION), CARD_EYEBROW);
+	const actions = approvalActions(permission({ canStopTurn: true, decision: egressDecision }));
+	assert.deepEqual(
+		actions.map((action) => [action.decision, action.label]),
+		[
+			["reject", "Reject"],
+			["reject-and-stop", "Reject and stop the turn"],
+			["allow-once", "Allow for this session"],
+		],
+	);
+	assert.match(actions[0]?.description ?? "", /does not ask about it again/);
+	assert.match(actions[2]?.description ?? "", /until the session ends/);
+	assert.equal(
+		keyboardHint(permission({ canStopTurn: true, decision: egressDecision })),
+		"Alt + A allows for this session · Alt + R rejects · Alt + X rejects and stops the turn",
+	);
 });
 
 // ---- the concrete thing being approved ---------------------------------------------------------

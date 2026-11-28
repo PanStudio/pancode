@@ -844,7 +844,7 @@ const GUIDED_CONTROL_PATHS = new Set([
 function settingControlAction(group: string, control: SettingControl): SectionAction {
 	return {
 		label: `${group} · ${control.label}`,
-		hint: () => `${formatControlValue(getAtPath(readSettings(), control.path))} · ${control.description}`,
+		hint: () => `${formatControlValue(getAtPath(readSettings(), control.path), control.path)} · ${control.description}`,
 		run: async (io) => {
 			if (await editSettingControl(io.rl, control)) io.ok(`${control.label} saved`);
 		},
@@ -869,7 +869,7 @@ export const SECTIONS: ReadonlyArray<SectionSpec> = SHARED_SETTINGS_AREAS.map((a
 					return {
 						...action,
 						label: `${settingsPlacementForPath(path).group} · ${path.endsWith(".target") ? action.label : (control?.label ?? action.label)}`,
-						hint: () => `${formatControlValue(getAtPath(readSettings(), path))} · ${control?.description ?? ""}`,
+						hint: () => `${formatControlValue(getAtPath(readSettings(), path), path)} · ${control?.description ?? ""}`,
 					};
 				}),
 				...catalog
