@@ -383,7 +383,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		}
 	});
 
-	it("all 38 curated packs pass validation", () => {
+	it("every curated pack passes validation", () => {
 		const isDir = (p: string) => statSync(p).isDirectory();
 		const hubDir = join(REPO_ROOT, "hub", "packs");
 
@@ -401,7 +401,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 				),
 		];
 
-		equal(packagePaths.length, 38, `expected 38 curated packs, found ${packagePaths.length}`);
+		ok(packagePaths.length > 0, "hub/packs must hold curated packs");
 
 		for (const pkgPath of packagePaths) {
 			const res = validateHubPackage(pkgPath);
@@ -428,10 +428,8 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			entries: Array<{ name: string; sourceUrl?: string; source?: { repo: string; subdir?: string } }>;
 		};
 
-		// 39 locally scanned packages (34 skills, the HPC, science-data, literature
-		// and life-science plugins and the local-status extension) plus every row
-		// the community row files under hub/community/ state; those packs have no
-		// local directory under hub/ and so are never in packagePaths.
+		// A local row names its pack directory under hub/ by sourceUrl; a community
+		// row names a repo instead and comes from a row file under hub/community/.
 		const communityDir = join(REPO_ROOT, "hub", "community");
 		const communityRows = readdirSync(communityDir, { withFileTypes: true })
 			.filter((publisher) => publisher.isDirectory())
@@ -444,11 +442,28 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 					),
 			)
 			.reduce((sum, count) => sum + count, 0);
+		const local = hubRegistry.entries.filter((entry) => entry.sourceUrl !== undefined);
+		ok(local.length > 0, "PanHub index must list the local packs");
+		for (const entry of local) {
+			ok(
+				statSync(join(REPO_ROOT, "hub", entry.sourceUrl ?? "")).isDirectory(),
+				`local entry '${entry.name}' must name a pack directory, got '${entry.sourceUrl}'`,
+			);
+		}
 		equal(
 			hubRegistry.entries.length,
-			39 + communityRows,
-			`PanHub index must contain the 39 local packs and ${communityRows} community rows`,
+			local.length + communityRows,
+			`PanHub index must contain its ${local.length} local packs and the ${communityRows} community rows`,
 		);
+		const localSources = new Set(local.map((entry) => join(REPO_ROOT, "hub", entry.sourceUrl ?? "")));
+		for (const kind of ["plugins", "skills"]) {
+			const root = join(REPO_ROOT, "hub", "packs", kind);
+			for (const dir of readdirSync(root, { recursive: true, withFileTypes: true })) {
+				if (dir.isFile() && dir.name === "plugin.json" && !dir.parentPath.includes("_authoring")) {
+					ok(localSources.has(dir.parentPath), `curated pack '${dir.parentPath}' has no PanHub index row`);
+				}
+			}
+		}
 
 		// None of the entries should reference _authoring or templates
 		for (const entry of hubRegistry.entries) {
