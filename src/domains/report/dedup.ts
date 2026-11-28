@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { resolvePackageRoot } from "../../core/package-root.js";
 import type { RenderedReport } from "./body.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";
 import type { ReportDraft } from "./draft.js";
 import { stripHiddenText, titleCore } from "./draft.js";
+import { citesIssue, compareTriples, readPackagedChangelog, versionTriple } from "./follow-up.js";
 import { ghEnvironment, REPORT_GH_TIMEOUT_MS, type ReportTransport } from "./transport.js";
 import { REPORT_REPOSITORY } from "./vocabulary.js";
 
@@ -77,38 +75,14 @@ function relatedSearchUrl(tokens: ReadonlyArray<string>): string {
 
 /** The version heading of the oldest section citing `#<number>`: the release that shipped the fix. */
 function changelogFixedIn(changelog: string, number: number): string | null {
-	const cite = new RegExp(
-		`(?:(?:^|[^\\w#/]|${REPORT_REPOSITORY})#${number}|github\\.com/${REPORT_REPOSITORY}/(?:issues|pull)/${number})(?!\\d)`,
-		"u",
-	);
 	let heading: string | null = null;
 	let found: string | null = null;
 	for (const line of changelog.split("\n")) {
 		const match = /^##\s+v?(\d+\.\d+\.\d+[^\s]*)/u.exec(line);
 		if (match) heading = match[1] ?? null;
-		else if (heading !== null && cite.test(line)) found = heading;
+		else if (heading !== null && citesIssue(line, number)) found = heading;
 	}
 	return found;
-}
-
-function readInstalledChangelog(): string | null {
-	try {
-		return readFileSync(join(resolvePackageRoot(), "CHANGELOG.md"), "utf8");
-	} catch {
-		// An install without its changelog cannot say a fix is in it.
-		return null;
-	}
-}
-
-type Triple = [number, number, number];
-
-function versionTriple(version: string): Triple | null {
-	const match = /^v?(\d+)\.(\d+)\.(\d+)/u.exec(version.trim());
-	return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
-}
-
-function compareTriples(a: Triple, b: Triple): number {
-	return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
 function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
@@ -246,7 +220,7 @@ export async function findRelated(
 	const fingerprintNumbers = new Set(byFingerprint.map((item) => item.number));
 	const candidates = new Map<number, SearchItem>();
 	for (const item of [...byFingerprint, ...byTitle]) candidates.set(item.number, item);
-	const changelog = deps.changelog === undefined ? readInstalledChangelog() : deps.changelog;
+	const changelog = deps.changelog === undefined ? readPackagedChangelog() : deps.changelog;
 
 	const matches: RelatedIssue[] = [];
 	for (const item of candidates.values()) {
