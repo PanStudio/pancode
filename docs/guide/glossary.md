@@ -304,7 +304,7 @@ The words you meet first, each in a sentence or two, with the guide that explain
 
 ### 65. Operator Notes
 - **Definition**: The `<operator-notes>` block of a compaction summary, a bounded list of things the operator asked PanCode to keep. Each compaction collects the notes already in earlier summaries, sentences in the operator's own messages that open with `remember`, `keep in mind` or `don't forget`, and the instructions given to `/compact`. Instructions to `/compact` also bind the summarizer through an `<operator-instructions>` block and are kept verbatim in the notes. A note is clipped to 400 characters, the block keeps the latest 30, and notes are XML-escaped inside it.
-- **Owning Type**: `extractOperatorNotes` and `formatOperatorNotes` in [compact.ts](../../src/domains/memory/compaction/compact.ts).
+- **Owning Type**: `extractOperatorNotes` and `formatOperatorNotes` in [compact.ts](../../src/domains/session/compaction/compact.ts).
 
 ### 66. Run Result Facts
 - **Definition**: The compact terminal facts of a finished run, read from the read model's run DTO over its sealed run scope: outcome and outcome code, exit code, token and tool counts, duration, changed paths, placement, result contract and the trust status authenticated by the run seal. One module produces them for the TUI worker block (live and replayed) and for ACP terminal fleet frames, so every interface draws the same numbers from the same record. A run that has not settled reads as `result unavailable` and never fails a render.

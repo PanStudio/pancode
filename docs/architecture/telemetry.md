@@ -25,7 +25,7 @@ Code that writes, folds or renders telemetry follows these rules.
 | R1 Unknown is never zero | A missing value is `unknown` and never `0` or `false`. Zero means measured zero. |
 | R2 Never-sent is not spent | A call whose disposition is `never_sent` carries no usage and no estimate. |
 | R3 Estimates name their method | An estimated value names how it was estimated (see [Honest values](#honest-values)). |
-| R4 One owner per fact | Each fact is written once, as an event in the journal of the scope that owns it. A finished run is its `run.settled` record under its seal, and every total is a fold of journal records. The telemetry domain is the only writer under `<stateDir>/telemetry/` ([paths.ts](../../src/core/telemetry/paths.ts)): the `rule11` boundary check fails a write in any other module under `src/` or the GUI's server whose path, as that module builds it, names the telemetry root. The `rule12` check fails code outside `src/engine/` that changes a message's provider `usage` other than by copying it whole or storing null, and a usage-shaped key on a session-ledger message payload, where the provider's own `usage` is the only one. |
+| R4 One owner per fact | Each fact is written once, as an event in the journal of the scope that owns it. A finished run is its `run.settled` record under its seal, and every total is a fold of journal records. The telemetry domain is the only writer under `<stateDir>/telemetry/` ([paths.ts](../../src/domains/telemetry/paths.ts)): the `rule11` boundary check fails a write in any other module under `src/` or the GUI's server whose path, as that module builds it, names the telemetry root. The `rule12` check fails code outside `src/engine/` that changes a message's provider `usage` other than by copying it whole or storing null, and a usage-shaped key on a session-ledger message payload, where the provider's own `usage` is the only one. |
 | R5 One fold, one renderer | Totals come from the folds in [folds.ts](../../src/domains/telemetry/folds.ts). Token and cost wording comes only from the canonical renderer in [render.ts](../../src/core/telemetry/render.ts); the `rule10` boundary check fails money formatting anywhere else in `src/` and in the GUI, which shows the display strings its server rendered. |
 | R6 Closed vocabularies | Agent roles, dispositions, failure causes, stop reasons, round kinds, transport kinds, tiers, content classes and run terminal reasons are closed enums ([enums.ts](../../src/core/telemetry/enums.ts)), and a classifier that belongs to one event, such as a cache verdict or a gap reason, is a closed vocabulary in that event's schema: call, usage, pricing and quota records in [schemas.ts](../../src/core/telemetry/schemas.ts), every other family in its own module beside it (`run-schemas.ts`, `session-schemas.ts`, `context-schemas.ts`, `host-schemas.ts`, `tool-schemas.ts`, `surface-schemas.ts`, `memory-schemas.ts`, `evidence-schemas.ts`). Free text never classifies. |
 | R7 Hashes declare what they are | Every hash names its function, canonicalization and subject, and is labelled `commitment` (the preimage is deliberately not kept) or `resolvable` (the preimage is in the scope's `objects/`). |
@@ -132,7 +132,7 @@ The three scopes open differently.
 
 ## Layout
 
-[paths.ts](../../src/core/telemetry/paths.ts) is the one module that knows where telemetry lives.
+[paths.ts](../../src/domains/telemetry/paths.ts) is the one module that knows where telemetry lives.
 
 ```text
 <stateDir>/telemetry/
