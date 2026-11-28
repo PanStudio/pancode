@@ -13,8 +13,7 @@ import type { PermissionRequiredMeta, RegistryDeps, RegistryVerdict, ToolInvokeO
 import { withRegistryScope } from "./registry-nested-calls.js";
 import { PARK_ABORT_REASON } from "./registry-verdicts.js";
 
-/** How long a contained command's connection waits on the operator's egress answer before it is refused. */
-const EGRESS_ASK_TIMEOUT_MS = 120_000;
+const WITHDRAWN_REASON = "the command ended before anyone answered its network access ask";
 const DENY_HINT = "Denying is remembered for this session.";
 
 /** A call parked on the approval queue for an ask only the operator answers. */
@@ -73,7 +72,7 @@ export function createShellEgress(
 ) {
 	const sessions = new Map<string, { granted: Set<string>; denied: Set<string> }>();
 	/** One live ask per origin per session, shared by every launch waiting on it. */
-	const asks = new Map<string, Promise<boolean>>();
+	const asks = new Map<string, { settled: Promise<boolean>; waiters: number; withdraw(): void }>();
 	const sessionKey = (options: ToolInvokeOptions | undefined) => options?.sessionId ?? deps.currentSessionId?.() ?? "";
 	const session = (options: ToolInvokeOptions | undefined) => {
 		const key = sessionKey(options);
@@ -85,7 +84,12 @@ export function createShellEgress(
 		return state;
 	};
 
-	const park = (origin: EgressOrigin, key: string, options: ToolInvokeOptions | undefined): Promise<boolean> => {
+	/** Settles true on approval, false on a denial or an unanswered card, null once withdrawn. */
+	const park = (
+		origin: EgressOrigin,
+		key: string,
+		options: ToolInvokeOptions | undefined,
+	): { answer: Promise<boolean | null>; withdraw(): void } => {
 		const url =
 			origin.port === 443
 				? `https://${origin.host}/`
@@ -104,7 +108,7 @@ export function createShellEgress(
 		});
 		if (admission.kind !== "ask") {
 			if (admission.kind === "deny") queue.record(call, admission.decision, "blocked");
-			return Promise.resolve(false);
+			return { answer: Promise.resolve(false), withdraw: () => {} };
 		}
 		const decision: SafetyDecision = {
 			...admission.decision,
@@ -121,12 +125,8 @@ export function createShellEgress(
 			...(options?.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
 		};
 		const reasonCode = `confirmation:${SHELL_EGRESS_RULE_ID}`;
-		return new Promise<boolean>((resolve) => {
-			const timer = setTimeout(
-				() => queue.cancel(meta.requestId, "nobody answered the network access ask in time"),
-				EGRESS_ASK_TIMEOUT_MS,
-			);
-			timer.unref?.();
+		let withdrawn = false;
+		const answer = new Promise<boolean | null>((resolve) => {
 			const entry: OperatorAskEntry = {
 				call,
 				decision,
@@ -134,8 +134,7 @@ export function createShellEgress(
 				closePark: () => {},
 				...(options !== undefined ? { options } : {}),
 				resolve(verdict) {
-					clearTimeout(timer);
-					resolve(verdict.kind === "ok" && verdict.result.kind === "ok");
+					resolve(withdrawn ? null : verdict.kind === "ok" && verdict.result.kind === "ok");
 				},
 				approve(requestedBy) {
 					queue.record(call, decision, "allowed", { requestId: meta.requestId, reasonCode });
@@ -144,17 +143,31 @@ export function createShellEgress(
 			};
 			enqueueOperatorAsk(queue, entry, reasonCode);
 		});
+		return {
+			answer,
+			withdraw() {
+				withdrawn = true;
+				queue.cancel(meta.requestId, WITHDRAWN_REASON);
+			},
+		};
 	};
 
 	/**
 	 * The live ask: a contained command's connection to an origin outside its
 	 * grants waits while the operator decides on the approval card every
 	 * surface already renders. Approving grants that exact origin to the
-	 * session's contained commands until the session ends; a denial, a timeout
-	 * or a cancelled call is remembered as a denial for the session. Workers,
-	 * headless runs and contained yolo, which nobody answers, are refused at once.
+	 * session's contained commands until the session ends; a denial, the
+	 * card's unattended window or a cancelled call is remembered as a denial
+	 * for the session. Once every launch waiting on the ask has ended, the card
+	 * is withdrawn and nothing is remembered, so the next command asks again.
+	 * Workers, headless runs and contained yolo, which nobody answers, are
+	 * refused at once.
 	 */
-	const requestApproval = async (origin: EgressOrigin, options: ToolInvokeOptions | undefined): Promise<boolean> => {
+	const requestApproval = async (
+		origin: EgressOrigin,
+		launchEnded: AbortSignal,
+		options: ToolInvokeOptions | undefined,
+	): Promise<boolean> => {
 		const key = originKey(origin);
 		const state = session(options);
 		if (state.granted.has(key)) return true;
@@ -162,23 +175,39 @@ export function createShellEgress(
 		if (
 			(deps.principal ?? "main") !== "main" ||
 			options?.signal?.aborted === true ||
+			launchEnded.aborted ||
 			!queue.cardsRendered() ||
 			deps.operatorAttends?.() !== true ||
 			deps.unattendedAsks?.() === true
 		)
 			return false;
 		const askKey = `${sessionKey(options)}\u0000${key}`;
-		const pending = asks.get(askKey);
-		if (pending !== undefined) return await pending;
-		const asked = withRegistryScope(options, () => park(origin, key, options)).then((allowed) => {
-			(allowed ? state.granted : state.denied).add(key);
-			return allowed;
+		let pending = asks.get(askKey);
+		if (pending === undefined) {
+			const parkedAsk = withRegistryScope(options, () => park(origin, key, options));
+			const settled = parkedAsk.answer.then((answer) => {
+				asks.delete(askKey);
+				if (answer !== null) (answer ? state.granted : state.denied).add(key);
+				return answer === true;
+			});
+			pending = { settled, waiters: 0, withdraw: parkedAsk.withdraw };
+			asks.set(askKey, pending);
+		}
+		const ask = pending;
+		ask.waiters += 1;
+		let ended = (): void => {};
+		const launchGone = new Promise<false>((resolve) => {
+			ended = () => {
+				ask.waiters -= 1;
+				if (ask.waiters === 0) ask.withdraw();
+				resolve(false);
+			};
+			launchEnded.addEventListener("abort", ended, { once: true });
 		});
-		asks.set(askKey, asked);
 		try {
-			return await asked;
+			return await Promise.race([ask.settled, launchGone]);
 		} finally {
-			asks.delete(askKey);
+			launchEnded.removeEventListener("abort", ended);
 		}
 	};
 
@@ -197,7 +226,7 @@ export function createShellEgress(
 				...policy,
 				egress: {
 					grants: egressGrants(settings.main.allow, settings.main.presets, session(options).granted),
-					ask: (origin) => requestApproval(origin, options),
+					ask: (origin, launchEnded) => requestApproval(origin, launchEnded, options),
 					denyHint:
 						"the operator can allow it when asked, or grant it for good in safety.egress.main.allow or safety.egress.main.presets",
 					...(settings.upstreamProxy !== null ? { upstreamProxy: settings.upstreamProxy } : {}),

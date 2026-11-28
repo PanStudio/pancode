@@ -1428,10 +1428,13 @@ test("an attended contained shell asks once per origin outside its egress grants
 		run: async (args, options) => {
 			const plan = options?.shellSandbox?.egress;
 			if (plan === undefined) return { kind: "ok", output: `network:${options?.shellSandbox?.network}` };
-			const [host = "", port = "443"] = String(args.command).split(":");
+			const [host = "", port = "443", end] = String(args.command).split(":");
 			const origin = { host, port: Number(port) };
 			if (isGrantedEgressOrigin(plan.grants, origin)) return { kind: "ok", output: "granted" };
-			return { kind: "ok", output: (await plan.ask?.(origin)) === true ? "approved" : "refused" };
+			// `:end` is a command that quits before anyone answers, which closes its proxy.
+			const launch = new AbortController();
+			if (end === "end") setTimeout(() => launch.abort(), 10);
+			return { kind: "ok", output: (await plan.ask?.(origin, launch.signal)) === true ? "approved" : "refused" };
 		},
 	});
 	const cards: Array<{ requestId: string; actionClass: ActionClass; ruleId: string | undefined }> = [];
@@ -1442,14 +1445,14 @@ test("an attended contained shell asks once per origin outside its egress grants
 			ruleId: decision.kind === "ask" ? decision.confirmationRuleId : undefined,
 		}),
 	);
-	const reach = async (origin: string, answer: "approve" | "deny", sessionId = "A") => {
+	const reach = async (origin: string, answer: "approve" | "deny" | "none", sessionId = "A") => {
 		const before = cards.length;
 		const pending = registry.invoke(bash(origin), { sessionId });
 		await new Promise((resolve) => setTimeout(resolve, 30));
 		const card = cards.length > before ? cards.at(-1) : undefined;
 		if (card !== undefined) {
 			if (answer === "approve") await registry.resumeParkedCalls({ ...card, requestedBy: "contract-operator" });
-			else registry.cancelParkedCall(card.requestId, "contract denial");
+			else if (answer === "deny") registry.cancelParkedCall(card.requestId, "contract denial");
 		}
 		const result = await pending;
 		return {
@@ -1475,6 +1478,10 @@ test("an attended contained shell asks once per origin outside its egress grants
 			{ asked: "shell-egress", output: "refused" },
 		],
 	);
+	// A command that ends before anyone answers withdraws its card and leaves nothing remembered.
+	deepStrictEqual(await reach("slow.example.org:443:end", "none"), { asked: "shell-egress", output: "refused" });
+	strictEqual(registry.parkedCount(), 0);
+	deepStrictEqual(await reach("slow.example.org:443", "approve"), { asked: "shell-egress", output: "approved" });
 	// An operator who is away is never asked; the origin is refused and named in the result.
 	attends = false;
 	deepStrictEqual(await reach("away.example.org:443", "approve"), { asked: false, output: "refused" });
