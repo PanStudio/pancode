@@ -526,7 +526,6 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 					approved: approvedWords,
 					escapes: approvedEscapes,
 				} = boundOperatorMessages(safeRead(() => deps.operatorMessages(turn), []));
-				const escapeApproved = approvedEscapes.length > 0;
 				prompted = { operatorMessages: operatorMessages.length };
 				const user = safetyJudgeUserPrompt({
 					operatorMessages,
@@ -614,16 +613,11 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 					after.streakRules.clear();
 					// The operator naming this action outranks what a page says: it is the one allow the judge read their words for.
 					const source = parsed.rule === OPERATOR_NAMED_RULE ? null : screened.source;
-					// A sandbox escape runs as the operator, with their credentials: a repository file or
-					// the model's own reading cannot grant it, so any other allow goes to the operator.
-					// operator-named stands only when the operator's own words the judge read speak of the sandbox, or they
-					// chose an affirmative option on a question that names leaving it; never the agent's text alone.
-					const citedOperator = parsed.rule === OPERATOR_NAMED_RULE;
+					// A sandbox escape runs as the operator, with their credentials: no reading of a message, an answered
+					// question or a repository file grants it, so an allow goes to the operator's approval card unless a
+					// session option the operator chose covers it.
 					const unnamedEscape =
-						source === null &&
-						asksToLeaveSandbox(subject.decision) &&
-						subject.escapeScope === undefined &&
-						!(citedOperator && (escapeApproved || operatorMentionsSandbox(operatorWords)));
+						source === null && asksToLeaveSandbox(subject.decision) && subject.escapeScope === undefined;
 					record({
 						...base,
 						...prompted,
@@ -640,9 +634,8 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 						return {
 							kind: "park",
 							cause: "unnamed-escape",
-							gateReason: citedOperator
-								? "This sandbox escape waits for the operator's approval: no operator message uses the word sandbox or unconfined, and the operator approved no question that names leaving the sandbox, so unsandboxed: true cannot run on PanCode's safety judge's word."
-								: `This sandbox escape waits for the operator's approval: unsandboxed: true runs on PanCode's safety judge's word only when an operator message names the escape, never under rule ${parsed.rule}.`,
+							gateReason:
+								"This sandbox escape waits for the operator's approval: unsandboxed: true runs only when the operator approves it on this card or chose a session option that covers it, never on PanCode's safety judge's word.",
 							build,
 							latencyMs,
 						};

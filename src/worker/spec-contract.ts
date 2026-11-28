@@ -781,12 +781,14 @@ function validateWorkerEnvelope(value: unknown): void {
 	readEnum(approval.autonomy, "WorkerSpec.envelope.approval.autonomy", ["default", "yolo"] as const);
 	readEnum(approval.asks, "WorkerSpec.envelope.approval.asks", ENVELOPE_ASKS);
 	const sandbox = readRecord(envelope.sandbox, "WorkerSpec.envelope.sandbox");
-	exactKeys(sandbox, ["backend", "confinesWrites"], "WorkerSpec.envelope.sandbox");
+	exactKeys(sandbox, ["backend", "confinesWrites", "unconfined"], "WorkerSpec.envelope.sandbox");
 	readEnum(sandbox.backend, "WorkerSpec.envelope.sandbox.backend", ENVELOPE_SANDBOX_BACKENDS);
 	if (typeof sandbox.confinesWrites !== "boolean")
 		throw new Error("WorkerSpec.envelope.sandbox.confinesWrites must be a boolean");
 	if (sandbox.confinesWrites && sandbox.backend !== "bwrap")
 		throw new Error("WorkerSpec.envelope.sandbox.confinesWrites needs the bwrap backend");
+	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.backend !== "none"))
+		throw new Error("WorkerSpec.envelope.sandbox.unconfined must be true and only with no backend");
 	if (!SHA256_HEX.test(readString(envelope.staticHead, "WorkerSpec.envelope.staticHead")))
 		throw new Error("WorkerSpec.envelope.staticHead must be a sha256 hex digest");
 	if (!Array.isArray(envelope.withheld)) throw new Error("WorkerSpec.envelope.withheld must be an array");
@@ -1216,6 +1218,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"unixSockets",
 	"maskSettings",
 	"backendExpected",
+	"unconfined",
 ]);
 
 function readAbsolutePaths(value: unknown, source: string): void {
@@ -1249,6 +1252,8 @@ function validateWorkerSandbox(value: unknown): void {
 		throw new Error("WorkerSpec.sandbox.maskSettings must be true when present");
 	if (sandbox.backendExpected !== undefined && sandbox.backendExpected !== true)
 		throw new Error("WorkerSpec.sandbox.backendExpected must be true when present");
+	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.mode === "required"))
+		throw new Error("WorkerSpec.sandbox.unconfined must be true when present and only under mode auto");
 }
 
 function validateWorkerFlowPolicy(value: unknown): void {
@@ -1473,6 +1478,8 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 			sandbox.mode === "auto" && envelope.sandbox.backend === "none" && !sandbox.network && envelope.network.shell;
 		if (sandbox.network !== envelope.network.shell && !restrictIfRecovered)
 			throw new Error("WorkerSpec.sandbox.network disagrees with the envelope's network.shell");
+		if ((sandbox.unconfined === true) !== (envelope.sandbox.unconfined === true))
+			throw new Error("WorkerSpec.sandbox.unconfined disagrees with the envelope's sandbox.unconfined");
 		const unreadable = envelope.read.outside.filter((root) => !(sandbox.readableRoots ?? []).includes(root));
 		if (unreadable.length > 0)
 			throw new Error(`WorkerSpec.sandbox cannot read the envelope's outside roots: ${unreadable.join(", ")}`);

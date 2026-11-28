@@ -62,6 +62,13 @@ export interface WorkerSandboxSpec {
 	 * worker whose own probe then fails refuses the command instead of running it direct.
 	 */
 	backendExpected?: true;
+	/**
+	 * Admission found no backend where the worker runs and the operator allowed
+	 * it to run unconfined: `safety.sandboxUnconfinedLocalWorkers` for a local
+	 * worker, `fleet.nodes[].allowUnsandboxed` for a fleet node. Without it a
+	 * worker with no backend refuses its commands. Never set under `required`.
+	 */
+	unconfined?: true;
 }
 
 /**
@@ -92,6 +99,8 @@ export interface SandboxMaskedPath {
 	 * of its empty tmpfs, each `source` (a physical path) at `target`.
 	 */
 	reveal?: ReadonlyArray<{ source: string; target: string }>;
+	/** Bubblewrap only: a directory mask remounted read-only, so nothing can be created in it. */
+	readOnly?: true;
 }
 
 export type SandboxCommand = { argv: ReadonlyArray<string> } | { shell: string };
@@ -116,12 +125,11 @@ export interface SandboxInvocationSpec {
 	 */
 	privateTmp?: boolean;
 	/**
-	 * Bubblewrap: the seccomp program file that refuses AF_UNIX sockets
-	 * (unix-sockets.ts). The launch opens it on a file descriptor bwrap reads
-	 * with `--seccomp`. Absent loads no filter.
+	 * Bubblewrap: the seccomp program file (seccomp.ts). The launch opens it on
+	 * a file descriptor bwrap reads with `--seccomp`. Absent loads no filter.
 	 */
-	unixSocketFilter?: string;
-	/** Seatbelt: deny connecting to and binding Unix-domain sockets. Bubblewrap takes `unixSocketFilter` instead. */
+	seccompFilter?: string;
+	/** Seatbelt: deny connecting to and binding Unix-domain sockets. Bubblewrap takes `seccompFilter` instead. */
 	denyUnixSockets?: boolean;
 }
 
@@ -136,4 +144,16 @@ export interface SandboxAvailability {
 	executable: string | null;
 	/** Why the sandbox is unavailable, or a caveat when it is. */
 	reason: string | null;
+	/**
+	 * Bubblewrap only: why the baseline seccomp filter (seccomp.ts) cannot load
+	 * here. The sandbox is partial: `required` refuses it, `auto` runs commands
+	 * in it and says what is missing. Absent when the filter loads.
+	 */
+	degraded?: string;
+	/**
+	 * Unavailable only: the trusted backend binary that was found but could not
+	 * build a sandbox here (a kernel or container that forbids its namespaces).
+	 * Absent when no usable binary exists at all.
+	 */
+	found?: string;
 }

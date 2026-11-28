@@ -5,6 +5,8 @@ import type { PancodeSettings } from "../core/config.js";
 import type { OutputStyle } from "../core/defaults.js";
 import { tierPolicy, tierRevision } from "../core/presentation-tier.js";
 import { pancodeProjectRoot } from "../core/project-root.js";
+import type { YoloShellState } from "../core/sandbox/main-session.js";
+import type { SandboxOutcome } from "../core/sandbox/status.js";
 import { asciiOnly } from "../core/terminal-preferences.js";
 import { markProjectSeen, projectSeen } from "../core/welcome-seen.js";
 import type { ContextState } from "../domains/context/index.js";
@@ -94,10 +96,10 @@ export interface WelcomeDashboardDeps {
 	 */
 	getProjectConfigReminder?: () => string | null;
 	/**
-	 * Whether default autonomy's shell calls run in the OS sandbox here, or null
-	 * while the host probe has not answered. Read on every frame, so it never probes.
+	 * How the shell runs here under the current settings, or null while the host
+	 * probe has not answered. Read on every frame, so it never probes.
 	 */
-	getShellContained?: () => boolean | null;
+	getShellSandbox?: () => WelcomeShellSandbox | null;
 	/**
 	 * Reads the latest earlier session in `cwd`, off the frame and only on a terminal. Supplied by the hydrated
 	 * presentation: session history stays out of the Stage 0 closure this module belongs to.
@@ -132,8 +134,8 @@ export interface WelcomeDashboardStats {
 	autonomy: string;
 	/** The operator's yolo confinement; read only at yolo, absent reads contained. */
 	yoloConfinement?: string;
-	/** False when default's shell calls run uncontained on this host; absent or null while unknown. */
-	shellContained?: boolean | null;
+	/** How the shell runs on this host; absent or null while unknown. */
+	shellSandbox?: WelcomeShellSandbox | null;
 	targets: string;
 	fleet: string;
 	/** One line of connected subscription usage; null hides the row entirely. */
@@ -434,26 +436,70 @@ function healthValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: nu
 	return truncateToWidth(theme.fg("warning", `${GLYPH.warn} no model connected`), room, GLYPH.ellipsis, false);
 }
 
-/** OS sandbox containment verdict for `detailed` without duplicating the status bar's autonomy badge. */
+/** The host's sandbox as the welcome reads it: what the backend is, and where default's and yolo's commands run. */
+export interface WelcomeShellSandbox {
+	outcome: SandboxOutcome;
+	/** Default autonomy's shell commands: in the sandbox, on the approval rails only, or the setting is off. */
+	main: "contained" | "rails" | "off";
+	yolo: YoloShellState;
+}
+
+/** Why default's commands are not sandboxed, in the welcome's words. */
+function notSandboxedWhy(outcome: SandboxOutcome): string {
+	switch (outcome) {
+		case "off":
+			return "safety.sandbox off";
+		case "lost":
+			return "OS sandbox lost";
+		case "partial":
+			return "partial OS sandbox refused by required";
+		default:
+			return "no OS sandbox";
+	}
+}
+
+/**
+ * OS sandbox verdict for `detailed` without duplicating the status bar's autonomy badge. It reads what the host
+ * does under the settings, never the confinement setting alone, and claims nothing while the probe is pending.
+ */
 function sandboxValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: number): string {
 	const sep = ` ${GLYPH.sep} `;
+	const state = stats.shellSandbox ?? null;
+	const active = state?.outcome === "partial" ? "OS sandbox partial (no seccomp baseline)" : "OS sandbox active";
+	let text: string;
+	let warn = false;
 	if (stats.autonomy === "yolo") {
-		const text =
-			stats.yoloConfinement === "unconfined" ? `unconfined${sep}no OS sandbox` : `contained${sep}OS sandbox active`;
-		return truncateToWidth(
-			theme.fg(stats.yoloConfinement === "unconfined" ? "warning" : "body", text),
-			room,
-			GLYPH.ellipsis,
-			false,
-		);
+		const confinement = stats.yoloConfinement === "unconfined" ? "unconfined" : "contained";
+		if (state === null) text = confinement;
+		else {
+			switch (state.yolo) {
+				case "contained-sandbox":
+					text = `contained${sep}${active}`;
+					break;
+				case "contained-rails":
+					text = `contained${sep}not sandboxed (${notSandboxedWhy(state.outcome)}), asks refused`;
+					warn = true;
+					break;
+				case "sandboxed":
+					text = `unconfined${sep}${active} (safety.sandbox required)`;
+					break;
+				case "refused":
+					text = `unconfined${sep}commands refused (required, ${notSandboxedWhy(state.outcome)})`;
+					warn = true;
+					break;
+				default:
+					text = `unconfined${sep}no OS sandbox`;
+					warn = true;
+			}
+		}
+	} else if (state === null) text = "auto edits";
+	else if (state.main === "contained") text = `auto in workspace${sep}${active}`;
+	else {
+		text = `auto edits${sep}not sandboxed (${notSandboxedWhy(state.outcome)})`;
+		warn = true;
 	}
-	const text =
-		stats.shellContained === true
-			? `auto in workspace${sep}OS sandbox active`
-			: stats.shellContained === false
-				? `auto edits${sep}no OS sandbox`
-				: "auto edits";
-	return truncateToWidth(theme.fg("body", text), room, GLYPH.ellipsis, false);
+	if (state?.outcome === "partial") warn = true;
+	return truncateToWidth(theme.fg(warn ? "warning" : "body", text), room, GLYPH.ellipsis, false);
 }
 
 /** Project awareness (`PANCODE.md`) status plus its actionable command when indexing or repair is needed. */
@@ -717,7 +763,9 @@ function statsSignature(stats: WelcomeDashboardStats): string {
 		stats.projectPreload,
 		stats.autonomy,
 		stats.yoloConfinement,
-		stats.shellContained,
+		stats.shellSandbox?.outcome,
+		stats.shellSandbox?.main,
+		stats.shellSandbox?.yolo,
 		stats.outputStyle,
 		stats.quota,
 		stats.projectConfig,
@@ -911,7 +959,7 @@ export class WelcomeDashboard implements WelcomeDashboardComponent {
 			submitKeyLabel: null,
 			autonomy: settings?.safety?.autonomy ?? "default",
 			yoloConfinement: effectiveYoloConfinement(settings?.safety),
-			shellContained: this.deps.getShellContained?.() ?? null,
+			shellSandbox: this.deps.getShellSandbox?.() ?? null,
 			quota: showOrientation ? (this.deps.getQuotaSummary?.() ?? null) : null,
 			targets: "",
 			fleet: "",

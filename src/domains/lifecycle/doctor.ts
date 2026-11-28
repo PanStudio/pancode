@@ -1029,7 +1029,9 @@ export async function runDoctorFleetChecks(
 		// unless it opts in, which a required sandbox ignores.
 		const mode = settings.safety.sandbox;
 		const sandboxUsable =
-			record.sandbox?.available === true && (settings.safety.sandboxNetwork === true || record.sandbox.network === null);
+			record.sandbox?.available === true &&
+			(mode !== "required" || record.sandbox.degraded === undefined) &&
+			(settings.safety.sandboxNetwork === true || record.sandbox.network === null);
 		const unsandboxedRefused =
 			!sandboxUsable && mode !== "off" && (mode === "required" || node?.allowUnsandboxed !== true);
 		const refusedWorkers = record.sandbox?.available ? "native workers needing network isolation" : "native workers";

@@ -963,6 +963,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"sandboxPassEnv",
 				"liveCheckTargets",
 				"sandboxUnixSockets",
+				"sandboxUnconfinedLocalWorkers",
 				"sandboxCacheMaxGiB",
 				"snapshots",
 				"validationWrappers",
@@ -1041,6 +1042,10 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 			if ("sandboxUnixSockets" in safety) {
 				const parsed = expectEnum(issues, "safety.sandboxUnixSockets", safety.sandboxUnixSockets, UNIX_SOCKET_MODES);
 				if (parsed !== undefined) settings.safety.sandboxUnixSockets = parsed;
+			}
+			if ("sandboxUnconfinedLocalWorkers" in safety) {
+				const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
+				if (parsed !== undefined) settings.safety.sandboxUnconfinedLocalWorkers = parsed;
 			}
 			if ("sandboxCacheMaxGiB" in safety) {
 				const parsed = expectNumber(issues, "safety.sandboxCacheMaxGiB", safety.sandboxCacheMaxGiB, { min: 0 });

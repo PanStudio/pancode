@@ -8,7 +8,8 @@ import { peekHarnessProfile, recordLessonShown, subscribeHarnessProfile } from "
 import type { JobRecord } from "../core/job-types.js";
 import { setPresentationTier, tierPolicy } from "../core/presentation-tier.js";
 import { probedSandboxAvailability } from "../core/sandbox/availability.js";
-import { mainShellContained } from "../core/sandbox/main-session.js";
+import { mainShellContained, yoloShellState } from "../core/sandbox/main-session.js";
+import { sandboxOutcome } from "../core/sandbox/status.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { CompactionPayload } from "../core/telemetry/live-events.js";
 import { motionEnabled } from "../core/terminal-preferences.js";
@@ -37,6 +38,7 @@ import type {
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
 import type { Component, ScrollView, TUI } from "../engine/tui.js";
 import { truncateToWidth } from "../engine/tui.js";
+import { effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
 import { createAssistantGenerationTiming, liveThroughput } from "../session-control/assistant-generation-timing.js";
 import type { ChatLoop, ChatLoopEvent } from "../session-control/chat-loop.js";
 import type { RunIo } from "../session-control/slash-command-types.js";
@@ -469,11 +471,16 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 		// Subscription usage is read lazily off the render path and cached, so the
 		// banner reads a string and never awaits a provider.
 		getQuotaSummary: () => quotaSummary.peek(),
-		getShellContained: () => {
-			const mode = (deps.getSettings?.() ?? settings).safety.sandbox;
-			if (mode === "off") return false;
+		getShellSandbox: () => {
+			const safety = (deps.getSettings?.() ?? settings).safety;
 			const known = probedSandboxAvailability();
-			return known === null ? null : mainShellContained(mode, known);
+			if (known === null) return null;
+			const contained = mainShellContained(safety.sandbox, known);
+			return {
+				outcome: sandboxOutcome(safety.sandbox, known),
+				main: safety.sandbox === "off" ? "off" : contained ? "contained" : "rails",
+				yolo: yoloShellState(effectiveYoloConfinement(safety), safety.sandbox, known),
+			};
 		},
 		...(deps.getProjectConfigReminder ? { getProjectConfigReminder: deps.getProjectConfigReminder } : {}),
 		...(deps.getSettings ? { getSettings: deps.getSettings } : {}),

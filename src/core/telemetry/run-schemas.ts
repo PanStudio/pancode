@@ -509,7 +509,10 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 							closed,
 						),
 						approval: Type.Object({ autonomy: ExistingId, asks: ExistingId }, closed),
-						sandbox: Type.Object({ backend: ExistingId, confinesWrites: Type.Boolean() }, closed),
+						sandbox: Type.Object(
+							{ backend: ExistingId, confinesWrites: Type.Boolean(), unconfined: Type.Optional(Type.Literal(true)) },
+							closed,
+						),
 						withheld: Type.Array(
 							Type.Object({ capability: ExistingId, reason: ExistingId, remedy: Type.Optional(text) }, closed),
 							{ maxItems: 1024 },

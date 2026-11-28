@@ -18,7 +18,7 @@ import { type MainSandboxPolicy, mainSandboxPolicy, mainShellContained } from ".
 import { withMountAliases } from "../../core/sandbox/mount-aliases.js";
 import { discoverSecretMasks } from "../../core/sandbox/secret-files.js";
 import type { SandboxMode } from "../../core/sandbox/types.js";
-import { unixSocketLaunch } from "../../core/sandbox/unix-sockets.js";
+import { sandboxLaunchFilters } from "../../core/sandbox/unix-sockets.js";
 import { physicalSandboxPath, settingsFileMasks, workerSandboxMasks } from "../../core/sandbox/worker-process.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
@@ -211,7 +211,7 @@ export async function compareHostVerificationBase(input: {
 				{ workspaceRoots: [worktree.path, worktree.root, ...links.map((link) => dirname(link.target))] },
 				baseMasks,
 			).masks;
-			const sockets = unixSocketLaunch("block", sandbox, { workspaceRoots: [worktree.path], privateTmp: true }, [
+			const sockets = sandboxLaunchFilters("block", sandbox, { workspaceRoots: [worktree.path], privateTmp: true }, [
 				...baseMasks,
 				...secretMasks,
 			]);

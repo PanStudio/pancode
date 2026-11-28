@@ -342,6 +342,63 @@ test("under bwrap git commits from a yolo script while hooks, config, commondir 
 	assert.equal(existsSync(join(common, "commondir")), false, "a planted commondir is swept");
 });
 
+test("under bwrap editor and agent startup files stay read-only, present or absent, and an absent one leaves nothing for git", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-startup-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const workspace = join(scratch, "main");
+	mkdirSync(join(workspace, ".vscode"), { recursive: true });
+	writeFileSync(join(workspace, ".vscode", "settings.json"), "{}");
+	git(workspace, "init", "-q");
+	git(workspace, "add", ".");
+	git(workspace, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init");
+	const layout = mainSandboxGitLayout(workspace);
+	const policy = resolveMainSandboxPolicy({
+		workspace,
+		scratchRoots: [],
+		pancodeDirs: [],
+		...(layout !== undefined ? { git: layout } : {}),
+	});
+	const script = [
+		"echo '{\"x\":1}' > .vscode/settings.json 2>/dev/null || echo present-refused",
+		"echo '{}' > .vscode/tasks.json 2>/dev/null || echo present-dir-refused",
+		"mkdir -p .idea 2>/dev/null; echo x > .idea/workspace.xml 2>/dev/null || echo absent-dir-refused",
+		"mkdir -p .claude/commands 2>/dev/null || echo claude-refused",
+		"echo 'eval evil' > .envrc 2>/dev/null || echo envrc-refused",
+		"echo '{}' > .mcp.json 2>/dev/null || echo mcp-refused",
+		"mv .gitmodules gm 2>/dev/null || echo gitmodules-pinned",
+		"test -z \"$(git status --porcelain)\" && echo git-clean",
+		"echo ok > ordinary.txt && echo ordinary-written",
+	].join("; ");
+	const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);
+	assert.equal(plan.kind, "sandboxed");
+	if (plan.kind !== "sandboxed") return;
+	const result = await run(plan.file, plan.args);
+	plan.afterExit();
+	for (const marker of [
+		"present-refused",
+		"present-dir-refused",
+		"absent-dir-refused",
+		"claude-refused",
+		"envrc-refused",
+		"mcp-refused",
+		"gitmodules-pinned",
+		"git-clean",
+		"ordinary-written",
+	]) {
+		assert.match(result.output, new RegExp(marker, "u"), result.output);
+	}
+	assert.equal(readFileSync(join(workspace, ".vscode", "settings.json"), "utf8"), "{}");
+	// The mount points of the absent ones are gone with the sandbox.
+	for (const name of [".idea", ".claude", ".envrc", ".mcp.json", ".gitmodules", ".husky"]) {
+		assert.equal(existsSync(join(workspace, name)), false, name);
+	}
+});
+
 // #419: worker parity. The host's /tmp must not hand a yolo script the operator's ssh-agent.
 test("under bwrap a yolo script runs in its own PID namespace and cannot reach an ssh-agent socket", async (t) => {
 	const availability = sandboxAvailability();
