@@ -92,6 +92,30 @@ const TOP_LEVEL_KEYS = [
 	"store",
 ] as const;
 
+const SAFETY_KEYS = [
+	"autonomy",
+	"limits",
+	"review",
+	"resources",
+	"sandbox",
+	"egress",
+	"scratchRoots",
+	"sandboxPassEnv",
+	"liveCheckTargets",
+	"sandboxUnixSockets",
+	"sandboxUnconfinedLocalWorkers",
+	"workerIsolation",
+	"sandboxCacheMaxGiB",
+	"homeReads",
+	"snapshots",
+	"validationWrappers",
+	"unattendedAfterSeconds",
+	"yoloAccepted",
+	"yoloConfinement",
+	"yoloUnconfinedAccepted",
+	"judge",
+] as const;
+
 function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, settings: PancodeSettings): void {
 	if ("sandbox" in safety) {
 		const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
@@ -1019,29 +1043,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 		if (!isRecord(raw.safety)) issues.add("safety", `expected a map, got ${describe(raw.safety)}`);
 		else {
 			const safety = raw.safety;
-			issues.unknownKeys("safety", safety, [
-				"autonomy",
-				"limits",
-				"review",
-				"resources",
-				"sandbox",
-				"egress",
-				"scratchRoots",
-				"sandboxPassEnv",
-				"liveCheckTargets",
-				"sandboxUnixSockets",
-				"sandboxUnconfinedLocalWorkers",
-				"workerIsolation",
-				"sandboxCacheMaxGiB",
-				"homeReads",
-				"snapshots",
-				"validationWrappers",
-				"unattendedAfterSeconds",
-				"yoloAccepted",
-				"yoloConfinement",
-				"yoloUnconfinedAccepted",
-				"judge",
-			]);
+			issues.unknownKeys("safety", safety, SAFETY_KEYS);
 			if ("autonomy" in safety) {
 				const parsed = expectEnum(issues, "safety.autonomy", safety.autonomy, AUTONOMY_LEVELS);
 				if (parsed !== undefined) settings.safety.autonomy = parsed;

@@ -38,7 +38,7 @@ interface IsolationFacts {
 }
 
 /** The provider origin the worker's model and probes address, from the same synthesis the worker runs. */
-export function workerModelOrigin(target: IsolationFacts["target"]): { api: string; origin: string } | null {
+function workerModelOrigin(target: IsolationFacts["target"]): { api: string; origin: string } | null {
 	try {
 		const model = target.runtime.synthesizeModel(target.target, target.wireModelId, null);
 		if (!model.baseUrl) return null;
