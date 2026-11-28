@@ -25,6 +25,7 @@ import type { createFlowGates } from "./flow.js";
 import type { createRegistryHooks } from "./hooks.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 import type { createRegistryPark } from "./park.js";
+import type { createRegistryResume } from "./resume.js";
 import type { createRegistryRun } from "./run.js";
 import type { createSnapshotGate } from "./snapshot.js";
 
@@ -138,4 +139,5 @@ export interface RegistryScope {
 	readonly routeAsk: ReturnType<typeof createRegistryAsk>["routeAsk"];
 	readonly runSpec: ReturnType<typeof createRegistryRun>["runSpec"];
 	readonly invokeAdmitted: ReturnType<typeof createRegistryRun>["invokeAdmitted"];
+	readonly resumeParkedCalls: ReturnType<typeof createRegistryResume>["resumeParkedCalls"];
 }
