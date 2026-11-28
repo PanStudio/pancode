@@ -274,6 +274,7 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		}
 		const args: ExecuteFleetRunInput = {
 			signal: abort.signal,
+			stopped: () => stoppedBy !== null,
 			plan: preview.plan,
 			playbookName: preview.name,
 			commands: preview.commands,

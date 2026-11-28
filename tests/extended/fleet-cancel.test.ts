@@ -397,6 +397,8 @@ describe("fleet cancel requests", () => {
 		const step = { stepId: "build", kind: "agent", waveIndex: 0, assignmentId: "asg-build" } as const;
 		// A keypress or permission reply launches with no telemetry context; the run still binds the launching session.
 		const runSessions: Array<string | null | undefined> = [];
+		// The run learns it was stopped, not merely aborted, so a worktree run keeps its task worktree for --resume.
+		const stoppedReads: boolean[] = [];
 		const launcher = createFleetRunLauncher({
 			dispatch: {} as DispatchContract,
 			agents: { getSpec: () => null },
@@ -408,7 +410,9 @@ describe("fleet cancel requests", () => {
 					void Promise.resolve().then(() => runSessions.push(telemetryContext()?.sessionId));
 					input.onStarted?.();
 					input.onStepDispatched?.(step);
+					stoppedReads.push(input.stopped?.() === true);
 					input.signal?.addEventListener("abort", () => {
+						stoppedReads.push(input.stopped?.() === true);
 						input.onStepSettled?.({
 							...step,
 							succeeded: false,
@@ -462,6 +466,7 @@ describe("fleet cancel requests", () => {
 		strictEqual(launcher.inFlight(), null);
 		deepStrictEqual(runSessions, ["session-launch", "session-launch"]);
 		deepStrictEqual(watched, ["started:model", "dispatched:build", "settled:fleet_stop"]);
+		deepStrictEqual(stoppedReads, [false, true]);
 	});
 
 	it("opens the terminal's session for a run typed before its first turn, so the run never goes unbound", () => {
