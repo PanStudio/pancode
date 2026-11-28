@@ -9,19 +9,17 @@ import { resolve as resolvePath } from "node:path";
 import { bashShellPath } from "../../core/bash-shell.js";
 import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable } from "../../core/sandbox/availability.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
-import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../core/tool-names.js";
+import { isHarnessExtensionToolName, isMcpToolName, type ToolName } from "../../core/tool-names.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { isClaudeSdkTool } from "../../engine/claude/tool-safety.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import { type AutonomyLevel, admissionAutonomy, effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 import { networkToolsDisabled } from "../../tools/network-policy.js";
-import { applyToolProfile } from "../../tools/profiles.js";
 import { runtimeAttachesGateway } from "../../tools/surface.js";
 import { gitCheckoutRoot } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import { INTERNAL_HELPER_RESULT_KINDS } from "../agents/result-contract.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
-import { roleExcludes, toolActionClass } from "../agents/role-class.js";
 import type { normalizeAgentSpec } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import { enabledHarnessExtensionToolNames } from "../extensions/command-tools.js";
@@ -103,20 +101,7 @@ export function writeModeInput(input: {
 		capabilityClass: input.spec.capabilityClass,
 		hoareContract: hoare,
 	});
-	const role = resolveRunRole({
-		gateRole: req.gate?.role,
-		capabilityClass: input.spec.capabilityClass,
-		readOnly: writeNone,
-	});
-	const network = sandboxAllowsNetwork({
-		req,
-		role,
-		capabilityClass: input.spec.capabilityClass,
-		allowedTools: applyToolProfile(input.recipe.tools as ReadonlyArray<ToolName>, req.toolProfile),
-		target: input.target,
-		settings: input.settings,
-		hoare,
-	});
+	const network = sandboxKeepsHostNetwork(input.settings, hoare);
 	return {
 		writeNone,
 		roots: writeNone ? [] : input.pathScope.writeBoundaries,
@@ -156,15 +141,7 @@ export function resolveDispatchEnvelopeStage(input: {
 		capabilityClass: spec.capabilityClass,
 		readOnly: writeNone,
 	});
-	const network = sandboxAllowsNetwork({
-		req,
-		role,
-		capabilityClass: spec.capabilityClass,
-		allowedTools: admission.allowedTools,
-		target,
-		settings: input.settings,
-		hoare,
-	});
+	const network = sandboxKeepsHostNetwork(input.settings, hoare);
 	const {
 		confinesWrites,
 		availability: placedAvailability,
@@ -410,27 +387,14 @@ function deniedToolNames(req: DispatchRequest): ReadonlySet<string> {
 	);
 }
 
-/** Whether a native worker's sandboxed commands keep network on (mirrors `resolveExecAndNetwork`). */
-function sandboxAllowsNetwork(input: {
-	req: DispatchRequest;
-	role: ReturnType<typeof resolveRunRole>;
-	capabilityClass: ReturnType<typeof normalizeAgentSpec>["capabilityClass"];
-	allowedTools: ReadonlyArray<ToolName>;
-	target: ResolvedTarget;
-	settings: EffectiveSettings;
-	hoare: boolean;
-}): boolean {
-	if (input.hoare) return false;
-	if (input.settings?.safety.sandboxNetwork === true) return true;
-	if (networkToolsDisabled() || !targetToolCapability(input.target)) return false;
-	const denied = deniedToolNames(input.req);
-	for (const tool of input.allowedTools) {
-		if (tool !== ToolNames.WebFetch && tool !== ToolNames.WebRead) continue;
-		if (denied.has(tool)) continue;
-		if (roleExcludes(input.role, input.capabilityClass, tool, toolActionClass(tool)) !== null) continue;
-		return true;
-	}
-	return false;
+/**
+ * Whether a native worker's sandboxed commands keep the host network, so the
+ * placement needs no network isolation: only `safety.egress.workers.mode: open`.
+ * Proxied reaches the network through PanCode's proxy inside an isolated
+ * namespace, and web tools grant the shell nothing (D2).
+ */
+function sandboxKeepsHostNetwork(settings: EffectiveSettings, hoare: boolean): boolean {
+	return !hoare && settings?.safety.egress.workers.mode === "open";
 }
 
 /**
@@ -509,9 +473,9 @@ function placementSandboxFacts(
 	return {
 		backend,
 		applies: applies && (backend !== "none" || mode === "required"),
+		egress: hoare ? "off" : (settings?.safety.egress.workers.mode ?? "off"),
 		// Admission passed with no usable backend, so the operator allowed this host's worker commands unconfined.
 		...(applies && backend === "none" ? { unconfined: true as const } : {}),
-		networkSetting: !hoare && settings?.safety.sandboxNetwork === true,
 		networkOff: hoare,
 		confinesWrites: backend === "bwrap",
 		availability,

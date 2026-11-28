@@ -12,6 +12,7 @@ import { GUARDRAIL_DEFAULTS } from "../../core/guardrails.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
+import { egressGrants } from "../../core/sandbox/egress/policy.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { withWorkerGitHookPaths } from "../../core/sandbox/git-hooks-fingerprint.js";
 import type { SandboxAvailability, WorkerSandboxSpec } from "../../core/sandbox/types.js";
@@ -102,6 +103,8 @@ interface DispatchWorkerSpecInput {
 	/** The harness starts without its repository instruction files; their rules ride compiled in the prompt. */
 	skipRepositoryInstructions?: boolean;
 	budget: WorkerBudget;
+	/** The worker runs on this host, not a fleet node: only then does its spec carry the operator's upstream proxy. */
+	localPlacement?: boolean;
 	/** Effective settings snapshot for this run; falls back to config.get(). */
 	settings?: Readonly<ReturnType<ConfigContract["get"]>>;
 	/** True when this process routes worker escalations to an operator; see DispatchBundleOptions. */
@@ -213,6 +216,10 @@ export function workerSandboxFor(input: {
 		input.req.taskWorktree !== undefined && mode !== "off" && input.envelope.sandbox.backend !== "none"
 			? shareTaskWorktreeDependencies(input.req.taskWorktree)
 			: [];
+	const egressSettings = input.settings?.safety.egress.workers;
+	const egress = hoare ? "off" : (egressSettings?.mode ?? "off");
+	const egressOrigins =
+		egressSettings === undefined ? [] : [...egressGrants(egressSettings.allow, egressSettings.presets).origins].sort();
 	const policy = resolveWorkerSandboxSpec({
 		mode,
 		readOnly: hoare || input.envelope.write.mode === "none",
@@ -222,11 +229,8 @@ export function workerSandboxFor(input: {
 			? { taskWorktree: { path: input.req.taskWorktree.path, branch: input.req.taskWorktree.branch } }
 			: {}),
 		// An auto fallback has host egress. If the worker recovers its backend, keep the original network restriction.
-		network:
-			input.envelope.network.shell &&
-			(input.envelope.sandbox.backend !== "none" ||
-				input.settings?.safety.sandboxNetwork === true ||
-				input.envelope.network.tools.length > 0),
+		network: input.envelope.network.shell && (input.envelope.sandbox.backend !== "none" || egress !== "off"),
+		...(egress === "proxied" ? { egress: { origins: egressOrigins } } : {}),
 		// The envelope's approved outside read roots ride with the dependency roots: readable, never writable.
 		dependencyRoots: [...dependencyRoots, ...input.envelope.read.outside],
 		...(input.settings !== undefined && !hoare
@@ -556,7 +560,13 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		envelope: input.envelope,
 		settings,
 	}).spec;
-	if (sandbox !== undefined) spec.sandbox = sandbox;
+	const upstreamProxy = settings?.safety.egress.upstreamProxy ?? null;
+	if (sandbox !== undefined)
+		spec.sandbox =
+			// The operator's upstream proxy, credentials and all, stays on this host: a fleet node's proxied worker dials directly.
+			sandbox.egress !== undefined && upstreamProxy !== null && input.localPlacement === true
+				? { ...sandbox, egress: { ...sandbox.egress, upstreamProxy } }
+				: sandbox;
 	// The worker re-attests this identity before every Git mutation; only in it
 	// does a git: worktree permit admit add and commit (Phase C).
 	const taskWorktree = input.req.taskWorktree;

@@ -4,7 +4,9 @@
 import { SHARED_SETTINGS_AREAS, settingsPlacementForPath } from "../../../../../src/core/settings-areas.js";
 import {
 	applyControlValue,
+	formatControlValue,
 	orderedAreaControls,
+	REDACTED_PROXY_PATH,
 	type SettingControl as RootControl,
 	SETTINGS_LABELS_BY_ID,
 	SETTINGS_VALUE_HELP_BY_ID,
@@ -115,6 +117,7 @@ function at(root: unknown, path: string): unknown {
 /** The text form the engine parses. Only collections with a guided editor cross as content. Others cross as a size. */
 function text(control: RootControl, value: unknown): string {
 	if (value === undefined || value === null) return "";
+	if (control.path === REDACTED_PROXY_PATH && typeof value === "string") return formatControlValue(value, control.path);
 	if (control.kind === "json" && Object.hasOwn(STRUCTURED_SETTINGS, control.path)) return JSON.stringify(value);
 	if (control.kind === "json") {
 		const size = Array.isArray(value) ? value.length : Object.keys(value as object).length;
@@ -242,6 +245,7 @@ export function readSettingsControls(cwd: string | null): SettingsControls {
 
 export function writeSettingControl(cwd: string | null, write: SettingWrite): SettingWritten {
 	runtimes();
+	const beforeRaw = write.path === REDACTED_PROXY_PATH ? at(readLayeredSettings(cwd).settings, write.path) : undefined;
 	const before = readSettingsControls(cwd);
 	const control = before.controls.find((candidate) => candidate.path === write.path);
 	if (!control) throw new AppProblem("not_found", "This setting is not available in PanCode on the desktop.");
@@ -278,9 +282,14 @@ export function writeSettingControl(cwd: string | null, write: SettingWrite): Se
 		throw new AppProblem(/higher-precedence/.test(detail) ? "conflict" : "validation", detail.slice(0, 600));
 	}
 	const after = readSettingsControls(cwd);
+	const afterRaw = write.path === REDACTED_PROXY_PATH ? at(readLayeredSettings(cwd).settings, write.path) : undefined;
 	const previous = new Map(before.controls.map((candidate) => [candidate.path, candidate.value]));
 	const changed = after.controls
-		.filter((candidate) => previous.get(candidate.path) !== candidate.value)
+		.filter(
+			(candidate) =>
+				previous.get(candidate.path) !== candidate.value ||
+				(candidate.path === REDACTED_PROXY_PATH && write.path === REDACTED_PROXY_PATH && beforeRaw !== afterRaw),
+		)
 		.map(({ path, value }) => ({ path, value }))
 		.sort((a, b) => Number(b.path === write.path) - Number(a.path === write.path));
 	return { changed, timing: control.timing, controls: after };
