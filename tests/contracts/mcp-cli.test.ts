@@ -363,6 +363,11 @@ it("tests one trusted server through the gateway's client and never launches an 
 			})),
 			[{ tool: "echo", isError: false, text: '{"text":"hi"}' }],
 		);
+		const launch = data.calls[0].sandbox;
+		deepStrictEqual(
+			{ launcher: launch.launcher, integration: launch.integration, confinement: launch.confinement, why: launch.why },
+			{ launcher: "mcp-stdio", integration: "mcp:fake", confinement: "unconfined", why: "not-opted-in" },
+		);
 	} finally {
 		scratch.cleanup();
 	}

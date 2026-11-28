@@ -25,7 +25,7 @@ import {
 } from "../core/sandbox/main-session.js";
 import type { ResourceLimits } from "../core/sandbox/types.js";
 import { workerSandboxApplies, workerSandboxConfigured } from "../core/sandbox/worker-process.js";
-import { layeredConfineList } from "../core/settings-layers.js";
+import { layeredConfineList, layeredMainHomeReads } from "../core/settings-layers.js";
 import { ToolNames } from "../core/tool-names.js";
 import { gitArgvCommand } from "../domains/safety/git-policy.js";
 import { StringEnum } from "../engine/ai.js";
@@ -215,6 +215,7 @@ function typedGitLaunch(
 			scratchRoots: effectiveScratchRoots([], workspace),
 			stateDirs: [],
 			network: "off",
+			homeReads: layeredMainHomeReads(workspace),
 		}),
 	};
 }

@@ -18,6 +18,7 @@ import {
 	optInLaunch,
 	planMainSandboxSpawn,
 } from "../../../core/sandbox/main-session.js";
+import { layeredMainHomeReads } from "../../../core/settings-layers.js";
 import { ownerTelemetryContext } from "../../../core/telemetry/context.js";
 import { telemetryHub } from "../../../core/telemetry/hub.js";
 import { isSecretArgKey, redactSecretString } from "../../../lib/secrets/redaction.js";
@@ -81,7 +82,13 @@ export function packLaunch(
 	if (!decided.confined) return { label: decided.label };
 	return {
 		label: decided.label,
-		policy: confinedIntegrationPolicy({ workspace, scratchRoots: [], stateDirs: [storeDir], network: "off" }),
+		policy: confinedIntegrationPolicy({
+			workspace,
+			scratchRoots: [],
+			stateDirs: [storeDir],
+			network: "off",
+			homeReads: layeredMainHomeReads(workspace),
+		}),
 	};
 }
 

@@ -49,7 +49,8 @@ import {
 	noteProjectTargets,
 } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
-import { RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX, type SandboxMode } from "./sandbox/types.js";
+import { homeReadList } from "./sandbox/home-read-roots.js";
+import { type HomeReadList, RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX, type SandboxMode } from "./sandbox/types.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
 import { type SettingsIssue, SettingsValidationError } from "./settings-issues.js";
@@ -1523,6 +1524,15 @@ export function layeredConfineList(cwd: string | null): ReadonlyArray<string> {
 		return readLayeredSettings(cwd).settings.safety.confine;
 	} catch {
 		return [];
+	}
+}
+
+/** `safety.homeReads` for the main session as the layers for `cwd` give it now, which a confined integration (P8) reads by too. */
+export function layeredMainHomeReads(cwd: string | null): HomeReadList | undefined {
+	try {
+		return homeReadList(readLayeredSettings(cwd).settings.safety.homeReads, "main");
+	} catch {
+		return undefined;
 	}
 }
 

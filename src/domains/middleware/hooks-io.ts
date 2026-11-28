@@ -40,7 +40,7 @@ import {
 	optInLaunch,
 	planMainSandboxSpawn,
 } from "../../core/sandbox/main-session.js";
-import { layeredConfineList } from "../../core/settings-layers.js";
+import { layeredConfineList, layeredMainHomeReads } from "../../core/settings-layers.js";
 import {
 	captureProjectSurface,
 	type ProjectSurfaceSnapshot,
@@ -268,6 +268,7 @@ function hookLaunch(
 			scratchRoots: effectiveScratchRoots([], workspaceRoot),
 			stateDirs: [],
 			network: "off",
+			homeReads: layeredMainHomeReads(workspaceRoot),
 		}),
 	};
 }

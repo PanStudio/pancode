@@ -12,6 +12,7 @@ import { type HostLaunchLabel, sandboxedLabel } from "../core/sandbox/host-launc
 import { seamLaunchLabel, seamOrHostLaunch } from "../core/sandbox/host-launch-record.js";
 import { confinedIntegrationPolicy, type MainSandboxPolicy, optInLaunch } from "../core/sandbox/main-session.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
+import { layeredMainHomeReads } from "../core/settings-layers.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { ToolNames } from "../core/tool-names.js";
 import { JOB_CONDITION_LIMIT, type JobConditionEvidence, projectJobPredicate } from "../domains/scheduling/index.js";
@@ -161,6 +162,7 @@ export function jobLaunch(
 			scratchRoots: effectiveScratchRoots([], cwd),
 			stateDirs: [],
 			network: "off",
+			homeReads: layeredMainHomeReads(cwd),
 		}),
 	};
 }

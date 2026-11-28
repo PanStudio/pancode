@@ -772,6 +772,7 @@ function mcpTestCallRecord(
 		isError: result.kind === "error",
 		text: result.kind === "error" ? result.message.replace(`${capability}: `, "") : result.output,
 		...(structured !== undefined ? { structuredContent: structured } : {}),
+		...(details.sandbox !== undefined ? { sandbox: details.sandbox } : {}),
 	};
 }
 

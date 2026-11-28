@@ -773,16 +773,22 @@ export type ConfinedNetwork =
  * under: the main session's, with the session's `workspace` and the scratch
  * roots writable and its own `stateDirs`, which may lie inside PanCode's
  * roots, writable after them. Everything else, PanCode's directories
- * included, stays read-only, and the main sandbox's secret masks hold. Its
- * network is `network`; a proxied one needs a spawn that serves the bridge.
+ * included, stays read-only, and the main sandbox's secret masks hold, as
+ * does a `listed` `safety.homeReads.main` (`homeReads`). Its network is
+ * `network`; a proxied one needs a spawn that serves the bridge.
  */
 export function confinedIntegrationPolicy(input: {
 	workspace: string;
 	scratchRoots: ReadonlyArray<string>;
 	stateDirs: ReadonlyArray<string>;
 	network: ConfinedNetwork;
+	homeReads: HomeReadList | undefined;
 }): MainSandboxPolicy {
-	const base = mainSandboxPolicy({ workspace: input.workspace, scratchRoots: input.scratchRoots });
+	const base = mainSandboxPolicy({
+		workspace: input.workspace,
+		scratchRoots: input.scratchRoots,
+		...(input.homeReads !== undefined ? { homeReads: input.homeReads } : {}),
+	});
 	const { network } = input;
 	return {
 		...base,

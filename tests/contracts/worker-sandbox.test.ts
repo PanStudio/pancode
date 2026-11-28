@@ -14,11 +14,12 @@ import {
 } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { type AddressInfo, connect, createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { readSettings } from "../../src/core/config.js";
+import { isSameOrDescendant } from "../../src/core/path-containment.js";
 import { runCommandVector } from "../../src/core/safe-exec.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
@@ -56,7 +57,11 @@ import {
 	planMainSandboxSpawn,
 } from "../../src/core/sandbox/main-session.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
-import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
+import {
+	type HomeReadList,
+	WORKER_SANDBOX_SPEC_VERSION,
+	type WorkerSandboxSpec,
+} from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import {
 	composeWorkerSandboxInvocation,
@@ -1203,7 +1208,13 @@ test("safety.confine is user-set, a project may only add to it, and an opt-in la
 		{
 			cwd: workspace,
 			workspaceRoot: workspace,
-			shellSandbox: confinedIntegrationPolicy({ workspace, scratchRoots: [], stateDirs: [], network: "off" }),
+			shellSandbox: confinedIntegrationPolicy({
+				workspace,
+				scratchRoots: [],
+				stateDirs: [],
+				network: "off",
+				homeReads: undefined,
+			}),
 			launchLabel: seamLaunchLabel(label),
 		},
 	);
@@ -1214,6 +1225,21 @@ test("safety.confine is user-set, a project may only add to it, and an opt-in la
 	assert.equal(result.sandbox?.why, "confine-opt-in");
 	assert.equal(result.sandbox?.integration, "jobs");
 	assert.deepEqual(result.sandbox?.network, { mode: "off", observed: false });
+
+	// A listed `safety.homeReads.main` hides the rest of the home from a confined integration as from the main shell.
+	if (!isSameOrDescendant(outside, homedir())) return;
+	writeFileSync(join(outside, "home-note.txt"), "home");
+	const read = (homeReads: HomeReadList | undefined) =>
+		runCommandVector("cat", [join(outside, "home-note.txt")], {
+			cwd: workspace,
+			workspaceRoot: workspace,
+			shellSandbox: confinedIntegrationPolicy({ workspace, scratchRoots: [], stateDirs: [], network: "off", homeReads }),
+			launchLabel: seamLaunchLabel(label),
+		});
+	assert.equal((await read(undefined)).stdout, "home");
+	const hidden = await read({ roots: [], toolchains: [] });
+	assert.notEqual(hidden.exitCode, 0);
+	assert.equal(hidden.stdout, "");
 });
 
 test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6, and redacts upstreamProxy control values (P3)", async (t) => {
