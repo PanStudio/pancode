@@ -15,6 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { snapshotModelInfo } from "../core/model-tier.js";
 import { modelRouteGuarded } from "../core/response-model-id.js";
+import { requestModelRouteRefresh } from "../core/sandbox/egress/model-route-client.js";
 import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/context.js";
 import { openAuthStorage } from "../domains/providers/auth/index.js";
 import type { AuthResolution } from "../domains/providers/auth/storage.js";
@@ -48,6 +49,26 @@ import { createWorkerStreamFn } from "./worker-run/stream.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput } from "./worker-run-types.js";
 
 export { workerProviderSupportsTools };
+
+/**
+ * The key to retry with after a provider rejection under the model route (D14), else null. The worker holds no
+ * credential to refresh: the route refreshes the one the provider rejected. `refreshed` earns the #427 retry with the
+ * same surrogate; `unchanged` (an API key) earns none.
+ */
+async function routed(
+	input: Pick<WorkerRunInput, "modelRoute" | "signal" | "target" | "runtime">,
+): Promise<string | null> {
+	if (input.modelRoute === undefined) return null;
+	const outcome = await requestModelRouteRefresh(input.modelRoute, input.signal);
+	if (outcome === "unchanged") return null;
+	if (outcome === "failed") {
+		throw new Error(
+			`The credential for target '${input.target.id}' could not be refreshed. Run pancode auth login ${input.runtime.id} again.`,
+		);
+	}
+	process.stderr.write(`[worker] the host refreshed the credential for target '${input.target.id}'; retrying once\n`);
+	return input.modelRoute.surrogate;
+}
 
 /**
  * Spin up a pi-agent-core Agent for the worker subprocess. Subscribes an event
@@ -237,7 +258,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	let lastAuthResolution: AuthResolution | null = null;
 	const refreshWorkerOAuthKey = async (): Promise<string | null> => {
 		const rejected = lastAuthResolution;
-		if (!input.authProfile || rejected?.source !== "stored-oauth" || rejected.apiKey === undefined) return null;
+		if (!input.authProfile || rejected?.source !== "stored-oauth" || rejected.apiKey === undefined) return routed(input);
 		process.stderr.write(`[worker] refreshing the OAuth credential for target '${input.target.id}' and retrying once\n`);
 		const refreshed = await openAuthStorage().forceRefreshApiKey(input.authProfile, rejected.apiKey, input.signal);
 		if (!refreshed.available || refreshed.apiKey === undefined) {

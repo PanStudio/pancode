@@ -9,6 +9,7 @@ import type {
 	SandboxBackend,
 	SandboxMode,
 	UnixSocketMode,
+	WorkerIsolationMode,
 } from "./types.js";
 
 /**
@@ -44,6 +45,12 @@ export interface SandboxStatus {
 	main: "contained" | "rails" | "off";
 	/** A native worker dispatched to this host: in the sandbox, refused at admission, allowed to run unconfined, or off. */
 	localWorker: "contained" | "refused" | "unconfined" | "off";
+	/**
+	 * `safety.workerIsolation: process` (D14): a local native worker process itself runs under bwrap with no network
+	 * and no provider credential (`isolated`), or is refused because this host cannot (a missing, partial or off
+	 * sandbox). `children` sandboxes only the worker's commands.
+	 */
+	workerIsolation: "children" | "isolated" | "refused";
 }
 
 export interface SandboxStatusInput {
@@ -55,6 +62,7 @@ export interface SandboxStatusInput {
 	unconfinedLocalWorkers: boolean;
 	/** Worker commands keep the open host network (`safety.egress.workers.mode: open`), so they need no network isolation. */
 	workerNetwork: boolean;
+	workerIsolationMode?: WorkerIsolationMode;
 }
 
 /** Pure: the outcome for this setting and probe. */
@@ -70,6 +78,9 @@ export function sandboxStatus(input: SandboxStatusInput): SandboxStatus {
 	const outcome = sandboxOutcome(setting, availability);
 	const usable = sandboxUsable(setting, availability);
 	const workerUsable = usable && (input.workerNetwork || input.networkIsolation === null);
+	// Process isolation needs bwrap with its seccomp baseline and a network namespace whatever the egress mode.
+	const isolable =
+		usable && availability.backend === "bwrap" && availability.degraded === undefined && input.networkIsolation === null;
 	return {
 		available: availability.available,
 		backend: availability.backend,
@@ -96,6 +107,7 @@ export function sandboxStatus(input: SandboxStatusInput): SandboxStatus {
 					: setting === "auto" && input.unconfinedLocalWorkers
 						? "unconfined"
 						: "refused",
+		workerIsolation: input.workerIsolationMode !== "process" ? "children" : isolable ? "isolated" : "refused",
 	};
 }
 
@@ -105,6 +117,7 @@ export function hostSandboxStatus(safety: {
 	sandboxUnixSockets: UnixSocketMode;
 	sandboxUnconfinedLocalWorkers: boolean;
 	egress: { workers: { mode: EgressMode } };
+	workerIsolation?: WorkerIsolationMode;
 }): SandboxStatus {
 	const availability = sandboxAvailability();
 	return sandboxStatus({
@@ -115,6 +128,7 @@ export function hostSandboxStatus(safety: {
 		wsl: process.platform === "linux" ? wslKind() : null,
 		unconfinedLocalWorkers: safety.sandboxUnconfinedLocalWorkers,
 		workerNetwork: safety.egress.workers.mode === "open",
+		...(safety.workerIsolation !== undefined ? { workerIsolationMode: safety.workerIsolation } : {}),
 	});
 }
 
@@ -156,5 +170,13 @@ export function sandboxStatusLine(status: SandboxStatus): string {
 					? "local native workers refused"
 					: "local workers not sandboxed (safety.sandbox off)",
 	);
+	if (status.workerIsolation === "isolated")
+		parts.push(
+			"local native workers isolated: no network, model calls through the host route (safety.workerIsolation process)",
+		);
+	else if (status.workerIsolation === "refused")
+		parts.push(
+			"local native workers refused: safety.workerIsolation process needs bwrap with seccomp and network isolation",
+		);
 	return parts.join("; ");
 }

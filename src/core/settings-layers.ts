@@ -576,6 +576,11 @@ const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }>
 		key: "sandboxUnconfinedLocalWorkers",
 		message: "unconfined local workers are allowed only in user settings; project value ignored",
 	},
+	// A repository could otherwise hand its workers the provider credential the operator kept on the host.
+	{
+		key: "workerIsolation",
+		message: "worker isolation is set only in user settings; project value ignored",
+	},
 	// The cache is the home's, not a repository's, and a tiny cap would make every startup empty it.
 	{
 		key: "sandboxCacheMaxGiB",

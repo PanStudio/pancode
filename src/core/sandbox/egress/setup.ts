@@ -7,6 +7,15 @@
  */
 export const EGRESS_PROXY_PORT = 3128;
 
+/** The loopback port an isolated worker reaches its provider on: the host's model route (D14). */
+export const MODEL_ROUTE_PORT = 3129;
+
+/**
+ * The loopback port an isolated worker's typed web_fetch tunnels through: a host proxy admitting public origins
+ * only, apart from the children's grants on `EGRESS_PROXY_PORT`.
+ */
+export const WEB_FETCH_PROXY_PORT = 3130;
+
 /** How long the in-sandbox setup may take to bind and hand over its listener before it gives up. */
 const SETUP_TIMEOUT_MS = 15_000;
 
@@ -20,25 +29,32 @@ export const EGRESS_UNGRANTED = "not in this shell's egress grants";
 export interface EgressBridgeSetup {
 	execPath: string;
 	port: number;
+	/** More loopback ports bound and handed over the same way (the isolated worker's model route). */
+	extraPorts?: ReadonlyArray<number>;
 }
 
 /**
  * Runs inside the sandbox's network namespace on the IPC descriptor the exec
- * seam opened: binds the proxy's loopback port, sends the listening socket to
- * the host, waits for the host's ready, then closes its copy and exits.
+ * seam opened: binds each loopback port, sends every listening socket to the
+ * host once all are bound, waits for the host's ready, then closes its copies
+ * and exits.
  */
 const SETUP_JS = [
 	'"use strict";',
 	'const net = require("node:net");',
-	"const port = Number(process.argv[1]);",
+	'const ports = process.argv[1].split(",").map(Number);',
 	'const fail = (m) => { process.stderr.write("pancode: egress proxy setup failed: " + m + "\\n"); process.exit(1); };',
 	`const timer = setTimeout(() => fail("the host did not take the listener"), ${SETUP_TIMEOUT_MS});`,
 	"if (typeof process.send !== 'function') fail('no channel to the host');",
-	"const server = net.createServer();",
-	'server.on("error", (e) => fail(e.message));',
-	'server.listen({ port, host: "127.0.0.1" }, () => process.send({ t: "pancode-egress-listener" }, server));',
-	'process.on("message", (m) => { if (m && m.t === "pancode-egress-ready") { clearTimeout(timer); server.close(); process.disconnect(); } });',
-	'process.on("disconnect", () => { if (server.listening) fail("the host closed the channel"); });',
+	"let bound = 0;",
+	"const servers = ports.map((port) => {",
+	"  const server = net.createServer();",
+	'  server.on("error", (e) => fail(e.message));',
+	'  server.listen({ port, host: "127.0.0.1" }, () => { if (++bound === ports.length) servers.forEach((s, i) => process.send({ t: "pancode-egress-listener", port: ports[i] }, s)); });',
+	"  return server;",
+	"});",
+	'process.on("message", (m) => { if (m && m.t === "pancode-egress-ready") { clearTimeout(timer); servers.forEach((s) => s.close()); process.disconnect(); } });',
+	'process.on("disconnect", () => { if (servers.some((s) => s.listening)) fail("the host closed the channel"); });',
 ].join("\n");
 
 /**
@@ -56,7 +72,8 @@ const SETUP_SH = [
 
 /** The argv that goes ahead of the command inside the sandbox. */
 export function egressSetupArgv(setup: EgressBridgeSetup): string[] {
-	return ["/bin/sh", "-c", SETUP_SH, "pancode-egress", setup.execPath, SETUP_JS, String(setup.port)];
+	const ports = [setup.port, ...(setup.extraPorts ?? [])].join(",");
+	return ["/bin/sh", "-c", SETUP_SH, "pancode-egress", setup.execPath, SETUP_JS, ports];
 }
 
 /**

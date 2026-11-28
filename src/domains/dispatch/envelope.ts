@@ -123,9 +123,10 @@ export interface WorkerEnvelope {
 	/**
 	 * `unconfined`: no usable OS sandbox where the worker runs and the operator allowed its commands to run without
 	 * one there (`safety.sandboxUnconfinedLocalWorkers`, a fleet node's `allowUnsandboxed`). Absent, a worker with no
-	 * backend refuses its commands.
+	 * backend refuses its commands. `workerIsolation: process` (D14): the worker process itself runs under bwrap with
+	 * no network and no provider credential, its model calls going through the host's model route.
 	 */
-	sandbox: { backend: EnvelopeSandboxBackend; confinesWrites: boolean; unconfined?: true };
+	sandbox: { backend: EnvelopeSandboxBackend; confinesWrites: boolean; unconfined?: true; workerIsolation?: "process" };
 	withheld: ReadonlyArray<WithheldCapability>;
 	/** `workerStaticHead` of the request head the worker sends; empty until the host compiles the prompt. */
 	staticHead: string;
@@ -227,6 +228,8 @@ export interface EnvelopeInput {
 		networkOff: boolean;
 		/** Admission let the worker's commands run with no OS sandbox; see {@link WorkerEnvelope.sandbox}. */
 		unconfined?: true;
+		/** Admission placed the worker process itself under bwrap behind the model route; see {@link WorkerEnvelope.sandbox}. */
+		workerIsolation?: "process";
 	};
 	approval: EnvelopeApproval;
 	permitDigest: string;
@@ -319,6 +322,7 @@ export function resolveWorkerEnvelope(input: EnvelopeInput): WorkerEnvelope {
 			backend: input.sandbox.backend,
 			confinesWrites: input.host.confinesWrites,
 			...(input.sandbox.unconfined === true ? { unconfined: true as const } : {}),
+			...(input.sandbox.workerIsolation === "process" ? { workerIsolation: "process" as const } : {}),
 		},
 		withheld,
 		staticHead: "",

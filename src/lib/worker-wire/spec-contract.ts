@@ -11,6 +11,7 @@ import {
 	RUNTIME_AUTHS,
 	RUNTIME_KINDS,
 } from "../../core/runtime-vocabulary.js";
+import type { ModelRouteBinding } from "../../core/sandbox/egress/model-route-client.js";
 import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../../core/sandbox/egress/policy.js";
 import { homeReadRootProblem } from "../../core/sandbox/home-read-roots.js";
 import {
@@ -183,6 +184,16 @@ interface WorkerSpecFields {
 	/** Only local PanCode workers may re-resolve this credential profile. */
 	authProfile?: string;
 	credentialExpiresAt?: number;
+	/**
+	 * `safety.workerIsolation: process` (D14): the worker's model calls to `origin` go through the host route, which
+	 * holds the credential. Exclusive with `apiKey`, `authProfile`, `credentialExpiresAt` and `target.auth.headers`.
+	 */
+	modelRoute?: ModelRouteBinding;
+	/**
+	 * With `modelRoute`, the bubblewrap the host probed, which the worker adopts for its children: inside the
+	 * worker's user namespace a root-owned bwrap reads as owned by nobody and fails the trust check.
+	 */
+	isolatedSandbox?: { executable: string };
 	thinkingLevel?: ThinkingLevel;
 	/** JSON Schema enforced on the llama.cpp chat-completions request. */
 	responseSchema?: Record<string, unknown>;
@@ -400,6 +411,21 @@ export function serializeWorkerRuntimeDescriptor(runtime: RuntimeDescriptor): Se
 		// no way to tell an alias spelling from a genuinely wrong runtime.
 		...(runtime.aliases !== undefined && runtime.aliases.length > 0 ? { aliases: [...runtime.aliases] } : {}),
 	};
+}
+
+/** A routed spec names its route and carries nothing the route exists to keep on the host. */
+function validateModelRoute(spec: Record<string, unknown>): void {
+	const route = readRecord(spec.modelRoute, "WorkerSpec.modelRoute");
+	for (const key of ["origin", "route", "surrogate"] as const) readString(route[key], `WorkerSpec.modelRoute.${key}`);
+	const origin = new URL(route.origin as string);
+	const local = new URL(route.route as string);
+	if (origin.origin !== route.origin) throw new Error("WorkerSpec.modelRoute.origin must be a bare origin");
+	if (local.protocol !== "http:" || local.hostname !== "127.0.0.1")
+		throw new Error("WorkerSpec.modelRoute.route must be an http://127.0.0.1 address");
+	for (const key of ["apiKey", "authProfile", "credentialExpiresAt"] as const)
+		if (spec[key] !== undefined) throw new Error(`WorkerSpec.modelRoute excludes WorkerSpec.${key}`);
+	const auth = (spec.target as { auth?: { headers?: unknown } } | undefined)?.auth;
+	if (auth?.headers !== undefined) throw new Error("WorkerSpec.modelRoute excludes WorkerSpec.target.auth.headers");
 }
 
 function readRecord(value: unknown, source: string): Record<string, unknown> {
@@ -774,7 +800,7 @@ function validateWorkerEnvelope(value: unknown): void {
 	readEnum(approval.autonomy, "WorkerSpec.envelope.approval.autonomy", ["default", "yolo"] as const);
 	readEnum(approval.asks, "WorkerSpec.envelope.approval.asks", ENVELOPE_ASKS);
 	const sandbox = readRecord(envelope.sandbox, "WorkerSpec.envelope.sandbox");
-	exactKeys(sandbox, ["backend", "confinesWrites", "unconfined"], "WorkerSpec.envelope.sandbox");
+	exactKeys(sandbox, ["backend", "confinesWrites", "unconfined", "workerIsolation"], "WorkerSpec.envelope.sandbox");
 	readEnum(sandbox.backend, "WorkerSpec.envelope.sandbox.backend", ENVELOPE_SANDBOX_BACKENDS);
 	if (typeof sandbox.confinesWrites !== "boolean")
 		throw new Error("WorkerSpec.envelope.sandbox.confinesWrites must be a boolean");
@@ -782,6 +808,8 @@ function validateWorkerEnvelope(value: unknown): void {
 		throw new Error("WorkerSpec.envelope.sandbox.confinesWrites needs the bwrap backend");
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.backend !== "none"))
 		throw new Error("WorkerSpec.envelope.sandbox.unconfined must be true and only with no backend");
+	if (sandbox.workerIsolation !== undefined && (sandbox.workerIsolation !== "process" || sandbox.backend !== "bwrap"))
+		throw new Error("WorkerSpec.envelope.sandbox.workerIsolation must be process and only with the bwrap backend");
 	if (!SHA256_HEX.test(readString(envelope.staticHead, "WorkerSpec.envelope.staticHead")))
 		throw new Error("WorkerSpec.envelope.staticHead must be a sha256 hex digest");
 	if (!Array.isArray(envelope.withheld)) throw new Error("WorkerSpec.envelope.withheld must be an array");
@@ -1288,7 +1316,8 @@ function validateProbedBackend(value: unknown, backendExpected: boolean): void {
 function validateWorkerEgress(value: unknown): void {
 	const source = "WorkerSpec.sandbox.egress";
 	const egress = readRecord(value, source);
-	exactKeys(egress, ["origins", "upstreamProxy"], source);
+	exactKeys(egress, ["origins", "open", "upstreamProxy"], source);
+	if (egress.open !== undefined && egress.open !== true) throw new Error(`${source}.open must be true when present`);
 	for (const [index, entry] of readStringArray(egress.origins, `${source}.origins`).entries()) {
 		const parsed = parseEgressAllowEntry(entry);
 		if (typeof parsed === "string" || originKey(parsed) !== entry)
@@ -1386,6 +1415,15 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 	readOptionalString(spec, "apiKey", "WorkerSpec");
 	readOptionalString(spec, "authProfile", "WorkerSpec");
 	readOptionalNumber(spec, "credentialExpiresAt", "WorkerSpec");
+	if (spec.modelRoute !== undefined) validateModelRoute(spec);
+	if (spec.isolatedSandbox !== undefined) {
+		const isolated = readRecord(spec.isolatedSandbox, "WorkerSpec.isolatedSandbox");
+		exactKeys(isolated, ["executable"], "WorkerSpec.isolatedSandbox");
+		if (typeof isolated.executable !== "string" || !isolated.executable.startsWith("/"))
+			throw new Error("WorkerSpec.isolatedSandbox.executable must be an absolute path");
+		if (spec.modelRoute === undefined || spec.sandbox === undefined)
+			throw new Error("WorkerSpec.isolatedSandbox needs WorkerSpec.modelRoute and WorkerSpec.sandbox");
+	}
 	readOptionalEnum(spec, "thinkingLevel", "WorkerSpec", THINKING_LEVELS);
 	// A misspelled sampling policy must not silently restore the server defaults that varied handbooks.
 	readOptionalEnum(spec, "sampling", "WorkerSpec", ["deterministic"] as const);
@@ -1408,6 +1446,9 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 		}
 	}
 	validateWorkerEnvelope(spec.envelope);
+	// The admitted isolation and the route travel together; either alone was edited after admission.
+	if ((spec.modelRoute !== undefined) !== ((spec.envelope as WorkerEnvelope).sandbox.workerIsolation === "process"))
+		throw new Error("WorkerSpec.modelRoute disagrees with the envelope's sandbox.workerIsolation");
 	if (spec.helperResult !== undefined) {
 		if (spec.helperResult !== true) throw new Error("WorkerSpec.helperResult must be true when present");
 		const contract = readRecord(spec.resultContract, "WorkerSpec.resultContract");
