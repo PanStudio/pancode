@@ -17,8 +17,8 @@ export interface TapFileWatcher {
  * Calls `onTap` once per line appended to `path`, with the line's text.
  *
  * A program running inside a dock pane cannot reach PanCode's key handler, so it
- * appends a line to a file only this session reads: cliamp's dock plugin and
- * the workers dashboard both do. The file is emptied when the watch starts,
+ * appends a line to a file only this session reads: an extension pane's
+ * program and the workers dashboard both do. The file is emptied when the watch starts,
  * which drops taps a dead session left behind. Change events make a tap
  * arrive in milliseconds; a slow interval catches the rest.
  */

@@ -39,7 +39,7 @@ async function describeInventory(deps: PanesToolDeps): Promise<ToolResult> {
 	const docks = status.available ? await deps.panes.docks() : [];
 	const header = `panes mode=${status.mode} ${status.available ? "available" : "unavailable"}; notifications=${status.settings.notifications}`;
 	// The docks line is the live state settings files cannot give: hidden docks
-	// are still running, and the music pane says what it is playing.
+	// are still running.
 	const dockLine = docks.map((dock) => `${dock.slot} ${dock.state}${dock.detail ? ` (${dock.detail})` : ""}`).join("; ");
 	const rows = status.panes.map((pane) => `- ${pane.paneId} ${pane.purpose} ${pane.label}`);
 	return {

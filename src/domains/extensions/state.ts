@@ -227,6 +227,7 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 		);
 	}
 	const state = stateResult.state;
+	const previouslyInstalled = Object.hasOwn(state.installed, manifest.id);
 	const origin = options.origin ?? { kind: "local" as const, source };
 	const publisher = options.publisher ?? derivedPublisher(origin.source);
 	const collision = publisherCollision(
@@ -304,7 +305,7 @@ export function installExtension(sourcePath: string, options: ExtensionInstallOp
 			...(assigned ? { services: assigned } : {}),
 			publisher,
 		};
-		state.disabled = state.disabled.filter((entry) => entry !== manifest.id);
+		if (!previouslyInstalled) state.disabled = state.disabled.filter((entry) => entry !== manifest.id);
 		writeState(scope, cwd, state, stateResult.bytes, stateResult.status === "valid" ? stateResult.invalid : []);
 	} catch (error) {
 		rmSync(stagingRoot, { recursive: true, force: true });

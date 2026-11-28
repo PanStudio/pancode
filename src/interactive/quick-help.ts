@@ -345,7 +345,7 @@ export interface QuickHelp {
 	close(): void;
 }
 
-/** `omit` drops actions this session cannot use, such as music while it is off. */
+/** `omit` drops actions this session cannot use. */
 export function createQuickHelp(
 	tui: TUI,
 	bindings: QuickHelpKeys,

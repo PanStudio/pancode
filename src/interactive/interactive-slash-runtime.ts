@@ -18,7 +18,6 @@ import { runOperatorRecall } from "../domains/context/working-set/operator-recal
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { agentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import type { ExtensionsContract } from "../domains/extensions/index.js";
-import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import {
 	type ProvidersContract,
@@ -248,8 +247,6 @@ export interface InteractiveSlashRuntimeDeps {
 	panes?: PanesOperations;
 	/** The attach socket behind `/attach`. Absent outside the interactive terminal. */
 	attach?: AttachOperations;
-	/** The music pane behind `/music`. Absent when the session started without panes. */
-	music?: MusicOperations;
 	/** The shared job control behind `/loop`. Absent where no session-owned job host exists. */
 	jobs?: JobOperations;
 	openModel: () => void;
@@ -726,7 +723,6 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 		openView: deps.openView,
 		...(deps.panes ? { panes: deps.panes } : {}),
 		...(deps.attach ? { attach: deps.attach } : {}),
-		...(deps.music ? { music: deps.music } : {}),
 		...(deps.jobs ? { jobs: deps.jobs } : {}),
 		setThinkingLevel: (level) => {
 			const settings = deps.getSettings?.();

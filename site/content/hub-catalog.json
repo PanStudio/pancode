@@ -1,8 +1,8 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "35a2527398216544f6ad84630c0fe795721e9f70341bcac9639bf8da03395d0e",
-		"rows": 44,
+		"sha256": "c3ef3988599541f5db80990820942b4eae8ff52f43ddd1ae624fe8a7a2e9cbf4",
+		"rows": 45,
 		"revoked": 0
 	},
 	"rows": [
@@ -20,6 +20,21 @@
 			},
 			"sha256": "5a54a13fc0f9791700b3f9475c5bf105343858633f9c21904137edd7b2e8eb53",
 			"install": "pancode hub install extension:local-status"
+		},
+		{
+			"kind": "extension",
+			"name": "music",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "Focus radio in a dock pane below PanCode, played by cliamp.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/extensions/music"
+			},
+			"sha256": "c3e47082733ac732109b294766128ccac40b6a2d7a978265b20fa191cdd0b936",
+			"install": "pancode hub install extension:music"
 		},
 		{
 			"kind": "extension",

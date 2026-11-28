@@ -206,6 +206,7 @@ export const coreTests = [
 	"anthropic-thread-idle",
 	"store-put-identity",
 	"upgrade-command",
+	"hub-default-packs",
 	"launcher-guard",
 	"extension-hook-turn-origin",
 	"extension-interview-answer",

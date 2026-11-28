@@ -510,6 +510,19 @@ const DEFAULT_DEPENDENCIES: UpgradeDependencies = {
 	isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
 };
 
+// The first-party packs that ship with PanCode load lazily: only a post-install
+// reaches them, and the hub modules are heavy for every other upgrade path.
+async function previewDefaultPacks(presenter: LifecyclePresenter): Promise<void> {
+	const { pendingDefaultPacks } = await import("../domains/resources/hub-defaults.js");
+	const pending = pendingDefaultPacks();
+	if (pending.length > 0) presenter.note(`Would install the default packs ${pending.join(", ")}.`);
+}
+
+async function giveDefaultPacks(presenter: LifecyclePresenter): Promise<void> {
+	const { applyDefaultPacks } = await import("../domains/resources/hub-defaults.js");
+	await applyDefaultPacks(presenter);
+}
+
 export async function runUpgradeCommand(
 	argv: ReadonlyArray<string>,
 	dependencies: Partial<UpgradeDependencies> = {},
@@ -972,11 +985,9 @@ export async function runUpgradeCommand(
 	};
 
 	if (opts.dryRun) {
-		if (method === "source" && !opts.postInstall) sourceAdvice();
-		else if (
-			!opts.postInstall &&
-			(comparison === null || comparison > 0 || leavingPrerelease || channelSelectionNeeded)
-		) {
+		if (opts.postInstall) await previewDefaultPacks(presenter);
+		else if (method === "source") sourceAdvice();
+		else if (comparison === null || comparison > 0 || leavingPrerelease || channelSelectionNeeded) {
 			try {
 				const { invocation } = await prepareInstall();
 				presenter.note(`Would run: ${formatUpgradeInvocation(invocation)}`);
@@ -1070,7 +1081,8 @@ export async function runUpgradeCommand(
 		}
 	}
 
-	if (method === "source" && !opts.postInstall) sourceAdvice();
+	if (opts.postInstall) await giveDefaultPacks(presenter);
+	else if (method === "source") sourceAdvice();
 
 	const after = getVersionInfo().pancode;
 	// One closing word on every path, with the outcome above it as steps. The

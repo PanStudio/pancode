@@ -211,8 +211,6 @@ function baseClassify(tool: string): ActionClass | null {
 		// expose only fixed utility presets. The peer handoff action is classified
 		// as dispatch above because its coding CLI may edit the workspace.
 		case ToolNames.Panes:
-		// music plays and stops PanCode's own player in PanCode's own dock.
-		case ToolNames.Music:
 		// limitation appends a typed receipt to the session ledger and touches
 		// nothing else, so it is never gated behind a confirmation.
 		case ToolNames.Limitation:

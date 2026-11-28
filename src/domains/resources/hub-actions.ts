@@ -324,6 +324,7 @@ function expectedFor(
 }
 
 function stateAfterInstall(entries: ReadonlyArray<InstalledPlugin>, identity: HubPackageIdentity) {
+	const existing = copyOf(entries, identity);
 	const peer = entries.find(
 		(item) => competes(item, identity) && item.scope === peerOf(identity.scope) && item.valid && item.compatible,
 	);
@@ -331,6 +332,15 @@ function stateAfterInstall(entries: ReadonlyArray<InstalledPlugin>, identity: Hu
 		return {
 			effectiveAfter: { scope: "project" as const, loadable: peer.loadable, state: hubCopyState(peer) },
 			fallbackNote: `the project copy stays effective; the new user copy is shadowed until the project copy is removed`,
+		};
+	}
+	if (existing && !existing.enabled) {
+		return {
+			effectiveAfter: { scope: identity.scope, loadable: false, state: "disabled" as const },
+			fallbackNote:
+				peer && identity.scope === "project"
+					? "this copy stays disabled and continues to shadow the existing user copy"
+					: "this copy stays disabled",
 		};
 	}
 	return {

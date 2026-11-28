@@ -744,6 +744,59 @@ describe("PanHub lifecycle plans", () => {
 		equal(loadable(), false, "a missing recorded envelope");
 	});
 
+	it("keeps a disabled extension copy disabled across hub update", () => {
+		const location = path.join(root, "sources", "delta");
+		const writeExtension = (version: string) => {
+			mkdirSync(location, { recursive: true });
+			writeFileSync(
+				path.join(location, "pancode-extension.json"),
+				JSON.stringify({
+					id: "delta",
+					name: "delta",
+					version,
+					description: "Disabled-update extension",
+					runtime: { api: 2, entrypoint: "main.mjs", commands: [{ name: "check", description: "Check" }] },
+				}),
+			);
+			writeFileSync(
+				path.join(location, "main.mjs"),
+				`export default function (api) { api.handle("check", () => ({ text: ${JSON.stringify(version)} })); }\n`,
+			);
+			writeFileSync(
+				path.join(root, "config", "hub.yaml"),
+				stringify({
+					entries: [
+						{
+							kind: "extension",
+							name: "delta",
+							version,
+							description: "Disabled-update extension",
+							sourceUrl: location,
+							sha256: pluginContentDigest(location),
+						},
+					],
+				}),
+			);
+		};
+		writeExtension("1.0.0");
+		install("extension:delta");
+		const disable = applyHubLifecycle(
+			planHubLifecycle({ operation: "disable", ref: "extension:delta", scope: "user", cwd: root }),
+		);
+		equal(disable.outcomes[0]?.status, "committed");
+
+		writeExtension("1.0.1");
+		const plan = planHubLifecycle({ operation: "update", ref: "extension:delta", scope: "user", cwd: root });
+		equal(plan.steps[0]?.effectiveAfter?.state, "disabled");
+		equal(plan.steps[0]?.effectiveAfter?.loadable, false);
+		const updated = applyHubLifecycle(plan);
+		equal(updated.outcomes[0]?.status, "committed");
+		const copyAfter = listInstalledExtensions(root, { scope: "user", all: true }).find((item) => item.id === "delta");
+		equal(copyAfter?.version, "1.0.1");
+		equal(copyAfter?.enabled, false);
+		equal(copyAfter?.loadable, false);
+	});
+
 	it("exposes plans and outcomes through the CLI with additive JSON and dry-run for every mutation", () => {
 		catalog([source({ name: "cli", kind: "skill" }), source({ name: "user", requires: ["skill:cli"] })]);
 		const dry = cli(["install", "skill:cli", "--dry-run"]);

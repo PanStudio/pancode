@@ -520,7 +520,6 @@ const MENU_ROWS = new Set([
 	"interface.exitSummary",
 	"interface.demo",
 	"interface.autoUpdate",
-	"integrations.music.enabled",
 	"telemetry.mode",
 	"report.offers",
 	"prompts.profile",
@@ -701,18 +700,6 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	"context.memory.thinkingLevel": [
 		"Memory thinking",
 		"How much the memory model reasons before it writes a memory step. Off, the default, asks for no reasoning; reasoning spends the memory output budget, and a model that cannot use the chosen level gets its nearest supported one, as in chat.",
-	],
-	"integrations.music.enabled": [
-		"Music pane",
-		"Allow /music to open cliamp in a docked pane and play focus radio. Needs Herdr panes and cliamp; off by default.",
-	],
-	"integrations.music.station": [
-		"Music station",
-		"What /music on plays: a stream URL or a station name looked up in Radio Browser.",
-	],
-	"integrations.music.agentControl": [
-		"PanCode controls music",
-		"Give PanCode a music tool to start, stop or skip the station on its own. When it is off the tool is not registered and costs no prompt bytes.",
 	],
 	"interface.exitSummary": [
 		"Session summary on exit",

@@ -46,7 +46,6 @@ export const GLOBAL_ACTION_ORDER = [
 	"pancode.session.tree",
 	"pancode.dispatchBoard.toggle",
 	"pancode.files.toggle",
-	"pancode.music.toggle",
 	"pancode.tasks.open",
 	"pancode.decisions.open",
 	"pancode.dispatch.background",

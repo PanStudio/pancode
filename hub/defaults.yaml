@@ -1,0 +1,6 @@
+# First-party packs a PanCode install gives once. `pnpm hub:pin` marks their
+# rows in index.yaml with `default: true`, and `pancode upgrade --post-install`
+# installs each into the user scope the first time a release offers it. A pack
+# the operator removes is never installed again by default.
+defaults:
+  - extension:music

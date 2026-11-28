@@ -262,8 +262,8 @@
   },
   {
     "slug": "panes-and-docks",
-    "title": "Panes and docks: files, workers, and music",
-    "description": "Show and hide a file browser, a live worker dashboard, and a focus radio beside the terminal conversation with one key each.",
+    "title": "Panes and docks: files and workers",
+    "description": "Show and hide a file browser and a live worker dashboard beside the terminal conversation with one key each.",
     "category": "Extend and share",
     "time": "5 min",
     "author": "Anthony Kougkas",

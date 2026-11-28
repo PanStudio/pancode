@@ -222,7 +222,7 @@ export interface MuxContract extends DomainContract {
 	/**
 	 * Close parked docks a dead PanCode process left behind in this workspace. A
 	 * crash skips `shutdown`, and a parked pane is out of sight, so a hidden
-	 * cliamp could otherwise keep playing with nothing on screen. Panes a live
+	 * extension pane could otherwise keep playing with nothing on screen. Panes a live
 	 * process owns, and docks in the layout where the operator can see them, are
 	 * never touched. Returns how many were closed.
 	 */

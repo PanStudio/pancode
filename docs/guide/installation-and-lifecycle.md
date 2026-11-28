@@ -16,7 +16,7 @@ On Windows, run `irm https://pancode.dev/install.ps1 | iex` in PowerShell. Both 
 PanCode installs with `scripts/install.sh` (or `scripts/install.ps1` on Windows), which unpacks a bundle that carries its own Node.js; from the npm registry as
 `@panstudio/pancode` using npm, pnpm, or Bun; or from a source checkout using the
 pinned pnpm workflow. The [README quick start](../../README.md#get-started) covers
-installing and first run. The package routes require Node.js `>=22.19.0`,
+installing and first run. A bare npm, pnpm, or Bun install gets the default first-party packs from `pancode upgrade --post-install`. The package routes require Node.js `>=22.19.0`,
 including installations managed by Bun; the installer satisfies that itself. On
 an older Node, the package's `pancode` command says so before loading anything
 else and names the installer, or a newer Node given by `PANCODE_NODE`.
@@ -517,6 +517,7 @@ The core files are created automatically during the first run. `settings.yaml` a
 | **Config** | `settings.yaml` | Target runtimes, model defaults, keybindings, and interface preferences. | `0o600` (rw-------) | Removed by uninstall (unless `--keep-config`) and by `reset --settings`. |
 | **Config** | `credentials.yaml` | Private keys and tokens managed via `pancode auth`. | `0o600` (rw-------) | Removed by uninstall (unless `--keep-config`) and by `reset --auth`. |
 | **Config** | `credentials.yaml.lock` | Lockfile used during credentials updates to prevent file corruption. | Ephemeral | Auto-removed. |
+| **Config** | `extensions/defaults.json` | The packs that ship with PanCode this home has been given, so a removed one is not installed again. See [Packs that ship with PanCode](panhub.md#packs-that-ship-with-pancode). | `0o600` (rw-------) | Removed by uninstall (unless `--keep-config`). |
 | **Config** | `workspace-trust/` | Project approvals from `pancode config trust`, one record per workspace. Operator decisions rather than disposable state, so they survive `reset --state` and `uninstall --keep-config`. | `0o600` (rw-------) | Removed by uninstall (unless `--keep-config`) and by `reset --all`. |
 | **State** | `home.json` | Install metadata: PanCode version, node, platform, `installedAt` (written once at first install) or `repairedAt` (when metadata is reconstructed over a preexisting config, data, or state root), `upgradedAt` and `upgradedFrom` (stamped on a version change), `noticedVersion` (the version whose one-time upgrade notice the interactive launch has shown), and `containedYoloNoticedAt` (when the one-time contained-yolo notice was shown; the notice never writes `settings.yaml`). | `0o600` (rw-------) | Removed by uninstall / `reset --state`. |
 | **Data** | `memory/records.json` | Long-term learning memories (up to 500 records) proposed/approved from runs. At the cap a write evicts undecided proposals first; a record this build cannot read is dropped at the next store write. A store of another version is never touched and reads as an error. `doctor` names a partly unreadable store, and `doctor --fix` rewrites it without the records this build cannot read. | `0o600` (rw-------) | Removed by uninstall / `reset --data`. |
@@ -645,6 +646,11 @@ an install held by other processes exits 75;
 a completed run, a dry run and a run that is already current exit 0. `--json` emits
 one report document with `command`, `title`, `method`, `status`, `items`, `steps`,
 `warnings`, `errors`, `advice` and `summary`.
+
+The post-install also installs the first-party packs that ship with PanCode, such
+as `extension:music`, the first time a release offers each one, and moves an
+installed one forward when its new version asks for nothing more. A pack you
+removed stays removed. See [Packs that ship with PanCode](panhub.md#packs-that-ship-with-pancode).
 
 On a source checkout, the command refreshes `home.json` and prints the checkout
 path and source update steps. Fetch tags, choose the desired release, and run

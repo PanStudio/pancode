@@ -5,8 +5,8 @@
  *
  * A dock is a pane in a fixed position relative to PanCode's anchor pane with a
  * target share of the anchor's axis, a minimum size in cells, and a managed
- * lifecycle. Four slots exist: `workers` to the right of the anchor, and
- * `files`, `music` and `extension` below it. Ad-hoc utility panes are not docks: only their placement
+ * lifecycle. Three slots exist: `workers` to the right of the anchor, and
+ * `files` and `extension` below it. Ad-hoc utility panes are not docks: only their placement
  * ({@link planUtilityPlacement}) is decided here, against the anchor's width and the dock column.
  *
  * The controller owns geometry only. Ownership stays in the pane registry,
@@ -16,7 +16,7 @@
  *
  * A dock can be hidden: `pane.move` carries the running pane into one parking
  * tab per PanCode session and back, so the tool inside it (Yazi's directory,
- * cliamp's playback) survives. Hidden docks keep their slot, their remembered
+ * an extension pane's playback) survives. Hidden docks keep their slot, their remembered
  * share and their ownership; only `close` ends the process.
  *
  * Three rules run through the reconciliation logic:
@@ -43,7 +43,7 @@ import {
 } from "./types.js";
 
 /** The managed dock positions, in the order the dock report lists them. */
-export const DOCK_SLOTS = ["files", "workers", "music", "extension"] as const;
+export const DOCK_SLOTS = ["files", "workers", "extension"] as const;
 export type DockSlot = (typeof DOCK_SLOTS)[number];
 
 export interface DockSpec {
@@ -68,10 +68,6 @@ export const DOCK_SPECS: Readonly<Record<DockSlot, DockSpec>> = {
 	// Views need rows; splitting down preserves the workers dock to the right.
 	extension: { slot: "extension", direction: "down", defaultShare: 0.3, minCells: 12 },
 	files: { slot: "files", direction: "down", defaultShare: 0.3, minCells: 12 },
-	// cliamp draws its spectrum only from 16 inner rows up (40x10 drops it), and
-	// herdr's border takes two more. The tiny default share means the floor
-	// always wins, so the pane is exactly as tall as the bars need.
-	music: { slot: "music", direction: "down", defaultShare: 0.05, minCells: 18 },
 };
 
 /** Label of the tab hidden docks wait in, so the operator can tell whose panes they are. */

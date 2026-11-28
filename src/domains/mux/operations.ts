@@ -111,7 +111,7 @@ export interface PanesDockStatus {
 /**
  * One dock in words, for the model and `/panes`: whether it is in the layout,
  * parked, or not running, and what it is doing. `detail` is the live fact that
- * settings files cannot give, such as what the music pane is playing.
+ * settings files cannot give, such as a setting that keeps a dock closed.
  */
 export interface PanesDockReport {
 	slot: DockSlot;
@@ -336,7 +336,7 @@ export interface PanesOperations {
 	 * pane for one selection.
 	 */
 	files(action: "toggle" | "open" | "hide" | "close" | "pick"): Promise<PanesFilesResult>;
-	/** Live state of every dock, including what the music pane is playing. */
+	/** Live state of every dock. */
 	docks(): Promise<ReadonlyArray<PanesDockReport>>;
 	/** Bind the composer-facing Yazi bridge without rebuilding this shared object. */
 	attachYazi(controller: PanesYaziController): () => void;

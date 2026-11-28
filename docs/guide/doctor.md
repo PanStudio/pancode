@@ -73,9 +73,9 @@ Conditional rows:
 
 ## External tools, PDFs, and panes
 
-`external tool <id>` covers `asciinema`, `herdr`, `yazi`, `croc`, `cliamp` (never `error`) ([doctor-toolchain.ts](../../src/cli/doctor-toolchain.ts), [resolve.ts](../../src/domains/toolchain/resolve.ts)):
+`external tool <id>` covers `asciinema`, `herdr`, `yazi`, `croc` (never `error`) ([doctor-toolchain.ts](../../src/cli/doctor-toolchain.ts), [resolve.ts](../../src/domains/toolchain/resolve.ts)):
 - `herdr` uses PanCode's pinned copy only: ``pane host <pin> (PanCode's pinned copy) at <path>`` (`OK`), `` pane host <pin> is not installed; run `pancode panes install` `` (`WARN`), or `no pinned pane host for this platform; PanCode runs without panes` (`INFO`).
-- Other tools prefer `PATH` when version `>= minimumVersion`, else vendored copy (`WARN` on missing `yazi` while files pane enabled; `INFO` on missing `croc`/`cliamp`/`asciinema`):
+- Other tools prefer `PATH` when version `>= minimumVersion`, else vendored copy (`WARN` on missing `yazi` while files pane enabled; `INFO` on missing `croc`/`asciinema`):
 
 | Detail | Meaning |
 | --- | --- |
