@@ -30,18 +30,16 @@ import { createSafetyPolicyEngine } from "../safety/policy-engine.js";
 import {
 	type ExtractionResult,
 	eligibleSemanticMemory,
-	embeddingProfileToSemanticProfile,
 	extractInbox,
 	extractProjectSources,
 	extractRecording,
 	type InboxRegistration,
 	previewInbox,
 	type SampledMediaPiece,
-	type SemanticFilters,
-	SemanticIndex,
-	type SemanticInput,
-} from "../semantic/index.js";
-import { SemanticStorage } from "../semantic/storage.js";
+} from "./ingestion.js";
+import { SemanticIndex } from "./service.js";
+import { embeddingProfileToSemanticProfile, SemanticStorage } from "./storage.js";
+import type { SemanticFilters, SemanticInput } from "./types.js";
 
 export interface SemanticAppOptions {
 	projectRoot: string;

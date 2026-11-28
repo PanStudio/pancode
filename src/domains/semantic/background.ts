@@ -30,7 +30,7 @@ export function createSemanticBackgroundRefresh(getSettings: () => Readonly<Panc
 		pendingRoot = null;
 		controller = new AbortController();
 		const signal = controller.signal;
-		active = import("./index.js")
+		active = import("./app.js")
 			.then(async ({ refreshSemantic }) => {
 				if (!signal.aborted) await refreshSemantic({ projectRoot, settings }, signal);
 			})

@@ -257,8 +257,7 @@ import { writeTranscriptExport } from "../domains/session/transcript-export.js";
 import { activePath } from "../domains/session/tree/active-path.js";
 import { latestUserImages } from "../domains/session/vision-images.js";
 import { probeWorkspaceAsync } from "../domains/session/workspace/index.js";
-import { archiveCommandHost } from "../domains/share/index.js";
-import { ShareDomainModule } from "../domains/share/module.js";
+import { archiveCommandHost, shareArchiver } from "../domains/share/index.js";
 import type { SystemOneInstance } from "../domains/system-one/index.js";
 import { createSystemOne, parseRouteList } from "../domains/system-one/index.js";
 import { READ_MODEL_FOLD } from "../domains/telemetry/index.js";
@@ -766,7 +765,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 							: {}),
 				}),
 			}),
-			ShareDomainModule,
 			createContextDomainModule({
 				noContextFiles: options.noContextFiles === true,
 				startupHintHost: {
@@ -981,7 +979,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	const agents = result.getContract("agents");
 	const resources = result.getContract("resources");
 	const extensions = result.getContract("extensions");
-	const share = result.getContract("share");
 	const mux = result.getContract("mux");
 	const contextDomain = result.getContract("context");
 	const interop = result.getContract("interop");
@@ -3444,7 +3441,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 												}),
 										}
 									: {}),
-								...(share ? archiveCommandHost(share) : {}),
+								...archiveCommandHost(shareArchiver),
 								// `/report` previews as text and sends only on a second `/report send <id>`.
 								reportHost: lazyReportTextHost(reportSession),
 								getChatTarget: () => getCurrentSettings().chat.target,
@@ -4108,7 +4105,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		reloadClasses,
 		armRestartHandoff: () => armRestartHandoff(pancodeStateDir(), termination),
 		...(interop ? { interop } : {}),
-		...(share ? { share } : {}),
+		share: shareArchiver,
 		...(mux ? { mux } : {}),
 		...(panes ? { panes } : {}),
 		...(panes ? { attachYaziBridge: (bridge) => panes.attachYazi(bridge) } : {}),

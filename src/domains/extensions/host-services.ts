@@ -524,7 +524,7 @@ export function createExtensionHostServices(deps: ExtensionHostServicesDeps): Ex
 		embed:
 			deps.embed ??
 			(async (request, signal, workspace) => {
-				const { embedForExtension } = await import("../semantic-app/index.js");
+				const { embedForExtension } = await import("../semantic/index.js");
 				return embedForExtension({ projectRoot: workspace }, request, signal);
 			}),
 		complete,

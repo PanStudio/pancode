@@ -261,7 +261,7 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 	const semantic: ContextSemanticDeps = deps.semantic ?? {
 		isEnabled: () => semanticUsable(deps.getSettings?.().context.semantic),
 		loadSearch: async () => {
-			const { searchSemantic } = await import("../domains/semantic-app/index.js");
+			const { searchSemantic } = await import("../domains/semantic/index.js");
 			return (request, context) => {
 				const { query, ...filters } = request;
 				const settings = deps.getSettings?.();
