@@ -13,6 +13,7 @@ import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { DISPATCH_SCOPE, emptyState, PANELS } from "../design/panel-model.js";
 import { InspectionError, InspectionSummary } from "../design/run-inspection.js";
 import { StatusMark, toneForOutcome } from "../design/status.js";
+import { matchesText } from "../design/text-match.js";
 import { MarkdownContent } from "../render/Markdown.js";
 import { Explained } from "../telemetry/Explained.js";
 import { explainable } from "../telemetry/quantity-model.js";
@@ -22,7 +23,6 @@ import {
 	inspectionSort,
 	listDestination,
 	matchesRunStatus,
-	matchesText,
 	sortInspectionRecords,
 } from "./run-inspection-model.js";
 import "./run-inspection.css";

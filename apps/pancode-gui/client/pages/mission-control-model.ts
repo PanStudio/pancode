@@ -3,8 +3,8 @@
 import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { Workspace } from "../../contracts/sessions.js";
 import type { StatusTone } from "../design/status.js";
+import { matchesText } from "../design/text-match.js";
 import { READY_LABEL, STATE_LABELS } from "../shell/shell-model.js";
-import { matchesText } from "./run-inspection-model.js";
 
 export const SESSION_FILTERS = ["all", "attention", "working", "ready", "closed"] as const;
 export type SessionFilter = (typeof SESSION_FILTERS)[number];

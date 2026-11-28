@@ -3,7 +3,7 @@
 import type { Machine, MachineAdd, MachineMutation } from "../../contracts/machines.js";
 import type { Operation } from "../../contracts/operations.js";
 import { terminalOperation } from "../api/operation-request-model.js";
-import { matchesText } from "./run-inspection-model.js";
+import { matchesText } from "../design/text-match.js";
 
 export type MachineRequest = {
 	readonly key: string;

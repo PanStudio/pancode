@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { RunTimelineEntry } from "../../../contracts/wire.js";
-import { matchesText } from "../run-inspection-model.js";
+import { matchesText } from "../../design/text-match.js";
 import { entryElapsedMs, entryKey, entryLabel } from "./trace-model.js";
 
 export const REPLAY_SPEEDS = [0.5, 1, 2, 4, 8] as const;
