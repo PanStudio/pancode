@@ -16,7 +16,6 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import type { StoreBackend } from "../backend/backend.js";
-import { registerStoreBackend } from "../backend/registry.js";
 import { StoreRefusal } from "../backend/types.js";
 import { hashStoreFile } from "../hash.js";
 import { createLogStoreBackend } from "../log/backend.js";
@@ -347,5 +346,3 @@ export function createS3StoreBackend(options: S3StoreOptions): StoreBackend {
 		}),
 	});
 }
-
-registerStoreBackend("s3", createS3StoreBackend);
