@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "27ca50782d5a19984f0ad5ae4ff7fc4e4778be4f082d3181cb1e7fb030464851",
+		"sha256": "66d8484b93766b8f8c26caa94187b8425cd00ccd7284a13831d7e19033f28cba",
 		"rows": 48,
 		"revoked": 0
 	},
@@ -485,7 +485,7 @@
 			"kind": "skill",
 			"name": "pancode-test",
 			"publisher": "pancode",
-			"version": "0.5.3",
+			"version": "0.5.4",
 			"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
 			"category": "meta",
 			"tier": "core",
@@ -493,7 +493,7 @@
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-test"
 			},
-			"sha256": "a7bc09a42e0b4494d5da7a24090a6ef3a714a58642a4577eb7b2c0d587e46350",
+			"sha256": "30072f40e0dc3b2b5326d5a7efaa8a2f4772e1353499b0c3837a37483450a2de",
 			"install": "pancode hub install skill:pancode-test"
 		},
 		{

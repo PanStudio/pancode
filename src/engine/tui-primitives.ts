@@ -11,7 +11,7 @@
  * from outside src/interactive/ to ./tui.js, static or dynamic, gives that
  * module a reachability set the theme modules do not share, so the bundler
  * peels it into a chunk of its own. That chunk lands in the Stage 0 instant
- * shell closure, which tests/contracts/instant-shell-import-graph.test.ts holds
+ * shell closure, which tests/extended/instant-shell-import-graph.test.ts holds
  * to six chunks. Everything re-exported here is a pass-through to the external
  * terminal engine, which is not bundled and so adds no chunk at all.
  *

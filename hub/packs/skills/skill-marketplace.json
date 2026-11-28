@@ -281,7 +281,7 @@
 				"choose PanCode test gates"
 			],
 			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-test",
-			"version": "0.5.3",
+			"version": "0.5.4",
 			"audit": "pass",
 			"category": "meta"
 		},
