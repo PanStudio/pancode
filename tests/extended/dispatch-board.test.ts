@@ -136,6 +136,7 @@ afterEach(() => {
 function setup(readers: TelemetryRunReaders = {}) {
 	const bus = createTelemetryHub();
 	const projection = createTelemetryProjection(bus, {
+		summarizeTrust: summarizeTrustStatus,
 		...readers,
 	});
 	projections.push(projection);

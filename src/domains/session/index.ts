@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+export { liveSessionView } from "../../lib/heartbeat/heartbeat.js";
+export { SessionLiveError, sessionLiveOwner } from "../../lib/heartbeat/live-owner.js";
 export {
 	parseSessionEntries,
 	readSessionEntriesForId,
@@ -19,8 +22,6 @@ export type {
 } from "./entries.js";
 export { isSessionEntry, isSessionHeader } from "./entries.js";
 export { runHeadlessCompaction } from "./headless-compact.js";
-export { liveSessionView } from "./heartbeat.js";
-export { SessionLiveError, sessionLiveOwner } from "./live-owner.js";
 export { projectMessage } from "./message-projection.js";
 export type { RecallTelemetry } from "./recall-telemetry.js";
 export { foldRecallTelemetry, formatRecallTelemetry, hasRecallTelemetry } from "./recall-telemetry.js";

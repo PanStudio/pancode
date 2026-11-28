@@ -40,6 +40,7 @@ export { sessionOperatorMetrics, usageReport } from "./read-model-usage.js";
 export { whyStopped } from "./read-model-why-stopped.js";
 export type { JournaledContent } from "./research-content.js";
 export { readJournaledContent } from "./research-content.js";
+export type { RetentionPruners } from "./retention.js";
 export type {
 	RouteHistoryEntry,
 	RouteHistoryFold,

@@ -43,7 +43,7 @@ import { TelemetryManifest } from "./manifest.js";
 import type { ProcessJournal } from "./process-journal.js";
 import { createProcessJournal } from "./process-journal.js";
 import { createTelemetryProjection } from "./projection.js";
-import { sweepTelemetryDaily } from "./retention.js";
+import { type RetentionPruners, sweepTelemetryDaily } from "./retention.js";
 import type { SessionCapture, TelemetrySessionOrigin } from "./session-journals.js";
 import { createSessionJournals, holdUnboundTelemetry } from "./session-journals.js";
 import { createLiveTelemetryModel } from "./telemetry-live.js";
@@ -82,7 +82,12 @@ function spendOfQuantity(quantity: Quantity | null | undefined): SessionSpend {
 /** The published contract, plus the reader binding its owning composition keeps. */
 export type TelemetryBundle = DomainBundle<TelemetryContract> & { runReaders: TelemetryRunReaderBinder };
 
-export function createTelemetryBundle(context: DomainContext): TelemetryBundle {
+export interface TelemetryBundleOptions {
+	/** Passes over other domains' state that the daily retention sweep runs after the journals; without them, no sweep. */
+	retention?: RetentionPruners;
+}
+
+export function createTelemetryBundle(context: DomainContext, options: TelemetryBundleOptions = {}): TelemetryBundle {
 	// Writers ask before every record and batch, so the capture is answered from memory: consent per session
 	// refreshes on the cold path before each lease, and the result is reused until settings or consent change (#434).
 	const consent = createConsentView(pancodeStateDir());
@@ -361,12 +366,16 @@ export function createTelemetryBundle(context: DomainContext): TelemetryBundle {
 
 	const extension: DomainExtension = {
 		async start() {
-			sweepTimer = setTimeout(() => {
-				void sweepTelemetryDaily(pancodeStateDir(), { stopped: () => stopping }).catch(() => {
-					// A failed sweep removes nothing it could not prove safe; the next day tries again.
-				});
-			}, 5_000);
-			sweepTimer.unref();
+			// Only a composition that hands over the retention passes sweeps, so a day is never claimed by a partial sweep.
+			const retention = options.retention;
+			if (retention) {
+				sweepTimer = setTimeout(() => {
+					void sweepTelemetryDaily(pancodeStateDir(), { stopped: () => stopping, pruners: retention }).catch(() => {
+						// A failed sweep removes nothing it could not prove safe; the next day tries again.
+					});
+				}, 5_000);
+				sweepTimer.unref();
+			}
 			try {
 				processJournal ??= createProcessJournal(
 					pancodeStateDir(),
@@ -556,13 +565,13 @@ export interface TelemetryDomain {
  * For a composition root that binds live run readers: list `module` in
  * `loadDomains` and keep the handle, because the loader publishes only the contract.
  */
-export function createTelemetryDomain(): TelemetryDomain {
+export function createTelemetryDomain(options: TelemetryBundleOptions = {}): TelemetryDomain {
 	let runReaders: TelemetryRunReaderBinder | undefined;
 	return {
 		module: {
 			manifest: TelemetryManifest,
 			createExtension: (context) => {
-				const bundle = createTelemetryBundle(context);
+				const bundle = createTelemetryBundle(context, options);
 				runReaders = bundle.runReaders;
 				return { extension: bundle.extension, contract: bundle.contract };
 			},

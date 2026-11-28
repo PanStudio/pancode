@@ -133,6 +133,8 @@ export interface TelemetryRunReaders {
 		placement?: { mode: string; branch?: string };
 		taskWorktree?: { branch: string };
 	} | null;
+	/** Words a settled run's trust status is shown in; a run's trust is left out of its summary without it. */
+	summarizeTrust?: (status: CanonicalTrustStatus) => TrustSummaryProjection;
 }
 
 /**

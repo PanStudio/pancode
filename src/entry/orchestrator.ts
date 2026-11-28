@@ -166,7 +166,6 @@ import {
 import { resolveModelReference } from "../domains/providers/resolver.js";
 import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../domains/providers/side-call-auth.js";
 import { resolveTarget } from "../domains/providers/unpriced-routes.js";
-import { createVisionSidecar } from "../domains/providers/vision-sidecar.js";
 import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota } from "../domains/quota/index.js";
 import { reportWiring } from "../domains/report/wiring.js";
 import {
@@ -276,6 +275,7 @@ import {
 import type { RunIo } from "../session-control/slash-command-types.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
+import { createVisionSidecar } from "../tools/vision-sidecar.js";
 import type { BootOptions } from "./boot-options.js";
 import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import {
@@ -289,6 +289,7 @@ import { bindSessionPackageActivity } from "./package-activity.js";
 import { resolvePanesEnablement } from "./panes-activation.js";
 import { reloadPluginResourcesAndNotify } from "./plugin-reload.js";
 import { createReloadClasses } from "./reload-classes.js";
+import { retentionPruners } from "./retention-pruners.js";
 import { applyRouteOverlay } from "./route-overlay.js";
 import { createJudgeScreen, createSafetyJudgeCompletion, createSafetyJudgeHost } from "./safety-judge-host.js";
 import { createSessionSettingsView } from "./session-settings-view.js";
@@ -551,7 +552,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// Only a headless run commits autonomously; TUI and ACP sessions keep the human author at any autonomy.
 	setAutonomousCommitProcess(bootSurface === "run");
 	// Every session this boot opens names its surface in the live record (#439).
-	(await import("../domains/session/heartbeat.js")).configureSessionHeartbeat({
+	(await import("../lib/heartbeat/heartbeat.js")).configureSessionHeartbeat({
 		surface: bootSurface,
 		terminate: (notice) => {
 			const termination = getTerminationCoordinator();
@@ -705,7 +706,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	const memoryOwner = new MemoryRuntime();
 	// The loader publishes only the query contract; this root keeps the right to register hooks.
 	const middlewareDomain = createMiddlewareDomain();
-	const telemetryDomain = createTelemetryDomain();
+	const telemetryDomain = createTelemetryDomain({ retention: retentionPruners });
 	// Annotated: the module options close over contracts read from this result.
 	const result: LoadResult = await loadDomains(
 		[

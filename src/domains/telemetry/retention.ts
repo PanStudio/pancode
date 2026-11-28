@@ -6,11 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { unlinkedStateDirectory } from "../../core/state-boundary.js";
 import { clearAbandonedStateLock, stateLockIsAbandoned, tryWithStateFileLockSync } from "../../core/state-file-lock.js";
 import { scanTelemetrySegment } from "../../core/telemetry/segment.js";
-import { pruneWorkerObservations } from "../context/worker/observation-retention.js";
-import { pruneWorkerContextSeeds } from "../context/worker/store.js";
-import { readContextSeedEnds, readRunEnds } from "../dispatch/state.js";
-import { pruneOrphanedObservations } from "../memory/observation-store.js";
-import { liveSessionOwner } from "../session/live-owner.js";
+import { liveSessionOwner } from "../../lib/heartbeat/live-owner.js";
 import { CONTENT_SUBJECTS, collectRefs } from "./objects.js";
 import {
 	TELEMETRY_BUNDLE_FILE,
@@ -558,6 +554,23 @@ const SWEEP_INTERVAL_MS = DAY_MS;
 const SWEEP_BUDGET_MS = 2_000;
 
 /**
+ * Retention passes over state other domains own that ages out with the telemetry journals. The composition that
+ * loads telemetry supplies them; a sweep without them removes journals only.
+ */
+export interface RetentionPruners {
+	/**
+	 * Evicted worker observations and worker context seeds, keyed on the runs that wrote and used them. It removes
+	 * nothing it cannot prove safe and never rejects.
+	 */
+	workerArtifacts?(
+		stateDir: string,
+		options: { nowMs: number; retentionMs: number; stopped: () => boolean },
+	): Promise<void>;
+	/** Memory observations of deleted sessions; resolves the count removed. */
+	orphanedObservations?(stateDir: string, stopped: () => boolean): Promise<number>;
+}
+
+/**
  * The automatic retention sweep: at most once a day per state root, claimed by a stamp under a non-waiting lock so
  * concurrent processes do not all sweep. The time budget starts after planning and bounds removal only; removal
  * stops when it ends and the rest goes on a later day. Null when the sweep was not due, another process holds the
@@ -565,7 +578,7 @@ const SWEEP_BUDGET_MS = 2_000;
  */
 export async function sweepTelemetryDaily(
 	stateDir: string,
-	options: { nowMs?: number; budgetMs?: number; stopped?: () => boolean } = {},
+	options: { nowMs?: number; budgetMs?: number; stopped?: () => boolean; pruners?: RetentionPruners } = {},
 ): Promise<PruneResult | null> {
 	const nowMs = options.nowMs ?? Date.now();
 	const root = telemetryRoot(stateDir);
@@ -595,37 +608,20 @@ export async function sweepTelemetryDaily(
 	}
 	const deadline = performance.now() + (options.budgetMs ?? SWEEP_BUDGET_MS);
 	const result = await applyTelemetryPrune(plan, { stopped: () => performance.now() > deadline || hostStopped() });
-	await pruneWorkerObservationsWithRuns(stateDir, nowMs, options.budgetMs ?? SWEEP_BUDGET_MS, hostStopped);
+	const workerArtifacts = options.pruners?.workerArtifacts;
+	if (workerArtifacts) {
+		// Worker artifacts age out with the run journals under their own budget (D1-5, FL-8).
+		const workerDeadline = performance.now() + (options.budgetMs ?? SWEEP_BUDGET_MS);
+		await workerArtifacts(stateDir, {
+			nowMs,
+			retentionMs: DEFAULT_PRUNE_POLICY.days * DAY_MS,
+			stopped: () => performance.now() > workerDeadline || hostStopped(),
+		}).catch(() => {});
+	}
 	// A deleted session's memory observations are orphans no session can read (C-35, orphans only). They share the
 	// removal budget: what is left after the journals goes on a later day.
-	await pruneOrphanedObservations(stateDir, () => performance.now() > deadline || hostStopped()).catch(() => 0);
+	await options.pruners
+		?.orphanedObservations?.(stateDir, () => performance.now() > deadline || hostStopped())
+		.catch(() => 0);
 	return result;
-}
-
-/**
- * Evicted worker observations age out with the run journals, keyed on the run that wrote them (D1-5), and worker
- * context seeds with them, keyed on the runs that used them (FL-8). A ledger that cannot be read says nothing about
- * which runs are still live, so nothing is removed that day.
- */
-async function pruneWorkerObservationsWithRuns(
-	stateDir: string,
-	nowMs: number,
-	budgetMs: number,
-	hostStopped: () => boolean,
-): Promise<void> {
-	let runEnds: ReadonlyMap<string, number | null>;
-	let seedEnds: ReadonlyMap<string, number | null>;
-	try {
-		runEnds = readRunEnds(stateDir);
-		seedEnds = readContextSeedEnds(stateDir);
-	} catch {
-		return;
-	}
-	const deadline = performance.now() + budgetMs;
-	const stopped = () => performance.now() > deadline || hostStopped();
-	const retentionMs = DEFAULT_PRUNE_POLICY.days * DAY_MS;
-	await pruneWorkerObservations(stateDir, { nowMs, retentionMs, runEnds, stopped }).catch(() => {
-		// A failed pass removes nothing it could not prove safe; the next day tries again.
-	});
-	await pruneWorkerContextSeeds(stateDir, { nowMs, retentionMs, seedEnds, stopped }).catch(() => {});
 }

@@ -42,13 +42,13 @@ import { resolveRuntimeTarget } from "../domains/providers/runtime-resolution.js
 import { jobIsComplete } from "../domains/scheduling/index.js";
 import type { SessionContract, SessionMeta } from "../domains/session/contract.js";
 import type { SessionEntry } from "../domains/session/entries.js";
-import { liveSessionOwner } from "../domains/session/live-owner.js";
 import { runOperatorShellLine } from "../domains/session/operator-shell.js";
 import { resumedSessionRoute } from "../domains/session/resumed-route.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { AgentMessage } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel } from "../lib/autonomy/autonomy.js";
+import { liveSessionOwner } from "../lib/heartbeat/live-owner.js";
 import {
 	redactFinalUrlCredentials,
 	redactStreamingUrlCredentials,
