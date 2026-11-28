@@ -39,6 +39,7 @@ import {
 import { PROSE_GUTTER_WIDTH } from "./chat-ink.js";
 import { renderTextSegmentLines } from "./chat-markdown.js";
 import { createChatCache, RENDERS_PER_ENTRY } from "./chat-panel/cache.js";
+import { createChatReceipts } from "./chat-panel/receipts.js";
 import type { ChatPanelScope } from "./chat-panel/scope.js";
 import { createChatWorkers } from "./chat-panel/workers.js";
 import { changeSettledCall, finishedCall, shownArgs } from "./chat-tool-rows.js";
@@ -100,7 +101,6 @@ import {
 	type TranscriptViewport,
 	viewportWindow,
 } from "./transcript-runs.js";
-import { turnHoldsCalls, turnSpend } from "./turn-spend.js";
 
 /**
  * What a replayed run end knows that a live one measures: the duration from
@@ -352,17 +352,8 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	 * the run's own calls and no run of the turn is still going (#434 §11.3).
 	 */
 	const liveReceipts = new Set<Extract<TranscriptEntry, { role: "assistant" }>>();
-	let receiptView: TelemetryView | null = null;
 	/** The latest settled receipt eligible for the turn's post-settlement prewarm record. */
 	let lastSettledReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null = null;
-	let promptRecallReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null = null;
-	const forgetPromptRecall = (): void => {
-		if (promptRecallReceipt?.turnUsage) {
-			delete promptRecallReceipt.turnUsage.promptRecall;
-			invalidateEntryCache(promptRecallReceipt);
-		}
-		promptRecallReceipt = null;
-	};
 	let cachedWidth: number | undefined;
 	let cachedRegions: ChatPanelRegions = { pieces: [], rows: 0 };
 	/** The last frame concatenated, built on first request; null until someone asks for it. */
@@ -418,8 +409,15 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		get cache() {
 			return cache;
 		},
+		workerEntries,
+		liveReceipts,
+		receiptView: null,
+		promptRecallReceipt: null,
 		get workers() {
 			return workers;
+		},
+		get receipts() {
+			return receipts;
 		},
 	};
 	const cache = createChatCache(scope);
@@ -442,6 +440,8 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		findSpawningCall,
 		workerInsertionIndex,
 	} = workers;
+	const receipts = createChatReceipts(scope);
+	const { forgetPromptRecall, refreshReceipts, trackReceipt } = receipts;
 	/**
 	 * An edit whose arguments have closed shows the diff it will make before its
 	 * result lands. The file is read off the event path; the frame that shows
@@ -459,67 +459,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			markDirty();
 			options.requestRender?.();
 		});
-	};
-	/** Read one receipt's turn from the view; it stays live until the view holds all of the turn's spend. */
-	const readReceipt = (entry: Extract<TranscriptEntry, { role: "assistant" }>, view: TelemetryView): void => {
-		const usage = entry.turnUsage;
-		if (usage?.turnId === undefined) {
-			liveReceipts.delete(entry);
-			return;
-		}
-		// The answer closes the run, so the moved turn's answering call is the run's last.
-		const spend = turnSpend(
-			view,
-			usage.turnId,
-			usage.movedTo === undefined ? undefined : usage.callIds?.at(-1),
-			usage.replayed === true ? "lineage" : "session",
-			usage.detachedRunIds,
-		);
-		if (spend === null) return;
-		if (JSON.stringify(spend) !== JSON.stringify(usage.spend)) {
-			invalidateEntryCache(entry);
-			entry.turnUsage = { ...usage, spend };
-			markDirty();
-		}
-		if (!runningTurns(view).has(usage.turnId) && turnHoldsCalls(view, usage.turnId, usage.callIds ?? []))
-			liveReceipts.delete(entry);
-	};
-	/** The turns with a referenced run still going, built once per view: a replay reads one view for every receipt. */
-	const runningTurnsByView = new WeakMap<TelemetryView, ReadonlySet<string>>();
-	const runningTurns = (view: TelemetryView): ReadonlySet<string> => {
-		let running = runningTurnsByView.get(view);
-		if (running === undefined) {
-			running = new Set(
-				view.runs().flatMap((run) => (run.terminalReason === null && run.turnId !== null ? [run.turnId] : [])),
-			);
-			runningTurnsByView.set(view, running);
-		}
-		return running;
-	};
-	let lastFleetOwned = options.fleetOwnsLiveProgress?.() === true;
-	const refreshReceipts = (): void => {
-		const fleetOwned = options.fleetOwnsLiveProgress?.() === true;
-		const fleetOwnedChanged = fleetOwned !== lastFleetOwned;
-		lastFleetOwned = fleetOwned;
-		const view = options.getTelemetry?.() ?? null;
-		if (view === receiptView && !fleetOwnedChanged) return;
-		receiptView = view;
-		for (const entry of workerEntries.values()) {
-			const shown = telemetryShown(entry.state, view);
-			if (shown === entry.telemetryShown) continue;
-			entry.telemetryShown = shown;
-			invalidateEntryCache(entry);
-			scope.dirty = true;
-		}
-		// A view still merging its cold read holds a partial session; its turns are read once it has merged.
-		if (view === null || view.seeding) return;
-		for (const entry of liveReceipts) readReceipt(entry, view);
-	};
-	/** A receipt the run just gave a turn: read now, and again on each new view while it is live. */
-	const trackReceipt = (entry: Extract<TranscriptEntry, { role: "assistant" }>): void => {
-		liveReceipts.add(entry);
-		const view = options.getTelemetry?.() ?? null;
-		if (view !== null && !view.seeding) readReceipt(entry, view);
 	};
 
 	const now = (): number => options.now?.() ?? Date.now();
@@ -731,14 +670,14 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 													: "Done"),
 				};
 				// Only the newest failure is one ↑ away; a later turn's prompt sits in front of an older one.
-				if (promptRecallReceipt?.turnUsage) {
-					delete promptRecallReceipt.turnUsage.promptRecall;
-					invalidateEntryCache(promptRecallReceipt);
+				if (scope.promptRecallReceipt?.turnUsage) {
+					delete scope.promptRecallReceipt.turnUsage.promptRecall;
+					invalidateEntryCache(scope.promptRecallReceipt);
 				}
-				promptRecallReceipt = null;
+				scope.promptRecallReceipt = null;
 				if (replayed === undefined && target.turnUsage.outcome === "Failed") {
 					target.turnUsage.promptRecall = true;
-					promptRecallReceipt = target;
+					scope.promptRecallReceipt = target;
 				}
 				trackReceipt(target);
 			}
@@ -1639,7 +1578,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			lastSettledReceipt = null;
 			liveReceipts.clear();
 			liveReplayBlocks.clear();
-			receiptView = null;
+			scope.receiptView = null;
 			runTurnId = undefined;
 			runStartedAt = undefined;
 			pendingPrompt = undefined;

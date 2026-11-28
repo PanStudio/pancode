@@ -12,11 +12,13 @@
  */
 
 import type { OutputStyle } from "../../core/defaults.js";
+import type { TelemetryView } from "../../domains/telemetry/contract.js";
 import type { ChatPanelOptions } from "../chat-panel.js";
 import type { TranscriptEntry, WorkerTranscriptEntry } from "../chat-transcript-model.js";
 import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
+import type { createChatReceipts } from "./receipts.js";
 import type { createChatWorkers } from "./workers.js";
 
 export interface ChatPanelScope {
@@ -24,7 +26,11 @@ export interface ChatPanelScope {
 	readonly transcript: TranscriptEntry[];
 	readonly entryRenderCache: Map<TranscriptEntry, Map<string, string[]>>;
 	readonly runs: EntryRuns;
+	readonly workerEntries: Map<string, WorkerTranscriptEntry>;
 	readonly dispatchGroups: Map<string, WorkerTranscriptEntry[]>;
+	readonly liveReceipts: Set<Extract<TranscriptEntry, { role: "assistant" }>>;
+	receiptView: TelemetryView | null;
+	promptRecallReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null;
 	/**
 	 * Transcript index where the current run's entries begin. A worker block or
 	 * a mid-turn notice splits one run across several assistant entries, and
@@ -69,4 +75,5 @@ export interface ChatPanelScope {
 	prerender: { width: number; terminalRows: number; style: OutputStyle; next: number } | null;
 	readonly cache: ReturnType<typeof createChatCache>;
 	readonly workers: ReturnType<typeof createChatWorkers>;
+	readonly receipts: ReturnType<typeof createChatReceipts>;
 }
