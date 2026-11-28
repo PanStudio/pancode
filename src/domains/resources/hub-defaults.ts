@@ -14,8 +14,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
-import { ENVELOPE_SEAT_BELT, envelopeLines } from "../extensions/envelope-review.js";
-import { bundledPluginCatalog } from "../plugins/catalog.js";
+import { ENVELOPE_SEAT_BELT, envelopeLines } from "../extensions/index.js";
+import { bundledPluginCatalog } from "../plugins/index.js";
 import { hubEntryRef } from "./hub.js";
 import {
 	applyHubLifecycle,
