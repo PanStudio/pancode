@@ -50,7 +50,7 @@ export function createChatLoopMachineTurn(
 			);
 		const paused = deps.autonomy?.halted() ?? null;
 		if (paused !== null)
-			return refused(`Yolo is paused for the operator (${paused.detail}); delivery remains with its job controller.`);
+			return refused(`YOLO is paused for the operator (${paused.detail}); delivery remains with its job controller.`);
 		if (!loop.api.machineTurnAvailable?.())
 			return refused("The main conversation is busy; delivery remains with its job controller.");
 		const current = (): boolean =>
@@ -158,7 +158,7 @@ export function createChatLoopMachineTurn(
 				settled ??
 				refused(
 					request.signal.aborted
-						? "Scheduled delivery cancelled before execution."
+						? "Scheduled delivery canceled before execution."
 						: "The fresh turn was refused during ordinary admission.",
 				)
 			);

@@ -124,7 +124,7 @@ export function createDispatchSteering(deps: DispatchSteeringDeps): DispatchStee
 			case "stopping":
 				deps.notify(
 					"info",
-					`canceling plan ${plan.name}: ${running.length > 0 ? `stopping ${running.join(", ")}` : "no step starts after this"}`,
+					`stopping plan ${plan.name}: ${running.length > 0 ? `stopping ${running.join(", ")}` : "no step starts after this"}`,
 					key,
 				);
 				break;

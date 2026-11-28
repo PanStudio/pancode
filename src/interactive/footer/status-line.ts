@@ -852,7 +852,7 @@ function renderCompactBusyRow(theme: PancodeTheme, state: FooterDashboardRenderS
 
 	const stopping = state.status.phase === "cancelling" || state.keyContext === "stopping";
 	const esc = stopping
-		? theme.fg("annotation", width >= 80 ? "Stop sent, waiting for exit" : `Stopping${GLYPH.ellipsis}`)
+		? theme.fg("annotation", width >= 80 ? "Cancel sent, waiting for exit" : `Canceling${GLYPH.ellipsis}`)
 		: theme.style("keyboardHint", "Esc cancels", { bold: true });
 	const escTail = `${sep}${esc}`;
 	const leftBudget = right ? Math.max(12, innerWidth - rightWidth - 2) : innerWidth;

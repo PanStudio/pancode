@@ -1390,7 +1390,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		// A busy /new cancels the run first. Say so, and give back any message typed
 		// meanwhile: resetForSession drops the queues, so it vanished silently (p7/A2).
 		const wasBusy = deps.chat.isStreaming();
-		if (wasBusy) notify("info", "/new: cancelling the active run before starting a new session", "session:new");
+		if (wasBusy) notify("info", "/new: canceling the active run before starting a new session", "session:new");
 		const unsent = wasBusy ? deps.chat.clearQueuedFollowUps() : [];
 		const settlement = settleChatBeforeSessionSwitch(deps.chat);
 		if (settlement) await settlement;

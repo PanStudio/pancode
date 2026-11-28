@@ -348,8 +348,8 @@ export function dispatchStatusPresentation(
 				token: "dispatchAction",
 			};
 		case "cancelling":
-			// The card and the strip say stopping while the process exits, so the board's status cell does too.
-			return { glyph: GLYPH.cancelled, label: "stopping", token: "warning" };
+			// The card and the strip say canceling while the process exits, so the board's status cell does too.
+			return { glyph: GLYPH.cancelled, label: "canceling", token: "warning" };
 		case "retrying":
 			return { glyph: GLYPH.phaseRetry, label: "retrying", token: "warning" };
 		case "completed":
