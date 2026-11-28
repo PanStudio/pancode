@@ -308,17 +308,44 @@ describe("fleet cancel requests", () => {
 				onNotice: (text) => notices.push(text),
 				...extra,
 			});
+		// A fresh run stopped before it writes its durable ledger record cannot be resumed, so its idle worktree is removed.
+		const earlyStop = new AbortController();
+		earlyStop.abort();
+		await run("fleet-dd0000", { signal: earlyStop.signal, stopped: () => true }).catch(() => undefined);
+		strictEqual(readFleetRun("fleet-dd0000"), null);
+		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0000"), null);
+		strictEqual(
+			notices.some((text) => text.includes("--resume fleet-dd0000")),
+			false,
+			notices.join("\n"),
+		);
+
+		// A non-stop abort (such as SIGINT or a timeout) removes an idle worktree instead of keeping it.
+		const nonStop = new AbortController();
+		let nonStopAdmissions = 0;
+		await run("fleet-dd0009", {
+			signal: nonStop.signal,
+			stopped: () => false,
+			beforeStepAdmission: () => {
+				if (++nonStopAdmissions === 2) nonStop.abort();
+			},
+		}).catch(() => undefined);
+		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0009"), null);
+
 		// The stop arrives while the plan step runs, so the build step is never admitted and nothing was written.
 		const stop = new AbortController();
 		let admissions = 0;
+		const keptCallbacks: unknown[] = [];
 		await run("fleet-dd0001", {
 			signal: stop.signal,
 			stopped: () => stop.signal.aborted,
+			onWorktreeKept: (kept) => keptCallbacks.push(kept),
 			beforeStepAdmission: () => {
 				if (++admissions === 2) stop.abort();
 			},
 		}).catch(() => undefined);
 		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0001")?.kind, "kept");
+		strictEqual(keptCallbacks.length, 0);
 		ok(
 			notices.some((text) => text.includes("for fleet run --resume fleet-dd0001")),
 			notices.join("\n"),
@@ -326,7 +353,27 @@ describe("fleet cancel requests", () => {
 		const record = readFleetRun("fleet-dd0001");
 		const planned = record !== null ? planFleetResume(record, plan, playbook, {}, root) : null;
 		if (record === null || planned?.ok !== true) throw new Error(`not resumable: ${JSON.stringify(planned)}`);
-		const outcome = await run("fleet-dd0002", { resume: { record, replayed: planned.replayed } });
+
+		// A resumed run that ends before writing its own record must not destroy the prior run's kept worktree.
+		const failedResume = new AbortController();
+		failedResume.abort();
+		await run("fleet-dd0003", {
+			signal: failedResume.signal,
+			stopped: () => false,
+			resume: { record, replayed: planned.replayed },
+		}).catch(() => undefined);
+		strictEqual(readFleetRun("fleet-dd0003"), null);
+		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0001")?.kind, "kept");
+		ok(
+			notices.some((text) => text.includes("ended before starting; kept task worktree") && text.includes("fleet-dd0001")),
+			notices.join("\n"),
+		);
+
+		// Even if a late stop arrives after the resumed run completes cleanly, its idle worktree is removed.
+		const outcome = await run("fleet-dd0002", {
+			resume: { record, replayed: planned.replayed },
+			stopped: () => true,
+		});
 		strictEqual(outcome.cleanRun, true);
 		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0001"), null);
 		ok(notices.includes("fleet fleet-dd0002 changed nothing; removed its task worktree"), notices.join("\n"));

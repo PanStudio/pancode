@@ -167,12 +167,30 @@ export async function executeFleetRun(input: ExecuteFleetRunInput): Promise<Flee
 		remoteEligible: (input.settings?.fleet?.nodes?.length ?? 0) > 0,
 		onNotice: (text) => input.onNotice?.(text),
 	});
+	let recordWritten = false;
+	let completedClean = false;
 	try {
-		return await executeFleetRunIn(input, { root: worktree.path, taskWorktree: worktree.runId });
+		const outcome = await executeFleetRunIn(input, {
+			root: worktree.path,
+			taskWorktree: worktree.runId,
+			onRecordWritten: () => {
+				recordWritten = true;
+			},
+		});
+		completedClean = outcome.cleanRun;
+		return outcome;
 	} finally {
+		// Only a run with a durable ledger record is resumable; a resumed run that ended before writing its own record
+		// restores the prior run's kept worktree instead of discarding it or advertising an unrecorded root id.
+		const resumeRootId =
+			!recordWritten && input.resume !== undefined
+				? input.resume.record.id
+				: recordWritten && !completedClean && input.stopped?.() === true
+					? input.fleetRootId
+					: null;
 		const kept = keepFleetTaskWorktree(
 			worktree,
-			{ fleetRootId: input.fleetRootId, playbookName: input.playbookName, stopped: input.stopped?.() === true },
+			{ fleetRootId: input.fleetRootId, playbookName: input.playbookName, resumeRootId },
 			(text) => input.onNotice?.(text),
 		);
 		if (kept !== null) input.onWorktreeKept?.(kept);
@@ -184,6 +202,14 @@ interface FleetRunPlace {
 	root: string;
 	/** Run id of the task worktree `root` is, recorded so a resume continues there. */
 	taskWorktree?: string;
+	/** Called once the run's initial durable ledger record is on disk and resumable. */
+	onRecordWritten?: () => void;
+}
+
+async function writeInitialFleetRun(record: FleetRunRecord, place: FleetRunPlace): Promise<string> {
+	const digest = sha256Hex(await writeFleetRun(record));
+	place.onRecordWritten?.();
+	return digest;
 }
 
 async function executeFleetRunIn(input: ExecuteFleetRunInput, place: FleetRunPlace): Promise<FleetRunOutcome> {
@@ -348,7 +374,7 @@ async function runFleetHoldingWorkspace(
 	// The digest of the last root record bytes this run wrote, which the final
 	// journal line names.
 	let sealed = false;
-	let manifestDigest = sha256Hex(await writeFleetRun(fleetRunRecord));
+	let manifestDigest = await writeInitialFleetRun(fleetRunRecord, place);
 	const writeManifest = async (): Promise<string> => {
 		if (sealed) return manifestDigest;
 		const digest = sha256Hex(await writeFleetRun(fleetRunRecord));

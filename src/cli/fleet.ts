@@ -679,7 +679,8 @@ async function runFleetTracked(
 	}
 	/** A durable root stop request stops the fleet: checked now, before each step starts, and on a short poll. */
 	const checkRootCancel = (): void => {
-		if (limitStop.signal.aborted || readRootCancelRequest(fleetRootId) === null) return;
+		if (shutdownSignal?.aborted === true || limitStop.signal.aborted || readRootCancelRequest(fleetRootId) === null)
+			return;
 		stopFleet("stopped", `stop requested for fleet root ${fleetRootId}; stopping the fleet`);
 	};
 	checkRootCancel();
