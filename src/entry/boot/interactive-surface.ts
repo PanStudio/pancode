@@ -6,7 +6,7 @@ import { armRestartHandoff } from "../../core/restart-handoff.js";
 import { resolveMemoryRoute } from "../../core/session-routing.js";
 import { pancodeDataDir, pancodeStateDir } from "../../core/xdg.js";
 import { readTaskMemorySpendSummary, taskMemoryBankSize } from "../../domains/memory/index.js";
-import { MEMORY_INTERVENTION_ACTIVITY_LIMIT } from "../../domains/memory/intervention.js";
+import { MEMORY_INTERVENTION_ACTIVITY_LIMIT } from "../../domains/memory/intervention/telemetry.js";
 import { projectTaskMemoryActivity } from "../../domains/memory/task-memory-status.js";
 import { pluginSnapshotFor } from "../../domains/plugins/index.js";
 import { shareArchiver } from "../../domains/share/index.js";

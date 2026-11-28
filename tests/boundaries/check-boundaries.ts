@@ -799,7 +799,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1041],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 738],
 	["src/domains/mcp/http-transport.ts#createMcpHttpTransport", 642],
-	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
 	["src/domains/providers/extension.ts#createProvidersBundle", 625],
@@ -1392,6 +1391,7 @@ function isWorkerDeniedModule(relative: string): boolean {
 		/^src\/domains\/[^/]+\/extension\.ts$/u.test(relative) ||
 		relative === "src/domains/telemetry/read-model.ts" ||
 		relative === "src/domains/memory/intervention.ts" ||
+		relative.startsWith("src/domains/memory/intervention/") ||
 		relative.startsWith("src/domains/context/wiki/") ||
 		relative.startsWith("src/domains/mcp/") ||
 		relative.startsWith("src/domains/resources/") ||
@@ -2101,7 +2101,8 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
  *      allowed because they erase at compile time.
  *   2b. The static value-import closure of src/worker/entry.ts contains no
  *      domain bundle (any domain's extension.ts), telemetry/read-model.ts,
- *      memory/intervention.ts, context/wiki/** or core/settings-controls.ts.
+ *      memory/intervention.ts, memory/intervention/**, context/wiki/** or
+ *      core/settings-controls.ts.
  *      Those are orchestrator-only; a worker reaches them by dynamic import
  *      at most, so they never load before the worker reads its spec.
  *   3. src/domains/<x> never imports src/domains/<y>/extension.ts for y != x.

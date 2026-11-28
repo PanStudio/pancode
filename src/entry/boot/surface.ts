@@ -32,7 +32,7 @@ import type { ExtensionRuntimeHookBridge } from "../../domains/extensions/runtim
 import type { InteropContract } from "../../domains/interop/contract.js";
 import type { GuardianStatePublisher } from "../../domains/memory/guardian-state.js";
 import type { MemoryRuntime } from "../../domains/memory/index.js";
-import type { MemoryInterventionRegistration } from "../../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../../domains/memory/intervention/types.js";
 import type { TaskMemoryBank } from "../../domains/memory/task-bank.js";
 import type { TaskMemoryHandoffSeedOutcome } from "../../domains/memory/task-memory-handoff.js";
 import type { HistoryReviewActivity } from "../../domains/memory/task-memory-status.js";

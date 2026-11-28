@@ -4,7 +4,7 @@
 import { isHostPolicyMessage } from "../core/host-policy-message.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
 import type { SuccessfulMemoryContextCommit } from "../domains/memory/commit-state.js";
-import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../domains/memory/intervention/types.js";
 import { callRepeatsAsRead } from "../engine/loop-guard.js";
 import { effectiveCallIdentity } from "../engine/loop-guard-repeat.js";
 import type { ContinuityReductionHooks } from "./continuity-controller.js";

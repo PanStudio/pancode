@@ -13,7 +13,7 @@ export { createTurnControlRunner } from "./turn-control-runner.js";
 import type { RouteName, RouteSource } from "../core/route-provenance.js";
 import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
-import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../domains/memory/intervention/types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 /**
  * The chat loop: one turn's state machine.

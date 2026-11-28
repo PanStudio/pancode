@@ -21,7 +21,7 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { recordUnsettled } from "./delivery-ledger.js";
 import { type MemoryGateOutcome, recordMemoryObservations } from "./guardian-gate.js";
-import type { MemoryDeliveryOutcome, MemoryKnowledgeReview } from "./intervention-types.js";
+import type { MemoryDeliveryOutcome, MemoryKnowledgeReview } from "./intervention/types.js";
 import type { MemoryObservationEvent } from "./observation-events.js";
 import { observationDigest } from "./observations.js";
 import { checkoutPosition } from "./operations.js";
