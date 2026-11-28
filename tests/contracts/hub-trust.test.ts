@@ -32,7 +32,7 @@ import { validateExtensionPackage } from "../../src/domains/extensions/authoring
 import { parseExtensionManifest } from "../../src/domains/extensions/discovery.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import { installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
-import { loadMcpServerConfig } from "../../src/domains/gateway/mcp/index.js";
+import { loadMcpServerConfig } from "../../src/domains/mcp/index.js";
 import { bundledHubIndexPath, fetchPluginCommit, parseHubIndexRows } from "../../src/domains/plugins/catalog.js";
 import {
 	clearPluginSnapshots,

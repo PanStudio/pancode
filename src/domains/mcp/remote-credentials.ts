@@ -8,8 +8,8 @@
  * finds no value, so a repository cannot route a stored token elsewhere.
  */
 
-import { sha256Hex } from "../../../core/hash.js";
-import { type AuthStorage, openAuthStorage } from "../../providers/auth/index.js";
+import { sha256Hex } from "../../core/hash.js";
+import { type AuthStorage, openAuthStorage } from "../providers/auth/index.js";
 import { mcpOAuthCatalogBinding } from "./oauth-grants.js";
 import { mcpHeaderCredentialRef, mcpOriginOf, parseMcpHeaderCredentialRef } from "./remote.js";
 

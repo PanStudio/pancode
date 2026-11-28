@@ -18,10 +18,10 @@
  */
 
 import path from "node:path";
-import { sha256Hex } from "../../../core/hash.js";
-import { safeResourceWrite } from "../../../core/safe-resource-write.js";
-import { isRecord } from "../../../core/type-guards.js";
-import { pancodeCacheDir } from "../../../core/xdg.js";
+import { sha256Hex } from "../../core/hash.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { isRecord } from "../../core/type-guards.js";
+import { pancodeCacheDir } from "../../core/xdg.js";
 import { MCP_INSTRUCTIONS_BYTES } from "./client-init.js";
 import { MCP_TOOL_LIST_CAP } from "./client-tools.js";
 import type { McpServerScope } from "./config.js";

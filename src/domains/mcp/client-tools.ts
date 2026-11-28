@@ -8,9 +8,9 @@
  */
 
 import { performance } from "node:perf_hooks";
-import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
-import { clampTimerDelayMs, sleep } from "../../../core/timers.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { rememberResolvedSecret } from "../../core/sandbox/env-scrub.js";
+import { clampTimerDelayMs, sleep } from "../../core/timers.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { McpCallToolOptions, McpToolListing } from "./client.js";
 import type { McpElicitation } from "./client-elicitation.js";
 import type { McpInitialization } from "./client-init.js";

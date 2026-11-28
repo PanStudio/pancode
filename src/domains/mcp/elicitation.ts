@@ -10,15 +10,15 @@
  */
 
 import { domainToUnicode } from "node:url";
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 import {
 	elicitationContentErrors,
 	elicitationValueError,
 	type McpFieldBase,
 	type McpFieldOption,
 	type McpFormField,
-} from "../../../core/views/elicitation-values.js";
-import { isSecretArgKey } from "../../../lib/secrets/redaction.js";
+} from "../../core/views/elicitation-values.js";
+import { isSecretArgKey } from "../../lib/secrets/redaction.js";
 
 export type McpElicitAction = "accept" | "decline" | "cancel";
 export type McpElicitValue = string | number | boolean | string[];

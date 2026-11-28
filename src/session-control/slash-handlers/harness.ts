@@ -589,8 +589,8 @@ function mcpSlashLogin(id: string, ctx: SlashCommandContext): void {
 	pendingMcpSignIns.set(id, controller);
 	void (async () => {
 		try {
-			const mcp = await import("../../domains/gateway/mcp/index.js");
-			const { mcpOAuthLogin } = await import("../../domains/gateway/mcp/oauth-login.js");
+			const mcp = await import("../../domains/mcp/index.js");
+			const { mcpOAuthLogin } = await import("../../domains/mcp/oauth-login.js");
 			const server = mcp.resolveMcpServers({ cwd: process.cwd() }).servers.find((entry) => entry.id === id);
 			if (server === undefined) throw new Error(`no declared MCP server with id '${id}'`);
 			if (server.url === undefined) throw new Error(`server '${id}' is a local server; it takes no credentials`);

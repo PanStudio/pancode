@@ -10,7 +10,7 @@ import type {
 	McpToolCallResult,
 	McpToolDescriptor,
 	McpTrustActionClass,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import {
 	DEFAULT_RESULT_TEXT_BYTES,
 	JSON_RPC_INVALID_PARAMS,
@@ -19,7 +19,7 @@ import {
 	MCP_RESOURCE_NOT_FOUND,
 	McpError,
 	renderMcpContent,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import { mcpServerPolicyRefusal } from "../../domains/safety/denial.js";
 import type { ImageContent } from "../../engine/types.js";

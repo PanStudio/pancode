@@ -26,7 +26,7 @@ import {
 	type McpUploadTarget,
 	mcpMultipartBody,
 	resolveMcpTarget,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import { isPublicWebAddress } from "../web-fetch-network.js";
 
 interface Address {

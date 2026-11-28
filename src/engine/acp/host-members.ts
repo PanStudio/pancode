@@ -27,7 +27,7 @@ import { DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS } from "../../core/defaults.js
 import { ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { McpElicitationHost, McpElicitResult, McpElicitValue } from "../../domains/gateway/mcp/index.js";
+import type { McpElicitationHost, McpElicitResult, McpElicitValue } from "../../domains/mcp/index.js";
 import { proposeTaskBankPromotion, type TaskMemorySnapshot } from "../../domains/memory/index.js";
 import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";

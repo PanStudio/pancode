@@ -8,8 +8,8 @@
  * sends the requests and the job host decides what an occurrence means.
  */
 
-import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
+import { isRecord } from "../../core/type-guards.js";
 import { MCP_EVENTS_EXTENSION, McpError } from "./protocol.js";
 
 export type McpEventDelivery = "poll" | "push" | "webhook";

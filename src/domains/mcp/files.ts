@@ -10,7 +10,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 
 export const MCP_FILES_EXTENSION = "io.modelcontextprotocol/files";
 const FILE_KEYWORD = "x-mcp-file";

@@ -7,7 +7,7 @@
  * tool's `outputSchema`. Nothing here touches a transport.
  */
 
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { McpDownloadTarget } from "./files.js";
 import { McpError, structuredContentJson } from "./protocol.js";
 

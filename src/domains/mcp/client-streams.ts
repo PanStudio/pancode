@@ -7,8 +7,8 @@
  * the server answers it, cancels it, or goes silent, or when this side cancels.
  */
 
-import { clampTimerDelayMs } from "../../../core/timers.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { clampTimerDelayMs } from "../../core/timers.js";
+import { isRecord } from "../../core/type-guards.js";
 import type {
 	McpEventStream,
 	McpEventStreamHandlers,

@@ -12,7 +12,7 @@ import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
 import type { StartupHint } from "../../domains/context/contract.js";
-import type { McpElicitationHost } from "../../domains/gateway/mcp/index.js";
+import type { McpElicitationHost } from "../../domains/mcp/index.js";
 import type { ProvidersContract } from "../../domains/providers/contract.js";
 import type { AutonomyStatus } from "../../domains/safety/autonomy-window.js";
 import type { ContextLedger } from "../../domains/session/context-ledger.js";

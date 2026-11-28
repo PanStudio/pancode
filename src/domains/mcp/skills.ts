@@ -16,10 +16,10 @@
 
 import { createHash } from "node:crypto";
 import { parse as parseYaml } from "yaml";
-import { canonicalJson, canonicalJsonStrict } from "../../../core/canonical-json.js";
-import { sha256Hex } from "../../../core/hash.js";
-import { neutralizeFraming } from "../../../core/reminder-framing.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { canonicalJson, canonicalJsonStrict } from "../../core/canonical-json.js";
+import { sha256Hex } from "../../core/hash.js";
+import { neutralizeFraming } from "../../core/reminder-framing.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { McpResourceRead } from "./resources.js";
 
 export const MCP_SKILLS_EXTENSION = "io.modelcontextprotocol/skills";

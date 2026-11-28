@@ -9,8 +9,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { sha256Hex } from "../../../core/hash.js";
-import { type AuthCredential, type AuthStorage, openAuthStorage } from "../../providers/auth/index.js";
+import { sha256Hex } from "../../core/hash.js";
+import { type AuthCredential, type AuthStorage, openAuthStorage } from "../providers/auth/index.js";
 import type { McpHttpAuthorizer } from "./http-transport.js";
 import { type McpOAuthClient, mcpCanonicalResource, mcpResourceCovers, refreshMcpAccessToken } from "./oauth.js";
 

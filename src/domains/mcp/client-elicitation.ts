@@ -9,7 +9,7 @@
  */
 
 import { performance } from "node:perf_hooks";
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 import { type ActiveCall, errorMessage, type McpSession, serverText } from "./client-session.js";
 import {
 	formContentErrors,

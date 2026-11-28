@@ -10,8 +10,8 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { escapeTerminalControls } from "../../../core/terminal-controls.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { escapeTerminalControls } from "../../core/terminal-controls.js";
+import { isRecord } from "../../core/type-guards.js";
 import { mcpRemoteEndpoint } from "./remote.js";
 
 /** A parsed `WWW-Authenticate` challenge: its scheme and lower-cased parameters. */

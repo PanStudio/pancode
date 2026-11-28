@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { escapeTerminalControls } from "../core/terminal-controls.js";
 import { isMcpResourceCapability, mcpToolName } from "../core/tool-names.js";
-import { mcpToolActionClass } from "../domains/gateway/mcp/action-classes.js";
-import type { McpClient, McpServerInfo } from "../domains/gateway/mcp/client.js";
+import { mcpToolActionClass } from "../domains/mcp/action-classes.js";
+import type { McpClient, McpServerInfo } from "../domains/mcp/client.js";
 import type {
 	McpServerEntryScript,
 	McpSkillApprovalStatus,
@@ -12,7 +12,7 @@ import type {
 	McpSurfaceStatus,
 	McpToolPathArguments,
 	ResolvedMcpServer,
-} from "../domains/gateway/mcp/index.js";
+} from "../domains/mcp/index.js";
 import {
 	approveMcpSkill,
 	approveMcpSurface,
@@ -37,14 +37,14 @@ import {
 	revokeMcpSkill,
 	trustMcpServer,
 	untrustMcpServer,
-} from "../domains/gateway/mcp/index.js";
+} from "../domains/mcp/index.js";
 import {
 	type McpResourceCount,
 	mcpCatalogStale,
 	mcpPromptsStale,
 	readMcpServerCatalog,
-} from "../domains/gateway/mcp/metadata-cache.js";
-import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
+} from "../domains/mcp/metadata-cache.js";
+import { canonicalProjectRoot } from "../domains/mcp/trust.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import { isMcpPromptCommandName } from "../tools/gateway/mcp-resources.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
@@ -782,7 +782,7 @@ async function mcpTestOutput(id: string, calls: ReadonlyArray<McpTestCall>): Pro
 			import("../tools/gateway/mcp-capabilities.js"),
 			import("../tools/registry.js"),
 			import("../engine/worker-tools.js"),
-			import("../domains/gateway/mcp/index.js"),
+			import("../domains/mcp/index.js"),
 		]);
 	let client: McpClient | null = null;
 	const registry = createRegistry({ safety: createWorkerSafety({ cwd }) });

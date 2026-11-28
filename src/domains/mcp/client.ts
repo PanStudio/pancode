@@ -20,7 +20,7 @@
  * resources, prompts, completion and skills (client-reads.ts).
  */
 
-import { clampTimerDelayMs } from "../../../core/timers.js";
+import { clampTimerDelayMs } from "../../core/timers.js";
 import { createMcpElicitation } from "./client-elicitation.js";
 import { createMcpInitialization } from "./client-init.js";
 import { createMcpReads } from "./client-reads.js";

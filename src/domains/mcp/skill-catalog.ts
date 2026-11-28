@@ -13,12 +13,12 @@
  */
 
 import path from "node:path";
-import { canonicalJson } from "../../../core/canonical-json.js";
-import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
-import { sha256Hex } from "../../../core/hash.js";
-import { safeResourceWrite } from "../../../core/safe-resource-write.js";
-import { isRecord } from "../../../core/type-guards.js";
-import { pancodeCacheDir } from "../../../core/xdg.js";
+import { canonicalJson } from "../../core/canonical-json.js";
+import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
+import { sha256Hex } from "../../core/hash.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { isRecord } from "../../core/type-guards.js";
+import { pancodeCacheDir } from "../../core/xdg.js";
 import { type McpServerScope, readBoundedFileText } from "./config.js";
 import { MCP_METADATA_CACHE_TTL_MS, type McpCatalogIdentity } from "./metadata-cache.js";
 import {

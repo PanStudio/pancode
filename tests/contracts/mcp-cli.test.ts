@@ -11,7 +11,7 @@ import {
 	MCP_TRUST_FILENAME,
 	MCP_USER_CONFIG_FILENAME,
 	readMcpTrustState,
-} from "../../src/domains/gateway/mcp/index.js";
+} from "../../src/domains/mcp/index.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 const CLI = new URL("../../dist/cli/index.js", import.meta.url).pathname;

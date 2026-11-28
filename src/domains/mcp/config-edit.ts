@@ -9,8 +9,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseDocument, stringify as stringifyYaml } from "yaml";
-import { safeResourceWrite } from "../../../core/safe-resource-write.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { isRecord } from "../../core/type-guards.js";
 import { MCP_CONFIG_VERSION, mcpConfigPaths, parseMcpConfigText } from "./config.js";
 
 export type McpEditScope = "user" | "project";

@@ -23,11 +23,11 @@ import { once } from "node:events";
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
-import { buildSafeToolEnv, resolveSafeCwd } from "../../../core/safe-exec.js";
-import { signalSandboxPayload } from "../../../core/sandbox/signal.js";
-import { planSandboxedSpawn } from "../../../core/sandbox/worker-process.js";
-import { sleep } from "../../../core/timers.js";
+import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
+import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { signalSandboxPayload } from "../../core/sandbox/signal.js";
+import { planSandboxedSpawn } from "../../core/sandbox/worker-process.js";
+import { sleep } from "../../core/timers.js";
 import { createLineFramer, encodeJsonRpcMessage, McpError } from "./protocol.js";
 import type {
 	McpOutboundMessage,

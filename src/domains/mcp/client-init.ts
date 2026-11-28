@@ -7,8 +7,8 @@
  * modern server is asked for its list-change stream at once.
  */
 
-import { sleep } from "../../../core/timers.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { sleep } from "../../core/timers.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { McpClient, McpServerInfo, McpSubscriptionFilter } from "./client.js";
 import {
 	ELICITATION_CAPABILITY,

@@ -40,9 +40,9 @@ import {
 	trustMcpServer,
 	writeMcpServerCatalog,
 	writeMcpSkillCatalog,
-} from "../../src/domains/gateway/mcp/index.js";
-import { mcpCatalogPath } from "../../src/domains/gateway/mcp/metadata-cache.js";
-import { parseMcpSkillEntry } from "../../src/domains/gateway/mcp/skills.js";
+} from "../../src/domains/mcp/index.js";
+import { mcpCatalogPath } from "../../src/domains/mcp/metadata-cache.js";
+import { parseMcpSkillEntry } from "../../src/domains/mcp/skills.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";

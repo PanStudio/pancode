@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pancodeConfigDir } from "../../core/xdg.js";
-import { mcpOriginOf } from "../gateway/mcp/index.js";
+import { mcpOriginOf } from "../mcp/index.js";
 import {
 	installHubPackage,
 	listInstalledPlugins,

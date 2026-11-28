@@ -32,7 +32,7 @@ import {
 	mcpOriginOf,
 	openMcpHeaderCredentialStore,
 	parseMcpConfigText,
-} from "../gateway/mcp/index.js";
+} from "../mcp/index.js";
 import { inventoryText } from "./inventory.js";
 import type { InteropInventoryItem } from "./types.js";
 

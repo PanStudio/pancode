@@ -18,9 +18,9 @@
  * an error message this transport makes or relays from the server.
  */
 
-import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
-import { rememberResolvedSecret } from "../../../core/sandbox/env-scrub.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
+import { rememberResolvedSecret } from "../../core/sandbox/env-scrub.js";
+import { isRecord } from "../../core/type-guards.js";
 import { encodeMcpHeaderValue, mcpNameSource, mcpParamHeaderValues } from "./http-headers.js";
 import { mcpScopeList, parseWwwAuthenticate } from "./oauth.js";
 import type { JsonRpcErrorObject, JsonRpcId, JsonRpcMessage } from "./protocol.js";

@@ -9,8 +9,8 @@
  * hashes to the digest the operator approved.
  */
 
-import { canonicalJson } from "../../../core/canonical-json.js";
-import { sha256Hex } from "../../../core/hash.js";
+import { canonicalJson } from "../../core/canonical-json.js";
+import { sha256Hex } from "../../core/hash.js";
 import type { McpToolDescriptor } from "./tool-results.js";
 
 /** The fields of one served tool that its approval covers. */

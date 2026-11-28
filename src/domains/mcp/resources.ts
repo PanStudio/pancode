@@ -7,7 +7,7 @@
  * touches a transport.
  */
 
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 import { JSON_RPC_INVALID_PARAMS, MCP_RESOURCE_NOT_FOUND, McpError } from "./protocol.js";
 import { type McpContentBlock, normalizeContentBlock } from "./tool-results.js";
 

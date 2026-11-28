@@ -29,10 +29,10 @@
 
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { safeResourceWrite } from "../../../core/safe-resource-write.js";
-import { withStateFileLockSync } from "../../../core/state-file-lock.js";
-import { isRecord } from "../../../core/type-guards.js";
-import { pancodeConfigDir } from "../../../core/xdg.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { withStateFileLockSync } from "../../core/state-file-lock.js";
+import { isRecord } from "../../core/type-guards.js";
+import { pancodeConfigDir } from "../../core/xdg.js";
 import {
 	loadMcpServerConfig,
 	type McpConfigDiagnostic,

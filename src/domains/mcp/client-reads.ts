@@ -7,8 +7,8 @@
  */
 
 import { performance } from "node:perf_hooks";
-import { clampTimerDelayMs } from "../../../core/timers.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { clampTimerDelayMs } from "../../core/timers.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { McpRequestOptions } from "./client.js";
 import type { McpElicitation } from "./client-elicitation.js";
 import type { McpInitialization } from "./client-init.js";

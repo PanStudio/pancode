@@ -11,11 +11,11 @@
  */
 
 import { performance } from "node:perf_hooks";
-import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
-import { readPancodeVersion } from "../../../core/package-root.js";
-import { neutralizeFraming } from "../../../core/reminder-framing.js";
-import { clampTimerDelayMs } from "../../../core/timers.js";
-import { isRecord } from "../../../core/type-guards.js";
+import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
+import { readPancodeVersion } from "../../core/package-root.js";
+import { neutralizeFraming } from "../../core/reminder-framing.js";
+import { clampTimerDelayMs } from "../../core/timers.js";
+import { isRecord } from "../../core/type-guards.js";
 import type {
 	McpClientStatus,
 	McpElicitationHandler,

@@ -14,7 +14,7 @@ import {
 	type McpContentBlock,
 	type McpResourceContents,
 	resourceLinkLine,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import type {
 	McpResourceCandidate,
 	McpSubmitAnswer,

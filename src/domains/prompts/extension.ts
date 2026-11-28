@@ -26,9 +26,9 @@ import {
 	selectActiveRules,
 } from "../context/index.js";
 import { detectRunIdentity } from "../dispatch/run-identity.js";
-import { loadMcpServerConfig } from "../gateway/mcp/config.js";
 import { interopAgentKind, peerModeCapabilities } from "../interop/index.js";
 import type { InteropAgentRecord } from "../interop/types.js";
+import { loadMcpServerConfig } from "../mcp/config.js";
 import { redactForMemoryRoute } from "../memory/secret-text.js";
 import { PANE_PEER_IDS } from "../mux/operations.js";
 import type { ResourcesContract } from "../resources/contract.js";

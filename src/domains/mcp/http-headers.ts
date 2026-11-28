@@ -9,7 +9,7 @@
  * builds each request's headers).
  */
 
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { McpParamHeader } from "./transport.js";
 
 /** RFC 9110 field-name token (`1*tchar`). */

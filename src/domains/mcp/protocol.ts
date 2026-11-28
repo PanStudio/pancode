@@ -11,7 +11,7 @@
  * the model with silently replaced bytes would misreport what the server said.
  */
 
-import { isRecord } from "../../../core/type-guards.js";
+import { isRecord } from "../../core/type-guards.js";
 
 /** The legacy revision PanCode offers in the initialize handshake. */
 export const MCP_PROTOCOL_VERSION = "2025-11-25";

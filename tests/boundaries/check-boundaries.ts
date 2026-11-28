@@ -788,7 +788,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 740],
-	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
+	["src/domains/mcp/http-transport.ts#createMcpHttpTransport", 642],
 	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
@@ -1402,7 +1402,7 @@ function isWorkerDeniedModule(relative: string): boolean {
 		relative === "src/domains/telemetry/read-model.ts" ||
 		relative === "src/domains/memory/intervention.ts" ||
 		relative.startsWith("src/domains/context/wiki/") ||
-		relative.startsWith("src/domains/gateway/") ||
+		relative.startsWith("src/domains/mcp/") ||
 		relative.startsWith("src/domains/resources/") ||
 		relative.startsWith("src/domains/plugins/") ||
 		relative === "src/core/settings-controls.ts"

@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { ACP_CONTEXT_STATUS_METHOD } from "../../core/context-operation.js";
 import { isRecord } from "../../core/type-guards.js";
-import { mcpDeclaredHeaderRefusal, mcpHeaderValueRefusal, mcpRemoteEndpoint } from "../../domains/gateway/mcp/index.js";
+import { mcpDeclaredHeaderRefusal, mcpHeaderValueRefusal, mcpRemoteEndpoint } from "../../domains/mcp/index.js";
 import { OPERATOR_SHELL_TIMEOUT_MS } from "../../domains/session/operator-shell.js";
 import type { McpClientServerSpec } from "../../tools/gateway/mcp-capability-types.js";
 import {

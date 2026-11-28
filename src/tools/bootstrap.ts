@@ -10,11 +10,7 @@ import type { WorkerContextSnapshot } from "../domains/context/worker/contract.j
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import { FLEET_PLACEMENT_HEADER, rememberSessionFleetNode } from "../domains/dispatch/fleet-placement-preference.js";
-import {
-	DEFAULT_KILL_GRACE_MS,
-	DEFAULT_TEARDOWN_BOUND_MS,
-	type McpElicitationHost,
-} from "../domains/gateway/mcp/index.js";
+import { DEFAULT_KILL_GRACE_MS, DEFAULT_TEARDOWN_BOUND_MS, type McpElicitationHost } from "../domains/mcp/index.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
