@@ -24,24 +24,23 @@
  *            hygiene runs it)
  *   --write  insert or correct the header in place; a second run changes nothing
  *
- * The size and line budgets read sources through stripLicenseHeader and
- * packagedHeaderBytes so the header itself never counts against them.
+ * The boundary line budgets read sources through stripLicenseHeader so the
+ * header itself never counts against them.
  */
 import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
-import { brotliCompress, brotliDecompressSync, gzipSync, constants as zlibConstants } from "node:zlib";
+import { parseArgs } from "node:util";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-export const LICENSE_ID = "LicenseRef-PanCode-1.0";
-export const COPYRIGHT_TEXT = "2026 Anthony Kougkas";
+const LICENSE_ID = "LicenseRef-PanCode-1.0";
+const COPYRIGHT_TEXT = "2026 Anthony Kougkas";
 const EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|mjs|cjs|py|sh|css)$/u;
 
 /** Files adapted from MIT-licensed code, each with the upstream notice it must keep. */
-export const ADAPTED_MIT = new Map([
+const ADAPTED_MIT = new Map([
 	["src/engine/messages.ts", "pi-coding-agent"],
 	["src/engine/prompt-templates.ts", "pi-coding-agent"],
 	["src/engine/truncate.ts", "pi-coding-agent"],
@@ -78,7 +77,7 @@ function mediaSources(base) {
 }
 
 /** Path rules that keep a file out of scope, each with its reason. */
-export const EXCLUDED = [
+const EXCLUDED = [
 	{ test: (path) => path.split("/").includes("node_modules"), reason: "installed dependency" },
 	{ test: (path) => path.startsWith("site/vendor/"), reason: "vendored third-party code" },
 	{ test: (path) => path.split("/").includes("fixtures"), reason: "test fixture, compared byte for byte" },
@@ -95,7 +94,7 @@ export const EXCLUDED = [
 ];
 
 /** Tracked files the header applies to, relative to `base`. */
-export function filesInScope(base = root) {
+function filesInScope(base = root) {
 	const media = mediaSources(base);
 	return execFileSync("git", ["ls-files", "-z"], { cwd: base, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
 		.split("\0")
@@ -115,7 +114,7 @@ function comment(style, text) {
 const SDK_LICENSE_ID = "Apache-2.0";
 
 /** The header `path` must open with. */
-export function expectedHeader(path) {
+function expectedHeader(path) {
 	const style = styleOf(path);
 	const id = path.startsWith("packages/sdk/")
 		? SDK_LICENSE_ID
@@ -131,7 +130,7 @@ const HEADER =
 	/^(?:\/\/ |# |\/\* )SPDX-License-Identifier: [^\n]*?(?: \*\/)?\n(?:\/\/ |# |\/\* )SPDX-FileCopyrightText: [^\n]*?(?: \*\/)?(?:\n|$)/u;
 
 /** Offset where the header belongs: after a shebang, a coding cookie on line 1 or 2, or a leading @charset. */
-export function headerOffset(text) {
+function headerOffset(text) {
 	const lines = text.slice(0, 4096).match(LINE) ?? [];
 	let offset = 0;
 	let index = 0;
@@ -142,7 +141,7 @@ export function headerOffset(text) {
 }
 
 /** The header's `[start, end)` byte range in `text` (UTF-16 offsets), or undefined when it has none in place. */
-export function licenseHeaderSpan(text) {
+function licenseHeaderSpan(text) {
 	const start = headerOffset(text);
 	const match = HEADER.exec(text.slice(start, start + 1024));
 	return match ? [start, start + match[0].length] : undefined;
@@ -163,7 +162,7 @@ function strayHeader(text) {
 }
 
 /** The file's text with the expected header in place, the old one (in place or stray) removed. */
-export function withLicenseHeader(path, text) {
+function withLicenseHeader(path, text) {
 	const span = licenseHeaderSpan(text) ?? strayHeader(text);
 	const body = span ? text.slice(0, span[0]) + text.slice(span[1]) : text;
 	const offset = headerOffset(body);
@@ -172,7 +171,7 @@ export function withLicenseHeader(path, text) {
 }
 
 /** One problem per file in scope whose header is missing, wrong or out of place, plus map entries gone stale. */
-export function headerProblems(base = root) {
+function headerProblems(base = root) {
 	const files = filesInScope(base);
 	const scope = new Set(files);
 	const problems = [];
@@ -190,86 +189,6 @@ export function headerProblems(base = root) {
 		} else problems.push(`${path}: ${strayHeader(text) ? "header out of place" : "no license header"}`);
 	}
 	return { files, problems };
-}
-
-const brotli = promisify(brotliCompress);
-
-/** Reads the start of a file, enough to hold a shebang and the header. */
-function readHead(file) {
-	const fd = openSync(file, "r");
-	try {
-		const buffer = Buffer.alloc(4096);
-		return buffer.toString("utf8", 0, readSync(fd, buffer, 0, buffer.length, 0));
-	} catch {
-		return "";
-	} finally {
-		closeSync(fd);
-	}
-}
-
-/**
- * Bytes the license headers add to a package, so the size budgets can leave them out. `files` is
- * the npm pack report's list; `packageRoot` holds the same paths. A loose file is credited its raw
- * header bytes. The source pack is credited, per member, the brotli bytes its header costs: the
- * member is decompressed, stripped and recompressed with build-source-pack's encoder settings
- * (the pack index's size digits stay counted).
- * The tarball credit adds the source-pack credit to each loose file's gzip delta compressed on its
- * own, an approximation of what the header costs inside the tarball's single gzip stream.
- *
- * Returns `discounts` (path to unpacked bytes, the shape classifySizes takes), `unpacked` (their
- * sum) and `tarball`.
- */
-export async function packagedHeaderBytes(packageRoot, files, { sourcePack } = {}) {
-	const discounts = new Map();
-	let tarball = 0;
-	for (const { path } of files) {
-		if (path === sourcePack) {
-			const credit = await sourcePackHeaderBytes(join(packageRoot, path));
-			if (credit > 0) discounts.set(path, credit);
-			tarball += credit;
-			continue;
-		}
-		if (!EXTENSIONS.test(path)) continue;
-		const file = join(packageRoot, path);
-		if (!existsSync(file)) continue;
-		const head = readHead(file);
-		const span = licenseHeaderSpan(head);
-		if (!span) continue;
-		const bytes = Buffer.byteLength(head.slice(span[0], span[1]));
-		discounts.set(path, bytes);
-		const text = readFileSync(file);
-		tarball += Math.max(
-			0,
-			gzipSync(text).length - gzipSync(Buffer.from(stripLicenseHeader(text.toString("utf8")))).length,
-		);
-	}
-	const unpacked = [...discounts.values()].reduce((total, bytes) => total + bytes, 0);
-	return { discounts, unpacked, tarball };
-}
-
-/** The brotli bytes the headers of the source pack's members take, measured against build-source-pack's encoding. */
-async function sourcePackHeaderBytes(packFile) {
-	const bytes = readFileSync(packFile);
-	if (bytes.toString("latin1", 0, 8) !== "PANSRC01") throw new Error(`not a source pack: ${packFile}`);
-	const indexLength = bytes.readUInt32LE(8);
-	const index = JSON.parse(bytes.toString("utf8", 12, 12 + indexLength));
-	const base = 12 + indexLength;
-	const credits = await Promise.all(
-		index.files.map(async (entry) => {
-			const blob = bytes.subarray(base + entry.offset, base + entry.offset + entry.length);
-			const text = brotliDecompressSync(blob).toString("utf8");
-			if (!licenseHeaderSpan(text)) return 0;
-			const stripped = Buffer.from(stripLicenseHeader(text));
-			const recompressed = await brotli(stripped, {
-				params: {
-					[zlibConstants.BROTLI_PARAM_QUALITY]: 11,
-					[zlibConstants.BROTLI_PARAM_SIZE_HINT]: stripped.length,
-				},
-			});
-			return Math.max(0, blob.length - recompressed.length);
-		}),
-	);
-	return credits.reduce((total, credit) => total + credit, 0);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
