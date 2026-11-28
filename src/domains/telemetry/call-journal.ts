@@ -5,10 +5,11 @@ import type { Hash } from "node:crypto";
 import { createHash } from "node:crypto";
 import { constants, existsSync, readdirSync, readFileSync } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import { mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
+import { open, readdir, readFile, rename, rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
+import { makeDirectory } from "../../core/make-directory.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { processBirthToken } from "../../core/process-identity.js";
 import { safeResourceWrite, safeResourceWriteAsync } from "../../core/safe-resource-write.js";
@@ -266,7 +267,7 @@ export function seedForkCallJournal(
 /** One lease for the writer's lifetime, adjudicated by host, pid and birth token (#434). */
 export async function openCallJournal(options: CallJournalOptions): Promise<CallJournal> {
 	const path = telemetryJournalPath(options.directory);
-	await mkdir(dirname(path), { recursive: true });
+	await makeDirectory(dirname(path));
 	// Settled attempts carry their economics from the journal that first receives them (token economy S8).
 	const economy = await import("./economy-settlement.js");
 	let ready!: (journal: CallJournal) => void;
