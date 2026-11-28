@@ -48,6 +48,8 @@ export type SandboxPlanFacts = Omit<SandboxLaunchFacts, "launcher" | "integratio
 export interface SandboxLaunchLabel {
 	launcher: SandboxLauncher;
 	integration?: string;
+	/** Why the integration's own policy confined it; kept only when the plan did confine it. */
+	why?: SandboxLaunchWhy;
 }
 
 /** A plan's facts under the seam's own launcher, or the label its caller passed. */
@@ -66,6 +68,7 @@ export function labelLaunch(facts: SandboxLaunchFacts, label: SandboxLaunchLabel
 		...rest,
 		launcher: label.launcher,
 		...(label.integration !== undefined ? { integration: label.integration } : {}),
+		...(label.why !== undefined && rest.confinement === "sandboxed" ? { why: label.why } : {}),
 	};
 }
 

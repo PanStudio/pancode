@@ -75,7 +75,8 @@ export type SandboxConfinement = (typeof SANDBOX_CONFINEMENTS)[number];
  * Why a launch has its confinement. Sandboxed: the main session's policy, the worker's spec, an operator's opt-in to
  * confine the integration (`safety.confine`), or a launcher confined by default. Unconfined: the operator let this
  * caller run without a backend, the integration is not opted in to confinement, `safety.sandbox` is off, or no
- * backend answered. Host: the operator's own authority.
+ * backend answered. Host: the operator's own authority. `read-admitted`: a main-session read tool (grep, find) runs
+ * on the host, and read admission checks every path it reads.
  */
 export const SANDBOX_LAUNCH_WHYS = [
 	"main-policy",
@@ -87,6 +88,7 @@ export const SANDBOX_LAUNCH_WHYS = [
 	"sandbox-off",
 	"no-backend",
 	"operator-authority",
+	"read-admitted",
 ] as const;
 export type SandboxLaunchWhy = (typeof SANDBOX_LAUNCH_WHYS)[number];
 
