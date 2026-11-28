@@ -11,7 +11,7 @@ import {
 	type ArenaVoteRequest,
 } from "../../contracts/arena.js";
 import { runPancodeCommand, stopPancodeCommand } from "../process-policy.js";
-import { arenaPackProblem, type CliRunner } from "./cli-runner.js";
+import { type CliRunner, packProblem } from "./cli-runner.js";
 import { fingerprint, type OperationRegistry } from "./operations.js";
 import { AppProblem } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
@@ -187,7 +187,7 @@ export class ArenaService {
 					return;
 				}
 				if (code === 2) {
-					const pack = arenaPackProblem(stderrHead);
+					const pack = packProblem("arena", stderrHead);
 					if (pack) {
 						reject(pack);
 						return;

@@ -84,7 +84,6 @@ const DEFAULT_ACTION_GROUPS = new Set([
 	"agents",
 	"tasks",
 	"claims",
-	"research",
 	"components",
 	"semantic",
 	"auth",
@@ -98,19 +97,9 @@ const EXEMPT: Readonly<Record<string, string>> = {
 	worker: "private wire entry: WorkerSpec on stdin, NDJSON on stdout",
 };
 
-const LONG_RUNNING = new Set([
-	"acp",
-	"gui",
-	"run",
-	"worker",
-	"research start",
-	"research resume",
-	"fleet run",
-	"fleet wait",
-	"fleet events",
-]);
+const LONG_RUNNING = new Set(["acp", "gui", "run", "worker", "fleet run", "fleet wait", "fleet events"]);
 
-const MODEL_WORK = new Set(["run", "acp", "research start", "research resume", "fleet run"]);
+const MODEL_WORK = new Set(["run", "acp", "fleet run"]);
 const READ_VERBS = new Set([
 	"list",
 	"show",

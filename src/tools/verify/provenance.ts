@@ -6,6 +6,7 @@ import { stat } from "node:fs/promises";
 import { sha256Hex } from "../../core/hash.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import type { MainSandboxPolicy } from "../../core/sandbox/main-session.js";
+import type { ResourceLimits } from "../../core/sandbox/types.js";
 import type { JudgedInputRecord, ProvenanceProbeRecord } from "./numeric.js";
 
 /**
@@ -69,7 +70,13 @@ export async function judgedInputDrift(
 /** Run each probe once, in the check's directory and sandbox, and record what it printed. */
 export async function runProvenanceProbes(
 	probes: ReadonlyArray<ReadonlyArray<string>>,
-	options: { cwd: string; workspaceRoot: string; shellSandbox?: MainSandboxPolicy; signal?: AbortSignal },
+	options: {
+		cwd: string;
+		workspaceRoot: string;
+		shellSandbox?: MainSandboxPolicy;
+		resourceLimits?: ResourceLimits;
+		signal?: AbortSignal;
+	},
 ): Promise<ProvenanceProbeRecord[]> {
 	const records: ProvenanceProbeRecord[] = [];
 	for (const probe of probes) {
@@ -84,6 +91,7 @@ export async function runProvenanceProbes(
 				maxOutputBytes: PROBE_MAX_OUTPUT_BYTES,
 				...(options.signal !== undefined ? { signal: options.signal } : {}),
 				...(options.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+				...(options.resourceLimits !== undefined ? { resourceLimits: options.resourceLimits } : {}),
 			});
 			const output = `${result.stdout}${result.stderr}`;
 			const line = output

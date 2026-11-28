@@ -30,6 +30,8 @@ export interface RunEnvPolicy {
 	}>;
 	/** The operator's `safety.sandboxPassEnv`: names their own runs already hand to commands. */
 	passEnv: ReadonlyArray<string>;
+	/** The target a run that names none resolves to (`chat.target`), whose credentials it then needs. */
+	defaultTarget?: string | null;
 }
 
 const BASE_NAMES = [

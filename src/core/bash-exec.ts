@@ -20,12 +20,27 @@ import {
 	launchFacts,
 	type SandboxLaunchLabel,
 	type SandboxLaunchRecord,
+	type SandboxLaunchSettlement,
 	sandboxLaunch,
 	writeDeniedHint,
 } from "./sandbox/launch-record.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn, sandboxWriteRefused } from "./sandbox/main-session.js";
+import {
+	forgetResourceScope,
+	invalidateResourceCapabilityCache,
+	killLiveResourceScopes,
+	launchResourceLimits,
+	launchResourceRefusal,
+	planResourceScope,
+	type ResourceScopeSettlement,
+	resourceLimitNote,
+	scopeLaunchFailure,
+	scopeLaunchFailureMessage,
+	settleResourceScope,
+	watchResourceScopeLeader,
+} from "./sandbox/resource-limits.js";
 import { signalSandboxPayload } from "./sandbox/signal.js";
-import type { SandboxEnvPolicy } from "./sandbox/types.js";
+import type { ResourceLimits, SandboxEnvPolicy } from "./sandbox/types.js";
 import { planSandboxedSpawn } from "./sandbox/worker-process.js";
 import { clampTimerDelayMs } from "./timers.js";
 import { applyToolEnvControls, GENERATED_TOOL_ENV_KEYS } from "./tool-env-controls.js";
@@ -61,6 +76,8 @@ export interface BashCommandResult extends Partial<BashStreamByteCounts> {
 	 * when the deadline had already passed before spawn, and then the command never started.
 	 */
 	timeoutLimit?: BashTimeoutLimit;
+	/** A resource ceiling that ended the command (`safety.resources`), as one line for the tool result. */
+	resourceNote?: string;
 	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
 	egress?: EgressReport;
 	/** What the sandbox policy decided for this launch and how it settled; absent when no policy applied. */
@@ -107,6 +124,8 @@ interface RunBashCommandOptions {
 	 * `/proc` shows it, no CPU in the shell's process tree. Absent or 0 is off (FX-32).
 	 */
 	idleMs?: number;
+	/** The main session's `safety.resources.main` ceilings for an agent command; a worker's come from its spec. */
+	resourceLimits?: ResourceLimits;
 }
 
 type BashOutputListener = (target: "stdout" | "stderr", text: string) => void;
@@ -599,6 +618,8 @@ export function killLiveCommandGroups(): void {
 		}
 	}
 	liveCommandGroups.clear();
+	// A limited command's scope also holds what it moved out of its group.
+	killLiveResourceScopes();
 }
 
 export async function runBashCommand(command: string, options: RunBashCommandOptions = {}): Promise<BashCommandResult> {
@@ -612,6 +633,10 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 	// verification receipts cannot report success merely because the filter
 	// succeeded. A caller can explicitly opt out with `set +o pipefail`.
 	const shellArgv = [shell, "-o", "pipefail", plan.mode, command];
+	// A set resource ceiling this host cannot enforce refuses before the sandbox is planned (D13).
+	const resourceLaunch = launchResourceLimits(options.resourceLimits);
+	const resourceRefusal = launchResourceRefusal(resourceLaunch);
+	if (resourceRefusal !== null) return notSpawnedResult(resourceRefusal);
 	// Inside a dispatched worker the command runs under the worker's OS
 	// sandbox (decision Q8), and a contained main-session call runs under the
 	// main-session sandbox; everywhere else the plan is a
@@ -626,10 +651,11 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		containedPlan ?? planSandboxedSpawn({ argv: shellArgv }, options.cwd ?? process.cwd(), [], { bridge: true });
 	const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "shell", options.launchLabel);
 	const launch = sandboxLaunch(facts);
-	if (sandbox.kind === "refused") {
+	const refused = (message: string): BashCommandResult => {
 		const record = launch.settle({ outcome: "refused" });
-		return { ...notSpawnedResult(sandbox.message), ...(record !== undefined ? { sandbox: record } : {}) };
-	}
+		return { ...notSpawnedResult(message), ...(record !== undefined ? { sandbox: record } : {}) };
+	};
+	if (sandbox.kind === "refused") return refused(sandbox.message);
 	const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
 	// A sandboxed command reaches the network without a judgment, so its
 	// environment loses every credential variable before the sandbox starts;
@@ -643,9 +669,55 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		enabled: gitCommitAttributionEnabled(process.env),
 	});
 	reportCommitAttributionDiagnostic(attribution.diagnostic);
-	const spawnFile = sandbox.kind === "sandboxed" ? sandbox.file : shell;
-	const spawnArgs = sandbox.kind === "sandboxed" ? sandbox.args : shellArgv.slice(1);
-	return new Promise<BashCommandResult>((resolve) => {
+	const plannedFile = sandbox.kind === "sandboxed" ? sandbox.file : shell;
+	const plannedArgs = sandbox.kind === "sandboxed" ? sandbox.args : shellArgv.slice(1);
+	// A limited command starts in its own systemd scope, which execs the planned launch in place.
+	const resources = planResourceScope(resourceLaunch, { file: plannedFile, args: plannedArgs, env: attribution.env });
+	if (resources.kind === "refused") {
+		if (sandbox.kind === "sandboxed") sandbox.afterExit();
+		return refused(resources.message);
+	}
+	const scope = resources.kind === "scoped" ? resources.scope : null;
+	const spawnFile = scope?.file ?? plannedFile;
+	const spawnArgs = scope?.args ?? plannedArgs;
+	return new Promise<BashCommandResult>((deliver) => {
+		// The scope is settled once the leader exits, which also ends what the command left running; the result
+		// waits for it and carries what a ceiling did.
+		let settling: Promise<ResourceScopeSettlement> | null = null;
+		const settleScope = (): Promise<ResourceScopeSettlement> | null => {
+			if (scope === null) return null;
+			settling ??= settleResourceScope(scope);
+			return settling;
+		};
+		// The record settles where the result is delivered, after a resource scope has said whether the launch happened.
+		let settledLaunch: SandboxLaunchSettlement | null = null;
+		const withRecord = (result: BashCommandResult, settled: SandboxLaunchSettlement | null): BashCommandResult => {
+			const record = settled === null ? undefined : launch.settle(settled);
+			return record === undefined ? result : { ...result, sandbox: record };
+		};
+		const resolve = (result: BashCommandResult): void => {
+			const pending = settleScope();
+			if (pending === null || scope === null) {
+				deliver(withRecord(result, settledLaunch));
+				return;
+			}
+			void pending.then((settlement) => {
+				const failure = settlement.launchUnconfirmed
+					? scopeLaunchFailure({
+							exitCode: result.exitCode,
+							stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+							stderr: result.stderr,
+						})
+					: null;
+				if (failure !== null) {
+					invalidateResourceCapabilityCache();
+					deliver(withRecord(notSpawnedResult(scopeLaunchFailureMessage(scope, failure)), { outcome: "launch-failed" }));
+					return;
+				}
+				const note = resourceLimitNote(scope, settlement);
+				deliver(withRecord(note === null ? result : { ...result, resourceNote: note }, settledLaunch));
+			});
+		};
 		const timeout = clampTimerDelayMs(options.timeoutMs ?? 300_000);
 		let aborted = false;
 		let timedOut = false;
@@ -659,14 +731,15 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		let pendingClose: (() => void) | null = null;
 		// Checked immediately before spawn: a run deadline spent by preparation starts no command (XR-12).
 		if (armedTimeoutLimit(timeout, options.deadlineAt)?.ms === 0) {
-			resolve(deadlinePassedResult());
+			if (scope !== null) forgetResourceScope(scope);
+			deliver(deadlinePassedResult());
 			return;
 		}
 		const output = createBashOutputProgressController(options.onUpdate, undefined, options.onOutput);
 
 		const child = spawn(spawnFile, spawnArgs, {
 			...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-			env: attribution.env,
+			env: scope?.env ?? attribution.env,
 			detached: process.platform !== "win32",
 			stdio: egressPlan === undefined ? ["ignore", "pipe", "pipe"] : egressStdio(["ignore", "pipe", "pipe"]),
 		});
@@ -676,15 +749,15 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			code: number | null,
 			outcome: "ran" | "launch-failed",
 			output: () => string,
-		): { egress?: EgressReport; sandbox?: SandboxLaunchRecord } => {
+		): { egress?: EgressReport } => {
 			const report = egress === null ? undefined : egress.report(code);
-			const record = launch.settle({
+			settledLaunch = {
 				outcome,
 				exitCode: code,
 				...(report !== undefined ? { egress: report } : {}),
 				hint: outcome === "ran" ? writeDeniedHint(facts, code, output, sandboxWriteRefused) : null,
-			});
-			return { ...(report !== undefined ? { egress: report } : {}), ...(record !== undefined ? { sandbox: record } : {}) };
+			};
+			return report !== undefined ? { egress: report } : {};
 		};
 		if (child.pid !== undefined) options.onSpawn?.(child.pid);
 		const groupId = process.platform !== "win32" ? child.pid : undefined;
@@ -696,6 +769,10 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		// The sandbox removes git config and commondir files its command planted, and the mount points of absent
 		// startup paths, once the sandbox is gone, before the result resolves (#419).
 		if (sandbox.kind === "sandboxed") child.once("exit", sandbox.afterExit);
+		if (scope !== null) {
+			watchResourceScopeLeader(scope, child.pid);
+			child.once("exit", () => void settleScope());
+		}
 
 		output.start();
 
@@ -846,6 +923,15 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			egress?.close();
 			const finalOutput = output.settle();
 			options.signal?.removeEventListener("abort", onAbort);
+			if (scope !== null) {
+				forgetResourceScope(scope);
+				invalidateResourceCapabilityCache();
+				if (sandbox.kind === "sandboxed") sandbox.afterExit();
+				deliver(
+					withRecord(notSpawnedResult(scopeLaunchFailureMessage(scope, error.message)), { outcome: "launch-failed" }),
+				);
+				return;
+			}
 			resolveAfterCancellation({
 				error: error as NodeJS.ErrnoException,
 				...finalOutput,

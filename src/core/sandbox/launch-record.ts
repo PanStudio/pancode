@@ -133,16 +133,16 @@ export function tallySandboxLaunch(tally: SandboxLaunchTally, record: SandboxLau
 	tally.dropped += (record.dropped ?? 0) + (record.shed ?? 0);
 }
 
+/** How an exec seam saw one launch end: its outcome, and for a launch that ran, its exit, network and hint. */
+export interface SandboxLaunchSettlement {
+	outcome: SandboxLaunchOutcome;
+	exitCode?: number | null;
+	egress?: EgressReport;
+	hint?: SandboxLaunchHint | null;
+}
+
 /** The record of one settled launch. A proxied launch that ran lists its origins; any other network was not observed. */
-export function sandboxLaunchRecord(
-	facts: SandboxLaunchFacts,
-	settled: {
-		outcome: SandboxLaunchOutcome;
-		exitCode?: number | null;
-		egress?: EgressReport;
-		hint?: SandboxLaunchHint | null;
-	},
-): SandboxLaunchRecord {
+export function sandboxLaunchRecord(facts: SandboxLaunchFacts, settled: SandboxLaunchSettlement): SandboxLaunchRecord {
 	const egress = settled.egress;
 	const outcome: SandboxLaunchOutcome = egress?.setupFailed === true ? "launch-failed" : settled.outcome;
 	const observed = facts.network === "proxied" && facts.confinement === "sandboxed" && outcome === "ran";
@@ -183,7 +183,7 @@ function recordSandboxLaunch(record: SandboxLaunchRecord, ctx: TelemetryContext 
  * time, and returned for the result. Absent facts (no policy decided the launch) record nothing.
  */
 export function sandboxLaunch(facts: SandboxLaunchFacts | undefined): {
-	settle(settled: Parameters<typeof sandboxLaunchRecord>[1]): SandboxLaunchRecord | undefined;
+	settle(settled: SandboxLaunchSettlement): SandboxLaunchRecord | undefined;
 } {
 	const ctx = facts === undefined ? undefined : telemetryContext();
 	let record: SandboxLaunchRecord | undefined;
