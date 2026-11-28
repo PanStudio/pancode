@@ -6,6 +6,7 @@ import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerEgressMode, workerMcpNoNetworkNotice } from "../../core/sandbox/worker-policy.js";
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
 import { toolPromptHintsForNames } from "../../tools/builtin-tool-catalog.js";
+import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import { agentHasTrait } from "../agents/spec.js";
 import { workerHandbookAudience } from "../context/handbook-units.js";
 import {
@@ -182,6 +183,7 @@ export function createLifecycleResolver(rt: DispatchRuntime) {
 		placement: FleetPlacementPreview,
 		metadataDeadlineAt: number,
 		signal?: AbortSignal,
+		checkoutRoot?: CheckoutRootLookup,
 	): Promise<DispatchLifecycleStage> {
 		const recipe = agents.get(req.agentId);
 		if (!recipe) {
@@ -272,6 +274,7 @@ export function createLifecycleResolver(rt: DispatchRuntime) {
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
 			placement,
+			...(checkoutRoot === undefined ? {} : { checkoutRoot }),
 		});
 		const { envelope, permit, readOnly, judgeWithheld } = stage;
 		if (envelope.write.mode === "worktree" && req.taskWorktree === undefined)

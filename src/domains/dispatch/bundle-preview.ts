@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { sha256Hex } from "../../core/hash.js";
 import { UnsupportedResponseSchemaError } from "../../core/response-schema.js";
 import type { ToolName } from "../../core/tool-names.js";
+import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import { WORKER_EXTENSION_HOOKS_MAX } from "../../worker/protocol.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import {
@@ -237,8 +238,9 @@ export function createRoutePreview(rt: DispatchRuntime) {
 	function previewFixed(
 		req: DispatchRequest,
 		settings: EffectiveSettings = getEffectiveSettings(),
+		checkoutRoot?: CheckoutRootLookup,
 	): DispatchPlanTaskResolution {
-		return previewFixedStages(req, settings).resolution;
+		return previewFixedStages(req, settings, checkoutRoot).resolution;
 	}
 
 	/**
@@ -250,6 +252,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 	function previewFixedStages(
 		req: DispatchRequest,
 		settings: EffectiveSettings,
+		checkoutRoot?: CheckoutRootLookup,
 	): {
 		resolution: DispatchPlanTaskResolution;
 		grants: DispatchDerivedGrants | null;
@@ -329,6 +332,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
 			placement,
+			...(checkoutRoot === undefined ? {} : { checkoutRoot }),
 		});
 		const effectiveTools = stage.tools;
 		const previewPermit = stage.permit;

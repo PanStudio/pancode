@@ -16,7 +16,7 @@ import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import { type AutonomyLevel, admissionAutonomy, effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 import { networkToolsDisabled } from "../../tools/network-policy.js";
 import { runtimeAttachesGateway } from "../../tools/surface.js";
-import { gitCheckoutRoot } from "../../tools/task-worktree.js";
+import { type CheckoutRootLookup, gitCheckoutRoot } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import { INTERNAL_HELPER_RESULT_KINDS } from "../agents/result-contract.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
@@ -93,6 +93,8 @@ export function writeModeInput(input: {
 	target: ResolvedTarget;
 	settings: EffectiveSettings;
 	placement: FleetPlacementPreview;
+	/** The admission's checkout reader; a lone call reads git itself. */
+	checkoutRoot?: CheckoutRootLookup;
 }): Parameters<typeof resolveWriteMode>[0] {
 	const { req } = input;
 	const hoare = isHoareResultContract(dispatchResultContract(req, input.recipe));
@@ -108,7 +110,7 @@ export function writeModeInput(input: {
 		worktree: req.taskWorktree !== undefined || req.worktree === true,
 		confinesWrites: placementSandboxFacts(input.target.runtime.kind, input.settings, input.placement, hoare, network)
 			.confinesWrites,
-		gitCheckout: gitCheckoutRoot(resolvePath(req.cwd ?? process.cwd())) !== null,
+		gitCheckout: (input.checkoutRoot ?? gitCheckoutRoot)(resolvePath(req.cwd ?? process.cwd())) !== null,
 		scopeEnforcement: runtimeEnforcement(input.target.runtime).scopeEnforcement,
 	};
 }
@@ -125,6 +127,8 @@ export function resolveDispatchEnvelopeStage(input: {
 	pathScope: DispatchPathScope;
 	judgeSeated: boolean;
 	placement: FleetPlacementPreview;
+	/** The admission's checkout reader; a lone call reads git itself. */
+	checkoutRoot?: CheckoutRootLookup;
 }): DispatchEnvelopeStage {
 	const { req, recipe, spec, admission, target, pathScope } = input;
 	const settings = input.liveSettings;
@@ -152,7 +156,7 @@ export function resolveDispatchEnvelopeStage(input: {
 		roots: writeNone ? [] : pathScope.writeBoundaries,
 		worktree: req.taskWorktree !== undefined || req.worktree === true,
 		confinesWrites,
-		gitCheckout: gitCheckoutRoot(resolvePath(req.cwd ?? process.cwd())) !== null,
+		gitCheckout: (input.checkoutRoot ?? gitCheckoutRoot)(resolvePath(req.cwd ?? process.cwd())) !== null,
 		scopeEnforcement: runtimeEnforcement(target.runtime).scopeEnforcement,
 	};
 	const mode = resolveWriteMode(facts);

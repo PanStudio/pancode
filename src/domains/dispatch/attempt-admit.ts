@@ -200,7 +200,7 @@ export async function admitAttemptRoute(rt: DispatchRuntime, attempt: OpenedAtte
 	} = rt.core;
 	const { options } = rt;
 	let req = attempt.req;
-	const { activeRouteObservation, preparation, probeClaims, requestedAt, settings, timing } = attempt;
+	const { activeRouteObservation, checkoutRoot, preparation, probeClaims, requestedAt, settings, timing } = attempt;
 
 	req =
 		routeAroundCoolingTarget(
@@ -225,6 +225,7 @@ export async function admitAttemptRoute(rt: DispatchRuntime, attempt: OpenedAtte
 		admittedPlacement,
 		metadataDeadlineAt,
 		preparation?.signal,
+		checkoutRoot,
 	);
 	preparation?.signal?.throwIfAborted();
 	assertResponseSchemaEnforceable(
@@ -320,9 +321,9 @@ export async function admitAttemptRoute(rt: DispatchRuntime, attempt: OpenedAtte
 		actual: () => {
 			const role: RouteRoleInput = { executionRole: withAttemptRole(req.executionRole, req.lineage?.attempt ?? 0) };
 			if (req.systemPrompt !== undefined) role.personaPrompt = req.systemPrompt;
-			return toRouteCandidate({ ...rt.preview.previewFixed(req, settings), nodeId: placed.id }, role);
+			return toRouteCandidate({ ...rt.preview.previewFixed(req, settings, checkoutRoot), nodeId: placed.id }, role);
 		},
-		shadow: () => rt.route.observeShadowRoute(req, placed, settings),
+		shadow: () => rt.route.observeShadowRoute(req, placed, settings, checkoutRoot),
 	});
 
 	if (req.contextSeed) persistWorkerContextSeed(req.contextSeed);
