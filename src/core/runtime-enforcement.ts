@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { RuntimeDescriptor, RuntimeEnforcement } from "./types/runtime-descriptor.js";
+import type { RuntimeDescriptor, RuntimeEnforcement } from "../domains/providers/types/runtime-descriptor.js";
 
 /**
  * Enforcement a runtime can honor for a worker permit (Codex review F10,

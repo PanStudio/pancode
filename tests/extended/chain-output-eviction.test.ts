@@ -15,8 +15,8 @@ import { structuralV2Policy } from "../../src/domains/context/working-set/polici
 import { projectWorkingSet } from "../../src/domains/context/working-set/project.js";
 import { isProtected } from "../../src/domains/context/working-set/protect.js";
 import { resolveRecall } from "../../src/domains/context/working-set/recall.js";
+import { captureSkillContext } from "../../src/domains/memory/compaction/compact.js";
 import { createRunEffectsRecorder, recordToolExecutionEffects } from "../../src/domains/safety/run-effects.js";
-import { captureSkillContext } from "../../src/domains/session/compaction/compact.js";
 import { type SessionEntry, SKILL_CONTEXT_STATE, type SkillContextState } from "../../src/domains/session/entries.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";

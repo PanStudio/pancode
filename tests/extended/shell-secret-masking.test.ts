@@ -3,8 +3,8 @@
 import { doesNotMatch, ok, strictEqual } from "node:assert/strict";
 import { afterEach, it } from "node:test";
 import { rememberResolvedSecret } from "../../src/core/sandbox/env-scrub.js";
-import { CommandOutputMask } from "../../src/domains/evidence/output-mask.js";
 import { runOperatorShellLine } from "../../src/domains/session/operator-shell.js";
+import { CommandOutputMask } from "../../src/lib/output-mask/output-mask.js";
 import { bashTool } from "../../src/tools/bash.js";
 
 /**

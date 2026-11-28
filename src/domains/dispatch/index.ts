@@ -26,6 +26,13 @@ export {
 } from "./fleet-tool-install.js";
 export { gateTopology } from "./gate-topology.js";
 export { DISPATCH_INTENT_PATH_LIST_CAP, declaredScopeIntent } from "./intent.js";
+export {
+	batchesCollectedElsewhere,
+	collectedElsewhereLine,
+	type DetachedBatchNudgeView,
+	openDetachedBatchViews,
+} from "./nudges/dispatch-nudge.js";
+export { createExplorationNudgeRegistrations, SCOUT_NUDGE_REGISTRATION_ID } from "./nudges/scout-nudge.js";
 export type { RecordingReference } from "./recording.js";
 export { readRunRecording } from "./recording.js";
 export { runUsageFromCallRecords } from "./run-call-usage.js";

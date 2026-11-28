@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall } from "../../core/tool-surface.js";
+import { turnCanCallTool } from "../../core/turn-constraints.js";
 import type { MiddlewareHookEvaluationContext, MiddlewareHookRegistration } from "./runtime.js";
-import { type MiddlewareEffect, type MiddlewareHookInput, metadataNumber, turnCanCallTool } from "./types.js";
+import { type MiddlewareEffect, type MiddlewareHookInput, metadataNumber } from "./types.js";
 
 /**
  * No-progress read streak (exploration design 3.1-3.3, X2).

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { isPlanCloseQuestion, isPlanOnlyRequest } from "../../core/plan-request.js";
-import { ToolNames } from "../../core/tool-names.js";
-import { dispatchMutatedParentWorkspace } from "../dispatch/workspace-mutation.js";
-import type { MiddlewareHookRegistration } from "./runtime.js";
-import { turnCanCallTool } from "./types.js";
+import { isPlanCloseQuestion, isPlanOnlyRequest } from "../../../core/plan-request.js";
+import { ToolNames } from "../../../core/tool-names.js";
+import { turnCanCallTool } from "../../../core/turn-constraints.js";
+import type { MiddlewareHookRegistration } from "../../middleware/index.js";
+import { dispatchMutatedParentWorkspace } from "../workspace-mutation.js";
 
 // Pasted documents are evidence, not operator intent (#431).
 const PLAN_REQUEST = /\bplan(?:s|ning)?\b/iu;

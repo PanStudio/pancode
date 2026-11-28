@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createStaleEditGuardRegistration } from "../../src/domains/session/compaction/stale-edit-guard.js";
+import { createStaleEditGuardRegistration } from "../../src/domains/memory/compaction/stale-edit-guard.js";
 import type { MessageEntry, SessionEntry } from "../../src/domains/session/entries.js";
 
 const cwd = "/work";

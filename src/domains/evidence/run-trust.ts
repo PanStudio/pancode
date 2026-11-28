@@ -8,11 +8,11 @@
  * so the two projections of one run cannot disagree on its trust.
  */
 
+import { compareCodepoints } from "../../core/ordering.js";
 import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import { readSealedScopeRecords } from "../telemetry/run-record.js";
 import { telemetryScopeOf } from "../telemetry/seal.js";
-import { compareCodepoints } from "./ordering.js";
 import {
 	adaptGateDecisionReviewStatus,
 	type CanonicalTrustStatus,

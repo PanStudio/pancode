@@ -165,7 +165,6 @@ export interface RunApprovedSelfUpgradeOptions {
 	plan: Extract<SelfUpgradePlan, { status: "available" }>;
 	signal?: AbortSignal;
 	cwd?: string;
-	spawnProcess?: typeof spawn;
 }
 
 function lastNonemptyLine(text: string): string {
@@ -192,9 +191,8 @@ export async function runApprovedSelfUpgrade(
 		throw new Error("automatic replacement is available only for an identified npm global or install.sh installation");
 	}
 	signal?.throwIfAborted();
-	const spawnProcess = options.spawnProcess ?? spawn;
 	const output = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-		const child = spawnProcess(
+		const child = spawn(
 			process.execPath,
 			[plan.installation.entry, "upgrade", "--json", `--channel=${upgradeChannel(plan.installation)}`],
 			{

@@ -16,15 +16,15 @@ import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { FactSum } from "../../src/core/telemetry/fact.js";
 import { newRecordId } from "../../src/core/telemetry/ids.js";
-import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
-import { encodeTelemetryLine } from "../../src/core/telemetry/segment.js";
-import { callJournalHeader, openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import {
 	telemetryJournalFiles,
 	telemetryJournalPath,
 	telemetryProcessDirectory,
 	telemetrySessionDirectory,
-} from "../../src/domains/telemetry/paths.js";
+} from "../../src/core/telemetry/paths.js";
+import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
+import { encodeTelemetryLine } from "../../src/core/telemetry/segment.js";
+import { callJournalHeader, openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { callsReport, sessionTelemetry } from "../../src/domains/telemetry/read-model-reports.js";
 import {
 	loadSessionTelemetrySource,

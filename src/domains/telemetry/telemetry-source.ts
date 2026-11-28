@@ -16,9 +16,6 @@ import {
 	withinStateRootAsync,
 } from "../../core/state-boundary.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
-import { isRecord } from "../../core/type-guards.js";
-import type { CallJournalRead } from "./call-journal.js";
-import { readCallJournal, readCallJournalSync } from "./call-journal.js";
 import {
 	isTelemetryJournalFile,
 	telemetryJournalFiles,
@@ -29,7 +26,10 @@ import {
 	telemetryRunsDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+import { isRecord } from "../../core/type-guards.js";
+import type { CallJournalRead } from "./call-journal.js";
+import { readCallJournal, readCallJournalSync } from "./call-journal.js";
 import type { JournalSource, ProcessIdentity, SessionSource } from "./read-model-sources.js";
 import { journalSourceFromRead, sessionAccountQuotaWindow, withSettledCalls } from "./read-model-sources.js";
 import type { TelemetryScopeFiles } from "./seal.js";

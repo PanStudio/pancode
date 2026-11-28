@@ -10,7 +10,7 @@
  *
  * `Intl.DateTimeFormat` resolves its zone at construction and never re-reads it,
  * so a formatter built at module load would ignore a later `process.env.TZ`
- * mutation. Tests do mutate it (tests/contracts/memory-overlay.test.ts:102). The
+ * mutation. Tests do mutate it (`tests/contracts/operator-local-date.test.ts`). The
  * formatters therefore live at module scope, built on first use, and are rebuilt
  * only when the env var no longer matches the zone they were built for. The steady
  * state is one string comparison per call, not one `Intl` construction per call.

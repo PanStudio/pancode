@@ -4,6 +4,7 @@ import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import type { RunSettled } from "../../core/telemetry/run-schemas.js";
 import {
+	OBSERVED_COMMAND_PREFIX,
 	TRUST_ABSENCE_REASONS,
 	TRUST_ARTIFACT_KINDS,
 	TRUST_STATUS_AUTHORITY_KINDS,
@@ -15,7 +16,6 @@ import {
 import { isRecord } from "../../core/type-guards.js";
 import { parseWorkerContextProvenance } from "../../lib/worker-wire/context-seed.js";
 import type { GateDecisionVerification } from "../dispatch/gate-decisions.js";
-import { OBSERVED_COMMAND_PREFIX } from "../dispatch/run-findings.js";
 import type { RunBriefingProvenance, RunProjectContextProvenance, RunResult } from "../dispatch/types.js";
 import type { SealVerdict } from "../telemetry/seal.js";
 import { describeSealMismatch } from "../telemetry/seal.js";

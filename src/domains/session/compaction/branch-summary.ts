@@ -270,11 +270,12 @@ export function serializeConversation(
  * Skeletons of the code reads among `entries` whose body is longer than `minChars`, keyed by tool-result turn id, for
  * `serializeConversation`'s `skeletons`. A read is a `read` call, direct or through the gateway, whose path names a
  * language with a vendored grammar; any other result, and any read the parser cannot skeletonize, has no entry and
- * keeps the plain clip. The parser loads on first use, never at boot.
+ * keeps the plain clip. `skeletonOf` is the caller's parser (context's lazy one), asked only when a read qualifies.
  */
 export async function codeReadSkeletons(
 	entries: ReadonlyArray<SessionEntry>,
 	minChars: number,
+	skeletonOf: (path: string, text: string) => Promise<CodeReadSkeleton | null>,
 ): Promise<ReadonlyMap<string, CodeReadSkeleton>> {
 	const paths = new Map<string, string>();
 	const note = (id: unknown, name: unknown, args: unknown) => {
@@ -301,9 +302,8 @@ export async function codeReadSkeletons(
 	});
 	const skeletons = new Map<string, CodeReadSkeleton>();
 	if (reads.length === 0) return skeletons;
-	const { codeSkeleton } = await import("../../context/codewiki/tree-sitter.js");
 	for (const read of reads) {
-		const skeleton = await codeSkeleton(read.path, read.body);
+		const skeleton = await skeletonOf(read.path, read.body);
 		if (skeleton) skeletons.set(read.turnId, skeleton);
 	}
 	return skeletons;
