@@ -7,7 +7,7 @@ import {
 	claimsWorkerResults,
 	createDetachedDispatchNudgeRegistration,
 	finishedDetachedBatchIds,
-} from "../../src/domains/middleware/dispatch-nudge.js";
+} from "../../src/domains/dispatch/nudges/dispatch-nudge.js";
 import { fixtureEnvelope } from "../harness/receipt.js";
 
 test("finished detached batches retain ownership filtering and request continuation without reminder text", () => {

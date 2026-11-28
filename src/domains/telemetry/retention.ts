@@ -5,9 +5,6 @@ import { lstat, readdir, readFile, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { unlinkedStateDirectory } from "../../core/state-boundary.js";
 import { clearAbandonedStateLock, stateLockIsAbandoned, tryWithStateFileLockSync } from "../../core/state-file-lock.js";
-import { scanTelemetrySegment } from "../../core/telemetry/segment.js";
-import { liveSessionOwner } from "../../lib/heartbeat/live-owner.js";
-import { CONTENT_SUBJECTS, collectRefs } from "./objects.js";
 import {
 	TELEMETRY_BUNDLE_FILE,
 	TELEMETRY_JOURNAL_FILE,
@@ -19,7 +16,10 @@ import {
 	telemetryRunsDirectory,
 	telemetrySealMarkerPath,
 	telemetrySessionsDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+import { scanTelemetrySegment } from "../../core/telemetry/segment.js";
+import { liveSessionOwner } from "../../lib/heartbeat/live-owner.js";
+import { CONTENT_SUBJECTS, collectRefs } from "./objects.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GIB = 1024 * 1024 * 1024;

@@ -10,6 +10,7 @@ import { telemetryContext } from "../../src/core/telemetry/context.js";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { validPayload } from "../../src/core/telemetry/events.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
+import { telemetryJournalPath, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
 import { abandonedSettlement, beginCall, registerTelemetrySink } from "../../src/core/telemetry/producer.js";
 import { DELTA_GAP_BOUNDS_MS } from "../../src/core/telemetry/schemas.js";
@@ -19,7 +20,6 @@ import { createMiddlewareBundle } from "../../src/domains/middleware/extension.j
 import { listMiddlewareRuleDefinitions } from "../../src/domains/middleware/rules.js";
 import { foldDecisions } from "../../src/domains/telemetry/fact-folds.js";
 import { createHealthWindows } from "../../src/domains/telemetry/health-window.js";
-import { telemetryJournalPath, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { sessionOperatorMetrics } from "../../src/domains/telemetry/read-model-usage.js";
 import { readSessionPromptCompiles } from "../../src/domains/telemetry/session-artifacts.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";

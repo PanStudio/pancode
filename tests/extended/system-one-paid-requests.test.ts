@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, mock } from "node:test";
 import { factKnownValue } from "../../src/core/telemetry/known.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { foregroundStreamUsage } from "../../src/domains/providers/endpoint-capacity.js";
 import typesafeJevRuntime from "../../src/domains/providers/runtimes/cloud/typesafe-jev.js";
 import llamacppRuntime from "../../src/domains/providers/runtimes/local-native/llamacpp.js";
@@ -17,7 +18,6 @@ import { createSystemOneEngine } from "../../src/domains/system-one/engines/syst
 import { yesNo } from "../../src/domains/system-one/questions.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { createSideRequestAdmission } from "../../src/entry/side-request-admission.js";
 import { runOutOfTurnRound } from "../../src/session-control/side-question.js";

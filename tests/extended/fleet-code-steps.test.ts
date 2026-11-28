@@ -8,9 +8,9 @@ import { after, before, describe, it } from "node:test";
 import { runFleetCodeSteps } from "../../src/cli/fleet-code-steps.js";
 import type { EventPayload } from "../../src/core/telemetry/events.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { openFleetRootTelemetry } from "../../src/domains/dispatch/run-telemetry.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 
 /** Runs one fleet code-steps invocation with stdout and stderr captured. */
 async function capture(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {

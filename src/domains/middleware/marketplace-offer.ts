@@ -11,6 +11,7 @@ import {
 import type { EventPayload } from "../../core/telemetry/events.js";
 import { ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
+import { turnCanCallTool } from "../../core/turn-constraints.js";
 import type { MarketplaceSkill } from "../resources/skills/marketplace.js";
 import {
 	assertPromotionInstallSource,
@@ -24,7 +25,7 @@ import {
 } from "../resources/skills/promotion.js";
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import { isSubstantiveUserTurn } from "./skills-reminder.js";
-import { type MiddlewareEffect, type MiddlewareHookInput, metadataNumber, turnCanCallTool } from "./types.js";
+import { type MiddlewareEffect, type MiddlewareHookInput, metadataNumber } from "./types.js";
 
 /**
  * Marketplace self-promotion offer. When the operator's request needs
