@@ -1077,16 +1077,13 @@ function renderKeyWhisperRow(
 	// A live extension fact outranks the onboarding whisper, so a pack's status and a long command's
 	// progress reach an operator who has not learned the whispers yet.
 	if (!rightPrefix && rightPrefixRoom >= 10) {
+		const sepWidth = visibleWidth(sep);
 		for (const fact of state.extensionFacts ?? []) {
-			if (!fact.text.trim()) continue;
-			const line = extensionFactLine(theme, fact, rightPrefixRoom);
-			if (rightPrefix === "") {
-				rightPrefix = line;
-				continue;
-			}
-			const candidate = `${rightPrefix}${sep}${line}`;
-			if (visibleWidth(candidate) > rightPrefixRoom) break;
-			rightPrefix = candidate;
+			const remaining = rightPrefix === "" ? rightPrefixRoom : rightPrefixRoom - visibleWidth(rightPrefix) - sepWidth;
+			if (remaining < 10) break;
+			const line = extensionFactLine(theme, fact, remaining);
+			if (!line) continue;
+			rightPrefix = rightPrefix === "" ? line : `${rightPrefix}${sep}${line}`;
 		}
 	}
 	if (!rightPrefix && !draftContext && state.whisper && rightPrefixRoom >= 14) {

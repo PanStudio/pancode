@@ -6,6 +6,7 @@
  */
 import type { ExtensionStatus } from "@pancode/sdk/extension";
 import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { boxIsland, GLYPH, onRaisedTheme, type PancodeTheme, padAnsi } from "../theme/index.js";
 import type { SemanticRole } from "../theme/tokens.js";
 
@@ -28,28 +29,40 @@ const TONE_ROLES = {
 
 /** The deck lists at most this many facts; the island's header counts the rest. */
 const DECK_FACT_ROWS = 4;
+const OWNER_PREFIX_SEP = /^[\s:·-]+/u;
+
+function cleanFactText(value: string): string {
+	return sanitizeCallTargetText(value).trim();
+}
 
 export function extensionFactsKey(facts: ReadonlyArray<ExtensionFact> | undefined): string {
-	return (facts ?? []).map((fact) => `${fact.id}\x1e${fact.owner}\x1e${fact.tone}\x1e${fact.text}`).join("\x1f");
+	if (!facts || facts.length === 0) return "";
+	return facts.map((fact) => `${fact.id}\x1e${fact.owner}\x1e${fact.tone}\x1e${fact.text}`).join("\x1f");
 }
 
 /**
  * `Owner: words`. A status that already opens with its owner's name ("Local
- * status ready") gives the name to the label instead of saying it twice, so
- * the footer reads "Local status: ready".
+ * status ready") drops the repeated prefix and keeps the host's owner casing,
+ * so the footer reads "Local status: ready".
  */
 function ownedStatus(owner: string, text: string): { owner: string; text: string } {
-	const trimmed = text.trim();
-	if (trimmed.toLowerCase().startsWith(owner.toLowerCase())) {
-		const rest = trimmed.slice(owner.length).replace(/^[\s:·-]+/u, "");
-		if (rest.length > 0) return { owner: trimmed.slice(0, owner.length), text: rest };
+	const cleanOwner = cleanFactText(owner);
+	const trimmed = cleanFactText(text);
+	if (trimmed.length === 0) return { owner: "", text: "" };
+	if (cleanOwner.length > 0 && trimmed.toLowerCase().startsWith(cleanOwner.toLowerCase())) {
+		const after = trimmed.slice(cleanOwner.length);
+		if (after.length === 0) return { owner: cleanOwner, text: "" };
+		if (OWNER_PREFIX_SEP.test(after)) return { owner: cleanOwner, text: after.replace(OWNER_PREFIX_SEP, "") };
 	}
-	return { owner, text: trimmed };
+	return { owner: cleanOwner, text: trimmed };
 }
 
 /** Row 2's form of a fact, clipped to `room` cells. */
 export function extensionFactLine(theme: PancodeTheme, fact: ExtensionFact, room: number): string {
 	const { owner, text } = ownedStatus(fact.owner, fact.text);
+	if (owner.length === 0 && text.length === 0) return "";
+	if (text.length === 0) return truncateToWidth(theme.fg(TONE_ROLES[fact.tone], owner), room, GLYPH.ellipsis, false);
+	if (owner.length === 0) return truncateToWidth(theme.fg(TONE_ROLES[fact.tone], text), room, GLYPH.ellipsis, false);
 	const label = `${owner}: `;
 	const body = truncateToWidth(text, Math.max(4, room - visibleWidth(label)), GLYPH.ellipsis, false);
 	return truncateToWidth(
@@ -66,7 +79,9 @@ export function renderExtensionsIsland(
 	facts: ReadonlyArray<ExtensionFact> | undefined,
 	width: number,
 ): string[] {
-	const shown = (facts ?? []).filter((fact) => fact.text.trim().length > 0);
+	const shown = (facts ?? [])
+		.map((fact) => ({ id: cleanFactText(fact.id), text: cleanFactText(fact.text), tone: fact.tone }))
+		.filter((fact) => fact.text.length > 0);
 	if (shown.length === 0) return [];
 	const theme = onRaisedTheme(baseTheme);
 	const contentWidth = Math.max(1, width - 4);
@@ -74,7 +89,7 @@ export function renderExtensionsIsland(
 	const idCol = Math.min(Math.max(...listed.map((fact) => visibleWidth(fact.id))), Math.floor(contentWidth * 0.4));
 	const lines = listed.map((fact) => {
 		const id = padAnsi(theme.fg("fieldName", fact.id), idCol, GLYPH.ellipsis);
-		const text = truncateToWidth(fact.text.trim(), Math.max(1, contentWidth - idCol - 2), GLYPH.ellipsis, false);
+		const text = truncateToWidth(fact.text, Math.max(1, contentWidth - idCol - 2), GLYPH.ellipsis, false);
 		return `${id}  ${theme.fg(TONE_ROLES[fact.tone], text)}`;
 	});
 	const more = shown.length - listed.length;

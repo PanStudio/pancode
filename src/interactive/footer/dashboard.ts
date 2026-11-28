@@ -40,7 +40,7 @@ import { skinEpoch } from "../theme/tokens.js";
 import { projectFooterRenderState } from "./chrome-projection.js";
 import type { ThinkingRailFacts } from "./context-rail.js";
 import { renderDeckDrawer } from "./deck-drawer.js";
-import type { ExtensionFact } from "./extension-facts.js";
+import { type ExtensionFact, extensionFactsKey } from "./extension-facts.js";
 import type { FleetBand } from "./fleet-band.js";
 import type { ComposerKeyContext, KeyHintFacts } from "./key-hints.js";
 import type { Notification, NotificationCenter } from "./notifications.js";
@@ -267,6 +267,7 @@ class FooterView extends Text {
 	private composedFleetBoard = false;
 	private composedDeckRev = -1;
 	private composedTimeBucket = "";
+	private composedExtKey = "";
 
 	constructor(
 		private readonly compose: (width: number, refreshFacts: boolean) => string[],
@@ -277,6 +278,7 @@ class FooterView extends Text {
 		private readonly getFleetBoard: () => boolean = () => false,
 		private readonly getDeckRev: () => number = () => 0,
 		private readonly getTimeBucket: () => string = () => "0",
+		private readonly getExtKey: (width: number) => string = () => "",
 	) {
 		super("", 0, 0);
 	}
@@ -295,6 +297,7 @@ class FooterView extends Text {
 		this.composedFleetBoard = this.getFleetBoard();
 		this.composedDeckRev = this.getDeckRev();
 		this.composedTimeBucket = this.getTimeBucket();
+		this.composedExtKey = this.getExtKey(width);
 		if (next.length === this.composedLines.length && next.every((line, index) => line === this.composedLines[index])) {
 			return;
 		}
@@ -314,10 +317,11 @@ class FooterView extends Text {
 			this.getWelcome() !== this.composedWelcome ||
 			this.getFleetBoard() !== this.composedFleetBoard ||
 			this.getDeckRev() !== this.composedDeckRev ||
-			this.getTimeBucket() !== this.composedTimeBucket
+			this.getTimeBucket() !== this.composedTimeBucket ||
+			this.getExtKey(width) !== this.composedExtKey
 		) {
-			// Pure clock/spinner ticks or keyContext changes reuse the cached facts snapshot
-			// without re-running `facts.snapshot()` (`contextUsage` / `#historyBudget` / `providers.list`).
+			// Pure clock/spinner ticks, extension status updates, or keyContext changes reuse the cached
+			// facts snapshot without re-running `facts.snapshot()` (`contextUsage` / `#historyBudget` / `providers.list`).
 			this.composeAt(width, factsChanged);
 		}
 		return this.composedLines;
@@ -344,6 +348,12 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		const sec = Math.floor(now / 1000);
 		return lastTimeKind === "animate" && motionEnabled() ? `${sec}:${animationStep(now)}` : `${sec}`;
 	};
+	const extKey = (width: number): string => {
+		const extFacts = deps.getExtensionFacts?.();
+		const ws = deps.getWorkspaceLine?.(width);
+		if ((!extFacts || extFacts.length === 0) && !ws) return "";
+		return `${extensionFactsKey(extFacts)}\x1d${ws ?? ""}`;
+	};
 	const view = new FooterView(
 		(width, refreshFacts) => composeFooter(width, refreshFacts),
 		terminalRows,
@@ -353,6 +363,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		fleetBoardOpenProbe,
 		() => deckOverrideRev,
 		timeBucket,
+		extKey,
 	);
 	let branchSlot: string | null = null;
 	// Cached snapshot & readiness so pure clock/spinner ticks and keyContext switches never

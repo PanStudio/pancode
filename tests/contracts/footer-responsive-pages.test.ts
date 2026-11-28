@@ -443,18 +443,58 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 	// right slot, ahead of the onboarding whisper; workspaceLine slots into slimmed anchor bar with 0 extra rows
 	const extState = footerState();
 	extState.outputStyle = "detailed";
-	extState.extensionFacts = [{ id: "music", owner: "Music", text: "music (hidden)", tone: "neutral" }];
+	extState.extensionFacts = [{ id: "music", owner: "Music", text: "hidden", tone: "neutral" }];
 	const detailedExtDeck = renderDeckDrawer(extState, 96, 40).map(stripTerminalSequences).join("\n");
-	match(detailedExtDeck, /Extensions[\s\S]*music {2}music \(hidden\)/u);
+	match(detailedExtDeck, /Extensions[\s\S]*music {2}hidden/u);
 	extState.outputStyle = "standard";
-	match(renderDeckDrawer(extState, 96, 40).map(stripTerminalSequences).join("\n"), /music {2}music \(hidden\)/u);
+	match(renderDeckDrawer(extState, 96, 40).map(stripTerminalSequences).join("\n"), /music {2}hidden/u);
 
 	extState.whisper = "Try /run to dispatch parallel workers";
 	const stdExtRows = renderCompactDashboard(extState, 96).map(stripTerminalSequences);
 	strictEqual(stdExtRows.length, 2);
-	match(stdExtRows[1] ?? "", /music: \(hidden\)/u);
+	match(stdExtRows[1] ?? "", /Music: hidden/u);
 	doesNotMatch(stdExtRows[1] ?? "", /Try \/run/u);
 	doesNotMatch(stdExtRows[0] ?? "", /hidden/u);
+
+	// Host owner casing and prefix-stripping rules: exact match does not repeat, prefix needs a delimiter, newlines flatten.
+	const ownerRulesState = {
+		...extState,
+		extensionFacts: [
+			{ id: "music", owner: "Music", text: "music", tone: "neutral" as const },
+			{ id: "lab", owner: "Lab", text: "Labeling\ncomplete", tone: "positive" as const },
+		],
+	};
+	const ownerRulesRow2 = renderCompactDashboard(ownerRulesState, 96).map(stripTerminalSequences)[1] ?? "";
+	match(ownerRulesRow2, /Music · Lab: Labeling complete/u);
+	doesNotMatch(ownerRulesRow2, /Music: music/u);
+	match(
+		renderCompactDashboard(
+			{ ...extState, extensionFacts: [{ id: "music", owner: "Music", text: "music (hidden)", tone: "neutral" }] },
+			96,
+		).map(stripTerminalSequences)[1] ?? "",
+		/Music: \(hidden\)/u,
+	);
+
+	// Narrow terminals (60 and 80 cols): facts truncate cleanly into remaining room and never push left keys or Alt+U off.
+	const multiExtState = {
+		...extState,
+		extensionFacts: [
+			{ id: "music", owner: "Music", text: "hidden", tone: "neutral" as const },
+			{ id: "arena", owner: "Arena", text: "running benchmark 3 of 10 in parallel", tone: "neutral" as const },
+		],
+	};
+	for (const narrowWidth of [60, 80] as const) {
+		const narrowRows = renderCompactDashboard(multiExtState, narrowWidth).map(stripTerminalSequences);
+		strictEqual(narrowRows.length, 2);
+		for (const row of narrowRows) {
+			strictEqual(visibleWidth(row) <= narrowWidth, true, `row exceeded ${narrowWidth} cols: ${row}`);
+		}
+		match(narrowRows[1] ?? "", /\? keys · \/ commands/u);
+		match(narrowRows[1] ?? "", /Music: hidden/u);
+		match(narrowRows[1] ?? "", /Alt\+U details/u);
+		if (narrowWidth === 80) match(narrowRows[1] ?? "", /Arena: /u);
+	}
+
 	const whisperOnly = { ...extState, extensionFacts: [] };
 	match(renderCompactDashboard(whisperOnly, 96).map(stripTerminalSequences)[1] ?? "", /Try \/run/u);
 	extState.whisper = null;
@@ -617,21 +657,25 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 	doesNotMatch(p3Lines[2] ?? "", /Tools 1 call/u);
 
 	// P5: extension facts get the boxed Extensions island (zero unboxed `Extensions:` row),
+	// live status changes invalidate FooterView without a factsRevision bump,
 	// and compact status bar slots workspaceLine inline without exceeding 1-2 rows.
 	const prevTierP5 = presentationTier();
 	setPresentationTier("detailed");
+	let liveExtFacts = [{ id: "lsp", owner: "LSP", text: "ready", tone: "positive" as const }];
 	const extFooter = buildFooterDashboard({
 		providers: { list: () => [] } as never,
 		resolveCurrentBranch: async () => null,
 		getTerminalColumns: () => 96,
 		getTerminalRows: () => 40,
-		getExtensionFacts: () => [{ id: "lsp", owner: "LSP", text: "ready", tone: "positive" }],
+		getExtensionFacts: () => liveExtFacts,
 	});
 	try {
 		const extLines = extFooter.view.render(96).map(stripTerminalSequences);
 		strictEqual(extLines.length, 9, "5-row detailed deck + 3-row Extensions island + 1 anchor bar");
 		doesNotMatch(extLines.join("\n"), /^Extensions:/mu);
 		match(extLines.join("\n"), /lsp {2}ready/u);
+		liveExtFacts = [{ id: "lsp", owner: "LSP", text: "indexing 2/4", tone: "positive" as const }];
+		match(extFooter.view.render(96).map(stripTerminalSequences).join("\n"), /lsp {2}indexing 2\/4/u);
 	} finally {
 		extFooter.dispose();
 		setPresentationTier(prevTierP5);
