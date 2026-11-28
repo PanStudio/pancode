@@ -23,6 +23,7 @@ import type { PendingSkillRequest } from "../../../core/skill-activation.js";
 import { isToolLimitName } from "../../../core/tool-limit-flags.js";
 import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../../core/tool-names.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
+import { cachedFrontmatterParser, resolvePackageReferences, withFrontmatterCache } from "../../agents/index.js";
 import type { HubAuditState } from "../../plugins/hub-types.js";
 import {
 	committedPluginResourceRoots,
@@ -33,10 +34,8 @@ import {
 } from "../../plugins/index.js";
 import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "../collision.js";
 import { readRootEntries, splitToolList, splitYamlFrontmatter, stringField } from "../common-loader.js";
-import { resolvePackageReferences } from "../package-references.js";
 import { installedSkillNames } from "./availability.js";
 import { normalizedSkillHash } from "./content-hash.js";
-import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
 import { getMarketplaceSkills } from "./marketplace.js";
 import { type McpServedSkill, type McpSkillSourceInput, servedMcpSkills } from "./mcp-source.js";
 

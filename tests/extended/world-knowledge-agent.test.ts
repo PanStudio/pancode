@@ -13,6 +13,7 @@ import { nodeResultContractFilesystem } from "../../src/domains/agents/result-co
 import { normalizeAgentSpec, resolveAgentToolCompatibility } from "../../src/domains/agents/spec.js";
 import { classifyAgentTask } from "../../src/domains/dispatch/agent-candidates.js";
 import { budgetEnforcementForRuntime } from "../../src/domains/dispatch/worker-spec.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 
 function worldResult(discovery: "performed" | "caller-supplied-only" | "unavailable") {
 	return JSON.stringify({
@@ -32,7 +33,7 @@ function worldResult(discovery: "performed" | "caller-supplied-only" | "unavaila
 
 describe("world-knowledge agent contract", () => {
 	it("is distinct from supplied-source research and repository reconnaissance", () => {
-		const recipes = discoverAgentRecipes(process.cwd()).filter((recipe) => recipe.source === "builtin");
+		const recipes = discoverAgentRecipes(loadSkills, process.cwd()).filter((recipe) => recipe.source === "builtin");
 		const world = recipes.find((recipe) => recipe.id === "world-knowledge");
 		const researcher = recipes.find((recipe) => recipe.id === "researcher");
 		const scout = recipes.find((recipe) => recipe.id === "scout");
@@ -54,7 +55,7 @@ describe("world-knowledge agent contract", () => {
 	});
 
 	it("has no mandatory PanCode tool and remains compatible with native or opaque external execution", () => {
-		const recipe = discoverAgentRecipes(process.cwd()).find((entry) => entry.id === "world-knowledge");
+		const recipe = discoverAgentRecipes(loadSkills, process.cwd()).find((entry) => entry.id === "world-knowledge");
 		ok(recipe);
 		const spec = normalizeAgentSpec(recipe);
 		deepStrictEqual(spec.toolRequirements.required, []);

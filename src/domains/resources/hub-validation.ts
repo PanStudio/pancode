@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import path from "node:path";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { parseFrontmatter } from "../agents/frontmatter.js";
+import { resolvePackageReferences } from "../agents/index.js";
 import { parsePlaybook, resolvePlaybookReferences } from "../agents/playbook.js";
 import { recipeIdFromPath } from "../agents/recipe.js";
 import { parseAgentRecipeSchema } from "../agents/recipe-schema.js";
@@ -14,7 +15,6 @@ import { pluginResourcePath } from "../plugins/discovery.js";
 import { isHubComponentKind } from "../plugins/index.js";
 import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
 import { readHubManifest } from "./hub-packages.js";
-import { resolvePackageReferences } from "./package-references.js";
 import { loadPromptTemplates, type PromptTemplateRoot } from "./prompts/loader.js";
 import { skillAuthoringDiagnostics } from "./skills/authoring-check.js";
 import { loadSkills, type Skill, type SkillRoot, skillCatalogValidity } from "./skills/loader.js";

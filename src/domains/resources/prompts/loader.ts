@@ -6,6 +6,7 @@ import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../../core/interop-agen
 import { isModelTier, type ModelTier } from "../../../core/model-tier.js";
 import { isStrictDescendant, relativePathEscapes } from "../../../core/path-containment.js";
 import { parseCommandArgs, substituteArgs } from "../../../engine/prompt-templates.js";
+import { resolvePackageReferences } from "../../agents/index.js";
 import {
 	type ResourceCandidate,
 	type ResourceDiagnostic,
@@ -20,7 +21,6 @@ import {
 	splitYamlFrontmatter,
 	stringField,
 } from "../common-loader.js";
-import { resolvePackageReferences } from "../package-references.js";
 import { importedToolSurface, projectCompatTrusted, templateToolSurface } from "../skills/loader.js";
 import { type TemplateTurnBounds, templateTurnBounds } from "./turn-bounds.js";
 
