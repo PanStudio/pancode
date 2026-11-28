@@ -165,6 +165,19 @@ function textOf(value: unknown): string | null {
 	return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** The run each step settled as, in verdict order; a step that never ran names none. */
+export function fleetEndStepRuns(
+	document: Readonly<Record<string, unknown>>,
+): Array<{ readonly stepId: string; readonly runId: string }> {
+	const steps = recordOf(document.verdict)?.steps;
+	if (!Array.isArray(steps)) return [];
+	return steps.flatMap((value) => {
+		const step = recordOf(value);
+		const runId = textOf(step?.runId);
+		return step !== null && runId !== null ? [{ stepId: String(step.stepId), runId }] : [];
+	});
+}
+
 /**
  * A persisted fleet_end document as the lines a model or operator reads: how it ended, each step's verdict and run,
  * the causes, the kept worktree and the cost. Read back from disk, so every field is checked rather than trusted.

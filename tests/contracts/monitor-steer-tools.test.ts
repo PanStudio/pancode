@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, doesNotMatch, match, strictEqual } from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { settleDispatchedRuns } from "../../src/cli/modes/headless-dispatched-runs.js";
@@ -12,6 +12,7 @@ import { writeFleetResult, writeFleetRootRecord } from "../../src/domains/dispat
 import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
+import { fleetEndAnswer } from "../../src/tools/monitor-fleet.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
@@ -342,6 +343,9 @@ describe("monitor tool", () => {
 		const f = await fixture(scratch);
 		try {
 			const rootId = "fleet-t4root00001";
+			const build = await f.contract.dispatch(f.request);
+			f.workers[0]?.finish();
+			strictEqual((await build.finalPromise).outcome, "succeeded");
 			writeFleetRootRecord({ rootId, playbook: "build-review", cwd: process.cwd() });
 			const running = okResult(await f.call(ToolNames.Monitor, { run_id: rootId }));
 			match(running.output, /fleet build-review root=fleet-t4root00001: running/);
@@ -365,7 +369,7 @@ describe("monitor tool", () => {
 					started: true,
 					refusedBeforeStep: false,
 					steps: [
-						{ stepId: "build", runId: "run-build", outcome: "succeeded" },
+						{ stepId: "build", runId: build.runId, outcome: "succeeded" },
 						{ stepId: "review", runId: "run-review", outcome: "failed" },
 					],
 					stopCause: null,
@@ -395,6 +399,10 @@ describe("monitor tool", () => {
 			match(collected.output, /cause run_failed: step review failed: tests red/);
 			match(collected.output, /worktree kept: \/work\/fleet-t4root00001 on pancode\/fleet-t4root00001/);
 			match(collected.output, /cost: ~\$0\.25/);
+			const buildAnswer = new RegExp(`build answer \\(run=${build.runId}\\):\\n\\{"confirmedFacts":\\[\\]`);
+			match(collected.output, buildAnswer, "collect carries each sealed step answer");
+			doesNotMatch(collected.output, /review answer/, "a step without a sealed run record shows no answer");
+			match(fleetEndAnswer(document), buildAnswer, "a playbook call's answer carries its steps' answers");
 			match(okResult(await f.call(ToolNames.Monitor, { mode: "record", run_id: rootId })).output, /"type": "fleet_end"/);
 			match(errorMessage(await f.call(ToolNames.Monitor, { mode: "peek", run_id: rootId })), /names its step run ids/);
 

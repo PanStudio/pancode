@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { setTimeout as sleep } from "node:timers/promises";
-import { fleetEndLines } from "../domains/dispatch/fleet-end-document.js";
+import { pancodeStateDir } from "../core/xdg.js";
+import { fleetEndLines, fleetEndStepRuns } from "../domains/dispatch/fleet-end-document.js";
 import {
 	type FleetRootRecord,
 	fleetRootState,
@@ -10,6 +11,8 @@ import {
 } from "../domains/dispatch/fleet-root-record.js";
 import type { DispatchOwnership } from "../domains/dispatch/ownership.js";
 import { readFleetRun } from "../domains/dispatch/state.js";
+import { inspectRunTrustStatus } from "../domains/evidence/trust-status.js";
+import { readRunRecord } from "../domains/telemetry/index.js";
 import type { ToolResult } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 
@@ -22,6 +25,8 @@ import { truncateUtf8 } from "./truncate-utf8.js";
 
 const POLL_MS = 250;
 const DOCUMENT_MAX_BYTES = 14 * 1024;
+const STEP_ANSWER_MAX_BYTES = 2 * 1024;
+const STEP_ANSWERS_MAX_BYTES = 8 * 1024;
 
 export type FleetRootMonitorMode = "status" | "peek" | "record" | "answer" | "wait" | "collect" | "tools";
 
@@ -72,6 +77,33 @@ function viewLines(view: FleetRootView): string[] {
 	return runningLines(view);
 }
 
+/** A step run's answer as monitor mode="answer" shows one: only under a seal that verifies. */
+function sealedStepAnswer(runId: string): string | null {
+	const record = readRunRecord(pancodeStateDir(), runId);
+	if (record?.settled == null || inspectRunTrustStatus(record).integrity.state !== "verified") return null;
+	const text = record.result?.state === "resolved" ? (record.result.value.output?.text.trim() ?? "") : "";
+	return text.length > 0 ? text : null;
+}
+
+/** Each step's sealed answer, so the model reports what the run found and not only that it passed. */
+function stepAnswerLines(document: Readonly<Record<string, unknown>>): string[] {
+	const lines: string[] = [];
+	let budget = STEP_ANSWERS_MAX_BYTES;
+	for (const { stepId, runId } of fleetEndStepRuns(document)) {
+		const answer = sealedStepAnswer(runId);
+		if (answer === null) continue;
+		const rest = `monitor(mode="answer", run_id="${runId}")`;
+		if (budget <= 0) {
+			lines.push(`${stepId} answer: ${rest}`);
+			continue;
+		}
+		const shown = truncateUtf8(answer, Math.min(STEP_ANSWER_MAX_BYTES, budget), `\n[answer cut; ${rest} has all of it]`);
+		budget -= Buffer.byteLength(shown, "utf8");
+		lines.push(`${stepId} answer (run=${runId}):`, shown);
+	}
+	return lines;
+}
+
 async function waitForSeal(
 	rootId: string,
 	view: FleetRootView,
@@ -101,9 +133,10 @@ async function waitForSeal(
 		current = readView(rootId) ?? current;
 	}
 	const waitedMs = Math.round(performance.now() - startedAt);
+	const answers = current.document !== null ? stepAnswerLines(current.document) : [];
 	return {
 		kind: "ok",
-		output: [`${mode} complete after ${waitedMs}ms:`, ...viewLines(current)].join("\n"),
+		output: [`${mode} complete after ${waitedMs}ms:`, ...viewLines(current), ...answers].join("\n"),
 		details: { ...viewDetails(current), mode, timedOut: false, complete: true, waitedMs },
 	};
 }
@@ -151,8 +184,8 @@ export async function monitorFleetRoot(input: {
 	return { kind: "ok", output: fleetEndAnswer(view.document), details: { ...viewDetails(view), mode } };
 }
 
-/** A sealed root's answer to the model: the fleet_end summary lines, then the document itself, bounded. */
+/** A sealed root's answer to the model: the fleet_end summary lines, each step's answer, then the document, bounded. */
 export function fleetEndAnswer(document: Readonly<Record<string, unknown>>): string {
 	const json = truncateUtf8(JSON.stringify(document, null, 2), DOCUMENT_MAX_BYTES, "\n[fleet_end document truncated]");
-	return [...fleetEndLines(document), "", json].join("\n");
+	return [...fleetEndLines(document), ...stepAnswerLines(document), "", json].join("\n");
 }
