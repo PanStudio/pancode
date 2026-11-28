@@ -289,6 +289,9 @@ export function createRegistryRun(reg: RegistryScope) {
 					landing = hookLanding(spec, call);
 				const executionOptions: ToolInvokeOptions = {
 					...callerOptions,
+					...(deps.readOnly === true && callerOptions.turnConstraints?.readOnly !== true
+						? { turnConstraints: { ...(callerOptions.turnConstraints ?? {}), readOnly: true } }
+						: {}),
 					...(allowsObservationPath ? { allowsObservationPath } : {}),
 					...(writeTargetViolation ? { writeTargetViolation } : {}),
 					...(deps.principal === "worker" && deps.git !== undefined ? { gitContext: deps.git } : {}),

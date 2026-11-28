@@ -7,6 +7,10 @@ import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { sumPricing } from "../../src/core/telemetry/pricing.js";
 import type { DispatchContract, DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import { agentRoleFactsResolver } from "../../src/domains/dispatch/execution-role.js";
+import { executeFleetRun } from "../../src/domains/dispatch/fleet-run.js";
+import { createFleetRunLauncher } from "../../src/domains/dispatch/fleet-run-launcher.js";
+import { compileFleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
 import type { FleetRunOutcome } from "../../src/domains/dispatch/fleet-run-types.js";
 import { writeFleetRunSync } from "../../src/domains/dispatch/state.js";
 import { readDurableFleetPlans } from "../../src/interactive/fleet-plan-history.js";
@@ -380,6 +384,152 @@ test("an earlier fleet read from its record counts steps and loops as the live r
 		strictEqual(plan.requiredStepCount, 1);
 		strictEqual(plan.succeededStepCount, 1);
 		deepStrictEqual(plan.loops, { resolved: 1, total: 1 });
+	} finally {
+		scratch.restore();
+	}
+});
+
+test("fleet-run overlay refuses drift between card and accept, throwing surfaces do not wedge launcher, and route drift refuses launch", async () => {
+	const scratch = await isolatePancodeEnv("pancode-fleet-drift-");
+	try {
+		const root = realpathSync(scratch.dir);
+		const agents = dispatchStubContext({ settings: DEFAULT_SETTINGS }).getContract("agents");
+		ok(agents);
+		const notices: Array<[string, string]> = [];
+		let accept: (() => void) | undefined;
+		let body = "Survey v1.";
+		let ran = 0;
+		const transitions = { state: "closed", handle: null, showPermission: () => false, close: noop };
+		const deps: Partial<OverlayGeneralOpenersDeps> = {
+			dispatch: {} as DispatchContract,
+			agents,
+			transitions: transitions as unknown as OverlayGeneralOpenersDeps["transitions"],
+			getSessionMeta: () => ({ cwd: root }) as ReturnType<OverlayGeneralOpenersDeps["getSessionMeta"]>,
+			terminal: { columns: 100 } as OverlayGeneralOpenersDeps["terminal"],
+			requestRender: noop,
+			stderr: noop,
+			getSettings: () => DEFAULT_SETTINGS,
+			closeOverlay: () => {
+				transitions.state = "closed";
+			},
+			notify: (_level, text, key) => notices.push([key ?? "", text]),
+			loadFleetSources: () => ({
+				commands: null,
+				playbook: {
+					version: 3,
+					name: "survey",
+					description: "Survey fixture",
+					path: join(root, "survey.md"),
+					body,
+					maxWorkers: 1,
+					budgetUsd: null,
+					onFailure: "stop",
+					steps: [{ kind: "agent", id: "survey", agent: "coder", scope: "readonly", dependencies: [] }],
+				} as never,
+			}),
+			openFleetRunApprovalOverlay: (_tui, options) => {
+				ok(options.subject.ok);
+				accept = options.onAccept;
+				return {} as ReturnType<NonNullable<OverlayGeneralOpenersDeps["openFleetRunApprovalOverlay"]>>;
+			},
+			runFleet: async () => {
+				ran += 1;
+				return {
+					cleanRun: true,
+					succeededStepCount: 1,
+					requiredStepCount: 1,
+					totalCost: sumPricing([]),
+				} as unknown as FleetRunOutcome;
+			},
+		};
+		const openers = createOverlayGeneralOpeners(deps as OverlayGeneralOpenersDeps);
+		openers.startFleetRun("survey", {});
+		ok(accept);
+		body = "Survey v2.";
+		accept();
+		strictEqual(ran, 0, "changed playbook between card open and accept must not run");
+		strictEqual(notices.at(-1)?.[0], "fleet-run:changed");
+
+		// A throwing surface must not wedge inFlight() or block later launches.
+		const preview = compileFleetRunPreview({
+			workspaceRoot: root,
+			name: "survey",
+			vars: {},
+			getAgentSpec: (id) => agents.getSpec(id),
+			roleFacts: agentRoleFactsResolver((id) => agents.getSpec(id)),
+			load: () => ({
+				commands: null,
+				playbook: {
+					version: 3,
+					name: "survey",
+					description: "Survey fixture",
+					path: join(root, "survey.md"),
+					body: "Survey v2.",
+					maxWorkers: 1,
+					budgetUsd: null,
+					onFailure: "stop",
+					steps: [{ kind: "agent", id: "survey", agent: "coder", scope: "readonly", dependencies: [] }],
+				} as never,
+			}),
+		});
+		ok(preview.ok);
+		const launcher = createFleetRunLauncher({
+			dispatch: {} as DispatchContract,
+			agents: { getSpec: (id) => agents.getSpec(id) },
+			workspaceRoot: () => root,
+			run: async () =>
+				({
+					cleanRun: true,
+					succeededStepCount: 1,
+					requiredStepCount: 1,
+					totalCost: sumPricing([]),
+				}) as unknown as FleetRunOutcome,
+		});
+		launcher.watch(() => {
+			throw new Error("boom surface");
+		});
+		const first = launcher.launch({ preview: preview.preview, origin: "model" });
+		strictEqual(first.status, "launched");
+		await first.settled;
+		strictEqual(launcher.inFlight(), null);
+		const second = launcher.launch({ preview: preview.preview, origin: "model" });
+		strictEqual(second.status, "launched");
+		await second.settled;
+
+		// Route drift between approvedRoutes and live dispatch.preview must fail preflight before any worker starts.
+		let dispatched = 0;
+		const driftedDispatch = {
+			preview: () => ({
+				targetId: "conn-b",
+				wireModelId: "model-b",
+				node: { id: "local", kind: "local" },
+				costUpperBoundUsd: 0.01,
+				endpoint: { key: "conn-b:model-b", label: "conn-b", limit: 4 },
+			}),
+			dispatch: async () => {
+				dispatched += 1;
+				throw new Error("must not dispatch drifted route");
+			},
+			reservations: { prepare: () => ({ ownerId: "r1" }), release: () => {} },
+		} as unknown as DispatchContract;
+		let caught: unknown;
+		try {
+			await executeFleetRun({
+				plan: preview.preview.plan,
+				playbookName: "survey",
+				commands: null,
+				workspaceRoot: root,
+				fleetRootId: "fleet-routedrift1",
+				dispatch: driftedDispatch,
+				agents: { getSpec: (id) => agents.getSpec(id) },
+				attributionEnabled: false,
+				approvedRoutes: new Map([["survey", { targetId: "conn-a", wireModelId: "model-a", nodeId: "local" }]]),
+			});
+		} catch (error) {
+			caught = error;
+		}
+		ok(caught instanceof Error && /route drifted from the approved card/u.test(caught.message), String(caught));
+		strictEqual(dispatched, 0, "drifted route must never dispatch a worker");
 	} finally {
 		scratch.restore();
 	}

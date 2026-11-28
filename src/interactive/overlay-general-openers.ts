@@ -238,6 +238,55 @@ export interface OverlayGeneralOpeners {
 	startFleetRun(name: string, vars: Readonly<Record<string, string>>, options?: FleetRunStartOptions): void;
 }
 
+function compileOverlayFleetPreview(
+	deps: OverlayGeneralOpenersDeps,
+	agents: NonNullable<OverlayGeneralOpenersDeps["agents"]>,
+	workspaceRoot: string,
+	name: string,
+	vars: Readonly<Record<string, string>>,
+	resume: string | undefined,
+): ReturnType<typeof compileFleetRunPreview> {
+	const roleFacts = agentRoleFactsResolver((id) => agents.getSpec(id));
+	const budget = deps.getBudgetPreflight?.();
+	return compileFleetRunPreview({
+		workspaceRoot,
+		name,
+		vars,
+		getAgentSpec: (agentId) => agents.getSpec(agentId),
+		roleFacts,
+		...(budget ? { budget } : {}),
+		...(deps.loadFleetSources ? { load: deps.loadFleetSources } : {}),
+		...(resume !== undefined ? { resume } : {}),
+		resolveRoute: fleetRouteResolver(deps.dispatch.preview, roleFacts, undefined, deps.standingTurnConstraints?.()),
+	});
+}
+
+function verifyAcceptedFleetRun(
+	name: string,
+	approved: FleetRunPreview,
+	recompile: () => ReturnType<typeof compileFleetRunPreview>,
+	notify: OverlayGeneralOpenersDeps["notify"],
+): boolean {
+	const current = recompile();
+	if (!current.ok) {
+		notify(
+			"warning",
+			`plan ${name}: changed since the card was opened and can no longer run (${current.diagnostics[0] ?? "validation failed"}). Nothing was started`,
+			"fleet-run:changed",
+		);
+		return false;
+	}
+	if (current.preview.planHash !== approved.planHash) {
+		notify(
+			"warning",
+			`plan ${name}: changed since the card was opened; review it again. Nothing was started`,
+			"fleet-run:changed",
+		);
+		return false;
+	}
+	return true;
+}
+
 export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): OverlayGeneralOpeners {
 	const openUsageOverlayFactory = deps.openUsageOverlay ?? openUsageOverlay;
 	const openContextOverlayFactory = deps.openContextOverlay ?? openContextOverlay;
@@ -797,19 +846,8 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			return;
 		}
 		const workspaceRoot = deps.getSessionMeta()?.cwd ?? process.cwd();
-		const roleFacts = agentRoleFactsResolver((id) => agents.getSpec(id));
-		const budget = deps.getBudgetPreflight?.();
-		const result = compileFleetRunPreview({
-			workspaceRoot,
-			name,
-			vars,
-			getAgentSpec: (agentId) => agents.getSpec(agentId),
-			roleFacts,
-			...(budget ? { budget } : {}),
-			...(deps.loadFleetSources ? { load: deps.loadFleetSources } : {}),
-			...(options.resume !== undefined ? { resume: options.resume } : {}),
-			resolveRoute: fleetRouteResolver(deps.dispatch.preview, roleFacts, undefined, deps.standingTurnConstraints?.()),
-		});
+		const compile = () => compileOverlayFleetPreview(deps, agents, workspaceRoot, name, vars, options.resume);
+		const result = compile();
 		// The command line refuses a task its playbook has no {{task}} for in the same words.
 		const taskRefusal = result.ok ? playbookTaskRefusal(result.preview.playbook, options.task) : null;
 
@@ -823,7 +861,8 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			columns: deps.terminal.columns,
 			onAccept: () => {
 				deps.closeOverlay();
-				if (result.ok && taskRefusal === null) dispatchFleetRun(result.preview, fleetRuns);
+				if (result.ok && taskRefusal === null && verifyAcceptedFleetRun(name, result.preview, compile, deps.notify))
+					dispatchFleetRun(result.preview, fleetRuns);
 			},
 			onCancel: () => {
 				deps.closeOverlay();

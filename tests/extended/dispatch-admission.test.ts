@@ -737,6 +737,125 @@ describe("dispatch admission boundary", () => {
 		}
 	});
 
+	it("refuses a playbook when its file or route drifts between approval card and launch, and enforces a read-only ceiling", async () => {
+		const context = dispatchStubContext();
+		const agents = context.getContract("agents");
+		ok(agents);
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		const root = mkdtempSync(join(tmpdir(), "dispatch-playbook-drift-"));
+		try {
+			let body = "Survey {{task}} carefully.";
+			let scope: "readonly" | "workspace" | "worktree" = "readonly";
+			const launched: FleetRunLaunchInput[] = [];
+			const port: DispatchPlaybookPort = {
+				launcher: {
+					launch: (input: FleetRunLaunchInput) => {
+						launched.push(input);
+						return { status: "refused", reason: "fixture: launcher reached" };
+					},
+				} as unknown as FleetRunLauncher,
+				workspaceRoot: () => root,
+				detachable: true,
+				preview: (name, vars) =>
+					compileFleetRunPreview({
+						workspaceRoot: root,
+						name,
+						vars,
+						getAgentSpec: (id) => agents.getSpec(id),
+						roleFacts: agentRoleFactsResolver((id) => agents.getSpec(id)),
+						load: () => ({
+							playbook: {
+								version: 3,
+								name: "survey",
+								description: "Survey fixture",
+								path: join(root, "survey.md"),
+								body,
+								maxWorkers: 1,
+								budgetUsd: null,
+								onFailure: "stop",
+								steps: [{ kind: "agent", id: "survey", agent: "scout", scope, dependencies: [] }],
+							} as unknown as Playbook,
+							commands: null,
+						}),
+					}),
+			};
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: root }), autonomy: () => "default" });
+			registry.register(
+				createDispatchTool({
+					dispatch: bundle.contract,
+					getAgentSpecs: () => agents.listSpecs(),
+					getAutonomy: () => "default",
+					playbooks: port,
+				}),
+			);
+			registry.onPermissionRequired((_call, _decision, meta) => {
+				// Simulate the playbook changing on disk while the operator reads the approval card.
+				body = "Survey {{task}} and rewrite the repo.";
+				void registry.resumeParkedCalls({ actionClass: "dispatch", requestId: meta.requestId, requestedBy: "test" });
+			});
+			const drifted = await registry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(drifted.kind === "ok" && drifted.result.kind === "error", JSON.stringify(drifted));
+			match(drifted.result.message, /changed since the approved card/u);
+			strictEqual(launched.length, 0, "a drifted playbook must never reach the launcher");
+
+			// Under a read-only registry ceiling: preview is allowed, writing/worktree playbooks are refused,
+			// and a purely read-only playbook forwards readOnly: true into turnConstraints.
+			body = "Survey {{task}} carefully.";
+			const roRegistry = createRegistry({
+				safety: createWorkerSafety({ cwd: root }),
+				autonomy: () => "yolo",
+				readOnly: true,
+			});
+			roRegistry.register(
+				createDispatchTool({
+					dispatch: bundle.contract,
+					getAgentSpecs: () => agents.listSpecs(),
+					getAutonomy: () => "yolo",
+					playbooks: port,
+				}),
+			);
+			scope = "workspace";
+			const roPreview = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" }, preview: true } },
+			});
+			ok(roPreview.kind === "ok" && roPreview.result.kind === "ok", JSON.stringify(roPreview));
+			const roWrite = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(roWrite.kind === "ok" && roWrite.result.kind === "error", JSON.stringify(roWrite));
+			match(roWrite.result.message, /cannot run under a read-only ceiling/u);
+			strictEqual(launched.length, 0, "workspace-writing playbook refused under read-only");
+
+			scope = "worktree";
+			const roWorktree = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(roWorktree.kind === "ok" && roWorktree.result.kind === "error", JSON.stringify(roWorktree));
+			match(roWorktree.result.message, /worktree isolation and cannot run under a read-only ceiling/u);
+			strictEqual(launched.length, 0, "worktree playbook refused under read-only");
+
+			scope = "readonly";
+			const roReadonly = await roRegistry.invoke({
+				tool: "dispatch",
+				args: { playbook: { name: "survey", vars: { task: "the parser" } } },
+			});
+			ok(roReadonly.kind === "ok" && roReadonly.result.kind === "error", JSON.stringify(roReadonly));
+			match(roReadonly.result.message, /fixture: launcher reached/u);
+			strictEqual(launched.length, 1);
+			strictEqual(launched[0]?.turnConstraints?.readOnly, true);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			await bundle.extension.stop?.();
+		}
+	});
+
 	it("preserves declared intent through admission when briefing quotes an absolute workspace", async () => {
 		const context = dispatchStubContext();
 		const agents = context.getContract("agents");

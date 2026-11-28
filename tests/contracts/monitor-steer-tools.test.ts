@@ -25,7 +25,7 @@ import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-e
  * records what the steer channel delivered and finishes when the test says so.
  */
 
-function controlledWorker() {
+function controlledWorker(outputText?: string) {
 	let resolve!: (value: SpawnedWorkerResult) => void;
 	const done = new Promise<SpawnedWorkerResult>((yes) => {
 		resolve = yes;
@@ -54,7 +54,7 @@ function controlledWorker() {
 					message: {
 						role: "assistant",
 						stopReason: "stop",
-						content: JSON.stringify({ confirmedFacts: [], missingEvidence: [], nextInspections: [] }),
+						content: outputText ?? JSON.stringify({ confirmedFacts: [], missingEvidence: [], nextInspections: [] }),
 					},
 				};
 		})(),
@@ -71,12 +71,12 @@ function controlledWorker() {
 /** Runs belong to the session that dispatched them, and monitor and steer act as that session. */
 const SESSION_ID = "session-monitor";
 
-async function fixture(scratch: IsolatedPancodeEnv) {
+async function fixture(scratch: IsolatedPancodeEnv, outputText?: string) {
 	const workers: ReturnType<typeof controlledWorker>[] = [];
 	const bundle = makeDispatchBundle(dispatchStubContext(), {
 		getSessionId: () => SESSION_ID,
 		spawnWorker: () => {
-			const worker = controlledWorker();
+			const worker = controlledWorker(outputText);
 			workers.push(worker);
 			return worker.worker;
 		},
@@ -409,6 +409,67 @@ describe("monitor tool", () => {
 			writeFleetRootRecord({ rootId: "fleet-t4other0001", playbook: "build-review", cwd: scratch.dir });
 			match(errorMessage(await f.call(ToolNames.Monitor, { run_id: "fleet-t4other0001" })), /belongs to another project/);
 			match(errorMessage(await f.call(ToolNames.Monitor, { run_id: "fleet-nosuchroot" })), /unknown fleet root/);
+		} finally {
+			await f.stop();
+		}
+	});
+
+	it("bounds sealed fleet step answers to 2KB each and 8KB total including cut markers", async () => {
+		const big = JSON.stringify({
+			confirmedFacts: ["x".repeat(3000)],
+			missingEvidence: [],
+			nextInspections: [],
+		});
+		const f = await fixture(scratch, big);
+		try {
+			const steps: Array<{ stepId: string; runId: string; outcome: "succeeded" }> = [];
+			for (let i = 0; i < 5; i++) {
+				const handle = await f.contract.dispatch(f.request);
+				f.workers[i]?.finish();
+				strictEqual((await handle.finalPromise).outcome, "succeeded");
+				steps.push({ stepId: `step${i}`, runId: handle.runId, outcome: "succeeded" });
+			}
+			const rootId = "fleet-t4budget001";
+			writeFleetRootRecord({ rootId, playbook: "big-answers", cwd: process.cwd() });
+			const document = fleetEndDocument(
+				{
+					rootId,
+					playbook: "big-answers",
+					planHash: "plan-hash",
+					started: true,
+					refusedBeforeStep: false,
+					steps,
+					stopCause: null,
+					cleanRun: true,
+					notRunStepIds: [],
+					totalCost: null,
+					totalUsage: null,
+					worktree: null,
+					limits: {
+						maxCostUsd: null,
+						maxCostSource: null,
+						enforced: false,
+						overshootPossible: false,
+						timeoutMs: null,
+					},
+				},
+				0,
+				[],
+			);
+			writeFleetResult(rootId, document);
+			const collected = okResult(await f.call(ToolNames.Monitor, { mode: "collect", run_ids: [rootId] }));
+			const sections = collected.output.split(/\nstep\d+ answer(?=[ (:])/u).slice(1);
+			strictEqual(sections.length, 5);
+			let totalAnswerBytes = 0;
+			for (const section of sections.slice(0, 4)) {
+				const body = section.slice(section.indexOf("\n") + 1);
+				const bytes = Buffer.byteLength(body, "utf8");
+				strictEqual(bytes <= 2048, true, `step answer exceeded 2048 bytes: ${bytes}`);
+				match(body, /\[answer cut; monitor\(mode="answer"/u);
+				totalAnswerBytes += bytes;
+			}
+			strictEqual(totalAnswerBytes <= 8192, true, `total step answers exceeded 8192 bytes: ${totalAnswerBytes}`);
+			match(sections[4] ?? "", /^: monitor\(mode="answer"/u, "fifth step past 8KB budget emits pointer only");
 		} finally {
 			await f.stop();
 		}

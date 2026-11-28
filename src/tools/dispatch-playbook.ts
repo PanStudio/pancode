@@ -148,6 +148,38 @@ export function playbookDetachRefusal(preview: FleetRunPreview): string | null {
 	return `dispatch: playbook '${preview.name}' cannot detach: step '${writer.id}' writes this checkout while the turn goes on. Run it attached (omit detach), or give the playbook isolation: worktree`;
 }
 
+/**
+ * Standing turn constraints a playbook cannot satisfy: a read-only ceiling refuses worktree isolation, host code
+ * steps, workspace-writing steps, and dynamic plan steps (whose spliced steps can write); a capability allowlist
+ * refuses worktree isolation and host code steps, which execute outside worker tool admission.
+ */
+export function playbookCeilingRefusal(
+	preview: FleetRunPreview,
+	turnConstraints: TurnConstraints | undefined,
+): string | null {
+	if (turnConstraints?.readOnly === true) {
+		if (preview.plan.isolation === "worktree") {
+			return `dispatch: playbook '${preview.name}' uses worktree isolation and cannot run under a read-only ceiling. Nothing was dispatched`;
+		}
+		const disallowed = preview.plan.steps.find(
+			(step) => step.kind === "code" || step.scope !== "readonly" || step.plan !== undefined,
+		);
+		if (disallowed !== undefined) {
+			return `dispatch: playbook '${preview.name}' step '${disallowed.id}' cannot run under a read-only ceiling. Nothing was dispatched`;
+		}
+	}
+	if (turnConstraints?.allowedTools !== undefined) {
+		if (preview.plan.isolation === "worktree") {
+			return `dispatch: playbook '${preview.name}' uses worktree isolation and cannot run under a capability allowlist. Nothing was dispatched`;
+		}
+		const codeStep = preview.plan.steps.find((step) => step.kind === "code");
+		if (codeStep !== undefined) {
+			return `dispatch: playbook '${preview.name}' step '${codeStep.id}' runs a host command and cannot run under a capability allowlist. Nothing was dispatched`;
+		}
+	}
+	return null;
+}
+
 const CLI_START = (name: string) => `pancode fleet run ${name} "<task>"`;
 
 /**
@@ -355,6 +387,25 @@ export async function runPlaybookCall(input: {
 		return {
 			kind: "error",
 			message: "dispatch: resolved plan requires a registry-authenticated operator approval",
+			details,
+		};
+	}
+	const ceilingRefusal = playbookCeilingRefusal(preview, input.turnConstraints);
+	if (ceilingRefusal !== null) return { kind: "error", message: ceilingRefusal, details };
+	// Re-compile against current playbook files, recipes, commands, routes and budget so drift between card and launch
+	// is refused rather than silently running a different plan or route.
+	const current = compilePlaybookRun(ref, input.port.preview);
+	if (!current.ok) {
+		return {
+			kind: "error",
+			message: `dispatch: playbook '${preview.name}' changed since the approved card and can no longer run:\n${current.message}`,
+			details,
+		};
+	}
+	if (current.preview.planHash !== input.sealedPlanHash) {
+		return {
+			kind: "error",
+			message: `dispatch: playbook '${preview.name}' changed since the approved card (approved=${input.sealedPlanHash.slice(0, 12)} current=${current.preview.planHash.slice(0, 12)}); review it again. Nothing was dispatched`,
 			details,
 		};
 	}

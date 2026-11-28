@@ -93,11 +93,24 @@ function stepAnswerLines(document: Readonly<Record<string, unknown>>): string[] 
 		const answer = sealedStepAnswer(runId);
 		if (answer === null) continue;
 		const rest = `monitor(mode="answer", run_id="${runId}")`;
-		if (budget <= 0) {
+		const limit = Math.min(STEP_ANSWER_MAX_BYTES, budget);
+		if (limit <= 0) {
 			lines.push(`${stepId} answer: ${rest}`);
 			continue;
 		}
-		const shown = truncateUtf8(answer, Math.min(STEP_ANSWER_MAX_BYTES, budget), `\n[answer cut; ${rest} has all of it]`);
+		let shown: string;
+		if (Buffer.byteLength(answer, "utf8") <= limit) {
+			shown = answer;
+		} else {
+			const marker = `\n[answer cut; ${rest} has all of it]`;
+			const markerBytes = Buffer.byteLength(marker, "utf8");
+			if (limit <= markerBytes) {
+				budget = 0;
+				lines.push(`${stepId} answer: ${rest}`);
+				continue;
+			}
+			shown = truncateUtf8(answer, limit - markerBytes, marker);
+		}
 		budget -= Buffer.byteLength(shown, "utf8");
 		lines.push(`${stepId} answer (run=${runId}):`, shown);
 	}

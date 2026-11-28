@@ -92,6 +92,57 @@ import { joinWriterSet } from "./writer-set.js";
 /** Owner id for a plan with no model runs; it holds nothing to release. */
 const NO_WORKER_RESERVATION = "fleet-no-worker-reservation";
 
+function assertApprovedStepRoute(
+	approvedRoutes: ExecuteFleetRunInput["approvedRoutes"],
+	stepId: string,
+	resolution: DispatchPlanTaskResolution,
+): void {
+	const approved = approvedRoutes?.get(stepId);
+	if (approved === undefined) return;
+	if (
+		resolution.targetId !== approved.targetId ||
+		resolution.wireModelId !== approved.wireModelId ||
+		resolution.node.id !== approved.nodeId
+	) {
+		throw new Error(
+			`fleet step '${stepId}' route drifted from the approved card (approved=${approved.targetId}/${approved.wireModelId}@${approved.nodeId} current=${resolution.targetId}/${resolution.wireModelId}@${resolution.node.id})`,
+		);
+	}
+}
+
+function verifyDispatchStepRoute(input: ExecuteFleetRunInput, stepId: string, request: DispatchRequest): void {
+	if (!input.approvedRoutes?.has(stepId) || input.dispatch.preview === undefined) return;
+	const currentRoute = input.dispatch.preview(request);
+	if (!currentRoute) throw new Error(`fleet step '${stepId}' cannot resolve its approved route`);
+	assertApprovedStepRoute(input.approvedRoutes, stepId, currentRoute);
+}
+
+function preflightAgentStep(
+	input: ExecuteFleetRunInput,
+	workspaceRoot: string,
+	fleetRootId: string,
+	decisionRefs: ReadonlyArray<string>,
+	step: Extract<ExecutionPlanStep, { kind: "agent" }>,
+) {
+	const request: DispatchRequest = {
+		agentId: step.agentId,
+		executionRole: step.executionRole,
+		task: step.task,
+		cwd: workspaceRoot,
+		requestOrigin: "user",
+		...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
+		...(decisionRefs.length > 0 ? { decisionRefs } : {}),
+		lineage: { parentRunId: input.resume?.record.id ?? fleetRootId, rootRunId: fleetRootId, attempt: 0, depth: 1 },
+		...(step.scope === "readonly" ? { readOnly: true as const } : {}),
+		...(step.target !== undefined ? { target: step.target } : {}),
+		...(step.profile !== undefined ? { workerProfile: step.profile } : {}),
+	};
+	const resolution = input.dispatch.preview?.(request);
+	if (!resolution) throw new Error(`fleet preflight cannot resolve step '${step.id}'`);
+	assertApprovedStepRoute(input.approvedRoutes, step.id, resolution);
+	return { step, costUpperBoundUsd: resolution.costUpperBoundUsd, nodeId: resolution.node.id };
+}
+
 /**
  * Run a compiled fleet plan to completion.
  *
@@ -576,26 +627,7 @@ async function runFleetHoldingWorkspace(
 				// The fleet write boundary is deliberately enforced after the step. The enforcer in
 				// write-boundary-enforcer.ts snapshots and verifies the step window. Pre-emptive
 				// confinement for declared commands would require a command sandbox, which does not exist.
-				const request: DispatchRequest = {
-					agentId: step.agentId,
-					executionRole: step.executionRole,
-					task: step.task,
-					cwd: workspaceRoot,
-					requestOrigin: "user",
-					...(decisionRefs.length > 0 ? { decisionRefs } : {}),
-					lineage: {
-						parentRunId: input.resume?.record.id ?? fleetRootId,
-						rootRunId: fleetRootId,
-						attempt: 0,
-						depth: 1,
-					},
-					...(step.scope === "readonly" ? { readOnly: true as const } : {}),
-					...(step.target !== undefined ? { target: step.target } : {}),
-					...(step.profile !== undefined ? { workerProfile: step.profile } : {}),
-				};
-				const resolution = dispatch.preview?.(request);
-				if (!resolution) throw new Error(`fleet preflight cannot resolve step '${step.id}'`);
-				return { step, costUpperBoundUsd: resolution.costUpperBoundUsd, nodeId: resolution.node.id };
+				return preflightAgentStep(input, workspaceRoot, fleetRootId, decisionRefs, step);
 			},
 			reserve(reservedPlan, admissions) {
 				// A fleet of deterministic steps admits no worker and holds no
@@ -797,6 +829,7 @@ async function runFleetHoldingWorkspace(
 					request.briefing = buildDelegationProposalBriefing(proposals);
 				}
 				signal?.throwIfAborted();
+				verifyDispatchStepRoute(input, step.id, request);
 				const handle = await dispatch.dispatch(request, undefined, signal ? { signal } : undefined);
 				const waveIndex = fleetPlanWaveIndex(livePlan, step.id);
 				stepDispatched({

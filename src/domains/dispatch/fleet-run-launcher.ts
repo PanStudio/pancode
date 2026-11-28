@@ -25,7 +25,7 @@ import {
 } from "./fleet-end-document.js";
 import { writeFleetResult, writeFleetRootRecord } from "./fleet-root-record.js";
 import { executeFleetRun } from "./fleet-run.js";
-import type { FleetRunPreview } from "./fleet-run-preview.js";
+import type { FleetRunPreview, FleetRunPreviewRoute } from "./fleet-run-preview.js";
 import type {
 	ExecuteFleetRunInput,
 	FleetRunAgentAccess,
@@ -173,6 +173,38 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		}
 		const admissionRefusal = fleetAdmissionRefusal();
 		if (admissionRefusal !== null) return { status: "refused", reason: `${admissionRefusal}. Nothing was dispatched` };
+		if (input.turnConstraints?.readOnly === true) {
+			if (preview.plan.isolation === "worktree") {
+				return {
+					status: "refused",
+					reason: `plan ${preview.name} uses worktree isolation and cannot run under a read-only ceiling. Nothing was dispatched`,
+				};
+			}
+			const disallowed = preview.plan.steps.find(
+				(step) => step.kind === "code" || step.scope !== "readonly" || step.plan !== undefined,
+			);
+			if (disallowed !== undefined) {
+				return {
+					status: "refused",
+					reason: `plan ${preview.name} step '${disallowed.id}' cannot run under a read-only ceiling. Nothing was dispatched`,
+				};
+			}
+		}
+		if (input.turnConstraints?.allowedTools !== undefined) {
+			if (preview.plan.isolation === "worktree") {
+				return {
+					status: "refused",
+					reason: `plan ${preview.name} uses worktree isolation and cannot run under a capability allowlist. Nothing was dispatched`,
+				};
+			}
+			const codeStep = preview.plan.steps.find((step) => step.kind === "code");
+			if (codeStep !== undefined) {
+				return {
+					status: "refused",
+					reason: `plan ${preview.name} step '${codeStep.id}' runs a host command and cannot run under a capability allowlist. Nothing was dispatched`,
+				};
+			}
+		}
 		// Read before the guard is taken: a throw here would otherwise refuse every later run in this session.
 		const settings = deps.getSettings?.();
 		const workspaceRoot = deps.workspaceRoot();
@@ -186,9 +218,18 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 				reason: `cannot record fleet root ${rootId}: ${errorText(error)}. Nothing was dispatched`,
 			};
 		}
+		// Attach surfaces before taking the single-run guard; a faulty surface must never wedge later launches.
+		const watches: FleetRunWatch[] = [];
+		for (const surface of surfaces) {
+			try {
+				const watch = surface({ rootId, preview, origin: input.origin });
+				if (watch !== null && watch !== undefined) watches.push(watch);
+			} catch (error) {
+				input.observer?.notice?.(`a fleet surface failed to attach to ${rootId}: ${errorText(error)}`);
+			}
+		}
 		running = { name: preview.name, rootId, origin: input.origin };
 		if (input.detached === true) uncollected.set(rootId, { rootId, name: preview.name, sealed: false });
-		const watches = [...surfaces].flatMap((surface) => surface({ rootId, preview, origin: input.origin }) ?? []);
 		const observer = joinedObserver([...(input.observer !== undefined ? [input.observer] : []), ...watches]);
 
 		const abort = new AbortController();
@@ -225,6 +266,12 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 			answer(admission);
 		};
 
+		const approvedRoutes = new Map<string, FleetRunPreviewRoute>();
+		for (const wave of preview.waves ?? []) {
+			for (const step of wave.steps) {
+				if (step.kind === "agent" && step.route !== undefined) approvedRoutes.set(step.stepId, step.route);
+			}
+		}
 		const args: ExecuteFleetRunInput = {
 			signal: abort.signal,
 			plan: preview.plan,
@@ -243,6 +290,7 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 				: {}),
 			...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
 			...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
+			...(approvedRoutes.size > 0 ? { approvedRoutes } : {}),
 			beforeStepAdmission: checkRootStop,
 			onStarted: () => {
 				started = true;
