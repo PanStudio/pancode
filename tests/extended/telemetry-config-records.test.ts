@@ -16,7 +16,7 @@ import type { ConfigChangePayload } from "../../src/core/telemetry/live-events.j
 import { unboundTelemetrySession } from "../../src/core/telemetry/producer.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
-import { computeSettingsFingerprint } from "../../src/domains/dispatch/settings-fingerprint.js";
+import { computeSettingsFingerprint } from "../../src/domains/config/settings-fingerprint.js";
 import { observationEvent } from "../../src/domains/memory/observation-events.js";
 import { recordFiredRules } from "../../src/domains/middleware/fired-record.js";
 import { openCallJournalHealth, readCallJournal } from "../../src/domains/telemetry/call-journal.js";

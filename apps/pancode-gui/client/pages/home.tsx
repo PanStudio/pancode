@@ -6,7 +6,6 @@ import { Link } from "react-router";
 import type { Workspace } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
 import { composerKeyAction, fitComposerField, initialEnterSends, touchFirst } from "../chat/composer-field.js";
-import { PROMPT_TEXT_MAX_CHARACTERS } from "../chat/prompt-limit.js";
 import { useFieldAssist } from "../chat/use-field-assist.js";
 import { Icon } from "../design/icons.js";
 import { useDetailsDismiss } from "../interaction/use-details-dismiss.js";
@@ -18,8 +17,11 @@ import { TopBar } from "../shell/TopBar.js";
 import { rememberWorkspace } from "../shell/tasks.js";
 import { firstRequestBusy, homeDraft, subscribeHomeDraft, updateHomeDraft } from "./home-draft.js";
 import {
+	canStartFirstTask,
 	EMPTY_HOME_DRAFT,
-	HOME_DRAFT_TEXT_MAX_CHARACTERS,
+	homeOnboarding,
+	homeTextIssue,
+	homeWorkspaceId,
 	setupWorkspaceId,
 	workspaceNotice,
 } from "./home-draft-model.js";
@@ -184,16 +186,7 @@ export function Home({ client }: { client: Client }) {
 	// A start whose task screen never mounted (a later navigation won) must not leave Home busy.
 	useEffect(() => settleStarted(), []);
 	const limitId = `${fieldId}-limit`;
-	const textIssue =
-		draft.textIssue === "too-large"
-			? `Drafts can contain up to ${HOME_DRAFT_TEXT_MAX_CHARACTERS.toLocaleString()} characters. This edit was not applied; shorten the text and try again.`
-			: draft.textIssue === "restored-too-large"
-				? `The saved draft exceeded ${HOME_DRAFT_TEXT_MAX_CHARACTERS.toLocaleString()} characters. Only its first ${HOME_DRAFT_TEXT_MAX_CHARACTERS.toLocaleString()} characters were restored.`
-				: draft.textIssue === "invalid"
-					? "The saved draft text could not be restored."
-					: text.trim().length > PROMPT_TEXT_MAX_CHARACTERS
-						? "A request can contain up to 32,000 characters. Shorten the draft before starting a task."
-						: null;
+	const textIssue = homeTextIssue(draft);
 	const setText = (value: string) => updateHomeDraft({ text: value });
 	const setChosen = (workspaceId: string) => {
 		updateHomeDraft({ workspaceId });
@@ -201,8 +194,7 @@ export function Home({ client }: { client: Client }) {
 	};
 	const workspaces = useQuery(workspacesQuery(client));
 	const list = workspaces.data ?? [];
-	// A missing saved choice stays visible as a recovery state; never send to a fallback project silently.
-	const workspaceId = draft.workspaceId ?? shell?.activeWorkspaceId ?? list[0]?.id ?? null;
+	const workspaceId = homeWorkspaceId(draft.workspaceId, shell?.activeWorkspaceId, list);
 	const workspace = list.find((item) => item.id === workspaceId) ?? null;
 	useEffect(() => {
 		if (!draft.workspaceId && workspaceId) updateHomeDraft({ workspaceId });
@@ -230,14 +222,15 @@ export function Home({ client }: { client: Client }) {
 		reconcile.reset();
 		field.current?.focus();
 	};
-	const canSend =
-		(ready || setup.isPending) &&
-		workspaces.isSuccess &&
-		!!workspace &&
-		text.trim() !== "" &&
-		text.trim().length <= PROMPT_TEXT_MAX_CHARACTERS &&
-		!busy &&
-		!pending;
+	const canSend = canStartFirstTask({
+		ready,
+		setupPending: setup.isPending,
+		workspacesLoaded: workspaces.isSuccess,
+		workspaceListed: !!workspace,
+		text,
+		busy,
+		pending: !!pending,
+	});
 	const submit = () => {
 		if (!canSend || !workspaceId) return;
 		updateHomeDraft({ workspaceId });
@@ -249,9 +242,12 @@ export function Home({ client }: { client: Client }) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the text is the resize trigger; the DOM read happens in the callback.
 	useLayoutEffect(() => fitComposerField(field.current), [text]);
 	const assist = useFieldAssist({ client, workspaceId, text, setText, field });
-	const needsSetup = setup.isSuccess && !ready;
-	const needsWorkspace = workspaces.isSuccess && list.length === 0;
-	const onboarding = needsSetup || needsWorkspace;
+	const { onboarding, stageDone } = homeOnboarding({
+		setupLoaded: setup.isSuccess,
+		ready,
+		workspacesLoaded: workspaces.isSuccess,
+		listed: list.length,
+	});
 	const notice = workspaceNotice({
 		pending: workspaces.isPending,
 		failed: workspaces.isError,
@@ -274,11 +270,7 @@ export function Home({ client }: { client: Client }) {
 			<TopBar />
 			<div className="newtask">
 				<div className="newtask__inner">
-					<PancodeStage
-						total={2}
-						// Steps finish in order, so the caption names the first open one even when a later one is already done.
-						done={setup.isSuccess && workspaces.isSuccess ? (ready ? (needsWorkspace ? 1 : 2) : 0) : null}
-					/>
+					<PancodeStage total={2} done={stageDone} />
 					<h1 className="newtask__title">{onboarding ? "Set up your workspace" : "Start a task"}</h1>
 					{!onboarding ? <p className="newtask__intro">Describe a change to make or a question about your code.</p> : null}
 					{onboarding ? (

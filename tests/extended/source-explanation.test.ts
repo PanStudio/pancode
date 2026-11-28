@@ -5,10 +5,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { WORKER_OUTPUT_MAX_BYTES } from "../../src/core/worker-output.js";
 import { validateResultContract } from "../../src/domains/agents/result-contract.js";
 import { RESULT_SUMMARY_DEFAULT_MAX_BYTES } from "../../src/domains/agents/result-contract-allowance.js";
 import { nodeResultContractFilesystem } from "../../src/domains/agents/result-contract-filesystem.js";
-import { createWorkerOutputCapture, WORKER_OUTPUT_MAX_BYTES } from "../../src/domains/dispatch/event-pump.js";
+import { createWorkerOutputCapture } from "../../src/domains/dispatch/event-pump.js";
 import { readTool } from "../../src/tools/read.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 

@@ -23,6 +23,7 @@ import { isAbsolute, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { PancodeSettings } from "../core/config.js";
+import { PANE_PEER_IDS } from "../core/pane-peers.js";
 import { relaunchScript } from "../core/relaunch-script.js";
 import { pancodeStateDir, resolvePancodeDirs } from "../core/xdg.js";
 import type { DispatchSnapshot } from "../domains/dispatch/contract.js";
@@ -33,7 +34,6 @@ import type { MuxContract, MuxOpenUtilityPaneRequest, MuxPaneRecord, MuxPaneRef 
 import {
 	PANE_HANDOFF_LABEL_SUFFIX,
 	PANE_INTERRUPT_KEYS,
-	PANE_PEER_IDS,
 	PANES_PRESETS,
 	type PanesCloseResult,
 	type PanesDockReport,

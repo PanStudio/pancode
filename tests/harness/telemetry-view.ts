@@ -12,7 +12,6 @@ import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { encodeTelemetryLine, scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
 import { buildContextLedger } from "../../src/domains/session/context-ledger.js";
-import { loadSessionTelemetrySource } from "../../src/domains/session/telemetry-source.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryReadModel, TelemetryView } from "../../src/domains/telemetry/contract.js";
 import { telemetryRunDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
@@ -21,6 +20,7 @@ import { callsReport, sessionTelemetry } from "../../src/domains/telemetry/read-
 import { runsReport } from "../../src/domains/telemetry/read-model-runs.js";
 import type { JournalSource } from "../../src/domains/telemetry/read-model-sources.js";
 import { createLiveTelemetryModel, telemetryView } from "../../src/domains/telemetry/telemetry-live.js";
+import { loadSessionTelemetrySource } from "../../src/domains/telemetry/telemetry-source.js";
 import { dispatchRunUsage } from "../../src/interactive/dispatch-board-store.js";
 import type { DispatchRunUsage } from "../../src/interactive/dispatch-row-model.js";
 

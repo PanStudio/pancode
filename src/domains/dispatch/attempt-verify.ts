@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../../core/host-verification.js";
 import { isTestFilePath } from "../../core/test-paths.js";
 import { taskWorktreeBaseDiff } from "../../tools/task-worktree.js";
 import { taskWorktreeHoldsWork } from "../../tools/task-worktree-claims.js";
@@ -34,11 +35,7 @@ import {
 import { receiptAssurance } from "./run-settlement.js";
 import { snapshotToolStats } from "./tool-stats.js";
 import type { RunOutcomeCode } from "./types.js";
-import {
-	HOST_VERIFICATION_EVENT,
-	type VerificationSlotEvents,
-	type VerificationSlotState,
-} from "./verification-slot.js";
+import type { VerificationSlotEvents } from "./verification-slot.js";
 
 export async function verifyAttemptOnHost(rt: DispatchRuntime, attempt: FinalizingAttempt, settling: GradedSettlement) {
 	const { context } = rt;

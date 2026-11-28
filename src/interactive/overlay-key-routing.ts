@@ -336,15 +336,6 @@ function routeReadOnlyOverlayKey(data: string, deps: CloseOverlayKeyDeps): boole
 	return false;
 }
 
-/** Pure overlay key router for the /fork message-picker. */
-function routeMessagePickerOverlayKey(data: string, deps: CloseOverlayKeyDeps): boolean {
-	if (isEscapeKey(data)) {
-		deps.closeOverlay();
-		return true;
-	}
-	return false;
-}
-
 export function overlayOwnsInput(overlayState: OverlayState): boolean {
 	return overlayState !== "closed";
 }
@@ -431,7 +422,7 @@ export function routeOverlayKey(
 	if (overlayState === "tree") return false;
 	// The snapshot list and its confirmation own their keys and Esc.
 	if (overlayState === "rewind") return false;
-	if (overlayState === "message-picker") return routeMessagePickerOverlayKey(data, deps);
+	if (overlayState === "message-picker") return routeReadOnlyOverlayKey(data, deps);
 	if (overlayState === "cwd-fallback") return false;
 	if (overlayState === "ask-user") return false;
 	if (

@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Value } from "typebox/value";
+import { activeWork } from "../client/shell/shell-model.js";
 import { SessionOverviewItem } from "../contracts/session-overview.js";
 import type { SessionSnapshot } from "../contracts/sessions.js";
 import { projectSessionOverview, SessionWorkers } from "../server/acp/session-overview.js";
@@ -60,4 +61,15 @@ test("the overview carries the held session's live runs and none for a session n
 	assert.ok(Value.Check(SessionOverviewItem, parked));
 	assert.deepEqual(parked.runs, []);
 	assert.deepEqual(projectSessionOverview(snapshot("open")).runs, []);
+});
+
+test("a task waiting on the operator's answer counts as active work beside approvals", () => {
+	const work = activeWork(
+		(["question", "approval", "working", "queued", "ready"] as const).map((activity) => ({ activity })),
+	);
+	assert.deepEqual(
+		work.items.map((item) => item.state),
+		["question", "approval", "working", "waiting"],
+	);
+	assert.deepEqual([work.working, work.queued, work.approval], [1, 1, 1]);
 });

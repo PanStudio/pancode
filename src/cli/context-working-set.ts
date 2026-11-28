@@ -524,7 +524,7 @@ function formatWorkingSet(trace: Trace): string {
 /** `--verify`: every dispatched attempt of the session against its receipt (ContextFold CF-9, F14). */
 async function verifySession(source: string, entries: SessionEntry[]): Promise<number> {
 	const { verifyAttemptReceipts } = await import("../session-control/attempt-receipt.js");
-	const { loadSessionTelemetrySource } = await import("../domains/session/telemetry-source.js");
+	const { loadSessionTelemetrySource } = await import("../domains/telemetry/telemetry-source.js");
 	const sessionId = basename(dirname(source));
 	const telemetry = loadSessionTelemetrySource(pancodeStatePath(), sessionId, dirname(source));
 	const result = verifyAttemptReceipts({

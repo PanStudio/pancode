@@ -30,7 +30,9 @@
  * should measure the rate window against, so every sequence below is testable.
  */
 
+import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../../core/host-verification.js";
 import { isRecord } from "../../core/type-guards.js";
+import { durableAssistantTextFromEvent, WORKER_OUTPUT_MAX_BYTES } from "../../core/worker-output.js";
 import type { CallActionDescriptor } from "../../lib/call-target/call-target.js";
 import {
 	type CutHeadGuard,
@@ -42,8 +44,6 @@ import {
 	messageStopCompleted,
 } from "../../lib/secrets/redaction.js";
 import { truncateUtf8 } from "../../tools/truncate-utf8.js";
-import { durableAssistantTextFromEvent, WORKER_OUTPUT_MAX_BYTES } from "../dispatch/event-pump.js";
-import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../dispatch/verification-slot.js";
 
 /**
  * Lines of worker prose kept while a run is live. The tail is what a streaming

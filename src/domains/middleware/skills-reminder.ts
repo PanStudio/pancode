@@ -13,8 +13,6 @@ import { type MiddlewareEffect, metadataNumber } from "./types.js";
 
 const SKILLS_REMINDER_REGISTRATION_ID = "observer.skills-reminder";
 
-export { SKILL_SUGGESTION_ANCHOR };
-
 export function skillsReminderMessage(installed: number, installable = 0, modelActivation = false): string {
 	if (installed <= 0) return "";
 	const counts = `${installed} ready PanCode skill${installed === 1 ? "" : "s"}`;

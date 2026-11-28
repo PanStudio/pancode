@@ -12,7 +12,6 @@ import {
 	runHostVerified,
 	type VerifiedOutcomeCount,
 } from "../domains/evidence/verified-outcomes.js";
-import { loadRepoTelemetrySources } from "../domains/session/telemetry-source.js";
 import { readRunRecord } from "../domains/telemetry/index.js";
 import {
 	autonomyLevel,
@@ -27,6 +26,7 @@ import {
 } from "../domains/telemetry/insights.js";
 import { CONTENT_SUBJECTS, readTelemetryObjectSync } from "../domains/telemetry/objects.js";
 import { telemetrySessionDirectory } from "../domains/telemetry/paths.js";
+import { loadRepoTelemetrySources } from "../domains/telemetry/telemetry-source.js";
 import { printError } from "./argv.js";
 
 export const INSIGHTS_HELP = `pancode telemetry insights [--project [<dir>]] [--json]

@@ -11,6 +11,7 @@ import { ApiProblem } from "../api/client.js";
 import { useLiveState } from "../interaction/announcer.js";
 import type { Notice, NoticeInput, NoticeTone } from "./notification-model.js";
 import { DEFAULT_TTL, noticeAfterDismissal, problemNotice, withNotice } from "./notification-model.js";
+import { useMediaQuery } from "./use-media-query.js";
 import "../interaction/interaction.css";
 
 export type { Notice, NoticeTone } from "./notification-model.js";
@@ -132,18 +133,6 @@ const keepFocus = (event: MouseEvent<HTMLButtonElement>) => event.preventDefault
 
 /** A phone-width window keeps two notices in view, a wider one three; the rest are counted. */
 const NARROW_QUERY = "(max-width: 599.98px)";
-function useVisibleCap(): number {
-	const [narrow, setNarrow] = useState(() => typeof matchMedia === "function" && matchMedia(NARROW_QUERY).matches);
-	useEffect(() => {
-		if (typeof matchMedia !== "function") return;
-		const query = matchMedia(NARROW_QUERY);
-		const change = () => setNarrow(query.matches);
-		query.addEventListener("change", change);
-		change();
-		return () => query.removeEventListener("change", change);
-	}, []);
-	return narrow ? 2 : 3;
-}
 
 /**
  * On a task page the stack is a row at the top of the composer dock instead of an overlay. An overlay
@@ -260,7 +249,7 @@ function useFloatingReserve(region: { readonly current: HTMLElement | null }, do
 
 export function NoticeToasts() {
 	const values = useNotices();
-	const cap = useVisibleCap();
+	const cap = useMediaQuery(NARROW_QUERY) ? 2 : 3;
 	const dockSlot = useDockSlot();
 	const shown = values.slice(-cap);
 	const hidden = values.length - shown.length;

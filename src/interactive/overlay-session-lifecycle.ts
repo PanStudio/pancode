@@ -14,10 +14,10 @@ import {
 	prepareHandoff,
 } from "../domains/session/handoff-service.js";
 import type { SessionContract, SessionEntry } from "../domains/session/index.js";
-import { liveSessionOwner } from "../domains/session/live-owner.js";
 import { resolveSessionTarget } from "../domains/session/names.js";
 import type { TelemetryContract } from "../domains/telemetry/index.js";
 import type { TUI } from "../engine/tui.js";
+import { liveSessionOwner } from "../lib/heartbeat/live-owner.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
 import { replayCurrentSession, restoreSession } from "../session-control/index.js";
 import {

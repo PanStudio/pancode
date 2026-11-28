@@ -16,7 +16,7 @@ import { chmodSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { assertSafeId } from "../../core/safe-id.js";
-import { liveSessionsDir } from "../session/heartbeat.js";
+import { liveSessionsDir } from "../../lib/heartbeat/heartbeat.js";
 import type { AttachChannel, AttachConnection, AttachTransport } from "./host.js";
 import { ATTACH_CLIENT_LINE_MAX_BYTES } from "./protocol.js";
 

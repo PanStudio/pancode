@@ -133,6 +133,12 @@ export function histogram(kinds: readonly string[], limit = HISTOGRAM_KINDS): Hi
 	};
 }
 
+/** Milliseconds from the run's start to an entry; null when either time is unknown or the entry predates the start. */
+export function entryElapsedMs(at: string, runStart: number | null): number | null {
+	const timestamp = Date.parse(at);
+	return runStart !== null && Number.isFinite(timestamp) && timestamp >= runStart ? timestamp - runStart : null;
+}
+
 type CallEntry = Extract<RunTimelineEntry, { kind: "call" }>;
 /** A stable key per timeline entry: an attempt, a feed sequence, or the record's kind and time. */
 export function entryKey(entry: RunTimelineEntry): string {

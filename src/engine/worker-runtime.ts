@@ -15,10 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { snapshotModelInfo } from "../core/model-tier.js";
 import { modelRouteGuarded } from "../core/response-model-id.js";
-import { requestModelRouteRefresh } from "../core/sandbox/egress/model-route-client.js";
 import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/context.js";
-import { openAuthStorage } from "../domains/providers/auth/index.js";
-import type { AuthResolution } from "../domains/providers/auth/storage.js";
 import { resolveEffectivePricing } from "../domains/providers/catalog.js";
 import { acceptsImageInput } from "../domains/providers/image-input.js";
 import { permissionHoldBackstopAt } from "../lib/worker-wire/protocol.js";
@@ -31,10 +28,10 @@ import { startClaudeSdkWorkerRun } from "./claude/sdk-runtime.js";
 import { disableCopilotConversationResume } from "./copilot/session-fs.js";
 import { observeExternalWorkerRun } from "./external-call-telemetry.js";
 import { startExternalCliWorkerRun } from "./external-cli/connectors.js";
-import { registerPancodeOAuthProviders } from "./oauth.js";
 import { supportsNamedToolChoice } from "./provider-payload.js";
 import { createRunPhase } from "./run-phase.js";
 import { createWorkerCallTelemetry } from "./worker-call-telemetry.js";
+import { createWorkerAuth } from "./worker-run/auth.js";
 import { createWorkerBounds } from "./worker-run/bounds.js";
 import { subscribeWorkerEvents } from "./worker-run/events.js";
 import { createWorkerEvidence } from "./worker-run/evidence.js";
@@ -49,26 +46,6 @@ import { createWorkerStreamFn } from "./worker-run/stream.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput } from "./worker-run-types.js";
 
 export { workerProviderSupportsTools };
-
-/**
- * The key to retry with after a provider rejection under the model route (D14), else null. The worker holds no
- * credential to refresh: the route refreshes the one the provider rejected. `refreshed` earns the #427 retry with the
- * same surrogate; `unchanged` (an API key) earns none.
- */
-async function routed(
-	input: Pick<WorkerRunInput, "modelRoute" | "signal" | "target" | "runtime">,
-): Promise<string | null> {
-	if (input.modelRoute === undefined) return null;
-	const outcome = await requestModelRouteRefresh(input.modelRoute, input.signal);
-	if (outcome === "unchanged") return null;
-	if (outcome === "failed") {
-		throw new Error(
-			`The credential for target '${input.target.id}' could not be refreshed. Run pancode auth login ${input.runtime.id} again.`,
-		);
-	}
-	process.stderr.write(`[worker] the host refreshed the credential for target '${input.target.id}'; retrying once\n`);
-	return input.modelRoute.surrogate;
-}
 
 /**
  * Spin up a pi-agent-core Agent for the worker subprocess. Subscribes an event
@@ -253,23 +230,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		},
 	};
 
-	// The credential the current request carries, so a server rejection refreshes
-	// exactly that token under the shared storage lock (#427).
-	let lastAuthResolution: AuthResolution | null = null;
-	const refreshWorkerOAuthKey = async (): Promise<string | null> => {
-		const rejected = lastAuthResolution;
-		if (!input.authProfile || rejected?.source !== "stored-oauth" || rejected.apiKey === undefined) return routed(input);
-		process.stderr.write(`[worker] refreshing the OAuth credential for target '${input.target.id}' and retrying once\n`);
-		const refreshed = await openAuthStorage().forceRefreshApiKey(input.authProfile, rejected.apiKey, input.signal);
-		if (!refreshed.available || refreshed.apiKey === undefined) {
-			// Reuse the CLI login syntax, and keep refresh-provider diagnostics out of the remedy (#427).
-			throw new Error(
-				`OAuth credential for target '${input.target.id}' could not be refreshed. Run pancode auth login ${rejected.providerId} again.`,
-			);
-		}
-		lastAuthResolution = refreshed;
-		return refreshed.apiKey;
-	};
+	const { refreshWorkerOAuthKey, getApiKey } = createWorkerAuth(scope);
 	const {
 		workerBudget,
 		deliveryTools,
@@ -364,28 +325,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		delegateGuardsToolArguments: true,
 		streamFn,
 		initialState,
-		getApiKey: async () => {
-			workerTelemetry?.stage("transform", "end");
-			// A key the parent handed over needs no resolution, so the call has no auth stage (#434).
-			if (!input.authProfile) return input.apiKey;
-			workerTelemetry?.stage("auth", "start");
-			let refreshed: boolean | undefined;
-			try {
-				registerPancodeOAuthProviders();
-				const resolved = await openAuthStorage().resolveApiKey(input.authProfile, {
-					includeFallback: false,
-					...(input.signal ? { signal: input.signal } : {}),
-				});
-				refreshed = resolved.refreshed;
-				if (!resolved.available || !resolved.apiKey) {
-					throw new Error(resolved.detail ?? `Credential '${input.authProfile}' is unavailable. Log in again.`);
-				}
-				lastAuthResolution = resolved;
-				return resolved.apiKey;
-			} finally {
-				workerTelemetry?.stage("auth", "end", refreshed === undefined ? {} : { refreshed });
-			}
-		},
+		getApiKey,
 	};
 	// Providers derive prompt-cache affinity (openai-codex prompt_cache_key,
 	// session headers) from the session ID. Without one every worker call
