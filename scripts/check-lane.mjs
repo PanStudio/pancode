@@ -82,7 +82,7 @@ export function selectLaneTests({ changed, added, importsOf, lists }) {
 	const pkg = new Set(lists.packageTests);
 	const unlisted = added.filter((path) => {
 		if (!TEST_FILE.test(path)) return false;
-		if (path.startsWith("tests/extended/") || path.startsWith("tests/extended-smoke/")) return false;
+		if (path.startsWith("tests/extended/") || path.startsWith("tests/smoke/")) return false;
 		if (!path.startsWith("tests/") && !path.startsWith("apps/pancode-gui/tests/")) return false;
 		return !core.has(path) && !gui.has(path) && !pkg.has(path);
 	});
@@ -252,7 +252,7 @@ async function main() {
 	const { affected, unlisted } = selectLaneTests({ changed, added, importsOf, lists });
 	for (const file of unlisted)
 		fail("test-lists", `${file} is in no gate list; add its stem to coreTests in scripts/ci-tests.mjs`);
-	for (const file of added.filter((path) => /^tests\/extended(-smoke)?\/.*\.test\.ts$/u.test(path)))
+	for (const file of added.filter((path) => /^tests\/(extended|smoke)\/.*\.test\.ts$/u.test(path)))
 		console.log(`notice: ${file} runs only in test:full`);
 	if (unlisted.length === 0) pass("test-lists");
 	stopIfFailed();
