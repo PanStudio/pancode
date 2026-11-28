@@ -14,7 +14,9 @@ import type {
 	ToolInvokeOptions,
 } from "../registry-contract.js";
 import type { createShellEgress, OperatorAskQueue } from "../registry-operator-asks.js";
-import type { ToolSpec } from "../tool-spec.js";
+import type { ToolResultDigest } from "../result-disposition.js";
+import type { ToolResult, ToolSpec } from "../tool-spec.js";
+import type { createRegistryAttempts } from "./attempts.js";
 import type { createFlowGates } from "./flow.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 import type { createSnapshotGate } from "./snapshot.js";
@@ -75,4 +77,18 @@ export interface RegistryScope {
 	readonly fileTargetFlowViolation: ReturnType<typeof createFlowGates>["fileTargetFlowViolation"];
 	readonly sourceAdmissionRefusal: ReturnType<typeof createFlowGates>["sourceAdmissionRefusal"];
 	readonly snapshotBeforeBody: ReturnType<typeof createSnapshotGate>["snapshotBeforeBody"];
+	readonly recordRegistryDisposition: ReturnType<typeof createRegistryAttempts>["recordRegistryDisposition"];
+	readonly observeBlockedAttempt: ReturnType<typeof createRegistryAttempts>["observeBlockedAttempt"];
+	readonly observeRejectedAttempt: ReturnType<typeof createRegistryAttempts>["observeRejectedAttempt"];
+	readonly guardOverrideForRejectedAttempt: ReturnType<typeof createRegistryAttempts>["guardOverrideForRejectedAttempt"];
+	readonly guardBlocked: ReturnType<typeof createRegistryAttempts>["guardBlocked"];
+	readonly runToolHook: (
+		hook: "before_tool" | "after_tool",
+		spec: ToolSpec,
+		call: ClassifierCall,
+		decision: SafetyDecision,
+		options: ToolInvokeOptions | undefined,
+		result?: ToolResult,
+		resultDigest?: ToolResultDigest,
+	) => ReadonlyArray<MiddlewareEffect>;
 }
