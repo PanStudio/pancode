@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepEqual, equal, match, ok } from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	existsSync,
@@ -22,6 +22,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { SETTINGS_SCAFFOLD_YAML } from "../../src/core/defaults.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import { createStdioTransport } from "../../src/engine/acp/transport.js";
+import { type CliResult, runSourceCli } from "../harness/headless-run.js";
 import {
 	closeServer,
 	type OpenAICompatFixture,
@@ -113,35 +114,16 @@ function writeSettings(change: (settings: Record<string, Record<string, unknown>
 	writeFileSync(file, stringifyYaml(settings));
 }
 
-interface Result {
-	code: number | null;
-	stdout: string;
-	stderr: string;
-}
-
-function pancode(args: string[]): Promise<Result> {
-	const env: NodeJS.ProcessEnv = {
-		...process.env,
-		...scratchPancodeEnvVars(home),
-		HOME: home,
-		TMPDIR: runTmp,
-		PANCODE_TEST_OPENAI_KEY: "fixture-key",
-	};
-	return new Promise((resolve) => {
-		const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), entry, ...args], {
-			cwd: work,
-			env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		child.stdout?.on("data", (chunk) => {
-			stdout += String(chunk);
-		});
-		child.stderr?.on("data", (chunk) => {
-			stderr += String(chunk);
-		});
-		child.on("close", (code) => resolve({ code, stdout, stderr }));
+function pancode(args: string[]): Promise<CliResult> {
+	return runSourceCli(args, {
+		cwd: work,
+		env: {
+			...process.env,
+			...scratchPancodeEnvVars(home),
+			HOME: home,
+			TMPDIR: runTmp,
+			PANCODE_TEST_OPENAI_KEY: "fixture-key",
+		},
 	});
 }
 

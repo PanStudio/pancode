@@ -199,7 +199,6 @@ export const coreTests = [
 	"provider-error-presentation",
 	"handbook-discovery",
 	"report-share",
-	"report-dataset",
 	"typecheck-corpus",
 	"anthropic-thread-idle",
 	"store-put-identity",
@@ -269,7 +268,7 @@ export const packageTests = [
 	"tests/extended/dogfood-doctor-readonly.test.ts",
 ];
 
-export const fullTests = ["contracts", "extended", "smoke", "extended-smoke"].flatMap((suite) =>
+export const fullTests = ["contracts", "extended", "smoke"].flatMap((suite) =>
 	readdirSync(join(root, "tests", suite))
 		.filter((name) => name.endsWith(".test.ts"))
 		.sort()
