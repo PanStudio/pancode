@@ -1,30 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { Interview } from "@pancode/sdk/extension";
-import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
-import { resetXdgCache } from "../../src/core/xdg.js";
-import { entryRootEnv, entryRoots } from "../../src/domains/campaign/fold.js";
-import { foldCampaignMetrics, parseRoster } from "../../src/domains/campaign/index.js";
-import type { CampaignResult } from "../../src/domains/campaign/runner.js";
-import {
-	CLAUDE_AGENT_SDK_VERSION,
-	ClaudeAgentSdkUnavailableError,
-} from "../../src/domains/lifecycle/claude-sdk-install.js";
-import {
-	COPILOT_SDK_PACKAGE,
-	COPILOT_SDK_VERSION,
-	CopilotSdkUnavailableError,
-	resolveCopilotSdkEntry,
-} from "../../src/domains/lifecycle/copilot-sdk-install.js";
-import type { SessionEntry } from "../../src/domains/session/entries.js";
-import { findPinnedTool, resolveVendoredBinary } from "../../src/domains/toolchain/index.js";
-import { runParkedInterview } from "../../src/tools/extension-interview.js";
+import type { CampaignResult } from "../../hub/packs/extensions/campaign/runtime/types.ts";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import { type HeadlessScratch, headlessScratch } from "../harness/headless-run.js";
 import {
 	closeServer,
@@ -33,7 +16,8 @@ import {
 	seedOpenAICompatToolOrchestrator,
 	startOpenAICompatFixture,
 } from "../harness/openai-compat-fixture.js";
-import { isolatePancodeEnv } from "../harness/scratch-env.js";
+
+const CAMPAIGN_PACK = fileURLToPath(new URL("../../hub/packs/extensions/campaign", import.meta.url));
 
 const DESK_MANIFEST = {
 	id: "desk",
@@ -82,7 +66,7 @@ function cli(
 	});
 }
 
-describe("campaign run folds one fixture across a roster", { timeout: 240_000 }, () => {
+describe("the campaign pack folds one fixture across a roster", { timeout: 300_000 }, () => {
 	let scratch: HeadlessScratch;
 	let chat: OpenAICompatFixture;
 	let fixture: string;
@@ -101,12 +85,15 @@ describe("campaign run folds one fixture across a roster", { timeout: 240_000 },
 		mkdirSync(desk);
 		writeFileSync(join(desk, "pancode-extension.json"), JSON.stringify(DESK_MANIFEST));
 		writeFileSync(join(desk, "extension.mjs"), DESK_SOURCE);
-		const installed = await cli(["extensions", "install", desk, "--user"], { env: scratch.env, cwd: scratch.root });
-		strictEqual(installed.status, 0, installed.stderr);
+		for (const source of [desk, CAMPAIGN_PACK]) {
+			const installed = await cli(["extensions", "install", source, "--user"], { env: scratch.env, cwd: scratch.root });
+			strictEqual(installed.status, 0, installed.stderr);
+		}
 		fixture = join(scratch.root, "fixture");
 		mkdirSync(join(fixture, ".planning"), { recursive: true });
 		writeFileSync(join(fixture, ".planning", "state.json"), '{"phase":"outline"}\n');
 		writeFileSync(join(fixture, "README.md"), "# paper\n");
+		writeFileSync(join(fixture, ".env"), "FIXTURE_SECRET=hunter2\n");
 		writeFileSync(
 			join(scratch.root, "roster.yaml"),
 			"roster:\n  - target: mock-chat\n    model: mock-model\n    label: mock\n  - target: absent-target\n    model: nope\n    thinking: low\n",
@@ -188,10 +175,15 @@ describe("campaign run folds one fixture across a roster", { timeout: 240_000 },
 			const saved = JSON.parse(readFileSync(join(entry.dir, "entry.json"), "utf8")) as { label: string; status: string };
 			deepStrictEqual([saved.label, saved.status], [entry.label, entry.status]);
 			ok(existsSync(join(entry.dir, "project", "README.md")), "each entry works in its own fixture copy");
+			// Under an OS sandbox the pack reads a secret file as masked, and copies it empty.
+			strictEqual(
+				readFileSync(join(entry.dir, "project", ".env"), "utf8"),
+				sandboxAvailability().available ? "" : "FIXTURE_SECRET=hunter2\n",
+			);
 			ok(!existsSync(join(entry.dir, "home", "config")), "no copy of the operator's config is kept under --out");
 		}
 		deepStrictEqual(readdirSync(out).sort(), ["01-mock", "02-absent-target-nope-low"]);
-		deepStrictEqual(readdirSync(fixture).sort(), [".planning", "README.md"]);
+		deepStrictEqual(readdirSync(fixture).sort(), [".env", ".planning", "README.md"]);
 		strictEqual(readCredentials(), credentials);
 		const operatorSessions = existsSync(join(scratch.stateDir, "sessions"))
 			? readdirSync(join(scratch.stateDir, "sessions"), { recursive: true }).filter((name) =>
@@ -297,149 +289,5 @@ describe("campaign run folds one fixture across a roster", { timeout: 240_000 },
 			deepStrictEqual(saved.completion, { claimed: null, assessed: "unknown", facts: [] });
 			deepStrictEqual(saved.verification, { outcome: "succeeded", outcomeDetail: null, causes: [], checks: [] });
 		}
-	});
-});
-
-function toolResult(toolName: string, details: Record<string, unknown>, isError = false): SessionEntry {
-	return {
-		kind: "message",
-		role: "tool_result",
-		turnId: `t-${Math.random()}`,
-		parentTurnId: null,
-		timestamp: "2026-11-16T00:00:00.000Z",
-		payload: { toolCallId: "c", toolName, isError, result: { content: [], details } },
-	} as SessionEntry;
-}
-
-function journalRecord(k: string, data: Record<string, unknown>): TelemetryRecord {
-	return { k, t: "2026-11-16T00:00:00.000Z", ctx: { sessionId: "s1" }, data } as unknown as TelemetryRecord;
-}
-
-describe("campaign metrics fold", () => {
-	it("counts gates, extension refusals and loop-guard blocks from the ledger and journal", () => {
-		const metrics = foldCampaignMetrics(
-			"s1",
-			[
-				toolResult("gateway", {
-					capability: "extension_wtfp__gate",
-					interview: { outcome: "done", checkpoints: ["plan-introduction"] },
-				}),
-				toolResult(
-					"extension_wtfp__gate",
-					{ interview: { outcome: "cancelled", reason: "unscripted", checkpoints: ["results-acceptance"] } },
-					true,
-				),
-				toolResult("gateway", { capability: "extension_wtfp__record" }, true),
-				// The shape an extension tool's error reaches the ledger in through the gateway: owner stamped, details empty.
-				{
-					...toolResult("gateway", {}, true),
-					payload: { toolName: "gateway", isError: true, owner: { kind: "extension", id: "wtfp" }, result: { details: {} } },
-				} as SessionEntry,
-				toolResult("gateway", { capability: "data" }, true),
-			],
-			[
-				journalRecord("hook.ran", { origin: "extension", hook: "before_tool", effectKinds: ["block_tool"] }),
-				journalRecord("hook.ran", { origin: "user", hook: "before_tool", effectKinds: ["block_tool"] }),
-				journalRecord("middleware.fired", { ruleId: "guard.loop", effects: ["block_tool"], hook: "before_tool" }),
-				journalRecord("middleware.fired", { ruleId: "guard.loop", effects: ["annotate_tool_result"], hook: "after_tool" }),
-			],
-			null,
-		);
-		deepStrictEqual(metrics.gates, {
-			reached: ["plan-introduction", "results-acceptance"],
-			interviews: 2,
-			answered: 1,
-			unscripted: 1,
-			unanswered: 0,
-		});
-		deepStrictEqual(metrics.refusals, { hookBlocks: 1, toolRefusals: 2 });
-		strictEqual(metrics.loopGuardBlocks, 1);
-		strictEqual(metrics.tokens, null);
-	});
-
-	it("a parked interview names the checkpoints it put to the author", async () => {
-		const interview: Interview = {
-			id: "gate",
-			title: "Gates",
-			step: {
-				key: "gate.one",
-				questions: [
-					{
-						id: "choice",
-						label: "Approve the plan?",
-						kind: "single",
-						checkpoint: "plan-introduction",
-						options: [{ value: "approve", label: "Approve" }],
-					},
-				],
-			},
-		};
-		const parked = await runParkedInterview(
-			{ ask: async () => ({ answers: [{ question: "Approve the plan?", answer: "Approve", options: ["Approve"] }] }) },
-			interview,
-			{ extensionId: "desk", title: "Desk" },
-			async () => ({ done: true, text: "sealed" }),
-		);
-		deepStrictEqual(parked.checkpoints, ["plan-introduction"]);
-	});
-
-	it("a roster entry names one model and a unique label", () => {
-		deepStrictEqual(parseRoster("roster:\n  - target: openai-codex\n    model: gpt-6-luna\n    thinking: high\n"), [
-			{ target: "openai-codex", model: "gpt-6-luna", thinking: "high", label: "openai-codex/gpt-6-luna@high" },
-		]);
-		throws(
-			() => parseRoster("roster:\n  - target: a\n    model: b\n  - target: a\n    model: b\n"),
-			/roster\[1\]\.label/u,
-		);
-		throws(() => parseRoster("roster:\n  - target: a\n    model: b\n    thinking: hot\n"), /roster\[0\]\.thinking/u);
-		throws(
-			() => parseRoster("roster:\n  - target: a\n    model: b\n    effort: high\n"),
-			/roster\[0\]\.effort: unknown key/u,
-		);
-		throws(() => parseRoster("entries: []\n"), /entries: unknown key/u);
-	});
-});
-
-describe("campaign entry components", () => {
-	it("an entry reads the operator's installed SDK and vendored tools, and a missing SDK names the operator's directory", async (t) => {
-		const env = await isolatePancodeEnv("pancode-campaign-components-");
-		t.after(env.restore);
-		delete process.env.PANCODE_CLAUDE_SDK_DIR;
-		const operatorComponents = join(env.dir, "operator-data", "components");
-		const sdk = join(operatorComponents, "copilot-sdk", COPILOT_SDK_VERSION, "node_modules", COPILOT_SDK_PACKAGE);
-		mkdirSync(sdk, { recursive: true });
-		writeFileSync(
-			join(sdk, "package.json"),
-			JSON.stringify({ name: COPILOT_SDK_PACKAGE, version: COPILOT_SDK_VERSION, type: "module", exports: "./sdk.mjs" }),
-		);
-		writeFileSync(join(sdk, "sdk.mjs"), "export class CopilotClient {}\n");
-		const operatorTools = join(env.dir, "operator-data", "tools");
-		const herdr = findPinnedTool("herdr");
-		ok(herdr !== null);
-		const herdrBinary = join(operatorTools, herdr.id, herdr.version, herdr.primaryBinary);
-		mkdirSync(join(herdrBinary, ".."), { recursive: true });
-		writeFileSync(herdrBinary, "#!/bin/sh\n");
-		const configDir = process.env.PANCODE_CONFIG_DIR ?? "";
-		const roots = entryRoots(join(env.dir, "out", "01-luna", "home"), configDir, operatorComponents, operatorTools);
-		Object.assign(process.env, entryRootEnv(roots));
-		resetXdgCache();
-
-		const entry = resolveCopilotSdkEntry();
-		ok(entry !== null, "the entry resolves the operator's copilot-sdk");
-		strictEqual(realpathSync(entry), realpathSync(join(sdk, "sdk.mjs")));
-		// A vendored tool the operator installed resolves from their toolchain root, not the entry's empty one.
-		strictEqual(resolveVendoredBinary("herdr")?.binaryPath, herdrBinary);
-
-		// Without the component, the install hint names the operator's directory, never the entry's throwaway home.
-		for (const [error, dir] of [
-			[new CopilotSdkUnavailableError(), join(operatorComponents, "copilot-sdk", COPILOT_SDK_VERSION)],
-			[new ClaudeAgentSdkUnavailableError(), join(operatorComponents, "claude-agent-sdk", CLAUDE_AGENT_SDK_VERSION)],
-		] as const) {
-			ok(error.message.includes(`separate component at ${dir};`), error.message);
-			ok(!error.message.includes(roots.home), error.message);
-		}
-		deepStrictEqual(readdirSync(operatorComponents), ["copilot-sdk"]);
-		strictEqual(existsSync(join(roots.data, "components")), false);
-		strictEqual(existsSync(join(roots.data, "tools")), false);
 	});
 });

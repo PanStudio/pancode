@@ -5,3 +5,4 @@
 defaults:
   - extension:music
   - extension:arena
+  - extension:campaign

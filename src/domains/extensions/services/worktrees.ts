@@ -478,8 +478,8 @@ export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDep
 
 		async resolvePlace(place) {
 			if (place === "workspace") return { cwd: deps.workspace, root: deps.workspace };
-			if (typeof place !== "object" || place === null)
-				throw new ExtensionWorktreeError("invalid", "a place is 'workspace' or { worktree }");
+			if (typeof place !== "object" || place === null || !("worktree" in place))
+				throw new ExtensionWorktreeError("invalid", "a place here is 'workspace' or { worktree }");
 			const entry = await lookup(place.worktree);
 			const { prefix } = await repo();
 			const rootReal = realpathSync(entry.path);

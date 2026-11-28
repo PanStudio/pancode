@@ -392,7 +392,7 @@ test("the extension runtime launch masks PanCode's config directory, or its sett
 	for (const file of settingsFiles) assert.ok(fallback.includes(realpathSync(file)), `${file} is not masked`);
 });
 
-test("the extension runtime launch masks secret files in the workspace and declared read roots", async (t) => {
+test("the extension runtime launch masks secret files in the workspace, declared read roots and granted directories", async (t) => {
 	const home = await isolatePancodeEnv("pancode-extension-secret-mask-");
 	t.after(() => home.restore());
 	const roots = {
@@ -402,21 +402,47 @@ test("the extension runtime launch masks secret files in the workspace and decla
 		bootstrap: join(home.dir, "bootstrap", "runtime-child-v2.mjs"),
 	};
 	const shared = join(home.dir, "shared");
-	for (const directory of [roots.workspace, roots.packageCopy, roots.storeDir, shared, join(home.dir, "bootstrap")])
+	const granted = join(home.dir, "fixture");
+	const out = join(home.dir, "out");
+	for (const directory of [
+		roots.workspace,
+		roots.packageCopy,
+		roots.storeDir,
+		shared,
+		granted,
+		out,
+		join(home.dir, "bootstrap"),
+	])
 		mkdirSync(directory, { recursive: true });
 	writeFileSync(join(roots.workspace, ".env"), "SUPER_SECRET_KEY=hunter2\n");
 	writeFileSync(join(shared, ".env"), "SHARED_SECRET_KEY=hunter3\n");
+	writeFileSync(join(granted, ".env"), "FIXTURE_SECRET_KEY=hunter4\n");
+	writeFileSync(join(out, ".env"), "OUT_SECRET_KEY=hunter5\n");
+	const grant = (flag: string, access: "read" | "write", path: string) => ({
+		flag,
+		access,
+		path,
+		canonical: realpathSync(path),
+		exists: true,
+	});
 	const launch = planExtensionLaunch({
 		declaration: {
 			permissions: { fs: { read: ["workspace", shared], write: [] }, exec: false, net: false },
 		} as unknown as ExtensionRuntimeDeclarationV2,
-		roots,
+		roots: {
+			...roots,
+			grants: [
+				grant("--fixture", "read", granted),
+				grant("--roster", "read", join(shared, ".env")),
+				grant("--out", "write", out),
+			],
+		},
 		argv: [process.execPath, roots.bootstrap],
 		availability: { available: true, backend: "seatbelt", executable: "/usr/bin/sandbox-exec", reason: null },
 	});
 	assert.equal(launch.report.backend, "seatbelt", launch.report.reason);
 	const args = launch.args.join("\n");
-	for (const file of [join(roots.workspace, ".env"), join(shared, ".env")])
+	for (const file of [join(roots.workspace, ".env"), join(shared, ".env"), join(granted, ".env"), join(out, ".env")])
 		assert.ok(args.includes(realpathSync(file)), `${file} is not masked`);
 });
 
