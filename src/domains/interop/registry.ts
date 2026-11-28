@@ -215,7 +215,7 @@ export const INTEROP_AGENT_KINDS: ReadonlyArray<InteropAgentKind> = [
 		instructionFiles: [],
 		// Shares the CLI's own login and store: agy keeps app data at <gemini-dir>/<app-data-dir>, here
 		// ~/.gemini/antigravity-cli. An isolated profile is an entry pointing these flags elsewhere. PanCode expands `~`
-		// at launch (engine/acp/antigravity-launch.ts); agy never sees it.
+		// at launch (acp/antigravity-launch.ts); agy never sees it.
 		acp: {
 			command: "agy",
 			args: ["acp", "--gemini-dir", "~/.gemini", "--app-data-dir", "antigravity-cli"],

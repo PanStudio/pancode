@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { EvidenceAssessedPayload } from "../../src/core/telemetry/live-events.js";
 import { composeTrustStatus } from "../../src/domains/evidence/index.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
 import { fakeTransport } from "../harness/acp-fake-transport.js";
 
 const chat: AcpServerChat = {

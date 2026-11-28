@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import type { AcpDelegationRunHandle } from "../../engine/acp/adapter.js";
+import type { AcpDelegationRunHandle } from "../../acp/adapter.js";
 import type { admitAcpDelegation } from "./acp-attempt-admit.js";
 import type { openAcpRun } from "./acp-attempt-run.js";
 import type { spawnAcpPeer } from "./acp-attempt-spawn.js";

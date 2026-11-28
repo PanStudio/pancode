@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../acp/adapter.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import type { DispatchRunIdentity } from "../../core/telemetry/live-events.js";
-import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../engine/acp/adapter.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import type {
+	WorkerExtensionHook,
+	WorkerHookEffect,
+	WorkerHookRequest,
+	WorkerHookRun,
+} from "../../lib/worker-wire/protocol.js";
+import type { WorkerBudget, WorkerPromptMessage } from "../../lib/worker-wire/spec-contract.js";
 import type { AskUserHandler } from "../../tools/ask-user.js";
-import type { WorkerExtensionHook, WorkerHookEffect, WorkerHookRequest, WorkerHookRun } from "../../worker/protocol.js";
-import type { WorkerBudget, WorkerPromptMessage } from "../../worker/spec-contract.js";
 import type { WorkerDecisionBinding } from "../../worker/stdin-demux.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import type { AgentAudience, AgentCapabilityClass } from "../agents/spec.js";

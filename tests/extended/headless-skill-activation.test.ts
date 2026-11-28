@@ -204,7 +204,7 @@ async function headlessSkillTurn(
 }
 
 describe("headless skill activation by autonomy level", () => {
-	it("loads a PanHub-installed skill through the built model tool despite a project compatibility copy", async () => {
+	it("loads a hub-installed skill through the built model tool despite a project compatibility copy", async () => {
 		const scratch = scratchHome();
 		const cwd = join(scratch.root, "project");
 		const env = { ...scratch.env, HOME: scratch.root };

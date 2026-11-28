@@ -9,7 +9,7 @@ import { detectPancodeRepo } from "../../core/pancode-repo.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
-import { mcpSkillReferenceServer } from "../gateway/mcp/skills.js";
+import { mcpSkillReferenceServer } from "../mcp/skills.js";
 import { enabledPluginResourceRoots, withPluginDiscoveryPass } from "../plugins/index.js";
 import { resolvePackageReferences } from "../resources/package-references.js";
 import { cachedFrontmatterParser, withFrontmatterCache } from "../resources/skills/frontmatter-cache.js";

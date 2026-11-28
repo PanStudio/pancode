@@ -7,7 +7,7 @@ import { fleetNode } from "./fleet-nodes.js";
 import { fleetConnectionHash } from "./fleet-preflight.js";
 import { buildSshArgs } from "./transport.js";
 
-/** Tools the remote PanCode client installs with its own `tools install`, including the optional runtime SDKs. */
+/** Tools the remote PanCode client installs with its own `programs install`, including the optional runtime SDKs. */
 export const FLEET_TOOLS = ["asciinema", "copilot-sdk", "claude-sdk"] as const;
 export type FleetTool = (typeof FLEET_TOOLS)[number];
 
@@ -34,7 +34,7 @@ export function prepareFleetToolInstall(id: string, tool: FleetTool): FleetToolI
 		node: structuredClone(node),
 		connectionHash: fleetConnectionHash(node),
 		tool,
-		command: `set -e; umask 077; export TMPDIR="$HOME/.cache/pancode/tool-install-tmp"; mkdir -p "$TMPDIR"; ${cli} tools install ${tool} --json`,
+		command: `set -e; umask 077; export TMPDIR="$HOME/.cache/pancode/tool-install-tmp"; mkdir -p "$TMPDIR"; ${cli} programs install ${tool} --json`,
 	};
 }
 
@@ -78,7 +78,7 @@ export async function executeFleetToolInstall(plan: FleetToolInstallPlan): Promi
 		maxOutputBytes: 128_000,
 	});
 	if (result.exitCode !== 0) {
-		// `tools install --json` reports its own failure as JSON on stdout and leaves stderr empty.
+		// `programs install --json` reports its own failure as JSON on stdout and leaves stderr empty.
 		let reason = result.stderr.trim() || result.stdout.trim();
 		try {
 			const message = (JSON.parse(result.stdout) as { message?: unknown } | null)?.message;

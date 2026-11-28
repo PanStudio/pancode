@@ -322,7 +322,7 @@ function callReachProbes(call: ClassifierCall, workspace: string, callCwd: strin
 	const typed = (raw: string, base: string): ReachProbe => ({ raw, base, shellWord: false });
 	const named = pathPolicyTargets(call, callCwd).map((target) => typed(target.path, callCwd));
 	if (call.tool === ToolNames.Store) {
-		// A store write lands under the PanStore data root, never at its `path` source.
+		// A store write lands under the store data root, never at its `path` source.
 		const writes = storeWriteSet(callCwd, call.args).map((path) => typed(path, callCwd));
 		const reads = call.args?.op === "get" || call.args?.op === "list";
 		const derived = Array.isArray(call.args?.derived_from) && call.args.derived_from.length > 0;

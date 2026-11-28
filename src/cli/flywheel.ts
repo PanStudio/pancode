@@ -217,7 +217,7 @@ export async function runFlywheelCommand(argv: ReadonlyArray<string>, deps: Flyw
 	let gh: string | null;
 	if (deps.findGh !== undefined) gh = deps.findGh();
 	else {
-		const { resolveToolBinary } = await import("../domains/toolchain/index.js");
+		const { resolveToolBinary } = await import("../lib/programs/index.js");
 		gh = resolveToolBinary("gh").binaryPath;
 	}
 	if (gh === null) {

@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { orderedAreaControls } from "../../src/cli/configure-controls.js";
 import { CONFIGURE_CATEGORY_CHOICES } from "../../src/cli/configure-layout.js";
 import { runtimesForCategory } from "../../src/cli/configure-target.js";
-import { runDoctorModelChecks } from "../../src/domains/lifecycle/doctor.js";
+import { runDoctorModelChecks } from "../../src/domains/install/doctor.js";
 import { AuthStorage, openAuthStorage } from "../../src/domains/providers/auth/index.js";
 import {
 	isOrchestratorEligibleRuntime,

@@ -20,8 +20,8 @@ import { readPancodeVersion, resolvePackageRoot } from "../../../core/package-ro
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { parseTomlDocument } from "../../../core/toml.js";
 import { pancodeCacheDir, resolvePancodeDirs } from "../../../core/xdg.js";
-import { findPinnedTool } from "../../toolchain/registry.js";
-import { resolveToolBinary } from "../../toolchain/resolve.js";
+import { findPinnedTool } from "../../../lib/programs/registry.js";
+import { resolveToolBinary } from "../../../lib/programs/resolve.js";
 import { renderYaziTheme } from "./theme.js";
 
 const PROFILE_FILES = ["yazi.toml", "keymap.toml", "theme.toml", "init.lua"] as const;
@@ -270,7 +270,7 @@ export function inspectCurrentYaziProfile(): YaziProfileInspection {
 	return inspectYaziProfile({ yaPath: resolveToolBinary("ya").binaryPath ?? "(unresolved)" });
 }
 
-/** One shared sentence for `tools status yazi` and the doctor profile row. */
+/** One shared sentence for `programs status yazi` and the doctor profile row. */
 export function describeYaziProfile(inspection: Readonly<YaziProfileInspection>): string {
 	return `${inspection.dir} (${inspection.state === "generation-failed" ? "generation failed" : inspection.state}); user config ${inspection.userConfigDir} is separate and untouched`;
 }

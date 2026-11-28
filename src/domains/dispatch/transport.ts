@@ -26,7 +26,7 @@
 import { AI_AGENT_NAME } from "../../core/agent-environment.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { shellQuote } from "../../core/shell-quote.js";
-import type { WorkerSpec } from "../../worker/spec-contract.js";
+import type { WorkerSpec } from "../../lib/worker-wire/spec-contract.js";
 import type { RunNodeIdentity } from "./types.js";
 import { type SpawnedWorker, spawnWorkerProcess, type WorkerProcessOptions } from "./worker-spawn.js";
 

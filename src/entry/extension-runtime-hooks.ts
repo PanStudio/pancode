@@ -36,7 +36,7 @@ import {
 	type WorkerHookEffect,
 	type WorkerHookRequest,
 	type WorkerHookRun,
-} from "../worker/protocol.js";
+} from "../lib/worker-wire/protocol.js";
 
 /** A hook that misses this many deadlines in a row is disabled for the generation. */
 const TIMEOUT_STREAK_LIMIT = 3;

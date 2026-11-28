@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
-import { PINNED_TOOLS, type PinnedTool } from "../../../../src/domains/toolchain/index.js";
+import { PINNED_TOOLS, type PinnedTool } from "../../../../src/lib/programs/index.js";
 import type { WorkerSettings } from "../../server/worker/protocol.js";
 
 export { PINNED_TOOLS };

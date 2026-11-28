@@ -8,13 +8,6 @@ import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../core/safe-exec.
 import { DECLARED_CHECK_KINDS, type DeclaredCheckKind } from "../core/telemetry/session-vocabulary.js";
 import { hostVerificationSandbox } from "../domains/dispatch/host-verification.js";
 import {
-	createVerifierDraft,
-	discoverVerifierAuthoring,
-	previewVerifierDraft,
-	runVerifierAuthoringWorkflow,
-	type VerifierRevision,
-} from "../tools/verify/authoring.js";
-import {
 	BROWSER_CHECK_ASSERTIONS,
 	type BrowserCheckAssertion,
 	loadProjectVerifierCatalog,
@@ -27,6 +20,13 @@ import { discoverDeclaredChecksAtRoot, recordPerfBaseline } from "../tools/verif
 import { printError, printOk } from "./argv.js";
 import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
+import {
+	createVerifierDraft,
+	discoverVerifierAuthoring,
+	previewVerifierDraft,
+	runVerifierAuthoringWorkflow,
+	type VerifierRevision,
+} from "./verifier-authoring.js";
 import { runVerifiersInspect } from "./verifiers-inspect.js";
 
 const HELP = `Project verifier authoring

@@ -4,6 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
+import { type TurnAnswerEntry, turnAnswer } from "../core/answer-segments.js";
 import { readPancodeVersion } from "../core/package-root.js";
 import { compromisedSuccess } from "../domains/dispatch/gate-verdict.js";
 import type { RunCallUsage } from "../domains/dispatch/run-call-usage.js";
@@ -11,7 +12,6 @@ import type { RunResult } from "../domains/dispatch/types.js";
 import { CITATION_CHECK_PREFIX } from "../domains/safety/citation-check-prefix.js";
 import { redactUrlCredentials } from "../lib/secrets/redaction.js";
 import type { ErrorSlug } from "./kit/slugs.js";
-import { type TurnAnswerEntry, turnAnswer } from "./modes/answer-segments.js";
 import { serializeJsonLine, setFrameProjector } from "./modes/jsonl.js";
 import type {
 	RunJsonDispatchedRunOutcome,

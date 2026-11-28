@@ -442,7 +442,7 @@ export async function executeSemanticRequest(
 
 async function defaultExecutor(): Promise<SemanticCliExecutor> {
 	// The composition bridge is loaded only for an explicit operation, keeping startup and help scan-free.
-	const bridge = await import("../domains/semantic-app/index.js");
+	const bridge = await import("../domains/semantic/index.js");
 	return (request, context) => executeSemanticRequest(request, context, bridge);
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub: one full-screen browser over every component and package this
+ * The hub: one full-screen browser over every component and package this
  * machine can see.
  *
  * Five categories, two modes and one selected scope. Browse lists install
@@ -56,7 +56,7 @@ import { refWords } from "./hub-words.js";
 import { type ListOverlayHandle, openListOverlay } from "./list-overlay.js";
 import type { ListOverlayItem, ListOverlayTab } from "./list-overlay-model.js";
 
-export const HUB_TITLE = "PanHub";
+export const HUB_TITLE = "Hub";
 
 /** @internal exported for contract tests */
 export const HUB_EMPTY_BROWSE =
@@ -66,7 +66,7 @@ const HUB_EMPTY_BROWSE_REMEDY =
 /** @internal exported for contract tests */
 export const HUB_EMPTY_INSTALLED = "Nothing of this kind is installed or loaded in this project or for your user.";
 const HUB_EMPTY_INSTALLED_REMEDY = "b shows installable packs.";
-const HUB_READ_FAILED_REMEDY = "R reads PanHub again; n opens the notices.";
+const HUB_READ_FAILED_REMEDY = "R reads the hub again; n opens the notices.";
 
 export interface HubOverlayDeps {
 	/** The package lifecycle. Plans are reviewed before anything is written. */
@@ -198,7 +198,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			inventoryCache = read({ cwd });
 			failure = undefined;
 		} catch (error) {
-			failure = `PanHub read failed: ${error instanceof Error ? error.message : String(error)}`;
+			failure = `The hub read failed: ${error instanceof Error ? error.message : String(error)}`;
 			inventoryCache = {
 				version: 1,
 				generatedAt: new Date().toISOString(),
@@ -241,7 +241,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			return result;
 		} catch (error) {
 			// A failed inspection is this package's problem, said once as a notice;
-			// it is not a PanHub read failure, which would paint every empty tab red.
+			// it is not a hub read failure, which would paint every empty tab red.
 			deps.notice("error", `${refWords(member.ref)}: ${error instanceof Error ? error.message : String(error)}`);
 			view.member = undefined;
 			return undefined;
@@ -502,7 +502,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			const here = subject.record.copies.find((copy) => copy.scope === view.scope) ?? subject.record.copies[0];
 			if (!here) {
 				handle.openDetail();
-				// Said once per package while PanHub is open: a second Enter on the
+				// Said once per package while the hub is open: a second Enter on the
 				// same row repeated the same line into the transcript and told nothing new.
 				if (!toldNotInstalled.has(subject.record.ref)) {
 					toldNotInstalled.add(subject.record.ref);
@@ -540,7 +540,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 		handle.setHidden(true);
 		const notices = (deps.openList ?? openListOverlay)(tui, {
 			markerId: "hub",
-			title: "PanHub notices",
+			title: "Hub notices",
 			items,
 			filterable: true,
 			explicitSearch: true,
@@ -629,7 +629,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 		emptyMessage: () => (view.mode === "browse" ? HUB_EMPTY_BROWSE : HUB_EMPTY_INSTALLED),
 		emptyRemedy: () =>
 			failure ? HUB_READ_FAILED_REMEDY : view.mode === "browse" ? HUB_EMPTY_BROWSE_REMEDY : HUB_EMPTY_INSTALLED_REMEDY,
-		// A read that failed is drawn as the error it is, not as an empty PanHub.
+		// A read that failed is drawn as the error it is, not as an empty hub.
 		emptyError: () => failure,
 		status,
 		onBack: {
@@ -661,7 +661,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			},
 			s: () => {
 				view.scope = view.scope === "user" ? "project" : "user";
-				deps.notice("info", `PanHub actions now select ${view.scope} scope.`);
+				deps.notice("info", `Hub actions now select ${view.scope} scope.`);
 				redraw();
 			},
 			o: () => {
@@ -677,7 +677,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			},
 			r: () => {
 				redraw();
-				deps.notice("info", "PanHub re-read from disk.");
+				deps.notice("info", "The hub re-read from disk.");
 			},
 		},
 		hints,
@@ -699,8 +699,8 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 	// its existing toggle; wide layouts already draw detail beside the list.
 	handle.toggleDetail();
 
-	// The rows and the pane are bounded by the tier, so a tier change while the
-	// PanHub is open rebuilds them in place, keeping the cursor and the filter.
+	// The rows and the pane are bounded by the tier, so a tier change while
+	// the hub is open rebuilds them in place, keeping the cursor and the filter.
 	const unsubscribeTier = onPresentationTierChange(() => {
 		if (!closed) handle.refreshTabs();
 	});
@@ -717,7 +717,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 	const start = (): void => {
 		if (closed) return;
 		if (deps.importSource) {
-			// `/hub import` asked for a review, not the browser: a source that cannot be planned closes PanHub, so the
+			// `/hub import` asked for a review, not the browser: a source that cannot be planned closes the hub, so the
 			// error it printed is not covered by a browse screen nobody asked for (tui-verify 13).
 			if (!importSource(deps.importSource)) deps.onClose();
 			return;

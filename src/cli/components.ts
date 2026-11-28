@@ -3,9 +3,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { resolvePackageRoot } from "../core/package-root.js";
-import { createComponentSnapshot, diffComponentSnapshots, loadComponentSnapshot } from "../domains/components/index.js";
-import type { ComponentDiff, ComponentSnapshot, HarnessComponent } from "../domains/components/types.js";
 import { printError, printOk } from "./argv.js";
+import { createComponentSnapshot, diffComponentSnapshots, loadComponentSnapshot } from "./dev/components/index.js";
+import type { ComponentDiff, ComponentSnapshot, HarnessComponent } from "./dev/components/types.js";
 
 const HELP = `pancode dev components [list] [--json]
 pancode dev components snapshot --out <path>

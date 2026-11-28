@@ -9,8 +9,8 @@ import {
 	WORKER_STDIN_FRAME_MAX_BYTES,
 	type WorkerHookResultFrame,
 	withinFrameBudget,
-} from "./protocol.js";
-import { parseWorkerSpec, type WorkerSpec } from "./spec-contract.js";
+} from "../lib/worker-wire/protocol.js";
+import { parseWorkerSpec, type WorkerSpec } from "../lib/worker-wire/spec-contract.js";
 
 interface WorkerStdinDemux {
 	feed(chunk: string): void;

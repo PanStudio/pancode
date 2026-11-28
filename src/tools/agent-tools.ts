@@ -35,6 +35,7 @@ import { DECLARED_CHECK_KINDS } from "../core/telemetry/session-vocabulary.js";
 import type { ToolSettled } from "../core/telemetry/tool-schemas.js";
 import type { ToolName } from "../core/tool-names.js";
 import { isMcpToolName, ToolNames } from "../core/tool-names.js";
+import { surfaceSpecPlacement, withGatewayForCapabilities } from "../core/tool-surface.js";
 import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
 import { isRecord } from "../core/type-guards.js";
 import { acceptsImageInput } from "../domains/providers/image-input.js";
@@ -60,7 +61,6 @@ import {
 	isRefusalToolResultError,
 	toolResultContextText,
 } from "./result-disposition.js";
-import { surfaceSpecPlacement, withGatewayForCapabilities } from "./surface.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 

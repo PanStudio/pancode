@@ -154,7 +154,7 @@ function s3Medium(client: S3Client, base: string): LogMedium {
 			// The log needs a create that fails when the key exists, a listing in key order and the store's clock.
 			const probe = `${base}log/probe/${randomId()}/`;
 			const refuse = (why: string) =>
-				new StoreRefusal("unavailable", `The S3 store at ${client.location(base)} cannot keep PanStore's log: ${why}.`);
+				new StoreRefusal("unavailable", `The S3 store at ${client.location(base)} cannot keep the store's log: ${why}.`);
 			try {
 				const first = await client.send("PUT", `${probe}b`, { headers: { "if-none-match": "*" }, body: Buffer.from("b") });
 				await discard(first);

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { RunAbortSource, TurnAbortSource } from "../../core/telemetry/live-events.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { effectiveToolCall } from "../../core/tool-surface.js";
 import type { AgentMessage } from "../../engine/types.js";
 import type { ChatLoopEvent, RetryStatusPhase } from "../../session-control/chat-loop.js";
 import { TOOL_MARKUP_REPROMPT_NOTICE_KEY } from "../../session-control/chat-loop-messages.js";
@@ -19,7 +20,6 @@ import {
 	type TurnSummary,
 } from "../../session-control/status-types.js";
 import { workspaceRelative } from "../../tools/presentation.js";
-import { effectiveToolCall } from "../../tools/surface.js";
 import { buildSummary, emptyRunTally, foldMessageIntoRunTally, summaryFromRunTally } from "./summary.js";
 import { computeWatchdogTier } from "./watchdog.js";
 

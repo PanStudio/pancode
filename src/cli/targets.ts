@@ -17,7 +17,7 @@ import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
 import { loadDomains } from "../core/domain-loader.js";
 import { readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
-import { ensurePancodeState } from "../domains/lifecycle/index.js";
+import { ensurePancodeState } from "../domains/install/index.js";
 import type { ProvidersContract, TargetStatus } from "../domains/providers/contract.js";
 import { missingVllmHarmonyFlags } from "../domains/providers/harmony-server.js";
 import {

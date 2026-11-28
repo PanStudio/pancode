@@ -28,10 +28,10 @@ import {
 import { dispatchResultContract } from "../../src/domains/dispatch/execution-role.js";
 import type { SettledRunRecord } from "../../src/domains/telemetry/index.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
+import type { WorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { createMonitorTool } from "../../src/tools/monitor.js";
 import { PRODUCER_INTEGRITY, runEvidenceLabels } from "../../src/tools/worker-evidence.js";
-import type { WorkerSpec } from "../../src/worker/spec-contract.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { resolvedRunResult } from "../harness/settled-run.js";

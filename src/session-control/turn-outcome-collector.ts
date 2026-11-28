@@ -5,6 +5,7 @@ import { ownerTelemetryContext, type TelemetryContext } from "../core/telemetry/
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { SurfaceOutcome, SurfaceSettled } from "../core/telemetry/surface-schemas.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import { nextFiringId } from "../domains/middleware/fired-record.js";
 import {
 	type MiddlewareHookInput,
@@ -19,10 +20,9 @@ import {
 import { FINISH_CONTRACT_REGISTRATION_ID } from "../domains/safety/finish-contract-registration.js";
 import { hashToolCall } from "../domains/safety/loop-detector.js";
 import { checkPassedForCall } from "../domains/safety/run-effects.js";
-import type { TurnControlRecord, TurnOutcomeRecord } from "../domains/turn-control/index.js";
-import { dispatchKeysFromArgs } from "../domains/turn-control/index.js";
+import type { TurnControlRecord, TurnOutcomeRecord } from "../lib/turn-control/index.js";
+import { dispatchKeysFromArgs } from "../lib/turn-control/index.js";
 import { completionOfToolResult } from "../tools/finish.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 
 interface CollectedTurn {
 	readonly control: TurnOutcomeRecord["control"];

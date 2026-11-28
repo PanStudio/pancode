@@ -87,7 +87,7 @@ import { terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 
 const HELP = `pancode hub <command>
 
-PanHub, one collection of packs: plugin, extension, skill. A plugin also carries
+The hub, one collection of packs: plugin, extension, skill. A plugin also carries
   agents, prompts and playbooks.
 Common: pancode hub list, pancode hub search <query>, pancode hub install <name>.
 
@@ -123,7 +123,7 @@ Package: writes a plugin.json beside a bare skill's SKILL.md so an ordinary
   install keeps what it bundles; the skill's own files are not touched.
 Skills: discovered runtime skills, including unmanaged local files. Inventory
   is the fixed, body-free skill read for GUI hosts.
-Sync: sync fast-forwards the PanHub catalog from its Git remote and push pushes
+Sync: sync fast-forwards the hub catalog from its Git remote and push pushes
   to it; both need integrations.hub.sync on and a remote confirmed with
   hub remote confirm <url>.
 `;
@@ -327,7 +327,7 @@ function printDrift(
 				? `differs from its pin (pinned ${result.expected}, on disk ${result.observed}); update it or reinstall with --force`
 				: result.status === "missing"
 					? "has no files on disk; reinstall it"
-					: "has no verified pin; reinstall it from PanHub to record one";
+					: "has no verified pin; reinstall it from the hub to record one";
 	process.stdout.write(`${where} ${detail}\n`);
 }
 
@@ -830,7 +830,7 @@ async function executeHubCommand(
 			if (parsed.json) emit(result.ok ? { ok: true, changed: result.changed, state: result.state } : result);
 			else if (result.ok)
 				printOk(
-					`PanHub index sequence ${result.state.indexSequence} ${result.changed ? "verified and kept" : "verified, unchanged"}; expires ${result.state.expires}`,
+					`The hub index sequence ${result.state.indexSequence} ${result.changed ? "verified and kept" : "verified, unchanged"}; expires ${result.state.expires}`,
 				);
 			else printError(describeRefusal(result));
 			return result.ok ? 0 : 1;
@@ -878,7 +878,7 @@ async function executeHubCommand(
 				"pancode hub reload: refreshes only this exiting process; use /reload hub in a running session\n",
 			);
 			if (parsed.json) emit(snapshot);
-			else printOk("PanHub refreshed for this process; use /reload hub in an active session");
+			else printOk("The hub refreshed for this process; use /reload hub in an active session");
 			return 0;
 		}
 		if (parsed.command === "sync" || parsed.command === "push") {
@@ -893,7 +893,7 @@ async function executeHubCommand(
 				throw new Error("hub remote confirm requires a URL");
 			const url = confirmHubRemote(parsed.positional[1] as string);
 			if (parsed.json) emit({ ok: true, remote: url });
-			else printOk(`confirmed PanHub remote ${url}`);
+			else printOk(`confirmed hub remote ${url}`);
 			return 0;
 		}
 		const ref = parsed.positional[0];

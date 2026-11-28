@@ -15,7 +15,7 @@ import {
 	missingFromFailedCall,
 	type SetupTargetFacts,
 	setupStatus,
-} from "../../src/domains/lifecycle/setup-status.js";
+} from "../../src/domains/install/setup-status.js";
 import type { AgentMessage } from "../../src/engine/types.js";
 import { providerFailureAdvice } from "../../src/interactive/renderers/provider-error.js";
 import { nameMissingCredentialRemedy } from "../../src/session-control/chat-loop-messages.js";

@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import {
+	answerAfterCitationCheck,
+	replySegment,
+	type TurnAnswerEntry,
+	turnAnswer,
+} from "../../core/answer-segments.js";
 import { modelRouteRefusalOf } from "../../core/response-model-id.js";
 import { skillActivationFromToolDetails } from "../../core/skill-activation.js";
 import { type BuiltinToolName, ToolNames } from "../../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { settledVerifyCall, verifyCallStart } from "../../domains/dispatch/run-findings.js";
 import { resultNotExecuted } from "../../domains/dispatch/tool-stats.js";
 import type { SafetyBlockedAttempt, ToolCallStat } from "../../domains/dispatch/types.js";
-import { describeMissing, missingFromFailedCall } from "../../domains/lifecycle/setup-status.js";
+import { describeMissing, missingFromFailedCall } from "../../domains/install/setup-status.js";
 import { CITATION_CHECK_PREFIX } from "../../domains/safety/citation-grounding.js";
 import { type RunEffectsRecorder, recordToolExecutionEffects } from "../../domains/safety/run-effects.js";
 import { SAFETY_JUDGE_ALLOW_REASON_CODE } from "../../domains/safety/safety-judge.js";
@@ -25,8 +33,6 @@ import {
 import { completionOfToolResult } from "../../tools/finish.js";
 import { TOOL_PLANES } from "../../tools/policy.js";
 import { toolResultText } from "../../tools/result-disposition.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../../tools/surface.js";
-import { answerAfterCitationCheck, replySegment, type TurnAnswerEntry, turnAnswer } from "./answer-segments.js";
 import type { HeadlessMainAgentResult, HeadlessMainAgentRunStats } from "./headless-run-types.js";
 import {
 	currentPlacementChangedPaths,

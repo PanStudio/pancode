@@ -5,10 +5,10 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { AcpToolMediator } from "../../src/acp/tool-mediator.js";
 import { resolvePackageRoot } from "../../src/core/package-root.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
-import { AcpToolMediator } from "../../src/engine/acp/tool-mediator.js";
 import { emitClaudeToolPermissionDecision } from "../../src/engine/claude/tool-safety.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { type AutonomyLevel, mapAutonomy } from "../../src/lib/autonomy/autonomy.js";

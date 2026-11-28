@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Live ownership and execution around the session domain's durable protocol. */
 import { randomUUID } from "node:crypto";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import {
 	type AcceptedNote,
 	type ContinuityAppendable,
@@ -24,7 +25,6 @@ import {
 import { persistContinuityGroup } from "../domains/session/continuity/persistence.js";
 import { resolveContinuityProjection } from "../domains/session/continuity/projection.js";
 import type { SessionEntry } from "../domains/session/entries.js";
-import { effectiveToolCall } from "../tools/surface.js";
 
 /**
  * self_compact writes its note before the results of the calls beside it arrive, so it runs alone. Its siblings are

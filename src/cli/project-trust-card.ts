@@ -12,7 +12,7 @@ import {
 	recordProjectPackageTrust,
 	recordProjectSurfaceTrust,
 } from "../core/workspace-trust.js";
-import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import { describeMissing } from "../domains/install/setup-status.js";
 import { loadUserHooks, type UserHookDeclarationBatch } from "../domains/middleware/hooks.js";
 import { loadProjectSafetyPolicy } from "../domains/safety/project-policy.js";
 import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub root key tool, run by the maintainer on an offline machine.
+ * The hub root key tool, run by the maintainer on an offline machine.
  *
  *   keygen  --out <dir>
  *           write a root private key (PKCS#8 PEM, mode 0600) as <dir>/hub-root.key.pem and print the base64

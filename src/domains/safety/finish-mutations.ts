@@ -3,7 +3,7 @@
 import { relative, resolve } from "node:path";
 import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { ToolNames } from "../../core/tool-names.js";
-import { effectiveToolCall } from "../../tools/surface.js";
+import { effectiveToolCall } from "../../core/tool-surface.js";
 import {
 	extractCommandDeleteTargets,
 	extractCommandWriteTargets,

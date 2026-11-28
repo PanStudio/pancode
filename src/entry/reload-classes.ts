@@ -219,7 +219,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 					const before = packages(deps.hub()?.packages ?? []);
 					try {
 						const snapshot = deps.reloadHub();
-						lines.push(...summary(`PanHub (generation ${snapshot.generation})`, before, packages(snapshot.packages)));
+						lines.push(...summary(`Hub (generation ${snapshot.generation})`, before, packages(snapshot.packages)));
 						for (const entry of snapshot.packages)
 							for (const issue of entry.diagnostics) {
 								if (issue.type === "error") failed = true;
@@ -232,7 +232,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 						if (!snapshot.packages.some((entry) => entry.diagnostics.some((issue) => issue.type === "error")))
 							lines.push("  failed: none");
 					} catch (error) {
-						failure("PanHub", error);
+						failure("Hub", error);
 					}
 				}
 				if (target === "all" || target === "extensions") {

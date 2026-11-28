@@ -295,13 +295,7 @@ export function HubPage({
 			{!compact && <PanelHeading panel={PANELS.hub} level={1} />}
 			{!workspaceId && <WorkspacePicker selection={selection} purpose="installation" />}
 			{!compact && <p>{context.intro}</p>}
-			<div
-				ref={collectionBar}
-				className="settings-tabs"
-				role="tablist"
-				aria-label="PanHub collections"
-				onKeyDown={onTabKey}
-			>
+			<div ref={collectionBar} className="settings-tabs" role="tablist" aria-label="Hub collections" onKeyDown={onTabKey}>
 				{collections.map((name) => (
 					<button
 						type="button"
@@ -427,7 +421,7 @@ export function HubPage({
 				)}
 				{!!inventory.data?.diagnostics.length && (
 					<details className="trace-panel">
-						<summary>PanHub discovery notes</summary>
+						<summary>Hub discovery notes</summary>
 						<ul>
 							{inventory.data.diagnostics.map((message) => (
 								<li key={message}>{message}</li>

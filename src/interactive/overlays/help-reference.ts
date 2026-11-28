@@ -385,7 +385,7 @@ export function openHelpOverlay(
 				"**Hidden panes**: a hidden pane waits in a tab labeled `pancode parked` in your herdr workspace and returns to its slot at the share you last gave it. The tab goes away when the last pane leaves it, and `/quit` closes whatever is still parked.",
 				"**Picking**: navigate, select with Space for several, then Ctrl+Y (or Enter in pick mode). The paths land in the composer as `@file` mentions and the keyboard returns to the composer.",
 				"**Logs and shell**: `/panes open logs` follows the newest dispatched run's journal; `/panes open shell` opens a shell in the workspace. A second open focuses the pane that is already there. `/panes close <name|all>` closes them; `/quit` closes the docks it manages (files, workers, and an extension pane, hidden or not), leaves a shell or logs pane you opened, and prints which panes it left and how to close them.",
-				"**Engine**: the files pane runs a vendored file manager installed with `pancode tools install yazi`; `pancode doctor` and `/panes` say whether it resolved.",
+				"**Engine**: the files pane runs a vendored file manager installed with `pancode programs install yazi`; `pancode doctor` and `/panes` say whether it resolved.",
 			],
 		},
 		{

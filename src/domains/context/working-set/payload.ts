@@ -10,8 +10,8 @@
  * whatever the tool returned, usually `{ content: [...], details: {...} }`.
  */
 
+import { effectiveToolCall } from "../../../core/tool-surface.js";
 import { isRecord } from "../../../core/type-guards.js";
-import { effectiveToolCall } from "../../../tools/surface.js";
 
 /**
  * The safety rails refused this call. The registry persists its admission

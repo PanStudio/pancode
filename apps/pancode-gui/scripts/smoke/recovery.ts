@@ -167,7 +167,7 @@ export async function recoverySteps(run: SmokeRun) {
 			);
 			await hubBox.fill("");
 			await settledQuery("");
-			await typeFast(hubBox, "PanHub");
+			await typeFast(hubBox, "Hub");
 		} finally {
 			await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
 			await cdp.detach();

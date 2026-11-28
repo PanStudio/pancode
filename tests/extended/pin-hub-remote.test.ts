@@ -226,6 +226,6 @@ describe("pin run", () => {
 			identities: new Set(["plugin:demo"]),
 			check: true,
 		});
-		deepStrictEqual(merged.errors, ["hub/community/octo/demo.yaml: duplicate PanHub pack identity: plugin:demo"]);
+		deepStrictEqual(merged.errors, ["hub/community/octo/demo.yaml: duplicate hub pack identity: plugin:demo"]);
 	});
 });

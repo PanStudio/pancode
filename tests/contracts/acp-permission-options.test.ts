@@ -12,8 +12,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { type AcpMediatorPermissionResolvedEvent, AcpToolMediator } from "../../src/engine/acp/tool-mediator.js";
-import type { AcpPermissionOption } from "../../src/engine/acp/types.js";
+import { type AcpMediatorPermissionResolvedEvent, AcpToolMediator } from "../../src/acp/tool-mediator.js";
+import type { AcpPermissionOption } from "../../src/acp/types.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 
 const root = mkdtempSync(join(tmpdir(), "pancode-acp-permission-options-"));

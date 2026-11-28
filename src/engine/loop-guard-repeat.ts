@@ -5,10 +5,10 @@ import { awkOnlyPrints, commandName, sedOnlyPrints, wrappedCommand } from "../co
 import { withoutLeadingCdTo } from "../core/leading-cd.js";
 import { READ_ONLY_SHELL_COMMAND_PATTERN } from "../core/read-only-calls.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import { hashToolCall } from "../domains/safety/loop-detector.js";
 import { scanShellLike, shellCommandWords, splitSegments } from "../domains/safety/shell-scan.js";
 import { gitCallIdentity } from "../tools/git-inspect.js";
-import { effectiveToolCall } from "../tools/surface.js";
 
 /**
  * Arguments that only change how much of the same answer comes back, never

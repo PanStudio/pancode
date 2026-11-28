@@ -122,7 +122,7 @@ const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<st
 			"src/cli/workspace-check.ts",
 			"src/cli/workspace-launch.ts",
 			"src/domains/mux/workspace/platform.ts",
-			"src/domains/toolchain/index.ts",
+			"src/lib/programs/index.ts",
 			"src/domains/mux/workspace/launch.ts",
 			"src/domains/mux/child-env.ts",
 			"src/core/terminal-background.ts",

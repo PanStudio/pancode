@@ -40,20 +40,20 @@ import {
 	trustMcpServer,
 	writeMcpServerCatalog,
 	writeMcpSkillCatalog,
-} from "../../src/domains/gateway/mcp/index.js";
-import { mcpCatalogPath } from "../../src/domains/gateway/mcp/metadata-cache.js";
-import { parseMcpSkillEntry } from "../../src/domains/gateway/mcp/skills.js";
+} from "../../src/domains/mcp/index.js";
+import { mcpCatalogPath } from "../../src/domains/mcp/metadata-cache.js";
+import { parseMcpSkillEntry } from "../../src/domains/mcp/skills.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
 import { resolveWorkerPermit, type WorkerMcpAttestation } from "../../src/domains/safety/worker-permit.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { parseWorkerSpec, type WorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { formatDispatchOutput } from "../../src/tools/dispatch-output.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
-import { parseWorkerSpec, type WorkerSpec } from "../../src/worker/spec-contract.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";

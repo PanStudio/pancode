@@ -11,8 +11,8 @@
 import type { StoreTagClass } from "@pancode/store/backend";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 import type { ProfileId } from "../domains/system-one/profiles.js";
-import type { TurnControlSettings } from "../domains/turn-control/index.js";
 import type { AutonomyLevel, YoloConfinement } from "../lib/autonomy/autonomy.js";
+import type { TurnControlSettings } from "../lib/turn-control/index.js";
 import type { FundingDefinitions } from "./funding-config.js";
 import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
@@ -222,6 +222,18 @@ export interface DurableCompactionSettings {
  *     Main agent only: workers run their own in-memory guard.
  */
 export type WorkingSetPolicyId = "age-horizon" | "structural-v1" | "structural-v2";
+/** System-one capability profiles selectable by hand; the settings validator reads them here so core needs no domain import. */
+export const PROFILE_IDS = [
+	"generic",
+	"jev",
+	"laya",
+	"laya-multilingual",
+	"julia-1",
+	"gliner2.5-small",
+	"gliner2.5-decide",
+	"strands-decider",
+] as const;
+
 export const WORKING_SET_PROFILE_IDS = ["default", "data-analysis", "web-design"] as const;
 export type WorkingSetProfileId = (typeof WORKING_SET_PROFILE_IDS)[number];
 
@@ -532,7 +544,7 @@ export interface FleetNodeSettings {
 	allowUnsandboxed?: boolean;
 }
 
-/** One PanStore root: tags live under `<path>/projects/<projectKey>`. */
+/** One store root: tags live under `<path>/projects/<projectKey>`. */
 interface StoreRootSetting {
 	name: string;
 	/** Absolute. */
@@ -567,7 +579,7 @@ export interface StoreS3Setting {
 }
 
 /**
- * Where PanStore keeps tags. `backend` local keeps them under `roots`; empty `roots` keeps the one store under the
+ * Where the store keeps tags. `backend` local keeps them under `roots`; empty `roots` keeps the one store under the
  * data directory. The first root is the primary and holds records and locks. `placement` names the root a new tag
  * goes to; a tag never moves after. `backend` shared keeps them in the one folder `shared` names, which several
  * hosts mount, and `backend` s3 in the bucket `s3` names; neither has roots or placement. User settings only.
@@ -979,7 +991,7 @@ interface IntegrationsSettings {
 		remote: string | null;
 		confirmedRemote: string | null;
 		sync: boolean;
-		/** Base URL of the signed PanHub index release; "" turns remote index refresh off. */
+		/** Base URL of the signed hub index release; "" turns remote index refresh off. */
 		index: string;
 	};
 	git: GitIntegrationSettings;

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
+import { effectiveToolCall } from "../../src/core/tool-surface.js";
 import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
 import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
@@ -18,7 +19,6 @@ import type { ToolRoundRecord } from "../../src/engine/types.js";
 import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { createTurnOutcomeCollector } from "../../src/session-control/turn-outcome-collector.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
-import { effectiveToolCall } from "../../src/tools/surface.js";
 
 test("a required capability clears when a gateway call carries it, not on other gateway ops", () => {
 	const control = createMiddlewareToolChoiceControl();

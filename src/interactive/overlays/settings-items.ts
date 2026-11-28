@@ -504,12 +504,12 @@ export function buildSettingItems(
 			...delegationAgentsAffordance(agents, options?.getInteropProposals?.() ?? []),
 		}),
 		settingItem("integrations.hub.catalog", hub.catalog ?? "(config directory)", {
-			submenu: editTextSubmenu("Edit PanHub catalog path; blank uses the config directory"),
+			submenu: editTextSubmenu("Edit the hub catalog path; blank uses the config directory"),
 			affordance: "free text",
 			editValue: hub.catalog ?? "",
 		}),
 		settingItem("integrations.hub.remote", hub.remote ?? "(local only)", {
-			submenu: editTextSubmenu("Edit hub remote URL; blank keeps PanHub local"),
+			submenu: editTextSubmenu("Edit hub remote URL; blank keeps the hub local"),
 			affordance: "free text",
 			editValue: hub.remote ?? "",
 		}),

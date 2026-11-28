@@ -642,7 +642,7 @@ test("an accepted steer says queued or requested, never delivered or stopped", (
 	assert.doesNotMatch(cancel.message, /\bstopped\b/i);
 });
 
-// The reason vocabulary is the engine's (`dispatchSteerReason` in src/engine/acp/server-session-input.ts).
+// The reason vocabulary is the engine's (`dispatchSteerReason` in src/acp/server-session-input.ts).
 test("every engine refusal reason reads as a sentence, and an unknown one is printed as reported", () => {
 	for (const reason of [
 		"dispatch-unavailable",

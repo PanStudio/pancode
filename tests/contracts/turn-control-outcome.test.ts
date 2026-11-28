@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { it } from "node:test";
 import { sumFacts } from "../../src/core/telemetry/pricing.js";
-import type { TurnOutcomeInput } from "../../src/domains/turn-control/index.js";
+import type { TurnOutcomeInput } from "../../src/lib/turn-control/index.js";
 import {
 	conversationShape,
 	dispatchKeysFromArgs,
 	nextClarificationStreak,
 	reduceTurnOutcome,
-} from "../../src/domains/turn-control/index.js";
+} from "../../src/lib/turn-control/index.js";
 import { runBoundaryCheck } from "../boundaries/check-boundaries.js";
 
 it("normalizes dispatch keys and excludes control and review calls", () => {
@@ -134,19 +134,20 @@ it("turn-control boundary rejects surface imports and domain internals, includin
 	try {
 		// The checker always reads the composition root for rule15.
 		mkdirSync(join(root, "src/entry"), { recursive: true });
+		mkdirSync(join(root, "src/domains"), { recursive: true });
 		writeFileSync(join(root, "src/entry/orchestrator.ts"), "");
 		for (const [specifier, target, refused] of [
 			["../../interactive/control.js", "src/interactive/control.ts", true],
 			["../../engine/types.js", "src/engine/types.ts", true],
 			["../../tools/read.js", "src/tools/read.ts", true],
 			["../../worker/spec.js", "src/worker/spec.ts", true],
-			["../providers/private.js", "src/domains/providers/private.ts", true],
-			["../providers/index.js", "src/domains/providers/index.ts", false],
-			["./local.js", "src/domains/turn-control/local.ts", false],
+			["../../domains/providers/private.js", "src/domains/providers/private.ts", true],
+			["../../domains/providers/index.js", "src/domains/providers/index.ts", false],
+			["./local.js", "src/lib/turn-control/local.ts", false],
 		] as const) {
 			mkdirSync(dirname(join(root, target)), { recursive: true });
 			writeFileSync(join(root, target), "export type Value = string;\n");
-			const source = join(root, "src/domains/turn-control/outcome.ts");
+			const source = join(root, "src/lib/turn-control/outcome.ts");
 			mkdirSync(dirname(source), { recursive: true });
 			writeFileSync(source, `import type { Value } from "${specifier}";\nexport type Outcome = Value;\n`);
 			strictEqual(

@@ -120,7 +120,7 @@ function dispatchSucceeded(t: ToolCall): boolean {
 	);
 }
 
-/** A skills lookup, a skill load, or a PanHub pack lookup. */
+/** A skills lookup, a skill load, or a hub pack lookup. */
 function isSkillLookup(t: ToolCall): boolean {
 	if (t.name === "pancode_hub") return true;
 	if (t.name === "context") return t.args.scope === "skills";

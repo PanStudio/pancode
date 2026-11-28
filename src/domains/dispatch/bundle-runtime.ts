@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { performance } from "node:perf_hooks";
+import { startAcpDelegationRun } from "../../acp/adapter.js";
 import type { DomainContext } from "../../core/domain-loader.js";
-import { startAcpDelegationRun } from "../../engine/acp/adapter.js";
 import { useMainCacheLaneStore } from "../../engine/ai.js";
 import type { AgentsContract } from "../agents/contract.js";
 import type { MiddlewareContract } from "../middleware/contract.js";

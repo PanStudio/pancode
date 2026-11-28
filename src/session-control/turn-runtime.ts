@@ -9,7 +9,7 @@
  */
 
 import { performance } from "node:perf_hooks";
-import { replySegment } from "../cli/modes/answer-segments.js";
+import { replySegment } from "../core/answer-segments.js";
 import { outputLimitCutOffToolCallIds } from "../core/assistant-output.js";
 import type { BackendCompletionTimings, CacheRequestStructure } from "../core/cache-telemetry.js";
 import { classifyCallFailure, trackCallFetch } from "../core/call-failure.js";
@@ -29,6 +29,7 @@ import { beginCall, type TelemetryCall, telemetryCaptures } from "../core/teleme
 import type { CallSettled } from "../core/telemetry/schemas.js";
 import { normalizeTokenUsage } from "../core/token-split.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import { runCapStopCode } from "../core/turn-constraints.js";
 import { requestFits } from "../domains/context/budget/request-fit.js";
 import { observationTracing, traceObservation } from "../domains/memory/observation-events.js";
@@ -102,7 +103,6 @@ import {
 	finishSiblingRefusal,
 	withoutReplyResult,
 } from "../tools/finish.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 import { type AttemptReceipt, carriedCheckpoints, type RequestCursor } from "./attempt-receipt.js";
 import {
 	type AssistantCallTiming,

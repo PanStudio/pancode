@@ -187,7 +187,7 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 		[["reset", "--state", "--json"], "confirmation_required"],
 		[["uninstall", "--json"], "confirmation_required"],
 		[["doctor", "--yes", "--json"], "usage"],
-		[["tools", "reset-profile", "--json"], "usage"],
+		[["programs", "reset-profile", "--json"], "usage"],
 		[["panes", "install", "--bogus", "--json"], "unknown_flag"],
 		[["interop", "adopt", "--json"], "usage"],
 	] as const) {
@@ -210,8 +210,8 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 		ok(Array.isArray(doc.workerSpecs));
 	});
 
-	it("pancode tools reset-profile names an unknown tool as not_found, exit 1", async () => {
-		const result = await cli(["tools", "reset-profile", "nope", "--json"]);
+	it("pancode programs reset-profile names an unknown tool as not_found, exit 1", async () => {
+		const result = await cli(["programs", "reset-profile", "nope", "--json"]);
 		equal(result.code, 1, result.stderr);
 		equal(JSON.parse(result.stdout).error.code, "not_found");
 	});

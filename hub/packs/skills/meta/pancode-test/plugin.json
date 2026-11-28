@@ -1,7 +1,7 @@
 {
 	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 	"name": "pancode-test",
-	"version": "0.5.2",
+	"version": "0.5.3",
 	"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
 	"license": "LicenseRef-PanCode-1.0",
 	"extensions": {

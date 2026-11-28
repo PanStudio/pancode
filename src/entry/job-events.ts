@@ -19,7 +19,7 @@ import {
 	mcpEventErrorName,
 	mcpEventErrorText,
 	outputSchemaMismatch,
-} from "../domains/gateway/mcp/index.js";
+} from "../domains/mcp/index.js";
 import {
 	JOB_EVENT_IDS_LIMIT,
 	JOB_JSON_BYTES,

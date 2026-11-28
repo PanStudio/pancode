@@ -17,8 +17,8 @@
  */
 
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import { isRecord } from "../core/type-guards.js";
-import { effectiveToolCall } from "./surface.js";
 
 /** The marker every surface attaches to a call the gateway ran on the model's behalf. */
 export const VIA_GATEWAY = "gateway" as const;

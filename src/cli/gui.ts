@@ -4,7 +4,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolvePackageRoot } from "../core/package-root.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { printError } from "./argv.js";
 
 export async function inspectGuiBackground(fix: boolean): Promise<DoctorFinding[]> {

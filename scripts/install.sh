@@ -544,7 +544,7 @@ offer_gui() {
 # plain terminal, says so once, and never downloads on first launch; `pancode panes install` retries.
 provision_workspace() {
 	# Same command as install.ps1, so both installers provision the pane host identically.
-	if "$node_bin" "$entry" tools install herdr --json </dev/null >"$work/workspace.out" 2>"$work/workspace.err"; then
+	if "$node_bin" "$entry" programs install herdr --json </dev/null >"$work/workspace.out" 2>"$work/workspace.err"; then
 		ok "pane host ready: $("$node_bin" -e 'try { process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).message || "herdr")); } catch { process.stdout.write("herdr"); }' "$work/workspace.out")"
 	else
 		warn "the pane host (herdr) was not installed; PanCode runs in the plain terminal until you run: pancode panes install"
@@ -937,7 +937,7 @@ main() {
 	entry="$final_prefix/lib/node_modules/pancode/dist/cli/index.js"
 	[ -f "$entry" ] || fail "the bundle has no dist/cli/index.js"
 	if [ "$include_claude_sdk" = 1 ]; then
-		"$node_bin" "$entry" tools install claude-sdk </dev/null || fail "Claude SDK provisioning failed; previous launcher remains active."
+		"$node_bin" "$entry" programs install claude-sdk </dev/null || fail "Claude SDK provisioning failed; previous launcher remains active."
 	fi
 	ok "installed PanCode $installed_version"
 

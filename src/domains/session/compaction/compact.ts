@@ -48,9 +48,9 @@ import { type ContinuityProjectionInput, resolveContinuityProjection } from "../
  */
 
 import { sha256Hex } from "../../../core/hash.js";
+import { effectiveToolCall, expandChainMessages } from "../../../core/tool-surface.js";
 import { hasAssistantGenerationDelta, streamSimple } from "../../../engine/ai.js";
 import type { EngineModel, ProviderCheckpointHandle, ProviderCompactionResult, Usage } from "../../../engine/types.js";
-import { effectiveToolCall, expandChainMessages } from "../../../tools/surface.js";
 import { foldWorkingSet } from "../../context/working-set/fold.js";
 import { projectWorkingSet } from "../../context/working-set/project.js";
 import { recallableRefs } from "../../context/working-set/recall.js";

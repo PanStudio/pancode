@@ -10,7 +10,7 @@ import { readStrictLayeredSettings } from "../../src/core/settings-layers.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { AgentsDomainModule } from "../../src/domains/agents/module.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../../src/domains/config/module.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 test("config validates the actual mutation result before publishing or writing it", async () => {

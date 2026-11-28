@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * Signature formats and verification for the PanHub index.
+ * Signature formats and verification for the hub index.
  *
  * Two signed documents share one envelope:
  *

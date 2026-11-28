@@ -28,9 +28,9 @@ import {
 	thinkingLevelDisplayWord,
 } from "../../domains/providers/index.js";
 import { settingsRuntimeFacts } from "../../domains/providers/settings-facts.js";
-import { TURN_CONTROL_WORKFLOWS } from "../../domains/turn-control/index.js";
 import type { Component } from "../../engine/tui.js";
 import { Input } from "../../engine/tui.js";
+import { TURN_CONTROL_WORKFLOWS } from "../../lib/turn-control/index.js";
 import { GLYPH } from "../theme/index.js";
 import {
 	cycleAffordance,

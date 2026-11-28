@@ -10,6 +10,7 @@
 
 import type { PancodeSettings } from "../core/config.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, expandChainMessages } from "../core/tool-surface.js";
 import { isRecord } from "../core/type-guards.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { modelEndpointKey, registerForegroundStream } from "../domains/providers/endpoint-capacity.js";
@@ -37,7 +38,6 @@ import type { EngineDestination, SystemOne } from "../domains/system-one/index.j
 import type { JudgeScreenResult } from "../domains/system-one/points/index.js";
 import { JUDGE_SCREEN_POINT, judgeScreenResults } from "../domains/system-one/points/index.js";
 import { type AskUserQuestion, normalizeAskUserQuestions } from "../tools/ask-user.js";
-import { effectiveToolCall, expandChainMessages } from "../tools/surface.js";
 import { capturedJudgeCallId, withJudgeCallCapture, withSidePurpose } from "./side-request-admission.js";
 
 /** Ledger entry type of a judge block or escalation; recorded, never shown or sent to a model. */

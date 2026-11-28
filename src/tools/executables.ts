@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { findExecutableOnPath, resolveToolBinary } from "../domains/toolchain/resolve.js";
+import { findExecutableOnPath, resolveToolBinary } from "../lib/programs/resolve.js";
 
 export function resolveFdBinary(): string | null {
 	return findExecutableOnPath("fd") ?? findExecutableOnPath("fdfind");
@@ -19,7 +19,7 @@ export function resolveRgBinary(): string | null {
  * `resolveRgBinary` above already do for the two search tools PanCode never
  * vendors.
  *
- * Callers that need to explain the answer (doctor, `pancode tools status`)
+ * Callers that need to explain the answer (doctor, `pancode programs status`)
  * want `resolveToolBinary` instead: this returns only the path to run.
  */
 export function resolveBinary(name: string): string | null {

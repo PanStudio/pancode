@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { AgentMessage } from "../../../engine/types.js";
-import { carriedMarkers, completeHistoryLength, contextHash, messageToolCalls } from "../../../worker/context-seed.js";
+import {
+	carriedMarkers,
+	completeHistoryLength,
+	contextHash,
+	messageToolCalls,
+} from "../../../lib/worker-wire/context-seed.js";
 import type { SessionEntry } from "../../session/entries.js";
 import { foldWorkingSet } from "../working-set/fold.js";
 import type { WorkerContextRecallMarks, WorkerContextSnapshot, WorkerContextSource } from "./contract.js";
 
-export { completeHistoryLength, contextHash, messageToolCalls } from "../../../worker/context-seed.js";
+export { completeHistoryLength, contextHash, messageToolCalls } from "../../../lib/worker-wire/context-seed.js";
 
 /**
  * The parent's recall aliases from its view: the alias mark across every branch of the file, and the markers the

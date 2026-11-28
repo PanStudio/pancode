@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub's status words, said once for the terminal hub and the GUI catalog: what an installed copy's state means to
+ * The hub's status words, said once for the terminal hub and the GUI catalog: what an installed copy's state means to
  * the operator, and where a pack's bytes came from. Browser-safe: no imports at all.
  */
 

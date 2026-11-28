@@ -11,7 +11,7 @@ import { splitYamlFrontmatter, stringField } from "../common-loader.js";
 
 /**
  * A bare skill is what the Agent Skills format publishes: a directory holding a
- * SKILL.md and whatever it bundles, with no package manifest. PanHub
+ * SKILL.md and whatever it bundles, with no package manifest. The hub
  * installs packages, so a bare skill reaches it one of two ways, and this module
  * is what both share: `hub import` projects a reviewed text-only copy, and
  * `hub package` writes a manifest beside the skill for an ordinary install.

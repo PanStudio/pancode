@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 
 import { resetXdgCache } from "../../src/core/xdg.js";
-import { runDoctorModelChecks } from "../../src/domains/lifecycle/doctor.js";
+import { runDoctorModelChecks } from "../../src/domains/install/doctor.js";
 import llamacppRuntime from "../../src/domains/providers/runtimes/local-native/llamacpp.js";
 import type { ProbeContext } from "../../src/domains/providers/types/runtime-descriptor.js";
 

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readSettings } from "../core/config.js";
 import { copilotKeychainOnlyDetail } from "../core/copilot-keychain.js";
-import { resolveCopilotSdkEntry } from "../domains/lifecycle/copilot-sdk-install.js";
-import { type DoctorFinding, targetIsActive } from "../domains/lifecycle/doctor.js";
+import { resolveCopilotSdkEntry } from "../domains/install/copilot-sdk-install.js";
+import { type DoctorFinding, targetIsActive } from "../domains/install/doctor.js";
 import type { CopilotSignInCheck } from "../domains/providers/copilot-setup.js";
 
 const NAME = "copilot sign-in";

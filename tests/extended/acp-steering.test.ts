@@ -3,9 +3,9 @@
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { setImmediate as tick } from "node:timers/promises";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpDispatchControl, AcpServerChat } from "../../src/engine/acp/server-options.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpDispatchControl, AcpServerChat } from "../../src/acp/server-options.js";
 import { fakeTransport } from "../harness/acp-fake-transport.js";
 
 /**

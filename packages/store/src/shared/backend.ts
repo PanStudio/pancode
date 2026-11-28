@@ -82,7 +82,7 @@ function parseMountinfo(text: string): Array<{ point: string; fstype: string; op
 
 async function qualifyMount(root: string): Promise<void> {
 	const refuse = (why: string) =>
-		new StoreRefusal("unavailable", `The shared store folder ${root} cannot keep PanStore's log: ${why}.`);
+		new StoreRefusal("unavailable", `The shared store folder ${root} cannot keep the store's log: ${why}.`);
 	if (process.platform !== "linux") throw refuse("a shared store is supported on Linux only");
 	const resolved = await realpath(root);
 	const mounts = parseMountinfo(await readFile("/proc/self/mountinfo", "utf8"));
@@ -241,7 +241,7 @@ function sharedMedium(root: string): LogMedium {
 				if (!refused)
 					throw new StoreRefusal(
 						"unavailable",
-						`The shared store folder ${root} cannot keep PanStore's log: link() over an existing name did not fail with EEXIST.`,
+						`The shared store folder ${root} cannot keep the store's log: link() over an existing name did not fail with EEXIST.`,
 					);
 			} finally {
 				for (const suffix of [".a", ".b", ".c"]) await unlink(`${probe}${suffix}`).catch(() => undefined);

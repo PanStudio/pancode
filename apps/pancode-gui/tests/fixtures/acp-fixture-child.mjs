@@ -54,7 +54,7 @@ for (const path of [
 			if (key !== "thinkingLevel") savedChat[key] = chat[key];
 		}
 }
-// The engine's own mode descriptions (src/engine/acp/server-models.ts modeState), so the GUI shows real copy.
+// The engine's own mode descriptions (src/acp/server-models.ts modeState), so the GUI shows real copy.
 const MODES = [
 	{
 		id: "default",
@@ -213,7 +213,7 @@ const recordExchange = (prompt, answer) => {
 	ledgerTurns++;
 };
 let writeCalls = 0;
-// Settled frames mirror src/engine/acp/server-tool-updates.ts: `content` carries the result
+// Settled frames mirror src/acp/server-tool-updates.ts: `content` carries the result
 // text and `rawOutput` is `{result, isError}`. A refusal is a FAILED call worded
 // by src/tools/registry.ts, and an applied write carries `details.diff` in the
 // numbered-row format of src/tools/edit-diff.ts.

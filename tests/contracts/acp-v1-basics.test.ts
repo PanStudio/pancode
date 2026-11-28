@@ -4,13 +4,13 @@ import { deepStrictEqual, rejects, strictEqual } from "node:assert/strict";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
+import { type AcpRequestError, AcpTimeoutError } from "../../src/acp/errors.js";
+import { createAcpInterviewChannel } from "../../src/acp/host-members.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import { createAcpHandshake } from "../../src/acp/server-handshake.js";
+import { type AcpJsonRpcPeerTransport, createStdioServerTransport } from "../../src/acp/transport.js";
 import { readDispatchScopeNotice } from "../../src/core/dispatch-scope-notice.js";
 import type { StartupHint } from "../../src/domains/context/contract.js";
-import { type AcpRequestError, AcpTimeoutError } from "../../src/engine/acp/errors.js";
-import { createAcpInterviewChannel } from "../../src/engine/acp/host-members.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import { createAcpHandshake } from "../../src/engine/acp/server-handshake.js";
-import { type AcpJsonRpcPeerTransport, createStdioServerTransport } from "../../src/engine/acp/transport.js";
 
 function server(options: { startupHints?: () => ReadonlyArray<StartupHint> } = {}) {
 	const requests = new Map<string, (params: unknown) => unknown>();

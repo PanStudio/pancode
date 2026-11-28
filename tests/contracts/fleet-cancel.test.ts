@@ -24,7 +24,7 @@ import {
 } from "../../src/domains/dispatch/fleet-root-record.js";
 import { openLedger, writeFleetRun } from "../../src/domains/dispatch/state.js";
 import type { RunLineage } from "../../src/domains/dispatch/types.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 describe("fleet cancel requests", () => {

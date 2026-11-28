@@ -20,7 +20,7 @@ import { SHARED_SETTINGS_AREAS, type SharedSettingsAreaId, settingsPlacementForP
 import { formatControlValue, orderSettingsEntries, type SettingControl } from "../core/settings-controls.js";
 import { renderUsdLimit } from "../core/telemetry/render.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import { getVersionInfo } from "../domains/lifecycle/version.js";
+import { getVersionInfo } from "../domains/install/version.js";
 import { targetFundingEvidence } from "../domains/providers/funding-evidence.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import {
@@ -677,7 +677,7 @@ const CONTENT_PARTS = {
 				["Trust project imports", settings.integrations.projectResources.trustProjectImports ? "trusted" : "untrusted"],
 				["External ACP agents", String(settings.integrations.externalAgents.entries.length)],
 				["Runtime plugins", listOr(settings.integrations.runtimePlugins)],
-				["PanHub remote sync", onOff(settings.integrations.hub.sync)],
+				["Hub remote sync", onOff(settings.integrations.hub.sync)],
 				["Git commit attribution", onOff(settings.integrations.git.commitAttribution)],
 				["Autonomous commit author", settings.integrations.git.commitAuthor],
 			];
@@ -729,7 +729,7 @@ const CONTENT_PARTS = {
 				},
 			},
 			{
-				label: "PanHub remote sync",
+				label: "Hub remote sync",
 				controlPath: "integrations.hub.sync",
 				hint: "toggle",
 				run: async (io) => {
@@ -738,7 +738,7 @@ const CONTENT_PARTS = {
 						draft.integrations.hub.sync = !draft.integrations.hub.sync;
 						next = draft.integrations.hub.sync;
 					});
-					io.ok(`PanHub remote sync ${onOff(next)}`);
+					io.ok(`Hub remote sync ${onOff(next)}`);
 				},
 			},
 		],

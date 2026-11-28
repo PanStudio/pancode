@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { stripPlanCloseOptions } from "../core/plan-request.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import { createRunCapCounter } from "../core/turn-constraints.js";
 import { requestFits } from "../domains/context/budget/request-fit.js";
 import { withOperatorSessionNotes } from "../domains/memory/index.js";
@@ -10,14 +11,13 @@ import { createContinuityPersistencePorts } from "../domains/session/continuity/
 import { continuityReplayText, resolveContinuityProjection } from "../domains/session/continuity/projection.js";
 import type { SessionEntry } from "../domains/session/entries.js";
 import { activePath } from "../domains/session/tree/active-path.js";
-import type { TurnFailureRecord } from "../domains/turn-control/outcome.js";
 import { cacheKeepalivePromptTokens } from "../engine/cache-keepalive.js";
 import { countImageBlocks } from "../engine/image-context.js";
 import type { MainRequestRecord } from "../engine/in-prefix-summary.js";
 import type { AgentEvent, AgentMessage, EngineModel } from "../engine/types.js";
+import type { TurnFailureRecord } from "../lib/turn-control/outcome.js";
 import { resolveSessionTools } from "../tools/agent-tools.js";
 import { isGatewayChain } from "../tools/gateway-display.js";
-import { effectiveToolCall } from "../tools/surface.js";
 import { requestCursorOf } from "./attempt-receipt.js";
 import type { ChatLoopEvent, RouteMoveFit, RouteMoveWait } from "./chat-loop.js";
 import {

@@ -177,7 +177,7 @@ entries:
       each run ended, its gates, refusals and tokens.
     version: 0.1.0
     sourceUrl: packs/extensions/campaign
-    sha256: 7d3e8f9f1cc458b9886eef7f03ac632923ee8c16243a23bff85869b371a15053
+    sha256: d9e5d2b7eaa11a269e069eb967f30bed0a1e5c098e080325df7c6799a51eadef
     license: LicenseRef-PanCode-1.0
     tier: core
     envelopeDigest: 46b05299328b2586ae874d54ca78a861cbde20a7508d0094beba52b1fee590b5
@@ -382,9 +382,9 @@ entries:
       - add an extension hook
       - create an extension workspace
       - debug extension reload
-    version: 0.1.8
+    version: 0.1.10
     sourceUrl: packs/skills/meta/extension-authoring
-    sha256: 90dd8f936047e91a284d218edc4c656e055cf8076e368282c215a314b34fa58c
+    sha256: cea3391c2b6e438b9dde66e272783513c208114df09abc7aad76700d8fb69d7d
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -424,9 +424,9 @@ entries:
   - kind: skill
     publisher: pancode
     name: find-skills
-    description: Finds published skills and prepares their PanHub installation for
-      the operator when the user asks whether a capability exists as a skill.
-      Not for authoring a new skill; use skill-authoring.
+    description: Finds published skills and prepares their hub installation for the
+      operator when the user asks whether a capability exists as a skill. Not
+      for authoring a new skill; use skill-authoring.
     category: meta
     audit: pass
     triggers:
@@ -435,17 +435,17 @@ entries:
       - install a skill
       - add an agent skill
       - search the skills marketplace
-    version: 0.3.4
+    version: 0.3.5
     sourceUrl: packs/skills/meta/find-skills
-    sha256: 931d05de4a417f9c024efa209b48e9aadf18e8d2b3c9a22541f70a0b8fbcde9d
+    sha256: 079500248f9481bf59223cb0114e4c983852a450f2e44e239496cc1f3bbdcf39
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
       - kind: skill
         name: find-skills
-        description: Finds published skills and prepares their PanHub installation for
-          the operator when the user asks whether a capability exists as a
-          skill. Not for authoring a new skill; use skill-authoring.
+        description: Finds published skills and prepares their hub installation for the
+          operator when the user asks whether a capability exists as a skill.
+          Not for authoring a new skill; use skill-authoring.
   - kind: skill
     publisher: pancode
     name: fix-issue
@@ -627,7 +627,7 @@ entries:
     description: "Develop PanCode inside its own repository: orient on the running
       build versus the workspace, trace owners, avoid the checks that fail
       landings, apply each edit the right way and hand the work back. Use before
-      changing PanCode source, prompts, tools or PanHub; pair with pancode-test
+      changing PanCode source, prompts, tools or the hub; pair with pancode-test
       for validation."
     category: meta
     audit: pass
@@ -637,9 +637,9 @@ entries:
       - change PanCode context or session lifecycle
       - edit PanCode skills tools or prompts
       - work a PanCode lane brief or spec
-    version: 0.7.3
+    version: 0.7.5
     sourceUrl: packs/skills/meta/pancode-dev
-    sha256: ad545ecd4f6ad03c0898abad89dcd200118450b090a524a5dc580b124b5bbcae
+    sha256: 49f59dfc1db0fcf26617722b716ecb5be5eef7270f7b089fa0b518ffd0f8b35d
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -648,7 +648,7 @@ entries:
         description: "Develop PanCode inside its own repository: orient on the running
           build versus the workspace, trace owners, avoid the checks that fail
           landings, apply each edit the right way and hand the work back. Use
-          before changing PanCode source, prompts, tools or…"
+          before changing PanCode source, prompts, tools or the…"
   - kind: skill
     publisher: pancode
     name: pancode-test
@@ -663,9 +663,9 @@ entries:
       - test PanCode context compaction or memory
       - verify PanCode skill activation
       - choose PanCode test gates
-    version: 0.5.2
+    version: 0.5.3
     sourceUrl: packs/skills/meta/pancode-test
-    sha256: 2342771a6c419c155a12c8a32f12a5125da28abc4be4f4a9440185a03c26ac7e
+    sha256: a7bc09a42e0b4494d5da7a24090a6ef3a714a58642a4577eb7b2c0d587e46350
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -952,9 +952,9 @@ entries:
       - improve this skill
       - why isn't this skill firing
       - prune a skill body
-    version: 0.4.3
+    version: 0.4.4
     sourceUrl: packs/skills/meta/skill-authoring
-    sha256: e817d9e8dfad5a4da5234c3f20b601ee7292f572e8d0c28962fd3fb0504e5598
+    sha256: f719e8e5437fbd03ecddee68aff537ac50717574bad2580b4547fbe313373110
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -1087,9 +1087,9 @@ entries:
       - turn this into a reusable workflow
       - distill this repeated process
       - create a skill from this session
-    version: 0.4.8
+    version: 0.4.9
     sourceUrl: packs/skills/workflow/workflow-capture
-    sha256: 1724e1059eeb408462125e340ecc0c0f7c1939789849a218285b54414ed2b88d
+    sha256: 275452b78956aaf622395a9baf5d7b391bd1ba90236440c8be2d8d530d8f94d0
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

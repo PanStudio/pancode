@@ -6,14 +6,14 @@ import { parse } from "yaml";
 import { DEFAULT_SETTINGS, SETTINGS_SCAFFOLD_YAML } from "../../src/core/defaults.js";
 import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { validateSettings } from "../../src/core/settings-validate.js";
-import type { TurnFacts } from "../../src/domains/turn-control/index.js";
+import type { TurnFacts } from "../../src/lib/turn-control/index.js";
 import {
 	decide,
 	decisionHash,
 	factsDigest,
 	renderCollectedBlock,
 	TURN_CONTROL_BLOCK_MAX_CHARS,
-} from "../../src/domains/turn-control/index.js";
+} from "../../src/lib/turn-control/index.js";
 
 const facts = (overrides: Partial<TurnFacts> = {}): TurnFacts => ({
 	explicitConstraints: false,

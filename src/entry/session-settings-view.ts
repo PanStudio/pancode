@@ -12,6 +12,8 @@
  * changes.
  */
 
+import type { AcpSafeSettingsSnapshot } from "../acp/server-options.js";
+import type { AcpSafeSettingsPatch } from "../acp/types-settings.js";
 import type { PancodeSettings, SettingsMutator } from "../core/config.js";
 import { readSettings, updateSettings } from "../core/config.js";
 import type { OutputStyle } from "../core/defaults.js";
@@ -53,8 +55,6 @@ import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.
 import type { SessionContract } from "../domains/session/contract.js";
 import { restoreResumedSessionRoute } from "../domains/session/resumed-route.js";
 import { appendSessionThinkingLevel } from "../domains/session/thinking-route.js";
-import type { AcpSafeSettingsSnapshot } from "../engine/acp/server-options.js";
-import type { AcpSafeSettingsPatch } from "../engine/acp/types-settings.js";
 import type { clampThinkingLevel, selectModel } from "../session-control/index.js";
 
 type SettingsScope = "session" | "project" | "global";

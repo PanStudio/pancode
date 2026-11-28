@@ -769,7 +769,7 @@ export function updatePlugin(id: string, options: PluginInstallOptions = {}): Pl
 				`plugin ${id} has changed or unverifiable content; use --force to preserve a recovery copy and replace it`,
 			);
 		if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(installed.source))
-			throw new Error("remote plugin updates must resolve a verified PanHub catalog source");
+			throw new Error("remote plugin updates must resolve a verified hub catalog source");
 		return installPlugin(installed.source, {
 			...options,
 			scope,

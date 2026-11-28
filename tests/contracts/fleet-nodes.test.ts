@@ -23,7 +23,7 @@ import {
 	WORKER_SPEC_HOOKLESS_VERSION,
 	WORKER_SPEC_VERSION,
 	WORKER_SPEC_VERSIONS,
-} from "../../src/worker/spec-contract.js";
+} from "../../src/lib/worker-wire/spec-contract.js";
 import { clearScratchPancodeHome, newScratchPancodeHome } from "../harness/scratch-env.js";
 
 describe("fleet node management", () => {

@@ -13,7 +13,7 @@
  * a missing heartbeat as a stall.
  */
 
-import { CONTROL_FRAME_PREFIX, encodeControlFrame, type WorkerControlFrame } from "./protocol.js";
+import { CONTROL_FRAME_PREFIX, encodeControlFrame, type WorkerControlFrame } from "../lib/worker-wire/protocol.js";
 
 /**
  * Text that is not a control frame, such as a model-written command echoed in a

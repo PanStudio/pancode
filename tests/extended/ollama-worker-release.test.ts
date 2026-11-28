@@ -11,7 +11,11 @@ import { approvedIdentityForSpec } from "../../src/domains/dispatch/worker-proto
 import { type SpawnedWorker, spawnWorkerProcess } from "../../src/domains/dispatch/worker-spawn.js";
 import ollamaRuntime from "../../src/domains/providers/runtimes/local-native/ollama.js";
 import { releasePancodeLoadedModelsOnExit } from "../../src/engine/apis/residency.js";
-import { CONTROL_FRAME_PREFIX, parseControlFrame, WORKER_PROTOCOL_VERSION } from "../../src/worker/protocol.js";
+import {
+	CONTROL_FRAME_PREFIX,
+	parseControlFrame,
+	WORKER_PROTOCOL_VERSION,
+} from "../../src/lib/worker-wire/protocol.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";

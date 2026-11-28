@@ -139,7 +139,7 @@ function Install-Pancode {
 			return
 		}
 		Say "would unpack the bundle into $installRoot\versions\<version>"
-		Say "would then install the pinned herdr that hosts PanCode's terminal panes: pancode tools install herdr"
+		Say "would then install the pinned herdr that hosts PanCode's terminal panes: pancode programs install herdr"
 		Ok "dry run complete; nothing was downloaded or changed"
 		return
 	}
@@ -327,7 +327,7 @@ function Install-Pancode {
 		$node = Join-Path $final "node.exe"
 		$entry = Join-Path $final "lib\node_modules\pancode\dist\cli\index.js"
 		if ($Options.IncludeClaudeSdk) {
-			& $node $entry tools install claude-sdk
+			& $node $entry programs install claude-sdk
 			if ($LASTEXITCODE -ne 0) { Fail "Claude SDK provisioning failed; previous launcher remains active." }
 		}
 		Ok "installed PanCode $($pkg.version)"
@@ -378,7 +378,7 @@ function Install-Pancode {
 		$panes = $null
 		$savedPreference = $ErrorActionPreference
 		$ErrorActionPreference = "Continue"
-		try { $panes = (& $node $entry tools install herdr --json 2>$null | Out-String) | ConvertFrom-Json } catch { $panes = $null } finally { $ErrorActionPreference = $savedPreference }
+		try { $panes = (& $node $entry programs install herdr --json 2>$null | Out-String) | ConvertFrom-Json } catch { $panes = $null } finally { $ErrorActionPreference = $savedPreference }
 		if ($panes -and $panes.ok) {
 			Ok "terminal panes ready (powered by herdr $($panes.version), Apache-2.0)"
 		} else {

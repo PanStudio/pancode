@@ -48,7 +48,7 @@ export function hubLifecycleAdapter(ttlMs = TTL_MS) {
 				plan = planHubLifecycle({ ...request, cwd });
 			} catch (error) {
 				const detail = message(error);
-				throw new AppProblem(/not installed|is not a PanHub pack/i.test(detail) ? "not_found" : "operation_failed", detail);
+				throw new AppProblem(/not installed|is not a hub pack/i.test(detail) ? "not_found" : "operation_failed", detail);
 			}
 			while (held.size >= MAX_PLANS) drop(held.keys().next().value as string);
 			const timer = setTimeout(() => drop(plan.id), ttlMs);

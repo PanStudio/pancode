@@ -299,7 +299,7 @@ export function registerHubPackage(source: string, options: HubScopeOptions & { 
 			a.name.localeCompare(b.name),
 		);
 		if ((existsSync(file) ? readFileSync(file, "utf8") : undefined) !== before)
-			throw new Error("PanHub index changed during registration");
+			throw new Error("The hub index changed during registration");
 		safeResourceWrite(file, stringifyYaml({ entries: next.map(({ origin: _origin, index: _index, ...item }) => item) }), {
 			encoding: "utf8",
 		});
@@ -345,7 +345,7 @@ function installedPlugin(entry: Pick<HubEntry, "kind" | "name">, options: HubSco
 }
 
 export function hubInstallPath(entry: Pick<HubEntry, "kind" | "name">, options: HubScopeOptions = {}): string {
-	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name)) throw new Error(`invalid PanHub entry name: ${entry.name}`);
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name)) throw new Error(`invalid hub entry name: ${entry.name}`);
 	return (
 		installedPlugin(entry, options)?.rootPath ??
 		path.join(hubPackageBaseDir(entry.kind, options.scope ?? "user", options.cwd ?? process.cwd()), entry.name)
@@ -496,7 +496,7 @@ export interface HubInstallResult {
  * the plan carries `expect`. Returns the writer's structured result.
  */
 export function commitHubInstallPlan(plan: HubInstallPlan): PluginMutationResult {
-	if (existsSync(plan.path) && !plan.force) throw new Error(`PanHub destination already exists: ${plan.path}`);
+	if (existsSync(plan.path) && !plan.force) throw new Error(`The hub destination already exists: ${plan.path}`);
 	if (!plan.sourceRoot) throw new Error("plugin install plan has no staged source");
 	if (plan.expectedInstalledDigest && pluginContentDigest(plan.path) !== plan.expectedInstalledDigest)
 		throw new Error(`plugin_destination_changed: ${plan.entry.name}`);
@@ -620,7 +620,7 @@ export function resolveHubPackage(
 	if (entry) return entry;
 	if (parsePluginGithubSource(source))
 		throw new Error("remote plugin installation requires a catalog entry with version and full-tree sha256 pin");
-	throw new Error(`${source} is not a PanHub pack or a local pack directory; find the name with \`pancode hub search\``);
+	throw new Error(`${source} is not a hub pack or a local pack directory; find the name with \`pancode hub search\``);
 }
 
 export function planHubUpdate(
@@ -722,10 +722,10 @@ function hubRemoteProblem(url: string): string | undefined {
 	return "it is not an https://, ssh:// or file:// URL, a user@host:path address or an absolute path";
 }
 
-/** Records `url` as the confirmed PanHub Git remote, and as the remote itself when none is set; returns the URL. */
+/** Records `url` as the confirmed hub Git remote, and as the remote itself when none is set; returns the URL. */
 export function confirmHubRemote(url: string): string {
 	const problem = hubRemoteProblem(url);
-	if (problem) throw new Error(`hub_remote_invalid: ${JSON.stringify(url)} cannot be a PanHub remote; ${problem}`);
+	if (problem) throw new Error(`hub_remote_invalid: ${JSON.stringify(url)} cannot be a hub remote; ${problem}`);
 	const current = readSettings().integrations.hub.remote;
 	if (current !== null && current !== url)
 		throw new Error(
@@ -748,7 +748,7 @@ export async function syncHub(direction: "sync" | "push", runner: HubCommandRunn
 	const settings = readSettings().integrations.hub;
 	if (!settings.sync)
 		throw new Error(
-			"hub_sync_disabled: PanHub Git sync is off by default; turn it on with pancode config set integrations.hub.sync true, add a Git remote named hub beside the user index, and confirm it with pancode hub remote confirm <url>",
+			"hub_sync_disabled: Hub Git sync is off by default; turn it on with pancode config set integrations.hub.sync true, add a Git remote named hub beside the user index, and confirm it with pancode hub remote confirm <url>",
 		);
 	const remote = confirmedRemote();
 	const cwd = path.dirname(catalogPath());

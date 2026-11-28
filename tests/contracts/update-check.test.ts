@@ -4,17 +4,17 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { Installation } from "../../src/domains/lifecycle/install-method.js";
+import type { Installation } from "../../src/domains/install/install-method.js";
 import {
 	compareReleaseVersions,
 	fetchReleaseVersion,
 	parseReleaseVersion,
-} from "../../src/domains/lifecycle/release-version.js";
+} from "../../src/domains/install/release-version.js";
 import {
 	createUpdateCheck,
 	UPDATE_CHECK_INTERVAL_MS,
 	UPDATE_NOTICE_INTERVAL_MS,
-} from "../../src/domains/lifecycle/update-check.js";
+} from "../../src/domains/install/update-check.js";
 import { startUpdateMonitor } from "../../src/interactive/update-monitor.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 

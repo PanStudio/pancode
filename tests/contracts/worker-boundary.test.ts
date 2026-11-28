@@ -43,7 +43,6 @@ import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/types/capability-flags.js";
 import type { SafetyDecision } from "../../src/domains/safety/contract.js";
 import { workerPermissionCacheKey } from "../../src/engine/worker-escalation.js";
-import { projectWorkerEventForStdout } from "../../src/worker/event-projection.js";
 import {
 	CONTROL_FRAME_PREFIX,
 	endpointIdentityHash,
@@ -56,7 +55,8 @@ import {
 	type WorkerAttestation,
 	type WorkerHookRequest,
 	workerSpecDigest,
-} from "../../src/worker/protocol.js";
+} from "../../src/lib/worker-wire/protocol.js";
+import { projectWorkerEventForStdout } from "../../src/worker/event-projection.js";
 import { createOrderedSteerHandler } from "../../src/worker/stdin-demux.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";

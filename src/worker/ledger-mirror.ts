@@ -16,8 +16,13 @@ import type { FlowRestrictionSet } from "../core/flow-restrictions.js";
  * admitted is what a receipt counts.
  */
 
-import type { AgentLedgerBody, AgentLedgerEntry, AgentLedgerPort, WorkerControlFrame } from "./protocol.js";
-import { parseAgentLedgerBody } from "./protocol.js";
+import type {
+	AgentLedgerBody,
+	AgentLedgerEntry,
+	AgentLedgerPort,
+	WorkerControlFrame,
+} from "../lib/worker-wire/protocol.js";
+import { parseAgentLedgerBody } from "../lib/worker-wire/protocol.js";
 
 /** Mirrors the orchestrator's per-run cap so a refusal is synchronous. */
 export const WORKER_AGENT_LEDGER_POST_CAP = 20;

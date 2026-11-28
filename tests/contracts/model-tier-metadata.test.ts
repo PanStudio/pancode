@@ -26,8 +26,8 @@ import {
 } from "../../src/domains/resources/prompts/loader.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { buildExtensionRuntimeHooks, evaluateWorkerHookRequest } from "../../src/entry/extension-runtime-hooks.js";
+import { parseWorkerHookRequest } from "../../src/lib/worker-wire/protocol.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import { parseWorkerHookRequest } from "../../src/worker/protocol.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

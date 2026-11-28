@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { canOpenBrowser, openBrowser } from "../../core/open-browser.js";
-import { resolveToolBinary } from "../toolchain/index.js";
+import { resolveToolBinary } from "../../lib/programs/index.js";
 import type { RenderedReport } from "./body.js";
 import { issueCanaryFinding, issueCanaryGate } from "./canary.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";
