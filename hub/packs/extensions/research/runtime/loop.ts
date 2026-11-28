@@ -634,7 +634,10 @@ async function runCampaignLoop(
 				);
 		}
 		// Each gate runs once on the base too, so what it creates is known before the first iteration commits.
-		for (const check of gateChecks) if (check.id !== objectiveCheck.id) await gate(baseWorktree, check);
+		for (const check of gateChecks) {
+			if (aborted()) break;
+			if (check.id !== objectiveCheck.id) await gate(baseWorktree, check);
+		}
 		const learnHalt = halt();
 		if (learnHalt !== null) return finish(learnHalt.reason, haltDetail("while running the gates on the base"));
 		await learnArtifacts(baseWorktree, baseUntracked);
@@ -848,6 +851,11 @@ async function runCampaignLoop(
 			const gates: ResearchGateResult[] = [];
 			for (const check of gateChecks) {
 				const isObjective = check.id === objectiveCheck.id && objectiveJudged !== undefined;
+				if (!isObjective && aborted()) {
+					outcomes.push({ check: check.id, execution: "aborted" });
+					gates.push({ check: check.id, passed: false, execution: "aborted", summary: "aborted" });
+					continue;
+				}
 				const judged = isObjective ? (objectiveJudged as ExtensionCheckResult) : await gate(worktree, check);
 				if (!isObjective) outcomes.push({ check: check.id, receipt: judged.receipt });
 				gates.push({

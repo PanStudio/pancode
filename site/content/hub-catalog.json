@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "5c6ac01226c2dbb35cf69d6a2bb07f619cb40dd7236cf8bea39d68fad82e2263",
+		"sha256": "c1d764d8a49b80bb2d6c69493128f413c10064a0a60317fa149d51daabf6bde9",
 		"rows": 48,
 		"revoked": 0
 	},
@@ -78,7 +78,7 @@
 			"source": {
 				"path": "hub/packs/extensions/research"
 			},
-			"sha256": "ee22c5cc38d7da50775ff4c97e2ca1893d718e15893eff18d179af98d3affb0b",
+			"sha256": "87275c4d3e61be3655be7d09428b652646116eef5050d6728e6a5040e34de345",
 			"install": "pancode hub install extension:research"
 		},
 		{

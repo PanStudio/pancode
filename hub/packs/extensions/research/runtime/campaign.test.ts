@@ -157,3 +157,149 @@ describe("research agent runs", () => {
 		strictEqual(failed.summary, "line one boom");
 	});
 });
+
+describe("research wall-deadline gate stop", () => {
+	it("stops launching further gates once the wall deadline expires during an earlier gate", async () => {
+		const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { openResearchCampaign, runResearchCampaign } = await import("./loop.ts");
+		const { readJournal } = await import("./store.ts");
+
+		const dir = mkdtempSync(join(tmpdir(), "research-gate-deadline-"));
+		const wt = join(dir, "wt");
+		const { mkdirSync } = await import("node:fs");
+		mkdirSync(wt);
+		try {
+			const checks = new Map<string, Record<string, unknown>>([
+				["bench", { id: "bench", kind: "command", command: ["echo", "1"], cwd: ".", timeoutMs: 1000 }],
+				["g1", { id: "g1", kind: "command", command: ["echo", "ok"], cwd: ".", timeoutMs: 1000 }],
+				["g2", { id: "g2", kind: "command", command: ["echo", "ok"], cwd: ".", timeoutMs: 1000 }],
+			]);
+			let clockMs = 0;
+			let commits = 0;
+			const gateCalls: string[] = [];
+			const finishedOutcomes: unknown[] = [];
+			let inIteration = false;
+			const services = {
+				worktrees: {
+					create: async ({ base }: { base?: string } = {}) => ({
+						id: `t-${++commits}`,
+						path: wt,
+						cwd: wt,
+						head: base ?? "base-sha",
+						kept: false,
+					}),
+					list: async () => [],
+					remove: async () => undefined,
+					git: async (_place: unknown, args: ReadonlyArray<string>) => {
+						const [cmd] = args;
+						if (cmd === "rev-parse" && args.includes("--show-toplevel"))
+							return { exitCode: 0, stdout: `${dir}\n`, stderr: "" };
+						if (cmd === "rev-parse" && args.some((a) => a.endsWith("^{commit}")))
+							return { exitCode: 0, stdout: "base-sha\n", stderr: "" };
+						if (cmd === "rev-parse" && args.some((a) => a.endsWith("^{tree}"))) {
+							const rev = args[args.length - 1] ?? "";
+							return { exitCode: 0, stdout: `${rev.replace("^{tree}", "")}-tree\n`, stderr: "" };
+						}
+						if (cmd === "diff") return { exitCode: 0, stdout: "src/app.ts\0", stderr: "" };
+						return { exitCode: 0, stdout: "", stderr: "" };
+					},
+					checkout: async () => undefined,
+					clean: async () => undefined,
+					copy: async () => undefined,
+					commit: async () => ({ head: "cand-sha", leftOut: [] }),
+					refs: {
+						get: async () => "base-sha",
+						create: async () => undefined,
+						swap: async () => true,
+					},
+				},
+				verify: {
+					list: async () =>
+						[...checks.values()].map((c) => ({
+							id: String(c.id),
+							kind: String(c.kind),
+							command: c.command as string[],
+							cwd: ".",
+							timeoutMs: 1000,
+							inputs: [],
+						})),
+					resolve: async (id: string) => ({
+						ok: true as const,
+						kind: "catalog" as const,
+						inputs: [],
+						check: checks.get(id),
+					}),
+					check: async (id: string) => {
+						if (inIteration) gateCalls.push(id);
+						if (inIteration && id === "g1") clockMs += 120_000;
+						return { ok: true, execution: "succeeded", validation: "passed", exitCode: 0, text: "ok", receipt: `r-${id}` };
+					},
+					measure: async (_id: string, _metric: string, place?: unknown) => ({
+						ok: true as const,
+						value:
+							place && typeof place === "object" && "worktree" in place && (place as { worktree: string }).worktree === "t-2"
+								? 100
+								: 50,
+						receipt: "r-bench",
+					}),
+				},
+				claims: {
+					hypotheses: async () => ({ H1: "h1" }),
+					read: async () => [{ id: "h1", criterion: { kind: "research-objective" } }],
+					begin: async () => ({ bench: ["h1"], g1: [], g2: [] }),
+					finish: async (_run: string, outcomes: ReadonlyArray<unknown>) => {
+						finishedOutcomes.push(...outcomes);
+						return {};
+					},
+				},
+			};
+			writeFileSync(join(wt, "src.txt"), "ok");
+			const campaign = await openResearchCampaign(services as never, {
+				root: dir,
+				objective: { check: "bench", metric: "ms", direction: "min", minImprovement: 0.05, trials: 3 },
+				gates: ["g1", "g2"],
+				scope: ["src/**"],
+				budget: { maxIterations: 3, maxWallMinutes: 1, allowUnpriced: true },
+				allowNoisy: true,
+				keep: false,
+				agent: { autonomy: "default" },
+				pancodeVersion: "0.9.2",
+			});
+			const outcome = await runResearchCampaign(campaign, {
+				root: dir,
+				services: services as never,
+				clock: () => clockMs,
+				agent: async () => {
+					inIteration = true;
+					return {
+						exitCode: 0,
+						sessionId: "s1",
+						outcome: "completed",
+						summary: "Hypothesis: faster\nPrediction: lower ms",
+						cost: { kind: "free" },
+					};
+				},
+			});
+			strictEqual(outcome.reason, "max-wall-minutes", outcome.detail);
+			deepStrictEqual(gateCalls, ["g1"]);
+			deepStrictEqual(finishedOutcomes, [
+				{ check: "bench", receipt: "r-bench" },
+				{ check: "g1", receipt: "r-g1" },
+				{ check: "g2", execution: "aborted" },
+			]);
+			const graded = readJournal(dir, campaign.id).events.find((e) => e.type === "graded");
+			ok(graded && graded.type === "graded");
+			deepStrictEqual(
+				graded.gates.map((g) => [g.check, g.passed, g.execution]),
+				[
+					["g1", true, "succeeded"],
+					["g2", false, "aborted"],
+				],
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
