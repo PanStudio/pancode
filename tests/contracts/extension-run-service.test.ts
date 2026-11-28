@@ -995,23 +995,26 @@ describe("an installed extension's work services", () => {
 });
 
 describe("extension run service: routes a run may leave to the operator", () => {
-	function routed(defaultTarget: string | null) {
+	const TARGETS = [
+		{ id: "chat", runtime: "openai-compatible", auth: { apiKeyEnvVar: "CHAT_KEY" } },
+		{ id: "other", runtime: "openai-compatible", auth: { apiKeyEnvVar: "OTHER_KEY" } },
+	] as const;
+	function routed(defaultTarget: string | null, placeTarget?: string) {
 		const tempRoot = mkdtempSync(join(tmpdir(), "run-service-route-"));
 		const calls: Call[] = [];
 		const service = createExtensionRunService({
 			ceilings: { maxConcurrent: 2, autonomy: ["default"], maxCostUsd: null, maxTimeoutSeconds: 600 },
 			launch: { file: "node", args: ["/pancode.js"] },
 			sourceEnv: { PATH: "/bin", CHAT_KEY: "c", OTHER_KEY: "o" },
-			envPolicy: {
-				targets: [
-					{ id: "chat", runtime: "openai-compatible", auth: { apiKeyEnvVar: "CHAT_KEY" } },
-					{ id: "other", runtime: "openai-compatible", auth: { apiKeyEnvVar: "OTHER_KEY" } },
-				],
-				passEnv: [],
-				defaultTarget,
-			},
+			envPolicy: { targets: [...TARGETS], passEnv: [], defaultTarget },
 			yoloRefusal: () => null,
-			resolvePlace: () => ({ cwd: "/w", workspaceRoot: "/w" }),
+			resolvePlace: () => ({
+				cwd: "/w",
+				workspaceRoot: "/w",
+				...(placeTarget !== undefined
+					? { envPolicy: { targets: [...TARGETS], passEnv: [], defaultTarget: placeTarget } }
+					: {}),
+			}),
 			tempRoot,
 			spawn: (file, args, options = {}) => {
 				calls.push({ file, args: [...args], options, answers: null });
@@ -1033,6 +1036,18 @@ describe("extension run service: routes a run may leave to the operator", () => 
 			assert.deepEqual(call.args.slice(1, 5), ["run", "--cwd", "/w", "--no-delegate"]);
 			assert.equal(call.options.env?.CHAT_KEY, "c");
 			assert.equal(call.options.env?.OTHER_KEY, undefined);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	it("takes the default target of a place that brings its own settings", async () => {
+		const h = routed("chat", "other");
+		try {
+			await h.service.wait((await h.service.start({ prompt: "go", timeoutSeconds: 60 })).id);
+			const call = h.calls[0] as Call;
+			assert.equal(call.options.env?.OTHER_KEY, "o");
+			assert.equal(call.options.env?.CHAT_KEY, undefined);
 		} finally {
 			h.cleanup();
 		}
