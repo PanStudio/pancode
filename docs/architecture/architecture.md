@@ -73,7 +73,7 @@ System One is not a loaded domain. The orchestrator builds it with `createSystem
 | workspace-snapshots | `src/domains/workspace-snapshots/**` | Git snapshots of the worktree taken before mutating calls, built in a private per-session index under `refs/pancode/snapshots/`, and the `/rewind` plan and restore. |
 
 The `interop` domain owns one question: which other coding agents are on this
-machine and in this project. [interop-agents.ts](../../src/core/interop-agents.ts) (in core, so every domain reads it) is pure data, one
+machine and in this project. [registry.ts](../../src/domains/interop/registry.ts) is pure data, one
 entry per known agent carrying its binaries, the directories it owns, its skill
 and prompt roots, its instruction filenames, and the ACP launch recipe when it
 has one. Consumers derive their agent-specific behavior from this table: the skills loader and the prompts loader take their compatibility

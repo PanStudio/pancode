@@ -57,7 +57,7 @@ are selected explicitly; PanCode does not silently switch agents or modes.
 | Pi CLI | No verified ACP recipe | `pi-cli` | `pi` |
 | A second PanCode | None | None | `pancode` |
 
-The recipes live in [interop-agents.ts](../../src/core/interop-agents.ts). Pi has
+The recipes live in [registry.ts](../../src/domains/interop/registry.ts). Pi has
 no built-in ACP connection. An operator-configured ACP peer entry
 can use a compatible adapter. A pinned bridge counts as verified only when that
 package at the pinned version sits in the project's `node_modules`; otherwise

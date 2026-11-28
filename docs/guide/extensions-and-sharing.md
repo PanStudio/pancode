@@ -4,7 +4,7 @@ Prompt templates and skills are Markdown resources you write once and reuse. A p
 
 PanCode has two package systems. A plugin is an Agent Plugin, content only: prompts, skills, agents, playbooks, scripts, and reference files, installed with `pancode hub install plugin:<name>` or from a path. Installation and resource discovery do not execute plugin code; its scripts are ordinary executable content if a tool later runs them. An extension is code that runs in its own process (hooks, runtime tools, commands, workspaces, interviews), installed with `pancode hub install extension:<name>` or `pancode extensions install <path>` after the operator reviews its capability envelope. Only plugins contribute resources. An extension may name the one plugin it serves with `plugin: <name>`. An extension command tool runs inside the main session's sandbox when admission contains it, as `bash` does, and a retry with `unsandboxed: true` raises the reviewed sandbox-escape ask; an api 2 runtime tool can declare `actionClass: write` for workspace writes. See [plugins.md](plugins.md) for the concept map and [harness-extensions.md](harness-extensions.md) for the extension contract.
 
-Source of truth: `src/domains/resources/`, `src/domains/plugins/`, `src/core/interop-agents.ts`, `src/domains/share/`, [share.ts](../../src/cli/share.ts), and [skills.ts](../../src/cli/skills.ts).
+Source of truth: `src/domains/resources/`, `src/domains/plugins/`, `src/domains/interop/registry.ts`, `src/domains/share/`, [share.ts](../../src/cli/share.ts), and [skills.ts](../../src/cli/skills.ts).
 
 ---
 
@@ -27,7 +27,7 @@ Source of truth: `src/domains/resources/`, `src/domains/plugins/`, `src/core/int
 
 Prompts and skills are loaded from package, user, and project roots. Higher-ranked roots override lower-ranked resources with the same name.
 
-Prompts and skills both add compatibility roots so that the command and skill files other agents already have on the machine are usable without copying. Both root lists come from the interop agent registry ([interop-agents.ts](../../src/core/interop-agents.ts)), so the two kinds cannot drift apart. The prompt precedence, lowest to highest, is:
+Prompts and skills both add compatibility roots so that the command and skill files other agents already have on the machine are usable without copying. Both root lists come from the interop agent registry ([registry.ts](../../src/domains/interop/registry.ts)), so the two kinds cannot drift apart. The prompt precedence, lowest to highest, is:
 
 | Precedence | Scope | Source | Root |
 | --- | --- | --- | --- |

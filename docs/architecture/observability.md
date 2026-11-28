@@ -8,7 +8,7 @@
 /view verify <runId>
 ```
 
-`/view` opens a full-screen split viewer. The left pane groups artifacts by category, newest first within a category, and supports type-to-filter. The right pane renders the selected artifact with pager controls. Below 84 columns of body width the viewer shows one pane at a time. The artifact providers live in [view-artifacts.ts](../../src/session-control/view-artifacts.ts), shared by every surface, and the viewer in [view-overlay.ts](../../src/interactive/view/view-overlay.ts) only renders them. ACP clients read the same providers through `_pancode/artifacts/list` and `_pancode/artifacts/read`; see [ACP](acp.md). The graphical application's session Artifacts drill-in is one such client ([the GUI guide](../guide/gui.md)).
+`/view` opens a full-screen split viewer. The left pane groups artifacts by category, newest first within a category, and supports type-to-filter. The right pane renders the selected artifact with pager controls. Below 84 columns of body width the viewer shows one pane at a time. The artifact providers live in [view-artifacts.ts](../../src/domains/session/view-artifacts.ts) in the session domain, and the viewer in [view-overlay.ts](../../src/interactive/view/view-overlay.ts) only renders them. ACP clients read the same providers through `_pancode/artifacts/list` and `_pancode/artifacts/read`; see [ACP](acp.md). The graphical application's session Artifacts drill-in is one such client ([the GUI guide](../guide/gui.md)).
 
 | Pane | Keys |
 | --- | --- |
@@ -19,7 +19,7 @@ The filter splits on whitespace and requires every token to match, case-insensit
 
 ## Verifying a run
 
-Pressing `v` on a run record or running `/view verify <runId>` checks the run's sealed scope again from its own files (`verifyRunRecordReport` in [view-artifacts.ts](../../src/session-control/view-artifacts.ts)) and posts the report as a notice without opening the viewer. The report lists each check with its evidence:
+Pressing `v` on a run record or running `/view verify <runId>` checks the run's sealed scope again from its own files (`verifyRunRecordReport` in [view-artifacts.ts](../../src/domains/session/view-artifacts.ts)) and posts the report as a notice without opening the viewer. The report lists each check with its evidence:
 
 1. **Run journal.** `<stateDir>/telemetry/runs/<runId>/` holds a readable journal.
 2. **Run settled.** The journal holds the run's `run.settled` record.

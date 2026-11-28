@@ -356,7 +356,7 @@ The values are illustrative. No other settings leaf, URL, auth fact, credential 
 
 ### Artifacts
 
-`_pancode/artifacts/list` and `_pancode/artifacts/read` serve the terminal's `/view` artifacts to a client (`src/engine/acp/artifacts.ts`). Both read the providers the overlay reads (`src/session-control/view-artifacts.ts`), so a client lists the same rows with the same titles and reads the same lines. Titles and subtitles pass through the overlay's sanitizer (control sequences stripped, secrets redacted). Bodies travel as loaded. A protected artifact's load renders its protection record and never the file. The provider module loads on first use.
+`_pancode/artifacts/list` and `_pancode/artifacts/read` serve the terminal's `/view` artifacts to a client (`src/engine/acp/artifacts.ts`). Both read the providers the overlay reads (`src/domains/session/view-artifacts.ts`), so a client lists the same rows with the same titles and reads the same lines. Titles and subtitles pass through the overlay's sanitizer (control sequences stripped, secrets redacted). Bodies travel as loaded. A protected artifact's load renders its protection record and never the file. The provider module loads on first use.
 
 The `pancode/artifacts` capability is `{version: 1, list, read, categories, perCategory: 200}`. `categories` names the 13 categories a client may request: `message-path`, `accountability`, `evidence`, `run`, `dispatch`, `task-ledger`, `workspace`, `tool-output`, `screenshots`, `protected-artifact`, `compaction`, `prompt-manifest`, and `audit`. The terminal's `transcript` category is excluded because the client already holds the conversation.
 
