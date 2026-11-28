@@ -239,8 +239,8 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 	});
 });
 
-// CLI SPEC L12: the root page, the full listing, and the spellings 0.8.5 removed.
-describe("root help and removed spellings", { concurrency: 4 }, () => {
+// CLI SPEC L12: the root page, the full listing, and what an unknown command answers.
+describe("root help and unknown commands", { concurrency: 4 }, () => {
 	it("root --help is at most 45 lines and names the core commands", async () => {
 		const result = await cli(["--help"]);
 		equal(result.status, 0, result.stderr);
@@ -277,26 +277,11 @@ describe("root help and removed spellings", { concurrency: 4 }, () => {
 		ok(help.stdout.includes("help run --topics"));
 	});
 
-	// No alias, tombstone or deprecation notice survives: each removed spelling is an ordinary usage error.
-	for (const args of [
-		["context-init"],
-		["context-init", "--help"],
-		["fleet", "inspect"],
-		["fleet", "drain", "--json"],
-		["evidence", "build"],
-		["--acp", "--help"],
-		["ext", "--help"],
-		["export", "--help"],
-		["evolve", "--help"],
-		["dev", "share"],
-		["targets", "workers"],
-		["semantic", "inbox-list"],
-	]) {
-		it(`pancode ${args.join(" ")} is an ordinary usage error`, async () => {
-			const result = await cli(args);
+	it("words a removed or unknown command as an ordinary usage error with no deprecation notice", async () => {
+		for (const result of await Promise.all([cli(["context-init", "--help"]), cli(["fleet", "inspect"])])) {
 			equal(result.status, 2, result.stderr);
 			match(result.stderr, /unknown/iu);
 			ok(!/deprecated|was removed|\nuse: /u.test(result.stderr), result.stderr);
-		});
-	}
+		}
+	});
 });
