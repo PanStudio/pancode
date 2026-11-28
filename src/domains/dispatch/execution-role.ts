@@ -24,6 +24,7 @@ import { isHoareResultContract, type ResultContract } from "../agents/result-con
 import type { AgentCapabilityClass } from "../agents/spec.js";
 import { modelLineage } from "../providers/index.js";
 import type { DispatchRequest } from "./contract.js";
+import { type GateReviewerRecipe, reviewerGatePrompt } from "./gate-role-prompts.js";
 import { type RunRole, requestedWriteNone, resolveRunRole } from "./obligation.js";
 
 /**
@@ -167,6 +168,18 @@ export function reviewDeciderAgentId(requested: string | undefined, installed?: 
 	if (trimmed.length > 0) return trimmed;
 	const reviewer = dispatchJobRecipe("review");
 	return installed === undefined || installed(reviewer) ? reviewer : DEFAULT_GATE_DECIDER_AGENT_ID;
+}
+
+/**
+ * The recipe a review gate seats as its reviewer and the persona it runs under: an installed recipe's body composed
+ * with the gate contract, or the pinned gate prompt (see {@link reviewerGatePrompt}). Dispatch and plan preview share it.
+ */
+export function reviewerGateSeat(
+	requested: string | undefined,
+	specs: ReadonlyArray<GateReviewerRecipe & { readonly id: string }>,
+): { agentId: string; systemPrompt: string } {
+	const agentId = reviewDeciderAgentId(requested, (id) => specs.some((spec) => spec.id === id));
+	return { agentId, systemPrompt: reviewerGatePrompt(specs.find((spec) => spec.id === agentId)) };
 }
 
 /**
