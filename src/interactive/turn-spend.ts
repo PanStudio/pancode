@@ -64,7 +64,6 @@ export interface TurnWorkerSpend {
 	calls: number | null;
 }
 
-/** The known part of a quantity: a measured or estimated value, or a sum's measured and estimated parts. */
 /** One session token metric, optionally for one model group. */
 export function sessionTokenQuantity(view: TelemetryView, metric: FactMetric, model?: string): Quantity | null {
 	return view.quantity(
@@ -77,6 +76,7 @@ export function sessionTokenQuantity(view: TelemetryView, metric: FactMetric, mo
 	);
 }
 
+/** The known part of a quantity: a measured or estimated value, or a sum's measured and estimated parts. */
 function known(quantity: Quantity): number {
 	return factKnownValue(quantity.fact);
 }
