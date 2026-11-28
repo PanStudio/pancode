@@ -2,17 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
-import { type Client, emptyInput } from "../api/client.js";
+import type { Client } from "../api/client.js";
 import { useShell } from "../shell/shell-context.js";
 import { settingsWorkspace } from "./config-map-model.js";
 import "./workspace-selection.css";
+import { workspacesQuery } from "../api/queries.js";
 
 export function useWorkspaceSelection(client: Client) {
 	const [search, setSearch] = useSearchParams();
 	const workspaces = useQuery({
-		queryKey: ["workspaces"],
-		queryFn: ({ signal }) => client.call(routes.workspaces, emptyInput, undefined, signal),
+		...workspacesQuery(client),
 	});
 	const shell = useShell();
 	const requested = search.get("workspace");

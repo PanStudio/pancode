@@ -3,7 +3,7 @@
 .machines-page {
 	max-width: 1440px;
 	margin: 0 auto;
-	padding: 0 0 40px;
+	padding: 0 0 var(--space-10);
 	color: var(--ink);
 }
 
@@ -15,11 +15,11 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 16px;
+	gap: var(--space-4);
 }
 
 .machines-heading {
-	padding: 0 0 24px;
+	padding: 0 0 var(--space-6);
 	border-bottom: 2px solid var(--ink);
 }
 
@@ -28,7 +28,7 @@
 	font-size: var(--text-display);
 	font-weight: 400;
 	line-height: 1.05;
-	margin: 12px 0;
+	margin: var(--space-3) 0;
 	letter-spacing: -0.035em;
 }
 
@@ -50,7 +50,7 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 8px;
+	gap: var(--space-2);
 	min-height: 38px;
 }
 
@@ -103,7 +103,7 @@
 
 .machines-summary > div {
 	border-right: 1px solid var(--line);
-	padding: 0 20px;
+	padding: 0 var(--space-5);
 	display: grid;
 	gap: 6px;
 }
@@ -131,12 +131,12 @@
 }
 
 .machines-summary > p {
-	padding-left: 24px;
+	padding-left: var(--space-6);
 	font: 13px / 1.8 var(--font-mono);
 }
 
 .machines-registry-heading {
-	margin: 24px 0 16px;
+	margin: var(--space-6) 0 var(--space-4);
 }
 
 .machines-section-heading h2 {
@@ -271,11 +271,11 @@
 }
 
 .machines-address {
-	margin: 8px 0 20px;
+	margin: var(--space-2) 0 var(--space-5);
 }
 
 .machines-facts {
-	margin: 24px 0;
+	margin: var(--space-6) 0;
 }
 
 .machines-facts > div {
@@ -301,25 +301,25 @@
 	display: block;
 	font: 11px / 1.7 var(--font-mono);
 	color: var(--ink-muted);
-	margin-top: 4px;
+	margin-top: var(--space-1);
 }
 
 .machines-evidence {
 	border-top: 2px solid var(--line-strong);
-	padding-top: 20px;
-	margin: 24px 0;
+	padding-top: var(--space-5);
+	margin: var(--space-6) 0;
 }
 
 .machines-checks {
 	display: grid;
 	grid-template-columns: repeat(3, 1fr);
-	gap: 16px 12px;
+	gap: var(--space-4) var(--space-3);
 	margin: 22px 0;
 }
 
 .machines-checks > div {
 	display: flex;
-	gap: 8px;
+	gap: var(--space-2);
 	font-size: var(--text-caption);
 	color: var(--ink-muted);
 }
@@ -336,14 +336,14 @@
 	display: block;
 	color: var(--ink-muted);
 	font-size: var(--text-caption);
-	margin-top: 4px;
+	margin-top: var(--space-1);
 }
 
 .machines-reason,
 .machines-confirm {
 	background: var(--surface-sunken);
 	border-left: 2px solid var(--secondary);
-	padding: 16px;
+	padding: var(--space-4);
 	font-size: var(--text-instrument);
 	line-height: 1.65;
 	overflow-wrap: anywhere;
@@ -351,7 +351,7 @@
 
 .machines-confirm h3 {
 	font: 24px var(--font-editorial);
-	margin: 0 0 12px;
+	margin: 0 0 var(--space-3);
 }
 
 .machines-actions {
@@ -360,7 +360,7 @@
 }
 
 .machines-add {
-	padding: 24px;
+	padding: var(--space-6);
 	margin: 12px 0 28px;
 	border: 1px solid var(--accent-line);
 	border-top: 3px solid var(--accent);
@@ -374,8 +374,8 @@
 .machines-fields {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 20px;
-	padding: 16px 0;
+	gap: var(--space-5);
+	padding: var(--space-4) 0;
 	margin: 0;
 	border: 0;
 }
@@ -415,12 +415,12 @@
 .machines-empty p {
 	color: var(--ink-muted);
 	max-width: 60ch;
-	margin: 16px auto 24px;
+	margin: var(--space-4) auto var(--space-6);
 }
 
 .machines-operation {
-	margin: 12px 0 20px;
-	padding: 16px 20px;
+	margin: var(--space-3) 0 var(--space-5);
+	padding: var(--space-4) var(--space-5);
 	border-left: 3px solid var(--accent);
 	background: var(--accent-soft);
 	font-size: var(--text-instrument);
@@ -439,7 +439,7 @@
 
 @media (max-width: 1050px) {
 	.machines-page {
-		padding: 20px 16px 40px;
+		padding: var(--space-5) var(--space-4) var(--space-10);
 	}
 
 	.machines-summary {
@@ -456,7 +456,7 @@
 	}
 
 	.machines-detail {
-		padding: 20px;
+		padding: var(--space-5);
 	}
 
 	.machines-checks,

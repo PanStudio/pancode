@@ -11,11 +11,12 @@ import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { AcpCommandControl } from "./commands.js";
 import { ACP_SESSION_LIMIT_CODE, AcpRequestError } from "./errors.js";
 import { ACP_WORKSPACE_META_KEY } from "./live-telemetry.js";
-import { requireBoundedClientString, safeStoredIdentifier } from "./server-bounds.js";
+import { requireBoundedClientString } from "./server-bounds.js";
 import type { PancodeAcpServerOptions } from "./server-options.js";
 import { ceilingBinds, ceilingMeta } from "./server-prompt-input.js";
 import type { AcpServerScope } from "./server-scope.js";
 import type { AcpServerSession } from "./server-tool-updates.js";
+import { ACP_MAX_SESSION_ID_BYTES, listableSessionId } from "./session-list-row.js";
 import { ACP_CEILING_META_KEY } from "./types.js";
 
 export function assertParamKeys(params: unknown, allowed: ReadonlySet<string>): Record<string, unknown> {
@@ -34,7 +35,7 @@ export function assertCeilingEnforceable(options: PancodeAcpServerOptions, ceili
 	}
 }
 
-export const ACP_MAX_SESSION_ID_BYTES = 128;
+export { ACP_MAX_SESSION_ID_BYTES } from "./session-list-row.js";
 
 export function sessionIdOf(params: unknown): string {
 	return requireBoundedClientString(
@@ -97,7 +98,7 @@ export function createAcpServerGuards(scope: AcpServerScope) {
 	const workspaceHistory = (): SessionMeta[] => {
 		const history = options.session?.history() ?? [];
 		return history.filter((meta) => {
-			if (safeStoredIdentifier(meta.id, ACP_MAX_SESSION_ID_BYTES) === null) return false;
+			if (!listableSessionId(meta.id)) return false;
 			try {
 				return realpathSync(resolvePath(meta.cwd)) === scope.canonicalCwd;
 			} catch {

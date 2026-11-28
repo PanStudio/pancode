@@ -18,6 +18,7 @@
  */
 
 import type { TimelineItem } from "../../contracts/sessions.js";
+import { record } from "../api/narrow.js";
 
 const GATEWAY = "gateway";
 
@@ -39,12 +40,6 @@ export interface GatewayReading {
 	readonly viaGateway: boolean;
 	/** Each step of a chain, settled ones first in the order they settled; null for anything else. */
 	readonly steps: readonly ChainStepView[] | null;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
 }
 
 /** The planned steps of a chain's arguments. */

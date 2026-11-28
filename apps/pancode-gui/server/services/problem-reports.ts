@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { Value } from "typebox/value";
 import {
 	ProblemReportBundle,
 	type ProblemReportBundleRequest,
@@ -13,7 +12,7 @@ import {
 	ProblemReportView,
 } from "../../contracts/problem-reports.js";
 import type { WorkerHost } from "../worker/host.js";
-import { AppProblem } from "./problem.js";
+import { projected } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
 
 /** The report dialog's routes: every decision about what is sent is the report domain's, in the ops lane. */
@@ -67,9 +66,6 @@ export class ProblemReportsService {
 			| typeof ProblemReportBundle
 			| typeof ProblemReportOffer,
 	>(schema: S, raw: unknown) {
-		const value = Value.Clean(schema, structuredClone(raw));
-		if (!Value.Check(schema, value))
-			throw new AppProblem("unavailable", "The report host returned an invalid projection.");
-		return value as import("typebox").Static<S>;
+		return projected(schema, raw, "unavailable", "The report host returned an invalid projection.", { clone: true });
 	}
 }

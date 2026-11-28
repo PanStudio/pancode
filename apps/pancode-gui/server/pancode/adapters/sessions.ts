@@ -3,6 +3,8 @@
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { safeIso, safeStoredString } from "../../../../../src/acp/server-bounds.js";
+import { listableSessionId, sessionListFields } from "../../../../../src/acp/session-list-row.js";
 import { pancodeStateDir } from "../../../../../src/core/xdg.js";
 import {
 	endAbandonedSession,
@@ -71,65 +73,8 @@ type LiveElsewhereRow = {
 	canTakeOver: boolean;
 };
 const SURFACES = { tui: "terminal", run: "headless", acp: "app" } as const;
-// The engine's wire bounds (src/acp/server.ts ACP_MAX_SESSION_ID_BYTES and ACP_MAX_LABEL_BYTES,
-// src/acp/types.ts ACP_MAX_TARGET_ID_BYTES and ACP_MAX_MODEL_ID_BYTES); adapters cannot import either module.
-const MAX_SESSION_ID_BYTES = 128,
-	MAX_LABEL_BYTES = 256,
-	MAX_TARGET_ID_BYTES = 128,
-	MAX_MODEL_ID_BYTES = 256;
-const TRUNCATION_SUFFIX = "…[truncated]";
 const HISTORY_LIMIT = 2_000;
 const unreadable = () => new AppProblem("unavailable", "The saved task list could not be read.");
-const hasControlCharacters = (value: string) => {
-	for (const character of value) {
-		const codePoint = character.codePointAt(0);
-		if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) return true;
-	}
-	return false;
-};
-const sliceToBytes = (value: string, maxBytes: number) => {
-	if (maxBytes <= 0) return "";
-	if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
-	const buffer = Buffer.allocUnsafe(maxBytes);
-	return buffer.toString("utf8", 0, buffer.write(value, 0, maxBytes, "utf8"));
-};
-const boundString = (value: string, maxBytes: number) => {
-	if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
-	const budget = maxBytes - Buffer.byteLength(TRUNCATION_SUFFIX, "utf8");
-	return budget <= 0 ? sliceToBytes(value, maxBytes) : `${sliceToBytes(value, budget)}${TRUNCATION_SUFFIX}`;
-};
-const storedString = (value: unknown, maxBytes: number) => {
-	if (typeof value !== "string") return "";
-	let safe = "";
-	for (const character of value) {
-		const codePoint = character.codePointAt(0);
-		safe += codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f) ? " " : character;
-	}
-	return boundString(safe, maxBytes);
-};
-const storedIdentifier = (value: unknown, maxBytes: number) =>
-	typeof value !== "string" ||
-	value.length === 0 ||
-	hasControlCharacters(value) ||
-	Buffer.byteLength(value, "utf8") > maxBytes
-		? null
-		: value;
-// The engine fails the whole list on a configured route it cannot represent; so does this read.
-const configuredIdentifier = (value: unknown, maxBytes: number) => {
-	if (value === null || value === undefined) return null;
-	const safe = storedIdentifier(value, maxBytes);
-	if (safe === null) throw unreadable();
-	return safe;
-};
-const iso = (value: unknown) => {
-	if (typeof value === "string" && !hasControlCharacters(value)) {
-		const timestamp = Date.parse(value);
-		if (Number.isFinite(timestamp)) return new Date(timestamp).toISOString();
-	}
-	return new Date(0).toISOString();
-};
-const count = (value: unknown) =>
-	typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 /**
  * The process that holds this session open, when it is another one: its live record names the surface and when it
  * opened. This app's own engine children are live too; the server, which knows their pids, drops those.
@@ -141,39 +86,31 @@ function liveElsewhere(meta: StoredSession): LiveElsewhereRow | undefined {
 	const record = view?.record;
 	return {
 		surface: record ? SURFACES[record.surface] : "process",
-		since: iso(record?.startedAt ?? meta.lastActivityAt ?? meta.createdAt),
-		host: storedString(owner.host, 255),
+		since: safeIso(record?.startedAt ?? meta.lastActivityAt ?? meta.createdAt),
+		host: safeStoredString(owner.host, 255),
 		pid: owner.pid,
 		stale: view?.stale ?? false,
 		canTakeOver: view !== null,
 	};
 }
 function historyRow(meta: StoredSession): HistoryRow {
-	const label = storedString(meta.name, MAX_LABEL_BYTES).trim();
-	const messageCount = count(meta.messageCount);
+	let fields: ReturnType<typeof sessionListFields>;
+	try {
+		fields = sessionListFields(meta);
+	} catch {
+		// The engine fails the whole list on a configured route it cannot represent; so does this read.
+		throw unreadable();
+	}
+	const { updatedAt, ...row } = fields;
 	const live = liveElsewhere(meta);
-	return {
-		id: meta.id,
-		createdAt: iso(meta.createdAt),
-		endedAt: meta.endedAt === null ? null : iso(meta.endedAt),
-		target: configuredIdentifier(meta.target, MAX_TARGET_ID_BYTES),
-		model: configuredIdentifier(meta.model, MAX_MODEL_ID_BYTES),
-		...(label.length > 0 ? { name: label } : {}),
-		...(meta.firstMessagePreview !== undefined
-			? { firstMessagePreview: storedString(meta.firstMessagePreview, MAX_LABEL_BYTES) }
-			: {}),
-		...(messageCount !== undefined ? { messageCount } : {}),
-		lastActivityAt: iso(meta.lastActivityAt ?? meta.endedAt ?? meta.createdAt),
-		...(live ? { liveElsewhere: live } : {}),
-	};
+	return { id: meta.id, ...row, lastActivityAt: updatedAt, ...(live ? { liveElsewhere: live } : {}) };
 }
 /**
  * A workspace's saved sessions, read from the ledger in this thread rather than by booting an engine for ACP
  * `session/list`. It mirrors that method line by line (src/acp/server.ts `workspaceHistory` and the
  * `session/list` handler): a safe stored id, a recorded cwd that resolves to this workspace, and a transcript
- * holding a model turn, newest activity first, with each field bounded as the engine bounds it on the wire. The
- * engine also scrubs URL credentials from names and previews (`redactUrlCredentials`), a module adapters may not
- * import. `cwd` is the workspace's canonical path.
+ * holding a model turn, newest activity first, each row projected by the engine's own `sessionListFields`. `cwd` is
+ * the workspace's canonical path.
  */
 export function listSessionHistory(cwd: string): HistoryRow[] {
 	let stored: StoredSession[];
@@ -187,7 +124,7 @@ export function listSessionHistory(cwd: string): HistoryRow[] {
 	}
 	const rows: HistoryRow[] = [];
 	for (const meta of stored) {
-		if (storedIdentifier(meta.id, MAX_SESSION_ID_BYTES) === null || meta.hasModelTurn === false) continue;
+		if (!listableSessionId(meta.id) || meta.hasModelTurn === false) continue;
 		try {
 			// The engine resolves a relative record against its own cwd, which is this workspace.
 			if (realpathSync(resolve(cwd, meta.cwd)) !== cwd) continue;

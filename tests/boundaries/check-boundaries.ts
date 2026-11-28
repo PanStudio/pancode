@@ -252,6 +252,7 @@ const OWNER_CAPABILITY_HOLDERS: ReadonlyMap<string, string> = new Map([
 	["src/engine/worker-tools.ts#middleware", "the worker builds its own host from the parent's snapshot"],
 	["src/session-control/chat-loop.ts#middleware", "receives registerHook from the orchestrator as a dependency"],
 	["src/entry/orchestrator.ts#telemetry", "the interactive composition root owns the telemetry domain"],
+	["src/entry/boot/surface.ts#telemetry", "carries the orchestrator's binder to the interactive surface it starts"],
 	["src/interactive/interactive-deps.ts#telemetry", "carries the orchestrator's binder to the presentation"],
 	["src/interactive/interactive-presentation.ts#telemetry", "binds the terminal's live run readers for its lifetime"],
 ]);
@@ -701,12 +702,17 @@ const COMPOSITION_ROOT_FUNCTIONS: ReadonlySet<string> = new Set([
 /** The composition root's size after the 0.7.0 refactor, with room for wiring only; the license header does not count. */
 export const COMPOSITION_ROOT_LINE_CEILING = 4800;
 
+/** The stage and surface modules bootOrchestrator is split into: part of the composition root, so held to its imports. */
+const COMPOSITION_ROOT_STAGES = "src/entry/boot";
+
 /**
  * rule15: the composition root constructs and wires services. It does not
  * value-import feature internals, grow module-scope helpers, or grow past its
- * line ceiling.
+ * line ceiling. A stage module under src/entry/boot (`stage`) is held to the
+ * import bans only: its functions are the stages themselves, and rule23 bounds
+ * each of them.
  */
-export function checkCompositionRoot(file: string, source: string): string[] {
+export function checkCompositionRoot(file: string, source: string, stage = false): string[] {
 	const violations: string[] = [];
 	const tree = parseTree(file, source);
 	const lineOf = (node: ts.Node): number => tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1;
@@ -740,6 +746,7 @@ export function checkCompositionRoot(file: string, source: string): string[] {
 					);
 			continue;
 		}
+		if (stage) continue;
 		const functions: Array<{ name: string; node: ts.Node }> = [];
 		if (ts.isFunctionDeclaration(statement) && statement.name)
 			functions.push({ name: statement.name.text, node: statement });
@@ -758,7 +765,7 @@ export function checkCompositionRoot(file: string, source: string): string[] {
 				);
 	}
 	const lines = stripLicenseHeader(source).split("\n").length;
-	if (lines > COMPOSITION_ROOT_LINE_CEILING)
+	if (!stage && lines > COMPOSITION_ROOT_LINE_CEILING)
 		violations.push(
 			`rule15: ${file} has ${lines} lines, over the composition root's ceiling of ${COMPOSITION_ROOT_LINE_CEILING}; move feature logic to the domain that owns it rather than raising the ceiling`,
 		);
@@ -802,7 +809,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/acp/adapter.ts#startAcpDelegationRun", 721],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3674],
+	["src/entry/orchestrator.ts#bootOrchestrator", 2618],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
@@ -2443,6 +2450,14 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		violations.push(...checkTelemetryProducer(path.relative(projectRoot, file), readFileSync(file, "utf8")));
 	}
 	violations.push(...checkCompositionRoot(ORCHESTRATOR, readFileSync(path.join(projectRoot, ORCHESTRATOR), "utf8")));
+	for (const file of walk(path.join(projectRoot, COMPOSITION_ROOT_STAGES)))
+		violations.push(
+			...checkCompositionRoot(
+				path.relative(projectRoot, file).split(path.sep).join("/"),
+				readFileSync(file, "utf8"),
+				true,
+			),
+		);
 	violations.push(...checkPackageBoundaries(projectRoot));
 	// A share keeps a field verbatim only where its schema already bounds it (#434).
 	violations.push(...shareProjectionErrors().map((error) => `share-projection: ${error}`));

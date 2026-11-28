@@ -2,7 +2,7 @@
 /* SPDX-FileCopyrightText: 2026 Anthony Kougkas */
 /* The offline page loads without the Vite bundle or the token layer, so it restates the brand paper, ink,
    muted ink, accent, secondary, on-accent and focus exactly as client/design/brand.css generates them, for the
-   light theme, the explicit dark theme and the system dark theme. Keep these values in step with brand.css. */
+   light theme, the explicit dark theme and the system dark theme. scripts/sync-brand.mjs writes and checks them. */
 :root {
 	--paper: #f6f1e6;
 	--ink: #151c1f;

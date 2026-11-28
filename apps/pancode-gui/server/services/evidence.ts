@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Static, TSchema } from "typebox";
-import { Value } from "typebox/value";
 import { type EvidenceOperationResult, type EvidenceRequest, RunRecordVerification } from "../../contracts/evidence.js";
 import type { WorkerHost } from "../worker/host.js";
 import type { CliRunner } from "./cli-runner.js";
 import { fingerprint, type OperationRegistry } from "./operations.js";
-import { AppProblem } from "./problem.js";
+import { projected } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
 
 export class EvidenceService {
@@ -17,9 +16,8 @@ export class EvidenceService {
 		private readonly operations: OperationRegistry,
 	) {}
 	async read<S extends TSchema>(input: EvidenceRequest, schema: S): Promise<Static<S>> {
-		const value = Value.Clean(schema, await this.reads.call("evidence.read", input));
-		if (!Value.Check(schema, value)) throw new AppProblem("unavailable", "Evidence returned an invalid projection.");
-		return value;
+		const raw = await this.reads.call("evidence.read", input);
+		return projected(schema, raw, "unavailable", "Evidence returned an invalid projection.");
 	}
 	/**
 	 * `runId` reaches a child process argv, so it must already be an id this host
@@ -38,12 +36,12 @@ export class EvidenceService {
 			cancellable: false,
 			run: async (progress): Promise<EvidenceOperationResult> => {
 				progress("PanCode is checking the record against its recorded run.");
-				const verification = Value.Clean(
+				const verification = projected(
 					RunRecordVerification,
 					await this.runner.run({ kind: "run.verify", id: runId }, workspace.path),
+					"operation_failed",
+					"Run record verification returned an invalid projection.",
 				);
-				if (!Value.Check(RunRecordVerification, verification))
-					throw new AppProblem("operation_failed", "Run record verification returned an invalid projection.");
 				return {
 					kind: "run-record-verification",
 					id: runId,

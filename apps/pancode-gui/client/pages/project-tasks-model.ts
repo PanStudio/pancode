@@ -3,6 +3,7 @@
 import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { SessionSummary } from "../../contracts/sessions.js";
 import type { TaskRow } from "../shell/shell-model.js";
+import { matchesText } from "./run-inspection-model.js";
 
 export const PROJECT_TASK_FILTERS = ["all", "open", "attention", "saved"] as const;
 export type ProjectTaskFilter = (typeof PROJECT_TASK_FILTERS)[number];
@@ -27,14 +28,13 @@ export function projectTaskInventory(
 		else counts.saved++;
 		if (needsAttention(row)) counts.attention++;
 	}
-	const words = query.toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
 	const shown = rows.filter((row) => {
 		if (filter === "open" && !row.open) return false;
 		if (filter === "saved" && row.open) return false;
 		if (filter === "attention" && !needsAttention(row)) return false;
 		const summary = saved.get(row.id);
 		const session = held.get(row.id);
-		const text = [
+		return matchesText(query, [
 			row.title,
 			row.id,
 			summary?.model,
@@ -42,10 +42,7 @@ export function projectTaskInventory(
 			summary?.firstMessagePreview,
 			session?.model,
 			session?.target,
-		]
-			.join(" ")
-			.toLocaleLowerCase();
-		return words.every((word) => text.includes(word));
+		]);
 	});
 	shown.sort((a, b) => {
 		if (sort === "name") return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);

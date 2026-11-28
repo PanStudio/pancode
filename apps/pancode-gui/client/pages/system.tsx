@@ -33,6 +33,7 @@ import "../design/facts.css";
 // The System views tab row is the same nav pattern as Settings', whose rules live there.
 import "./settings.css";
 import "./system.css";
+import { metaQuery, systemQuery } from "../api/queries.js";
 import { useRevealCurrent } from "../interaction/use-reveal-current.js";
 
 /** A jump to a closed disclosure opens it, so the link lands on its contents and not on a closed summary. */
@@ -70,13 +71,11 @@ export function SystemPage({
 	useOpenJumpTargets();
 	const report = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["system"],
-		queryFn: () => client.call(routes.system, emptyInput),
+		...systemQuery(client),
 	});
 	const meta = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["meta"],
-		queryFn: () => client.call(routes.meta, emptyInput),
+		...metaQuery(client),
 	});
 	const [search, setSearch] = useSearchParams();
 	const [sidebarAttention, setSidebarAttention] = useState(false);

@@ -5,6 +5,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { ApiProblem, emptyInput } from "../api/client.js";
+import { freshMeta } from "../api/queries.js";
 import { sessionBuffer } from "../api/sessions.js";
 import type { SessionControlRequest, SessionControlTarget } from "./session-control-model.js";
 import { createSessionControlStore, observedControlOutcome, stopRefusal } from "./session-control-model.js";
@@ -30,8 +31,7 @@ export function useSessionControls(client: Client) {
 	const send = async (original: SessionControlRequest) => {
 		store.patch(original.key, { stage: "sending", message: "Sending the original control request…" });
 		try {
-			const meta = await client.call(routes.meta, emptyInput);
-			queries.setQueryData(["meta"], meta);
+			const meta = await freshMeta(client, queries);
 			if (original.epoch !== null && original.epoch !== meta.epoch) {
 				store.patch(original.key, { restarted: true });
 				throw new Error(

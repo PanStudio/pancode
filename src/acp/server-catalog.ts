@@ -6,29 +6,15 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { isRecord } from "../core/type-guards.js";
 import { AcpRequestError } from "./errors.js";
-import {
-	requireBoundedClientString,
-	safeConfiguredIdentifier,
-	safeIso,
-	safeStoredString,
-	utf8Bytes,
-} from "./server-bounds.js";
-import { safeCount } from "./server-event-frames.js";
+import { requireBoundedClientString, safeIso, utf8Bytes } from "./server-bounds.js";
 import { assertParamKeys, sessionIdOf } from "./server-guards.js";
 import { ACP_MAX_SESSION_LIST_RESULT_BYTES } from "./server-models.js";
 import type { PancodeAcpServerOptions } from "./server-options.js";
 import type { AcpServerScope } from "./server-scope.js";
+import { ACP_MAX_LABEL_BYTES, sessionListFields } from "./session-list-row.js";
 import type { AcpEmptyResult } from "./types.js";
-import {
-	ACP_MAX_MODEL_ID_BYTES,
-	ACP_MAX_TARGET_ID_BYTES,
-	ACP_SESSION_LABEL_METHOD,
-	ACP_SESSION_LIST_METHOD,
-	ACP_SESSION_META_KEY,
-} from "./types.js";
+import { ACP_SESSION_LABEL_METHOD, ACP_SESSION_LIST_METHOD, ACP_SESSION_META_KEY } from "./types.js";
 import type { AcpSessionList, AcpSessionListRow } from "./types-session.js";
-
-const ACP_MAX_LABEL_BYTES = 256;
 
 /** How long teardown waits for accepted work to finish after cancellation. */
 const ACP_PROMPT_SETTLE_BOUND_MS = 5000;
@@ -110,23 +96,20 @@ export function registerAcpServerCatalog(scope: AcpServerScope): void {
 		const projected: AcpSessionListRow[] = [];
 		let budgetBytes = utf8Bytes(JSON.stringify({ sessions: [] }));
 		for (const meta of history.slice(start, start + 50)) {
-			const label = safeStoredString(meta.name, ACP_MAX_LABEL_BYTES).trim();
-			const messageCount = safeCount(meta.messageCount);
+			const row = sessionListFields(meta);
 			const item = {
 				sessionId: meta.id,
 				cwd: scope.canonicalCwd,
-				...(label.length > 0 ? { title: label } : {}),
-				updatedAt: safeIso(meta.lastActivityAt ?? meta.endedAt ?? meta.createdAt),
+				...(row.name !== undefined ? { title: row.name } : {}),
+				updatedAt: row.updatedAt,
 				_meta: {
 					[ACP_SESSION_META_KEY]: {
-						createdAt: safeIso(meta.createdAt),
-						endedAt: meta.endedAt === null ? null : safeIso(meta.endedAt),
-						target: safeConfiguredIdentifier(meta.currentTarget ?? meta.target, ACP_MAX_TARGET_ID_BYTES),
-						model: safeConfiguredIdentifier(meta.currentModel ?? meta.model, ACP_MAX_MODEL_ID_BYTES),
-						...(meta.firstMessagePreview !== undefined
-							? { firstMessagePreview: safeStoredString(meta.firstMessagePreview, ACP_MAX_LABEL_BYTES) }
-							: {}),
-						...(messageCount !== null ? { messageCount } : {}),
+						createdAt: row.createdAt,
+						endedAt: row.endedAt,
+						target: row.target,
+						model: row.model,
+						...(row.firstMessagePreview !== undefined ? { firstMessagePreview: row.firstMessagePreview } : {}),
+						...(row.messageCount !== undefined ? { messageCount: row.messageCount } : {}),
 						...(meta.hasModelTurn !== undefined ? { hasModelTurn: meta.hasModelTurn } : {}),
 						...(meta.lastActivityAt !== undefined ? { lastActivityAt: safeIso(meta.lastActivityAt) } : {}),
 					},

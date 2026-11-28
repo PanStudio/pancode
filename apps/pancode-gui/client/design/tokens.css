@@ -33,6 +33,20 @@
 	--space-10: 40px;
 	--space-12: 48px;
 	--space-16: 64px;
+	/* Stacking order, lowest first. Names that share a number are separate uses at the same height. */
+	--layer-raised: 1;
+	--layer-sticky: 2;
+	--layer-float: 4;
+	--layer-field-menu: 5;
+	--layer-composer: 6;
+	--layer-popover: 10;
+	--layer-toast: 10;
+	--layer-titlebar: 10;
+	--layer-menu: 20;
+	--layer-scrim: 20;
+	--layer-skip-link: 20;
+	--layer-notice: 25;
+	--layer-modal: 30;
 	--text-caption: 12px;
 	--text-instrument: 13px;
 	--text-exact: 14px;

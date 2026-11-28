@@ -386,7 +386,7 @@
 }
 .drill__form .drill__btn {
 	min-height: 32px;
-	padding-inline: 12px;
+	padding-inline: var(--space-3);
 }
 .drill__form--stacked {
 	display: grid;
