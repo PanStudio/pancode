@@ -4,7 +4,6 @@ import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import {
-	type AcceptedNote,
 	HANDOFF_NOTE_MAX_BYTES,
 	type HandoffIdentity,
 	type HandoffPolicy,
@@ -17,12 +16,7 @@ import {
 	isHandoffEvent,
 	isHandoffTransactionEntry,
 } from "../../src/domains/session/continuity/validate.js";
-
-function admit(text: string): AcceptedNote {
-	const result = validateContinuityNote(text);
-	if (!result.ok) throw new Error(`expected ${JSON.stringify(text)} to admit, got ${result.reason}`);
-	return result.accepted;
-}
+import { admit } from "../harness/continuity-fixture.js";
 
 const IDENTITY: HandoffIdentity = {
 	handoffId: "h1",

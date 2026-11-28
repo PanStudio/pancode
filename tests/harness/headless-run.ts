@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { copyFileSync, cpSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { initializePancodeHome } from "../../src/core/init.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
 import type { RunEnvelope } from "../../src/domains/dispatch/types.js";
@@ -18,8 +19,9 @@ import type { SettledRunRecord } from "../../src/domains/telemetry/index.js";
 import { readRunJournal } from "./run-journal.js";
 import { dropGeneratedToolEnv, scratchPancodeEnvVars } from "./scratch-env.js";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "dist", "cli", "index.js");
+const SOURCE_CLI = join(ROOT, "src", "cli", "index.ts");
 
 let privateCli: string | null = null;
 
@@ -137,6 +139,22 @@ export function runCli(
 			clearTimeout(timer);
 			resolve({ code, signal, stdout, stderr, elapsedMs: Date.now() - startedAt });
 		});
+	});
+}
+
+/**
+ * `runCli` on the checkout's source entry through tsx, for a test that must not agree with a stale `dist/`.
+ * The default bound is a hang guard: a cold tsx start under a loaded host takes seconds, not minutes.
+ */
+export function runSourceCli(
+	args: ReadonlyArray<string>,
+	options: { env: NodeJS.ProcessEnv; cwd: string; timeoutMs?: number },
+): Promise<CliResult> {
+	return runCli(args, {
+		...options,
+		timeoutMs: options.timeoutMs ?? 120_000,
+		cli: SOURCE_CLI,
+		node: ["--import", import.meta.resolve("tsx")],
 	});
 }
 

@@ -8,15 +8,12 @@ import { findCutPoint } from "../../src/domains/session/compaction/cut-point.js"
 import { collectSessionEntries } from "../../src/domains/session/compaction/session-entries.js";
 import { calculateContextTokens, estimateTokens } from "../../src/domains/session/compaction/tokens.js";
 import type {
-	AcceptedNote,
 	ContinuityCheckpointPayload,
 	ContinuityCommitData,
 	HandoffEvent,
 	HandoffIdentity,
-	HandoffPolicy,
 } from "../../src/domains/session/continuity/contract.js";
 import { resolveContinuityEvidence } from "../../src/domains/session/continuity/evidence.js";
-import { validateContinuityNote } from "../../src/domains/session/continuity/note.js";
 import {
 	HANDOFF_RECOVERY_REQUEST_CUSTOM_TYPE,
 	isHandoffRecoveryRequestEntry,
@@ -28,6 +25,7 @@ import {
 } from "../../src/domains/session/continuity/projection.js";
 import { isSessionEntry, SESSION_ENTRY_KINDS, type SessionEntry } from "../../src/domains/session/entries.js";
 import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
+import { admit, handoffPolicy } from "../harness/continuity-fixture.js";
 
 /**
  * Format v5 registration and the readers it touches.
@@ -41,12 +39,6 @@ import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
 const SESSION = "session-a";
 const AT = "2026-09-21T09:00:00.000Z";
 const PREPARED_AT = 1_000_000;
-
-function admit(text: string): AcceptedNote {
-	const result = validateContinuityNote(text);
-	if (!result.ok) throw new Error(`fixture note rejected: ${result.reason}`);
-	return result.accepted;
-}
 
 const NOTE = admit("resume the migration at step 4; the rollback script is untested");
 
@@ -62,18 +54,6 @@ function identity(over: Partial<HandoffIdentity> = {}): HandoffIdentity {
 		toolCallId: "tc-1",
 		sourceRevision: "lb-3-0123456789abcdef",
 		...over,
-	};
-}
-
-function policy(): HandoffPolicy {
-	return {
-		preparedAtMs: PREPARED_AT,
-		automaticDeadlineAtMs: PREPARED_AT + 600_000,
-		maxAttempts: 2,
-		maxSummaryCallsPerAttempt: 2,
-		additionalSummaryRetriesPerCall: 0,
-		maxSummaryStreamInvocations: 4,
-		flushRetryLimit: 3,
 	};
 }
 
@@ -111,7 +91,7 @@ function checkpoint(over: Partial<ContinuityCheckpointPayload> = {}): Continuity
 		schemaVersion: 1,
 		identity: over.identity ?? identity(),
 		accepted: over.accepted ?? NOTE,
-		policy: over.policy ?? policy(),
+		policy: over.policy ?? handoffPolicy(PREPARED_AT),
 		commit,
 		state: over.state ?? { transition: commit.transition, event: { phase: "ready" }, activeResume: null, delivery: null },
 	};
@@ -173,7 +153,7 @@ function readyLedger(): SessionEntry[] {
 	return [
 		message("u1", "user", null, "start"),
 		message("a1", "assistant", "u1", "working"),
-		tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() }),
+		tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) }),
 		tx("h1-reduce", "h1-prep", 1, 1, { phase: "reducing" }),
 		carryingSummary("h1-summary"),
 		commitEntry(),
@@ -189,7 +169,9 @@ describe("format v5 registration", () => {
 	});
 
 	it("admits a valid transaction and commit through the shared entry validator", () => {
-		ok(isSessionEntry(tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() })));
+		ok(
+			isSessionEntry(tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) })),
+		);
 		ok(isSessionEntry(commitEntry()));
 	});
 
@@ -201,15 +183,16 @@ describe("format v5 registration", () => {
 	});
 
 	it("rejects a transaction whose envelope disagrees with its transition", () => {
-		const entry = tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() }) as unknown as Record<
-			string,
-			unknown
-		>;
+		const entry = tx("h1-prep", null, 0, 0, {
+			phase: "prepared",
+			accepted: NOTE,
+			policy: handoffPolicy(PREPARED_AT),
+		}) as unknown as Record<string, unknown>;
 		ok(!isSessionEntry({ ...entry, turnId: "someone-else" }));
 	});
 
 	it("rejects a persisted policy that claims a wider budget than the frozen ceiling", () => {
-		const wide = { ...policy(), maxAttempts: 3 };
+		const wide = { ...handoffPolicy(PREPARED_AT), maxAttempts: 3 };
 		ok(!isSessionEntry(tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: wide })));
 	});
 
@@ -298,7 +281,10 @@ describe("continuity readers", () => {
 	});
 
 	it("prices continuity bookkeeping at zero", () => {
-		strictEqual(estimateTokens(tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() })), 0);
+		strictEqual(
+			estimateTokens(tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) })),
+			0,
+		);
 		strictEqual(estimateTokens(commitEntry()), 0);
 	});
 
@@ -533,7 +519,7 @@ describe("projected note", () => {
 		const entries = [
 			message("u1", "user", null, "start"),
 			message("a1", "assistant", "u1", "working"),
-			tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: exact, policy: policy() }),
+			tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: exact, policy: handoffPolicy(PREPARED_AT) }),
 			tx("h1-reduce", "h1-prep", 1, 1, { phase: "reducing" }),
 			carryingSummary("h1-summary", checkpoint({ accepted: exact })),
 			commitEntry(checkpoint({ accepted: exact })),
