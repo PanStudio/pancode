@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-export const PACKAGE = "@pancode/store" as const;
-
 export * from "./backend/index.js";
 export { hashStoreFile } from "./hash.js";
 export { ensureStoreRootId, readStoreRootId, STORE_ROOT_FILE } from "./identity.js";

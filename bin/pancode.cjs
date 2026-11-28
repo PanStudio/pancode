@@ -155,14 +155,6 @@ function updatableRoot(path, root) {
 }
 
 /*
- * A package-manager install is replaced in place after a session quits, by a
- * detached wrapper that waits until no PanCode of this install runs (#436). A
- * launch registers itself so that wrapper waits for it, and waits while the
- * wrapper's lease is live so it never links half-replaced files. The common
- * case costs one stat; source checkouts, native installs, npx and
- * project-local copies skip all of it. Returns false to stop.
- */
-/*
  * The wrapper's result counts only when written by this run: the path is fixed
  * per install, and a second wrapper that yielded to this lease records its own
  * deferred result there under its own pid (#436).
@@ -178,6 +170,14 @@ function resultSince(fs, lease) {
 	}
 }
 
+/*
+ * A package-manager install is replaced in place after a session quits, by a
+ * detached wrapper that waits until no PanCode of this install runs (#436). A
+ * launch registers itself so that wrapper waits for it, and waits while the
+ * wrapper's lease is live so it never links half-replaced files. The common
+ * case costs one stat; source checkouts, native installs, npx and
+ * project-local copies skip all of it. Returns false to stop.
+ */
 function holdInstall(path) {
 	var fs = require("fs");
 	var root = path.dirname(__dirname);
