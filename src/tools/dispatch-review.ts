@@ -3,7 +3,7 @@
 import type { TelemetryContext } from "../core/telemetry/context.js";
 import type { DispatchRequest } from "../domains/dispatch/contract.js";
 import { buildEvidencePacket, type EvidencePacket, packetProvenance } from "../domains/dispatch/evidence-packet.js";
-import { reviewDeciderAgentId, withRunRole } from "../domains/dispatch/execution-role.js";
+import { reviewerGateSeat, withRunRole } from "../domains/dispatch/execution-role.js";
 import {
 	decideReviewGate,
 	finalizePendingGateDecision,
@@ -15,7 +15,6 @@ import {
 	stagePendingGateDecision,
 	stagePendingGateOutput,
 } from "../domains/dispatch/gate-decisions.js";
-import { REVIEWER_GATE_PROMPT } from "../domains/dispatch/gate-role-prompts.js";
 import { narrowDispatchIntentToReadOnly } from "../domains/dispatch/intent.js";
 import { renderDispatchReviewerTask } from "../domains/dispatch/intent-requirements.js";
 import type { RunGateProvenance, RunResult } from "../domains/dispatch/types.js";
@@ -207,13 +206,14 @@ export async function runReviewGated(
 				};
 			}
 			const packet = builderEvidencePacket(deps, builder);
+			const seat = reviewerGateSeat(review.reviewer, deps.getAgentSpecs());
 			const reviewerRequest: DispatchRequest = {
-				agentId: reviewDeciderAgentId(review.reviewer, (id) => deps.getAgentSpecs().some((spec) => spec.id === id)),
+				agentId: seat.agentId,
 				...(base.budget === undefined ? {} : { budget: base.budget }),
 				...(base.record === undefined ? {} : { record: base.record }),
 				executionRole: "reviewer",
 				task: renderDispatchReviewerTask(base.task, builder.receipt.runId, cycle, base.intent, packet),
-				systemPrompt: REVIEWER_GATE_PROMPT,
+				systemPrompt: seat.systemPrompt,
 				readOnly: true,
 				// The packet names the builder's run result by its absolute state-dir path, and a request with no intent infers
 				// its scope from the task text, which refuses an absolute token (scope_path_absolute). The reviewer takes

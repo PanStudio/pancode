@@ -1003,7 +1003,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				}),
 			) as { kind: string; output?: string; message?: string };
 			strictEqual(packedRead.kind, "ok", packedRead.message);
-			match(packedRead.output ?? "", /from "\.\.\/core\/assistant-model\.js"/);
+			match(packedRead.output ?? "", /from "\.\.\/core\/defaults\.js"/);
 			// A directory that exists only in the pack answers like a loose one, not "File not found".
 			const packedDirectory = dirname(packedSource);
 			strictEqual(existsSync(packedDirectory), false, "src/interactive must ship packed, not as a loose directory");

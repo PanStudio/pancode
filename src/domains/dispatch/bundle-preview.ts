@@ -128,7 +128,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 				`dispatch: harness-origin runs require a read-only recipe; '${req.agentId}' is ${spec.capabilityClass}`,
 			);
 		}
-		if (hasCallerPersonaOverride(req) && (spec.audience === "shadow" || spec.audience === "internal")) {
+		if (hasCallerPersonaOverride(req, recipe) && (spec.audience === "shadow" || spec.audience === "internal")) {
 			throw new Error(`dispatch: persona overrides are not allowed for ${spec.audience} agent '${req.agentId}'`);
 		}
 		// A read-only recipe pointed at a mutating task is knowable here and costs
