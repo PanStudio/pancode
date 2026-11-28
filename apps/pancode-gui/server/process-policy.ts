@@ -32,6 +32,7 @@ import {
 	createStdioTransport,
 	processAlive,
 	processBirthToken,
+	processIsZombie,
 	resolvePackageRoot,
 	resolvePancodeDirs,
 } from "./pancode/http-shims.js";
@@ -106,14 +107,7 @@ export function signalRecordedChild(pid: number, birthToken: string, signal: "SI
 	}
 }
 export async function childRunning(pid: number) {
-	if (!processAlive(pid)) return false;
-	if (process.platform !== "linux") return true;
-	try {
-		const value = await readFile(`/proc/${pid}/stat`, "utf8");
-		return !["Z", "X"].includes(value.slice(value.lastIndexOf(")") + 2).split(" ")[0] ?? "");
-	} catch {
-		return processAlive(pid);
-	}
+	return processAlive(pid) && !processIsZombie(pid);
 }
 
 /** Fixed-argv CLI children are owned process groups, independently of ACP sessions. */

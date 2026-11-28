@@ -7,7 +7,7 @@ import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSummary } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
 import { emptyInput, problemCode } from "../api/client.js";
-import { clock, formatDuration } from "../api/clock.js";
+import { clock } from "../api/clock.js";
 import type { ConnectionState } from "../api/events.js";
 import { SWITCH_FRESHNESS, sessionCapabilitiesQuery } from "../api/queries.js";
 import { sessionQuery } from "../api/session-query.js";
@@ -24,7 +24,7 @@ import { compactionsByTurn, STARTER_PROMPTS, TRUNCATION_NOTE } from "../chat/cha
 import { fillComposer, focusComposer, openComposerAction, openComposerForm } from "../chat/composer-registry.js";
 import { useContextOperationRef, useStopContext } from "../chat/context-command.js";
 import { contextWorkView } from "../chat/context-work-model.js";
-import { LiveWorkers, workerCount } from "../chat/FleetStrip.js";
+import { LiveWorkers } from "../chat/FleetStrip.js";
 import { foldFleetRuns, isLiveRun } from "../chat/fleet-facts.js";
 import type { HealthRow } from "../chat/health.js";
 import { compactionRows, summarizeHealth } from "../chat/health.js";
@@ -64,6 +64,7 @@ import { answeredTurns, renameBlocker, taskTitle } from "../shell/shell-model.js
 import { TopBar } from "../shell/TopBar.js";
 import { rememberedWorkspace, useRenameTask, useSessionWorkers } from "../shell/tasks.js";
 import { openAppWindow } from "../shell/windows.js";
+import { preferredFirst, taskChip, unreadProjectsNote } from "./sessions-model.js";
 import { settleStarted, startedRequest } from "./started-request.js";
 import "../chat/chat-turn.css";
 import "../chat/conversation.css";
@@ -101,7 +102,7 @@ async function locateTask(
 	preferred: string | null = rememberedWorkspace(),
 ): Promise<LocatedTask> {
 	const all = await client.call(routes.workspaces, emptyInput, undefined, signal);
-	const projects = [...all.filter((row) => row.id === preferred), ...all.filter((row) => row.id !== preferred)];
+	const projects = preferredFirst(all, preferred);
 	let unread = 0;
 	for (const project of projects) {
 		signal.throwIfAborted();
@@ -381,7 +382,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 					) : (
 						<p>
 							None of your projects has a saved task with this link.
-							{unread > 0 ? ` ${unread} ${unread === 1 ? "project" : "projects"} could not be read.` : ""}
+							{unreadProjectsNote(unread)}
 						</p>
 					)}
 					{resume.error ? <p>Could not resume this task. {resume.error.message}</p> : null}
@@ -429,42 +430,21 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 	const workspaceRoot = workspace.data?.path;
 	const title = taskTitle(snapshot);
 	const workspaceName = workspace.data?.name ?? "Project";
-	const elapsedMs = running && turn?.startedAt && now > 0 ? Math.max(0, now - Date.parse(turn.startedAt)) : 0;
-	// Sub-second figures ("0ms") say nothing; the chip shows time once it is a whole second.
-	const elapsed = elapsedMs >= 1000 ? formatDuration(elapsedMs) : null;
 	const canClose = snapshot.state === "open" && !running && !contextRunning;
 	const contextOperation = contextActivity?.operation ?? snapshot.contextWork?.latest;
 	const contextView = contextOperation
 		? contextWorkView(contextOperation, contextActivity ?? undefined, now, snapshot.state === "open")
 		: null;
 	const paneOpen = pane.open;
-	const chip: { tone: "working" | "approval" | "failed" | "quiet"; label: string } | null = pending
-		? { tone: "approval", label: "Needs your approval" }
-		: contextRunning && contextView
-			? { tone: "working", label: contextView.title }
-			: running && snapshot.state === "open"
-				? turn?.queued
-					? { tone: "quiet", label: "Waiting for a slot" }
-					: {
-							tone: "working",
-							label: [
-								liveWorkers > 0 ? `Waiting on ${workerCount(liveWorkers)}` : turn?.startedAt ? "Working" : "Starting",
-								elapsed ?? null,
-							]
-								.filter(Boolean)
-								.join(" · "),
-						}
-				: snapshot.state === "starting"
-					? { tone: "working", label: "Starting" }
-					: snapshot.state === "parked"
-						? { tone: "quiet", label: "Paused" }
-						: snapshot.state === "closed"
-							? { tone: "quiet", label: "Closed" }
-							: snapshot.state === "unknown" || snapshot.state === "failed"
-								? { tone: "failed", label: "Unavailable" }
-								: turn?.status === "failed"
-									? { tone: "failed", label: "Last turn failed" }
-									: null;
+	const chip = taskChip({
+		state: snapshot.state,
+		turn,
+		approval: pending !== null,
+		contextWork: contextRunning && contextView ? contextView.title : null,
+		running,
+		liveWorkers,
+		now,
+	});
 	// Only a saved task takes a name, and the engine saves it once PanCode has answered in it.
 	const renameBlocked = renameBlocker({ saved: snapshot.label !== null, answered: answeredTurns(snapshot.turns) });
 	const memoryMark = memoryGuardianMark(

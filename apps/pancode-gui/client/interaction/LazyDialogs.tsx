@@ -10,6 +10,7 @@
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { Command } from "./CommandPalette.js";
 import { Dialog } from "./Dialog.js";
+import { whenIdle } from "./when-idle.js";
 
 type Loaded<T> = { readonly module: T } | { readonly failed: true } | null;
 
@@ -61,12 +62,7 @@ export function preloadDialogs(): () => void {
 		palette.start();
 		help.start();
 	};
-	if (typeof requestIdleCallback === "function") {
-		const handle = requestIdleCallback(warm, { timeout: 3000 });
-		return () => cancelIdleCallback(handle);
-	}
-	const handle = setTimeout(warm, 1500);
-	return () => clearTimeout(handle);
+	return whenIdle(warm, 1500);
 }
 
 /**

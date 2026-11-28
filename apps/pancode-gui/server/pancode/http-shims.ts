@@ -19,9 +19,16 @@ export { runningBuildId } from "../../../../src/core/build-info.js";
 export { ACP_CONTEXT_STATUS_METHOD } from "../../../../src/core/context-operation.js";
 export { resolvePackageRoot } from "../../../../src/core/package-root.js";
 export { relativePathEscapes } from "../../../../src/core/path-containment.js";
-export { processAlive, processBirthToken } from "../../../../src/core/process-identity.js";
+export {
+	ownerIdentity,
+	ownerState,
+	processAlive,
+	processBirthToken,
+	processIsZombie,
+} from "../../../../src/core/process-identity.js";
 export { pendingInstalledVersion, registerRunningBuild } from "../../../../src/core/running-build.js";
 export { isSecretPath } from "../../../../src/core/sandbox/secret-files.js";
+export { StateFileLockTimeoutError, withStateFileLock } from "../../../../src/core/state-file-lock.js";
 export {
 	renderCompactCount,
 	renderCount,
@@ -29,7 +36,7 @@ export {
 	renderUsdLimit,
 	renderUsdSpend,
 } from "../../../../src/core/telemetry/render.js";
-export { resolvePancodeDirs } from "../../../../src/core/xdg.js";
+export { resolvePancodeDirs, xdgBaseDir } from "../../../../src/core/xdg.js";
 export { readInstallerRecord } from "../../../../src/domains/install/install-method.js";
 export { getVersionInfo } from "../../../../src/domains/install/version.js";
 export { ESCAPE_SCOPE_OPTION_PREFIX } from "../../../../src/domains/safety/escape-scope.js";

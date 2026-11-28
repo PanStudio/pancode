@@ -7,7 +7,6 @@ import { Explained } from "../telemetry/Explained.js";
 import { contextMeter } from "./overview-model.js";
 import type { PaneView } from "./pane-model.js";
 import {
-	settledTurns,
 	useContextLedger,
 	useSessionCapabilities,
 	useSessionTelemetry,
@@ -15,7 +14,7 @@ import {
 	useTelemetrySession,
 } from "./session-telemetry.js";
 import type { Spend } from "./session-usage-model.js";
-import { chipFigures, contextFigure, quotaChip, sessionSpend } from "./session-usage-model.js";
+import { chipFigures, contextFigure, quotaChip, sessionSpend, settledTurns } from "./session-usage-model.js";
 import "./usage-panel.css";
 
 const RING = 2 * Math.PI * 6;

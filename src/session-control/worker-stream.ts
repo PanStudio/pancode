@@ -51,7 +51,6 @@ import {
 } from "../domains/telemetry/worker-progress.js";
 
 export { boundSettledText } from "../domains/telemetry/worker-progress.js";
-export type { WorkerProgressSnapshot };
 
 export interface WorkerAttempt {
 	runId: string;

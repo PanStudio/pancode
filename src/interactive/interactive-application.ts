@@ -497,7 +497,6 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		commandUnavailable: (command) =>
 			command === "panes" && deps.panes === undefined ? "needs a pane host; this session has none" : undefined,
 		...(deps.jobs ? { jobs: deps.jobs } : {}),
-		getParkedCallCount: () => deps.toolRegistry?.parkedCount() ?? 0,
 		workersDockAvailable: () =>
 			deps.mux !== undefined && deps.mux.mode !== "none" && deps.createWatchPane !== undefined && deps.mux.available(),
 		getQueuedMessageCount: () => {

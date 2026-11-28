@@ -5,8 +5,7 @@ import { validateSettingsFile } from "../core/config.js";
 import { cwdHash } from "../core/cwd-hash.js";
 import { COST_NOT_MEASURED } from "../core/telemetry/render.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { usageReport } from "../domains/telemetry/read-model-usage.js";
-import { emptyUsageDiagnostics, usageWindow } from "../domains/telemetry/usage-window.js";
+import { usageReportWindow } from "../domains/telemetry/usage-window.js";
 import { printError } from "./argv.js";
 import { economyLines } from "./telemetry-read.js";
 
@@ -87,18 +86,19 @@ export async function runUsageCommand(argv: ReadonlyArray<string>): Promise<numb
 		process.stderr.write(HELP);
 		return 2;
 	}
-	const now = Date.now();
-	const from = now - parsed.days * 24 * 60 * 60 * 1000;
 	const path = parsed.repo === undefined ? null : resolve(parsed.repo);
-	const diagnostics = emptyUsageDiagnostics();
-	const { repo } = await usageWindow(
+	const {
+		from,
+		to: now,
+		report,
+		diagnostics,
+	} = await usageReportWindow(
 		pancodeStateDir(),
 		path === null ? null : cwdHash(path),
 		parsed.days,
-		now,
-		diagnostics,
+		Date.now(),
+		validateSettingsFile().settings.funding,
 	);
-	const report = usageReport(repo, from, now, validateSettingsFile().settings.funding);
 	for (const note of diagnostics.notes) process.stderr.write(`pancode usage: ${note}\n`);
 	if (parsed.json) {
 		process.stdout.write(`${JSON.stringify(report)}\n`);

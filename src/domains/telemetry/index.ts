@@ -78,4 +78,4 @@ export {
 	runTelemetryDirectoryExists,
 	runTelemetryWrittenMs,
 } from "./telemetry-source.js";
-export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageWindow } from "./usage-window.js";
+export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageReportWindow, usageWindow } from "./usage-window.js";

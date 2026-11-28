@@ -440,6 +440,33 @@ function inspectSafetyAndMemory(cwd: string, graph: CustomizationGraph): void {
 	}
 }
 
+/** The prefixes the inspectors above start an issue line with, by the category they inspect. */
+const ISSUE_PREFIX_CATEGORY: Readonly<Record<string, CustomizationCategory>> = {
+	settings: "settings",
+	"pancode-md": "pancode-md",
+	rule: "rule",
+	rules: "rule",
+	"operator-profile": "operator-profile",
+	hook: "hook",
+	hooks: "hook",
+	"hook-runs": "hook",
+	extensions: "extension",
+	skills: "skill-root",
+	prompts: "prompt-root",
+	agents: "agent-root",
+	playbooks: "playbook-root",
+	safety: "safety",
+	memory: "memory",
+};
+
+/** The category a `graph.issues` line belongs to, or null for a line no inspector here wrote. */
+export function customizationIssueCategory(issue: string): CustomizationCategory | null {
+	const prefix = /^[a-z-]+/.exec(issue)?.[0];
+	return prefix !== undefined && Object.hasOwn(ISSUE_PREFIX_CATEGORY, prefix)
+		? (ISSUE_PREFIX_CATEGORY[prefix] ?? null)
+		: null;
+}
+
 /**
  * Build the effective-customization graph for `cwd`. Never throws; every surface
  * is best-effort and failures land in `issues`.

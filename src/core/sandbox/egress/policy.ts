@@ -13,7 +13,7 @@ export interface EgressOrigin {
  * Named exact host/port bundles an operator can grant by name. Exact hosts
  * only: a preset never matches a subdomain it does not list.
  */
-export const EGRESS_PRESETS: Readonly<Record<EgressPresetName, readonly string[]>> = {
+const EGRESS_PRESETS: Readonly<Record<EgressPresetName, readonly string[]>> = {
 	npm: ["registry.npmjs.org:443"],
 	pypi: ["pypi.org:443", "files.pythonhosted.org:443"],
 	github: [

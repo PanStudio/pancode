@@ -207,8 +207,6 @@ export interface CodewikiCoordinateOptions {
 	onProgress?: (progress: CodewikiBuildProgress) => void;
 	/** Never create an artifact merely because a background session happened to start. */
 	requireExisting?: boolean;
-	/** Optional identity-checked cache, evaluated only after the cross-process lease is held. */
-	readCurrent?: (workspace: string) => Codewiki | undefined;
 	beforeCommit?: (result: CodewikiBuildWorkerResult, workspace: string) => void | Promise<void>;
 	afterCommit?: (result: CodewikiBuildWorkerResult, workspace: string) => void | Promise<void>;
 }
@@ -247,7 +245,7 @@ export function coordinateCodewikiWrite(
 				codemapPath(workspace),
 				async () => {
 					if (options.requireExisting && !existsSync(codemapPath(workspace))) return null;
-					const current = options.readCurrent?.(workspace) ?? readCodewiki(workspace);
+					const current = readCodewiki(workspace);
 					options.signal?.throwIfAborted();
 					const request = await select(current, workspace);
 					if (!request) return null;

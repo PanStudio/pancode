@@ -575,8 +575,6 @@ export interface OpenTasksOverlayOptions {
 		history: ReadonlyArray<SessionTaskHistoryBoard>;
 		artifacts: ReadonlyArray<SessionArtifact>;
 	};
-	getHistory?: () => ReadonlyArray<SessionTaskHistoryBoard>;
-	getArtifacts?: () => ReadonlyArray<SessionArtifact>;
 	getUserTasks?: () => ReadonlyArray<UserTask>;
 	onAddUserTask?: (title: string) => void;
 	onHandUserTask?: (id: string) => void;
@@ -819,13 +817,8 @@ class TasksOverlayBody implements Component, RowBudgetedBody {
 		const errors: string[] = [];
 		try {
 			const snapshot = this.options.getSessionSnapshot?.();
-			if (snapshot) {
-				this.history = snapshot.history;
-				this.artifacts = snapshot.artifacts;
-			} else {
-				this.history = this.options.getHistory?.() ?? [];
-				this.artifacts = this.options.getArtifacts?.() ?? [];
-			}
+			this.history = snapshot?.history ?? [];
+			this.artifacts = snapshot?.artifacts ?? [];
 		} catch (error) {
 			errors.push(error instanceof Error ? error.message : String(error));
 		}

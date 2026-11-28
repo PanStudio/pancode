@@ -615,3 +615,83 @@ export function tableText(header: readonly string[], rows: readonly (readonly st
 	const clean = (cell: string) => cell.replace(/[\t\n\r]+/gu, " ").trim();
 	return [header, ...rows].map((row) => row.map(clean).join("\t")).join("\n");
 }
+
+/**
+ * Lines a code block shows before it scrolls, from the `pre`'s 520px cap at 12px/1.7 mono. A block
+ * that fits says nothing about its length; a longer one names it, because its end is out of sight.
+ */
+export const CODE_VISIBLE_LINES = 24;
+/** A line past this many characters runs off a reading column, so the block offers to wrap. */
+const CODE_WRAP_OFFER_CHARS = 88;
+
+export function codeLineCount(code: string): number {
+	return code.length === 0 ? 0 : code.split("\n").length;
+}
+
+export function hasLongLine(code: string): boolean {
+	let start = 0;
+	while (start <= code.length) {
+		const end = code.indexOf("\n", start);
+		if ((end < 0 ? code.length : end) - start > CODE_WRAP_OFFER_CHARS) return true;
+		if (end < 0) return false;
+		start = end + 1;
+	}
+	return false;
+}
+
+/** Long JSON offers the tree; a short object reads fine as text. */
+export function offersJsonTree(lineCount: number, chars: number): boolean {
+	return lineCount > CODE_VISIBLE_LINES || chars > 2_000;
+}
+
+/** Digits in the widest old or new line number, or 0 when the diff has no hunk ranges to number. */
+export function diffGutterWidth(lines: readonly DiffLine[]): number {
+	let widest = 0;
+	for (const line of lines) widest = Math.max(widest, line.old ?? 0, line.new ?? 0);
+	return widest === 0 ? 0 : String(widest).length;
+}
+
+export function footnoteId(scope: string, label: string): string {
+	return `${scope}-fn-${label.replace(/[^\w-]/gu, "_")}`;
+}
+
+export function headingTag(depth: number): "h2" | "h3" | "h4" | "h5" | "h6" {
+	const level = Math.min(6, Math.max(2, depth + 1));
+	return `h${level}` as "h2" | "h3" | "h4" | "h5" | "h6";
+}
+
+const ENTITY_PATTERN =
+	/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp|copy|reg|hellip|mdash|ndash|rarr|larr|times);/giu;
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: '"',
+	apos: "'",
+	nbsp: " ",
+	copy: "©",
+	reg: "®",
+	hellip: "…",
+	mdash: "—",
+	ndash: "–",
+	rarr: "→",
+	larr: "←",
+	times: "×",
+};
+
+/** Markdown entity references survive lexing verbatim; React must show the character. */
+export function decodeEntities(text: string): string {
+	if (!text.includes("&")) return text;
+	return text.replace(ENTITY_PATTERN, (match, entity: string) => {
+		const lower = entity.toLowerCase();
+		if (lower.startsWith("#x")) {
+			const code = Number.parseInt(lower.slice(2), 16);
+			return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+		}
+		if (lower.startsWith("#")) {
+			const code = Number.parseInt(lower.slice(1), 10);
+			return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+		}
+		return NAMED_ENTITIES[lower] ?? match;
+	});
+}

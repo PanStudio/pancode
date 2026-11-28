@@ -126,8 +126,6 @@ interface GrantBrokerDeps {
 	randomId?: () => string;
 	/** Bound on pending records across the process. */
 	maxPending?: number;
-	/** Bound on requests one attempt may open. */
-	maxRequestsPerRun?: number;
 	/** Terminal records kept for audit and duplicate answers. */
 	retainTerminal?: number;
 	/** Called after every state change with a snapshot of the record. */
@@ -193,7 +191,7 @@ export function createGrantBroker(deps: GrantBrokerDeps): GrantBroker {
 	const now = deps.now ?? Date.now;
 	const randomId = deps.randomId ?? (() => `grant-${randomBytes(16).toString("hex")}`);
 	const maxPending = deps.maxPending ?? DEFAULT_GRANT_MAX_PENDING;
-	const maxPerRun = deps.maxRequestsPerRun ?? DEFAULT_GRANT_MAX_REQUESTS_PER_RUN;
+	const maxPerRun = DEFAULT_GRANT_MAX_REQUESTS_PER_RUN;
 	const retainTerminal = deps.retainTerminal ?? DEFAULT_RETAIN_TERMINAL;
 	const records = new Map<string, GrantRecord>();
 	const byWorker = new Map<string, string>();

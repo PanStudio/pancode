@@ -3,8 +3,8 @@
 import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { Workspace } from "../../contracts/sessions.js";
 import type { StatusTone } from "../design/status.js";
+import { matchesText } from "../design/text-match.js";
 import { READY_LABEL, STATE_LABELS } from "../shell/shell-model.js";
-import { matchesText } from "./run-inspection-model.js";
 
 export const SESSION_FILTERS = ["all", "attention", "working", "ready", "closed"] as const;
 export type SessionFilter = (typeof SESSION_FILTERS)[number];
@@ -26,6 +26,17 @@ export const ACTIVITY: Readonly<
 /** The card's state word: the sidebar's, except that a failed agent is not a failed turn. */
 export function activityLabel(item: Pick<SessionOverviewItem, "activity" | "state">): string {
 	return item.activity === "failed" && item.state === "failed" ? "Session failed" : ACTIVITY[item.activity].label;
+}
+
+/** What waits on the operator; approvals outrank questions. Null when nothing waits. */
+export function attentionLine(item: Pick<SessionOverviewItem, "pendingApprovals" | "pendingQuestions">): string | null {
+	if (item.pendingApprovals) return `${item.pendingApprovals} approval${item.pendingApprovals === 1 ? "" : "s"} waiting`;
+	if (item.pendingQuestions) return `${item.pendingQuestions} question${item.pendingQuestions === 1 ? "" : "s"} waiting`;
+	return null;
+}
+
+export function cardOpenLabel(item: Pick<SessionOverviewItem, "activity" | "state">): string {
+	return ACTIVITY[item.activity].group === "attention" ? "Review" : item.state === "parked" ? "Continue" : "Open";
 }
 
 export function sessionInventory(
