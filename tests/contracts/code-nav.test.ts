@@ -9,7 +9,7 @@ import { ToolNames } from "../../src/core/tool-names.js";
 import { executeCodewikiBuildOutcome } from "../../src/domains/context/codewiki/build-operation.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
 import { loadCodewikiForTool } from "../../src/tools/codewiki/shared.js";
-import type { ToolInvokeOptions, ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { ToolInvokeOptions, ToolRegistry } from "../../src/tools/registry/contract.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

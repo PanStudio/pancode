@@ -23,9 +23,9 @@ import {
 	releaseObservation,
 	reserveObservation,
 } from "../observation.js";
-import { prepareToolArgs } from "../registry-call-prep.js";
-import type { ToolInvokeOptions, ToolRegistry } from "../registry-contract.js";
-import { nestedBlockedResult, nestedChainResult, nestedExecutedResult } from "../registry-nested-calls.js";
+import { prepareToolArgs } from "../registry/call-prep.js";
+import type { ToolInvokeOptions, ToolRegistry } from "../registry/contract.js";
+import { nestedBlockedResult, nestedChainResult, nestedExecutedResult } from "../registry/nested-calls.js";
 import { toolResultContextText } from "../result-disposition.js";
 import { resolveToolPromptHint, type ToolResult, type ToolSpec } from "../tool-spec.js";
 import { GATEWAY_FIND_SELF_CAP_BYTES } from "./caps.js";

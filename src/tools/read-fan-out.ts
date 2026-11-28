@@ -3,7 +3,7 @@
 import { resolveGuardrail } from "../core/guardrails.js";
 import { denialLines } from "../domains/safety/denial.js";
 import { formatModelRejection } from "../domains/safety/rejection-feedback.js";
-import type { RegistryVerdict } from "./registry-contract.js";
+import type { RegistryVerdict } from "./registry/contract.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 
 /**

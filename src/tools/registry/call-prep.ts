@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { isHarnessExtensionToolName } from "../core/tool-names.js";
-import type { ToolCallLanding } from "../domains/middleware/types.js";
-import type { ClassifierCall } from "../domains/safety/action-classifier.js";
-import type { SafetyDecision } from "../domains/safety/contract.js";
-import type { OutboundFile } from "./registry-contract.js";
-import type { ToolResultDisposition } from "./result-disposition.js";
-import { DEFAULT_TOOL_RESULT_MAX_BYTES } from "./result-shaping.js";
-import { pathToolLanding } from "./tool-landing.js";
-import type { ToolSpec } from "./tool-spec.js";
+import { isHarnessExtensionToolName } from "../../core/tool-names.js";
+import type { ToolCallLanding } from "../../domains/middleware/types.js";
+import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
+import type { SafetyDecision } from "../../domains/safety/contract.js";
+import type { ToolResultDisposition } from "../result-disposition.js";
+import { DEFAULT_TOOL_RESULT_MAX_BYTES } from "../result-shaping.js";
+import { pathToolLanding } from "../tool-landing.js";
+import type { ToolSpec } from "../tool-spec.js";
+import type { OutboundFile } from "./contract.js";
 
 /**
  * Run a tool's optional `prepareArguments` normalizer before its body. A

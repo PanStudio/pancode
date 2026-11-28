@@ -8,8 +8,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { planFacts, readDispatchPlan } from "../../src/interactive/dispatch-plan-summary.js";
 import { createOverlayPermissionLifecycle } from "../../src/interactive/overlay-permission-lifecycle.js";
 import { describeDispatchPlan, RESOLVED_DISPATCH_PLAN_ARGUMENT } from "../../src/tools/dispatch-plan.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 
 test("the plan-card task preview keeps line breaks and tabs, and still neutralizes other control characters", () => {

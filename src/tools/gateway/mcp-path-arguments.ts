@@ -4,7 +4,7 @@ import path from "node:path";
 import { ToolNames } from "../../core/tool-names.js";
 import type { McpPathArgumentAccess, McpTrustActionClass } from "../../domains/mcp/index.js";
 import { resolveToCwd } from "../path-utils.js";
-import type { HostEffectCall, ToolInvokeOptions } from "../registry-contract.js";
+import type { HostEffectCall, ToolInvokeOptions } from "../registry/contract.js";
 import { isStoreReference } from "./mcp-store-references.js";
 
 /** One declared path argument a call names, with each spelling of the path the server could reach. */
