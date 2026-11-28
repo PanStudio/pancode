@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type Static, Type } from "typebox";
-import { Id } from "./common.js";
+import { Id, ModelRef } from "./common.js";
 
 const closed = { additionalProperties: false };
 const Nullable = <T extends Parameters<typeof Type.Union>[0][number]>(schema: T) => Type.Union([schema, Type.Null()]);
@@ -15,7 +15,6 @@ const ResearchMetric = Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
 const ResearchScope = Type.String({ minLength: 1, maxLength: 256, pattern: "^[^\\-\\r\\n][^\\r\\n]*$" });
 /** One line of guidance for the agent; never a leading dash, so `--goal` always takes it as its value. */
 const ResearchGoal = Type.String({ minLength: 1, maxLength: 2000, pattern: "^[^\\-\\s][^\\r\\n]*$" });
-const ResearchModel = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" });
 
 export const ResearchStartRequest = Type.Object(
 	{
@@ -32,7 +31,7 @@ export const ResearchStartRequest = Type.Object(
 		allowUnpriced: Type.Boolean(),
 		goal: Type.Optional(ResearchGoal),
 		target: Type.Optional(Id),
-		model: Type.Optional(ResearchModel),
+		model: Type.Optional(ModelRef),
 	},
 	closed,
 );

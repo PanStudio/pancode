@@ -59,8 +59,7 @@ export class SettingsService {
 	}
 	/** `null` reads the graph where no project layer applies. */
 	async graph(workspaceId: string | null) {
-		const cwd =
-			workspaceId === null ? await this.workspaces.installationPath() : (await this.workspaces.get(workspaceId)).path;
+		const cwd = await this.workspaces.cwd(workspaceId);
 		const report = await this.reads.call("config.graph", { cwd }, { deadlineMs: 15_000 });
 		if (!Value.Check(ConfigGraph, report))
 			throw new AppProblem("unavailable", "Configuration inspection returned an invalid projection.");

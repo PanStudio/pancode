@@ -238,6 +238,12 @@ import {
 	toolCallUpdateMeta,
 } from "./server-tool-updates.js";
 import {
+	ACP_MAX_LABEL_BYTES,
+	ACP_MAX_SESSION_ID_BYTES,
+	listableSessionId,
+	sessionListFields,
+} from "./session-list-row.js";
+import {
 	ACP_SESSION_FORK_METHOD,
 	ACP_SESSION_SWITCH_TURN_METHOD,
 	ACP_SESSION_TREE_METHOD,
@@ -323,8 +329,6 @@ import { ACP_SNAPSHOT_LIST_MAX } from "./types-session.js";
 import type { AcpSafeSettingsPatch, AcpTargetList, AcpTargetProbe } from "./types-settings.js";
 import { ACP_SAFE_SETTINGS_KEYS } from "./types-settings.js";
 
-const ACP_MAX_SESSION_ID_BYTES = 128;
-const ACP_MAX_LABEL_BYTES = 256;
 const ACP_MAX_CORRECTION_BYTES = 2048;
 const ACP_MAX_HANDOFF_GOAL_BYTES = 2048;
 /** A rendered handoff is bounded list by list; this is the ceiling on a reviewed edit of it. */
@@ -1134,7 +1138,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	const workspaceHistory = (): SessionMeta[] => {
 		const history = options.session?.history() ?? [];
 		return history.filter((meta) => {
-			if (safeStoredIdentifier(meta.id, ACP_MAX_SESSION_ID_BYTES) === null) return false;
+			if (!listableSessionId(meta.id)) return false;
 			try {
 				return realpathSync(resolvePath(meta.cwd)) === canonicalCwd;
 			} catch {
@@ -1707,23 +1711,20 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		const projected: AcpSessionListRow[] = [];
 		let budgetBytes = utf8Bytes(JSON.stringify({ sessions: [] }));
 		for (const meta of history.slice(start, start + 50)) {
-			const label = safeStoredString(meta.name, ACP_MAX_LABEL_BYTES).trim();
-			const messageCount = safeCount(meta.messageCount);
+			const row = sessionListFields(meta);
 			const item = {
 				sessionId: meta.id,
 				cwd: canonicalCwd,
-				...(label.length > 0 ? { title: label } : {}),
-				updatedAt: safeIso(meta.lastActivityAt ?? meta.endedAt ?? meta.createdAt),
+				...(row.name !== undefined ? { title: row.name } : {}),
+				updatedAt: row.updatedAt,
 				_meta: {
 					[ACP_SESSION_META_KEY]: {
-						createdAt: safeIso(meta.createdAt),
-						endedAt: meta.endedAt === null ? null : safeIso(meta.endedAt),
-						target: safeConfiguredIdentifier(meta.currentTarget ?? meta.target, ACP_MAX_TARGET_ID_BYTES),
-						model: safeConfiguredIdentifier(meta.currentModel ?? meta.model, ACP_MAX_MODEL_ID_BYTES),
-						...(meta.firstMessagePreview !== undefined
-							? { firstMessagePreview: safeStoredString(meta.firstMessagePreview, ACP_MAX_LABEL_BYTES) }
-							: {}),
-						...(messageCount !== null ? { messageCount } : {}),
+						createdAt: row.createdAt,
+						endedAt: row.endedAt,
+						target: row.target,
+						model: row.model,
+						...(row.firstMessagePreview !== undefined ? { firstMessagePreview: row.firstMessagePreview } : {}),
+						...(row.messageCount !== undefined ? { messageCount: row.messageCount } : {}),
 						...(meta.hasModelTurn !== undefined ? { hasModelTurn: meta.hasModelTurn } : {}),
 						...(meta.lastActivityAt !== undefined ? { lastActivityAt: safeIso(meta.lastActivityAt) } : {}),
 					},

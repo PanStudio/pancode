@@ -1,20 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ArtifactList } from "../../contracts/artifacts.js";
+import { matchesText } from "../pages/run-inspection-model.js";
 import type { BranchRow } from "./branch-model.js";
 
-function paneMatches(query: string, values: readonly (string | null | undefined)[]): boolean {
-	const text = values.filter(Boolean).join(" ").toLocaleLowerCase();
-	return query
-		.trim()
-		.toLocaleLowerCase()
-		.split(/\s+/)
-		.filter(Boolean)
-		.every((word) => text.includes(word));
-}
-
 export function paneBranchRows(rows: readonly BranchRow[], query: string, kind: string): BranchRow[] {
-	return rows.filter((row) => (!kind || row.kind === kind) && paneMatches(query, [row.text, row.label, row.word]));
+	return rows.filter((row) => (!kind || row.kind === kind) && matchesText(query, [row.text, row.label, row.word]));
 }
 
 export function paneArtifactRows(
@@ -24,6 +15,6 @@ export function paneArtifactRows(
 ): ArtifactList["artifacts"] {
 	return rows.filter(
 		(row) =>
-			(!category || row.category === category) && paneMatches(query, [row.title, row.subtitle, row.id, row.category]),
+			(!category || row.category === category) && matchesText(query, [row.title, row.subtitle, row.id, row.category]),
 	);
 }

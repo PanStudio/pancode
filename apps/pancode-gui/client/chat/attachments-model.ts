@@ -4,6 +4,7 @@
 // judges each image by its bytes and resizes it again; these rules only keep a request inside the one
 // stdio line the agent reads it from, and say why when an attachment cannot come along.
 
+import { countNoun } from "../../../../src/core/views/count-words.js";
 import {
 	attachmentWeight,
 	TURN_FILE_MAX,
@@ -97,8 +98,6 @@ export function admitAttachment(current: readonly Attachment[], next: Attachment
 	return { ok: true as const };
 }
 
-const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-
 /** How the attachments read beside Send; empty when there are none. */
 export function attachmentSummary(current: readonly Attachment[]): string {
 	if (current.length === 0) return "";
@@ -108,8 +107,8 @@ export function attachmentSummary(current: readonly Attachment[]): string {
 		images.reduce((total, item) => total + (item.data.length * 3) / 4, 0) +
 		files.reduce((total, item) => total + item.bytes, 0);
 	const parts = [
-		...(images.length > 0 ? [counted(images.length, "image")] : []),
-		...(files.length > 0 ? [counted(files.length, "file")] : []),
+		...(images.length > 0 ? [countNoun(images.length, "image")] : []),
+		...(files.length > 0 ? [countNoun(files.length, "file")] : []),
 	];
 	return `${parts.join(" and ")}, about ${attachmentSize(bytes)}`;
 }

@@ -40,6 +40,7 @@ import {
 	parseReviewDiffRow,
 	WIRE_TRUNCATION_SUFFIX,
 } from "../../../../src/core/views/diff-rows.js";
+import { text } from "../api/narrow.js";
 
 /** write.ts reports this on the result text, not in `details`. */
 const NO_TRAILING_NEWLINE_NOTE = "no longer ends with a newline";
@@ -328,10 +329,6 @@ const PROVENANCE_LABEL: Readonly<Record<DiffProvenance, string>> = {
 	unchanged: "No textual change",
 	absent: "No diff available",
 };
-
-function text(value: unknown): string | null {
-	return typeof value === "string" && value.length > 0 ? value : null;
-}
 
 /**
  * Split into lines, keeping one line more than the render budget so the caller

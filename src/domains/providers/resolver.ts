@@ -223,7 +223,7 @@ export function resolveModelReference(
 	const { base, thinkingLevel } = splitThinkingSuffix(trimmed);
 	const candidates = collectCandidates(providers);
 	if (candidates.length === 0) {
-		return { ref: null, error: "no targets configured; add one with `pancode configure` or `pancode targets add`" };
+		return { ref: null, error: "no targets configured; add one with `pancode configure`" };
 	}
 
 	// #416: worker aliases cannot shadow chat families; versioned ids keep explicit refusals.

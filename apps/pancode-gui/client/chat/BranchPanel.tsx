@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { memo, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { SessionTree } from "../../contracts/branches.js";
@@ -12,6 +12,7 @@ import { notify } from "../design/notifications.js";
 import { type BranchRow, branchView, FORKED_NOTE, SWITCHED_NOTE } from "./branch-model.js";
 import "./session-board.css";
 import "./pane-inspection.css";
+import { sessionTreeQuery } from "../api/queries.js";
 import { paneBranchRows } from "./pane-inspection-model.js";
 
 const excerpt = (text: string) => (text.length > 80 ? `${text.slice(0, 79)}…` : text);
@@ -49,13 +50,10 @@ export const BranchPanel = memo(function BranchPanel({
 	const supported = !!capabilities?.branches;
 	const tree = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["session-tree", sessionId, settledTurns],
-		queryFn: () => client.call(routes.sessionTree, { ...params, body: {} }),
 		// A continue replays turns and moves the key; the panel and its heading stay mounted meanwhile,
 		// so the focus it hands to the heading afterwards has somewhere to land.
-		placeholderData: keepPreviousData,
+		...sessionTreeQuery(client, sessionId, settledTurns),
 		enabled: sessionOpen && supported,
-		retry: false,
 	});
 	const change = useMutation({
 		meta: { errorSurface: "inline" },

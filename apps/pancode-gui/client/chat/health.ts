@@ -16,6 +16,7 @@
 //    than being dropped silently or throwing.
 
 import type { HealthItem } from "../../contracts/fleet-events.js";
+import { amount, fields, flag, integer, text } from "../api/narrow.js";
 import type { StatusTone } from "../design/status.js";
 
 /**
@@ -71,14 +72,6 @@ const SEVERITY: Readonly<Record<StatusTone, number>> = {
 	neutral: 0,
 };
 
-const record = (value: unknown): Readonly<Record<string, unknown>> =>
-	typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-const text = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
-const integer = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
-const flag = (value: unknown): boolean => value === true;
-const amount = (value: number | null): string => (value === null ? "not reported" : value.toLocaleString("en-US"));
-
 const PROVIDER_TONES: Readonly<Record<string, StatusTone>> = {
 	healthy: "success",
 	degraded: "warn",
@@ -112,7 +105,7 @@ function toolBudgetDetail(
 
 function toRow(item: HealthItemLike): HealthRow | null {
 	const base = { id: item.id, at: item.at, sourceSequence: item.sourceSequence };
-	const payload = record(item.fact.payload);
+	const payload = fields(item.fact.payload);
 	switch (item.fact.type) {
 		case "health.contextWarning": {
 			const warning = text(payload.warning);

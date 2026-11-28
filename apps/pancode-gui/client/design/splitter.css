@@ -5,7 +5,7 @@
 .splitter {
 	position: absolute;
 	inset-block: 0;
-	z-index: 4;
+	z-index: var(--layer-float);
 	width: 9px;
 	cursor: col-resize;
 	touch-action: none;
@@ -21,7 +21,7 @@
 	content: "";
 	position: absolute;
 	inset-block: 0;
-	left: 4px;
+	left: var(--space-1);
 	width: 1px;
 	background: transparent;
 	transition: background var(--motion-fast) var(--ease-standard);

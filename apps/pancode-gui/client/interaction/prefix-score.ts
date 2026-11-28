@@ -3,7 +3,7 @@
 // The command palette's ranking. Text is compared case-insensitively in a fixed locale, so the order
 // does not move with the viewer's language.
 
-function normalise(text: string): string {
+export function normalise(text: string): string {
 	return text.toLocaleLowerCase("en-US");
 }
 

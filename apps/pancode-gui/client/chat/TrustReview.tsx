@@ -5,7 +5,8 @@ import { useRef, useState } from "react";
 import type { TrustPreviewFile, TrustSurface } from "../../contracts/review.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
-import { ApiProblem, emptyInput } from "../api/client.js";
+import { ApiProblem } from "../api/client.js";
+import { workspacesQuery } from "../api/queries.js";
 import { sessionBuffer } from "../api/sessions.js";
 import { Dialog } from "../interaction/Dialog.js";
 import {
@@ -76,8 +77,7 @@ export function TrustReview({
 		meta: { errorSurface: "inline" },
 	});
 	const workspaces = useQuery({
-		queryKey: ["workspaces"],
-		queryFn: () => client.call(routes.workspaces, emptyInput),
+		...workspacesQuery(client),
 		meta: { errorSurface: "inline" },
 	});
 	const approve = useMutation({

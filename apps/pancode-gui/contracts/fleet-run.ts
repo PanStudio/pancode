@@ -6,13 +6,13 @@ export { FleetCapability };
 
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { Sha256 } from "./common.js";
 
 // `_pancode/fleet/preview` and `/run`: the terminal's `/fleet run <playbook>` approval. A preview
 // compiles and dispatches nothing; a run starts only the plan whose hash was approved. The agent
 // bounds a preview at 64 steps, a field at 512 bytes and diagnostics at 32 lines of 1 KiB.
 const closed = { additionalProperties: false };
 const text = Type.String({ maxLength: 520 });
-const Hash = Type.String({ pattern: "^[0-9a-f]{64}$" });
 const FleetName = Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$" });
 const Vars = Type.Record(
 	Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" }),
@@ -29,7 +29,7 @@ export const FleetPreviewRequest = Type.Object(
 	closed,
 );
 export const FleetRunRequest = Type.Object(
-	{ name: FleetName, vars: Type.Optional(Vars), planHash: Hash, resume: Type.Optional(ResumeId) },
+	{ name: FleetName, vars: Type.Optional(Vars), planHash: Sha256, resume: Type.Optional(ResumeId) },
 	closed,
 );
 

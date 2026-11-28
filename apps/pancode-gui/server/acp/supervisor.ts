@@ -137,7 +137,7 @@ import { ACP_CONTEXT_STATUS_METHOD } from "../pancode/http-shims.js";
 import { childRunning, startAcpChild } from "../process-policy.js";
 import { withLedgerDisplay } from "../services/context-display.js";
 import type { EventHub } from "../services/event-hub.js";
-import { AppProblem } from "../services/problem.js";
+import { AppProblem, projected } from "../services/problem.js";
 import type { WorkspaceService } from "../services/workspaces.js";
 import type { AppFiles } from "../state/files.js";
 import type { Entry } from "./child-entry.js";
@@ -1252,11 +1252,8 @@ export class Supervisor {
 		schema: S,
 		timeoutMs?: number,
 	): Promise<Static<S>> {
-		const raw = await this.active(id).client.request(method, params, timeoutMs),
-			value = Value.Clean(schema, raw);
-		if (!Value.Check(schema, value))
-			throw new AppProblem("upstream_acp", "PanCode returned an invalid control response.");
-		return value;
+		const raw = await this.active(id).client.request(method, params, timeoutMs);
+		return projected(schema, raw, "upstream_acp", "PanCode returned an invalid control response.");
 	}
 	settings(id: string, patch?: SafeSettingsPatch) {
 		if (patch)

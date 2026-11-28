@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { announce, composeTitle, useLiveState } from "../interaction/announcer.js";
 
-/** `--paper` from client/design/tokens.css, light and dark. Keep these two in step with it. */
+/** `--paper` from client/design/brand.css, light and dark. scripts/sync-brand.mjs writes and checks these two. */
 export const THEME_COLORS: Readonly<Record<"light" | "dark", string>> = {
 	light: "#f6f1e6",
 	dark: "#0e1113",

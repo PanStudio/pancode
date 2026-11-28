@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { IconName } from "../design/icons.js";
+import { matchesText } from "../pages/run-inspection-model.js";
 import { SETTINGS_SECTIONS } from "./shell-model.js";
 
 const GROUPS = [
@@ -40,14 +41,12 @@ export type ExploreSection = { id: string; label: string; path: string; icon: Ic
 
 export function exploreGroups(query: string) {
 	const sections: readonly ExploreSection[] = [...SETTINGS_SECTIONS, ...EXTRA];
-	const words = query.toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
 	return GROUPS.map((group) => ({
 		...group,
 		sections: group.sections.flatMap((id) => {
 			const section = sections.find((item) => item.id === id);
 			if (!section) return [];
-			const text = `${section.label} ${group.label} ${group.detail} ${KEYWORDS[id] ?? ""}`.toLocaleLowerCase();
-			return words.every((word) => text.includes(word)) ? [section] : [];
+			return matchesText(query, [section.label, group.label, group.detail, KEYWORDS[id]]) ? [section] : [];
 		}),
 	})).filter((group) => group.sections.length > 0);
 }

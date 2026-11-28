@@ -5,9 +5,9 @@ import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSummary } from "../../contracts/sessions.js";
-import { ApiProblem, type Client } from "../api/client.js";
+import { type Client, problemCode } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
-import { SESSION_HISTORY_FRESHNESS } from "../api/queries.js";
+import { sessionHistoryQuery } from "../api/queries.js";
 import { liveElsewhereLabel } from "../chat/live-elsewhere-model.js";
 import { Icon } from "../design/icons.js";
 import { InventoryMore } from "../interaction/InventoryMore.js";
@@ -114,9 +114,7 @@ export function Sessions({ client }: { client: Client }) {
 		meta: { errorSurface: "inline" },
 	});
 	const history = useQuery({
-		queryKey: ["session-history", workspaceId],
-		queryFn: ({ signal }) => client.call(routes.sessionHistory, input, undefined, signal),
-		...SESSION_HISTORY_FRESHNESS,
+		...sessionHistoryQuery(client, workspaceId),
 		meta: { errorSurface: "inline" },
 	});
 	const overview = useSessionOverview(client);
@@ -130,7 +128,7 @@ export function Sessions({ client }: { client: Client }) {
 	);
 	const saved = useMemo(() => new Map((history.data ?? []).map((row) => [row.id, row])), [history.data]);
 	const held = useMemo(() => new Map((overview.data?.sessions ?? []).map((row) => [row.id, row])), [overview.data]);
-	const unsupported = history.error instanceof ApiProblem && history.error.problem.code === "unsupported";
+	const unsupported = problemCode(history.error) === "unsupported";
 	const name = workspace.data?.name ?? "Project";
 	const loading = overview.isPending || history.isPending;
 	const refreshing = workspace.isFetching || overview.isFetching || history.isFetching;

@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import { type Client, emptyInput } from "../api/client.js";
 import { RequestRecovery, useOperationRequest } from "../api/operation-request.js";
+import { freshMeta, targetsOperationResult, targetsQuery } from "../api/queries.js";
 import { humanizeKey, reportedCount } from "../design/facts-model.js";
 import { Boundary, PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
@@ -35,12 +36,8 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 	// With no project open the page shows the user's own connections; a project layers its overrides on them.
 	const resolved = !selection.workspaces.isPending && !selection.missing;
 	const targets = useQuery({
-		queryKey: ["targets", id],
+		...targetsQuery(client, id),
 		meta: { errorSurface: "inline" },
-		queryFn: () =>
-			id
-				? client.call(routes.targetsList, { ...emptyInput, params: { id } })
-				: client.call(routes.userTargetsList, emptyInput),
 		enabled: resolved && view === "targets",
 	});
 	const routing = useQuery({
@@ -69,20 +66,19 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 	const cancel = useMutation({
 		meta: { errorSurface: "inline" },
 		mutationFn: async () => {
-			const meta = await client.call(routes.meta, emptyInput);
-			queries.setQueryData(["meta"], meta);
+			const meta = await freshMeta(client, queries);
 			if (!operationId || request?.epoch !== meta.epoch)
 				throw new Error("The original operation belongs to another server. Refresh its status before continuing.");
 			return client.call(routes.cancel, { ...emptyInput, params: { id: operationId } });
 		},
 	});
 	useEffect(() => {
-		const result = operation.data?.status === "succeeded" ? operation.data.result : null;
-		if (!result || !("targets" in result) || !request?.settled || tracking.epochChanged) return;
-		queries.setQueryData(["targets", request.workspaceId], result.targets);
+		const updated = targetsOperationResult(operation.data);
+		if (!updated || !request?.settled || tracking.epochChanged) return;
+		queries.setQueryData(targetsQuery(client, request.workspaceId).queryKey, updated);
 		for (const key of ["routing", "settings-report", "config-graph", "settings-controls"])
 			void queries.invalidateQueries({ queryKey: [key] });
-	}, [operation.data, request, tracking.epochChanged, queries]);
+	}, [client, operation.data, request, tracking.epochChanged, queries]);
 	return (
 		<section className="settings-connections">
 			<PanelHeading panel={view === "targets" ? PANELS.targets : PANELS.routing} level={1} />

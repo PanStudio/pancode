@@ -3,9 +3,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { Link } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { Workspace } from "../../contracts/sessions.js";
-import { type Client, emptyInput } from "../api/client.js";
+import type { Client } from "../api/client.js";
 import { composerKeyAction, fitComposerField, initialEnterSends, touchFirst } from "../chat/composer-field.js";
 import { PROMPT_TEXT_MAX_CHARACTERS } from "../chat/prompt-limit.js";
 import { useFieldAssist } from "../chat/use-field-assist.js";
@@ -28,6 +27,7 @@ import { settleStarted } from "./started-request.js";
 import { reconcileFirstTask, useFirstTask } from "./use-first-task.js";
 import "../chat/composer-box.css";
 import "./home.css";
+import { metaQuery, workspacesQuery } from "../api/queries.js";
 import { setupLink, useSetupStatus } from "./target-onboarding.js";
 
 const TASK_STARTERS = [
@@ -199,7 +199,7 @@ export function Home({ client }: { client: Client }) {
 		updateHomeDraft({ workspaceId });
 		rememberWorkspace(workspaceId);
 	};
-	const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => client.call(routes.workspaces, emptyInput) });
+	const workspaces = useQuery(workspacesQuery(client));
 	const list = workspaces.data ?? [];
 	// A missing saved choice stays visible as a recovery state; never send to a fallback project silently.
 	const workspaceId = draft.workspaceId ?? shell?.activeWorkspaceId ?? list[0]?.id ?? null;
@@ -209,10 +209,7 @@ export function Home({ client }: { client: Client }) {
 	}, [draft.workspaceId, workspaceId]);
 	const setup = useSetupStatus(client, true, setupWorkspaceId(workspaceId, list));
 	const ready = setup.data?.state === "ready";
-	const meta = useQuery({
-		queryKey: ["meta"],
-		queryFn: () => client.call(routes.meta, emptyInput),
-	});
+	const meta = useQuery(metaQuery(client));
 	const send = useFirstTask(client);
 	const reconcile = useMutation({
 		mutationFn: async () => {

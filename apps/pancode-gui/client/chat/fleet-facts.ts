@@ -26,6 +26,7 @@ import {
 import type { FleetItem } from "../../contracts/fleet-events.js";
 import type { SessionWorkerRun } from "../../contracts/session-overview.js";
 import { formatDuration } from "../api/clock.js";
+import { amount, fields, flag, integer, text } from "../api/narrow.js";
 import type { StatusTone } from "../design/status.js";
 import { tokensText } from "./session-usage-model.js";
 
@@ -110,13 +111,6 @@ export const isWorkingRun = (run: FleetRun): boolean => run.state === "running" 
 /** The strip keeps this many runs, dropping the oldest settled one first. */
 export const FLEET_RUN_CAP = 64;
 
-const record = (value: unknown): Readonly<Record<string, unknown>> =>
-	typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-const text = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
-const integer = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
-const flag = (value: unknown): boolean => value === true;
-
 const RUN_FACTS: ReadonlySet<string> = new Set([
 	"fleet.enqueued",
 	"fleet.started",
@@ -147,7 +141,7 @@ function blank(runId: string, at: string): FleetRun {
 }
 
 function measuredCount(value: unknown): number | null {
-	const fact = record(value);
+	const fact = fields(value);
 	return fact.kind === "measured" ? integer(fact.value) : null;
 }
 
@@ -243,7 +237,7 @@ export function foldFleetRuns(items: readonly FleetItemLike[]): readonly FleetRu
 	const ordered = [...items].sort((left, right) => left.sourceSequence - right.sourceSequence);
 	for (const item of ordered) {
 		if (!isRunFact(item.fact.type)) continue;
-		const payload = record(item.fact.payload),
+		const payload = fields(item.fact.payload),
 			event = runLifecycleEvent(item.fact.type, payload);
 		if (event === null) continue;
 		const { runId } = event;
@@ -334,8 +328,6 @@ export interface FleetFactPresentation {
 	readonly known: boolean;
 }
 
-const amount = (value: number | null): string => (value === null ? "not reported" : value.toLocaleString("en-US"));
-
 const DISPOSITION_LABELS: Readonly<Record<string, string>> = {
 	block: "blocked the call",
 	lockout: "locked the tool out for the rest of the turn",
@@ -349,7 +341,7 @@ const DISPOSITION_LABELS: Readonly<Record<string, string>> = {
  * but neither surface is this one's problem and a fact that reaches here is still reported.
  */
 export function presentFleetFact(fact: { readonly type: string; readonly payload?: unknown }): FleetFactPresentation {
-	const payload = record(fact.payload);
+	const payload = fields(fact.payload);
 	switch (fact.type) {
 		case "fleet.enqueued":
 			return {
@@ -447,7 +439,7 @@ export function fleetEvidence(items: readonly FleetItemLike[]): readonly FleetEv
 	return items
 		.flatMap((item): FleetEvidence[] => {
 			if (item.fact.type !== "evidence.ready") return [];
-			const payload = record(item.fact.payload);
+			const payload = fields(item.fact.payload);
 			const runId = text(payload.runId);
 			if (runId === null) return [];
 			return [

@@ -4,6 +4,11 @@ import { type Static, Type } from "typebox";
 import { ClientIdentity } from "./auth.js";
 
 export const Id = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" });
+export const Sha256 = Type.String({ pattern: "^[0-9a-f]{64}$" });
+/** The id the hub gives a staged plan. */
+export const PlanId = Type.String({ pattern: "^[a-f0-9]{16}$" });
+/** A model id as targets name them: `claude-haiku-5.5`, `mini/qwen3.8-27b-iq4r-v4`, `org/model:tag`. */
+export const ModelRef = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" });
 /**
  * The widest artifact window the server keeps per family. Every list route is
  * clamped below it, so the cap is not the operating limit: it is the assertion
