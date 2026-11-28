@@ -146,7 +146,13 @@ test("research routes list, read and regrade campaigns, and run a start as a can
 		assert.equal(finished.status, "succeeded");
 		assert.ok(finished.status === "succeeded" && "id" in finished.result);
 		assert.equal(finished.result.id, "r20261108-120739-d20d");
-		assert.ok(finished.progress.some((row) => row.message === "research r20261108-123902-22f8: A/A unchanged"));
+		assert.ok(finished.progress.some((row) => row.message === "pancode research: r20261108-123902-22f8: A/A unchanged"));
+
+		const absent = await json(await h.post(base, { ...request, goal: "pack absent" }), Accepted);
+		const refused = await terminal(h.operations, absent.operationId, 10_000);
+		assert.ok(refused.status === "failed");
+		assert.equal(refused.problem.code, "unsupported");
+		assert.match(refused.problem.detail, /pancode hub install extension:research/);
 
 		// Replaying a settled start returns its terminal operation and must not lock the workspace again.
 		assert.equal((await json(await h.post(base, request, doneKey), Accepted)).operationId, doneId);
@@ -189,10 +195,10 @@ test("research routes list, read and regrade campaigns, and run a start as a can
 			.split("\n")
 			.map((line) => JSON.parse(line) as { kind: string; argv?: string[]; pid: number });
 		const starts = records.filter((row) => row.kind === "start" && row.argv?.[1] === "start");
-		assert.equal(starts.length, 3);
+		assert.equal(starts.length, 4);
 		assert.deepEqual(starts[0]?.argv, commandPlan({ kind: "research.start", request }).argv);
 		const stopped = records.filter((row) => row.kind === "SIGTERM").map((row) => row.pid);
-		assert.deepEqual(stopped, [starts[1]?.pid, starts[2]?.pid]);
+		assert.deepEqual(stopped, [starts[2]?.pid, starts[3]?.pid]);
 		for (const pid of stopped) assert.throws(() => process.kill(pid, 0));
 	} finally {
 		await h.close();

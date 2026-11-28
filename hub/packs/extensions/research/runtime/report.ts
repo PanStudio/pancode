@@ -5,9 +5,9 @@
  * the journal as written. `recomputeCampaign` regrades every measured iteration and the A/A check from the raw
  * samples with the recorded seed and says, per grade, whether the recomputation agrees with the journal.
  */
-import { type SpendTotal, totalSpend } from "./budget.js";
-import { grade } from "./grader.js";
-import { listCampaignIds, readCampaign, readJournal, readSamples } from "./store.js";
+import { type SpendTotal, totalSpend } from "./budget.ts";
+import { grade } from "./grader.ts";
+import { listCampaignIds, readCampaign, readJournal, readSamples } from "./store.ts";
 import type {
 	ResearchAgentAutonomy,
 	ResearchArchiveReason,
@@ -18,7 +18,7 @@ import type {
 	ResearchHypothesisVerdict,
 	ResearchJournalEvent,
 	ResearchStopReason,
-} from "./types.js";
+} from "./types.ts";
 
 export interface ResearchIterationView {
 	iteration: number;

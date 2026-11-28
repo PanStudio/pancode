@@ -474,7 +474,9 @@ test("research page follows a campaign the server still runs after the page was 
 		cancellable: true,
 		status: "running",
 		startedAt: "2026-11-08T13:57:52.000Z",
-		progress: [{ at: "2026-11-08T13:57:53.000Z", message: `research ${campaign}: iteration 1: agent run in it-0001` }],
+		progress: [
+			{ at: "2026-11-08T13:57:53.000Z", message: `pancode research: ${campaign}: iteration 1: agent run in it-0001` },
+		],
 	});
 	const html = render(cache, `/research?workspace=workspace-a&campaign=${campaign}`, <ResearchPage client={client} />);
 	assert.match(html, /Stop campaign/);

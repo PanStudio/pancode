@@ -6,9 +6,9 @@
  * nothing a dead process held in memory is needed, except the check artifacts, which the loop learns again by running
  * the checks on the best commit.
  */
-import { budgetStop } from "./budget.js";
-import { foldJournal } from "./report.js";
-import type { ResearchCampaign, ResearchCost, ResearchJournalEvent } from "./types.js";
+import { budgetStop } from "./budget.ts";
+import { foldJournal } from "./report.ts";
+import type { ResearchCampaign, ResearchCost, ResearchJournalEvent } from "./types.ts";
 
 export interface ResearchResumeState {
 	best: string;

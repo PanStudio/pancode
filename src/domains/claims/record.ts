@@ -366,7 +366,7 @@ export async function recordHostVerificationClaims(input: {
  * Append claims, then carry each contradiction that overturned an agreement into memory (#406): every memory record
  * citing one of the overturned agreeing claims gets a regression naming both claims, written through memory's own
  * locked mutation, and a `regression` line in the claims log names the records it reached, none included. Every
- * producer of claims (main-thread verify, host verification, research iterations) appends through here, so a
+ * producer of claims (main-thread verify, host verification, an extension's claims service) appends through here, so a
  * contradiction reaches memory when it is recorded rather than on some later append.
  *
  * The log's index says which contradictions still await their regression line, so the whole log is read only when

@@ -9,6 +9,7 @@ import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
 import type { RunPlanProvenance } from "../../src/domains/dispatch/types.js";
 import { buildDynamicPromptMessages } from "../../src/domains/dispatch/worker-dynamic-prompt.js";
 import type { SpawnedWorker } from "../../src/domains/dispatch/worker-spawn.js";
+import claudeSdkRuntime from "../../src/domains/providers/runtimes/claude/claude-sdk.js";
 import { startClaudeSdkWorkerRun } from "../../src/engine/claude/sdk-runtime.js";
 import type { WorkerRunInput } from "../../src/engine/worker-run-types.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
@@ -568,4 +569,70 @@ test("default autonomy fans out a sealed all-scout plan without a plan stop and 
 		await bundle.extension.stop?.();
 		env.restore();
 	}
+});
+
+test("worker resource ceilings are sealed into the spec's limits, checked on read, and refuse a runtime that runs its own commands", async () => {
+	const withCeilings = () => {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.safety.resources.workers.memoryMiB = 512;
+		settings.safety.resources.workers.tasks = 64;
+		return settings;
+	};
+	const dispatched = async (prefix: string, context: ReturnType<typeof dispatchStubContext>) => {
+		const env = await isolatePancodeEnv(prefix);
+		let captured: WorkerSpec | undefined;
+		const bundle = makeDispatchBundle(context, {
+			spawnWorker(spec) {
+				captured = spec;
+				throw new Error("worker spec observed");
+			},
+		});
+		try {
+			await bundle.extension.start();
+			const outcome = await bundle.contract
+				.dispatch({ agentId: "coder", task: "Inspect the task", executionRole: "builder", cwd: env.dir })
+				.then(
+					() => "dispatched",
+					(error: unknown) => (error instanceof Error ? error.message : String(error)),
+				);
+			return { outcome, spec: captured === undefined ? undefined : JSON.parse(JSON.stringify(captured)) };
+		} finally {
+			await bundle.extension.stop?.();
+			env.restore();
+		}
+	};
+	const sealed = await dispatched("pancode-worker-resources-", dispatchStubContext({ settings: withCeilings() }));
+	ok(sealed.spec);
+	deepStrictEqual(sealed.spec.limits.resources, { memoryMiB: 512, tasks: 64 });
+	deepStrictEqual(parseWorkerSpec(structuredClone(sealed.spec)).limits.resources, { memoryMiB: 512, tasks: 64 });
+	// Resource ceilings are independent of the OS sandbox: safety.sandbox off still carries limits.resources.
+	const sandboxOffSettings = withCeilings();
+	sandboxOffSettings.safety.sandbox = "off";
+	const sandboxOff = await dispatched(
+		"pancode-worker-resources-sandbox-off-",
+		dispatchStubContext({ settings: sandboxOffSettings }),
+	);
+	ok(sandboxOff.spec);
+	strictEqual(sandboxOff.spec.sandbox, undefined);
+	deepStrictEqual(sandboxOff.spec.limits.resources, { memoryMiB: 512, tasks: 64 });
+	deepStrictEqual(parseWorkerSpec(structuredClone(sandboxOff.spec)).limits.resources, { memoryMiB: 512, tasks: 64 });
+	for (const [resources, refusal] of [
+		[{}, /must set at least one ceiling/u],
+		[{ memoryMiB: 0 }, /memoryMiB must be an integer from 1 to/u],
+		[{ disk: 5 }, /WorkerSpec\.limits\.resources/u],
+	] as const) {
+		const edited = structuredClone(sealed.spec);
+		edited.limits.resources = resources;
+		throws(() => parseWorkerSpec(edited), refusal);
+	}
+	const sdkSettings = withCeilings();
+	sdkSettings.targets = [{ id: "sdk-worker", runtime: "claude-sdk", defaultModel: "claude-sonnet-4-6" }];
+	sdkSettings.fleet.default.target = "sdk-worker";
+	sdkSettings.fleet.default.model = "claude-sonnet-4-6";
+	const sdk = await dispatched(
+		"pancode-worker-resources-sdk-",
+		dispatchStubContext({ settings: sdkSettings, runtime: claudeSdkRuntime }),
+	);
+	strictEqual(sdk.spec, undefined);
+	match(sdk.outcome, /safety\.resources\.workers is set but the sdk runtime claude-sdk runs its own commands/u);
 });

@@ -6,7 +6,7 @@
  * objective's direction and minimum improvement. The resampler is seeded, and the seed is recorded with every grade,
  * so `research report` recomputes the identical interval from the raw samples.
  */
-import type { ResearchDirection, ResearchGrade } from "./types.js";
+import type { ResearchDirection, ResearchGrade } from "./types.ts";
 
 const CI_LOW = 0.025;
 const CI_HIGH = 0.975;

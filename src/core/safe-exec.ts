@@ -12,7 +12,21 @@ import {
 import { relativePathEscapes } from "./path-containment.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import {
+	forgetResourceScope,
+	invalidateResourceCapabilityCache,
+	launchResourceLimits,
+	launchResourceRefusal,
+	planResourceScope,
+	type ResourceScopeSettlement,
+	resourceLimitNote,
+	scopeLaunchFailure,
+	scopeLaunchFailureMessage,
+	settleResourceScope,
+	watchResourceScopeLeader,
+} from "./sandbox/resource-limits.js";
 import { signalSandboxPayload } from "./sandbox/signal.js";
+import type { ResourceLimits } from "./sandbox/types.js";
 import { planSandboxedSpawn } from "./sandbox/worker-process.js";
 import { clampTimerDelayMs } from "./timers.js";
 import { applyToolEnvControls } from "./tool-env-controls.js";
@@ -90,6 +104,8 @@ export interface SafeCommandResult {
 	pipeDrainIncomplete?: boolean;
 	/** Diagnostic for incomplete cleanup; the effective exit code also reports failure to existing callers. */
 	failure?: string | null;
+	/** A resource ceiling that ended the command (`safety.resources`), as one line for the caller to show. */
+	resourceNote?: string;
 	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
 	egress?: EgressReport;
 }
@@ -138,6 +154,8 @@ export interface RunCommandVectorOptions {
 	typedGitWritablePaths?: ReadonlyArray<string>;
 	/** Set for a contained main-session call (run_script, verify): it runs in the main-session sandbox with this policy. */
 	shellSandbox?: MainSandboxPolicy;
+	/** The main session's `safety.resources.main` ceilings for an agent command; a worker's come from its spec. */
+	resourceLimits?: ResourceLimits;
 	output?: SafeCommandOutputSink;
 	/**
 	 * Milliseconds between SIGTERM and SIGKILL when the runner stops the
@@ -476,10 +494,34 @@ export function runCommandVector(
 	args: ReadonlyArray<string>,
 	options: RunCommandVectorOptions = {},
 ): Promise<SafeCommandResult> {
-	return new Promise((resolve) => {
+	return new Promise((deliver) => {
 		const startedAtClock = performance.now();
 		const startedAt = Date.now();
 		const cwd = resolveSafeCwd(options.cwd, options.workspaceRoot);
+		const notLaunched = (message: string): SafeCommandResult => ({
+			file,
+			args: [...args],
+			cwd,
+			stdout: "",
+			stderr: message,
+			exitCode: 126,
+			leaderExit: null,
+			signal: null,
+			aborted: false,
+			timedOut: false,
+			outputCapped: false,
+			durationMs: 0,
+			startedAt,
+			launched: false,
+			failure: message,
+		});
+		// A set resource ceiling this host cannot enforce refuses before the sandbox is planned (D13).
+		const resourceLaunch = launchResourceLimits(options.resourceLimits);
+		const resourceRefusal = launchResourceRefusal(resourceLaunch);
+		if (resourceRefusal !== null) {
+			deliver(notLaunched(resourceRefusal));
+			return;
+		}
 		const timeoutMs = clampTimerDelayMs(options.timeoutMs ?? SAFE_EXEC_DEFAULT_TIMEOUT_MS);
 		const killGraceMs = clampTimerDelayMs(options.killGraceMs ?? SAFE_EXEC_DEFAULT_KILL_GRACE_MS);
 		const maxOutputBytes = options.maxOutputBytes ?? SAFE_EXEC_DEFAULT_MAX_OUTPUT_BYTES;
@@ -562,35 +604,63 @@ export function runCommandVector(
 			containedPlan ?? planSandboxedSpawn({ argv: [file, ...args] }, cwd, options.typedGitWritablePaths, { bridge: true });
 		if (sandbox.kind === "refused") {
 			settled = true;
-			resolve({
-				file,
-				args: [...args],
-				cwd,
-				stdout: "",
-				stderr: sandbox.message,
-				exitCode: 126,
-				leaderExit: null,
-				signal: null,
-				aborted: false,
-				timedOut: false,
-				outputCapped: false,
-				durationMs: 0,
-				startedAt,
-				launched: false,
-				failure: sandbox.message,
-			});
+			deliver(notLaunched(sandbox.message));
 			return;
 		}
+		// A limited command starts in its own systemd scope, which execs the planned launch in place.
+		const resources = planResourceScope(resourceLaunch, {
+			file: sandbox.kind === "sandboxed" ? sandbox.file : file,
+			args: sandbox.kind === "sandboxed" ? sandbox.args : args,
+			env,
+		});
+		if (resources.kind === "refused") {
+			settled = true;
+			if (sandbox.kind === "sandboxed") sandbox.afterExit();
+			deliver(notLaunched(resources.message));
+			return;
+		}
+		const scope = resources.kind === "scoped" ? resources.scope : null;
+		// The scope is settled once the leader exits, which also ends what the command left running; the result
+		// waits for it and carries what a ceiling did.
+		let settling: Promise<ResourceScopeSettlement> | null = null;
+		const settleScope = (): Promise<ResourceScopeSettlement> | null => {
+			if (scope === null) return null;
+			settling ??= settleResourceScope(scope);
+			return settling;
+		};
+		const resolve = (result: SafeCommandResult): void => {
+			const pending = settleScope();
+			if (pending === null || scope === null) {
+				deliver(result);
+				return;
+			}
+			void pending.then((settlement) => {
+				const failure = settlement.launchUnconfirmed
+					? scopeLaunchFailure({
+							exitCode: result.exitCode,
+							stdoutBytes: result.stdoutBytes ?? Buffer.byteLength(result.stdout, "utf8"),
+							stderr: result.stderr,
+						})
+					: null;
+				if (failure !== null) {
+					invalidateResourceCapabilityCache();
+					deliver({ ...notLaunched(scopeLaunchFailureMessage(scope, failure)), durationMs: result.durationMs });
+					return;
+				}
+				const note = resourceLimitNote(scope, settlement);
+				deliver(note === null ? result : { ...result, resourceNote: note });
+			});
+		};
 		const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
 		const stdio: Array<"inherit" | "ignore" | "pipe"> = inherit
 			? ["inherit", "inherit", "inherit"]
 			: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"];
 		const child = spawn(
-			sandbox.kind === "sandboxed" ? sandbox.file : file,
-			sandbox.kind === "sandboxed" ? sandbox.args : [...args],
+			scope?.file ?? (sandbox.kind === "sandboxed" ? sandbox.file : file),
+			scope?.args ?? (sandbox.kind === "sandboxed" ? sandbox.args : [...args]),
 			{
 				cwd,
-				env,
+				env: scope?.env ?? env,
 				detached: process.platform !== "win32",
 				stdio: egressPlan === undefined ? stdio : egressStdio(stdio),
 			},
@@ -602,6 +672,10 @@ export function runCommandVector(
 		// The sandbox removes git config and commondir files its command planted, and the mount points of absent
 		// startup paths, once the sandbox is gone, before the result resolves (#419).
 		if (sandbox.kind === "sandboxed") child.once("exit", sandbox.afterExit);
+		if (scope !== null) {
+			watchResourceScopeLeader(scope, child.pid);
+			child.once("exit", () => void settleScope());
+		}
 
 		const onAbort = (): void => {
 			aborted = true;
@@ -687,6 +761,16 @@ export function runCommandVector(
 			child.stderr?.destroy();
 			child.unref();
 			egress?.close();
+			if (scope !== null && spawnError !== undefined) {
+				forgetResourceScope(scope);
+				invalidateResourceCapabilityCache();
+				if (sandbox.kind === "sandboxed") sandbox.afterExit();
+				deliver({
+					...notLaunched(scopeLaunchFailureMessage(scope, spawnError.message)),
+					durationMs: Math.round(performance.now() - startedAtClock),
+				});
+				return;
+			}
 			const output = captured();
 			resolve({
 				file,
@@ -822,7 +906,9 @@ interface StagingCommandOptions {
  * one is configured, a timeout and a bounded buffer, and a process group of its
  * own that is signalled after the leader ends so a clone's helpers do not
  * outlive it. A synchronous call cannot take an abort signal, so the timeout is
- * its only cancellation bound. Throws with the command's own stderr on failure.
+ * its only cancellation bound. It runs without `safety.resources` ceilings
+ * because settling a systemd scope is asynchronous. Throws with the command's
+ * own stderr on failure.
  */
 export function runStagingCommandSync(
 	file: string,

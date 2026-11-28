@@ -139,8 +139,8 @@ test("regrade lines and live progress lines come from the CLI's own output", () 
 		],
 	);
 	const progress = [
-		"research r20261108-123812-bacf: opened at 6af8f20fdee1",
-		"research r20261108-123812-bacf: A/A unchanged",
+		"pancode research: r20261108-123812-bacf: opened at 6af8f20fdee1",
+		"pancode research: r20261108-123812-bacf: A/A unchanged",
 	];
 	assert.equal(campaignFromProgress(["starting", ...progress]), "r20261108-123812-bacf");
 	assert.equal(campaignFromProgress(["pancode: research start: no such check"]), null);

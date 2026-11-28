@@ -67,6 +67,7 @@ export const verifyTool: ToolSpec = {
 				{
 					...(options?.signal !== undefined ? { signal: options.signal } : {}),
 					...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+					...(options?.resourceLimits !== undefined ? { resourceLimits: options.resourceLimits } : {}),
 				},
 				options,
 			),

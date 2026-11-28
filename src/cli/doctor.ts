@@ -18,6 +18,7 @@ import {
 	yoloScriptSandboxState,
 	yoloShellState,
 } from "../core/sandbox/main-session.js";
+import { hostResourceStatus, resourceStatusLine, resourceStatusRefuses } from "../core/sandbox/resource-limits.js";
 import { discoverSecretMasks } from "../core/sandbox/secret-files.js";
 import { hostSandboxStatus, sandboxStatusLine } from "../core/sandbox/status.js";
 import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
@@ -203,6 +204,27 @@ function sandboxStatusFinding(): DoctorFinding {
 					? "info"
 					: "warn",
 		detail: sandboxStatusLine(status),
+	};
+}
+
+/**
+ * The resource ceilings (`safety.resources`, D13): what this host can enforce per command, what is set, and that a
+ * set limit it cannot enforce refuses its commands. Disk is never bounded.
+ */
+function resourceLimitsFinding(): DoctorFinding {
+	let safety = DEFAULT_SETTINGS.safety;
+	try {
+		safety = readSettings().safety;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the defaults.
+	}
+	const status = hostResourceStatus(safety.resources);
+	const set = status.main !== null || status.workers !== null;
+	return {
+		ok: true,
+		name: "resource limits",
+		level: resourceStatusRefuses(status) ? "warn" : set ? "ok" : "info",
+		detail: resourceStatusLine(status),
 	};
 }
 
@@ -602,6 +624,7 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 		: [
 				...scratchRootFindings(workspaceRoot),
 				sandboxStatusFinding(),
+				resourceLimitsFinding(),
 				shellSandboxFinding(workspaceRoot),
 				homeReadsFinding(workspaceRoot),
 				...schedulerClientFindings(),
