@@ -21,6 +21,7 @@ import {
 	evidenceDestination,
 	inspectionSort,
 	listDestination,
+	matchesRunStatus,
 	matchesText,
 	sortInspectionRecords,
 } from "./run-inspection-model.js";
@@ -159,9 +160,7 @@ export function FleetPage({ client }: { client: Client }) {
 	const loadedRoots = admittedPages(roots).flatMap((page) => page.items);
 	const loadedRuns = admittedPages(runs).flatMap((page) => page.items);
 	const matchingRoots = sortInspectionRecords(
-		loadedRoots.filter(
-			(run) => matchesText(q, [run.id, run.fleet]) && (!status || (status === "active" ? !run.endedAt : !!run.endedAt)),
-		),
+		loadedRoots.filter((run) => matchesText(q, [run.id, run.fleet]) && matchesRunStatus(status, run.endedAt)),
 		sort,
 		(run) => ({ name: run.fleet, date: run.startedAt, id: run.id }),
 	);
@@ -169,7 +168,7 @@ export function FleetPage({ client }: { client: Client }) {
 		loadedRuns.filter(
 			(run) =>
 				matchesText(q, [run.id, run.agentId, run.task, run.targetId, run.wireModelId]) &&
-				(!status || (status === "active" ? !run.endedAt : !!run.endedAt)),
+				matchesRunStatus(status, run.endedAt),
 		),
 		sort,
 		(run) => ({ name: run.task || run.agentId, date: run.startedAt, id: run.id }),

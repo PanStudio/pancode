@@ -51,3 +51,29 @@ export function evidenceVerdictTone(verdict: string) {
 			? "success"
 			: "unverified";
 }
+
+/** An empty status filter admits every run; "active" admits runs that have not ended, any other value ended runs. */
+export function matchesRunStatus(status: string, endedAt: string | null | undefined): boolean {
+	return !status || (status === "active" ? !endedAt : !!endedAt);
+}
+
+type EvidenceRow = {
+	verdict: string;
+	run: { runId: string; agentId?: string | null; wireModelId?: string | null; tags: readonly string[] };
+};
+export function matchesEvidence(item: EvidenceRow, verdict: string, query: string): boolean {
+	return (
+		(!verdict || item.verdict === verdict) &&
+		matchesText(query, [item.run.runId, item.run.agentId ?? "", item.run.wireModelId ?? "", ...item.run.tags])
+	);
+}
+
+export function evidenceVerdictTally(items: readonly { verdict: string }[]): {
+	supported: number;
+	compromised: number;
+} {
+	return {
+		supported: items.filter((item) => item.verdict === "reviewed" || item.verdict === "grounded").length,
+		compromised: items.filter((item) => item.verdict === "compromised").length,
+	};
+}

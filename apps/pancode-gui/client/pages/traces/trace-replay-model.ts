@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { RunTimelineEntry } from "../../../contracts/wire.js";
 import { matchesText } from "../run-inspection-model.js";
-import { entryKey, entryLabel } from "./trace-model.js";
+import { entryElapsedMs, entryKey, entryLabel } from "./trace-model.js";
 
 export const REPLAY_SPEEDS = [0.5, 1, 2, 4, 8] as const;
 const REPLAY_WINDOW = 9;
@@ -23,7 +23,7 @@ export function replayEntries(entries: readonly RunTimelineEntry[], runStart: nu
 			key: entryKey(entry),
 			entry,
 			startedMs,
-			elapsedMs: startedMs !== null && runStart !== null && startedMs >= runStart ? startedMs - runStart : null,
+			elapsedMs: entryElapsedMs(entry.at, runStart),
 		};
 	});
 }
@@ -42,6 +42,30 @@ export function replayWindow(
 ): { start: number; entries: ReplayEntry[] } {
 	const start = Math.max(0, Math.min(index - Math.floor(REPLAY_WINDOW / 2), entries.length - REPLAY_WINDOW));
 	return { start, entries: entries.slice(start, start + REPLAY_WINDOW) };
+}
+
+/** The entry a seek lands on, clamped to the recorded range. */
+export function replaySeekKey(entries: readonly ReplayEntry[], position: number): string | null {
+	return entries[Math.max(0, Math.min(entries.length - 1, position))]?.key ?? null;
+}
+
+export function replayStateText(following: boolean, capturing: boolean, playing: boolean): string {
+	return following && capturing ? "Following capture" : playing ? "Playing recording" : "Recording paused";
+}
+
+/** The play button: following and playing both pause; at the last entry it offers to start over. */
+export function replayPlayControl(
+	following: boolean,
+	playing: boolean,
+	atEnd: boolean,
+	count: number,
+): { icon: "stop" | "play"; label: string; text: string } {
+	if (following || playing) return { icon: "stop", label: "Pause replay", text: "Pause" };
+	return {
+		icon: "play",
+		label: atEnd ? "Replay from first entry" : "Play recorded entries",
+		text: atEnd && count > 1 ? "Replay" : "Play",
+	};
 }
 
 /** Scheduling is separate from elapsed evidence: equal/unknown starts use a reading beat, and long idle gaps are capped. */

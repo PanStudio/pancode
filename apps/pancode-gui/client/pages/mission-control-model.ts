@@ -28,6 +28,17 @@ export function activityLabel(item: Pick<SessionOverviewItem, "activity" | "stat
 	return item.activity === "failed" && item.state === "failed" ? "Session failed" : ACTIVITY[item.activity].label;
 }
 
+/** What waits on the operator; approvals outrank questions. Null when nothing waits. */
+export function attentionLine(item: Pick<SessionOverviewItem, "pendingApprovals" | "pendingQuestions">): string | null {
+	if (item.pendingApprovals) return `${item.pendingApprovals} approval${item.pendingApprovals === 1 ? "" : "s"} waiting`;
+	if (item.pendingQuestions) return `${item.pendingQuestions} question${item.pendingQuestions === 1 ? "" : "s"} waiting`;
+	return null;
+}
+
+export function cardOpenLabel(item: Pick<SessionOverviewItem, "activity" | "state">): string {
+	return ACTIVITY[item.activity].group === "attention" ? "Review" : item.state === "parked" ? "Continue" : "Open";
+}
+
 export function sessionInventory(
 	items: readonly SessionOverviewItem[],
 	workspaces: readonly Workspace[],

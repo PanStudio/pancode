@@ -16,10 +16,11 @@ import { Explained } from "../telemetry/Explained.js";
 import { explainable } from "../telemetry/quantity-model.js";
 import { ARTIFACT_MAX_PAGES, ARTIFACT_PAGE_SIZE, admittedPages, retainedLinksLive } from "./artifact-pagination.js";
 import {
+	evidenceVerdictTally,
 	evidenceVerdictTone,
 	inspectionSort,
 	listDestination,
-	matchesText,
+	matchesEvidence,
 	sortInspectionRecords,
 } from "./run-inspection-model.js";
 import "./run-inspection.css";
@@ -268,11 +269,7 @@ export function EvidencePage({ client }: { client: Client }) {
 	const bundles = useMemo(
 		() =>
 			sortInspectionRecords(
-				loaded.filter(
-					(item) =>
-						(!verdict || item.verdict === verdict) &&
-						matchesText(q, [item.run.runId, item.run.agentId ?? "", item.run.wireModelId ?? "", ...item.run.tags]),
-				),
+				loaded.filter((item) => matchesEvidence(item, verdict, q)),
 				sort,
 				(item) => ({
 					name: runLabel(item.run),
@@ -282,6 +279,7 @@ export function EvidencePage({ client }: { client: Client }) {
 			),
 		[loaded, verdict, q, sort],
 	);
+	const tally = evidenceVerdictTally(loaded);
 	return (
 		<section className="run-inspection">
 			<PanelHeading panel={PANELS.evidenceInventory} level={1} />
@@ -370,11 +368,8 @@ export function EvidencePage({ client }: { client: Client }) {
 			<InspectionSummary
 				figures={[
 					{ label: "Runs matching / loaded", value: `${bundles.length} / ${loaded.length}` },
-					{
-						label: "Reviewed or grounded · loaded",
-						value: loaded.filter((item) => item.verdict === "reviewed" || item.verdict === "grounded").length,
-					},
-					{ label: "Compromised · loaded", value: loaded.filter((item) => item.verdict === "compromised").length },
+					{ label: "Reviewed or grounded · loaded", value: tally.supported },
+					{ label: "Compromised · loaded", value: tally.compromised },
 				]}
 			/>
 			<div className="inspection-inventory">

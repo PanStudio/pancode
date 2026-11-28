@@ -21,7 +21,14 @@ import { useSessionOverview, useTaskActions } from "../shell/tasks.js";
 import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import { useSessionIntent } from "../shell/use-session-intent.js";
 import type { SessionFilter } from "./mission-control-model.js";
-import { ACTIVITY, activityLabel, SESSION_FILTERS, sessionInventory } from "./mission-control-model.js";
+import {
+	ACTIVITY,
+	activityLabel,
+	attentionLine,
+	cardOpenLabel,
+	SESSION_FILTERS,
+	sessionInventory,
+} from "./mission-control-model.js";
 import { OperatorMetrics, SessionMetricFigures, useOperatorMetrics } from "./operator-metrics.js";
 import type { SessionControls } from "./session-control-actions.js";
 import "./mission-control.css";
@@ -289,6 +296,7 @@ const SessionCard = memo(function SessionCard({
 	const intent = useSessionIntent(client, item.id, connected);
 	const control = controls.records.find((record) => record.sessionId === item.id);
 	const state = { ...ACTIVITY[item.activity], label: activityLabel(item) };
+	const attention = attentionLine(item);
 	const held = item.state === "open" || item.state === "parked" || item.state === "starting";
 	const busy = control !== undefined && control.stage !== "complete";
 	return (
@@ -323,14 +331,7 @@ const SessionCard = memo(function SessionCard({
 			) : (
 				<p className="operator-note">No metrics in the retained 30-day sample.</p>
 			)}
-			{item.pendingApprovals || item.pendingQuestions ? (
-				<p className="mission-card__attention">
-					{item.pendingApprovals
-						? `${item.pendingApprovals} approval${item.pendingApprovals === 1 ? "" : "s"} waiting`
-						: `${item.pendingQuestions} question${item.pendingQuestions === 1 ? "" : "s"} waiting`}{" "}
-					· Open to respond
-				</p>
-			) : null}
+			{attention ? <p className="mission-card__attention">{attention} · Open to respond</p> : null}
 			{item.activeWorkers || item.queuedWorkers || item.nodes.length || !item.workersComplete ? (
 				<p className="mission-card__workers">
 					<Icon name="fleet" />
@@ -376,7 +377,7 @@ const SessionCard = memo(function SessionCard({
 						</button>
 					) : null}
 					<Link className="mission-card__open" to={`/sessions/${item.id}`} {...intent}>
-						{state.group === "attention" ? "Review" : item.state === "parked" ? "Continue" : "Open"}
+						{cardOpenLabel(item)}
 						<Icon name="arrowUp" />
 					</Link>
 				</div>

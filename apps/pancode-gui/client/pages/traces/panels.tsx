@@ -14,7 +14,15 @@ import { StatusMark } from "../../design/status.js";
 import { Explained } from "../../telemetry/Explained.js";
 import { explainable, quantityText } from "../../telemetry/quantity-model.js";
 import { RunRecordChecks } from "./run-record-checks.js";
-import { callPosition, entryLabel, runModelSpend, runSpan, runSpend, stageBars } from "./trace-model.js";
+import {
+	callPosition,
+	entryElapsedMs,
+	entryLabel,
+	runModelSpend,
+	runSpan,
+	runSpend,
+	stageBars,
+} from "./trace-model.js";
 export function object(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -182,8 +190,8 @@ function CallSpend({ client, call }: { client: Client; call: CallEntry }) {
 /** One timeline entry: what it is, when it fell in the run, and the displays it carries. */
 export function EntryRow({ client, entry, start }: { client: Client; entry: RunTimelineEntry; start: number | null }) {
 	const label = entryLabel(entry);
-	const at = Date.parse(entry.at);
-	const elapsed = start !== null && Number.isFinite(at) && at >= start ? `+${formatDuration(at - start)}` : null;
+	const elapsedMs = entryElapsedMs(entry.at, start);
+	const elapsed = elapsedMs !== null ? `+${formatDuration(elapsedMs)}` : null;
 	const details =
 		entry.kind === "call" ? (
 			<>

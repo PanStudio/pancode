@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Machine, MachineAdd, MachineMutation } from "../../contracts/machines.js";
+import type { Operation } from "../../contracts/operations.js";
+import { terminalOperation } from "../api/operation-request-model.js";
 import { matchesText } from "./run-inspection-model.js";
 
 export type MachineRequest = {
@@ -19,6 +21,42 @@ export function acceptMachineRequest(
 	operationId: string,
 ): MachineRequest | null {
 	return current?.key === key ? { ...current, operationId } : current;
+}
+
+/** Polling stops once the operation is over, or once a restart has made its id meaningless. */
+export function pollsMachineOperation(operation: Operation | undefined, epochChanged: boolean): boolean {
+	return !epochChanged && !(operation !== undefined && terminalOperation(operation));
+}
+
+/** The tracked request's operation once it is over and not yet settled; null while there is nothing to settle. */
+export function settlingMachineOperation(
+	request: MachineRequest | null,
+	operation: Operation | undefined,
+	epochChanged: boolean,
+): Operation | null {
+	if (!request || request.settled || epochChanged || !operation || operation.id !== request.operationId) return null;
+	return terminalOperation(operation) ? operation : null;
+}
+
+/** A settled request closes the add form; a successful add also clears the draft it sent. */
+export function settleMachineRequest<
+	T extends { request: MachineRequest | null; adding: boolean; draft: MachineDraft },
+>(current: T, request: MachineRequest, status: Operation["status"]): T {
+	if (current.request?.key !== request.key) return current;
+	const add = request.body.action === "add";
+	return {
+		...current,
+		request: { ...current.request, settled: true },
+		adding: add ? false : current.adding,
+		draft: status === "succeeded" && add ? emptyMachineDraft : current.draft,
+	};
+}
+
+/** The settings views a finished operation makes stale: a successful add or remove changes them, a check does not. */
+export function machineSettingsInvalidations(request: MachineRequest, status: Operation["status"]): readonly string[] {
+	return status === "succeeded" && request.body.action !== "check"
+		? ["settings-report", "settings-controls", "config-graph"]
+		: [];
 }
 
 export type MachineDraft = {
