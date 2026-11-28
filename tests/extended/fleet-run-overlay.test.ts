@@ -261,8 +261,9 @@ test("a settled fleet names its loops, and a loop checkpoint reads as progress r
 		deepStrictEqual(errors, ["plan survey: write boundary w0: outside writes\n"]);
 		const settled = notices.find(([, key]) => key === "fleet-run:settled");
 		ok(settled);
-		ok(settled[2].includes("1/1 steps succeeded, 1/1 loop resolved"), settled[2]);
-		ok(cards.at(-1)?.includes("2/2 steps ran · 1/1 loop resolved"), cards.at(-1));
+		// The notice states the card's counts, not the required count the outcome keeps beside them.
+		ok(settled[2].includes("plan survey: 2 of 2 planned steps ran, 1/1 loop resolved"), settled[2]);
+		ok(cards.at(-1)?.includes("2 of 2 planned steps ran · 1/1 loop resolved"), cards.at(-1));
 	} finally {
 		scratch.restore();
 	}

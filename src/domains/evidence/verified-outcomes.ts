@@ -6,7 +6,8 @@
  * An outcome counts only from a typed field PanCode recorded, never from prose a model wrote:
  *  - a `verify` result whose declared `reproduce` or `numeric-compare` judgement passed;
  *  - a worker run whose record verifies against its seal and whose host verification passed;
- *  - a board task marked done whose required checks all have an observed pass.
+ *  - a board task marked done whose required checks all have an observed pass;
+ *  - a review gate whose sealed decision passed the results it judged.
  * One verification is one outcome. A check passing again on the same judged payload is the same result, so it is keyed
  * by check id and payload digests. A worker run's host checks are keyed the same way from the dispatch result the
  * ledger holds (its sealed run record keeps no report), and a run whose every host check judged a payload a main-thread
@@ -25,7 +26,7 @@ import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
 import type { FactSum } from "../../core/telemetry/fact.js";
 import { isRecord } from "../../core/type-guards.js";
 import { foldSessionTaskHistory, observedTaskChecks, taskCompletionStanding } from "../session/task-board.js";
-import { readRunTrust } from "./run-trust.js";
+import { type GateReview, readRunGateIndex, readRunTrust } from "./run-trust.js";
 
 /** The declared check kinds whose pass is a verified outcome; `command` and `perf-budget` passes are not. */
 const VERIFIED_CHECK_KINDS = ["reproduce", "numeric-compare"] as const;
@@ -38,6 +39,37 @@ export interface VerifiedOutcomeCount {
 	workers: number;
 	/** Board tasks done with every required check observed passing, and a pass no other outcome here counts. */
 	tasks: number;
+	/** Distinct passing review-gate verdicts on results no host verification counted here. */
+	reviews: number;
+}
+
+/** A sealed review or compete gate decision, as `readRunGateIndex` reads it. */
+export type ReviewGateFacts = Pick<GateReview, "topology" | "outcome" | "subjects" | "independent">;
+
+/**
+ * The gate decisions sealed about a session's runs, read once through the gate index: each run's coordinators and
+ * owning sessions, so the fleet root that decided a step's review is found from the step.
+ */
+export function sessionGateDecisions(stateDir: string, runIds: Iterable<string>): GateReview[] {
+	const gatesOf = readRunGateIndex(stateDir);
+	const out: GateReview[] = [];
+	const seen = new Set<string>();
+	for (const runId of runIds) {
+		let gates: GateReview[];
+		try {
+			gates = gatesOf(runId);
+		} catch {
+			// An unreadable run authenticates no review.
+			continue;
+		}
+		for (const gate of gates) {
+			const key = `${gate.decisionId}\u0000${gate.digest}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push(gate);
+		}
+	}
+	return out;
 }
 
 function str(value: unknown): string {
@@ -149,12 +181,14 @@ function forkOwnStart(entries: ReadonlyArray<unknown>, forkTurnId: string): numb
  * turn a fork branched at. The entries a fork copied from its parent lead its ledger and end at that turn's rows, so a
  * pass they hold is the parent's and counts nothing here, as the fork's totals hold only its own spend. The cut is by
  * position, not by time, so a skewed clock cannot move a pass across it. Copied rows still feed the task board fold,
- * because a task the fork marks done may have been opened before it.
+ * because a task the fork marks done may have been opened before it. `gates` are the sealed gate decisions about the
+ * session's runs (`sessionGateDecisions`); a review that passed counts once per judged result.
  */
 export function countVerifiedOutcomes(
 	entries: ReadonlyArray<unknown>,
 	verified: ReadonlySet<string>,
 	forkTurnId: string | null = null,
+	gates: ReadonlyArray<ReviewGateFacts> = [],
 ): VerifiedOutcomeCount {
 	const ownFrom = forkTurnId === null ? 0 : forkOwnStart(entries, forkTurnId);
 	// A task's pass carries the time of the entry that recorded it; in a fork it is its own only when that entry is.
@@ -191,7 +225,29 @@ export function countVerifiedOutcomes(
 			if (observedTaskChecks(task).passed.some((pass) => ownPass(pass.observedAt) && !counted.has(pass.observedAt)))
 				tasks += 1;
 		}
-	return { total: checks.size + workers.size + tasks, checks: checks.size, workers: workers.size, tasks };
+	// A review gate that passed independently is a judged outcome: a reviewer on an independent route read the result
+	// and accepted it. A non-independent review compromises trust rather than verifying an outcome. The result it judged
+	// names it, so a second pass on the same subjects and digests is the same outcome, and a pass on runs whose host
+	// verification already counts judged a result counted once.
+	const reviews = new Set<string>();
+	for (const gate of gates) {
+		if (gate.topology !== "review" || gate.outcome !== "pass" || gate.independent !== true || gate.subjects.length === 0)
+			continue;
+		if (gate.subjects.every((subject) => workers.has(subject.runId))) continue;
+		reviews.add(
+			gate.subjects
+				.map((subject) => `${subject.runId}\u0000${subject.digest ?? ""}`)
+				.sort()
+				.join(","),
+		);
+	}
+	return {
+		total: checks.size + workers.size + tasks + reviews.size,
+		checks: checks.size,
+		workers: workers.size,
+		tasks,
+		reviews: reviews.size,
+	};
 }
 
 /**

@@ -42,6 +42,8 @@ export interface ChainRecognition {
 	/** One step is a built-in test runner, which executes repository code. */
 	runsTestRunner: boolean;
 	scriptPreviews: ReadonlyArray<string>;
+	/** Source spans of the variable references and value list a recognized read-only loop proved. */
+	provenSpans: ReadonlyArray<{ start: number; end: number }>;
 }
 
 /** Operators that join two commands the recognizer checks one by one. `&`, subshells and here-strings stay out. */

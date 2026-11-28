@@ -214,13 +214,19 @@ export function compileFleetExecutionPlan(input: CompileFleetPlanInput): Executi
 			gate?: { path: string; commandId: string };
 			plan?: { roster: ReadonlyArray<string>; maxTasks: number; proposals: boolean };
 		},
+		checkInstructions?: string,
 	): ExecutionPlanStepInput => {
 		const resolved = resolveAgent(context);
 		// A loop's check verifies the change; the playbook body tells a builder
 		// how to make it, so the check gets its own task and never that body.
 		const body =
 			loop?.role === "check"
-				? renderFleetCheckTask({ request, authors: workspaceAuthors(steps, dependencies), note: checkNote })
+				? renderFleetCheckTask({
+						request,
+						authors: workspaceAuthors(steps, dependencies),
+						note: checkNote,
+						...(checkInstructions !== undefined ? { instructions: checkInstructions } : {}),
+					})
 				: task;
 		return {
 			kind: "agent",
@@ -351,6 +357,8 @@ export function compileFleetExecutionPlan(input: CompileFleetPlanInput): Executi
 						checkDependencies,
 						step.check.writes,
 						membership,
+						undefined,
+						step.check.instructions,
 					),
 				);
 			}

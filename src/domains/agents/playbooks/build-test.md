@@ -22,6 +22,10 @@ Implement this change and leave the suite green.
 
 {{task}}
 
+Make the smallest change that does what the request asks, and nothing beside
+it. Add the smallest test that proves it: one focused case that fails without
+the change, and no tests for behaviour you did not change.
+
 The suite is run by code: after you finish, a deterministic check step runs the
 repository's registered `test` command, shown below with its exact arguments,
 and reports its exit code and output verbatim. The check also runs test files

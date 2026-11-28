@@ -131,6 +131,9 @@ export interface FleetRunOutcome {
 	/** Steps that ran unconditionally, excluding nodes a resolved loop skipped. */
 	requiredStepCount: number;
 	succeededStepCount: number;
+	/** Every step the live plan declared, and those that settled; a plan with loops states these (`fleetStepCountText`). */
+	plannedStepCount: number;
+	ranStepCount: number;
 	resolvedLoopCount: number;
 	/** True when every required step succeeded and every loop converged. */
 	cleanRun: boolean;

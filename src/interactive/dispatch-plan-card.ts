@@ -4,6 +4,7 @@
 /** The fleet plan card: plan progress, step rows, and the plan body. */
 import type { OutputStyle } from "../core/defaults.js";
 import { tierPolicy } from "../core/presentation-tier.js";
+import { type FleetStepCounts, fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
 import { truncateToWidth, visibleWidth } from "../engine/tui.js";
 import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { cardRail, cardRows } from "./card.js";
@@ -31,22 +32,28 @@ export function planWarnedStepCount(plan: FleetPlanRunView): number {
 	return plan.steps.filter((step) => step.state === "passed" && (step.worker?.caveat ?? null) !== null).length;
 }
 
+/** A settled plan's step counts from its card's view, which its notice states too. */
+export function planStepCounts(plan: FleetPlanRunView): FleetStepCounts {
+	return {
+		ran: plan.steps.filter((step) => step.state === "passed" || step.state === "failed" || step.state === "replayed")
+			.length,
+		planned: plan.steps.length,
+		succeeded: plan.succeededStepCount,
+		required: plan.requiredStepCount,
+		...(plan.loops !== undefined ? { loops: plan.loops } : {}),
+	};
+}
+
 export function planProgressText(plan: FleetPlanRunView, statusShown = false, withFailure = true): string {
 	const done = plan.steps.filter((step) => step.state === "passed" || step.state === "replayed").length;
 	const failed = plan.steps.find((step) => step.state === "failed" && !planStepStopped(plan, step.stepId));
 	const live = plan.state === "running" || plan.state === "cancelling";
-	const loops =
-		live || plan.loops === undefined
-			? ""
-			: `${SEP}${plan.loops.resolved}/${plan.loops.total} ${plan.loops.total === 1 ? "loop" : "loops"} resolved`;
+	const loops = live || plan.loops === undefined ? "" : `${SEP}${fleetLoopText(plan.loops)}`;
 	// A settled plan with loops counts the steps that ran of those it planned, as `fleet list` does: its required count
 	// leaves the loop steps out, so `1/1 steps` would hide a failed check and the repair after it (fleet finding 18).
-	const ran = plan.steps.filter(
-		(step) => step.state === "passed" || step.state === "failed" || step.state === "replayed",
-	);
 	const count =
 		!live && plan.loops !== undefined
-			? `${ran.length}/${plan.steps.length} steps ran${loops}`
+			? `${fleetStepCountText(planStepCounts(plan))}${loops}`
 			: `${live ? done : plan.succeededStepCount}/${plan.requiredStepCount} steps${loops}`;
 	if (plan.state === "cancelling") {
 		const stopping = plan.stoppedStepIds ?? [];

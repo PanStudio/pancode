@@ -116,6 +116,22 @@ describe("worker permit", () => {
 		throws(() => parseWorkerPermissionDeclaration({ git: "all" }, "narrowing"), /narrowing\.git must be one of/u);
 	});
 
+	it("takes a discovered recipe's audience from where it lives and names the one fix for any other claim", () => {
+		const recipe = (source: "project" | "builtin", audience?: string) => {
+			const fields = frontmatter({ audience });
+			if (audience === undefined) delete fields.audience;
+			return () => parseAgentRecipeSchema({ id: "a", source, filepath: "a.md", body: "Persona.", frontmatter: fields });
+		};
+		strictEqual(recipe("project")().audience, "custom");
+		strictEqual(recipe("project", "custom")().audience, "custom");
+		throws(
+			recipe("project", "base"),
+			/a\.md: audience is set by where the recipe lives, and a project recipe is always 'custom'; remove the audience line$/u,
+		);
+		throws(recipe("builtin"), /audience is required/u);
+		strictEqual(recipe("builtin", "base")().audience, "base");
+	});
+
 	it("keeps today's behavior when nothing is declared and maps legacy escalate to operator-decided main routing", () => {
 		const plain = resolveWorkerPermit(input());
 		deepStrictEqual(plain.allowance, { git: "inspect", asks: "deny", approvalAuthority: "operator" });

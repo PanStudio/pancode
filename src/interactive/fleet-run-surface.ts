@@ -10,9 +10,10 @@ import { GLYPH } from "../core/glyphs.js";
 import { renderPricingSum } from "../core/telemetry/render.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { FleetRunSurface, FleetRunWatch } from "../domains/dispatch/fleet-run-launcher.js";
-import { WriterSetBusyError } from "../domains/dispatch/index.js";
+import { type FleetStepCounts, fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
+import { type FleetRunOutcome, WriterSetBusyError } from "../domains/dispatch/index.js";
 import { planWithWorkerRows } from "./dispatch-board-store.js";
-import { planWarnedStepCount, renderFleetPlanCard } from "./dispatch-plan-card.js";
+import { planStepCounts, planWarnedStepCount, renderFleetPlanCard } from "./dispatch-plan-card.js";
 import type { DispatchBoardRow } from "./dispatch-row-model.js";
 import type { FleetPlanRuns, FleetPlanRunView } from "./fleet-plan-runs.js";
 import { progressNoticeKeys } from "./footer/notifications.js";
@@ -28,6 +29,39 @@ export interface FleetRunBoardSurfaceDeps {
 	readonly getDispatchRows?: () => ReadonlyArray<DispatchBoardRow>;
 	readonly getSettings?: () => Readonly<PancodeSettings>;
 	readonly terminal: { columns: number };
+}
+
+/**
+ * The settled notice states the card's own counts, so the two never give one run two different numbers. An unpriced
+ * run keeps the total a lower bound, never a measured $0.00 nobody put a number on, and steps whose worker finished
+ * with a warning say so, as their rows on the card do.
+ */
+function fleetSettledNotice(
+	name: string,
+	outcome: FleetRunOutcome,
+	plan: FleetPlanRunView | null | undefined,
+	warned: number,
+): { level: "info" | "success" | "warning"; text: string } {
+	const loopTotal = outcome.result?.loops?.length ?? 0;
+	const counts: FleetStepCounts = plan
+		? planStepCounts(plan)
+		: {
+				ran: outcome.ranStepCount,
+				planned: outcome.plannedStepCount,
+				succeeded: outcome.succeededStepCount,
+				required: outcome.requiredStepCount,
+				...(loopTotal > 0 ? { loops: { resolved: outcome.resolvedLoopCount, total: loopTotal } } : {}),
+			};
+	if (plan?.state === "cancelled") {
+		return { level: "info", text: `plan ${name}: canceled ${GLYPH.sep} ${fleetStepCountText(counts)} before the stop` };
+	}
+	const steps = `${fleetStepCountText(counts, warned === 0 ? "succeeded" : "finished")}${warned === 0 ? "" : `, ${warned} with warnings`}`;
+	const loops = counts.loops === undefined ? "" : `${fleetLoopText(counts.loops)}, `;
+	const cost = plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`;
+	return {
+		level: outcome.cleanRun && warned === 0 ? "success" : "warning",
+		text: `plan ${name}: ${steps}, ${loops}${cost}`,
+	};
 }
 
 export function fleetRunBoardSurface(deps: FleetRunBoardSurfaceDeps): FleetRunSurface {
@@ -74,21 +108,8 @@ export function fleetRunBoardSurface(deps: FleetRunBoardSurfaceDeps): FleetRunSu
 					const { outcome } = settlement;
 					const plan = deps.fleetPlans?.settle(rootId, outcome);
 					const warned = plan ? planWarnedStepCount(appendPlanCard(plan)) : 0;
-					if (plan?.state === "cancelled") {
-						deps.notify(
-							"info",
-							`plan ${name}: canceled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
-							"fleet-run:settled",
-						);
-						return;
-					}
-					deps.notify(
-						outcome.cleanRun && warned === 0 ? "success" : "warning",
-						// An unpriced run keeps the total a lower bound, never a measured $0.00 nobody put a number on. Steps whose
-						// worker finished with a warning say so, as their rows on the card do.
-						`plan ${name}: ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps ${warned === 0 ? "succeeded" : `finished, ${warned} with warnings`}, ${plan?.loops === undefined ? "" : `${plan.loops.resolved}/${plan.loops.total} ${plan.loops.total === 1 ? "loop" : "loops"} resolved, `}${plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`}`,
-						"fleet-run:settled",
-					);
+					const settled = fleetSettledNotice(name, outcome, plan, warned);
+					deps.notify(settled.level, settled.text, "fleet-run:settled");
 					return;
 				}
 				const { error } = settlement;
