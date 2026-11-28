@@ -2875,7 +2875,7 @@ test("the exit summary counts a failed-over council member once, by its last att
 });
 
 test("a chained verify step naming no declared check seals no failed validation and leaves an earlier pass standing", async () => {
-	const { gatewayChainReceipts } = await import("../../src/tools/surface.js");
+	const { gatewayChainReceipts } = await import("../../src/core/tool-surface.js");
 	const chained = (unresolved: boolean) => ({
 		details: {
 			op: "chain",

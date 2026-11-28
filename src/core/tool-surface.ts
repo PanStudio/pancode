@@ -16,7 +16,7 @@
  * compiler and by ledger consumers, so it depends on core leaves only.
  */
 
-import { normalizeGatewayArguments } from "../core/gateway-envelope.js";
+import { normalizeGatewayArguments } from "./gateway-envelope.js";
 import {
 	type BuiltinToolName,
 	isBuiltinToolName,
@@ -24,8 +24,8 @@ import {
 	isMcpToolName,
 	type ToolName,
 	ToolNames,
-} from "../core/tool-names.js";
-import { isRecord } from "../core/type-guards.js";
+} from "./tool-names.js";
+import { isRecord } from "./type-guards.js";
 
 export type ToolPlacement = "direct" | "gateway";
 

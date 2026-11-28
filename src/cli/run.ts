@@ -5,7 +5,6 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { type PancodeSettings, readSettings } from "../core/config.js";
 import { loadDomains } from "../core/domain-loader.js";
-import { FileReferenceError, readFileArgsAsync } from "../core/file-references.js";
 import { setAutonomousCommitProcess } from "../core/git-commit-attribution.js";
 import { parseJsonObjectPayload } from "../core/json-payload.js";
 import { readPancodeVersion } from "../core/package-root.js";
@@ -28,6 +27,7 @@ import { SESSION_COST_CEILING_EXIT_CODE, SessionCostCeilingError } from "../doma
 import type { ImageContent } from "../engine/types.js";
 import type { HeadlessRunDeadline } from "../entry/boot-options.js";
 import { redactUrlCredentials } from "../lib/secrets/redaction.js";
+import { FileReferenceError, readFileArgsAsync } from "../tools/file-references.js";
 import { isToolProfileName } from "../tools/profiles.js";
 import { dispatchOnlyFlagConflict, type RunCliArgs, requestedRunLimits, sandboxRequiredRefusal } from "./args.js";
 import { classifyDefaultTarget } from "./default-target.js";

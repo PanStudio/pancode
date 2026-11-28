@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "c1d764d8a49b80bb2d6c69493128f413c10064a0a60317fa149d51daabf6bde9",
+		"sha256": "86c2eb89ac4366d36368093824069c653f805166054c11e6c385313ef70e7b70",
 		"rows": 48,
 		"revoked": 0
 	},
@@ -470,7 +470,7 @@
 			"kind": "skill",
 			"name": "pancode-dev",
 			"publisher": "pancode",
-			"version": "0.7.3",
+			"version": "0.7.4",
 			"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation.",
 			"category": "meta",
 			"tier": "core",
@@ -478,7 +478,7 @@
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-dev"
 			},
-			"sha256": "ad545ecd4f6ad03c0898abad89dcd200118450b090a524a5dc580b124b5bbcae",
+			"sha256": "926f53e65f0b6bad1b267db2e8f1ca80b536b4c5d7b2366cca92ad29004f16fe",
 			"install": "pancode hub install skill:pancode-dev"
 		},
 		{

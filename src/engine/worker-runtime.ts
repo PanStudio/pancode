@@ -46,6 +46,7 @@ import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/
 import { telemetryHub } from "../core/telemetry/hub.js";
 import { hasTokenUsageCounts, normalizeTokenUsage } from "../core/token-split.js";
 import { type ToolName, ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import {
 	parseWorkerResultContract,
 	validateResultContract,
@@ -114,7 +115,6 @@ import { createWorkerGitContext } from "../tools/git-exec.js";
 import { runObservationPool } from "../tools/observation.js";
 import { CODE_NAV_TASK_STEERING, codeNavTaskSteering } from "../tools/profiles.js";
 import type { RegistryDeps } from "../tools/registry-contract.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 import {
 	clearTaskGates,
 	configureWorkerTaskGates,

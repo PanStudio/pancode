@@ -3,11 +3,11 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
+import { expandConfigPath } from "../core/resolve-config-value.js";
 import type { ImageContent } from "../engine/types.js";
 import { formatDimensionNote, resizeImage } from "../lib/image/image-resize.js";
-import type { DocumentKind } from "../tools/read-documents/index.js";
-import { formatSize } from "../tools/truncate.js";
-import { expandConfigPath } from "./resolve-config-value.js";
+import type { DocumentKind } from "./read-documents/index.js";
+import { formatSize } from "./truncate.js";
 
 interface FileReferenceDiagnostic {
 	/** `info` marks a file that went in only in part, such as a PDF cut at the attachment cap. */
@@ -197,7 +197,7 @@ async function renderArchiveReference(
 	size: number,
 	signal: AbortSignal | undefined,
 ): Promise<FileReferenceResult> {
-	const { renderDocument, windowDocument } = await import("../tools/read-documents/index.js");
+	const { renderDocument, windowDocument } = await import("./read-documents/index.js");
 	const request = { numbered: false, offset: 1, limit: null, tail: null, signal };
 	const handle = await open(filePath, "r");
 	let rendered: Awaited<ReturnType<typeof renderDocument>>;
@@ -259,8 +259,8 @@ async function readFileReferenceAsync(fileArg: string, options: FileReferenceOpt
 		if (isPdf) {
 			// PDF bytes are not text context; share read's bounded page extraction (#438).
 			const [{ pdfTextHeader, renderPdf }, { truncateUtf8 }] = await Promise.all([
-				import("../tools/read-documents/pdf.js"),
-				import("../tools/truncate-utf8.js"),
+				import("./read-documents/pdf.js"),
+				import("./truncate-utf8.js"),
 			]);
 			options.onExtract?.(filePath);
 			const rendered = await renderPdf(filePath, {

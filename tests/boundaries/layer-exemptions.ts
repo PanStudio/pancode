@@ -14,13 +14,9 @@ export const LAYER_EXEMPTIONS: {
 	dependsOn: ReadonlyMap<string, number>;
 } = {
 	core: new Map([
-		["src/core/file-references.ts -> src/tools", 4],
 		["src/core/settings-controls.ts -> src/domains/config", 1],
 		["src/core/settings-controls.ts -> src/domains/providers", 3],
-		["src/core/settings-validate-sections.ts -> src/domains/system-one", 1],
-		["src/core/settings-validate.ts -> src/domains/turn-control", 1],
 		["src/core/termination.ts -> src/engine", 1],
-		["src/core/turn-constraints.ts -> src/tools", 1],
 	]),
 	barrel: new Map([
 		["src/domains/agents -> src/domains/config", 1],

@@ -11,8 +11,8 @@
 import type { StoreTagClass } from "@pancode/store/backend";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 import type { ProfileId } from "../domains/system-one/profiles.js";
-import type { TurnControlSettings } from "../domains/turn-control/index.js";
 import type { AutonomyLevel, YoloConfinement } from "../lib/autonomy/autonomy.js";
+import type { TurnControlSettings } from "../lib/turn-control/index.js";
 import type { FundingDefinitions } from "./funding-config.js";
 import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
@@ -222,6 +222,18 @@ export interface DurableCompactionSettings {
  *     Main agent only: workers run their own in-memory guard.
  */
 export type WorkingSetPolicyId = "age-horizon" | "structural-v1" | "structural-v2";
+/** System-one capability profiles selectable by hand; the settings validator reads them here so core needs no domain import. */
+export const PROFILE_IDS = [
+	"generic",
+	"jev",
+	"laya",
+	"laya-multilingual",
+	"julia-1",
+	"gliner2.5-small",
+	"gliner2.5-decide",
+	"strands-decider",
+] as const;
+
 export const WORKING_SET_PROFILE_IDS = ["default", "data-analysis", "web-design"] as const;
 export type WorkingSetProfileId = (typeof WORKING_SET_PROFILE_IDS)[number];
 

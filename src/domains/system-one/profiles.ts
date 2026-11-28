@@ -20,20 +20,12 @@
  */
 
 import { existsSync } from "node:fs";
+import { PROFILE_IDS } from "../../core/defaults.js";
 import type { ReadoutKind, SemanticKind } from "./contract.js";
 import { MAX_CHOICE_OPTIONS } from "./questions.js";
 import type { EngineCapabilities, Question } from "./types.js";
 
-export const PROFILE_IDS = [
-	"generic",
-	"jev",
-	"laya",
-	"laya-multilingual",
-	"julia-1",
-	"gliner2.5-small",
-	"gliner2.5-decide",
-	"strands-decider",
-] as const;
+export { PROFILE_IDS };
 /** Selectable on a typed-wire engine. `llm-structured` is what any chat target declares and is not chosen by hand. */
 export type ProfileId = (typeof PROFILE_IDS)[number] | "llm-structured";
 

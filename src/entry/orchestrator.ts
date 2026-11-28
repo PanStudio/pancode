@@ -23,7 +23,6 @@ import {
 } from "../core/defaults.js";
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
-import { detectSupportedImageMimeType } from "../core/file-references.js";
 import { setAutonomousCommitProcess, setCommitDecisionRefsProvider } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
 import { HEADLESS_PERMISSION_DENIED_REASON } from "../core/headless-permission.js";
@@ -59,6 +58,7 @@ import { registerResearchTraceSink } from "../core/telemetry/research-trace.js";
 import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
 import { yieldToEventLoop } from "../core/timers.js";
 import { ToolNames } from "../core/tool-names.js";
+import { surfaceSpecPlacement } from "../core/tool-surface.js";
 import { narrowTurnConstraints, templateTurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
 import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/workspace-trust.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
@@ -321,7 +321,7 @@ import type { ReloadTarget } from "../session-control/reload-report.js";
 import type { RunIo } from "../session-control/slash-command-types.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
-import { surfaceSpecPlacement } from "../tools/surface.js";
+import { detectSupportedImageMimeType } from "../tools/file-references.js";
 import type { BootOptions } from "./boot-options.js";
 import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import {

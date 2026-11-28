@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { prepareBoundedImage } from "../../core/file-references.js";
 import { resolveSafeCwd } from "../../core/safe-exec.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { DISPLAY_IMAGES_MAX_CHARS, MAX_DISPLAY_IMAGES, type ToolResultImage } from "../../core/tool-result-images.js";
@@ -15,6 +14,7 @@ import {
 } from "../../domains/lifecycle/browser-component.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { ImageContent } from "../../engine/types.js";
+import { prepareBoundedImage } from "../file-references.js";
 import {
 	commitObservationReservation,
 	finalizeObservation,

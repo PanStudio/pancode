@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { sha256Hex } from "../../core/hash.js";
-import { gatewayChainReceipts } from "../../tools/surface.js";
+import { gatewayChainReceipts } from "../../core/tool-surface.js";
 import type { ObservationSourceUnit } from "../memory/index.js";
 import { serializeConversation } from "./compaction/branch-summary.js";
 import type { SessionEntry } from "./entries.js";

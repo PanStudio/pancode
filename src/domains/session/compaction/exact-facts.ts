@@ -16,10 +16,10 @@
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { sha256Hex } from "../../../core/hash.js";
+import { effectiveToolCall, expandChainMessages } from "../../../core/tool-surface.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { expandPath } from "../../../tools/path-utils.js";
 import { shellExitSpeaksForCommand } from "../../../tools/shell-exit-scope.js";
-import { effectiveToolCall, expandChainMessages } from "../../../tools/surface.js";
 import type { recallableRefs } from "../../context/working-set/recall.js";
 import type { SessionEntry } from "../entries.js";
 

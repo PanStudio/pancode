@@ -2114,7 +2114,7 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
  *      Those are orchestrator-only; a worker reaches them by dynamic import
  *      at most, so they never load before the worker reads its spec.
  *   3. src/domains/<x> never imports src/domains/<y>/extension.ts for y != x.
- *   7. src/domains/turn-control/** imports no interactive, engine, tools or
+ *   7. src/lib/turn-control/** imports no interactive, engine, tools or
  *      worker modules, and reaches other domains only through index.ts.
  *   4. src/tools/** never imports src/interactive/**. The tool substrate is
  *      surface-agnostic: headless, interactive, ACP, and worker runs share it,
@@ -2175,6 +2175,7 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
 export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const srcRoot = path.join(projectRoot, "src");
 	const engineRoot = path.join(srcRoot, "engine");
+	const turnControlRoot = path.join(srcRoot, "lib", "turn-control");
 	const workerRoot = path.join(srcRoot, "worker");
 	const domainsRoot = path.join(srcRoot, "domains");
 	const providersDomainRoot = path.join(domainsRoot, "providers");
@@ -2236,6 +2237,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		const inWorker = isWithin(filePath, workerRoot);
 		const fromDomain = domainOf(filePath, domainsRoot);
 		const inTools = isWithin(filePath, toolsRoot);
+		const inTurnControl = isWithin(filePath, turnControlRoot);
 		const inSessionControl = isWithin(filePath, sessionControlRoot);
 		const isChatLoopModule = inSessionControl && isChatLoopTurnModule(filePath);
 		const inCli = isWithin(filePath, cliRoot);
@@ -2273,14 +2275,12 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 			const resolved = resolveRelativeImport(filePath, specifier);
 			const targetDomain = domainOf(resolved, domainsRoot);
 			if (
-				fromDomain === "turn-control" &&
+				inTurnControl &&
 				(isWithin(resolved, interactiveRoot) ||
 					isWithin(resolved, engineRoot) ||
 					isWithin(resolved, toolsRoot) ||
 					isWithin(resolved, workerRoot) ||
-					(targetDomain !== null &&
-						targetDomain !== fromDomain &&
-						resolved !== path.join(domainsRoot, targetDomain, "index.ts")))
+					(targetDomain !== null && resolved !== path.join(domainsRoot, targetDomain, "index.ts")))
 			) {
 				const qualifier = typeOnly ? " (type-only)" : "";
 				violations.push(

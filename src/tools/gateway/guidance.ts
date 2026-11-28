@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { discoveryScore } from "../../core/harness-discovery.js";
+import { surfaceSpecPlacement } from "../../core/tool-surface.js";
 import { validateEngineToolArguments } from "../../engine/ai.js";
-import { surfaceSpecPlacement } from "../surface.js";
 import type { ToolSpec, ToolUsageExample } from "../tool-spec.js";
 
 const EXAMPLE_MAX_BYTES = 768;

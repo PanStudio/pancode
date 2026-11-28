@@ -12,6 +12,7 @@ import { pathToFileURL } from "node:url";
 import { messageCallsForAccounting } from "../../core/message-accounting.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { displayImageMimeType, toolResultImages, toolResultShotPaths } from "../../core/tool-result-images.js";
+import { effectiveToolCall } from "../../core/tool-surface.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
@@ -33,7 +34,6 @@ import {
 import { CONTEXT_STATUS_NOTICE_KEY } from "../../session-control/compaction-lines.js";
 import { gatewayChainPlan } from "../../tools/gateway-display.js";
 import { toolResultPresentationText } from "../../tools/result-disposition.js";
-import { effectiveToolCall } from "../../tools/surface.js";
 import type { AgentMessage } from "../types.js";
 import { clippedArgsCommand } from "../worker-refusals.js";
 import { commandResultLines } from "./command-result.js";

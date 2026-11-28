@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import {
@@ -9,7 +11,6 @@ import {
 	type StepChainData,
 } from "../domains/session/entries.js";
 import { filterEntriesToActivePath, findLastEntry } from "../domains/session/tree/active-path.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 
 /**
  * Compact start for step turns (WTF-P 0.8.3 C5). Under a template's

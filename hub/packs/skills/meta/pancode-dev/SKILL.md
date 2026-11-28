@@ -7,7 +7,7 @@ triggers:
   - change PanCode context or session lifecycle
   - edit PanCode skills tools or prompts
   - work a PanCode lane brief or spec
-version: 0.7.3
+version: 0.7.4
 license: LicenseRef-PanCode-1.0
 pancode:
   registry-id: PanStudio/pancode

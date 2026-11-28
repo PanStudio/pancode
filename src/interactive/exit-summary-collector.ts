@@ -9,6 +9,7 @@ import { factRef } from "../core/telemetry/dto.js";
 import type { EconomyQuantities } from "../core/telemetry/economy.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import { freshCachedTokens, renderUpperBound } from "../core/telemetry/render.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import { isRecord } from "../core/type-guards.js";
 import {
 	usageCoverage,
@@ -35,7 +36,6 @@ import type { TelemetryContract } from "../domains/telemetry/index.js";
 import type { ChatLoopEvent } from "../session-control/chat-loop.js";
 import { COUNCIL_SEALED_REPORT_AGENT_ID } from "../session-control/council.js";
 import type { WorkerRunResultFacts } from "../session-control/worker-stream.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 import {
 	neverSentCallCount,
 	sentCallCount,

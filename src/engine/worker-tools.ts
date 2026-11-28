@@ -19,6 +19,7 @@ import type { McpAttestedSkill } from "../domains/resources/skills/mcp-source.js
 import { sha256Hex } from "../core/hash.js";
 import { workerReadOnlyTargetViolation, workerSandboxWritesNothing } from "../core/sandbox/worker-process.js";
 import { type ToolName, ToolNames } from "../core/tool-names.js";
+import { runtimeAttachesGateway } from "../core/tool-surface.js";
 import type { MiddlewareHookRegistration, MiddlewareSnapshot } from "../domains/middleware/index.js";
 import { createMiddlewareHostFromSnapshot } from "../domains/middleware/snapshot.js";
 import { classify as classifyAction } from "../domains/safety/action-classifier.js";
@@ -48,7 +49,6 @@ import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { registerHarnessExtensionTools } from "../tools/harness-extensions.js";
 import { createRegistry } from "../tools/registry.js";
 import type { RegistryDeps, ToolRegistry } from "../tools/registry-contract.js";
-import { runtimeAttachesGateway } from "../tools/surface.js";
 import { type AgentLedgerPort, toolSignatureOf } from "../worker/protocol.js";
 
 /** Host-owned terminal protocol, never an additional workspace capability. */

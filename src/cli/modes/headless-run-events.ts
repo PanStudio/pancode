@@ -10,6 +10,7 @@ import {
 import { modelRouteRefusalOf } from "../../core/response-model-id.js";
 import { skillActivationFromToolDetails } from "../../core/skill-activation.js";
 import { type BuiltinToolName, ToolNames } from "../../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { settledVerifyCall, verifyCallStart } from "../../domains/dispatch/run-findings.js";
 import { resultNotExecuted } from "../../domains/dispatch/tool-stats.js";
 import type { SafetyBlockedAttempt, ToolCallStat } from "../../domains/dispatch/types.js";
@@ -32,7 +33,6 @@ import {
 import { completionOfToolResult } from "../../tools/finish.js";
 import { TOOL_PLANES } from "../../tools/policy.js";
 import { toolResultText } from "../../tools/result-disposition.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../../tools/surface.js";
 import type { HeadlessMainAgentResult, HeadlessMainAgentRunStats } from "./headless-run-types.js";
 import {
 	currentPlacementChangedPaths,

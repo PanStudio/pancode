@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ToolNames } from "../../core/tool-names.js";
-import { effectiveToolCall, expandChainMessages } from "../../tools/surface.js";
+import { effectiveToolCall, expandChainMessages } from "../../core/tool-surface.js";
 import { callVerdict } from "./check-classifier.js";
 import type { FinishContractEvidence } from "./finish-contract.js";
 import { detectValidationCommand } from "./protected-artifacts.js";

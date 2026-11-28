@@ -30,8 +30,8 @@ import {
 	type ToolName,
 	ToolNames,
 } from "../../core/tool-names.js";
+import { directSurfaceNames, withGatewayForCapabilities } from "../../core/tool-surface.js";
 import { applyToolProfile, type ToolProfileName } from "../../tools/profiles.js";
-import { directSurfaceNames, withGatewayForCapabilities } from "../../tools/surface.js";
 import { type WorkerStaticHeadInput, workerEnvelopeDigest, workerStaticHead } from "../../worker/protocol.js";
 import { roleExcludes, roleHeldTools, roleRemedy, toolActionClass } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";

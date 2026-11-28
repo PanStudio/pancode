@@ -267,7 +267,7 @@
 				"work a PanCode lane brief or spec"
 			],
 			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-dev",
-			"version": "0.7.3",
+			"version": "0.7.4",
 			"audit": "pass",
 			"category": "meta"
 		},

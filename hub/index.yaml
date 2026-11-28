@@ -637,9 +637,9 @@ entries:
       - change PanCode context or session lifecycle
       - edit PanCode skills tools or prompts
       - work a PanCode lane brief or spec
-    version: 0.7.3
+    version: 0.7.4
     sourceUrl: packs/skills/meta/pancode-dev
-    sha256: ad545ecd4f6ad03c0898abad89dcd200118450b090a524a5dc580b124b5bbcae
+    sha256: 926f53e65f0b6bad1b267db2e8f1ca80b536b4c5d7b2366cca92ad29004f16fe
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

@@ -4,6 +4,7 @@ import type { WorkerRosters } from "../core/defaults.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { getTerminationCoordinator } from "../core/termination.js";
 import { ToolNames } from "../core/tool-names.js";
+import { coordinatorToolPlacement } from "../core/tool-surface.js";
 import type { AgentSpec } from "../domains/agents/spec.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
@@ -45,7 +46,6 @@ import type { ReportToolDeps } from "./report.js";
 import { reportToolSurface } from "./report-surface.js";
 import { createSelfCompactTool, type RequestSelfCompact } from "./self-compact.js";
 import { steerToolSurface } from "./steer-surface.js";
-import { coordinatorToolPlacement } from "./surface.js";
 import type { ToolSpec } from "./tool-spec.js";
 
 export { toolPromptHintsForNames };

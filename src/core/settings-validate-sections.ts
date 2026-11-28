@@ -11,9 +11,14 @@ import {
 	validateStoreProjectId,
 	validateStoreRoots,
 } from "@pancode/store/paths";
-import { PROFILE_IDS } from "../domains/system-one/profiles.js";
 import type { PancodeSettings } from "./config.js";
-import { STORE_BACKEND_KINDS, type StoreS3Setting, type StoreSharedSetting, THINKING_LEVELS } from "./defaults.js";
+import {
+	PROFILE_IDS,
+	STORE_BACKEND_KINDS,
+	type StoreS3Setting,
+	type StoreSharedSetting,
+	THINKING_LEVELS,
+} from "./defaults.js";
 import { MODEL_TIERS } from "./model-tier.js";
 import { parseEgressAllowEntry, upstreamProxyProblem } from "./sandbox/egress/policy.js";
 import { homeReadRootProblem } from "./sandbox/home-read-roots.js";
