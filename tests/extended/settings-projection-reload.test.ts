@@ -4,9 +4,9 @@ import { deepStrictEqual, ok } from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { type SettingsMutator, updateSettings } from "../../src/core/config.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
 import { isolatePancodeEnv, scratchPancodeEnvVars } from "../harness/scratch-env.js";
 
 test("saved next-turn settings reach the running guardrail consumer", async () => {

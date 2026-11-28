@@ -65,7 +65,7 @@ const ADAPTED_MIT = new Map([
 
 /** Files a generator writes; the generator's own source carries the header. */
 const GENERATED = new Set([
-	"src/engine/acp/upstream-schema.ts", // scripts/acp-schema.ts
+	"src/acp/upstream-schema.ts", // scripts/acp-schema.ts
 	"site/css/brand.css", // site/tokens.mjs
 	"apps/pancode-gui/client/design/brand.css", // apps/pancode-gui/scripts/sync-brand.mjs
 ]);

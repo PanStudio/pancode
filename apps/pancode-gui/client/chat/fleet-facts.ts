@@ -467,7 +467,7 @@ export function fleetEvidence(items: readonly FleetItemLike[]): readonly FleetEv
 
 /**
  * The engine answers a refused steer with a closed reason code
- * (src/engine/acp/server-session-input.ts, `dispatchSteerReason`). Each reads as a sentence the
+ * (src/acp/server-session-input.ts, `dispatchSteerReason`). Each reads as a sentence the
  * operator can act on. An unknown code is printed as reported, never hidden.
  */
 export const STEER_REFUSALS: Readonly<Record<string, string>> = {

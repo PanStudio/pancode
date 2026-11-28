@@ -8,7 +8,7 @@
  * result.
  *
  * Keyed on the canonical PanCode tool name the ACP frame carries (`toolNameOf`);
- * the title is the call's display words (src/engine/acp/server-tool-updates.ts). `item.toolKind` is a five-value UI hint whose
+ * the title is the call's display words (src/acp/server-tool-updates.ts). `item.toolKind` is a five-value UI hint whose
  * mapping is lossy (git, dispatch and steer all become `other`; read, ls,
  * context and monitor all become `read`), so it is only the fallback for MCP and
  * dynamic tools.

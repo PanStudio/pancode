@@ -71,7 +71,7 @@ the repository handbook are enforced by `pnpm run lint`.
 - Export hygiene: an `export function` whose name appears in one file fails
   lint. Remove the keyword, then `pnpm exec biome check --write <file>`.
 - GUI contract: after editing `src/core/telemetry/dto.ts` or a schema module
-  it imports, `src/engine/acp/types.ts` or a `types-*.ts` module beside it,
+  it imports, `src/acp/types.ts` or a `types-*.ts` module beside it,
   or `apps/pancode-gui/contracts/*.ts`,
   run `pnpm --filter pancode-gui run openapi` and commit
   `apps/pancode-gui/contracts/openapi.json`. Only `test:gui` catches a

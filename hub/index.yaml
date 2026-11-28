@@ -639,7 +639,7 @@ entries:
       - work a PanCode lane brief or spec
     version: 0.7.4
     sourceUrl: packs/skills/meta/pancode-dev
-    sha256: 452cd6f6245b2f37cba0c8969ea01227ca54fd153aea377331d75edf68623f79
+    sha256: 283b5215edbfed37c9c5f40b9e62f7c335e77b0c4898e4986ac1e53b81fd55a9
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

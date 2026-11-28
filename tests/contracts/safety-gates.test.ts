@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
+import { AcpToolMediator } from "../../src/acp/tool-mediator.js";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { recordProjectSurfaceTrust, safetySurfaceTrustHash } from "../../src/core/workspace-trust.js";
@@ -33,7 +34,6 @@ import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy
 import { protectedArtifactMutationBlockReason } from "../../src/domains/safety/protected-artifacts.js";
 import { createRunEffectsRecorder } from "../../src/domains/safety/run-effects.js";
 import { scanShellLike } from "../../src/domains/safety/shell-scan.js";
-import { AcpToolMediator } from "../../src/engine/acp/tool-mediator.js";
 import { emitClaudeToolPermissionDecision } from "../../src/engine/claude/tool-safety.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";

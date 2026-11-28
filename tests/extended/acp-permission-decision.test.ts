@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { createRegistry } from "../../src/tools/registry.js";

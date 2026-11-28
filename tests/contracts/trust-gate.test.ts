@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, 
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { settingsPath } from "../../src/core/config.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import {
@@ -26,7 +27,6 @@ import { createMiddlewareBundle } from "../../src/domains/middleware/extension.j
 import { loadUserHooks, userHookToRegistration } from "../../src/domains/middleware/hooks.js";
 import { buildUserHookRegistrations, spawnSyncCommandRunner } from "../../src/domains/middleware/hooks-io.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
 import { createExtensionReloadCoordinator } from "../../src/entry/extension-reload.js";
 import { middlewareOwner } from "../harness/middleware-owner.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

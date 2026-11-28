@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Browser-safe ACP values, without pulling the wire validators into the shell.
-export { ACP_MAX_JOBS } from "../../../../src/engine/acp/runtime.js";
+export { ACP_MAX_JOBS } from "../../../../src/acp/runtime.js";
 
 // The modules that own these numbers also build TypeBox schemas at load, which no browser chunk should carry.
 // They are restated here; tests/contracts.test.ts holds each equal to its source.

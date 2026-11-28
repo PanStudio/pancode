@@ -20,15 +20,15 @@ export { ESCAPE_SCOPE_OPTION_PREFIX } from "../../../../src/domains/safety/escap
 export {
 	AcpProtocolError,
 	AcpTimeoutError,
-} from "../../../../src/engine/acp/errors.js";
-export type { AcpJsonRpcTransport } from "../../../../src/engine/acp/transport.js";
-export { createStdioTransport } from "../../../../src/engine/acp/transport.js";
-export type * from "../../../../src/engine/acp/types.js";
-export type * from "../../../../src/engine/acp/types-capabilities.js";
-export type * from "../../../../src/engine/acp/types-fleet.js";
-export type * from "../../../../src/engine/acp/types-readouts.js";
-export type * from "../../../../src/engine/acp/types-session.js";
-export type * from "../../../../src/engine/acp/types-settings.js";
-export type * from "../../../../src/engine/acp/types-tools.js";
-export type * from "../../../../src/engine/acp/types-views.js";
+} from "../../../../src/acp/errors.js";
+export type { AcpJsonRpcTransport } from "../../../../src/acp/transport.js";
+export { createStdioTransport } from "../../../../src/acp/transport.js";
+export type * from "../../../../src/acp/types.js";
+export type * from "../../../../src/acp/types-capabilities.js";
+export type * from "../../../../src/acp/types-fleet.js";
+export type * from "../../../../src/acp/types-readouts.js";
+export type * from "../../../../src/acp/types-session.js";
+export type * from "../../../../src/acp/types-settings.js";
+export type * from "../../../../src/acp/types-tools.js";
+export type * from "../../../../src/acp/types-views.js";
 export { WORKSPACE_SECRET_PATHS } from "../../../../src/lib/secrets/secret-paths.js";

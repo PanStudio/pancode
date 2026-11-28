@@ -514,7 +514,7 @@ it("continuation state has one owner: a nudge per prompt, carried or resubmitted
 		'import type { ChatTurnState } from "./turn-state.js";',
 	])
 		ok(checkTurnStateOwnership(module, source)[0]?.startsWith("rule16:"), source);
-	deepStrictEqual(checkTurnStateOwnership("src/engine/acp/server.ts", "active.continuation = null;"), []);
+	deepStrictEqual(checkTurnStateOwnership("src/acp/server.ts", "active.continuation = null;"), []);
 	deepStrictEqual(checkTurnStateOwnership("src/session-control/turn-state.ts", "state.turnStop = null;"), []);
 });
 

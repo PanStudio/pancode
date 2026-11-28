@@ -29,11 +29,11 @@ export {
 	TELEMETRY_DTO_SCHEMAS,
 } from "../../../../src/core/telemetry/dto.js";
 export type { ContextActivityPayload } from "../../../../src/core/telemetry/live-events.js";
-export * from "../../../../src/engine/acp/types.js";
-export * from "../../../../src/engine/acp/types-capabilities.js";
-export * from "../../../../src/engine/acp/types-fleet.js";
-export * from "../../../../src/engine/acp/types-readouts.js";
-export * from "../../../../src/engine/acp/types-session.js";
-export * from "../../../../src/engine/acp/types-settings.js";
-export * from "../../../../src/engine/acp/types-tools.js";
-export * from "../../../../src/engine/acp/types-views.js";
+export * from "../../../../src/acp/types.js";
+export * from "../../../../src/acp/types-capabilities.js";
+export * from "../../../../src/acp/types-fleet.js";
+export * from "../../../../src/acp/types-readouts.js";
+export * from "../../../../src/acp/types-session.js";
+export * from "../../../../src/acp/types-settings.js";
+export * from "../../../../src/acp/types-tools.js";
+export * from "../../../../src/acp/types-views.js";

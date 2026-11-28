@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { ExtensionCommandRow } from "../../src/domains/extensions/operator-commands.js";
 import type { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 
 const refuse = (member: string) =>
 	new Proxy(

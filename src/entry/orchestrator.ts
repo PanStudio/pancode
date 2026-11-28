@@ -4,6 +4,18 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
+import type { AcpHostReport } from "../acp/commands.js";
+import {
+	bindBoardActions,
+	createAcpElicitationChannel,
+	createAcpInterviewChannel,
+	createHostToolEvents,
+	followWorkerRuns,
+	oracleBriefingFromEntries,
+	runHostDispatch,
+} from "../acp/host-members.js";
+import type { AcpHandoffControl } from "../acp/server-options.js";
+import { createStdioServerTransport } from "../acp/transport.js";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
 import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
 import { mcpLiveStatuses } from "../cli/mcp.js";
@@ -270,18 +282,6 @@ import {
 	pruneWorkspaceSnapshots,
 	workspaceSnapshotRepositoryPresent,
 } from "../domains/workspace-snapshots/index.js";
-import type { AcpHostReport } from "../engine/acp/commands.js";
-import {
-	bindBoardActions,
-	createAcpElicitationChannel,
-	createAcpInterviewChannel,
-	createHostToolEvents,
-	followWorkerRuns,
-	oracleBriefingFromEntries,
-	runHostDispatch,
-} from "../engine/acp/host-members.js";
-import type { AcpHandoffControl } from "../engine/acp/server-options.js";
-import { createStdioServerTransport } from "../engine/acp/transport.js";
 import {
 	declareRuntimeNoticeProducer,
 	EXIT_RELEASE_MS,
@@ -3062,7 +3062,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// the session/update union (agent_message_chunk, agent_thought_chunk,
 		// tool_call*, plan, …) carries turn content, and notifications outside
 		// an active session/prompt would break strict clients (see the matching
-		// note in src/engine/acp/server-tool-updates.ts). The external-divergence and
+		// note in src/acp/server-tool-updates.ts). The external-divergence and
 		// target-removed notices therefore go to the session ledger as `custom`
 		// entries, where /resume and session tooling can surface them.
 		// ACP is operatorless too: bound a runaway turn with the shared
@@ -3117,8 +3117,8 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// two fleets would race over one workspace.
 		let acpFleetInFlight: { name: string; fleetRootId: string } | null = null;
 		const [{ acpCommandControl }, { servePancodeAcpAgent }] = await Promise.all([
-			import("../engine/acp/commands.js"),
-			import("../engine/acp/server.js"),
+			import("../acp/commands.js"),
+			import("../acp/server.js"),
 		]);
 		try {
 			const transport = options.acp.transport ?? createStdioServerTransport(options.acp.transportOptions);

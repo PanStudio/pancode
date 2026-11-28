@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import type { AcpExtensionReloadOutcome, AcpInstalledExtension } from "../../src/engine/acp/extensions.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import type { AcpExtensionReloadOutcome, AcpInstalledExtension } from "../../src/acp/extensions.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 
 const EXTENSION = (overrides: Partial<AcpInstalledExtension>): AcpInstalledExtension => ({
 	id: "survey-tools",

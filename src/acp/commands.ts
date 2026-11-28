@@ -1,0 +1,1060 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { AcpCommandsCapability } from "./types-capabilities.js";
+import type {
+	AcpCommandArgsSpec,
+	AcpCommandCatalog,
+	AcpCommandDescriptor,
+	AcpCommandFlagSpec,
+	AcpCommandPositionalSpec,
+	AcpCommandReportMeta,
+	AcpCommandResult,
+	AcpTypedCommand,
+} from "./types-views.js";
+
+export type { AcpCommandArgsSpec, AcpCommandCatalog, AcpCommandDescriptor } from "./types-views.js";
+
+/**
+ * The operator command catalog, projected onto ACP.
+ *
+ * Two methods ride the `_meta` seam: `_pancode/commands/list` hands a client
+ * the grammar it needs to build an argument UI, and
+ * `_pancode/commands/invoke` runs one of them headlessly. Neither adds a
+ * `sessionUpdate` kind or a top-level response field, so protocolVersion stays
+ * at 1.
+ *
+ * Each definition in the shared session command registry owns its ACP
+ * admission and turn/stream behavior. This adapter projects that metadata and
+ * supplies the host's operations and output sink.
+ */
+import type { JobRecord } from "../core/job-types.js";
+import type { PendingSkillRequest } from "../core/skill-activation.js";
+import { ToolNames } from "../core/tool-names.js";
+import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { NOTICE_LEVELS, type NoticeLevel } from "../core/views/notice-words.js";
+import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import { consentText } from "../domains/report/index.js";
+import {
+	type ExtensionLineAnswer,
+	extensionLineCommands,
+	screenExtensionLine,
+	typedLineCommands,
+} from "../session-control/extension-line.js";
+import { parseLoopArgv } from "../session-control/loop-command.js";
+import type { ReloadTarget } from "../session-control/reload-report.js";
+import type { SlashCommand, SlashCommandContext, SlashCommandKind } from "../session-control/slash-command-types.js";
+import { BUILTIN_SLASH_COMMANDS, parseSlashCommand } from "../session-control/slash-commands.js";
+import { dispatchSlashCommand } from "../session-control/slash-dispatch.js";
+import { commandReference } from "../session-control/slash-reference.js";
+import type { CommandArgsSpec, CommandFlagSpec, CommandPositionalSpec } from "../session-control/slash-spec.js";
+import { bounded, commandResultLines } from "./command-result.js";
+import { AcpRequestError } from "./errors.js";
+import {
+	ACP_COMMANDS_INVOKE_METHOD,
+	ACP_COMMANDS_LIST_METHOD,
+	ACP_COMMANDS_META_KEY,
+	ACP_PROMPT_META_KEY,
+} from "./types.js";
+
+export { ACP_COMMANDS_INVOKE_METHOD, ACP_COMMANDS_LIST_METHOD, ACP_COMMANDS_META_KEY };
+
+/**
+ * Bounds on the catalog and on one invocation's result (CONTRACT C001 §3).
+ * A client renders every line it receives; a command that streams a worker's
+ * output through `io.stderr` can produce thousands of them, and a `values`
+ * array comes from a settings-derived list that grows with the install.
+ */
+const ACP_MAX_COMMAND_NAME_BYTES = 64;
+const ACP_MAX_COMMAND_TEXT_BYTES = 512;
+const ACP_MAX_COMMAND_VALUES = 64;
+const ACP_MAX_COMMAND_FLAGS = 32;
+const ACP_MAX_COMMAND_POSITIONALS = 8;
+const ACP_MAX_COMMAND_SUBCOMMANDS = 16;
+const ACP_MAX_COMMAND_ARGV = 32;
+const ACP_MAX_COMMAND_ARGV_BYTES = 4096;
+const ACP_MAX_COMMAND_RESULT_LINES = 200;
+
+/**
+ * How a command behaves once it is running, beyond its return value. Both
+ * flags exist because the honest answer is "this control does something you
+ * will not see here", and a client that does not know that renders a button
+ * that looks broken.
+ */
+interface AcpCommandRule {
+	name: string;
+	/**
+	 * Only these subcommands are admitted. Present for the three commands whose
+	 * bare form opens an overlay (`/context`, `/tasks`, `/memory`): the verbs are
+	 * wire-shaped, the browser they share a name with is not.
+	 */
+	subcommands?: ReadonlyArray<string>;
+	/**
+	 * The command dispatches a worker and returns before it finishes. Its result
+	 * is "started"; everything interesting arrives as `_pancode/event` dispatch
+	 * kinds. A client not consuming those sees a control that appears to do
+	 * nothing.
+	 */
+	streams?: "dispatch";
+	/**
+	 * The command puts operator-authored text into the session as a user turn,
+	 * outside any `session/prompt`. A client will observe a turn it never
+	 * prompted; that is the contract, not a protocol violation.
+	 */
+	injectsUserTurn?: true;
+	/**
+	 * First arguments of an {@link injectsUserTurn} command that submit nothing.
+	 * `/loop` fires turns later, but listing and stopping its jobs must stay
+	 * available while a prompt runs: a runaway loop is stopped mid-turn.
+	 */
+	injectsUserTurnExcept?: ReadonlyArray<string>;
+	/**
+	 * The command's work runs as a conversation turn: the tool calls it makes on
+	 * the operator's behalf, and the approvals they park, belong to a
+	 * `session/prompt` the client can see. `/council` is one because a council
+	 * is a plan-scale dispatch that supervised autonomy parks for approval, and
+	 * an approval with no visible call to bind to is refused.
+	 */
+	promptTurn?: true;
+	/** Subcommands whose work runs as a conversation turn, as {@link promptTurn} does for a whole command. */
+	promptTurnSubcommands?: ReadonlyArray<string>;
+	/** First arguments that only read, with `""` for the bare form; the rest are refused under a ceiling. */
+	reads?: ReadonlyArray<string>;
+	/** First arguments that only stop, pause or reshape the session's own context; a ceiling admits them as reads. */
+	sessionOnly?: ReadonlyArray<string>;
+	/** The whole command, or these first arguments, write or delegate, so a read-only ceiling refuses them even as turns. */
+	readOnlyRefuses?: true | ReadonlyArray<string>;
+}
+
+/**
+ * The 14 commands whose whole result is text, plus the verbs of the three
+ * hub commands. Everything absent from this list is either TUI-bound (it
+ * reaches `keyboardActions`, an overlay, or the editor) or already reachable
+ * over ACP by other means, and is refused by name.
+ */
+export const ACP_COMMAND_RULES: ReadonlyArray<AcpCommandRule> = BUILTIN_SLASH_COMMANDS.flatMap((entry) =>
+	entry.acp === false ? [] : [{ name: entry.name, ...entry.acp }],
+);
+
+/** Host capabilities required by each advertised operation. Grammar stays in the slash registry. */
+const COMMAND_REQUIREMENTS: Record<string, ReadonlyArray<keyof AcpCommandHost>> = {
+	eggs: ["eggsCommand"],
+	doctor: ["runDoctor"],
+	share: ["listWorkerRuns", "submitOperatorNote"],
+	fleet: ["listWorkerRuns", "submitOperatorNote"],
+	archive: ["exportShareArchive", "importShareArchive"],
+	oracle: ["oracleBriefing", "submitOperatorNote"],
+	council: ["runCouncilDispatch", "getWorkerRosters"],
+	poll: ["runCouncilDispatch"],
+	skill: ["submitTurn", "parsePendingSkillRequests", "clearSkillSurface"],
+	tasks: ["userTasks", "submitTurn"],
+	memory: ["seedTaskMemory"],
+	remember: ["operatorMemory"],
+	export: ["exportTranscript"],
+	loop: ["jobs"],
+	report: ["reportHost"],
+	reload: ["reloadClasses"],
+};
+const CONTEXT_REQUIREMENTS: Record<string, keyof AcpCommandHost> = {
+	compact: "runCompact",
+	recall: "runContextRecall",
+	init: "runInit",
+	refresh: "runContextRefresh",
+	reset: "runContextClear",
+	recover: "runHandoffRecovery",
+};
+function availableRules(host?: AcpCommandHost): ReadonlyArray<AcpCommandRule> {
+	if (!host) return ACP_COMMAND_RULES;
+	return ACP_COMMAND_RULES.flatMap((rule) => {
+		if (!(COMMAND_REQUIREMENTS[rule.name] ?? []).every((key) => host[key] !== undefined)) return [];
+		if (rule.name !== "context") return [rule];
+		const subcommands =
+			rule.subcommands?.filter(
+				(name) => CONTEXT_REQUIREMENTS[name] !== undefined && host[CONTEXT_REQUIREMENTS[name]] !== undefined,
+			) ?? [];
+		return subcommands.length ? [{ ...rule, subcommands }] : [];
+	});
+}
+
+const RULE_BY_NAME = new Map(ACP_COMMAND_RULES.map((rule) => [rule.name, rule]));
+
+/** A registry name in the allowlist that the registry does not own is a build mistake, not a runtime one. */
+for (const rule of ACP_COMMAND_RULES) {
+	if (!BUILTIN_SLASH_COMMANDS.some((entry) => entry.name === rule.name)) {
+		throw new Error(`ACP_COMMAND_RULES: "${rule.name}" is not a registered slash command`);
+	}
+}
+
+export const ACP_COMMANDS_CAPABILITY = {
+	version: 1,
+	list: ACP_COMMANDS_LIST_METHOD,
+	invoke: ACP_COMMANDS_INVOKE_METHOD,
+	count: ACP_COMMAND_RULES.length,
+} as const;
+
+/* -------------------------------------------------------------------------- */
+/* Catalog projection                                                          */
+/* -------------------------------------------------------------------------- */
+
+function projectValues(values: ReadonlyArray<string> | undefined): string[] | undefined {
+	if (values === undefined || values.length === 0) return undefined;
+	return values.slice(0, ACP_MAX_COMMAND_VALUES).map((value) => bounded(value, ACP_MAX_COMMAND_NAME_BYTES));
+}
+
+function projectFlag(flag: CommandFlagSpec): AcpCommandFlagSpec {
+	const values = projectValues(flag.values);
+	return {
+		name: bounded(flag.name, ACP_MAX_COMMAND_NAME_BYTES),
+		...(flag.takesValue === true ? { takesValue: true } : {}),
+		...(flag.repeatable === true ? { repeatable: true } : {}),
+		...(values ? { values } : {}),
+		...(flag.valueName !== undefined ? { valueName: bounded(flag.valueName, ACP_MAX_COMMAND_NAME_BYTES) } : {}),
+		...(flag.completionSlot !== undefined ? { completionSlot: flag.completionSlot } : {}),
+	};
+}
+
+function projectPositional(positional: CommandPositionalSpec): AcpCommandPositionalSpec {
+	const values = projectValues(positional.values);
+	return {
+		name: bounded(positional.name, ACP_MAX_COMMAND_NAME_BYTES),
+		required: positional.required,
+		...(values ? { values } : {}),
+		...(positional.rest === true ? { rest: true } : {}),
+		...(positional.completionSlot !== undefined ? { completionSlot: positional.completionSlot } : {}),
+	};
+}
+
+/**
+ * The grammar, minus the two parser-internal switches. `parseFlagsBeforeRest`
+ * and `parseFlagsInRest` describe how this process tokenizes a line, and a
+ * client that never builds the line has no use for them; `invokeAcpCommand`
+ * takes argv and does the joining itself.
+ *
+ * `admitted` narrows the subcommand map to the verbs the allowlist exposes, so
+ * a palette built from this projection cannot offer a control the server will
+ * refuse.
+ */
+function projectArgs(spec: CommandArgsSpec | undefined, admitted?: ReadonlyArray<string>): AcpCommandArgsSpec {
+	if (spec === undefined) return {};
+	const flags = (spec.flags ?? []).slice(0, ACP_MAX_COMMAND_FLAGS).map(projectFlag);
+	const positionals = (spec.positionals ?? []).slice(0, ACP_MAX_COMMAND_POSITIONALS).map(projectPositional);
+	const subcommandEntries = Object.entries(spec.subcommands ?? {})
+		.filter(([name]) => admitted === undefined || admitted.includes(name))
+		.slice(0, ACP_MAX_COMMAND_SUBCOMMANDS);
+	const subcommands: Record<string, AcpCommandArgsSpec> = {};
+	for (const [name, sub] of subcommandEntries) {
+		subcommands[bounded(name, ACP_MAX_COMMAND_NAME_BYTES)] = projectArgs(sub);
+	}
+	return {
+		...(flags.length > 0 ? { flags } : {}),
+		...(positionals.length > 0 ? { positionals } : {}),
+		...(subcommandEntries.length > 0 ? { subcommands } : {}),
+	};
+}
+
+/**
+ * The catalog a GUI palette builds its argument UI from. It is derived from
+ * `commandReference()` rather than from a second table, because a hand-written
+ * copy of 13 grammars drifts on the first flag anyone adds.
+ */
+export function acpCommandCatalog(host?: AcpCommandHost): AcpCommandCatalog {
+	const reference = new Map(commandReference({ includeHidden: true }).map((entry) => [entry.name, entry]));
+	const commands: AcpCommandDescriptor[] = [];
+	for (const rule of availableRules(host)) {
+		const entry = reference.get(rule.name);
+		if (entry === undefined) continue;
+		const summaries: Record<string, string> = {};
+		for (const [name, text] of Object.entries(entry.subcommandDescriptions ?? {})) {
+			if (rule.subcommands !== undefined && !rule.subcommands.includes(name)) continue;
+			summaries[bounded(name, ACP_MAX_COMMAND_NAME_BYTES)] = bounded(text, ACP_MAX_COMMAND_TEXT_BYTES);
+		}
+		commands.push({
+			name: bounded(entry.name, ACP_MAX_COMMAND_NAME_BYTES),
+			summary: bounded(entry.description, ACP_MAX_COMMAND_TEXT_BYTES),
+			usage: bounded(
+				rule.subcommands ? `/${entry.name} <${rule.subcommands.join("|")}> …` : entry.usage,
+				ACP_MAX_COMMAND_TEXT_BYTES,
+			),
+			group: entry.group,
+			args: projectArgs(entry.args, rule.subcommands),
+			...(Object.keys(summaries).length > 0 ? { subcommandSummaries: summaries } : {}),
+			...(rule.subcommands !== undefined ? { requiresSubcommand: true as const } : {}),
+			...(rule.streams !== undefined ? { streams: rule.streams } : {}),
+			...(rule.injectsUserTurn === true ? { injectsUserTurn: true as const } : {}),
+			...(rule.promptTurn === true ? { promptTurn: true as const } : {}),
+			...(rule.promptTurnSubcommands?.some((name) => rule.subcommands?.includes(name) ?? true)
+				? {
+						promptTurnSubcommands: rule.promptTurnSubcommands.filter((name) => rule.subcommands?.includes(name) ?? true),
+					}
+				: {}),
+		});
+	}
+	return { version: 1, commands };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Headless invocation                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What this process must supply for an allowlisted command to do its work.
+ *
+ * Three members are required because the composition root always has them and
+ * four commands dispatch through them. Everything else is optional in exactly
+ * the way `SlashCommandContext` already declares it optional: an absent member
+ * omits its command from the bound ACP catalog and refuses wire invocation.
+ * Direct slash dispatch retains the TUI-style not-wired diagnostic. The TUI-only members (`echoOperatorCommand`, `showReference`,
+ * `showDoctor`, `render`) are deliberately never supplied; each has a
+ * documented non-TUI fallback in the registry.
+ */
+/**
+ * What a host operation that finishes after its command returns says about how
+ * it ended. The TUI prints its own progress; a wire client has only the reply.
+ */
+export interface AcpHostReport {
+	level: NoticeLevel;
+	text: string;
+}
+
+/**
+ * A context operation the reply waits for. The registry calls it as a
+ * fire-and-forget member, as the TUI does, so a host that returns a promise
+ * has it awaited, and an {@link AcpHostReport} it resolves to, or its
+ * failure, becomes the result.
+ */
+type AcpHostOperation<Args extends unknown[]> = (...args: Args) => unknown;
+
+export type AcpCommandHost = Pick<SlashCommandContext, "dispatch" | "bus" | "providers"> &
+	Partial<
+		Pick<
+			SlashCommandContext,
+			| "eggsCommand"
+			| "clearSkillSurface"
+			| "exportShareArchive"
+			| "getAgentRoleFacts"
+			| "getAutonomy"
+			| "getChatModel"
+			| "getChatTarget"
+			| "getDecisionBoard"
+			| "getFleetAgentProfiles"
+			| "importShareArchive"
+			| "isTurnInFlight"
+			| "standingTurnConstraints"
+			| "jobs"
+			| "listWorkerRuns"
+			| "oracleBriefing"
+			| "operatorMemory"
+			| "getWorkerRosters"
+			| "reportHost"
+			| "runCouncilDispatch"
+			| "runDoctor"
+			| "runLocalOperation"
+			| "seedTaskMemory"
+			| "submitOperatorNote"
+			| "userTasks"
+		>
+	> & {
+		runCompact?: AcpHostOperation<Parameters<SlashCommandContext["runCompact"]>>;
+		runContextRecall?: AcpHostOperation<[ref: string]>;
+		runContextRefresh?: AcpHostOperation<[]>;
+		/** Write the session transcript; the reply says where, or why not. */
+		exportTranscript?: AcpHostOperation<[path?: string]>;
+		/** Reset generated project context; the options carry the operator's confirmation. */
+		runContextClear?: AcpHostOperation<Parameters<SlashCommandContext["runContextClear"]>>;
+		/** Resume a paused handoff; the reply waits for the turn it continues. */
+		runHandoffRecovery?: AcpHostOperation<[handoffId: string, action: "reduce" | "deliver"]>;
+		runInit?: AcpHostOperation<Parameters<SlashCommandContext["runInit"]>>;
+		/** `/reload`: the reply is the reload report. */
+		reloadClasses?: AcpHostOperation<[target: ReloadTarget]>;
+		cwd?: string;
+		/**
+		 * Submit a user turn. `pendingSkillRequests` arrives already expanded, so
+		 * this is `chat.submit(text, {pendingSkillRequests})` and nothing more.
+		 */
+		submitTurn?: (text: string, options: { pendingSkillRequests?: ReadonlyArray<PendingSkillRequest> }) => void;
+		/**
+		 * `resources.parsePendingSkillRequests`. Skill expansion happens here, in
+		 * the caller of submit, exactly as `interactive-slash-runtime.ts` does it:
+		 * `chat.submit` does not expand, so without this an ACP client sending
+		 * `/skill foo` would put the literal five-character command into the
+		 * model's context as prose.
+		 */
+		parsePendingSkillRequests?: (
+			text: string,
+			cwd?: string,
+		) => { text: string; pendingSkillRequests: PendingSkillRequest[] };
+		/** `resources.expandPromptTemplate`, read structurally: whether a loaded template claims a `/name` line. */
+		expandPromptTemplate?: (text: string, cwd?: string) => AcpPromptTemplateVerdict;
+		/**
+		 * The loaded prompt templates as the terminal's palette and `/help` list them, read unverified as the
+		 * terminal reads them for display; the one source of every prompt row a client lists.
+		 */
+		listPromptsForDisplay?: () => ReadonlyArray<{
+			name: string;
+			description: string;
+			argumentHint?: string;
+			unavailable?: string;
+			displayOnly?: boolean;
+			sourceInfo: { source?: string };
+		}>;
+		/** The loaded prompts, verified, with the source that won each name, which a takeover's ownership is judged by. */
+		listPrompts?: () => ReadonlyArray<{
+			name: string;
+			description?: string;
+			argumentHint?: string;
+			sourceInfo: { source?: string };
+		}>;
+		/** The session's extension runtimes; read per call because the host starts and restarts them. */
+		operatorExtensions?: () => OperatorExtensions | undefined;
+		/**
+		 * Trusted MCP servers' prompts as `/<id>:<prompt>` rows, a template's name
+		 * left out; a line naming one is sent, and submit expansion asks the server.
+		 */
+		mcpPrompts?: () => ReadonlyArray<{ name: string; description: string; argumentHint?: string }>;
+	};
+
+/** The fields of `PromptTemplateExpansion` the prompt screen reads. */
+interface AcpPromptTemplateVerdict {
+	expanded: boolean;
+	refusal?: { message: string };
+	display?: { template: { name: string }; text: string };
+}
+
+/**
+ * What a prompt line is before any of it reaches the model: text to send
+ * (with a `\/` escape already removed), a reference the operator reads and the
+ * model never sees, or a refusal. An admitted command never reaches this; the
+ * server invokes it first.
+ */
+type AcpPromptLineVerdict =
+	| { kind: "send"; text: string }
+	| { kind: "reference"; lines: string[] }
+	/** An extension command or takeover, answered by its runtime with no model turn (WTF-P F04). */
+	| { kind: "extension"; run(signal?: AbortSignal): Promise<ExtensionLineAnswer> }
+	| { kind: "refuse"; code: "unknown_command" | "command_unavailable"; message: string };
+
+/** Every refusal on this surface is the client's mistake, so they all carry one shape. */
+function invalid(reason: string, message: string): AcpRequestError {
+	return new AcpRequestError(-32602, message, { code: "invalid_params", reason });
+}
+
+/**
+ * Rebuild the command line the registry parses.
+ *
+ * Nothing is quoted. A rest positional is taken verbatim to end of line
+ * (`slash-spec.ts:305`), so a quoted task would arrive with its quotes inside
+ * the task text, and a client cannot know from the catalog which of its
+ * arguments lands in a rest slot. The tokenizer's own metacharacters are
+ * therefore refused rather than escaped, and whitespace is admitted only in the
+ * final element, which is the one that can be rest text.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a control character in a command line is the refusal.
+const ARGV_CONTROL = /[\u0000-\u001f\u007f]/u;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a control character in a command line is the refusal.
+const ARGV_CONTROL_OR_QUOTE = /[\u0000-\u001f\u007f"']/u;
+
+function checkArgv(argv: ReadonlyArray<string>, typed: boolean): void {
+	if (argv.length > ACP_MAX_COMMAND_ARGV) throw invalid("argv_too_long", "too many command arguments");
+	for (const [index, value] of argv.entries()) {
+		if (typeof value !== "string") throw invalid("argv_invalid", "command arguments must be strings");
+		if (Buffer.byteLength(value, "utf8") > ACP_MAX_COMMAND_ARGV_BYTES) {
+			throw invalid("argv_too_long", "a command argument is too long");
+		}
+		if (typed) {
+			if (ARGV_CONTROL.test(value)) throw invalid("argv_invalid", "a command argument contains a control character");
+			continue;
+		}
+		if (ARGV_CONTROL_OR_QUOTE.test(value)) {
+			throw invalid("argv_invalid", "a command argument contains a quote or control character");
+		}
+		if (index < argv.length - 1 && /\s/u.test(value)) {
+			throw invalid("argv_invalid", "only the last command argument may contain whitespace");
+		}
+	}
+}
+
+function joinArgv(command: string, argv: ReadonlyArray<string>): string {
+	checkArgv(argv, false);
+	return argv.length === 0 ? `/${command}` : `/${command} ${argv.join(" ")}`;
+}
+
+/**
+ * `/loop` takes its words as typed argv instead of a rebuilt line: a task, a
+ * predicate or a program argument keeps its spaces and quotes as one element,
+ * which the joined line could neither carry nor distinguish from two words.
+ */
+function parseLoopRequest(argv: ReadonlyArray<string>): SlashCommand {
+	checkArgv(argv, true);
+	const loop = parseLoopArgv(argv);
+	return loop.ok
+		? { kind: "loop", command: loop.command }
+		: { kind: "usage-error", command: "loop", reason: loop.reason };
+}
+
+/** The parse must land on a kind the allowlisted entry itself declares, or on that entry's usage error. */
+
+function parsedBelongsTo(parsed: SlashCommand, name: string, kinds: ReadonlyArray<SlashCommandKind>): boolean {
+	if (parsed.kind === "usage-error") return parsed.command === name;
+	return kinds.includes(parsed.kind);
+}
+
+/**
+ * Run one allowlisted command with no TUI behind it.
+ *
+ * Doctor completes before replying. Dispatch commands acknowledge admission and
+ * keep reporting progress through their existing event stream.
+ */
+export function invokeAcpCommand(
+	request: { command: unknown; argv: unknown; askConsent?: AcpConsentAsk },
+	host: AcpCommandHost,
+): Promise<AcpCommandResult> {
+	if (typeof request.command !== "string") throw invalid("invalid_params", "command must be a string");
+	const rule = RULE_BY_NAME.get(request.command);
+	if (rule === undefined) throw invalid("command_not_exposed", "command is not exposed over ACP");
+	const entry = BUILTIN_SLASH_COMMANDS.find((candidate) => candidate.name === rule.name);
+	if (entry === undefined) throw invalid("command_not_exposed", "command is not exposed over ACP");
+
+	const argv: string[] = [];
+	if (request.argv !== undefined) {
+		if (!Array.isArray(request.argv)) throw invalid("argv_invalid", "argv must be an array of strings");
+		for (const value of request.argv) argv.push(value as string);
+	}
+	if (rule.subcommands !== undefined && !rule.subcommands.includes(argv[0] ?? "")) {
+		throw invalid("subcommand_not_exposed", "this command is exposed only through its subcommands");
+	}
+	// The registry submits `/skill <name>` as chat text and expects the caller to
+	// have expanded it first. Without the expander the model would receive the
+	// command line as prose, which reads like an answer and is not one.
+	// `off` is the reserved name only when it stands alone; `/skill off x` invokes
+	// a skill called `off` and still submits.
+	const clearsSkillSurface = argv.length === 1 && argv[0] === "off";
+	if (rule.name === "skill" && !clearsSkillSurface && host.parsePendingSkillRequests === undefined) {
+		throw invalid("not_wired", "skill expansion is not wired in this session");
+	}
+
+	const parsed = rule.name === "loop" ? parseLoopRequest(argv) : parseSlashCommand(joinArgv(rule.name, argv));
+	if (!parsedBelongsTo(parsed, rule.name, entry.kinds)) {
+		throw invalid("command_not_exposed", "command is not exposed over ACP");
+	}
+
+	const lines: string[] = [];
+	let rank = 0;
+	let truncated = false;
+	const push = (text: string): void => {
+		for (const line of commandResultLines(text)) {
+			if (lines.length >= ACP_MAX_COMMAND_RESULT_LINES) {
+				truncated = true;
+				return;
+			}
+			lines.push(line);
+		}
+	};
+	const notice = (next: NoticeLevel, text: string): void => {
+		rank = Math.max(rank, NOTICE_LEVELS.indexOf(next));
+		push(text);
+	};
+
+	let report: AcpCommandReportMeta | undefined;
+	const finish = (): AcpCommandResult => {
+		if (truncated) lines.push(`…output truncated at ${ACP_MAX_COMMAND_RESULT_LINES} lines`);
+		return {
+			level: NOTICE_LEVELS[rank] ?? "info",
+			lines,
+			...(report !== undefined ? { _meta: { "pancode/report": report } } : {}),
+		};
+	};
+	const runDoctor = host.runDoctor;
+	if (parsed.kind === "doctor" && runDoctor) {
+		return Promise.resolve()
+			.then(() => runDoctor({ deep: parsed.deep }))
+			.then(
+				(report) => {
+					notice(report.level, report.text);
+					return finish();
+				},
+				(error: unknown) => {
+					notice("error", `doctor failed: ${error instanceof Error ? error.message : String(error)}`);
+					return finish();
+				},
+			);
+	}
+	const pending: Promise<void>[] = [];
+	const ctx = sessionCommandContext(
+		host,
+		notice,
+		push,
+		pending,
+		rule.name,
+		(next) => {
+			report = next;
+		},
+		request.askConsent,
+	);
+	let outcome: ReturnType<typeof dispatchSlashCommand>;
+	try {
+		outcome = dispatchSlashCommand(parsed, ctx);
+	} catch (error) {
+		// A handler that throws (an archive written to a path that cannot hold
+		// it) has an outcome a client can read, not a protocol fault.
+		notice("error", `${rule.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+		return Promise.resolve(finish());
+	}
+	if (outcome === "rejected") rank = NOTICE_LEVELS.length - 1;
+	// A dispatch command returns before its worker produces anything, and a
+	// silent success would read as a control that did nothing.
+	// A command whose reply waits for its own work (`/oracle`, `/council`) has
+	// finished by then, so it is not described as starting.
+	if (rule.streams === "dispatch" && lines.length === 0 && outcome === "accepted" && pending.length === 0) {
+		push(`${rule.name} started; its progress appears in this task as it runs`);
+	}
+	return pending.length === 0 ? Promise.resolve(finish()) : Promise.all(pending).then(finish);
+}
+
+/**
+ * Ask the ACP client to approve attaching a diagnostic bundle, showing it the consent text. Resolves true only on an
+ * explicit allow; a decline, a cancel, or a client that cannot answer resolves false.
+ */
+export type AcpConsentAsk = (title: string, consent: ReadonlyArray<string>) => Promise<boolean>;
+
+/** The consent sentences a bundle request grants, from the shipped consent text. */
+function bundleConsentSentences(bundle: NonNullable<Parameters<ReportHost["plan"]>[0]["bundle"]>): string[] {
+	const text = consentText();
+	return [...bundle.scopes.map((scope) => text[scope]), ...(bundle.transcript !== null ? [text.transcript] : [])];
+}
+
+type ReportHost = NonNullable<SlashCommandContext["reportHost"]>;
+
+/**
+ * The report host, with each reply's draft and state also handed to the result's `_meta`. A preview that asks for a
+ * diagnostic bundle first asks the client through `session/request_permission`; without an explicit allow the
+ * bundle is dropped and nothing is attached.
+ */
+function reportHostWithMeta(
+	host: ReportHost,
+	onReport: (report: AcpCommandReportMeta) => void,
+	askConsent?: AcpConsentAsk,
+): ReportHost {
+	const seen = <T extends { report?: AcpCommandReportMeta }>(reply: Promise<T>): Promise<T> =>
+		reply.then((answer) => {
+			if (answer.report !== undefined)
+				onReport({
+					draftId: bounded(answer.report.draftId, ACP_MAX_COMMAND_NAME_BYTES),
+					state: bounded(answer.report.state, ACP_MAX_COMMAND_NAME_BYTES),
+				});
+			return answer;
+		});
+	return {
+		plan: (input) => {
+			const { bundle, ...rest } = input;
+			if (bundle === undefined) return seen(host.plan(input));
+			const asked = askConsent
+				? askConsent("Attach a diagnostic bundle to this report?", bundleConsentSentences(bundle)).catch(() => false)
+				: Promise.resolve(false);
+			return asked.then((allowed) => {
+				if (!allowed)
+					return {
+						level: "warn" as const,
+						text: askConsent
+							? "Nothing was attached: the client did not allow the diagnostic bundle. Run /report again without --bundle, or allow it when asked."
+							: "Nothing was attached: this client cannot be asked for consent, so a diagnostic bundle is not attached here. Run `pancode report --bundle mechanics` in a terminal.",
+					};
+				return seen(host.plan({ ...rest, bundle }));
+			});
+		},
+		send: (draftId, choices) => seen(host.send(draftId, choices)),
+		status: () => seen(host.status()),
+		forget: (id) => seen(host.forget(id)),
+	};
+}
+
+/** A report is two fields and nothing else the wire could not carry. */
+function isHostReport(value: unknown): value is AcpHostReport {
+	if (typeof value !== "object" || value === null) return false;
+	const report = value as Partial<AcpHostReport>;
+	return typeof report.text === "string" && NOTICE_LEVELS.includes(report.level as NoticeLevel);
+}
+
+/**
+ * A `SlashCommandContext` with no terminal behind it.
+ *
+ * Presentation callbacks are optional adapter ports. ACP supplies only
+ * session operations and an output sink; admitted commands use their neutral
+ * output fallbacks without constructing terminal behavior.
+ */
+function sessionCommandContext(
+	host: AcpCommandHost,
+	notice: (level: NoticeLevel, text: string) => void,
+	push: (text: string) => void,
+	pending: Promise<void>[],
+	commandName: string,
+	onReport: (report: AcpCommandReportMeta) => void,
+	askConsent?: AcpConsentAsk,
+): SlashCommandContext {
+	const submitTurn = host.submitTurn;
+	// A context operation the operator stopped settles its own canonical
+	// `cancelled` operation, so the reply says the same instead of a failure.
+	// Only the error's own name counts; other operations keep failed/error.
+	const reportFailure = (label: string, error: unknown, cancellable: boolean): void => {
+		if (cancellable && error instanceof Error && error.name === "AbortError") {
+			notice("warn", `${label} cancelled`);
+			return;
+		}
+		notice("error", `${label} failed: ${error instanceof Error ? error.message : String(error)}`);
+	};
+	// Runs a host operation and, when it answers later, holds the reply for it.
+	const awaited = (label: string, run: () => unknown, cancellable = false): void => {
+		let result: unknown;
+		try {
+			result = run();
+		} catch (error) {
+			reportFailure(label, error, cancellable);
+			return;
+		}
+		// A host that finished at once answers at once; its report is the result too.
+		if (isHostReport(result)) {
+			notice(result.level, result.text);
+			return;
+		}
+		if (!(result instanceof Promise)) return;
+		pending.push(
+			result.then(
+				(report) => {
+					if (isHostReport(report)) notice(report.level, report.text);
+				},
+				(error: unknown) => {
+					reportFailure(label, error, cancellable);
+				},
+			),
+		);
+	};
+	const runContextRecall = host.runContextRecall;
+	const runContextRefresh = host.runContextRefresh;
+	const reloadClasses = host.reloadClasses;
+	return {
+		io: { stdout: push, stderr: push },
+		notice,
+		dispatch: host.dispatch,
+		bus: host.bus,
+		providers: host.providers,
+		...(host.getDecisionBoard ? { getDecisionBoard: host.getDecisionBoard } : {}),
+		...(host.getAgentRoleFacts ? { getAgentRoleFacts: host.getAgentRoleFacts } : {}),
+		...(host.submitOperatorNote ? { submitOperatorNote: host.submitOperatorNote } : {}),
+		...(host.listWorkerRuns ? { listWorkerRuns: host.listWorkerRuns } : {}),
+		...(host.exportShareArchive ? { exportShareArchive: host.exportShareArchive } : {}),
+		...(host.importShareArchive ? { importShareArchive: host.importShareArchive } : {}),
+		...(host.runDoctor ? { runDoctor: host.runDoctor } : {}),
+		...(host.oracleBriefing ? { oracleBriefing: host.oracleBriefing } : {}),
+		...(host.operatorMemory ? { operatorMemory: host.operatorMemory } : {}),
+		...(host.getChatTarget ? { getChatTarget: host.getChatTarget } : {}),
+		...(host.getChatModel ? { getChatModel: host.getChatModel } : {}),
+		...(host.getFleetAgentProfiles ? { getFleetAgentProfiles: host.getFleetAgentProfiles } : {}),
+		...(host.getAutonomy ? { getAutonomy: host.getAutonomy } : {}),
+		...(host.isTurnInFlight ? { isTurnInFlight: host.isTurnInFlight } : {}),
+		...(host.standingTurnConstraints ? { standingTurnConstraints: host.standingTurnConstraints } : {}),
+		...(host.jobs ? { jobs: host.jobs } : {}),
+		...(host.getWorkerRosters ? { getWorkerRosters: host.getWorkerRosters } : {}),
+		...(host.runCouncilDispatch ? { runCouncilDispatch: host.runCouncilDispatch } : {}),
+		...(host.reportHost ? { reportHost: reportHostWithMeta(host.reportHost, onReport, askConsent) } : {}),
+		...(runContextRecall
+			? { runContextRecall: (ref: string) => awaited("context recall", () => runContextRecall(ref), true) }
+			: {}),
+		...(runContextRefresh
+			? { runContextRefresh: () => awaited("context refresh", () => runContextRefresh(), true) }
+			: {}),
+		...(host.runLocalOperation ? { runLocalOperation: host.runLocalOperation } : {}),
+		// The reply waits for a command's own long work, so `/oracle` answers with
+		// what it did and a prompt-turn command ends after the note it submits.
+		holdReplyFor: (operation) => {
+			pending.push(
+				operation.catch((error: unknown) => {
+					notice("error", `command failed: ${error instanceof Error ? error.message : String(error)}`);
+				}),
+			);
+		},
+		// The reply waits for admission, not the run: a run that never started already left its refusal as a line.
+		awaitDispatchStart: (admission) => {
+			pending.push(
+				admission.then((started) => {
+					if (started === "started") push(`${commandName} started; its progress appears in this task as it runs`);
+					else if (started === "queued")
+						push(`${commandName} queued for a worker slot; its progress appears in this task once it starts`);
+				}),
+			);
+		},
+		...(host.eggsCommand ? { eggsCommand: host.eggsCommand } : {}),
+		...(host.clearSkillSurface ? { clearSkillSurface: host.clearSkillSurface } : {}),
+		...(host.seedTaskMemory ? { seedTaskMemory: host.seedTaskMemory } : {}),
+		...(host.userTasks ? { userTasks: host.userTasks } : {}),
+		runInit: (options) => {
+			const runInit = host.runInit;
+			if (!runInit) {
+				notice("error", "context init is not wired in this session");
+				return;
+			}
+			awaited("context init", () => runInit(options), true);
+		},
+		runContextClear: (options) => {
+			const runContextClear = host.runContextClear;
+			if (!runContextClear) {
+				notice("error", "context reset is not wired in this session");
+				return;
+			}
+			// A reset deletes generated project context. The terminal confirms it in
+			// a chooser; over the wire the confirmation is the flag, so no host is
+			// ever asked to reset without one.
+			if (options.confirmed !== true) {
+				notice(
+					"warn",
+					"Resetting removes generated project context. Confirm with /context reset --yes, or add --all to delete PANCODE.md too. Nothing was changed.",
+				);
+				return;
+			}
+			awaited("context reset", () => runContextClear(options), true);
+		},
+		...(host.runHandoffRecovery
+			? {
+					runHandoffRecovery: (handoffId: string, action: "reduce" | "deliver") => {
+						const recover = host.runHandoffRecovery;
+						if (recover) awaited("context recover", () => recover(handoffId, action), true);
+					},
+				}
+			: {}),
+		runCompact: (instructions) => {
+			const runCompact = host.runCompact;
+			if (!runCompact) {
+				notice("error", "context compact is not wired in this session");
+				return;
+			}
+			awaited("context compact", () => runCompact(instructions), true);
+		},
+		...(reloadClasses ? { reloadClasses: (target: ReloadTarget) => awaited("reload", () => reloadClasses(target)) } : {}),
+		exportTranscript: (path) => {
+			const exportTranscript = host.exportTranscript;
+			if (!exportTranscript) {
+				notice("error", "export is not wired in this session; no session is bound to this process");
+				return;
+			}
+			awaited("export", () => exportTranscript(path));
+		},
+		submitChat: (text) => {
+			if (!submitTurn) {
+				notice("error", "this command submits a user turn, and no chat loop is bound to this process");
+				return;
+			}
+			const expansion = host.parsePendingSkillRequests?.(text, host.cwd);
+			if (expansion === undefined) {
+				submitTurn(text, {});
+				return;
+			}
+			submitTurn(
+				expansion.text,
+				expansion.pendingSkillRequests.length > 0 ? { pendingSkillRequests: expansion.pendingSkillRequests } : {},
+			);
+		},
+	};
+}
+
+/* -------------------------------------------------------------------------- */
+/* Control surface                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What `src/acp/server.ts` is handed instead of this module.
+ *
+ * The server is a declared Stage 0 seam and the instant shell's chunk budget is
+ * measured on its closure (rule6, tests/boundaries/check-boundaries.ts). This
+ * module value-imports the whole slash registry, so a direct import would drag
+ * the registry into that budget. The composition root already reaches the
+ * registry, so it builds the control; the server never learns that a slash
+ * command exists.
+ */
+export interface AcpCommandControl {
+	/** Pure and rebuilt per call, so the server memoizes it for a polling client. */
+	catalog(): AcpCommandCatalog;
+	/** Refusals throw {@link AcpRequestError} with the reason already attached. */
+	invoke(request: {
+		command: unknown;
+		argv: unknown;
+		/** Asks the client before a diagnostic bundle is attached; absent means nothing is attached. */
+		askConsent?: AcpConsentAsk;
+	}): AcpCommandResult | Promise<AcpCommandResult>;
+	/** True when this command name submits a user turn, which a live prompt owns. */
+	injectsUserTurn(command: unknown, argv?: unknown): boolean;
+	/** True when this command, or its subcommand in `argv[0]`, must run inside a `session/prompt` turn; absent reads as false. */
+	promptTurn?(command: unknown, argv?: unknown): boolean;
+	/**
+	 * Why `limits`, a binding client or operator ceiling, refuses this command,
+	 * or null when it admits it. The ceiling bounds tool calls, so only a
+	 * command whose effect is a turn under those limits, or a pure read, runs
+	 * (Z1). A command that starts a worker is refused when the limits withhold
+	 * dispatch. Absent refuses every command under a binding ceiling.
+	 */
+	ceilingRefusal?(command: unknown, argv: unknown, limits: TurnConstraints): string | null;
+	/** Announced verbatim under `pancode/commands`. */
+	capability: Partial<AcpCommandsCapability> & { count?: number };
+	/** Screen a prompt line that did not name an admitted command. */
+	screenPrompt?(text: string): AcpPromptLineVerdict;
+	/** The loaded prompt templates; read per call because a hub reload changes them. */
+	prompts?(): AcpTypedCommand[];
+	/** The loaded extensions' commands; read per call because an extension restart changes them. */
+	extensionCommands?(): AcpTypedCommand[];
+	/**
+	 * The prompts and extension commands a client may type as `/name`, beyond the
+	 * built-in commands; read per call because a hub reload or an extension restart changes them.
+	 */
+	typedCommands?(): AcpTypedCommand[];
+	/** The jobs the bound session owns now. Present only when the host has a job control. */
+	jobs?(): ReadonlyArray<JobRecord>;
+	/** A job's model spend as the telemetry read model words it; null when nothing measured one. */
+	jobSpend?(id: string): string | null;
+}
+
+const MAX_PROMPT_NAMES = 256;
+const ACP_MAX_TYPED_COPY_BYTES = ACP_MAX_COMMAND_NAME_BYTES * 4;
+
+function typedCommand(entry: {
+	name: string;
+	description: string;
+	argumentHint?: string;
+	unavailable?: string;
+	displayOnly?: boolean;
+}): AcpTypedCommand {
+	const hint = entry.argumentHint?.trim();
+	const marks = {
+		...(entry.unavailable ? { unavailable: bounded(entry.unavailable, ACP_MAX_TYPED_COPY_BYTES) } : {}),
+		...(entry.displayOnly ? { displayOnly: true as const } : {}),
+	};
+	return {
+		name: bounded(entry.name, ACP_MAX_COMMAND_NAME_BYTES),
+		description: bounded(entry.description, ACP_MAX_TYPED_COPY_BYTES),
+		...(hint ? { input: { hint: bounded(hint, ACP_MAX_TYPED_COPY_BYTES) } } : {}),
+		...(Object.keys(marks).length > 0 ? { _meta: { [ACP_PROMPT_META_KEY]: marks } } : {}),
+	};
+}
+
+/**
+ * The terminal editor's verdict on a typed line, minus the overlays: a
+ * command-shaped `/token` that no command and no loaded template owns is a
+ * typo the model should not answer, and a terminal command this host does not
+ * run is named as one rather than sent as prose (`dispatchSlashCommand`'s
+ * `unknown-command` branch is the authority this mirrors).
+ */
+function screenAcpPromptLine(text: string, host: AcpCommandHost): AcpPromptLineVerdict {
+	const trimmed = text.trim();
+	const parsed = parseSlashCommand(trimmed);
+	if (parsed.kind === "unknown") return { kind: "send", text: trimmed.startsWith("\\/") ? parsed.text : text };
+	if (parsed.kind === "empty") return { kind: "send", text };
+	const token = /^\/(\S+)/u.exec(trimmed)?.[1] ?? "";
+	if (parsed.kind === "usage-error" && !BUILTIN_SLASH_COMMANDS.some((entry) => entry.name === token)) {
+		// A usage error for a name the registry does not own says where its job went.
+		return { kind: "refuse", code: "command_unavailable", message: `${parsed.reason}.` };
+	}
+	if (parsed.kind !== "unknown-command") {
+		const offered = availableRules(host).some((rule) => rule.name === token);
+		return {
+			kind: "refuse",
+			code: "command_unavailable",
+			message: offered
+				? `/${token} runs from the command list, not from a prompt.`
+				: `/${token} is a terminal command and is not available in this client. Start the line with \\/ to send it as text.`,
+		};
+	}
+	const extension = screenExtensionLine(trimmed, parsed.token, host.operatorExtensions?.(), host.listPrompts?.() ?? []);
+	if (extension?.kind === "refuse") return { kind: "refuse", code: "command_unavailable", message: extension.message };
+	if (extension?.kind === "run") return { kind: "extension", run: extension.run };
+	const template = host.expandPromptTemplate?.(trimmed, host.cwd);
+	if (template?.expanded === true) return { kind: "send", text };
+	if (template?.expanded !== false || (!template.refusal && !template.display)) {
+		if (host.mcpPrompts?.().some((prompt) => prompt.name === parsed.token)) return { kind: "send", text };
+	}
+	if (template?.display) {
+		return {
+			kind: "reference",
+			lines: [`/${bounded(template.display.template.name, ACP_MAX_COMMAND_NAME_BYTES)}`, template.display.text],
+		};
+	}
+	return {
+		kind: "refuse",
+		code: "unknown_command",
+		message:
+			template?.refusal?.message ??
+			`/${parsed.token} is not a command or a loaded prompt template. Start the line with \\/ to send it as text.`,
+	};
+}
+
+function ruleInjectsUserTurn(rule: AcpCommandRule, argv: unknown): boolean {
+	if (rule.injectsUserTurn !== true) return false;
+	const first = Array.isArray(argv) ? argv[0] : undefined;
+	return !(typeof first === "string" && rule.injectsUserTurnExcept?.includes(first) === true);
+}
+
+/** Binds one host to the control the ACP server takes. */
+export function acpCommandControl(host: AcpCommandHost): AcpCommandControl {
+	return {
+		catalog: () => acpCommandCatalog(host),
+		invoke: (request) => {
+			const rule = availableRules(host).find((entry) => entry.name === request.command);
+			if (!rule) throw invalid("command_unavailable", "command is not available in this host");
+			if (rule.subcommands && (!Array.isArray(request.argv) || !rule.subcommands.includes(request.argv[0])))
+				throw invalid("subcommand_not_exposed", "subcommand is not available in this host");
+			return invokeAcpCommand(request, host);
+		},
+		injectsUserTurn: (command, argv) => {
+			if (typeof command !== "string") return false;
+			const rule = RULE_BY_NAME.get(command);
+			return rule !== undefined && ruleInjectsUserTurn(rule, argv);
+		},
+		ceilingRefusal: (command, argv, limits) => {
+			// An unknown command is refused by invoke with its own reason.
+			const rule = typeof command === "string" ? RULE_BY_NAME.get(command) : undefined;
+			if (rule === undefined) return null;
+			const first = Array.isArray(argv) && typeof argv[0] === "string" ? argv[0] : "";
+			const label = `/${rule.name}${first ? ` ${first}` : ""}`;
+			if (rule.streams === "dispatch" && !turnAllowsTool(limits, ToolNames.Dispatch))
+				return `${label} starts a worker and the ceiling withholds dispatch`;
+			if (limits.readOnly === true && (rule.readOnlyRefuses === true || rule.readOnlyRefuses?.includes(first) === true))
+				return `${label} writes or delegates and the ceiling is read-only`;
+			if (
+				ruleInjectsUserTurn(rule, argv) ||
+				rule.reads?.includes(first) === true ||
+				rule.sessionOnly?.includes(first) === true
+			)
+				return null;
+			return `${label} acts outside the ceiling's tool limits; under a ceiling only reads, session controls and commands that submit a turn run`;
+		},
+		promptTurn: (command, argv) => {
+			if (typeof command !== "string") return false;
+			const rule = RULE_BY_NAME.get(command);
+			if (rule?.promptTurn === true) return true;
+			const subcommand = Array.isArray(argv) ? argv[0] : undefined;
+			return typeof subcommand === "string" && rule?.promptTurnSubcommands?.includes(subcommand) === true;
+		},
+		capability: { ...ACP_COMMANDS_CAPABILITY, count: availableRules(host).length },
+		screenPrompt: (text) => screenAcpPromptLine(text, host),
+		...(host.jobs
+			? { jobs: () => host.jobs?.list() ?? [], jobSpend: (id: string) => host.jobs?.spend?.(id) ?? null }
+			: {}),
+		// The announcement and the command list read the same prompt listing, so a client sees one set of rows.
+		...(host.listPromptsForDisplay || host.operatorExtensions || host.mcpPrompts
+			? {
+					typedCommands: () => {
+						const typed = typedLineCommands(host.operatorExtensions?.(), host.listPromptsForDisplay?.() ?? []);
+						const mcp = (host.mcpPrompts?.() ?? []).filter((row) => !typed.some((entry) => entry.name === row.name));
+						return [...typed, ...mcp].slice(0, MAX_PROMPT_NAMES).map(typedCommand);
+					},
+				}
+			: {}),
+		...(host.listPromptsForDisplay
+			? {
+					prompts: () => (host.listPromptsForDisplay?.() ?? []).slice(0, MAX_PROMPT_NAMES).map(typedCommand),
+				}
+			: {}),
+		...(host.operatorExtensions
+			? {
+					extensionCommands: () =>
+						extensionLineCommands(host.operatorExtensions?.(), host.listPromptsForDisplay?.() ?? [])
+							.slice(0, MAX_PROMPT_NAMES)
+							.map(typedCommand),
+				}
+			: {}),
+	};
+}

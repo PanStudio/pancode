@@ -17,6 +17,9 @@ import {
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import { runAuthCommand } from "../../src/cli/auth.js";
 import { resolveSupportedWireModels, validateResolvedModel } from "../../src/cli/configure-target.js";
 import { isCopilotRefusal } from "../../src/core/copilot-refusal.js";
@@ -51,9 +54,6 @@ import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { noteCallStarted, stampCallEconomics } from "../../src/domains/telemetry/economy-settlement.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import {
 	copilotSdkAccount,
 	copilotSdkRestartIdle,

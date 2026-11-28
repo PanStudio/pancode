@@ -11,14 +11,14 @@ const app = fileURLToPath(new URL("../", import.meta.url));
 const root = resolve(app, "../..");
 // The engine's ACP wire contract, split by protocol domain; the shims re-export each module whole.
 const acpWireTypes = [
-	"src/engine/acp/types.ts",
-	"src/engine/acp/types-capabilities.ts",
-	"src/engine/acp/types-fleet.ts",
-	"src/engine/acp/types-readouts.ts",
-	"src/engine/acp/types-session.ts",
-	"src/engine/acp/types-settings.ts",
-	"src/engine/acp/types-tools.ts",
-	"src/engine/acp/types-views.ts",
+	"src/acp/types.ts",
+	"src/acp/types-capabilities.ts",
+	"src/acp/types-fleet.ts",
+	"src/acp/types-readouts.ts",
+	"src/acp/types-session.ts",
+	"src/acp/types-settings.ts",
+	"src/acp/types-tools.ts",
+	"src/acp/types-views.ts",
 ];
 // The presentation both surfaces draw: pure, browser-safe modules the client imports directly, so the GUI and the
 // terminal word a view from one source. The closure test below holds the tree free of Node builtins.
@@ -34,8 +34,8 @@ const httpModules = new Map([
 	["src/core/running-build.ts", new Set(["registerRunningBuild", "pendingInstalledVersion"])],
 	// The exact loaded build, so a remote node's GUI is driven by this client only when both builds agree.
 	["src/core/build-info.ts", new Set(["runningBuildId"])],
-	["src/engine/acp/transport.ts", new Set(["createStdioTransport", "AcpJsonRpcTransport"])],
-	["src/engine/acp/errors.ts", new Set(["AcpProcessError", "AcpTimeoutError", "AcpRequestError", "AcpProtocolError"])],
+	["src/acp/transport.ts", new Set(["createStdioTransport", "AcpJsonRpcTransport"])],
+	["src/acp/errors.ts", new Set(["AcpProcessError", "AcpTimeoutError", "AcpRequestError", "AcpProtocolError"])],
 	...acpWireTypes.map((path) => [path, new Set(["*"])] as const),
 	["src/core/xdg.ts", new Set(["pancodeStateDir", "pancodeDataDir", "pancodeConfigDir", "resolvePancodeDirs"])],
 	["src/core/package-root.ts", new Set(["resolvePackageRoot"])],
@@ -229,7 +229,7 @@ function violations(file: string, source: string): string[] {
 				)
 					errors.push(`wire shim allowlist: ${rootTarget} ${names}`);
 			} else if (name === "server/pancode/wire-runtime.ts") {
-				if (rootTarget !== "src/engine/acp/runtime.ts" || names.some((symbol) => symbol !== "ACP_MAX_JOBS"))
+				if (rootTarget !== "src/acp/runtime.ts" || names.some((symbol) => symbol !== "ACP_MAX_JOBS"))
 					errors.push(`wire runtime allowlist: ${rootTarget} ${names}`);
 			} else if (name === "server/pancode/http-shims.ts") {
 				const allowed = httpModules.get(rootTarget);
@@ -309,7 +309,7 @@ test("boundary checker rejects representative bypasses", () => {
 	])
 		assert.ok(violations(resolve(app, "server/http/escape.ts"), source).length > 0, source);
 	assert.ok(
-		violations(resolve(app, "server/pancode/wire-runtime.ts"), 'export * from "../../../../src/engine/acp/types.js";')
+		violations(resolve(app, "server/pancode/wire-runtime.ts"), 'export * from "../../../../src/acp/types.js";')
 			.length > 0,
 	);
 	const client = resolve(app, "client/chat/escape.ts");

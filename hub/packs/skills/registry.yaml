@@ -78,7 +78,7 @@ skills:
   - name: pancode-dev
     path: meta/pancode-dev
     version: 0.7.4
-    sha256: 76ad8ea5844a4570106c64bf3a000955aebda70eee6ba3ccbf13d08e632e9089
+    sha256: 2054f4a60ce6b4a08ac94aef4c916ef235cad4f156823465ed1ef2d807a5a197
   - name: pancode-test
     path: meta/pancode-test
     version: 0.5.3

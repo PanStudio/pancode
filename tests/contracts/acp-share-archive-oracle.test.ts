@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/index.js";
 import { archiveCommandHost, shareArchiver } from "../../src/domains/share/index.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
 import { followWorkerRuns } from "../../src/session-control/worker-run-ledger.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

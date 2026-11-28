@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../acp/adapter.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import type { DispatchRunIdentity } from "../../core/telemetry/live-events.js";
-import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../engine/acp/adapter.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type {
 	WorkerExtensionHook,

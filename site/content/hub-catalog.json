@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "e372a19b1e58220d4414663d31310ccf81eb8731308158e1ed0e286261700140",
+		"sha256": "0bd0eac5373eb7fefbb1abaebc55611c4fc7dbb70f9dc94805432752ad0cb7ec",
 		"rows": 48,
 		"revoked": 0
 	},
@@ -478,7 +478,7 @@
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-dev"
 			},
-			"sha256": "452cd6f6245b2f37cba0c8969ea01227ca54fd153aea377331d75edf68623f79",
+			"sha256": "283b5215edbfed37c9c5f40b9e62f7c335e77b0c4898e4986ac1e53b81fd55a9",
 			"install": "pancode hub install skill:pancode-dev"
 		},
 		{
