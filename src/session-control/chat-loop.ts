@@ -1,36 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/context-operation.js";
-import { writeDiagnostic } from "../core/diagnostics.js";
-import { enterAutonomousCommitScope } from "../core/git-commit-attribution.js";
-import { continuationCountsAgainstCap, JobClockExpired, TURN_CONTINUATION_CAP } from "../core/job-types.js";
-import { resourceLimitsFromSettings } from "../core/sandbox/resource-limits.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
-import { observedToolCallOrigin, ownerTelemetryContext, toolCallBatch } from "../core/telemetry/context.js";
-import { routeCallsPerRound, turnBudgetWidthScale } from "../core/turn-budget-width.js";
 import { createConversationEggs } from "../domains/session/easter-eggs.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import type { SealedCompletion } from "../tools/finish.js";
-import type {
-	MachineTurnProjectionAdmission,
-	MachineTurnProjectionHost,
-	MachineTurnRequest,
-	MachineTurnResult,
-} from "./job-turn-types.js";
+import type { MachineTurnProjectionHost, MachineTurnRequest, MachineTurnResult } from "./job-turn-types.js";
 import type { TurnControlRunner } from "./turn-control-runner.js";
 
 export { runOutOfTurnRound } from "./side-question.js";
 export { createTurnControlRunner } from "./turn-control-runner.js";
 
 import type { RouteName, RouteSource } from "../core/route-provenance.js";
-import { runOverrides } from "../core/run-overrides.js";
 import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
-import { SMALL_WINDOW_TOKENS } from "../domains/context/fold/pressure.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
-import { captureWorkerContext } from "../domains/context/worker/snapshot.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
-import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessages } from "../engine/agent.js";
 /**
  * The chat loop: one turn's state machine.
  *
@@ -46,29 +30,11 @@ import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessage
  * machine, and the shared ChatTurnState the modules coordinate through.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
-import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
-import { formatCount } from "../core/format-time.js";
-import {
-	armedSkillSurface,
-	evaluateSkillToolSurface,
-	type PendingSkillRequest,
-	type PendingSkillToolPolicy,
-	SKILL_SURFACE_ENTRY,
-	type SkillSurfaceChange,
-	skillSurfaceChange,
-	skillSurfaceLabels,
-	skillSurfaceNames,
-} from "../core/skill-activation.js";
+import { type PendingSkillRequest, type SkillSurfaceChange, skillSurfaceNames } from "../core/skill-activation.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { TurnAbortSource } from "../core/telemetry/live-events.js";
-import {
-	narrowTurnConstraints,
-	snapshotTurnConstraints,
-	type TurnConstraints,
-	toolSurfaceSources,
-} from "../core/turn-constraints.js";
+import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
 import type { TurnOrigin, TurnToolCall } from "../core/turn-origin.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
@@ -84,59 +50,40 @@ import {
 } from "../domains/middleware/index.js";
 import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
-import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities } from "../domains/providers/index.js";
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
-import {
-	type CompactionTrigger,
-	latestSkillContextState,
-	mainSkillContextState,
-	type SessionEntry,
-	SKILL_CONTEXT_STATE,
-} from "../domains/session/entries.js";
-import { absentOutputs, namedOutputs } from "../domains/session/output-obligations.js";
-import { protectedArtifactStateFromSessionEntries } from "../domains/session/protected-artifacts.js";
-import type { RetrySettings } from "../domains/session/retry.js";
-import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
+import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import { createEngineAgent } from "../engine/agent.js";
 import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
-import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry/contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
-import { compactionFailureReason } from "./chat-loop/submit-fit.js";
-import { isRedirectReason } from "./chat-loop/submit-turn.js";
+import { createChatLoopAdmission } from "./chat-loop/admission.js";
+import { createChatLoopCancel } from "./chat-loop/cancel.js";
+import { createChatLoopContextCommands } from "./chat-loop/context-commands.js";
+import { createChatLoopMachineTurn } from "./chat-loop/machine-turn.js";
+import { createChatLoopNotices } from "./chat-loop/notices.js";
+import { createTurnPreparation } from "./chat-loop/preparation.js";
+import { createChatLoopRouteMove } from "./chat-loop/route-move.js";
+import { createChatLoopSessionCommands } from "./chat-loop/session-commands.js";
+import { createChatLoopSessionReset } from "./chat-loop/session-reset.js";
+import { createChatLoopSideRounds } from "./chat-loop/side-rounds.js";
+import { createChatLoopToolOptions, toolInvokeOptions } from "./chat-loop/tool-options.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
 import { createChatLoopComposition } from "./chat-loop-composition.js";
-import {
-	HOST_STATUS_NOTICE_KEY,
-	isOperatorCancelReason,
-	notConfiguredNotice,
-	OPERATOR_CANCEL_REASON,
-} from "./chat-loop-messages.js";
-import { normalizeRetrySettings } from "./chat-loop-policy.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
 import { createChatLoopSubmit } from "./chat-loop-submit.js";
-import {
-	DRAFT_MAX_TOKENS,
-	DRAFT_TEMPERATURES,
-	draftCandidateFromText,
-	draftTemperature,
-	runDraftWithSamplerFallback,
-} from "./drafts.js";
-import { type HandoffRepairInput, runHandoffRound } from "./handoff-round.js";
-import { continuityRenderTime } from "./model-session-replay.js";
+import type { HandoffRepairInput } from "./handoff-round.js";
 import type { NoticeSource } from "./notice-source.js";
 import type { OperatorMemoryChip, OperatorMemoryCommands, OperatorMemoryStorePort } from "./operator-memory.js";
-import { type OutOfTurnRoute, runOutOfTurnRound, runSideQuestion, type SideQuestionResult } from "./side-question.js";
+import { type OutOfTurnRoute, runSideQuestion } from "./side-question.js";
 import type { AgentStatusEvent, ModelRequestFacts } from "./status-types.js";
 import type { TriageSystemOne } from "./steering-triage.js";
 import type { LiveContextUsage, TurnContextDeps } from "./turn-context.js";
@@ -150,15 +97,13 @@ import type {
 	SteeringMode,
 } from "./turn-queues.js";
 import type { RetryForecast, RetryStatusEvent } from "./turn-recovery.js";
-import type { AssistantDeltaEvent, TurnRuntime } from "./turn-runtime-types.js";
+import type { AssistantDeltaEvent } from "./turn-runtime-types.js";
 import {
 	type AgentRuntime,
 	type ChatLoopRunSnapshot,
-	clearActiveInterrupt,
 	createTurnState,
 	type TurnPreparationPhase,
 	type TurnPreparationStep,
-	type TurnStop,
 } from "./turn-state.js";
 
 export type { QueuedChatMessage } from "./turn-queues.js";
@@ -444,7 +389,7 @@ export interface ChatCancelOptions {
 	atToolBoundary?: boolean;
 }
 
-interface SideQuestionOptions {
+export interface SideQuestionOptions {
 	/** Cancels the round. Esc and Ctrl+C in the overlay abort through it. */
 	signal?: AbortSignal;
 	/** Streamed answer text so the overlay fills as the provider produces it. */
@@ -453,7 +398,7 @@ interface SideQuestionOptions {
 	onRoute?: (route: OutOfTurnRoute) => void;
 }
 
-interface DraftOptions {
+export interface DraftOptions {
 	/** Cancels every candidate round. */
 	signal?: AbortSignal;
 	/** One candidate's streamed text, by index in start order. */
@@ -463,7 +408,7 @@ interface DraftOptions {
 }
 
 /** One `/draft` candidate: its text, or why its round produced none. */
-type DraftCandidate = ({ status: "drafted"; text: string } | { status: "failed"; reason: string }) & {
+export type DraftCandidate = ({ status: "drafted"; text: string } | { status: "failed"; reason: string }) & {
 	route?: OutOfTurnRoute;
 };
 
@@ -471,7 +416,7 @@ export type DraftOutcome =
 	| { status: "drafted"; candidates: DraftCandidate[]; aborted: boolean }
 	| { status: "refused"; reason: string };
 
-interface HandoffRoundOptions extends SideQuestionOptions {
+export interface HandoffRoundOptions extends SideQuestionOptions {
 	/**
 	 * Run the second and last extraction round, quoting the parser's complaint
 	 * and what the first round returned. Both rounds are journaled calls under
@@ -485,7 +430,7 @@ interface HandoffRoundOptions extends SideQuestionOptions {
  * in flight, or no orchestrator target is configured); `failed` is a round that
  * started and the provider rejected.
  */
-type SideQuestionOutcome =
+export type SideQuestionOutcome =
 	| { status: "answered"; text: string; route?: OutOfTurnRoute }
 	| { status: "aborted"; text: string }
 	| { status: "refused"; reason: string }
@@ -960,20 +905,6 @@ export interface CreateChatLoopDeps {
 	registerPrewarmEndpointSlot?: (runtime: AgentRuntime) => (() => void) | null;
 }
 
-function reloadProtectedArtifactsForSession(
-	protectedArtifacts: NonNullable<CreateChatLoopDeps["protectedArtifacts"]>,
-	readSessionEntries: (() => ReadonlyArray<SessionEntry>) | undefined,
-): void {
-	try {
-		const entries = readSessionEntries ? readSessionEntries() : [];
-		protectedArtifacts.replace(protectedArtifactStateFromSessionEntries(entries));
-	} catch (error) {
-		protectedArtifacts.markDegraded(
-			`session protection history could not be read: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-}
-
 /**
  * How the last step pipeline ended, for a headless caller: `done` when its step
  * tool said `pipelineDone`; otherwise `stoppedBy` says whether the yolo
@@ -989,40 +920,6 @@ export interface StepPipelineEnd {
 	template?: string;
 	done: boolean;
 	stoppedBy?: "cap" | "turn" | "cancel" | "failure" | "unreported";
-}
-
-/**
- * Whether a turn the per-turn tool budget ends now is continued without the operator, as `yoloContinuationDue`
- * decides when it settles: yolo, not a machine turn (its job decides), and the stop it settles on not capped. A plain
- * budget crossing never counts against the cap, so it continues past it; a turn whose tools the loop guard already
- * locked, or that failed, settles on a counted stop and does not once the cap is spent (CLI-H1).
- */
-export function budgetCrossingContinues(input: {
-	yolo: boolean;
-	machineTurn: boolean;
-	failure: TurnStop | null;
-	locked: boolean;
-	continuations: number;
-}): boolean {
-	const failure = input.failure;
-	if (!input.yolo || input.machineTurn || failure?.cause === "wait_past_budget") return false;
-	const cause = failure !== null ? failure.cause : input.locked ? "loop_guard" : "tool_budget";
-	return !(continuationCountsAgainstCap(cause) && input.continuations >= TURN_CONTINUATION_CAP);
-}
-
-/**
- * One event to every listener. A listener's throw never reaches the turn that emitted, as on the telemetry hub; the
- * snapshot keeps a listener that subscribes or leaves inside its own call from changing this delivery.
- */
-function deliverChatLoopEvent(listeners: ReadonlySet<(event: ChatLoopEvent) => void>, event: ChatLoopEvent): void {
-	for (const listener of [...listeners]) {
-		try {
-			listener(event);
-		} catch (error) {
-			const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-			writeDiagnostic(`[pancode:chat-loop] Listener crashed on ${event.type}: ${message}`, "error");
-		}
-	}
 }
 
 export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
@@ -1059,291 +956,27 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	let lastHistoricalImageNoticeKey: string | null = null;
 
 	const unsubscribeEggSession = deps.bus?.subscribe("session.parked", () => eggs.reset());
-	const preparationListeners = new Set<(phase: TurnPreparationPhase) => void>();
-	/**
-	 * Move the consumed prompt to a new preparation phase and tell everything
-	 * that renders it. Idempotent, so the two compaction sites and the two
-	 * clearing sites (admission and settlement, because a refusal never reaches
-	 * admission) can all set the phase they mean without ordering rules.
-	 */
-	const setTurnPreparation = (phase: TurnPreparationPhase): void => {
-		if (state.turnPreparation === phase) return;
-		// `since` is the age of the whole window, not of its current sub-state:
-		// what the operator is judging is how long ago they pressed Enter.
-		if (state.turnPreparation === "idle") state.turnPreparationSince = Date.now();
-		if (phase === "idle") {
-			state.turnPreparationSince = 0;
-			state.turnPreparationStage = null;
-		}
-		state.turnPreparation = phase;
-		for (const listener of preparationListeners) {
-			try {
-				listener(phase);
-			} catch {
-				// Preparation observers are presentation only and cannot fail a turn.
-			}
-		}
-	};
+	const {
+		preparationListeners,
+		setTurnPreparation,
+		markPreparationStep,
+		enterPreparation,
+		leavePreparation,
+		endPreparationCompaction,
+		preparingSubmits,
+	} = createTurnPreparation(state);
 
-	const markPreparationStep = (step: TurnPreparationStep): void => {
-		state.turnPreparationStage = { step, since: Date.now() };
-	};
+	const { emit, refuseSkillRequests, emitFooterNotice, emitNotice, armSkillSurface, emitAdmissionNotice } =
+		createChatLoopNotices(deps, state, listeners);
 
-	/**
-	 * Submits currently holding a consumed prompt. The FIFO gate lets a second
-	 * submit open its window while the first is still settling, so the phase is
-	 * refcounted rather than owned: the last one out turns the light off.
-	 */
-	let preparingSubmits = 0;
-	const enterPreparation = (): void => {
-		preparingSubmits += 1;
-		// Opening a window never narrows one that is already open: a second submit
-		// arriving while the first is compacting must not flip the composer from
-		// COMPACTING back to PREPARING while the compaction is still running.
-		if (state.turnPreparation === "idle") setTurnPreparation("preparing");
-	};
-	const leavePreparation = (): void => {
-		preparingSubmits = Math.max(0, preparingSubmits - 1);
-		if (preparingSubmits === 0) setTurnPreparation("idle");
-	};
-	/**
-	 * Return to the plain preparing state after a compaction inside the window.
-	 * Refcount-aware, because two submits share the window and the slower one's
-	 * compaction can finish after the window has already closed; restoring
-	 * `preparing` there would re-open it with nothing left to prepare.
-	 */
-	const endPreparationCompaction = (): void => {
-		setTurnPreparation(preparingSubmits > 0 ? "preparing" : "idle");
-	};
-
-	const emit = (event: ChatLoopEvent): void => deliverChatLoopEvent(listeners, event);
-
-	const refuseSkillRequests = (
-		requests: ReadonlyArray<PendingSkillRequest>,
-		inlinedPaths: ReadonlyArray<string>,
-	): boolean => {
-		if (!requests.some((request) => request.name.trim() === "context-handoff")) return false;
-		// The file this request inlines is judged, not labeled: a refused request sends nothing, so it labels nothing.
-		const refusal = deps.refuseHandoffSkill?.(inlinedPaths) ?? null;
-		if (refusal === null) return false;
-		emit({
-			type: "notice",
-			level: "warning",
-			surface: "transcript",
-			text: refusal,
-			admission: { reason: "handoff-skill-refused" },
-		});
-		return true;
-	};
-
-	const emitFooterNotice = (level: ChatNoticeEvent["level"], text: string, key: string): void => {
-		emit({ type: "notice", level, surface: "footer", text, key });
-	};
-
-	/** An operator `/context compact` is between its start and its settled card. */
-	let operatorCompactionRunning = false;
-
-	/**
-	 * Transcript notices are first-class `notice` events, never fake
-	 * `message_end` assistant messages: a notice can never become a headless
-	 * turn's answer, never carries usage, and never ends a run. Run closure is
-	 * the engine's job (handleRunFailure delivers agent_end on abort and
-	 * provider-failure paths) and RunAborted carries abort provenance to the
-	 * status reducer.
-	 */
-	const emitNotice = (
-		text: string,
-		level: ChatNoticeEvent["level"] = "info",
-		key?: string,
-		skillSurface?: SkillSurfaceChange,
-		source?: NoticeSource,
-	): void => {
-		emit({
-			type: "notice",
-			level,
-			surface: "transcript",
-			text,
-			...(key === undefined ? {} : { key }),
-			...(skillSurface === undefined ? {} : { skillSurface }),
-			...(source === undefined ? {} : { source }),
-		});
-	};
-
-	/**
-	 * Carry (or drop) the tool surface a skill declared once the turn that
-	 * loaded it settles, and say so once on the transcript. The operator needs
-	 * to know a narrowing is armed across their next messages, and needs one
-	 * line back when it lifts; the skill-activation ledger entry already
-	 * records provenance, so this is the notice, not a second UI.
-	 */
-	const armSkillSurface = (
-		policy: PendingSkillToolPolicy | undefined,
-		loadedBefore?: ReadonlySet<string>,
-		explicitOff = false,
-	): void => {
-		const previous = skillSurfaceNames(state.activeSkillSurface).join(", ");
-		const next = armedSkillSurface(policy);
-		const current = skillSurfaceNames(next).join(", ");
-		if (
-			deps.session?.current() &&
-			(explicitOff ||
-				previous.length > 0 ||
-				(policy?.loadedSkillNames.size ?? 0) > 0 ||
-				(policy?.requests.length ?? 0) > 0)
-		) {
-			const entries = activePath(deps.readSessionEntries?.() ?? [], state.lastTurnId ?? undefined);
-			// A loaded skill that declares no tool narrowing arms no surface, yet its
-			// instructions are in context. Record it from the loading policy: an
-			// unknown selection would block every later compaction of this session.
-			const selection = next
-				? mainSkillContextState(entries, next)
-				: policy !== undefined && policy.loadedSkillNames.size > 0
-					? mainSkillContextState(entries, policy)
-					: { version: 1 as const, activationRefs: [] };
-			const data = selection ?? { version: 1 as const, activationRefs: [], unknown: true as const };
-			if (JSON.stringify(data) !== JSON.stringify(latestSkillContextState(entries))) {
-				// Persist before changing live state: restart must not resurrect a cleared/replaced skill.
-				deps.session.appendEntry({ kind: "custom", customType: SKILL_CONTEXT_STATE, parentTurnId: state.lastTurnId, data });
-			}
-		}
-		const change = skillSurfaceChange(skillSurfaceNames(state.activeSkillSurface), next);
-		state.activeSkillSurface = next;
-		// The change itself is recorded, so a resumed transcript states the same
-		// `§` row the live one did; the selection above is what compaction reads.
-		if (change !== null && deps.session?.current()) {
-			deps.session.appendEntry({
-				kind: "custom",
-				customType: SKILL_SURFACE_ENTRY,
-				parentTurnId: state.lastTurnId,
-				data: change,
-			});
-		}
-		const activated = skillSurfaceLabels(policy).filter((label) => !loadedBefore?.has(label.split(" ")[0] ?? label));
-		if (activated.length > 0) {
-			const loaded: SkillSurfaceChange = {
-				version: 1,
-				state: "loaded",
-				names: activated.map((label) => label.split(" ")[0] ?? label),
-				previous: [],
-				allowedTools: [],
-				disallowedTools: [],
-			};
-			emitNotice(
-				policy?.allowListAdvisory === true && current.length === 0
-					? `[PanCode] Skill activated: ${activated.join(", ")}. Its allowed-tools list is guidance in yolo; explicit disallowed-tools still apply.`
-					: current.length > 0
-						? deps.headless === true
-							? `[PanCode] Skill activated: ${activated.join(", ")}. Its tool surface stays armed for the rest of this session.`
-							: `[PanCode] Skill activated: ${activated.join(", ")}. Its tool surface stays armed across your next turns until another skill replaces it or you run /skill off.`
-						: `[PanCode] Skill activated: ${activated.join(", ")}. It declares no tool narrowing.`,
-				"info",
-				HOST_STATUS_NOTICE_KEY,
-				change !== null && change.state !== "cleared" ? change : loaded,
-			);
-		}
-		if (change?.state === "cleared") {
-			emitNotice(
-				`[PanCode] Skill tool surface cleared: ${previous}. The full tool surface is back.`,
-				"info",
-				HOST_STATUS_NOTICE_KEY,
-				change,
-			);
-		} else if (change?.state === "replaced" && activated.length === 0) {
-			emitNotice(
-				`[PanCode] Skill tool surface replaced: ${previous} by ${current}.`,
-				"info",
-				HOST_STATUS_NOTICE_KEY,
-				change,
-			);
-		}
-	};
-
-	/**
-	 * Transcript notice for an admission exit, carrying the reason the turn
-	 * never started. Refusals that end the run report at `"error"` level; exits
-	 * where the turn simply did not need to start keep `"info"`.
-	 */
-	const emitAdmissionNotice = (text: string, reason: string, level: ChatNoticeEvent["level"] = "info"): void => {
-		emit({ type: "notice", level, surface: "transcript", text, admission: { reason } });
-	};
-	const visionModelOptions = (): string[] => {
-		const options: string[] = [];
-		for (const status of deps.providers.list()) {
-			for (const candidate of modelCandidatesForStatus(status)) {
-				const caps = resolveModelCapabilities(status, candidate.id, deps.providers.knowledgeBase);
-				if (!acceptsImageInput({ runtimeId: status.runtime?.id ?? status.target.runtime, vision: caps.vision })) continue;
-				options.push(`${status.target.id}/${candidate.id}`);
-				if (options.length === 5) return options;
-			}
-		}
-		return options;
-	};
-
-	/**
-	 * Which of the two settings is actually missing when the runtime resolves to
-	 * null. Both halves produce the same operator-facing notice, but a machine
-	 * consumer of the reason (the ACP server reports it as `data.reason`) needs
-	 * to tell "no orchestrator at all" from "a target that names no model", and
-	 * collapsing them sent a client with a configured target to the wrong fix.
-	 */
-	const nullRuntimeAdmissionReason = (): string => {
-		const orchestrator = deps.getSettings().chat;
-		const target = orchestrator.target?.trim() ?? "";
-		const model = orchestrator.model?.trim() ?? "";
-		return target.length > 0 && model.length === 0 ? "model-not-configured" : "orchestrator-not-configured";
-	};
-
-	const retrySettings = (): RetrySettings => normalizeRetrySettings(deps.getSettings().chat.retry);
-
-	const hostRunContext = new AsyncLocalStorage<ToolInvokeOptions["hostRun"]>();
-	// A headless run's observation pool rolls once spent instead of capping the run (CLI-P42); attended turns keep theirs.
-	const headlessObservation = deps.headless === true ? createHeadlessObservationPool() : null;
-	// M-4: the outputs this session's operator prompts named with an `output: <path>` line that do not exist now.
-	const missingOutputs = (): string[] =>
-		absentOutputs(
-			namedOutputs(activePath(deps.readSessionEntries?.() ?? [], state.lastTurnId ?? undefined)),
-			process.cwd(),
-		);
-	const currentToolInvokeOptions = (toolCallId?: string): Partial<ToolInvokeOptions> => {
-		const options: Partial<ToolInvokeOptions> = {
-			toolResultMaxBytes: deps.getSettings().context.toolResultMaxBytes,
-			abortCause: () => state.activeInterruptReason ?? state.toolProseAbortReason,
-			steerInterrupt: steerInterrupter,
-			...toolLimitOptions(deps.getSettings().safety),
-			...observedToolCallOrigin(state.runtime?.agent.state.messages ?? [], toolCallId),
-		};
-		const batch = toolCallBatch(state.runtime?.agent.state.messages ?? [], toolCallId);
-		if (batch !== undefined) {
-			options.correlationId = batch.id;
-			options.batchSize = batch.size;
-		}
-		const yolo = (deps.getAutonomy?.() ?? deps.getSettings().safety.autonomy) === "yolo";
-		options.turnBudgetContinues = budgetCrossingContinues({
-			yolo,
-			machineTurn: machineTurnRunning !== null,
-			failure: state.continuation.stop,
-			locked: state.synthesisToolLock,
-			continuations: state.continuation.yoloContinuations,
-		});
-		if (options.turnBudgetContinues) options.observationBudgetRoll = () => requestBudgetRoll("observation");
-		// Yolo keeps XR-6 exactly, its stops included; the headless roll is never its fallback (CLI-P42).
-		else if (!yolo && headlessObservation !== null) Object.assign(options, headlessObservation.invokeOptions(batch?.id));
-		// The per-turn budgets follow this route's measured calls per round (CLI-P26).
-		const scale = turnBudgetWidthScale(
-			routeCallsPerRound(state.runtime?.agent.state.messages ?? [], state.runtime?.agent.state.model?.id),
-		);
-		if (scale > 1) options.turnBudgetScale = scale;
-		const hostRun = hostRunContext.getStore();
-		if (hostRun !== undefined) options.hostRun = hostRun;
-		const sessionId = deps.session?.current()?.id ?? null;
-		if (sessionId) options.sessionId = sessionId;
-		const turnId = state.activeUserTurnId ?? state.lastTurnId;
-		if (turnId) options.turnId = turnId;
-		if (state.currentPendingSkillPolicy) options.pendingSkillPolicy = state.currentPendingSkillPolicy;
-		if (state.currentTurnConstraints) options.turnConstraints = state.currentTurnConstraints;
-		if (state.currentAskUserPolicy) options.askUserPolicy = state.currentAskUserPolicy;
-		return options;
-	};
+	const {
+		visionModelOptions,
+		nullRuntimeAdmissionReason,
+		retrySettings,
+		hostRunContext,
+		headlessObservation,
+		missingOutputs,
+	} = createChatLoopToolOptions(deps, state);
 
 	const loop: ChatLoopScope = {
 		deps,
@@ -1365,7 +998,15 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		retrySettings,
 		headlessObservation,
 		missingOutputs,
-		currentToolInvokeOptions,
+		hostRunContext,
+		sideQuestionRound,
+		enterPreparation,
+		leavePreparation,
+		eggs,
+		sessionResetListeners,
+		operatorToolLimits,
+		preparingSubmits,
+		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
 		},
@@ -1413,9 +1054,18 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		lastStepPipeline: null,
 		/** The running submit's runtime, where its own messages start, and whether it is a yolo continuation. */
 		stepTurnScope: null,
+		// Settlement tracking for whenSettled(): every submit still going, coerced
+		// to never reject so shutdown ordering cannot throw. `priorSubmit` is what
+		// `activeSubmit` held before the latest submit joined it, which is the run an
+		// interrupt has to wait out.
+		activeSubmit: Promise.resolve(),
 		priorSubmit: Promise.resolve(),
 		sessionResetSettlement: Promise.resolve(),
 		machinePreparation: null,
+		machineTurnRunning: null,
+		pendingMachineCancellation: null,
+		machineHostDisposed: false,
+		nextRequestPrepared: Promise.resolve(),
 		nextRequestNavigation: 0,
 		// A submit owns the turn state machine from the moment it starts running,
 		// which is well before `state.streaming` flips: the probe, auto-compaction,
@@ -1471,6 +1121,33 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		},
 		get turnRuntime() {
 			return turnRuntime;
+		},
+		get steerInterrupter() {
+			return steerInterrupter;
+		},
+		get prewarm() {
+			return prewarm;
+		},
+		get prepareNextRequest() {
+			return prepareNextRequest;
+		},
+		get cancelTriage() {
+			return cancelTriage;
+		},
+		get withEndpointSlot() {
+			return withEndpointSlot;
+		},
+		get prepareOutOfTurnRound() {
+			return prepareOutOfTurnRound;
+		},
+		get routeMoveWait() {
+			return routeMoveWait;
+		},
+		get routeFit() {
+			return routeFit;
+		},
+		get continuity() {
+			return continuity;
 		},
 		get stepStarts() {
 			return stepStarts;
@@ -1567,19 +1244,6 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 	// --- the state machine --------------------------------------------------
 
-	// Settlement tracking for whenSettled(): every submit still going, coerced
-	// to never reject so shutdown ordering cannot throw. `priorSubmit` is what
-	// `activeSubmit` held before the latest submit joined it, which is the run an
-	// interrupt has to wait out.
-	let activeSubmit: Promise<void> = Promise.resolve();
-	let machineTurnOwner: object | null = null;
-	let machineTurnRunning: object | null = null;
-	let pendingMachineCancellation: object | null = null;
-	let machineProjectionBinding: { host: MachineTurnProjectionHost } | null = null;
-	let machineProjectionRequired = false;
-	let machineHostDisposed = false;
-
-	let nextRequestPrepared: Promise<void> = Promise.resolve();
 	const {
 		continueStoppedTurn,
 		interruptRefusalReason,
@@ -1616,23 +1280,8 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		moveQueuedEntry: (id, delta) => queues.moveEntry(id, delta),
 		setQueuedEntryKind: (id, kind) => queues.setEntryKind(id, kind),
 		interruptRefusal: () => (state.streaming ? interruptRefusalReason() : null),
-		resumeAutonomy: () => {
-			const autonomy = deps.autonomy;
-			if (autonomy === undefined || autonomy.halted() === null) return false;
-			if (loop.disposed || state.streaming || state.activeUserTurnId !== null) return false;
-			autonomy.operatorSpoke();
-			void api.submit(
-				"[PanCode] The operator resumed yolo after it paused. Continue from where the previous turn stopped, and if the work is already finished, say so and stop.",
-				{ origin: "yolo resume", yoloContinuation: true },
-			);
-			return true;
-		},
+		...createChatLoopSessionCommands(loop, state),
 		autonomyStatus: () => deps.autonomy?.status?.() ?? null,
-		clearSkillSurface: () => {
-			const cleared = skillSurfaceNames(state.activeSkillSurface);
-			armSkillSurface(undefined, undefined, true);
-			return cleared;
-		},
 		activeSkillSurface: () => skillSurfaceNames(state.activeSkillSurface),
 		activeEggs: eggs.active,
 		eggsCommand: eggs.command,
@@ -1646,122 +1295,13 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 		submit: createChatLoopSubmit(loop, state),
 
-		cancel(options?: ChatCancelOptions): void {
-			if (options?.atToolBoundary === true) {
-				const { atToolBoundary: _deferred, ...stop } = options;
-				// Mid-run the stop waits for the round's tool batch; finishTurn lands it
-				// before the next model request. Between runs nothing is in flight.
-				if (state.streaming && state.runtime?.agent.signal?.aborted !== true) {
-					loop.boundaryStop ??= stop;
-					return;
-				}
-				api.cancel(stop);
-				return;
-			}
-			// A stop now supersedes one still waiting for the tool boundary.
-			loop.boundaryStop = null;
-			const machineCancellation = pendingMachineCancellation;
-			pendingMachineCancellation = null;
-			const preserveQueue = machineCancellation !== null && machineCancellation === machineTurnRunning;
-			// An operator who already stopped this turn keeps it stopped: a guard
-			// stop racing in after the Esc must not read as the guard's, or yolo
-			// would continue the turn (R2-safety-secrets-20).
-			const wasCanceledByOperator = state.activeInterruptReason !== null && state.activeInterruptByOperator;
-			loop.guardStoppedOwner = options?.source === "loop_guard" && !wasCanceledByOperator ? loop.submitOwner : null;
-			loop.submitOwner?.abort();
-			turnRuntime.cancelRunWatchdog();
-			continuity.cancel();
-			loop.pendingPreTurnRead?.abort();
-			loop.pendingVisionSidecar?.abort();
-			loop.pendingCompactionPaint?.abort();
-			const wasStreaming = state.streaming;
-			context.cancelCompaction();
-			recovery.cancelRetryCountdown();
-			// Settle the queue before the abort settles the in-flight prompt: a
-			// cancelled run must not deliver queued messages on its own. An
-			// interrupt holds them for the prompt it is about to send, and an operator
-			// stop holds them until the operator acts (#447). A guard stop was not the
-			// operator's choice, and a job cancellation has successors to protect
-			// (#411), so both leave the entries to the ordinary settlement path.
-			queues.onRunCancelled({
-				hold: isRedirectReason(options?.reason),
-				preserve: preserveQueue,
-				settle: options?.source === "loop_guard" || options?.source === "autonomy",
-			});
-			const requestedReason = options?.reason?.trim();
-			if (wasStreaming && !wasCanceledByOperator) {
-				// Keep immediate feedback in the footer. A transcript notice here
-				// would split the streamed entry before message_end can finalize it.
-				// The reason is carried by the provider's aborted assistant, or by
-				// one synthetic closing record after an empty abort settles.
-				state.activeInterruptReason =
-					requestedReason && requestedReason.length > 0 ? requestedReason : OPERATOR_CANCEL_REASON;
-				state.activeInterruptByOperator = (options?.source ?? "stream_cancel") === "stream_cancel";
-				state.activeInterruptByTriage = options?.source === "triage";
-				state.activeInterruptByAutonomy = options?.source === "autonomy";
-				state.activeInterruptByJobClock = options?.source === "job_clock";
-				state.activeInterruptByLoopGuard = options?.source === "loop_guard";
-				// An Esc is reported once, by the turn's Cancelled outcome. The footer
-				// carries only an interruption the operator did not ask for.
-				if (!isOperatorCancelReason(state.activeInterruptReason))
-					emitFooterNotice("warning", state.activeInterruptReason, "turn.interrupted");
-			}
-			state.runtime?.agent.abort();
-			if (wasStreaming && !wasCanceledByOperator && (options?.source ?? "stream_cancel") === "stream_cancel") {
-				const sessionId = api.getSessionId();
-				const settled = api.whenSettled();
-				// #425: publish after stream closure so the notice cannot split the aborted assistant entry.
-				void import("../domains/dispatch/batch-store.js")
-					.then(async ({ listDetachedBatches }) => {
-						await settled;
-						if (loop.disposed || api.getSessionId() !== sessionId) return;
-						const batches = listDetachedBatches().filter(
-							(batch) => batch.sessionId === sessionId && (sessionId !== null || batch.cwd === process.cwd()),
-						);
-						if (batches.length === 0) return;
-						emitNotice(
-							`Main turn cancelled. Detached batches continue independently: ${batches.map((batch) => batch.id).join(", ")}. ` +
-								'Collect with monitor(mode="collect", batch_id="<batch-id>"); abort a worker with steer(action="cancel", run_id="<run-id>"). ' +
-								"Collect existing results or explicitly re-run failed assignments before replacing their work.",
-							"info",
-							"dispatch.detached-continues",
-						);
-					})
-					.catch((error: unknown) => {
-						process.stderr.write(
-							`[dispatch] cancel notice failed: ${error instanceof Error ? error.message : String(error)}\n`,
-						);
-					});
-			}
-			if (wasStreaming && deps.bus) {
-				// A keypress cancels outside the turn's async context, so the record names its session itself (#434).
-				deps.bus.emit(
-					"turn.aborted",
-					{
-						source: options?.source ?? "stream_cancel",
-						at: Date.now(),
-						reason: options?.auditReason ?? (requestedReason ? "loop guard stopped a runaway turn" : "user cancelled stream"),
-					},
-					ownerTelemetryContext({ sessionId: api.getSessionId(), turnId: state.activeUserTurnId ?? undefined }),
-				);
-			}
-		},
+		...createChatLoopCancel(loop, state),
 
 		onEvent(handler: (event: ChatLoopEvent) => void): () => void {
 			listeners.add(handler);
 			return () => {
 				listeners.delete(handler);
 			};
-		},
-
-		captureWorkerContext(): WorkerContextSnapshot | null {
-			const meta = deps.session?.current();
-			if (!meta) return null;
-			return captureWorkerContext(
-				{ sessionId: meta.id, leafTurnId: state.lastTurnId, cwd: meta.cwd },
-				state.runtime?.agent.state.messages ?? state.replayedContextMessages,
-				deps.readSessionEntries?.(),
-			);
 		},
 
 		getSessionId(): string | null {
@@ -1792,68 +1332,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 		routeMoveWait,
 
-		routeMoveFit(route) {
-			try {
-				const candidate = turnRuntime.previewRoute(route);
-				return candidate ? routeFit(candidate) : { kind: "unresolved", reason: "no route is configured" };
-			} catch (err) {
-				return { kind: "unresolved", reason: err instanceof Error ? err.message : String(err) };
-			}
-		},
-
-		routeLeavesCache(route) {
-			try {
-				const candidate = turnRuntime.previewRoute(route);
-				if (!candidate) return false;
-				const runtime = state.runtime;
-				// A session resumed with nothing sent yet has no runtime; the route it would run on is the one it left off with.
-				const current = runtime
-					? { targetId: runtime.targetId, wireModelId: runtime.wireModelId }
-					: (() => {
-							const resolved = turnRuntime.previewRoute();
-							return resolved ? { targetId: resolved.target.target.id, wireModelId: resolved.target.wireModelId } : null;
-						})();
-				return (
-					current === null ||
-					current.targetId !== candidate.target.target.id ||
-					current.wireModelId !== candidate.target.wireModelId
-				);
-			} catch {
-				// An unresolvable route has no cost to state; the rest of the dialog and the pick itself report it.
-				return false;
-			}
-		},
-
-		moveWaitingRequest() {
-			const wait = routeMoveWait();
-			if (wait === "idle") return { kind: "idle" };
-			let fit: RouteMoveFit;
-			let candidate: ReturnType<TurnRuntime["previewRoute"]> = null;
-			try {
-				candidate = turnRuntime.previewRoute();
-				fit = candidate ? routeFit(candidate) : { kind: "unresolved", reason: "no route is configured" };
-			} catch (err) {
-				fit = { kind: "unresolved", reason: err instanceof Error ? err.message : String(err) };
-			}
-			if (fit.kind === "same") return { kind: "same" };
-			if (wait !== "first-output" && wait !== "retry-wait") return { kind: "next-turn", wait };
-			if (fit.kind !== "fits" || candidate === null) {
-				return { kind: "next-turn", wait, ...(fit.kind === "fits" ? {} : { fit }) };
-			}
-			const inFlight = state.runtime;
-			const alreadyStopped = state.routeMove !== null;
-			state.routeMove = candidate.target;
-			if (wait === "retry-wait") recovery.cancelRetryCountdown();
-			else if (!alreadyStopped && inFlight) {
-				// The stall path's seam, because this is the same event to everything below it: PanCode aborted a silent call
-				// with no operator stop behind it, and the run goes on. The reason stays in the ledger for /view.
-				state.streamStallReason = `aborted to move this request to ${candidate.target.target.id}/${candidate.target.wireModelId}: no output had arrived from ${inFlight.targetId}/${inFlight.wireModelId}`;
-				state.streamStallStage = null;
-				turnRuntime.cancelRunWatchdog();
-				inFlight.agent.abort();
-			}
-			return { kind: "moved", wait };
-		},
+		...createChatLoopRouteMove(loop, state),
 
 		turnPreparation() {
 			return { phase: state.turnPreparation, since: state.turnPreparationSince, stage: state.turnPreparationStage };
@@ -1868,138 +1347,23 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 		contextUsage: () => context.contextUsage(),
 		currentTurnConstraints: () => state.currentTurnConstraints,
-		setToolCeiling(ceilings, lifetime = "session") {
-			const limits = snapshotTurnConstraints(
-				ceilings.reduce(narrowTurnConstraints, lifetime === "session" ? operatorToolLimits : sessionToolLimits),
-			);
-			if (lifetime === "session") sessionToolLimits = limits;
-			promptToolLimits = limits;
-			// A run in flight keeps the scope it was admitted under (#423).
-			if (!state.streaming) state.currentTurnConstraints = promptToolLimits;
-			return limits;
-		},
-		toolLimits: () => promptToolLimits,
-		jobConstraints: () => {
-			const constraints = state.currentTurnConstraints;
-			const policy = state.currentPendingSkillPolicy ?? state.activeSkillSurface;
-			if (!policy) return snapshotTurnConstraints(constraints);
-			const allowedTools = (deps.toolRegistry?.listAll() ?? [])
-				.map((tool) => tool.name)
-				.filter(
-					(name) =>
-						evaluateSkillToolSurface(policy, name) === null &&
-						(constraints?.allowedTools === undefined || constraints.allowedTools.includes(name)),
-				);
-			// The skill surface narrows the job, so a refusal must name it rather than
-			// blame a wider scope that still admits the tool.
-			return snapshotTurnConstraints({
-				...constraints,
-				allowedTools,
-				toolSurfaceSources: [
-					...toolSurfaceSources(constraints),
-					{
-						tools: allowedTools,
-						source: `active skill tool surface (${skillSurfaceNames(policy).join(", ")})`,
-						remedy: "Unload the narrowing skill or widen its allowed-tools, then recreate the job.",
-					},
-				],
-			});
-		},
 		contextLedger: () => context.contextLedger(),
 		screenWindow: () =>
 			state.runtime ? { messages: state.runtime.agent.state.messages, since: loop.operatorSpokeAt } : null,
 		liveBudget: () => context.liveBudget(),
 		inspectLiveBudget: () => context.inspectLiveBudget(),
 		refreshLiveBudget: () => context.refreshLiveBudget(),
-		whenSettled: () => activeSubmit,
+		whenSettled: () => loop.activeSubmit,
 		whenPrewarmSettled: () => prewarm.settled(),
-		nextRequestReady: () => nextRequestPrepared,
-		onSessionReset(handler): () => void {
-			sessionResetListeners.add(handler);
-			return () => {
-				sessionResetListeners.delete(handler);
-			};
-		},
-
-		resetForSession(leafTurnId: string | null, replayMessages?: ReadonlyArray<AgentMessage>): void {
-			loop.submitOwner?.abort();
-			loop.submitGeneration += 1;
-			// An interview another session or branch closed never answers this one's continuations (C-25).
-			loop.promptInterview = undefined;
-			turnRuntime.cancelRunWatchdog();
-			loop.sessionResetSettlement = activeSubmit;
-			state.streaming = false;
-			loop.pendingPreTurnRead?.abort();
-			context.cancelCompaction();
-			for (const listener of sessionResetListeners) {
-				try {
-					listener();
-				} catch {
-					// A host observer must not interrupt canonical replay and state cleanup.
-				}
-			}
-			// Local shell completion and tree navigation also refresh the same transcript.
-			eggs.syncConversation();
-			loop.operatorTurnsBefore = null;
-			lastHistoricalImageNoticeKey = null;
-			loop.pendingVisionSidecar?.abort();
-			loop.pendingCompactionPaint?.abort();
-			continuity.cancel();
-			void continuity.pause();
-			state.currentTurnConstraints = sessionToolLimits;
-			// The leaf being left is still `state.lastTurnId`; a navigation clears the chain there.
-			stepStarts.reset({ sessionId: deps.session?.current()?.id ?? null, leafTurnId: state.lastTurnId }, leafTurnId);
-			state.activeSkillSurface = undefined;
-			state.currentPendingSkillPolicy = undefined;
-			if (state.runtime) {
-				state.runtime.agent.abort();
-				(state.runtime.agent as { clearAllQueues?: () => void } | undefined)?.clearAllQueues?.();
-				turnRuntime.cleanupSessionResources(state.runtime.agent.sessionId);
-			}
-			recovery.cancelRetryCountdown();
-			cancelTriage();
-			const sessionId = api.getSessionId();
-			if (deps.toolRegistry) ensureDetailLedgerForSession(deps.toolRegistry, sessionId);
-			queues.reset({ keepOperator: sessionId !== null && sessionId === loop.queueSessionId });
-			loop.queueSessionId = sessionId;
-			middleware.clearPendingReminders();
-			// The turn the reset cut off never reaches its turn_end hook: what its requests carried settles with it now.
-			outcomeCollector.closeSession();
-			middlewareToolChoice.reset();
-			state.lastTurnId = leafTurnId;
-			state.lastRunSnapshot = null;
-			// In place before the context resets, so it republishes on the history of the leaf arrived at.
-			state.replayedContextMessages = replayMessages ? [...replayMessages] : [];
-			state.continuityAtMs = continuityRenderTime(replayMessages) ?? null;
-			if (state.runtime) replaceEngineMessages(state.runtime.agent, [...state.replayedContextMessages]);
-			// The incoming leaf is the advisory branch identity for the new session.
-			// Ordinary appends advance `state.lastTurnId` from here without re-arming
-			// an advisory; arriving here at all is the navigation that does.
-			context.resetForSession(leafTurnId);
-			loop.nextRequestNavigation += 1;
-			nextRequestPrepared =
-				replayMessages && replayMessages.length > 0 ? prepareNextRequest(loop.nextRequestNavigation) : Promise.resolve();
-			// The resumed ledger renders before the first new turn (issue #189),
-			// and the window it renders against should be the probed one rather
-			// than the catalog's, so the live capability probe the first submit
-			// would run runs now, under the same TTL; the footer refreshes on the
-			// provider-health event the probe publishes.
-			void turnRuntime.ensureLiveCapabilitiesForSelectedModel().catch(() => {});
-			if (deps.protectedArtifacts) {
-				reloadProtectedArtifactsForSession(deps.protectedArtifacts, deps.readSessionEntries);
-			}
-			// A resume replays a history the backend has never seen; a fresh session
-			// replays nothing but still compiles a prompt and a tool surface. Both
-			// leave a prefix the next turn will pay for unless it is sent now.
-			prewarm.schedule(replayMessages && replayMessages.length > 0 ? "resume" : "session-start");
-		},
+		nextRequestReady: () => loop.nextRequestPrepared,
+		...createChatLoopSessionReset(loop, state),
 
 		dispose(): void {
 			loop.disposed = true;
 			steerInterrupter.dispose();
 			loop.submitOwner?.abort();
 			loop.pendingPreTurnRead?.abort();
-			machineHostDisposed = true;
+			loop.machineHostDisposed = true;
 			sessionResetListeners.clear();
 			unsubscribeEggSession?.();
 			eggs.reset();
@@ -2029,578 +1393,14 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			middlewareToolChoice.reset();
 		},
 
-		async askSideQuestion(question: string, options: SideQuestionOptions = {}): Promise<SideQuestionOutcome> {
-			const text = question.trim();
-			if (text.length === 0) {
-				return { status: "refused", reason: "a side question needs a question" };
-			}
-			// Never queued and, since #415, never refused for a running turn. A side
-			// question exists to be answered now, beside a run the operator is
-			// watching; holding it until the run settles would deliver it after the
-			// moment it was asked in had passed.
-			const prepared = await prepareOutOfTurnRound(null, options.signal, false, false);
-			if (!prepared.ok) return { status: "refused", reason: prepared.reason };
-			const route = { targetId: prepared.runtime.targetId, wireModelId: prepared.runtime.wireModelId };
-			options.onRoute?.(route);
-			// A snapshot, taken now: a running turn keeps appending to the live list
-			// while this round awaits admission and streams.
-			const messages = [...prepared.runtime.agent.state.messages];
-			let result: SideQuestionResult;
-			try {
-				result = await withEndpointSlot(prepared.runtime, (slot) =>
-					sideQuestionRound({
-						...sideCallJournal(prepared.runtime, "btw", prepared.origin),
-						beforeRequest: sideCallAdmission(prepared.origin, slot, options.signal),
-						admitFlow: () => deps.admitFlow?.(prepared.runtime) ?? null,
-						model: prepared.runtime.agent.state.model,
-						// Read-only: the round appends its own message to this copy, so
-						// the live agent's history is untouched.
-						messages,
-						question: text,
-						midTurn: prepared.inFlight,
-						// The turn's own prompt and tools, so the round reads the prefix the turn already cached (S12).
-						livePrefix: (history, tail, signal) => engineLiveTurnRequest(prepared.runtime.agent, history, tail, signal),
-						// The level the session's own next turn would use.
-						thinkingLevel: prepared.runtime.agent.state.thinkingLevel ?? "off",
-						...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
-						...(prepared.refreshApiKey ? { refreshApiKey: prepared.refreshApiKey } : {}),
-						...(options.signal ? { signal: options.signal } : {}),
-						...(options.onDelta ? { onDelta: options.onDelta } : {}),
-					}),
-				);
-			} catch (err) {
-				return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
-			}
-			return result.aborted
-				? { status: "aborted", text: result.text }
-				: {
-						status: "answered",
-						text: result.text,
-						route: { ...route, ...(result.reportedModel !== undefined ? { reportedModel: result.reportedModel } : {}) },
-					};
-		},
-
-		async draftCandidates(request: string, count: number, options: DraftOptions = {}): Promise<DraftOutcome> {
-			const text = request.trim();
-			if (text.length === 0) return { status: "refused", reason: "a draft needs a request" };
-			if (!Number.isInteger(count) || count < 1 || count > DRAFT_TEMPERATURES.length) {
-				return { status: "refused", reason: `draft count must be 1 to ${DRAFT_TEMPERATURES.length}` };
-			}
-			// Never queued, for the side question's reason, and run beside a turn in
-			// flight the same way (#415): the drafts answer the session as it stands now.
-			const prepared = await prepareOutOfTurnRound(null, options.signal, false, false);
-			if (!prepared.ok) return { status: "refused", reason: prepared.reason };
-			const route = { targetId: prepared.runtime.targetId, wireModelId: prepared.runtime.wireModelId };
-			options.onRoute?.(route);
-			const messages = [...prepared.runtime.agent.state.messages];
-			const candidates = await Promise.all(
-				DRAFT_TEMPERATURES.slice(0, count).map(async (temperature, index): Promise<DraftCandidate> => {
-					const samplingTemperature = draftTemperature(prepared.runtime.agent.state.model, temperature);
-					try {
-						// One endpoint slot per round: each is a full request against the
-						// same scheduler, and capacity has to count every one of them.
-						const result = await withEndpointSlot(prepared.runtime, (slot) =>
-							runDraftWithSamplerFallback(
-								index,
-								samplingTemperature,
-								(sampling) =>
-									runOutOfTurnRound({
-										...sideCallJournal(prepared.runtime, "helper", prepared.origin),
-										purpose: "draft",
-										beforeRequest: sideCallAdmission(prepared.origin, slot, options.signal),
-										admitFlow: () => deps.admitFlow?.(prepared.runtime) ?? null,
-										model: prepared.runtime.agent.state.model,
-										// One snapshot for every candidate, read-only as the side question's is.
-										messages,
-										systemPrompt: sampling.systemPrompt,
-										userText: text,
-										midTurn: prepared.inFlight,
-										maxTokens: DRAFT_MAX_TOKENS,
-										thinkingLevel: prepared.runtime.agent.state.thinkingLevel ?? "off",
-										...(sampling.temperature === undefined ? {} : { temperature: sampling.temperature }),
-										...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
-										...(prepared.refreshApiKey ? { refreshApiKey: prepared.refreshApiKey } : {}),
-										...(options.signal ? { signal: options.signal } : {}),
-										...(options.onCandidate ? { onDelta: (partial: string) => options.onCandidate?.(index, partial) } : {}),
-									}),
-								options.signal,
-							),
-						);
-						return {
-							...draftCandidateFromText(result.text),
-							route: { ...route, ...(result.reportedModel !== undefined ? { reportedModel: result.reportedModel } : {}) },
-						};
-					} catch (err) {
-						return { status: "failed", reason: err instanceof Error ? err.message : String(err), route };
-					}
-				}),
-			);
-			return { status: "drafted", candidates, aborted: options.signal?.aborted === true };
-		},
-
-		async extractHandoff(goal: string, options: HandoffRoundOptions = {}): Promise<SideQuestionOutcome> {
-			const text = goal.trim();
-			if (text.length === 0) {
-				return { status: "refused", reason: "a handoff needs a goal" };
-			}
-			// Refused, never queued: a handoff describes a session that has stopped
-			// working, and a turn still in flight is about to change what the
-			// document would say.
-			const prepared = await prepareOutOfTurnRound(
-				"a turn is in flight; /handoff cannot summarize a session that is still moving",
-				options.signal,
-				false,
-				false,
-			);
-			if (!prepared.ok) return { status: "refused", reason: prepared.reason };
-			options.onRoute?.({ targetId: prepared.runtime.targetId, wireModelId: prepared.runtime.wireModelId });
-			let result: SideQuestionResult;
-			try {
-				result = await withEndpointSlot(prepared.runtime, (slot) =>
-					runHandoffRound({
-						...sideCallJournal(prepared.runtime, "handoff", prepared.origin),
-						beforeRequest: sideCallAdmission(prepared.origin, slot, options.signal),
-						admitFlow: () => deps.admitFlow?.(prepared.runtime) ?? null,
-						model: prepared.runtime.agent.state.model,
-						// Read-only, exactly as the side-question round treats it.
-						messages: prepared.runtime.agent.state.messages,
-						goal: text,
-						// The runtime id is what decides whether the schema can be bound
-						// on the wire rather than only stated in the prompt.
-						runtimeId: prepared.runtime.runtimeResolution.runtime.id,
-						...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
-						...(prepared.refreshApiKey ? { refreshApiKey: prepared.refreshApiKey } : {}),
-						...(options.signal ? { signal: options.signal } : {}),
-						...(options.repair ? { repair: options.repair } : {}),
-					}),
-				);
-			} catch (err) {
-				return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
-			}
-			return result.aborted ? { status: "aborted", text: result.text } : { status: "answered", text: result.text };
-		},
+		...createChatLoopSideRounds(loop),
 
 		requestSelfCompact: (note, toolCallId, signal) => continuity.request(note, toolCallId, signal),
-		async recoverHandoff(handoffId, action) {
-			if (state.streaming || state.turnPreparation !== "idle")
-				throw new Error("Wait for the current turn to settle before recovery.");
-			const runtime = turnRuntime.ensureRuntime();
-			if (!runtime) throw new Error("No native runtime is configured.");
-			clearActiveInterrupt(state);
-			if (!state.activeUserTurnId) {
-				const operator = findLastEntry(
-					activePath(deps.readSessionEntries?.() ?? [], state.lastTurnId ?? undefined),
-					(entry) => entry.kind === "message" && entry.role === "user",
-				);
-				state.activeUserTurnId = operator?.turnId ?? null;
-			}
-			const operationSession = deps.session?.current()?.id ?? null;
-			const operationCwd = process.cwd();
-			const operation = createContextOperation(
-				{
-					kind: "context-recover",
-					sessionId: operationSession,
-					cwd: operationCwd,
-					origin: "operator",
-					reason: `handoff ${action}`,
-				},
-				(event) => {
-					if (operationSession !== (deps.session?.current()?.id ?? null) || operationCwd !== process.cwd()) return;
-					deps.bus?.emit("context.activity_changed", event);
-					if (event.operation?.outcome && operationSession)
-						deps.session?.appendEntry({
-							kind: "custom",
-							customType: CONTEXT_OPERATION_CUSTOM_TYPE,
-							parentTurnId: state.lastTurnId,
-							data: event.operation,
-						});
-				},
-			);
-			state.streaming = true;
-			operation.start("state", "Recovering paused handoff");
-			try {
-				await new Promise<void>((resolve) => setImmediate(resolve));
-				if (
-					state.activeInterruptReason ||
-					operationSession !== (deps.session?.current()?.id ?? null) ||
-					operationCwd !== process.cwd()
-				)
-					throw new DOMException("Handoff recovery cancelled", "AbortError");
-				await continuity.recover(handoffId, action);
-				await continueEngineWithoutInput(runtime.agent);
-				operation.finish(state.activeInterruptReason ? "cancelled" : "completed", "Handoff recovery settled");
-			} catch (error) {
-				operation.finish(
-					error instanceof Error && error.name === "AbortError" ? "cancelled" : "failed",
-					error instanceof Error ? error.message : String(error),
-				);
-				throw error;
-			} finally {
-				state.streaming = false;
-				await continuity.pause();
-			}
-		},
-		async compact(instructions?: string): Promise<void> {
-			const reply = (text: string, level: ChatNoticeEvent["level"] = "info"): void =>
-				emit({ type: "notice", level, surface: "transcript", text, commandReply: true });
-			// Session check runs BEFORE orchestrator-configuration so a fresh
-			// TUI with nothing configured still reports the actionable "no
-			// current session" message rather than the "not configured"
-			// banner.
-			if (!deps.session?.current()) {
-				reply("[/context compact] no current session to compact; start one with /new or /resume first");
-				return;
-			}
-			let agentRuntime: AgentRuntime | null;
-			try {
-				await turnRuntime.ensureLiveCapabilitiesForSelectedModel();
-				agentRuntime = turnRuntime.ensureRuntime({ silent: true });
-			} catch (err) {
-				reply(`[/context compact] ${err instanceof Error ? err.message : String(err)}`);
-				return;
-			}
-			if (!agentRuntime) {
-				reply(`[/context compact] ${notConfiguredNotice(deps.getSettings().chat)}`);
-				return;
-			}
-			// A second request while one runs would join it and report the same ending twice, and drop its own instructions.
-			if (operatorCompactionRunning) {
-				reply(
-					"[/context compact] a compaction is already running; its card reports how it ends. Run /context compact again after that if it is still needed.",
-					"warning",
-				);
-				return;
-			}
-			operatorCompactionRunning = true;
-			let compacted = false;
-			const paintCompaction = prepareCompactionPaint();
-			enterPreparation();
-			setTurnPreparation("compacting");
-			try {
-				await paintCompaction();
-				compacted = await context.runAutoCompact(agentRuntime, true, instructions, "force");
-			} catch (err) {
-				if (err instanceof Error && err.name === "AbortError") {
-					// A forced compaction skips every cheaper stage, so a stop before the summary saved left the context as it was.
-					// Its card already says so with the size it stayed at; a notice beside it said the same thing twice.
-					if (context.lastCompactionCardSettled()) return;
-					const tokens = context.contextUsage().tokens;
-					reply(
-						`[/context compact] cancelled; context unchanged${tokens !== null ? ` at ${formatCount(tokens)} tokens` : ""}`,
-					);
-					return;
-				}
-				// A failed summary saved nothing either, and the operator needs that, the reason in words and the way on (HS14).
-				const tokens = context.contextUsage().tokens;
-				reply(
-					`[/context compact] failed; context unchanged${tokens !== null ? ` at ${formatCount(tokens)} tokens` : ""}. ${compactionFailureReason(err)}. /context compact tries again; /model picks another route to summarize on.`,
-					"error",
-				);
-				return;
-			} finally {
-				operatorCompactionRunning = false;
-				leavePreparation();
-				endPreparationCompaction();
-			}
-			if (!compacted && !context.lastCompactionWasNoGain()) {
-				const entries = deps.readSessionEntries?.() ?? [];
-				const hasMessages =
-					entries.some((entry) => entry.kind === "message") || agentRuntime.agent.state.messages.length > 0;
-				const usage = context.contextUsage();
-				const used = usage.tokens !== null ? `${formatCount(usage.tokens)} tokens` : "unknown usage";
-				const budget =
-					usage.tokens !== null && usage.contextWindow > 0
-						? `${formatCount(usage.tokens)} of ${formatCount(usage.contextWindow)} tokens used`
-						: used;
-				// Nothing was summarized, so instructions given for the summary went unused, and the operator should know (bt-11).
-				const unused = instructions?.trim() ? ". Your compaction instructions were not used" : "";
-				// A window this run capped small has no later turn that frees room, so the way on is a larger cap (memory-audit 13).
-				const capped =
-					usage.contextWindow > 0 &&
-					usage.contextWindow < SMALL_WINDOW_TOKENS &&
-					runOverrides().maxContextTokens === usage.contextWindow
-						? `. This run's --max-context-tokens ${usage.contextWindow} leaves no older history to summarize; start again with a larger --max-context-tokens, or /new`
-						: "";
-				reply(
-					hasMessages
-						? `[/context compact] too short to compact (${budget}); every turn is still inside the kept recent window, so no older history can be summarized yet${capped}${unused}`
-						: `[/context compact] session is empty; start a conversation first${unused}`,
-				);
-			}
-		},
+		...createChatLoopContextCommands(loop, state),
 	};
 
-	const submitInner = api.submit.bind(api);
-	const submitTracked: ChatLoop["submit"] = (text, options) => {
-		loop.priorSubmit = activeSubmit;
-		const preparationToken = options?.machineTurn?.preparationToken;
-		loop.machinePreparation = preparationToken === undefined ? null : { token: preparationToken, runtime: null };
-		// The flag brackets the whole submit, including the early returns an
-		// admission failure takes, so a refused turn does not leave the pre-warm
-		// believing a turn is still running.
-		loop.turnActive = true;
-		const run = submitInner(text, options).finally(() => {
-			if (loop.machinePreparation?.token === preparationToken) loop.machinePreparation = null;
-			loop.turnActive = false;
-			keepalive.cancel();
-		});
-		// A steer during a run is a submit that returns at once. Replacing the record with it forgot the
-		// live run, so an interrupt's wait for the cancel to settle returned early and shutdown could stop the writer
-		// under a persisting turn. The record covers every submit still going.
-		activeSubmit = Promise.all([loop.priorSubmit, run.catch(() => {})]).then(() => {});
-		return run;
-	};
-
-	// FIFO admission gate. Between entry and `state.streaming = true` a fresh
-	// submit awaits the target probe, auto-compaction, and the session prompt
-	// compile; a second submit arriving in that window used to run the same
-	// pipeline concurrently, skip the probe the first one was still awaiting,
-	// append its user turn first, and leave the first to fail on the engine's
-	// active-prompt invariant after its turn was already in the ledger. Each
-	// submit now waits for the previous one to either own the stream or return,
-	// then re-evaluates `state.streaming`, so a prompt typed during boot lands
-	// as the next steer or follow-up in the order it was typed. The gate is
-	// released at admission, not settlement, so steering stays immediate.
-	let admissionTail: Promise<void> | null = null;
-	api.submit = (text, options = {}) => {
-		const constraints = snapshotTurnConstraints(options.constraints);
-		options = { ...options, ...(constraints === undefined ? {} : { constraints }) };
-		// Capture before admission can await. Internal resubmits inherit the
-		// async scope; every independent public submit explicitly starts its own.
-		const hostRun = options.hostRun === undefined ? undefined : structuredClone(options.hostRun);
-		// The operator owns the slot from the keystroke, not from admission. The
-		// prefix the pre-warm already pushed through stays in it either way, so
-		// aborting here costs nothing and stops the real turn from queueing behind
-		// a request nobody is waiting on.
-		prewarm.cancel();
-		keepalive.cancel();
-		const previous = admissionTail;
-		let release: () => void = () => {};
-		const ticket = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		admissionTail = ticket;
-		const releaseTicket = (): void => {
-			release();
-			if (admissionTail === ticket) admissionTail = null;
-		};
-		// The window opens here, not at admission: the caller has already cleared
-		// the editor and painted the prompt, and a submit that queues behind the
-		// FIFO gate is still a prompt PanCode is holding. It closes once, at
-		// whichever of admission and settlement comes first, so a refused probe
-		// and a blocked overflow preflight close it as reliably as a turn that
-		// reaches the stream.
-		enterPreparation();
-		let leftPreparation = false;
-		const leaveOnce = (): void => {
-			if (leftPreparation) return;
-			leftPreparation = true;
-			leavePreparation();
-		};
-		const start = async (): Promise<void> => {
-			const { onPreparationVisible, ...submitOptions } = options;
-			try {
-				await onPreparationVisible?.();
-			} catch {
-				// A presentation observer cannot refuse a turn after the editor has
-				// consumed it. The ordinary render path can recover on its next tick.
-			}
-			if (options.isAdmissionCurrent?.() === false) {
-				releaseTicket();
-				return;
-			}
-			return hostRunContext
-				.run(hostRun, () =>
-					submitTracked(text, {
-						...submitOptions,
-						onAdmitted: () => {
-							releaseTicket();
-							leaveOnce();
-							options.onAdmitted?.();
-						},
-					}),
-				)
-				.finally(releaseTicket);
-		};
-		const run = previous ? previous.then(start) : start();
-		return run.finally(leaveOnce);
-	};
-
-	api.bindMachineTurnProjection = (host) => {
-		const binding = { host };
-		machineProjectionRequired = true;
-		machineProjectionBinding = binding;
-		return () => {
-			if (machineProjectionBinding === binding) machineProjectionBinding = null;
-		};
-	};
-	api.machineTurnAvailable = () =>
-		!machineHostDisposed &&
-		(!machineProjectionRequired || machineProjectionBinding !== null) &&
-		machineTurnOwner === null &&
-		!state.streaming &&
-		preparingSubmits === 0 &&
-		!loop.turnActive &&
-		!state.currentAskUserPolicy?.inFlight &&
-		deps.toolRegistry?.hasParkedCalls() !== true &&
-		queues.entries().length === 0;
-	api.submitMachineTurn = async (request) => {
-		const refused = (reason: string): MachineTurnResult => ({ status: "refused", turnId: null, reason });
-		if (machineProjectionRequired && machineProjectionBinding === null)
-			return refused(
-				"The attended turn projection is detached; delivery remains with its job controller until the host is available.",
-			);
-		const paused = deps.autonomy?.halted() ?? null;
-		if (paused !== null)
-			return refused(`Yolo is paused for the operator (${paused.detail}); delivery remains with its job controller.`);
-		if (!api.machineTurnAvailable?.())
-			return refused("The main conversation is busy; delivery remains with its job controller.");
-		const current = (): boolean =>
-			!machineHostDisposed &&
-			!request.signal.aborted &&
-			request.sessionId === api.getSessionId() &&
-			request.isAdmissionCurrent();
-		if (!current()) return refused("The job's originating session or generation is no longer current.");
-		const token = {};
-		machineTurnOwner = token;
-		let settled: MachineTurnResult | null = null;
-		let ownedUserTurnId: string | null = null;
-		let ownedRuntime: AgentRuntime | null = null;
-		let projectionLease: Extract<MachineTurnProjectionAdmission, { status: "ready" }> | null = null;
-		// A scheduled job's turn is autonomous: its commits name PanCode as author under `auto`.
-		const autonomousCommits: { release: (() => void) | null } = { release: null };
-		const cancel = (): void => {
-			if (
-				machineTurnOwner === token &&
-				loop.machinePreparation?.token === token &&
-				!state.streaming &&
-				state.activeUserTurnId === null
-			) {
-				// This preparation still owns the FIFO slot; cancel its ports without aborting a successor runtime (#411).
-				loop.pendingPreTurnRead?.abort();
-				loop.pendingVisionSidecar?.abort();
-				loop.pendingCompactionPaint?.abort();
-				if (loop.machinePreparation.runtime !== null && state.runtime === loop.machinePreparation.runtime)
-					context.cancelCompaction();
-				return;
-			}
-			if (
-				machineTurnRunning === token &&
-				ownedUserTurnId !== null &&
-				state.activeUserTurnId === ownedUserTurnId &&
-				state.runtime === ownedRuntime &&
-				request.sessionId === api.getSessionId()
-			) {
-				pendingMachineCancellation = token;
-				// The controller's abort reason says what ended it; a timed-out occurrence is not a cancelled one (#445).
-				const cause = request.signal.reason;
-				const ended = cause instanceof Error ? cause.message : String(cause);
-				try {
-					api.cancel({
-						reason: `Scheduled job occurrence ended: ${ended}.`,
-						auditReason: `job occurrence ended: ${ended}`,
-						...(cause instanceof JobClockExpired ? { source: "job_clock" as const } : {}),
-					});
-				} finally {
-					pendingMachineCancellation = null;
-				}
-			}
-		};
-		request.signal.addEventListener("abort", cancel, { once: true });
-		try {
-			const binding = machineProjectionBinding;
-			if (binding !== null) {
-				const meta = deps.session?.current();
-				if (!meta || meta.id !== request.sessionId)
-					return refused("The projection's conversation is no longer bound to this machine turn.");
-				const projection = binding.host.acquire({
-					jobId: request.jobId,
-					executionId: request.executionId,
-					text: request.text,
-					origin: request.origin,
-					sessionId: request.sessionId,
-					cwd: realpathSync(meta.cwd),
-					signal: request.signal,
-				});
-				if (projection.status === "deferred") return refused(projection.reason);
-				projectionLease = projection;
-				if (!current() || machineProjectionBinding !== binding)
-					return refused("The attended projection host changed during machine-turn admission.");
-			}
-			await api.submit(request.text, {
-				origin: request.origin,
-				...(request.operatorAuthored === true ? { operatorAuthored: true } : {}),
-				...(request.constraints === undefined ? {} : { constraints: request.constraints }),
-				isAdmissionCurrent: current,
-				machineTurn: {
-					preparationToken: token,
-					onStarting: request.onStarting,
-					onSettled: (result) => {
-						settled = result;
-						if (machineTurnRunning === token) machineTurnRunning = null;
-					},
-				},
-				onAdmitted: () => {
-					if (loop.machinePreparation?.token === token) loop.machinePreparation = null;
-					machineTurnRunning = token;
-					autonomousCommits.release ??= enterAutonomousCommitScope();
-					ownedUserTurnId = state.activeUserTurnId;
-					ownedRuntime = state.runtime;
-					emit({
-						type: "queued_user_turn",
-						text: request.text,
-						kind: "follow-up",
-						origin: request.origin,
-					});
-					if (request.notice !== undefined) emitNotice(request.notice, "warning", "job.clock-resumed");
-					if (request.signal.aborted) cancel();
-				},
-			});
-			return (
-				settled ??
-				refused(
-					request.signal.aborted
-						? "Scheduled delivery cancelled before execution."
-						: "The fresh turn was refused during ordinary admission.",
-				)
-			);
-		} catch (error) {
-			return {
-				status: request.signal.aborted ? "canceled" : "failed",
-				turnId: null,
-				reason: error instanceof Error ? error.message : String(error),
-			};
-		} finally {
-			request.signal.removeEventListener("abort", cancel);
-			autonomousCommits.release?.();
-			if (machineTurnRunning === token) machineTurnRunning = null;
-			try {
-				projectionLease?.release();
-			} catch (error) {
-				emitNotice(
-					`Machine turn projection release failed: ${error instanceof Error ? error.message : String(error)}`,
-					"error",
-				);
-			}
-			if (machineTurnOwner === token) machineTurnOwner = null;
-			// Successor prompts have their own lifetime and must never extend this occurrence (#411).
-			if (settled !== null && !machineHostDisposed)
-				void queues
-					.resubmitStranded()
-					.then(async (submitted) => {
-						if (!submitted) await queues.resubmitRequestContinuation();
-					})
-					.catch((error: unknown) => emitNotice(error instanceof Error ? error.message : String(error), "error"));
-		}
-	};
+	const { submitTracked, submit } = createChatLoopAdmission(loop, api.submit.bind(api));
+	api.submit = submit;
+	Object.assign(api, createChatLoopMachineTurn(loop, state));
 	return api;
-}
-
-/** The per-call bounds settings put on every tool invocation: the bash idle timeout and the main session's resource ceilings. */
-function toolLimitOptions(safety: PancodeSettings["safety"]): Pick<ToolInvokeOptions, "bashIdleMs" | "resourceLimits"> {
-	const resourceLimits = resourceLimitsFromSettings(safety.resources.main);
-	return {
-		...(safety.limits.bashIdleTimeoutMs > 0 ? { bashIdleMs: safety.limits.bashIdleTimeoutMs } : {}),
-		...(resourceLimits === undefined ? {} : { resourceLimits }),
-	};
 }
