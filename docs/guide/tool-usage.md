@@ -36,7 +36,7 @@ the tool:
 | Look things up | [`gateway`](#gateway-discover-and-call-secondary-capabilities), [`pancode_docs`](#pancodedocs-retrieve-bundled-documentation-through-the-gateway), [`pancode_hub`](#pancodehub-inspect-the-component-catalog-through-the-gateway), [`context`](#context-workspace-skill-activation-and-recall), [`git`](#git-typed-inspection-staging-and-commits), [`data`](#data-inspect-structured-files-through-the-gateway) |
 | Reach outside the machine | [`web_read` and `web_fetch`](#webread-and-webfetch-read-web-pages-or-make-full-http-requests), [`credential_present`](#credentialpresent-check-environment-or-file-for-a-credential-key) |
 | Talk to the operator | [`ask_user`](#askuser-host-owned-operator-interviews), [`panes`](#panes-manage-terminal-panes-owned-by-pancode), [`report`](#report-draft-a-pancode-report-for-the-operator) |
-| Configure and manage the session | [`configure_pancode`](#configurepancode-propose-pancode-settings-and-targets-with-an-approved-diff), [`restart_session`](#restartsession-restart-onto-a-rebuilt-pancode-checkout), [`self_compact`](#selfcompact-save-a-handoff-note-and-compact-context), [`vision`](#vision-ask-the-configured-vision-model-about-an-image), [`consult`](#consult-ask-a-fast-decision-model), [`music`](#music-control-the-focus-radio-pane) |
+| Configure and manage the session | [`configure_pancode`](#configurepancode-propose-pancode-settings-and-targets-with-an-approved-diff), [`restart_session`](#restartsession-restart-onto-a-rebuilt-pancode-checkout), [`self_compact`](#selfcompact-save-a-handoff-note-and-compact-context), [`vision`](#vision-ask-the-configured-vision-model-about-an-image), [`consult`](#consult-ask-a-fast-decision-model) |
 
 Cross-cutting behavior that applies to every tool is in
 [Observation envelope](#observation-envelope-truncation-notices-offload-next-hints-and-the-turn-budget),
@@ -84,7 +84,7 @@ steps in a chain. Describing `gateway` returns composition syntax; describing
 | Placement | Tools |
 | --- | --- |
 | Direct in main sessions | read, bash, edit, write, grep, code_nav, verify, ask_user, finish, gateway; dispatch and consult when wired; memory_note when the session starts with `context.memory.surfaces.lessons: agent` |
-| Gateway in main sessions | Every other wired builtin, including find, ls, count, context, run_script, tasks, monitor, steer, ledger, panes, music, limitation, decide and self_compact |
+| Gateway in main sessions | Every other wired builtin, including find, ls, count, context, run_script, tasks, monitor, steer, ledger, panes, limitation, decide and self_compact |
 | Direct in workers | The builtins that `TOOL_PLACEMENT` marks direct and the recipe admits. `find`, `ls` and `count` move behind the gateway when the worker's surface admits `bash`. See its discovered tools rather than assuming the main surface |
 | Gateway when trusted/installed | `extension_<id>__<name>`, `mcp_<id>__<tool>`, and `mcp_<id>__:list_resources` and `mcp_<id>__:read_resource` for a server that declares resources. An extension tool its manifest lists in `runtime.promote` is attached directly instead, and the gateway refuses that name |
 
@@ -228,7 +228,6 @@ Every name in `ToolNames` ([tool-names.ts](../../src/core/tool-names.ts)) has on
 | `tasks` | direct | gateway | orchestrate | read | sequential |
 | `ledger` | direct | gateway | orchestrate | read | sequential |
 | `panes` | direct | gateway | orchestrate | read | sequential |
-| `music` | direct | gateway | orchestrate | read | sequential |
 | `limitation` | direct | gateway | orchestrate | read | parallel |
 | `finish` | direct | direct | orchestrate | read | sequential |
 | `memory_note` | direct (never offered to workers) | direct when the session starts with `context.memory.surfaces.lessons: agent` | orchestrate | read | sequential |
@@ -1271,7 +1270,7 @@ Arguments:
 `show` takes the workers dock over for a live dispatched run without moving the keyboard. `open` accepts only the
 fixed preset enum. Arbitrary argv is operator-only through `/panes open` and is
 rejected by the model tool. `handoff` opens the named coding CLI interactively in a PanCode-owned pane. It produces no managed run and no run record. `send`, `wait` and `read` work with a handoff pane only, never a utility pane. `send` delivers a prompt or an interrupt key and nothing else; no field types raw text or presses a key that could accept an approval, a prompt is subject to the same information-flow check as a handoff brief, and a peer that is blocked on its own operator is refused. A `pancode` peer is a second PanCode that queues the prompt as a turn labelled as coming from the sender. `wait` reports when the peer settles, is blocked asking its operator, or is still running after the budget. `read` returns the peer's recent terminal under an untrusted-content banner, with credentials masked as bash output is; treat it as the peer's unverified claim. `close` can remove only panes PanCode owns, and it ends a dock's process whether the dock is visible or hidden. `list`
-reports mux health, notification policy, the state of the files, workers and music docks, and the current inventory. Each dock reads `visible`, `hidden` (parked and still running) or `closed`, and the music dock adds what it is playing (`playing <title>` or `paused`). The model reads dock state there rather than from settings files, and `list` reports it whether or not `integrations.music.agentControl` is on. The tool has no action that hides a dock.
+reports mux health, notification policy, the state of the files, workers and extension docks, and the current inventory. Each dock reads `visible`, `hidden` (parked and still running) or `closed`. The model reads dock state there rather than from settings files. The tool has no action that hides a dock.
 
 ```text
 panes(action="list")
@@ -1492,12 +1491,6 @@ A saved `apply` reports when the change takes effect, by the setting's effect ti
 gateway(op="call", capability="configure_pancode", args={action: "preview", path: "chat.thinkingLevel", value: "high"})
 gateway(op="call", capability="configure_pancode", args={action: "apply", proposalId: "<id from preview>"})
 ```
-
-## music: control the focus-radio pane
-
-`music(action)` drives the focus-radio player in PanCode's own dock pane. Source: [music.ts](../../src/tools/music.ts), [music-surface.ts](../../src/tools/music-surface.ts). Read class; sequential. `action` is required and is one of `on` (play, opening or revealing the pane first), `pause` (silence the stream and keep the pane), `off` (stop and close it), `next` (skip to the next station) or `status` (report what is playing or paused). Showing and hiding the pane stay with the operator. The result is one line, and a refusal or failure comes back as an error naming the reason.
-
-The tool registers only when `integrations.music.agentControl` is on, cliamp resolves and the pane mux is live, which also requires `integrations.music.enabled`. A session where it could only refuse carries no schema for it. No prompt fragment says when to play music; that is the operator's call in project instructions. The operator's own door is the `/music` command. Setup, stations and the player are in [Music](music.md).
 
 ## restart_session: restart onto a rebuilt PanCode checkout
 

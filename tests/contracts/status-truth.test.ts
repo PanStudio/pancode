@@ -1555,7 +1555,7 @@ test("the hint row says what Enter does with the draft and never offers exit or 
 	match(hint("shell-refused"), /Esc stops what is running, then Enter runs this/u);
 	match(hint("steer-empty"), /^Type to steer · Esc stops the run/u);
 	const learned = Array.from({ length: 12 }, (_, slot) => hint("idle", slot * 60_000)).join("\n");
-	doesNotMatch(learned, /Exit|Suspend|Music|Files pane|Thinking effort/u);
+	doesNotMatch(learned, /Exit|Suspend|Files pane|Thinking effort/u);
 	strictEqual(hint("idle", 0), hint("idle", 61_000), "a learning hint holds until its key is learned");
 	strictEqual(hint("send", 0), hint("send", 600_000), "a draft silences the learning");
 	const running = Array.from({ length: 12 }, (_, slot) => hint("steer-empty", slot * 60_000)).join("\n");

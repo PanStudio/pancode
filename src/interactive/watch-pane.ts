@@ -99,7 +99,7 @@ function fileSession(path: string): string | null {
 }
 
 /**
- * What a hidden workers dock leaves behind, as the music pane names what keeps playing. "Still running" meant the
+ * What a hidden workers dock leaves behind. "Still running" meant the
  * dashboard, and read as a worker still running after the only one had finished (bt-48-14), so the notice names the
  * live workers and says nothing more when there are none.
  */

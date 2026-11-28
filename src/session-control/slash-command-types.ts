@@ -17,7 +17,6 @@ import type { OperatorExtensions } from "../domains/extensions/operator-extensio
 import type { InteropAgentId, InteropProposal, InteropReport } from "../domains/interop/index.js";
 import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import type { OperatorMemoryScope } from "../domains/memory/operator-statement.js";
-import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanePeerId, PanesOperations, PanesPresetId } from "../domains/mux/operations.js";
 import type { ProvidersContract, ResolvedModelRef } from "../domains/providers/index.js";
 import type { ReportTextDuplicate, ReportTextHost } from "../domains/report/text-flow.js";
@@ -185,9 +184,6 @@ type SlashCommandVariant =
 	| { kind: "panes-peers" }
 	/** `/files`: toggle the files pane; `hide` parks it with Yazi running; `close` ends it; `pick` borrows it for one selection. */
 	| { kind: "files"; action: "toggle" | "open" | "hide" | "close" | "pick" }
-	/** `/music`: reveal or hide the music pane, or on, off, pause, next, status, station <name or url>. */
-	| { kind: "music"; action: "toggle" | "on" | "off" | "pause" | "next" | "status" }
-	| { kind: "music-station"; station: string }
 	| { kind: "thinking-set"; level: string }
 	| { kind: "thinking-picker" }
 	| { kind: "model" }
@@ -586,8 +582,6 @@ export interface SessionCommandContext {
 	panes?: PanesOperations;
 	/** The attach socket behind `/attach`. Absent outside the interactive terminal. */
 	attach?: AttachOperations;
-	/** The music pane. Absent when the session started without panes. */
-	music?: MusicOperations;
 	/** The shared job control behind `/loop`. Absent where no session-owned job host exists. */
 	jobs?: JobOperations;
 	/** Serialize a local async command so the next admitted slash command observes its committed state. */

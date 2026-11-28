@@ -15,7 +15,6 @@ import type { ExtensionRuntimeHookBridge } from "../domains/extensions/runtime-h
 import type { InteropContract } from "../domains/interop/index.js";
 import type { TaskMemoryOperatorStatus } from "../domains/memory/index.js";
 import type { MuxContract } from "../domains/mux/index.js";
-import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanesOperations, PanesWatchController } from "../domains/mux/operations.js";
 import type { ProvidersContract, ThinkingLevel } from "../domains/providers/index.js";
 import type { ResourcesContract } from "../domains/resources/index.js";
@@ -106,8 +105,6 @@ export interface InteractiveDeps {
 	 * composition root so the tool registry and this surface drive one instance.
 	 */
 	panes?: PanesOperations;
-	/** The music pane behind `/music` and its leader key. Absent without panes. */
-	music?: MusicOperations;
 	/**
 	 * The shared job control behind `/loop`, from the composition root that owns
 	 * the session. Absent where no session-owned job host exists, which `/loop`

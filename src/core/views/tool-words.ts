@@ -189,7 +189,6 @@ export const TOOL_SUBJECTS = {
 	},
 	git: (args, context) =>
 		joinDefined("git", argText(args, "op"), argText(args, "rev"), pathArg(args, "path", context, null)),
-	music: (args) => joinDefined("music", argText(args, "action")),
 	panes: (args) => joinDefined("panes", argText(args, "action"), argText(args, "target") ?? argText(args, "preset")),
 	dispatch: dispatchSubject,
 	monitor: (args) => {

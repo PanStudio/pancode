@@ -86,7 +86,7 @@ test("a name this task cannot serve says so instead of reaching the agent", () =
 	assert.equal(notice("/tree", { capabilities: { commands: true } as never }), "/tree is not available in this task.");
 	assert.equal(notice("/usage", { paneAvailable: false }), "/usage is not available in this task.");
 	assert.equal(notice("/quit", {}), "Close this task from the task menu, or close the window. PanCode keeps running.");
-	assert.equal(notice("/music", {}), "/music is a terminal command and has no equivalent in PanCode on the desktop.");
+	assert.equal(notice("/panes", {}), "/panes is a terminal command and has no equivalent in PanCode on the desktop.");
 });
 
 test("the slash list offers what this task can serve under Also works, after everything it lists itself", () => {
@@ -97,7 +97,7 @@ test("the slash list offers what this task can serve under Also works, after eve
 	for (const name of ["compact", "init", "model", "new", "help", "rename", "cost"])
 		assert.ok(names.includes(name), name);
 	assert.ok(!names.includes("status"), "the catalog's status is listed as the catalog's");
-	assert.ok(!names.includes("quit") && !names.includes("music"), "a notice is not something to pick");
+	assert.ok(!names.includes("quit") && !names.includes("panes"), "a notice is not something to pick");
 	assert.ok(!names.some((name) => listed.some((entry) => entry.name === name)), "no name is listed twice");
 	const bare = aliasEntries(facts({ capabilities: { commands: true } as never, paneAvailable: false }), []).map(
 		(entry) => entry.name,
@@ -150,7 +150,7 @@ test("every terminal command a browser can serve lands on a control, and the res
 	for (const name of ["btw", "draft", "reload", "view", "trust"])
 		assert.equal(resolveAlias(`/${name}`, bare)?.alias.target.kind, "notice", name);
 	// Every terminal-only name is a notice, never a prompt.
-	for (const name of ["restart", "upgrade", "panes", "music"])
+	for (const name of ["restart", "upgrade", "panes"])
 		assert.equal(resolveAlias(`/${name}`, full)?.alias.target.kind, "notice", name);
 	assert.ok(!SLASH_ALIASES.some((spec) => spec.names.includes("files") && spec.target.kind === "notice"));
 });

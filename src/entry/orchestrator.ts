@@ -1970,23 +1970,10 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// Operator-initiated backgrounding is a TUI affordance: the registry is the
 	// one object the dispatch tool and the keypress both hold.
 	const dispatchBackground = createDispatchBackgroundRegistry();
-	// The music pane rides the same pane host. It exists on every panes boot so
-	// `/music` can name what is missing; the model's `music` tool is gated
-	// separately at registration below.
-	const music =
-		withPanes && mux
-			? withPanes.createMusicSession({
-					mux,
-					getSettings: () => getCurrentSettings().integrations.music,
-					getCwd: () => process.cwd(),
-				})
-			: null;
 	// One `PanesOperations` instance drives both the `panes` tool and the
 	// `/panes` slash command, so the model and the operator cannot be told
 	// different things about the same pane. It also owns the no-mux Yazi chooser,
-	// while model tool registration below remains gated on a live pane host. The
-	// music facts it reports come from the session whether or not the model may
-	// control the player: what is playing is knowledge, control stays gated.
+	// while model tool registration below remains gated on a live pane host.
 	const panes =
 		withPanes && mux
 			? withPanes.createPanesRuntime({
@@ -1995,7 +1982,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 					getDispatchSnapshot: () => dispatch.snapshot(),
 					agentRefusal: () => flowUnmediatedAgentRefusal(flowLedger.policy(), null),
 					getCwd: () => process.cwd(),
-					...(music ? { musicState: () => music.state() } : {}),
 				})
 			: null;
 
@@ -2372,12 +2358,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// absent from the prompt on a machine with none rather than present and
 		// always refusing.
 		...(panes && mux?.mode !== "none" ? { panes } : {}),
-		// The operator opts the model in with integrations.music.agentControl, and
-		// the tool exists only when music could actually play at startup, so a
-		// session without it carries no tool schema and no prompt bytes for it.
-		...(music && getCurrentSettings().integrations.music.agentControl && music.unavailableReason() === null
-			? { music }
-			: {}),
 		getCostCeilingUsd: () => result.getContract("scheduling")?.ceilingUsd() ?? 0,
 		...(config ? { getWorkerRosters: () => config.get().fleet.rosters } : {}),
 		...(config ? { getDispatchSchemaComposition: () => dispatchSchemaCompositionFor(config.get().fleet) } : {}),
@@ -4127,7 +4107,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		...(share ? { share } : {}),
 		...(mux ? { mux } : {}),
 		...(panes ? { panes } : {}),
-		...(music ? { music } : {}),
 		...(panes ? { attachYaziBridge: (bridge) => panes.attachYazi(bridge) } : {}),
 		// The interactive surface never imports the panes glue itself; the
 		// factories arrive only on an active boot, through the same dynamic

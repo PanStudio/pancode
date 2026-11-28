@@ -152,7 +152,7 @@ export interface InteractivePresentationDeps {
 	getProjectConfigReminder?: () => string | null;
 	getConnections?: () => { mcp: string[]; plugins: string[] };
 	extensionCommands?: import("./slash-autocomplete.js").SlashAutocompleteOptions["extensionCommands"];
-	/** Session facts that dim or omit palette rows: `/panes` without a pane host, `/music` while off. */
+	/** Session facts that dim or omit palette rows, such as `/panes` without a pane host. */
 	commandUnavailable?: (command: string) => string | undefined;
 	commandHidden?: (command: string) => boolean;
 	getExtensionStatus?: () => ReadonlyArray<string>;

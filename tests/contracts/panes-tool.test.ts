@@ -121,7 +121,7 @@ describe("panes tool", () => {
 		const f = fixture();
 		match(
 			output(await f.call({ action: "list" })),
-			/^panes mode=guest available; notifications=\S+\ndocks: files closed[^\n]*; workers closed; music closed[^\n]*\n- no PanCode-owned panes$/,
+			/^panes mode=guest available; notifications=\S+\ndocks: files closed[^\n]*; workers closed; extension closed[^\n]*\n- no PanCode-owned panes$/,
 		);
 		strictEqual(output(await f.call({ action: "open", preset: "shell" })), "opened the shell pane (p1).");
 		strictEqual(

@@ -196,9 +196,6 @@ Default chat settings control interactive conversation routing, reasoning effort
 | `integrations.hub.index` | `"https://github.com/PanStudio/pancode/releases/download/hub-index/"` | Base URL holding `signing.json`, `index.envelope.json` and `index.yaml` for the signed PanHub index. Empty keeps the bundled index only. 0.9.0 has no root key, so it always uses the bundled index. | next turn |
 | `integrations.git.commitAttribution` | `true` | Boolean. Evidence-backed role trailers on commits created through PanCode. | hot reload |
 | `integrations.git.commitAuthor` | `"auto"` | `auto` or `human`. Who authors an autonomous commit; see [Commit authorship](#commit-authorship). Ignored when `commitAttribution` is `false`. | hot reload |
-| `integrations.music.enabled` | `false` | Boolean. Allows `/music` to open cliamp in a Herdr dock. Needs Herdr panes and cliamp. | hot reload |
-| `integrations.music.station` | `"http://radio.cliamp.stream/lofi/stream"` | Non-empty string, a stream URL or a station name. What `/music on` plays. | hot reload |
-| `integrations.music.agentControl` | `false` | Boolean. Registers the `music` tool at startup so the model can drive the pane; off, the tool does not exist and costs no prompt bytes. | restart required |
 | `telemetry.mode` | `"standard"` | `standard` or `research`. What each scope's telemetry journal admits; a project or local layer can only lower it. | next turn |
 | `telemetry.research.content` | `false` | Boolean. In research mode with workspace consent, keep prompts, request bodies and background memory and compaction text as telemetry objects. | next turn |
 | `telemetry.research.deltas` | `true` | Boolean. In research mode, keep each call's inter-delta gaps as one `call.timing_captured` histogram. | next turn |
@@ -210,7 +207,7 @@ Default chat settings control interactive conversation routing, reasoning effort
 
 `systemOne.*` is experimental and off by default. The [System One guide](system-one.md) describes them, including the engine `profile` field (`generic`, `jev`, `laya`, `laya-multilingual`, `julia-1`, `gliner2.5-small`, `gliner2.5-decide` or `strands-decider`), which has no default. A decision engine's window is the `capabilities.contextWindow` of its `systemone` target (480 when unset), bounded by the profile's ceiling. There is no placement setting: which processor an engine runs on is decided by the server behind its target.
 
-The music keys are documented in the [music guide](music.md). The exit summary is part of [commands and modes](commands-and-modes.md).
+The exit summary is part of [commands and modes](commands-and-modes.md).
 
 ### Commit authorship
 

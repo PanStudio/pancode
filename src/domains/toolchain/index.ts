@@ -8,7 +8,6 @@ export {
 	findPinnedTool,
 	findPinnedToolByBinary,
 	PINNED_TOOLS,
-	packageManagerInstallHints,
 } from "./registry.js";
 export type { ToolRemoveOptions, ToolRemoveResult } from "./remove.js";
 export { installedToolVersions, removeTool, STALE_STAGING_MS } from "./remove.js";
