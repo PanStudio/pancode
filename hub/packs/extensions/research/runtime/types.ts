@@ -4,10 +4,11 @@
  * The research hill climb: an operator names an objective metric printed by a declared verifier check and a budget,
  * and PanCode repeatedly lets its own agent change an isolated worktree, measures the change against the current best
  * commit, and keeps it only when it beats noise. Everything a campaign decides is written under
- * `.pancode/research/<id>/` so `research report` can recompute every verdict from the raw samples.
+ * `.pancode/data/research/<id>/` so `research report` can recompute every verdict from the raw samples.
  */
 
-import type { DeclaredCheck } from "../../tools/verify/catalog.js";
+/** A verifier check exactly as `.pancode/verifiers.yaml` declared it, as `verify.resolve` returns it. */
+export type DeclaredCheck = Readonly<Record<string, unknown>> & { readonly id: string; readonly kind: string };
 
 export const RESEARCH_CAMPAIGN_VERSION = 1;
 export const RESEARCH_REF_PREFIX = "refs/heads/pancode/research/";

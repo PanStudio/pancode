@@ -93,25 +93,6 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		},
 	},
 	{
-		name: "research",
-		rank: 3,
-		acp: false,
-		description: "Show this project's research campaigns and their iteration timelines",
-		group: "Work",
-		kinds: ["research"],
-		fromArgs(parsed) {
-			if (parsed.error) return { kind: "usage-error", command: "research", reason: parsed.error };
-			return { kind: "research" };
-		},
-		handle(_command, ctx) {
-			if (!ctx.openResearch) {
-				ctx.notice("info", "/research is not wired in this session; run pancode research status");
-				return;
-			}
-			ctx.openResearch();
-		},
-	},
-	{
 		name: "tasks",
 		rank: 1,
 		acp: {

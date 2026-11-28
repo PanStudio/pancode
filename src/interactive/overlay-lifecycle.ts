@@ -182,7 +182,6 @@ export interface OverlayLifecycleController {
 	toggleFooterDashboardState(): void;
 	openTasksOverlayState(): void;
 	openDecisionsOverlayState(): void;
-	openResearchOverlayState(): void;
 	openMemoryOverlayState(): void;
 	openRewindOverlayState(): void;
 	openViewOverlayState(initialFilter?: string): void;
@@ -681,7 +680,6 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 	const toggleFooterDashboardState = overlayGeneralOpeners.toggleFooter;
 	const openTasksOverlayState = overlayGeneralOpeners.openTasks;
 	const openDecisionsOverlayState = overlayGeneralOpeners.openDecisions;
-	const openResearchOverlayState = overlayGeneralOpeners.openResearch;
 	const openMemoryOverlayState = overlayGeneralOpeners.openMemory;
 	const openRewindOverlayState = overlayGeneralOpeners.openRewind;
 	const openViewOverlayState = overlayGeneralOpeners.openView;
@@ -758,7 +756,6 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 		toggleFooterDashboardState,
 		openTasksOverlayState,
 		openDecisionsOverlayState,
-		openResearchOverlayState,
 		openMemoryOverlayState,
 		openRewindOverlayState,
 		openViewOverlayState,

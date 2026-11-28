@@ -41,7 +41,9 @@ import {
 } from "../../src/domains/extensions/path-grants.js";
 import {
 	assertPlainProjectDir,
+	assertPlainWorktreeParent,
 	extensionProjectDir,
+	extensionWorktreeParent,
 	prepareProjectDir,
 } from "../../src/domains/extensions/runtime-sandbox.js";
 import {
@@ -991,6 +993,233 @@ describe("an installed extension's work services", () => {
 		const output = await operator.invoke(extensionInvocation("wt-scope", "make"), "", [], new AbortController().signal);
 		assert.ok(output.text);
 		assert.equal(existsSync(output.text), false);
+	});
+});
+
+describe("extension run service: routes a run may leave to the operator", () => {
+	const TARGETS = [
+		{ id: "chat", runtime: "openai-compatible", auth: { apiKeyEnvVar: "CHAT_KEY" } },
+		{ id: "other", runtime: "openai-compatible", auth: { apiKeyEnvVar: "OTHER_KEY" } },
+	] as const;
+	function routed(defaultTarget: string | null, placeTarget?: string) {
+		const tempRoot = mkdtempSync(join(tmpdir(), "run-service-route-"));
+		const calls: Call[] = [];
+		const service = createExtensionRunService({
+			ceilings: { maxConcurrent: 2, autonomy: ["default"], maxCostUsd: null, maxTimeoutSeconds: 600 },
+			launch: { file: "node", args: ["/pancode.js"] },
+			sourceEnv: { PATH: "/bin", CHAT_KEY: "c", OTHER_KEY: "o" },
+			envPolicy: { targets: [...TARGETS], passEnv: [], defaultTarget },
+			yoloRefusal: () => null,
+			resolvePlace: () => ({
+				cwd: "/w",
+				workspaceRoot: "/w",
+				...(placeTarget !== undefined
+					? { envPolicy: { targets: [...TARGETS], passEnv: [], defaultTarget: placeTarget } }
+					: {}),
+			}),
+			tempRoot,
+			spawn: (file, args, options = {}) => {
+				calls.push({ file, args: [...args], options, answers: null });
+				options.output?.onStdout?.(Buffer.from('{"type":"run_end","outcome":"succeeded","exitCode":0}\n'));
+				return Promise.resolve(result({}));
+			},
+		});
+		return { service, calls, cleanup: () => rmSync(tempRoot, { recursive: true, force: true }) };
+	}
+
+	it("omits --target and --model when a run names neither, and passes the default target's credentials", async () => {
+		const h = routed("chat");
+		try {
+			const { id } = await h.service.start({ prompt: "go", timeoutSeconds: 60, delegate: false });
+			await h.service.wait(id);
+			const call = h.calls[0] as Call;
+			assert.equal(call.args.includes("--target"), false);
+			assert.equal(call.args.includes("--model"), false);
+			assert.deepEqual(call.args.slice(1, 5), ["run", "--cwd", "/w", "--no-delegate"]);
+			assert.equal(call.options.env?.CHAT_KEY, "c");
+			assert.equal(call.options.env?.OTHER_KEY, undefined);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	it("takes the default target of a place that brings its own settings", async () => {
+		const h = routed("chat", "other");
+		try {
+			await h.service.wait((await h.service.start({ prompt: "go", timeoutSeconds: 60 })).id);
+			const call = h.calls[0] as Call;
+			assert.equal(call.options.env?.OTHER_KEY, "o");
+			assert.equal(call.options.env?.CHAT_KEY, undefined);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	it("keeps dispatch unless delegate is false, and a named route gets only its own credentials", async () => {
+		const h = routed("chat");
+		try {
+			const { id } = await h.service.start({ prompt: "go", target: "other", model: "m", timeoutSeconds: 60 });
+			await h.service.wait(id);
+			const call = h.calls[0] as Call;
+			assert.equal(call.args.includes("--no-delegate"), false);
+			assert.deepEqual(call.args.slice(4, 8), ["--target", "other", "--model", "m"]);
+			assert.equal(call.options.env?.OTHER_KEY, "o");
+			assert.equal(call.options.env?.CHAT_KEY, undefined);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	it("refuses half a route and a delegate other than false", async () => {
+		const h = routed(null);
+		try {
+			await assert.rejects(
+				h.service.start({ prompt: "go", target: "chat", timeoutSeconds: 60 }),
+				(error: ExtensionRunError) => error.code === "invalid" && /target and model go together/u.test(error.message),
+			);
+			await assert.rejects(
+				h.service.start({ prompt: "go", model: "m", timeoutSeconds: 60 }),
+				(error: ExtensionRunError) => error.code === "invalid",
+			);
+			await assert.rejects(
+				h.service.start({ prompt: "go", timeoutSeconds: 60, delegate: true as unknown as false }),
+				(error: ExtensionRunError) => error.code === "invalid" && /delegate may only be false/u.test(error.message),
+			);
+			assert.equal(h.calls.length, 0);
+		} finally {
+			h.cleanup();
+		}
+	});
+});
+
+describe("a runtime that declares worktrees", () => {
+	it("reads its own worktrees but no other extension's, and learns the PanCode version", async (t) => {
+		const env = await isolatePancodeEnv("ext-own-worktrees-");
+		const priorCwd = process.cwd();
+		const cleanup: Array<() => Promise<void> | void> = [];
+		t.after(async () => {
+			for (const fn of cleanup.reverse()) await fn();
+			process.chdir(priorCwd);
+			env.restore();
+		});
+		const root = join(env.dir, "pack");
+		mkdirSync(join(env.dir, "repo"));
+		const repo = realpathSync(join(env.dir, "repo"));
+		process.env.HOME = env.dir;
+		mkdirSync(root);
+		execFileSync("git", ["init", "-q"], { cwd: repo });
+		writeFileSync(join(repo, "f.txt"), "hello\n");
+		execFileSync("git", ["add", "f.txt"], { cwd: repo });
+		execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], { cwd: repo });
+		const other = join(repo, ".pancode", "worktrees", "ext-other");
+		mkdirSync(other, { recursive: true });
+		writeFileSync(join(other, "secret.txt"), "no\n");
+		writeFileSync(
+			join(root, "pancode-extension.json"),
+			JSON.stringify({
+				id: "wt-read",
+				version: "1.0.0",
+				description: "Reads a file in its own worktree",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					commands: [{ name: "read", description: "read" }],
+					services: { worktrees: true },
+				},
+			}),
+		);
+		writeFileSync(
+			join(root, "extension.mjs"),
+			`import { readFileSync, writeFileSync } from "node:fs";
+			import { join } from "node:path";
+			export default (api) => {
+				api.handle("read", async (_args, ctx) => {
+					const wt = await ctx.worktrees.create({ base: "HEAD", keep: true });
+					const own = readFileSync(join(wt.path, "f.txt"), "utf8").trim();
+					let other = "read";
+					try { readFileSync(${JSON.stringify(join(other, "secret.txt"))}, "utf8"); } catch (error) { other = error.code; }
+					let wrote = "wrote";
+					try { writeFileSync(join(wt.path, "nope.txt"), "x"); } catch (error) { wrote = error.code; }
+					return { text: JSON.stringify({ own, other, wrote, wtPath: wt.path, version: ctx.snapshot.pancodeVersion }) };
+				});
+			};`,
+		);
+		const noservice = join(env.dir, "pack-noservice");
+		mkdirSync(noservice);
+		writeFileSync(
+			join(noservice, "pancode-extension.json"),
+			JSON.stringify({
+				id: "wt-noservice",
+				version: "1.0.0",
+				description: "Workspace reader without services.worktrees",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					permissions: { fs: { read: ["workspace"] } },
+					commands: [{ name: "peek", description: "peek" }],
+				},
+			}),
+		);
+		writeFileSync(
+			join(noservice, "extension.mjs"),
+			`import { readFileSync } from "node:fs";
+			export default (api) => {
+				api.handle("peek", (args) => {
+					try { return { text: "leaked:" + readFileSync(args, "utf8").trim() }; }
+					catch (error) { return { text: "blocked:" + error.code }; }
+				});
+			};`,
+		);
+		assert.ok(installExtension(root, { cwd: repo, scope: "user" }).extension?.loadable);
+		assert.ok(installExtension(noservice, { cwd: repo, scope: "user" }).extension?.loadable);
+		process.chdir(repo);
+		const operator = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "attended", mode: "interactive" }),
+			isIdle: () => true,
+		});
+		cleanup.push(() => operator.dispose());
+		assert.equal((await operator.reload("startup")).status, "committed");
+		const output = await operator.invoke(extensionInvocation("wt-read", "read"), "", [], new AbortController().signal);
+		const read = JSON.parse(output.text ?? "{}") as {
+			own: string;
+			other: string;
+			wrote: string;
+			wtPath: string;
+			version: string;
+		};
+		assert.equal(read.own, "hello");
+		assert.equal(read.other, "ERR_ACCESS_DENIED");
+		assert.equal(read.wrote, "ERR_ACCESS_DENIED");
+		assert.match(read.version, /^\d+\.\d+\.\d+/u);
+
+		// A sibling extension with workspace read access but no services.worktrees cannot read ext-wt-read's worktree.
+		const peek = await operator.invoke(
+			extensionInvocation("wt-noservice", "peek"),
+			join(read.wtPath, "f.txt"),
+			[],
+			new AbortController().signal,
+		);
+		assert.match(peek.text, /^blocked:/u, `wt-noservice unexpectedly read wt-read's worktree: ${peek.text}`);
+
+		// A symlink planted along .pancode/worktrees/ext-wt-read is refused even in a read-only session.
+		await operator.dispose();
+		rmSync(join(repo, ".pancode", "worktrees", "ext-wt-read"), { recursive: true, force: true });
+		symlinkSync(tmpdir(), join(repo, ".pancode", "worktrees", "ext-wt-read"));
+		const parent = extensionWorktreeParent(repo, "wt-read");
+		assert.ok(parent !== undefined);
+		assert.throws(() => assertPlainWorktreeParent(parent), /not a plain directory/u);
+		const badReader = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "ro", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "wt-read",
+			readOnly: () => true,
+		});
+		cleanup.push(() => badReader.dispose());
+		await badReader.reload("startup");
+		await assert.rejects(
+			() => badReader.invoke(extensionInvocation("wt-read", "read"), "", [], new AbortController().signal),
+			/not a plain directory/u,
+		);
 	});
 });
 

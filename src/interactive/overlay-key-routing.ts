@@ -23,7 +23,6 @@ export type OverlayState =
 	| "thinking-level"
 	| "tasks"
 	| "decisions"
-	| "research"
 	| "memory"
 	| "view"
 	| "model"
@@ -418,7 +417,6 @@ export function routeOverlayKey(
 	if (overlayState === "thinking-level") return false;
 	if (overlayState === "tasks") return false;
 	if (overlayState === "decisions") return false;
-	if (overlayState === "research") return false;
 	if (overlayState === "memory") return false;
 	if (overlayState === "view") return false;
 	if (overlayState === "model") return false;
