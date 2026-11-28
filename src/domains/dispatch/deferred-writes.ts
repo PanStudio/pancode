@@ -14,24 +14,58 @@
  * always a whole prefix of what was appended to it, and an exit in that window costs its last lines.
  */
 
-import { closeSync, constants, openSync, writeSync } from "node:fs";
-import { type FileHandle, open } from "node:fs/promises";
+import { closeSync, constants, lstatSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { type FileHandle, lstat, mkdir, open } from "node:fs/promises";
+import { dirname } from "node:path";
 import { safeResourceWrite, safeResourceWriteAsync } from "../../core/safe-resource-write.js";
 
 const APPEND_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW;
 const FILE_MODE = 0o600;
-/** Append handles held open at once; past this, the least recently opened idle one closes. */
+/** Append handles held open at once (open, opening, or closing); past this, the least recently used idle one closes. */
 const MAX_OPEN_APPENDS = 64;
 
+export interface DeferredAppendOptions {
+	onError?: (error: unknown) => void;
+	mkdirMode?: number;
+	plainDirectories?: readonly string[];
+}
+
+export interface DeferredRecordOptions {
+	plainDirectories?: readonly string[];
+}
+
 type Pending =
-	| { kind: "append"; lines: string[]; onError?: (error: unknown) => void }
-	| { kind: "record"; contents: string };
+	| {
+			kind: "append";
+			lines: string[];
+			onError?: (error: unknown) => void;
+			mkdirMode?: number;
+			plainDirectories?: readonly string[];
+	  }
+	| { kind: "record"; contents: string; plainDirectories?: readonly string[] };
 
 const queued = new Map<string, Pending>();
 const inFlight = new Map<string, Promise<void>>();
 const handles = new Map<string, FileHandle>();
+const retiredHandles = new Set<string>();
+let opening = 0;
+let closing = 0;
+let slotWaiters: Array<() => void> = [];
 let scheduled: NodeJS.Immediate | undefined;
 let exitHooked = false;
+
+function waitForAppendSlot(): Promise<void> {
+	return new Promise<void>((resolve) => {
+		slotWaiters.push(resolve);
+	});
+}
+
+function notifyAppendSlot(): void {
+	if (slotWaiters.length === 0) return;
+	const waiters = slotWaiters;
+	slotWaiters = [];
+	for (const wake of waiters) wake();
+}
 
 function schedule(): void {
 	if (!exitHooked) {
@@ -45,18 +79,32 @@ function schedule(): void {
 }
 
 /** Queue `text` for the end of `path`. A failed write reports once per batch through the latest `onError`. */
-export function deferAppend(path: string, text: string, onError?: (error: unknown) => void): void {
+export function deferAppend(path: string, text: string, options?: DeferredAppendOptions): void {
 	const pending = queued.get(path);
 	if (pending?.kind === "append") {
 		pending.lines.push(text);
-		if (onError !== undefined) pending.onError = onError;
-	} else queued.set(path, { kind: "append", lines: [text], ...(onError !== undefined ? { onError } : {}) });
+		if (options?.onError !== undefined) pending.onError = options.onError;
+		if (options?.mkdirMode !== undefined) pending.mkdirMode = options.mkdirMode;
+		if (options?.plainDirectories !== undefined) pending.plainDirectories = options.plainDirectories;
+	} else {
+		queued.set(path, {
+			kind: "append",
+			lines: [text],
+			...(options?.onError !== undefined ? { onError: options.onError } : {}),
+			...(options?.mkdirMode !== undefined ? { mkdirMode: options.mkdirMode } : {}),
+			...(options?.plainDirectories !== undefined ? { plainDirectories: options.plainDirectories } : {}),
+		});
+	}
 	schedule();
 }
 
 /** Queue `contents` as the whole of `path`, replacing any value not yet written. */
-export function deferRecord(path: string, contents: string): void {
-	queued.set(path, { kind: "record", contents });
+export function deferRecord(path: string, contents: string, options?: DeferredRecordOptions): void {
+	queued.set(path, {
+		kind: "record",
+		contents,
+		...(options?.plainDirectories !== undefined ? { plainDirectories: options.plainDirectories } : {}),
+	});
 	schedule();
 }
 
@@ -68,65 +116,151 @@ export function deferredWritePending(path: string): boolean {
 /** Forget what `path` still has queued, for a file that is being removed. */
 export function dropDeferredWrite(path: string): void {
 	queued.delete(path);
+	if (inFlight.has(path)) {
+		retiredHandles.add(path);
+		return;
+	}
 	void closeHandle(path);
+}
+
+function closeOpenHandle(handle: FileHandle): Promise<void> {
+	closing += 1;
+	return handle
+		.close()
+		.catch(() => undefined)
+		.finally(() => {
+			closing -= 1;
+			notifyAppendSlot();
+		});
 }
 
 /** Close `path`'s append handle once no write to it is in flight. */
 function closeHandle(path: string): Promise<void> {
 	const running = inFlight.get(path);
-	if (running !== undefined) return running.then(() => closeHandle(path));
+	if (running !== undefined) {
+		retiredHandles.add(path);
+		return running.then(() => closeHandle(path));
+	}
+	retiredHandles.delete(path);
 	const handle = handles.get(path);
 	if (handle === undefined) return Promise.resolve();
 	handles.delete(path);
-	return handle.close().catch(() => undefined);
+	return closeOpenHandle(handle);
 }
 
-async function appendHandle(path: string): Promise<FileHandle> {
-	const held = handles.get(path);
-	if (held !== undefined) return held;
-	const handle = await open(path, APPEND_FLAGS, FILE_MODE);
-	handles.set(path, handle);
-	if (handles.size > MAX_OPEN_APPENDS) {
-		const idle = [...handles.keys()].find((candidate) => candidate !== path && !inFlight.has(candidate));
-		if (idle !== undefined) void closeHandle(idle);
+async function directoriesArePlainAsync(directories: readonly string[]): Promise<boolean> {
+	for (const dir of directories) {
+		try {
+			const stat = await lstat(dir);
+			if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			return false;
+		}
 	}
-	return handle;
+	return true;
+}
+
+function directoriesArePlainSync(directories: readonly string[]): boolean {
+	for (const dir of directories) {
+		try {
+			const stat = lstatSync(dir, { throwIfNoEntry: false });
+			if (stat !== undefined && (!stat.isDirectory() || stat.isSymbolicLink())) return false;
+		} catch {
+			return false;
+		}
+	}
+	return true;
+}
+
+async function appendHandle(path: string, pending: Extract<Pending, { kind: "append" }>): Promise<FileHandle> {
+	const held = handles.get(path);
+	if (held !== undefined) {
+		// Refresh LRU order on reuse so active feeds stay open ahead of quiet ones.
+		handles.delete(path);
+		handles.set(path, held);
+		return held;
+	}
+	if (pending.plainDirectories !== undefined && !(await directoriesArePlainAsync(pending.plainDirectories))) {
+		throw new Error("run state directory is not a regular directory");
+	}
+	await mkdir(dirname(path), {
+		recursive: true,
+		...(pending.mkdirMode !== undefined ? { mode: pending.mkdirMode } : {}),
+	});
+	if (pending.plainDirectories !== undefined && !(await directoriesArePlainAsync(pending.plainDirectories))) {
+		throw new Error("run state directory is not a regular directory");
+	}
+	while (handles.size + opening + closing >= MAX_OPEN_APPENDS) {
+		const idle = [...handles.keys()].find((candidate) => candidate !== path && !inFlight.has(candidate));
+		if (idle !== undefined) {
+			const victim = handles.get(idle);
+			handles.delete(idle);
+			if (victim !== undefined) await closeOpenHandle(victim);
+			continue;
+		}
+		await waitForAppendSlot();
+	}
+	opening += 1;
+	try {
+		const handle = await open(path, APPEND_FLAGS, FILE_MODE);
+		handles.set(path, handle);
+		return handle;
+	} finally {
+		opening -= 1;
+		notifyAppendSlot();
+	}
 }
 
 async function writePending(path: string, pending: Pending): Promise<void> {
 	if (pending.kind === "record") {
+		if (pending.plainDirectories !== undefined && !(await directoriesArePlainAsync(pending.plainDirectories))) return;
 		await safeResourceWriteAsync(path, pending.contents, { encoding: "utf8", mode: FILE_MODE });
 		return;
 	}
-	const handle = await appendHandle(path);
+	const handle = await appendHandle(path, pending);
 	try {
 		await handle.writeFile(pending.lines.join(""));
 	} catch (error) {
-		handles.delete(path);
-		await handle.close().catch(() => undefined);
+		if (handles.get(path) === handle) handles.delete(path);
+		await closeOpenHandle(handle);
 		throw error;
 	}
 }
 
 function writePendingSync(path: string, pending: Pending): void {
 	if (pending.kind === "record") {
+		if (pending.plainDirectories !== undefined && !directoriesArePlainSync(pending.plainDirectories)) return;
 		safeResourceWrite(path, pending.contents, { encoding: "utf8", mode: FILE_MODE });
 		return;
 	}
+	if (pending.plainDirectories !== undefined && !directoriesArePlainSync(pending.plainDirectories)) {
+		throw new Error("run state directory is not a regular directory");
+	}
+	mkdirSync(dirname(path), {
+		recursive: true,
+		...(pending.mkdirMode !== undefined ? { mode: pending.mkdirMode } : {}),
+	});
+	if (pending.plainDirectories !== undefined && !directoriesArePlainSync(pending.plainDirectories)) {
+		throw new Error("run state directory is not a regular directory");
+	}
 	const handle = openSync(path, APPEND_FLAGS, FILE_MODE);
 	try {
-		writeSync(handle, pending.lines.join(""));
+		const buffer = Buffer.from(pending.lines.join(""), "utf8");
+		let offset = 0;
+		while (offset < buffer.length) offset += writeSync(handle, buffer, offset, buffer.length - offset);
 	} finally {
 		closeSync(handle);
 	}
 }
 
 /**
- * Land what `path` has queued, after any write already in flight, and close its handle: its owner is done with it
- * until it appends again. Never rejects: a failed write is the writer's to report.
+ * Land what `path` has queued, including lines appended while this waits, and close its handle: its owner is done with
+ * it until it appends again. Never rejects: a failed write is the writer's to report.
  */
-export function flushDeferredWrite(path: string): Promise<void> {
-	return land(path).then(() => closeHandle(path));
+export async function flushDeferredWrite(path: string): Promise<void> {
+	while (queued.has(path) || inFlight.has(path)) await land(path);
+	await closeHandle(path);
 }
 
 function land(path: string): Promise<void> {
@@ -135,13 +269,23 @@ function land(path: string): Promise<void> {
 	const pending = queued.get(path);
 	if (pending === undefined) return Promise.resolve();
 	queued.delete(path);
-	const write: Promise<void> = writePending(path, pending)
-		.catch((error: unknown) => {
+	const write = Promise.resolve().then(async () => {
+		try {
+			await writePending(path, pending);
+		} catch (error: unknown) {
 			if (pending.kind === "append") pending.onError?.(error);
-		})
-		.finally(() => {
+		} finally {
+			if (retiredHandles.delete(path)) {
+				const handle = handles.get(path);
+				if (handle !== undefined) {
+					handles.delete(path);
+					await closeOpenHandle(handle);
+				}
+			}
 			if (inFlight.get(path) === write) inFlight.delete(path);
-		});
+			notifyAppendSlot();
+		}
+	});
 	inFlight.set(path, write);
 	return write;
 }

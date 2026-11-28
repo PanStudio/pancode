@@ -58,16 +58,17 @@ function directoryIsPlain(path: string): boolean {
 	}
 }
 
-/** False when a directory on the way is not plain or, written now, the write failed; a deferred write cannot fail here. */
+/** False when written now and a directory on the way is not plain or the write failed; deferred writes check off the emitter. */
 function writeRecord(stateDir: string, runId: string, relative: string, value: unknown, now = false): boolean {
 	const directory = runDirectory(stateDir, runId);
-	if (![join(stateDir, "runs"), directory, join(directory, RUN_GRANTS_DIR)].every(directoryIsPlain)) return false;
+	const plainDirectories = [join(stateDir, "runs"), directory, join(directory, RUN_GRANTS_DIR)];
 	const path = join(directory, relative);
 	const contents = `${JSON.stringify(value)}\n`;
 	if (!now) {
-		deferRecord(path, contents);
+		deferRecord(path, contents, { plainDirectories });
 		return true;
 	}
+	if (!plainDirectories.every(directoryIsPlain)) return false;
 	try {
 		safeResourceWrite(path, contents, { encoding: "utf8", mode: 0o600 });
 		return true;

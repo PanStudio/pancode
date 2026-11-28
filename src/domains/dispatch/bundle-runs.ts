@@ -267,6 +267,12 @@ export function createRunTable(rt: DispatchRuntime) {
 			reportDispatchDiagnostic(`persist failed row for run ${envelope.id}`, ledgerError);
 		}
 		active.delete(envelope.id);
+		journalBridge?.closeFeed("failed", detail, {
+			runId: envelope.id,
+			agentId: run.req.agentId,
+			exitCode: 1,
+		});
+		await flushRunFeed(envelope.id);
 		settleAssignmentDurablyWithoutReceipt(run.lineage.rootRunId, envelope.id, "failed");
 		recordTargetOutcome(envelope.id, run.targetId, run.runtimeId, run.wireModelId, "failed", 1, "internal");
 		context.bus.emit("run.failed", {

@@ -44,8 +44,8 @@
  * It never fails the fleet it describes.
  */
 
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
 import { pancodeStateDir } from "../../core/xdg.js";
@@ -168,8 +168,7 @@ export function createFleetEventJournal(
 					...body,
 				} as Omit<FleetEventLine, "digest">;
 				line = { ...unsigned, digest: lineDigest(unsigned) } as FleetEventLine;
-				if (seq === 0) mkdirSync(dirname(path), { recursive: true });
-				deferAppend(path, `${JSON.stringify(line)}\n`, turnOff);
+				deferAppend(path, `${JSON.stringify(line)}\n`, { onError: turnOff });
 				if (body.type === "fleet_sealed" && body.forced === true) drainDeferredWritesSync([path]);
 			} catch (error) {
 				turnOff(error);
