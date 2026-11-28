@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { isStrictDescendant } from "../path-containment.js";
-import type { SandboxCommand, SandboxInvocation, SandboxInvocationSpec } from "./types.js";
+import { isSameOrDescendant, isStrictDescendant } from "../path-containment.js";
+import type { SandboxCommand, SandboxInvocation, SandboxInvocationSpec, SandboxMaskedPath } from "./types.js";
 
 export const DEFAULT_BWRAP_PATH = "/usr/bin/bwrap";
 
@@ -49,11 +49,43 @@ function uniquePaths(entries: ReadonlyArray<string> | undefined): string[] {
 }
 
 /**
+ * Whether a read-only path or a mask sits where a read restriction already hides it: under a hidden directory and
+ * outside every root that shows back. Binding it would show it again; masking it would create its name.
+ */
+function hiddenByRestriction(spec: SandboxInvocationSpec): (entry: string) => boolean {
+	const restriction = spec.readRestriction;
+	if (restriction === undefined) return () => false;
+	const hidden = uniquePaths(restriction.hidden);
+	const shown = uniquePaths([
+		spec.cwd,
+		...restriction.exposed,
+		...spec.writableRoots,
+		...(spec.gitWritablePaths ?? []),
+		...(spec.readableRoots ?? []),
+	]);
+	return (entry) => {
+		const target = bindPath(entry);
+		return (
+			hidden.some((dir) => isSameOrDescendant(target, dir)) && !shown.some((root) => isSameOrDescendant(target, root))
+		);
+	};
+}
+
+/** A directory mask that shows subtrees back stays, since they are PanCode's own paths the command needs. */
+function maskKept(mask: SandboxMaskedPath, hidden: (entry: string) => boolean): boolean {
+	return !hidden(mask.path) || (mask.kind === "directory" && (mask.reveal ?? []).length > 0);
+}
+
+/**
  * Pure bubblewrap argv for one sandboxed command. Mount order is the policy:
  * later mounts shadow earlier ones, so the sequence is read-only root, fresh
  * /dev, /proc and private /tmp (unless `privateTmp` is false), then writable roots, then read-only
  * re-protection inside them, then the Git metadata the run may write, then
  * masks over secrets, each directory mask followed by the subtrees it reveals.
+ * A read restriction hides its directories under empty tmpfs mounts right
+ * after /proc and binds back what it shows, so every later bind shadows it;
+ * the hidden directories are remounted read-only last, so nothing a command
+ * writes there lands anywhere.
  *
  * `-try` binds skip a missing source instead of failing the whole command, so
  * a write root that does not exist yet stays unwritable rather than breaking
@@ -70,6 +102,11 @@ export function buildBwrapInvocation(
 	const args: string[] = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts"];
 	if (!spec.network) args.push("--unshare-net");
 	args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
+	const hidden = uniquePaths(spec.readRestriction?.hidden);
+	for (const dir of hidden) args.push("--tmpfs", dir);
+	for (const entry of uniquePaths(spec.readRestriction?.exposed)) args.push("--ro-bind-try", entry, entry);
+	for (const link of spec.readRestriction?.links ?? []) args.push("--symlink", link.target, bindPath(link.path));
+	const unseen = hiddenByRestriction(spec);
 	if (spec.privateTmp !== false) {
 		args.push("--tmpfs", SANDBOX_TMP);
 		const readable = uniquePaths([spec.cwd, ...(spec.readableRoots ?? [])]);
@@ -78,9 +115,9 @@ export function buildBwrapInvocation(
 		}
 	}
 	for (const entry of uniquePaths(spec.writableRoots)) args.push("--bind-try", entry, entry);
-	for (const entry of uniquePaths(spec.readOnlyPaths)) args.push("--ro-bind-try", entry, entry);
+	for (const entry of uniquePaths(spec.readOnlyPaths)) if (!unseen(entry)) args.push("--ro-bind-try", entry, entry);
 	for (const entry of uniquePaths(spec.gitWritablePaths)) args.push("--bind-try", entry, entry);
-	for (const mask of spec.maskedPaths) {
+	for (const mask of spec.maskedPaths.filter((entry) => maskKept(entry, unseen))) {
 		if (mask.kind === "directory") {
 			args.push("--tmpfs", bindPath(mask.path));
 			for (const entry of mask.reveal ?? [])
@@ -88,6 +125,7 @@ export function buildBwrapInvocation(
 			if (mask.readOnly === true) args.push("--remount-ro", bindPath(mask.path));
 		} else args.push("--ro-bind-try", "/dev/null", bindPath(mask.path));
 	}
+	for (const dir of hidden) args.push("--remount-ro", dir);
 	for (const [key, value] of Object.entries(spec.setEnv ?? {})) args.push("--setenv", key, value);
 	for (const key of spec.unsetEnv ?? []) args.push("--unsetenv", key);
 	if (spec.seccompFilter !== undefined) args.push("--seccomp", String(SECCOMP_FILTER_FD));

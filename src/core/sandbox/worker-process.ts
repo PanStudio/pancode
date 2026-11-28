@@ -8,6 +8,7 @@ import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
 import { pancodeConfigPath } from "../xdg.js";
 import { sandboxAvailability, sandboxNetworkIsolation, wslKind } from "./availability.js";
+import { planHomeReads } from "./home-reads.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { missingBaselineLine } from "./seccomp.js";
@@ -348,6 +349,22 @@ export function composeWorkerSandboxInvocation(
 			: masks;
 	if (aliased instanceof Error)
 		throw new Error(`sandbox: no worker sandbox is available (${aliased.message}); the command was not run`);
+	const homeReads =
+		policy.homeReads === undefined
+			? undefined
+			: planHomeReads({
+					list: policy.homeReads,
+					backend: availability.backend,
+					admitted: [
+						...new Set([
+							...policy.readableRoots.map(physicalSandboxPath),
+							...writableRoots,
+							...policy.gitWritablePaths.map(physicalSandboxPath),
+						]),
+					],
+					cwd: physicalSandboxPath(cwd),
+				});
+	if (homeReads instanceof Error) throw new Error(`sandbox: ${homeReads.message}`);
 	const protectedStartup = startup?.(writableRoots, availability.backend) ?? { readOnlyPaths: [], masks: [] };
 	const spec: SandboxInvocationSpec = {
 		command,
@@ -357,8 +374,9 @@ export function composeWorkerSandboxInvocation(
 		gitWritablePaths: policy.gitWritablePaths.map(physicalSandboxPath),
 		readableRoots: policy.readableRoots.map(physicalSandboxPath),
 		network: policy.network,
-		maskedPaths: [...aliased, ...protectedStartup.masks],
+		maskedPaths: [...aliased, ...protectedStartup.masks, ...(homeReads?.masks ?? [])],
 		...sockets.fields,
+		...(homeReads !== undefined ? { readRestriction: homeReads.restriction } : {}),
 		unsetEnv: SANDBOX_UNSET_ENV,
 		// Under bubblewrap the private /tmp is the only scratch space outside the
 		// writable roots, and an inherited TMPDIR elsewhere would be read-only.

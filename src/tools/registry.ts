@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { Value } from "typebox/value";
 import { isWorkerToolCallCapExceededReason } from "../core/guardrails.js";
 import { HEADLESS_PERMISSION_DENIED_MARKER } from "../core/headless-permission.js";
+import { homeReadList } from "../core/sandbox/home-read-roots.js";
 import {
 	type MainSandboxPolicy,
 	mainSandboxPolicy,
@@ -225,6 +226,22 @@ interface ParkedCall {
 	settledHookEffects?: ReadonlyArray<MiddlewareEffect>;
 }
 
+/** The main shell's sandbox policy for one call's roots, from the registry's live settings deps. */
+function registryShellSandboxPolicy(
+	deps: RegistryDeps,
+	roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
+	sessionId: string | undefined,
+): MainSandboxPolicy {
+	const env = deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {};
+	const safety = deps.sandboxSafety?.();
+	const unixSockets = safety !== undefined ? { unixSockets: safety.sandboxUnixSockets } : {};
+	const listed = safety !== undefined ? homeReadList(safety.homeReads, "main") : undefined;
+	const homeReads = listed !== undefined ? { homeReads: listed } : {};
+	const base = { workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets, ...homeReads };
+	if (roots.readOnly === true) return readOnlyMainSandboxPolicy({ ...base, scratchDir: readOnlyScratchDir(sessionId) });
+	return mainSandboxPolicy(base);
+}
+
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const tools = new Map<ToolName, ToolSpec>();
 	/**
@@ -354,20 +371,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const shellSandboxPolicy = (
 		roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
 		sessionId: string | undefined,
-	): MainSandboxPolicy => {
-		const env = deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {};
-		const unixSockets = deps.sandboxUnixSockets !== undefined ? { unixSockets: deps.sandboxUnixSockets() } : {};
-		if (roots.readOnly === true) {
-			return readOnlyMainSandboxPolicy({
-				workspace: roots.workspace,
-				scratchRoots: roots.scratchRoots,
-				scratchDir: readOnlyScratchDir(sessionId ?? deps.currentSessionId?.()),
-				...env,
-				...unixSockets,
-			});
-		}
-		return mainSandboxPolicy({ workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets });
-	};
+	): MainSandboxPolicy => registryShellSandboxPolicy(deps, roots, sessionId ?? deps.currentSessionId?.());
 	/**
 	 * True yolo for this registry's calls (#407): the operator's session at
 	 * yolo, or a worker whose permit inherited it. Admission decides the net;

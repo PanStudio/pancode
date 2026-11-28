@@ -51,6 +51,7 @@ import {
 	normalizeModelRefs,
 	validateExternalAgent,
 	validateFleetNode,
+	validateHomeReads,
 	validateKeybindings,
 	validateModels,
 	validatePrompts,
@@ -84,7 +85,14 @@ const TOP_LEVEL_KEYS = [
 	"store",
 ] as const;
 
-function readSandboxBooleans(issues: Issues, safety: Record<string, unknown>, target: PancodeSettings["safety"]): void {
+/** The sandbox mode, its booleans and `safety.homeReads`. */
+function readSandboxFields(issues: Issues, safety: Record<string, unknown>, settings: PancodeSettings): void {
+	const target = settings.safety;
+	if ("sandbox" in safety) {
+		const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
+		if (parsed !== undefined) target.sandbox = parsed;
+	}
+	if ("homeReads" in safety) validateHomeReads(issues, safety.homeReads, settings);
 	for (const key of ["sandboxNetwork", "sandboxUnconfinedLocalWorkers"] as const) {
 		if (!(key in safety)) continue;
 		const parsed = expectBoolean(issues, `safety.${key}`, safety[key]);
@@ -961,6 +969,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"sandboxUnixSockets",
 				"sandboxUnconfinedLocalWorkers",
 				"sandboxCacheMaxGiB",
+				"homeReads",
 				"snapshots",
 				"validationWrappers",
 				"unattendedAfterSeconds",
@@ -973,11 +982,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				const parsed = expectEnum(issues, "safety.autonomy", safety.autonomy, AUTONOMY_LEVELS);
 				if (parsed !== undefined) settings.safety.autonomy = parsed;
 			}
-			if ("sandbox" in safety) {
-				const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
-				if (parsed !== undefined) settings.safety.sandbox = parsed;
-			}
-			readSandboxBooleans(issues, safety, settings.safety);
+			readSandboxFields(issues, safety, settings);
 			if ("snapshots" in safety) {
 				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
 				if (parsed !== undefined) settings.safety.snapshots = parsed;

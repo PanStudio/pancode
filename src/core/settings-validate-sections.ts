@@ -15,6 +15,8 @@ import { PROFILE_IDS } from "../domains/system-one/profiles.js";
 import type { PancodeSettings } from "./config.js";
 import { STORE_BACKEND_KINDS, type StoreS3Setting, type StoreSharedSetting, THINKING_LEVELS } from "./defaults.js";
 import { MODEL_TIERS } from "./model-tier.js";
+import { homeReadRootProblem } from "./sandbox/home-read-roots.js";
+import { HOME_READ_MODES, HOME_READ_TOOLCHAINS } from "./sandbox/types.js";
 import {
 	describe,
 	expectBoolean,
@@ -296,6 +298,53 @@ function acceptedMapKey(issues: Issues, path: string, key: string): boolean {
 		return false;
 	}
 	return true;
+}
+
+/** `safety.homeReads`: per-caller home read modes and what `listed` shows back. */
+export function validateHomeReads(issues: Issues, raw: unknown, settings: PancodeSettings): void {
+	if (!isRecord(raw)) {
+		issues.add("safety.homeReads", `expected a map, got ${describe(raw)}`);
+		return;
+	}
+	issues.unknownKeys("safety.homeReads", raw, ["main", "workers", "roots", "toolchains"]);
+	const next = settings.safety.homeReads;
+	for (const caller of ["main", "workers"] as const) {
+		if (!(caller in raw)) continue;
+		const parsed = expectEnum(issues, `safety.homeReads.${caller}`, raw[caller], HOME_READ_MODES);
+		if (parsed !== undefined) next[caller] = parsed;
+	}
+	if ("roots" in raw) {
+		const parsed = expectStringArray(issues, "safety.homeReads.roots", raw.roots);
+		if (parsed !== undefined) {
+			next.roots = [
+				...new Set(
+					parsed.filter((root) => {
+						const problem = homeReadRootProblem(root);
+						if (problem !== null) issues.add("safety.homeReads.roots", `${root}: ${problem}`);
+						return problem === null;
+					}),
+				),
+			];
+		}
+	}
+	if ("toolchains" in raw) {
+		const parsed = expectStringArray(issues, "safety.homeReads.toolchains", raw.toolchains);
+		if (parsed !== undefined) {
+			next.toolchains = [
+				...new Set(
+					parsed.filter((name): name is (typeof HOME_READ_TOOLCHAINS)[number] => {
+						const known = (HOME_READ_TOOLCHAINS as readonly string[]).includes(name);
+						if (!known)
+							issues.add(
+								"safety.homeReads.toolchains",
+								`${name}: unknown toolchain (known: ${HOME_READ_TOOLCHAINS.join(", ")})`,
+							);
+						return known;
+					}),
+				),
+			];
+		}
+	}
 }
 
 export function validateSystemOne(issues: Issues, raw: unknown, settings: PancodeSettings): void {

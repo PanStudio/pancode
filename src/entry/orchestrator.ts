@@ -1830,7 +1830,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		},
 		currentSessionId: () => session?.current()?.id,
 		sandboxEnv: () => mainSandboxEnvPolicy(getCurrentSettings()),
-		sandboxUnixSockets: () => getCurrentSettings().safety.sandboxUnixSockets,
+		sandboxSafety: () => getCurrentSettings().safety,
 		mutationEpoch: (turnId) => loopGuard.mutationEpoch(turnId),
 		flow: {
 			...flowPort,

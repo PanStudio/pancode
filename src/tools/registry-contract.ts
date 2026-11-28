@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { PancodeSettings } from "../core/config.js";
 import type { ModelRunInfo } from "../core/model-tier.js";
 import type { MainSandboxPolicy, YoloScriptSandboxState } from "../core/sandbox/main-session.js";
-import type { SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
+import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -121,8 +123,11 @@ export interface RegistryDeps {
 	 * read per call. Absent scrubs with the name and value rules alone.
 	 */
 	sandboxEnv?: () => SandboxEnvPolicy;
-	/** `safety.sandboxUnixSockets`, read per contained call. Absent blocks them. */
-	sandboxUnixSockets?: () => UnixSocketMode;
+	/**
+	 * `safety.sandboxUnixSockets` and `safety.homeReads`, read per contained
+	 * call. Absent blocks Unix sockets and reads the whole home.
+	 */
+	sandboxSafety?: () => Pick<PancodeSettings["safety"], "sandboxUnixSockets" | "homeReads">;
 	/**
 	 * The loop guard's parent-workspace mutation epoch for a turn. The main
 	 * agent's denial memory keys on it, so a refusal is repeated only while

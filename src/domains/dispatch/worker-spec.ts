@@ -14,6 +14,7 @@ import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
 import { withWorkerGitHookPaths } from "../../core/sandbox/git-hooks-fingerprint.js";
+import { homeReadList } from "../../core/sandbox/home-read-roots.js";
 import type { SandboxAvailability, WorkerSandboxSpec } from "../../core/sandbox/types.js";
 import { resolveWorkerSandboxSpec, workerSandboxLine } from "../../core/sandbox/worker-policy.js";
 import type { SharedStoreGrant } from "../../core/store-shared-grant.js";
@@ -213,6 +214,7 @@ export function workerSandboxFor(input: {
 		input.req.taskWorktree !== undefined && mode !== "off" && input.envelope.sandbox.backend !== "none"
 			? shareTaskWorktreeDependencies(input.req.taskWorktree)
 			: [];
+	const homeReads = input.settings !== undefined ? homeReadList(input.settings.safety.homeReads, "workers") : undefined;
 	const policy = resolveWorkerSandboxSpec({
 		mode,
 		readOnly: hoare || input.envelope.write.mode === "none",
@@ -232,6 +234,7 @@ export function workerSandboxFor(input: {
 		...(input.settings !== undefined && !hoare
 			? { env: sandboxEnvPolicy(input.settings), unixSockets: input.settings.safety.sandboxUnixSockets }
 			: {}),
+		...(homeReads !== undefined ? { homeReads } : {}),
 	});
 	const spec = withWorkerGitHookPaths(policy, input.req.taskWorktree?.path ?? input.req.cwd ?? process.cwd());
 	// The envelope names a backend only where the placed host, this one or a fleet node, reported one.

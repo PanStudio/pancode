@@ -11,7 +11,8 @@ import {
 	RUNTIME_AUTHS,
 	RUNTIME_KINDS,
 } from "../core/runtime-vocabulary.js";
-import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
+import { homeReadRootProblem } from "../core/sandbox/home-read-roots.js";
+import { HOME_READ_TOOLCHAINS, WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
@@ -1185,6 +1186,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"maskSettings",
 	"backendExpected",
 	"unconfined",
+	"homeReads",
 ]);
 
 function readAbsolutePaths(value: unknown, source: string): void {
@@ -1220,6 +1222,20 @@ function validateWorkerSandbox(value: unknown): void {
 		throw new Error("WorkerSpec.sandbox.backendExpected must be true when present");
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.mode === "required"))
 		throw new Error("WorkerSpec.sandbox.unconfined must be true when present and only under mode auto");
+	if (sandbox.homeReads !== undefined) validateWorkerHomeReads(sandbox.homeReads);
+}
+
+/** Roots are checked as spelled; the worker expands `~/` in its own host's home. */
+function validateWorkerHomeReads(value: unknown): void {
+	const source = "WorkerSpec.sandbox.homeReads";
+	const homeReads = readRecord(value, source);
+	exactKeys(homeReads, ["roots", "toolchains"], source);
+	for (const [index, root] of readStringArray(homeReads.roots, `${source}.roots`).entries()) {
+		const problem = homeReadRootProblem(root);
+		if (problem !== null) throw new Error(`${source}.roots[${index}] ${problem}`);
+	}
+	for (const [index, name] of readStringArray(homeReads.toolchains, `${source}.toolchains`).entries())
+		readEnum(name, `${source}.toolchains[${index}]`, HOME_READ_TOOLCHAINS);
 }
 
 function validateWorkerFlowPolicy(value: unknown): void {

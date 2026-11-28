@@ -27,6 +27,7 @@ import {
 	pancodeStatePath,
 } from "../xdg.js";
 import { sandboxAvailability, sandboxUsable } from "./availability.js";
+import { type HomeReadPlan, planHomeReads } from "./home-reads.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
@@ -34,7 +35,9 @@ import { missingBaselineLine } from "./seccomp.js";
 import { discoverSecretMasks, SECRET_SCAN_LIMITS } from "./secret-files.js";
 import { holdStartupMountPoints, startupPathProtection } from "./startup-paths.js";
 import type {
+	HomeReadList,
 	SandboxAvailability,
+	SandboxBackend,
 	SandboxCommand,
 	SandboxEnvPolicy,
 	SandboxInvocationSpec,
@@ -190,6 +193,8 @@ export interface MainSandboxPolicyInput {
 	unixSockets?: UnixSocketMode;
 	/** The checkout a task worktree was cut from, when the workspace is one. Its secret files are masked too. */
 	sourceCheckout?: string;
+	/** `safety.homeReads` for the main session when it is `listed`: the home is hidden but for these. */
+	homeReads?: HomeReadList;
 }
 
 /** No pass list and no target credential names: the scrub's name and value rules alone. */
@@ -219,6 +224,8 @@ export interface MainSandboxPolicy {
 	env: SandboxEnvPolicy;
 	/** Whether a contained command may create Unix-domain sockets (unix-sockets.ts). */
 	unixSockets: UnixSocketMode;
+	/** Hides the home but for the session's own roots and these (home-reads.ts). Absent reads it all. */
+	homeReads?: HomeReadList;
 	/** Also a writable root; bound again after the read-only paths, since it lives inside PanCode's cache dir. */
 	sandboxCache?: string;
 	/**
@@ -582,6 +589,7 @@ export function resolveMainSandboxPolicy(input: MainSandboxPolicyInput): MainSan
 		},
 		env: input.env ?? DEFAULT_SANDBOX_ENV_POLICY,
 		unixSockets: input.unixSockets ?? "block",
+		...(input.homeReads !== undefined ? { homeReads: input.homeReads } : {}),
 		...(input.sandboxCache !== undefined ? { sandboxCache: input.sandboxCache } : {}),
 	};
 }
@@ -702,6 +710,7 @@ export function mainSandboxPolicy(roots: {
 	env?: SandboxEnvPolicy;
 	unixSockets?: UnixSocketMode;
 	sourceCheckout?: string;
+	homeReads?: HomeReadList;
 }): MainSandboxPolicy {
 	const git = mainSandboxGitLayout(roots.workspace);
 	assertPancodeDirLayout();
@@ -754,6 +763,7 @@ export function readOnlyMainSandboxPolicy(roots: {
 	scratchDir: string;
 	env?: SandboxEnvPolicy;
 	unixSockets?: UnixSocketMode;
+	homeReads?: HomeReadList;
 }): MainSandboxPolicy {
 	return {
 		writableRoots: [roots.scratchDir],
@@ -765,6 +775,7 @@ export function readOnlyMainSandboxPolicy(roots: {
 		secretRoots: { workspace: roots.workspace, scratchRoots: roots.scratchRoots },
 		env: roots.env ?? DEFAULT_SANDBOX_ENV_POLICY,
 		unixSockets: roots.unixSockets ?? "block",
+		...(roots.homeReads !== undefined ? { homeReads: roots.homeReads } : {}),
 		readOnly: true,
 	};
 }
@@ -945,6 +956,8 @@ export function planMainSandboxSpawn(
 			message: `sandbox: the main-session sandbox is unavailable (${aliased.message}); the command was not run`,
 		};
 	}
+	const homeReads = mainHomeReadPlan(policy, physicalPolicy, cwd, availability.backend);
+	if (homeReads instanceof Error) return { kind: "refused", message: `sandbox: ${homeReads.message}` };
 	const npmUserConfig =
 		policy.readOnly !== true && physicalPolicy.sandboxCache !== undefined
 			? mainSandboxNpmUserConfig(physicalPolicy.sandboxCache, aliased, homedir(), physicalPolicy)
@@ -963,10 +976,11 @@ export function planMainSandboxSpawn(
 			{ ...physicalPolicy, readOnlyPaths: [...physicalPolicy.readOnlyPaths, ...startup.readOnlyPaths] },
 			command,
 			physicalSandboxPath(cwd),
-			[...aliased, ...startup.masks],
+			[...aliased, ...startup.masks, ...(homeReads?.masks ?? [])],
 			npmUserConfig,
 		),
 		...sockets.fields,
+		...(homeReads !== undefined ? { readRestriction: homeReads.restriction } : {}),
 	};
 	const invocation = buildSandboxInvocation(spec, availability.backend, availability.executable);
 	const absentFiles = policy.absentGitFiles.filter((file) => !pathExists(file));
@@ -981,6 +995,29 @@ export function planMainSandboxSpawn(
 		},
 		env: policy.env,
 	};
+}
+
+/**
+ * The `listed` home-reads plan for one main-session command, or undefined
+ * when the home is open. The session's own roots show: the workspace, the
+ * writable roots (the scratch roots, the sandbox cache and the repository's
+ * git dirs among them) and, in a read-only run, the git dirs it reads.
+ */
+function mainHomeReadPlan(
+	policy: MainSandboxPolicy,
+	physicalPolicy: MainSandboxPolicy,
+	cwd: string,
+	backend: SandboxBackend,
+): HomeReadPlan | Error | undefined {
+	if (policy.homeReads === undefined) return undefined;
+	const workspace = policy.secretRoots.workspace;
+	const readGitDirs = policy.readOnly === true ? (mainSandboxGitLayout(workspace)?.mountDirs ?? []) : [];
+	return planHomeReads({
+		list: policy.homeReads,
+		backend,
+		admitted: [...new Set([workspace, ...readGitDirs].map(physicalSandboxPath).concat(physicalPolicy.writableRoots))],
+		cwd: physicalSandboxPath(cwd),
+	});
 }
 
 /**

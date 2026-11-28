@@ -2,12 +2,24 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
+import { readSettings } from "../../src/core/config.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
+import { planHomeReads } from "../../src/core/sandbox/home-reads.js";
 import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
@@ -16,7 +28,10 @@ import {
 	configureWorkerProcessSandbox,
 	planSandboxedSpawn,
 } from "../../src/core/sandbox/worker-process.js";
+import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
+import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
+import { settingsChangeKind } from "../../src/domains/config/classify.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
 import { workerSandboxFor } from "../../src/domains/dispatch/worker-spec.js";
 import { createTaskWorktree } from "../../src/tools/task-worktree.js";
@@ -415,4 +430,150 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 	assert.equal(existsSync(join(sandboxedWorktree.path, "node_modules", "dep")), true);
 	assert.equal(sandboxed.spec?.backendExpected, true);
 	assert.equal(sandboxed.spec?.readableRoots.includes(root), true);
+});
+
+/** A fake home with a project, its sibling, a listed tool reached through a link, and a git identity. */
+function fakeHome() {
+	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-home-reads-")));
+	const home = join(scratch, "home");
+	const project = join(home, "src", "project");
+	const sibling = join(home, "src", "sibling");
+	const tool = join(home, "tools", "bin");
+	for (const dir of [project, sibling, tool]) mkdirSync(dir, { recursive: true });
+	writeFileSync(join(home, "notes.txt"), "HOME_NOTE\n");
+	writeFileSync(join(sibling, "a.txt"), "SIBLING_FILE\n");
+	writeFileSync(join(tool, "t.txt"), "LISTED_FILE\n");
+	writeFileSync(join(home, ".gitconfig"), "[user]\n\tname = GIT_IDENTITY\n");
+	symlinkSync(tool, join(home, "linked"));
+	return { scratch, home, project, sibling, tool };
+}
+
+test("under bwrap listed home reads hide the home but for the run's roots and the listed ones", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		return;
+	}
+	const { scratch, home, project, tool } = fakeHome();
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const plan = planHomeReads({
+		list: { roots: ["~/linked", "~/absent"], toolchains: [] },
+		backend: "bwrap",
+		admitted: [project],
+		cwd: project,
+		home,
+		wsl: false,
+	});
+	assert.ok(!(plan instanceof Error), String(plan));
+	assert.deepEqual(plan.restriction.links, [{ path: join(home, "linked"), target: tool }]);
+	const invocation = buildBwrapInvocation(
+		{
+			command: {
+				argv: [
+					"/bin/bash",
+					"--noprofile",
+					"--norc",
+					"-c",
+					[
+						"cat ~/notes.txt ~/src/sibling/a.txt ~/.gitconfig 2>/dev/null",
+						"ls ~/src",
+						"cat ~/linked/t.txt",
+						"echo w > written && cat written",
+						"touch ~/planted 2>/dev/null || echo home-read-only",
+					].join("; "),
+				],
+			},
+			cwd: project,
+			writableRoots: [project],
+			// Under a hidden directory and outside every shown root, a bind or mask would show its path again.
+			readOnlyPaths: [join(project, ".git"), join(home, ".config")],
+			network: false,
+			maskedPaths: [{ path: join(home, ".gitconfig"), kind: "file" }],
+			readRestriction: plan.restriction,
+			setEnv: { HOME: home },
+		},
+		availability.executable ?? "bwrap",
+	);
+	const args = invocation.args;
+	assert.ok(args.indexOf(home) < args.indexOf("--bind-try"), "the home is hidden before any later bind");
+	assert.equal(args.lastIndexOf("--remount-ro") > args.lastIndexOf("--bind-try"), true);
+	assert.equal(args.includes(join(home, ".config")), false);
+	assert.equal(args.includes(join(project, ".git")), true);
+	assert.equal(args.includes("/dev/null"), false);
+	const result = await run(invocation.file, args);
+	assert.equal(result.code, 0, result.output);
+	assert.doesNotMatch(result.output, /HOME_NOTE|SIBLING_FILE|GIT_IDENTITY|sibling/u);
+	assert.match(result.output, /^project$/mu);
+	assert.match(result.output, /LISTED_FILE/u);
+	assert.match(result.output, /^w$/mu);
+	assert.match(result.output, /home-read-only/u);
+	assert.equal(existsSync(join(home, "planted")), false);
+});
+
+test("listed home reads refuse a plan that would show a hidden tree or run outside every shown root", (t) => {
+	const { scratch, home, project, sibling } = fakeHome();
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	symlinkSync(scratch, join(home, "up"));
+	const plan = (input: Partial<Parameters<typeof planHomeReads>[0]>) =>
+		planHomeReads({
+			list: { roots: [], toolchains: [] },
+			backend: "bwrap",
+			admitted: [project],
+			cwd: project,
+			home,
+			wsl: false,
+			...input,
+		});
+	assert.ok(!(plan({}) instanceof Error));
+	assert.match(String(plan({ admitted: [scratch] })), /holds .*home/u);
+	assert.match(String(plan({ list: { roots: ["~/up"], toolchains: [] } })), /resolves to .* which holds/u);
+	assert.match(String(plan({ cwd: sibling })), /working directory/u);
+	assert.match(String(plan({ wsl: true, mountinfo: join(scratch, "no-mountinfo") })), /mount table|no-mountinfo/u);
+});
+
+test("safety.homeReads validates its roots, keeps roots user-only and lets a project only hide more", (t) => {
+	const workspace = mkdtempSync(join(pancodeHome.dir, "workspace-"));
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	mkdirSync(join(pancodeHome.dir, "config"), { recursive: true });
+	const userFile = join(pancodeHome.dir, "config", "settings.yaml");
+	t.after(() => rmSync(userFile, { force: true }));
+	writeFileSync(userFile, "version: 2\n");
+	assert.deepEqual(readSettings().safety.homeReads, { main: "open", workers: "open", roots: [], toolchains: [] });
+	writeFileSync(
+		userFile,
+		"version: 2\nsafety:\n  homeReads:\n    workers: listed\n    roots: [~/src/app, /opt/data]\n    toolchains: [nvm, uv]\n",
+	);
+	assert.deepEqual(readSettings().safety.homeReads, {
+		main: "open",
+		workers: "listed",
+		roots: ["~/src/app", "/opt/data"],
+		toolchains: ["nvm", "uv"],
+	});
+	for (const bad of ["roots: [src/app]", "roots: ['~']", "roots: [/]", "toolchains: [brew]"]) {
+		writeFileSync(userFile, `version: 2\nsafety:\n  homeReads:\n    ${bad}\n`);
+		assert.throws(() => readSettings(), /safety\.homeReads\.(roots|toolchains)/u, bad);
+	}
+
+	writeFileSync(userFile, "version: 2\n");
+	writeFileSync(
+		join(workspace, ".pancode", "settings.local.yaml"),
+		"safety:\n  homeReads:\n    main: listed\n    workers: open\n    roots: [~/.ssh]\n    toolchains: [nvm]\n",
+	);
+	const snapshot = captureProjectSurface(workspace, "settings");
+	assert.ok(snapshot.contentHash);
+	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+	const layered = readLayeredSettings(workspace);
+	assert.deepEqual(layered.settings.safety.homeReads, { main: "listed", workers: "open", roots: [], toolchains: [] });
+	for (const path of ["safety.homeReads.roots", "safety.homeReads.toolchains"])
+		assert.match(layered.issues.find((issue) => issue.path === path)?.message ?? "", /user settings/u, path);
+	assert.equal(settingsChangeKind("safety.homeReads.main"), "nextTurn");
+	const spec = resolveWorkerSandboxSpec({
+		mode: "auto",
+		readOnly: false,
+		cwd: workspace,
+		writeBoundaries: [],
+		network: false,
+		homeReads: { roots: ["~/src/app"], toolchains: ["nvm"] },
+	});
+	assert.deepEqual(spec?.homeReads, { roots: ["~/src/app"], toolchains: ["nvm"] });
 });
