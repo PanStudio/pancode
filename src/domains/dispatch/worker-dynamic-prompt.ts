@@ -33,7 +33,7 @@ import { readAgentLedger } from "./agent-ledger-store.js";
 import type { DispatchRequest } from "./contract.js";
 import type { WithheldCapability } from "./envelope.js";
 import { abbreviateHandoffText, type ExecutionHandoff } from "./execution-handoff.js";
-import { competeStanceLiner, isBoundedGateRolePrompt } from "./gate-role-prompts.js";
+import { competeStanceLiner, type GateReviewerRecipe, isBoundedGateRolePrompt } from "./gate-role-prompts.js";
 import { answerBudgetMessage } from "./handback.js";
 import { renderDispatchIntentRequirements, renderWithheldNotice } from "./intent-requirements.js";
 import type { PeerInstructions } from "./peer-instructions.js";
@@ -469,9 +469,14 @@ function hasPersonaOverride(req: DispatchRequest): boolean {
  * the agent every unnamed council seats) refused `--synthesis judge` outright,
  * before a single member ran.
  */
-export function hasCallerPersonaOverride(req: DispatchRequest): boolean {
+export function hasCallerPersonaOverride(req: DispatchRequest, recipe?: GateReviewerRecipe): boolean {
 	if (!hasPersonaOverride(req)) return false;
-	return !isBoundedGateRolePrompt({ role: req.gate?.role, readOnly: req.readOnly, systemPrompt: req.systemPrompt });
+	return !isBoundedGateRolePrompt({
+		role: req.gate?.role,
+		readOnly: req.readOnly,
+		systemPrompt: req.systemPrompt,
+		...(recipe === undefined ? {} : { recipe }),
+	});
 }
 
 export function personaOverrideFor(
