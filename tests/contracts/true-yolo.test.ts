@@ -313,16 +313,18 @@ test("the operator's scope reaches the net for the main principal at yolo and fo
 	evaluateAdmission({ principal: "main", effects, safety, autonomy: "default", operatorYolo: OPERATOR_YOLO });
 	evaluateAdmission({ principal: "main", effects, safety, autonomy: "yolo" });
 	evaluateAdmission({ principal: "worker", effects, safety, operatorYolo: OPERATOR_YOLO });
-	evaluateAdmission({
+	const inherited = evaluateAdmission({
 		principal: "worker",
 		effects,
 		safety,
 		workerExecuteAutonomy: "yolo",
 		operatorYolo: OPERATOR_YOLO,
 	});
+	strictEqual(inherited.kind, "allow", JSON.stringify(inherited));
 	deepStrictEqual(seen.slice(0, 4), [OPERATOR_YOLO, undefined, undefined, undefined]);
-	// A worker never takes the caller's scope; it inherits one with no scratch roots and no script sandbox.
-	deepStrictEqual(seen[4], { scratchRoots: [], scriptSandbox: "unsandboxed" });
+	// A worker never takes the caller's scope; it inherits one with no scratch roots and no script sandbox, marked as a
+	// worker's so the net keeps protected startup paths blocked.
+	deepStrictEqual(seen[4], { scratchRoots: [], scriptSandbox: "unsandboxed", worker: true });
 });
 
 test("yolo runs bash from a cwd outside the workspace; default and worker yolo keep the block", async () => {
