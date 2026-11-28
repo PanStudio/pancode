@@ -711,7 +711,7 @@ test("auth list shows Copilot beside the runtimes PanCode signs in, with the acc
 	}) as typeof process.stdout.write;
 	try {
 		strictEqual(await runAuthCommand(["list"]), 0);
-		match(stdout, /^\s*copilot-sdk\s+GitHub Copilot SDK\s+signed in as octo\s+targets=\d+$/mu);
+		match(stdout, /^\s*copilot-sdk\s+GitHub Copilot SDK\s+signed in as octo\s+connections=\d+$/mu);
 		stdout = "";
 		strictEqual(await runAuthCommand(["list", "--json"]), 0);
 	} finally {
