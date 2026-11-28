@@ -77,7 +77,7 @@ export function fleetRunBoardSurface(deps: FleetRunBoardSurfaceDeps): FleetRunSu
 					if (plan?.state === "cancelled") {
 						deps.notify(
 							"info",
-							`plan ${name}: cancelled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
+							`plan ${name}: canceled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
 							"fleet-run:settled",
 						);
 						return;
@@ -96,7 +96,7 @@ export function fleetRunBoardSurface(deps: FleetRunBoardSurfaceDeps): FleetRunSu
 				const failed = deps.fleetPlans?.fail(rootId, message);
 				if (failed?.state === "cancelled") {
 					appendPlanCard(failed);
-					deps.notify("info", `plan ${name}: cancelled before every step settled`, "fleet-run:settled");
+					deps.notify("info", `plan ${name}: canceled before every step settled`, "fleet-run:settled");
 					return;
 				}
 				if (error instanceof WriterSetBusyError) {
