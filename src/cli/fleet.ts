@@ -37,10 +37,10 @@ import {
 	type PlaybookCommandRegistry,
 	PlaybookCommandRegistryMissingError,
 	playbookCommandsFor,
-	playbookPromptVariables,
 	renderPlaybookPrompt,
 } from "../domains/agents/index.js";
 import { createAgentsDomainModule } from "../domains/agents/module.js";
+import { bindPlaybookTask, playbookTaskRefusal } from "../domains/agents/playbook-task.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ContextDomainModule } from "../domains/context/module.js";
 import { clearRootCancelRequest, readRootCancelRequest } from "../domains/dispatch/cancel-requests.js";
@@ -257,11 +257,8 @@ function parseFleetRunArgs(args: ReadonlyArray<string>): FleetRunOptions | { err
 		else return { error: `fleet run takes one task argument, got another: '${arg}'; quote the whole task` };
 	}
 	if (!name) return { error: FLEET_RUN_USAGE };
-	if (task !== undefined && vars.task !== undefined) {
-		return {
-			error: "the task is given twice: pass it as the argument after the playbook or as --var task=..., not both",
-		};
-	}
+	const bound = bindPlaybookTask(vars, task);
+	if ("error" in bound) return { error: bound.error };
 	const format = values.get("--output-format");
 	if (format !== undefined && format !== "text" && format !== "json" && format !== "stream-json") {
 		return { error: `--output-format takes text, json or stream-json, got '${format}'` };
@@ -417,11 +414,8 @@ async function runFleetTracked(
 	try {
 		playbook = loadPlaybook(process.cwd(), name);
 		track.playbook = playbook.name;
-		if (options.task !== undefined && !playbookPromptVariables(playbook.body).includes("task")) {
-			throw new Error(
-				`playbook '${playbook.name}' takes no task: its prompt has no {{task}}; pass its variables with --var`,
-			);
-		}
+		const refusal = playbookTaskRefusal(playbook, options.task);
+		if (refusal !== null) throw new Error(refusal);
 		prompt = renderPlaybookPrompt(playbook.body, vars);
 		commands = playbookCommandsFor(process.cwd(), playbook);
 	} catch (err) {
