@@ -11,7 +11,7 @@ import {
 import type { ResponseModelIdObservation } from "../../core/response-model-id.js";
 import type { CacheReadField, CacheWriteField } from "../../core/token-split.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { CodexQuotaObservation } from "../types.js";
+import { type CodexQuotaObservation, zeroUsage } from "../types.js";
 import { codexAccountScope, parseCodexQuotaEvent } from "./codex-quota.js";
 // The Usage and AssistantMessage fields read here are declared by this module's pi-ai augmentation.
 import type {} from "./openai-completions.js";
@@ -127,12 +127,7 @@ export function observeResponsesModelId<T extends StreamOptions>(
 				provider: model.provider,
 				model: model.id,
 				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					...zeroUsage(),
 					cacheReadField,
 					cacheWriteField,
 				},

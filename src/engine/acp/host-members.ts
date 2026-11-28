@@ -59,7 +59,7 @@ import {
 export { oracleBriefingFromEntries } from "../../session-control/oracle.js";
 export { followWorkerRuns } from "../../session-control/worker-run-ledger.js";
 
-export interface HostToolEvents {
+interface HostToolEvents {
 	emit(event: Record<string, unknown>): void;
 	onEvent(handler: (event: unknown) => void): () => void;
 }

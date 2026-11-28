@@ -114,7 +114,7 @@ export function emitEvent(event: unknown): void {
  * over; a timeout records the output failure, since process.exit would drop
  * whole buffered frames with no trace on the reader's side.
  */
-export function drainStdout(timeoutMs = 2000): Promise<boolean> {
+function drainStdout(timeoutMs = 2000): Promise<boolean> {
 	return new Promise((resolve) => {
 		let done = false;
 		const finish = (drained: boolean): void => {

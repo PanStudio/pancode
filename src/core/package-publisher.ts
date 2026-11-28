@@ -7,7 +7,7 @@
  */
 
 /** Lowercase GitHub owner, `pancode` for first-party packs, or `local`. */
-export const PUBLISHER_PATTERN = /^[a-z0-9][a-z0-9-]{0,38}$/u;
+const PUBLISHER_PATTERN = /^[a-z0-9][a-z0-9-]{0,38}$/u;
 
 const GITHUB_OWNER = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\//u;
 

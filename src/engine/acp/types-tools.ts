@@ -5,16 +5,9 @@
  * withdrawal, and the decision, worker-ask and plan facts a permission ask carries.
  */
 
-import type { Static } from "typebox";
 import { Type } from "typebox";
 import type { DispatchPlanView } from "../../tools/dispatch-plan.js";
 import { closed } from "./types.js";
-
-/** Params of the `_pancode/permission/withdraw` notification. */
-export interface AcpPermissionWithdrawParams {
-	sessionId: string;
-	requestId: string;
-}
 
 export interface AcpDispatchPlanMeta {
 	version: 1;
@@ -141,9 +134,3 @@ export const AcpDispatchPlanFactsSchema = Type.Object(
 	},
 	closed,
 );
-
-export type AcpPermissionDecisionFacts = Static<typeof AcpPermissionDecisionFactsSchema>;
-
-export type AcpWorkerAskFacts = Static<typeof AcpWorkerAskFactsSchema>;
-
-export type AcpDispatchPlanFacts = Static<typeof AcpDispatchPlanFactsSchema>;

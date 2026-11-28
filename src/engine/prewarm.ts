@@ -30,16 +30,10 @@ import { LLM_MESSAGE_ROLES } from "./types.js";
 export const PREWARM_USER_TEXT = ".";
 
 /** Output budget for the round. The tokens the model produces are not the point. */
-export const PREWARM_MAX_TOKENS = 1;
+const PREWARM_MAX_TOKENS = 1;
 
 /** Which trigger asked for the pre-warm. Recorded on the ledger entry. */
 export type PrewarmTrigger = "session-start" | "resume" | "compaction";
-
-export interface PrewarmContext {
-	systemPrompt: string;
-	messages: ReadonlyArray<AgentMessage>;
-	tools: ReadonlyArray<AgentTool>;
-}
 
 export interface PrewarmRoundInput {
 	telemetry?: CallJournalOptions;

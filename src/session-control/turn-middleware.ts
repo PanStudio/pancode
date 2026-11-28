@@ -54,7 +54,7 @@ import type { HostInserts } from "./host-inserts.js";
 import type { NoticeSource } from "./notice-source.js";
 import type { AgentRuntime, TurnMiddlewareState } from "./turn-state.js";
 
-export interface TurnMiddlewareDeps {
+interface TurnMiddlewareDeps {
 	memoryContentGuard?: ((content?: string) => () => boolean) | undefined;
 	state: TurnMiddlewareState;
 	middleware?: MiddlewareContract | undefined;
@@ -109,7 +109,7 @@ const COMPLETION_FACT_NOTES: Record<CompletionFact, string> = {
 };
 
 /** The awaited turn_start phase's answer: the turn's refusal, or the effects an admitted turn applies. */
-export type TurnStartGate = { refusal: string } | ({ refusal: null } & AwaitedTurnStart);
+type TurnStartGate = { refusal: string } | ({ refusal: null } & AwaitedTurnStart);
 
 export interface TurnMiddleware {
 	/** Async-only completed tool-batch observation and delivery of already-finished background reminders. */

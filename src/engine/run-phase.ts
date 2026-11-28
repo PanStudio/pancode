@@ -6,7 +6,7 @@
  * tool, the round after which the run ends, and why the run sealed without a result. Pure: no I/O, no clock.
  */
 
-export type RunPhaseName = "work" | "handback" | "sealed";
+type RunPhaseName = "work" | "handback" | "sealed";
 
 /**
  * What moved the run out of `work`, journaled as the handback's bound kind. `time` is the run's wall clock;
@@ -16,7 +16,7 @@ export type RunPhaseName = "work" | "handback" | "sealed";
  */
 export type HandbackTrigger = "context" | "time" | "synthesis" | "tools" | "refusals" | "result";
 
-export interface RunPhase {
+interface RunPhase {
 	readonly name: RunPhaseName;
 	/** The bound that first moved the run into handback; null while it works. */
 	readonly trigger: HandbackTrigger | null;

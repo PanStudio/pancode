@@ -12,10 +12,10 @@
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { EngineOAuthProvider } from "./oauth.js";
 
-export const AUTH_CLIENT_ID = "58fdd3bc-e1c3-4ce5-80ea-8d6b87cfb944";
-export const GATEWAY_CLIENT_ID = "681c10cc-f684-4540-bcd7-0b4df3bc26ef";
-export const GATEWAY_SCOPE = `https://auth.globus.org/scopes/${GATEWAY_CLIENT_ID}/action_all`;
-export const ALLOWED_DOMAINS = "anl.gov,alcf.anl.gov";
+const AUTH_CLIENT_ID = "58fdd3bc-e1c3-4ce5-80ea-8d6b87cfb944";
+const GATEWAY_CLIENT_ID = "681c10cc-f684-4540-bcd7-0b4df3bc26ef";
+const GATEWAY_SCOPE = `https://auth.globus.org/scopes/${GATEWAY_CLIENT_ID}/action_all`;
+const ALLOWED_DOMAINS = "anl.gov,alcf.anl.gov";
 
 const AUTHORIZE_URL = "https://auth.globus.org/v2/oauth2/authorize";
 const TOKEN_URL = "https://auth.globus.org/v2/oauth2/token";

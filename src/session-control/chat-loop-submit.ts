@@ -87,22 +87,22 @@ import { noOutcomeUsage } from "./worker-receipts.js";
 import { isWorkerShareNote } from "./worker-share.js";
 
 /** Closing notice an operator interrupt leaves in the transcript and the ledger. */
-export const INTERRUPT_CANCEL_REASON = "[PanCode] run interrupted by operator; delivering the new message now.";
+const INTERRUPT_CANCEL_REASON = "[PanCode] run interrupted by operator; delivering the new message now.";
 
 /** The same redirect when triage read a queued message as a stop; no operator cancelled anything. */
-export const TRIAGE_INTERRUPT_REASON =
+const TRIAGE_INTERRUPT_REASON =
 	"[PanCode] run interrupted because triage read the new message as a stop; delivering it now.";
 
 export const isRedirectReason = (reason: string | null | undefined): boolean =>
 	reason === INTERRUPT_CANCEL_REASON || reason === TRIAGE_INTERRUPT_REASON;
 
-export const ENGINE_ACTIVE_PROMPT_ERROR =
+const ENGINE_ACTIVE_PROMPT_ERROR =
 	"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.";
 
-export const ACTIVE_PROMPT_NOTICE =
+const ACTIVE_PROMPT_NOTICE =
 	"[PanCode] another response was already active, so this response could not start. Wait for it to finish, then submit again.";
 
-export function operatorFacingEngineError(message: string): string {
+function operatorFacingEngineError(message: string): string {
 	return message.includes(ENGINE_ACTIVE_PROMPT_ERROR) ? ACTIVE_PROMPT_NOTICE : message;
 }
 

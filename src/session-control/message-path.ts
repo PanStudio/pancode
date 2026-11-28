@@ -27,12 +27,12 @@ interface PathMessage {
 
 type RowFacts = Omit<MessageStepped, "messageId" | "submittedAt">;
 
-export interface MessagePathDeps {
+interface MessagePathDeps {
 	sessionId: () => string | null;
 	turnId: () => string | null;
 }
 
-export interface MessagePath {
+interface MessagePath {
 	submitted(message: PathMessage, facts: { chars: number; by: "operator" | "machine" } & JournalEmissionTiming): void;
 	/** The prompt reached the engine. */
 	prompted(message: PathMessage): void;

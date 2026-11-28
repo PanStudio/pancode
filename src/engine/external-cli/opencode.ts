@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { asRecord } from "../../core/type-guards.js";
 import {
 	opencodeCliMode,
 	referencedOpenCodeCredentials,
 } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
+import { zeroUsage } from "../types.js";
 import type { WorkerRunInput } from "../worker-run-types.js";
-import { cliEventRecord, emptyCliUsage, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
+import { cliWorkOrderPrompt, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
 
-export const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
-
-export { opencodeCliMode } from "../../domains/providers/runtimes/external-cli-policy.js";
+const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
 
 export function buildOpenCodeCliArgs(input: WorkerRunInput): string[] {
 	assertToolProfileEnforceable(input.toolProfile, "opencode-cli");
@@ -29,15 +30,7 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 	configDirEnv: "OPENCODE_CONFIG_DIR",
 	extraEnv: referencedOpenCodeCredentials,
 	args: buildOpenCodeCliArgs,
-	prompt(input) {
-		return [
-			input.systemPrompt.trim(),
-			...(input.dynamicPromptMessages ?? []).map((message) => message.body.trim()),
-			input.task.trim(),
-		]
-			.filter(Boolean)
-			.join("\n\n");
-	},
+	prompt: cliWorkOrderPrompt,
 	// OpenCode's run command emits text/step/error events and then exits on session idle.
 	requireTerminalEvent: false,
 	onEvent(event, state, append, observeUsage) {
@@ -45,12 +38,12 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 			state.responseId = event.sessionID;
 			state.sessionId = event.sessionID;
 		}
-		const part = cliEventRecord(event.part);
+		const part = asRecord(event.part);
 		if (event.type === "text" && part?.type === "text" && typeof part.text === "string") {
 			append(`${state.text ? "\n" : ""}${part.text}`);
 		} else if (event.type === "step_finish" && part?.type === "step-finish") {
-			const tokens = cliEventRecord(part.tokens);
-			const cache = cliEventRecord(tokens?.cache);
+			const tokens = asRecord(part.tokens);
+			const cache = asRecord(tokens?.cache);
 			observeUsage(
 				{
 					usage: {
@@ -68,7 +61,7 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 				},
 				typeof part.id === "string" ? part.id : undefined,
 			);
-			const usage = state.usage ?? emptyCliUsage();
+			const usage = state.usage ?? zeroUsage();
 			usage.input += finiteUsage(tokens?.input);
 			usage.output += finiteUsage(tokens?.output);
 			usage.cacheRead += finiteUsage(cache?.read);
@@ -81,8 +74,8 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 				[tokens.input, tokens.output, tokens.total].some((value) => typeof value === "number" && Number.isFinite(value));
 			state.costReported ||= typeof part.cost === "number" && Number.isFinite(part.cost);
 		} else if (event.type === "error") {
-			const error = cliEventRecord(event.error);
-			const data = cliEventRecord(error?.data);
+			const error = asRecord(event.error);
+			const data = asRecord(error?.data);
 			state.error = String(data?.message ?? error?.name ?? "OpenCode reported a session error");
 		}
 	},

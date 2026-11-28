@@ -13,7 +13,7 @@ import {
 	reportCommitAttributionDiagnostic,
 	withManagedGitCommitAttributionEnvironment,
 } from "./git-commit-attribution.js";
-import { SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
+import { combineSafeOutput, SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
@@ -73,7 +73,7 @@ export interface BashCommandProgress {
 	outputBytes: number;
 }
 
-export interface RunBashCommandOptions {
+interface RunBashCommandOptions {
 	cwd?: string;
 	timeoutMs?: number;
 	/**
@@ -108,7 +108,7 @@ export interface BashProgressScheduler {
 	clearTimeout(timer: unknown): void;
 }
 
-export interface BashOutputProgressController {
+interface BashOutputProgressController {
 	/** Raw stream byte counts, independent of UTF-8 decoding and capture clipping. */
 	byteCounts(): BashStreamByteCounts;
 	/** Emit the initial empty cumulative snapshot, when a callback is configured. */
@@ -300,7 +300,7 @@ let loginEnvSnapshot: NodeJS.ProcessEnv | null = null;
 let loginEnvSettled = false;
 
 /** `pending` means the login profile has not been captured yet, so what it exports is unknown. */
-export type ToolEnvProbe = "set" | "unset" | "pending";
+type ToolEnvProbe = "set" | "unset" | "pending";
 
 /**
  * Whether the environment a bash command will run with sets `key` to a non-empty value. The login profile can export
@@ -451,11 +451,6 @@ export async function bashSecretValues(secretNames?: Iterable<string>): Promise<
 	return knownSecretValues((await bashSpawnPlan()).source, secretNames);
 }
 
-export function combineBashOutput(result: Pick<BashCommandResult, "stdout" | "stderr">): string {
-	const { stdout, stderr } = result;
-	return stderr.length > 0 ? `${stdout}${stdout.endsWith("\n") || stdout.length === 0 ? "" : "\n"}${stderr}` : stdout;
-}
-
 /**
  * The merged output of a command still running. The merge writes the newline that keeps stderr off stdout's last line, and
  * stdout can still grow there, so `https://u:pw` followed by stderr must stay held while `http://h:8080\n` followed by the
@@ -463,7 +458,7 @@ export function combineBashOutput(result: Pick<BashCommandResult, "stdout" | "st
  */
 export function combineLiveBashOutput(progress: Pick<BashCommandResult, "stdout" | "stderr">): string {
 	const { stdout, stderr } = progress;
-	return combineBashOutput({ stdout: stderr.length > 0 ? holdUnresolvedUserinfo(stdout) : stdout, stderr });
+	return combineSafeOutput({ stdout: stderr.length > 0 ? holdUnresolvedUserinfo(stdout) : stdout, stderr });
 }
 
 /** A `required` sandbox with no backend, or a host with no bash: the command never spawned. */

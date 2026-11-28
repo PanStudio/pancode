@@ -52,7 +52,7 @@ import { sideCallCacheFamilyId } from "./apis/cache-family.js";
 import type { CopilotQuotaReadOptions } from "./copilot/quota.js";
 import { engineModels } from "./models.js";
 import { deterministicSampling } from "./provider-payload.js";
-import type { EngineModel } from "./types.js";
+import { type EngineModel, zeroUsage } from "./types.js";
 
 // Dispatch registers the admission store's cross-process cache lanes for main sessions here (M-11).
 export { useMainCacheLaneStore } from "./apis/cache-family.js";
@@ -91,14 +91,7 @@ export async function copilotSdkSignInProbe(keychain: boolean) {
 	return client.probeCopilotSignIn(keychain);
 }
 
-export type {
-	CopilotAccount,
-	CopilotListingBilling,
-	CopilotListingPromo,
-	CopilotListingTierPrices,
-	CopilotListingTokenPrices,
-	CopilotModelRow,
-} from "./copilot/client.js";
+export type { CopilotAccount } from "./copilot/client.js";
 
 /** The account the official Copilot runtime is signed in as; loads the optional SDK on first use. */
 export async function copilotSdkAccount() {
@@ -116,12 +109,8 @@ export type {
 	CopilotQuotaAccount,
 	CopilotQuotaEntry,
 	CopilotQuotaObservation,
-	CopilotQuotaObservationKind,
-	CopilotQuotaQuantityKind,
 	CopilotQuotaReadOptions,
 	CopilotQuotaReadResult,
-	CopilotQuotaRpcClient,
-	CopilotQuotaUnit,
 } from "./copilot/quota.js";
 
 /** Copilot account quota observations the live stream delivers, as they arrive; loads no SDK. */
@@ -152,7 +141,7 @@ export const streamSimple = engineStreamSimple;
 /** The session's own turn path, whose cache retention and system split a round reading the turn's prefix must match. */
 export const mainStreamSimple = engineMainStreamSimple;
 
-export interface EngineTextCompletionInput extends SideCallAuth {
+interface EngineTextCompletionInput extends SideCallAuth {
 	callTelemetry?: CallMessageObserver;
 	model: EngineModel;
 	systemPrompt: string;
@@ -216,7 +205,7 @@ function conversationMessage(
 		api: model.api,
 		provider: model.provider,
 		model: model.id,
-		usage: emptyUsage(),
+		usage: zeroUsage(),
 		stopReason: "stop",
 		timestamp,
 	};
@@ -292,7 +281,7 @@ async function completeEngineTextAttempt(input: EngineTextCompletionInput): Prom
 		throw error;
 	});
 	const failed = response.stopReason === "error" || response.stopReason === "aborted";
-	const usage = response.usage ?? emptyUsage();
+	const usage = response.usage ?? zeroUsage();
 	const failure = failed
 		? tracking.failure(
 				response,
@@ -335,7 +324,7 @@ async function completeEngineTextAttempt(input: EngineTextCompletionInput): Prom
 	};
 }
 
-export interface EngineAi {
+interface EngineAi {
 	listModels<TProvider extends KnownProvider>(provider: TProvider): EngineModel[];
 	getModel<TProvider extends KnownProvider>(provider: TProvider, modelId: string): EngineModel | undefined;
 }
@@ -353,17 +342,6 @@ export function createEngineAi(): EngineAi {
 				return undefined;
 			}
 		},
-	};
-}
-
-function emptyUsage(): Usage {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 }
 
@@ -432,7 +410,7 @@ function errorOnlyMessage(errorMessage: string): AssistantMessage {
 		api: "pancode",
 		provider: "pancode",
 		model: "unknown",
-		usage: emptyUsage(),
+		usage: zeroUsage(),
 		stopReason: "error",
 		errorMessage,
 		timestamp: Date.now(),

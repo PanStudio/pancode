@@ -98,7 +98,7 @@ export function createAssistantGenerationTiming() {
 	};
 }
 
-export type AssistantGenerationTiming = ReturnType<typeof createAssistantGenerationTiming>;
+type AssistantGenerationTiming = ReturnType<typeof createAssistantGenerationTiming>;
 
 /** The streaming run's rate and output count at `at`, or null before the first token. */
 export function liveThroughput(timing: AssistantGenerationTiming, at: number): TokenThroughputSnapshot | null {

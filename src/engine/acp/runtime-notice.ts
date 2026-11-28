@@ -18,7 +18,7 @@ import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { RuntimeNoticePayload } from "../../core/telemetry/live-events.js";
 import { type SessionNotice, subscribeSessionNotices } from "../../session-control/session-notices.js";
 
-export interface AcpRuntimeNotice {
+interface AcpRuntimeNotice {
 	level: RuntimeNoticePayload["level"];
 	text: string;
 	/** The terminal's notice key: `runtime-notice:<kind>:<targetId>`. */
@@ -45,7 +45,7 @@ function readRuntimeNotice(payload: unknown): AcpRuntimeNotice | null {
 	};
 }
 
-export interface AcpRuntimeNoticeRelay {
+interface AcpRuntimeNoticeRelay {
 	/** One `runtime.notice_raised` payload; `sessionId` is the bound session, or null before one is bound. */
 	raise(payload: unknown, sessionId: string | null): void;
 	/** One session notice; `sessionId` as for `raise`. */

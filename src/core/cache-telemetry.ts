@@ -68,7 +68,7 @@ export function firstChangedSection(
 	return undefined;
 }
 
-export type CacheBreakCause =
+type CacheBreakCause =
 	| "none"
 	| "tool_choice_changed"
 	| "prompt_recompiled"
@@ -86,7 +86,7 @@ export type CacheBreakCause =
 	| "replay_mismatch"
 	| "unknown";
 
-export interface CacheCallObservation {
+interface CacheCallObservation {
 	expectedCachedTokens: number | null;
 	/** Null when the provider omitted its cache-read count; an omitted read is never a zero read. */
 	cacheReadTokens: number | null;
@@ -113,7 +113,7 @@ export interface CacheCallTransport {
 }
 
 /** What the route and the transport knew about the call before its usage arrived (#423). */
-export interface CacheCallRoute {
+interface CacheCallRoute {
 	/** The cache lifetime the route declares, null when none is known. */
 	ttlMs: number | null;
 	transport?: CacheCallTransport & {

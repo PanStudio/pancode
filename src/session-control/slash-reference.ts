@@ -7,7 +7,7 @@ import type { CommandAlias, CommandRank, SlashCommandGroup } from "./slash-comma
 import { BUILTIN_SLASH_COMMANDS, parseSlashCommand } from "./slash-commands.js";
 import { type CommandArgsSpec, usageLine } from "./slash-spec.js";
 
-export interface CommandReferenceEntry {
+interface CommandReferenceEntry {
 	name: string;
 	usage: string;
 	description: string;
@@ -62,7 +62,7 @@ export function commandReference(options: { includeHidden?: boolean } = {}): Rea
 }
 
 /** Match classes, best first. */
-export type CommandMatchClass = "exact" | "name" | "alias" | "verb" | "letters" | "description";
+type CommandMatchClass = "exact" | "name" | "alias" | "verb" | "letters" | "description";
 
 export interface CommandMatch {
 	ref: CommandReferenceEntry;

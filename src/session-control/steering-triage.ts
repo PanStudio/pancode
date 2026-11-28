@@ -49,7 +49,7 @@ export function triageMaxTokens(level: ThinkingLevel): number {
 /** A `stop` below this confidence is marked, never acted on. */
 export const TRIAGE_STOP_MIN_CONFIDENCE = 0.8;
 /** A `stop` older than this when the verdict lands is stale: the operator has had time to press the key themselves. */
-export const TRIAGE_STOP_MAX_AGE_MS = 30_000;
+const TRIAGE_STOP_MAX_AGE_MS = 30_000;
 
 /** Code points of each queued message, the task and the latest reply sent to the triage model. */
 const MAX_ENTRY_CHARS = 600;
@@ -62,7 +62,7 @@ export interface TriageEntry {
 	readonly kind: QueuedMessageKind;
 }
 
-export interface TriageInput {
+interface TriageInput {
 	/** The operator's request that started the run. */
 	readonly task: string;
 	/** The assistant's latest text, or empty. */
@@ -220,7 +220,7 @@ export function triageMayInterrupt(
 }
 
 /** Typed picks as verdicts. Without real probabilities the mass is one-hot and would always clear the stop bar, so a verdict carries none. */
-export function typedTriageVerdicts(picks: ReadonlyArray<TriagePick>, probabilities: boolean): TriageVerdict[] {
+function typedTriageVerdicts(picks: ReadonlyArray<TriagePick>, probabilities: boolean): TriageVerdict[] {
 	return picks.map(({ id, relation, urgency, mass }) => ({
 		id,
 		relation,

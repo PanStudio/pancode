@@ -3,7 +3,6 @@
 import type { AcpArtifactPage, AcpArtifactReadRequest, AcpArtifactRow } from "./types-views.js";
 
 export { ACP_ARTIFACTS_LIST_METHOD, ACP_ARTIFACTS_META_KEY, ACP_ARTIFACTS_READ_METHOD } from "./types.js";
-export type { AcpArtifactPage, AcpArtifactReadRequest, AcpArtifactRow } from "./types-views.js";
 
 /**
  * `_pancode/artifacts/list` and `_pancode/artifacts/read`: the session's

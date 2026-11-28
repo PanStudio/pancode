@@ -28,7 +28,14 @@ import {
 	statedRetryWaitMs,
 } from "../domains/session/retry.js";
 import { LOCAL_CONTEXT_OVERFLOW_PREFIX } from "../engine/apis/output-budget.js";
-import type { AgentMessage, EngineModel, ImageContent, MutableAgentState, Usage } from "../engine/types.js";
+import {
+	type AgentMessage,
+	type EngineModel,
+	type ImageContent,
+	type MutableAgentState,
+	type Usage,
+	zeroUsage,
+} from "../engine/types.js";
 import type { TerminalAssistantFailure } from "./chat-loop-messages.js";
 import {
 	CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
@@ -114,7 +121,7 @@ export interface TurnRecoveryDeps {
 	compactCommand?: () => string;
 }
 
-export interface TurnRecovery {
+interface TurnRecovery {
 	runCompactAndRetry(
 		agentRuntime: AgentRuntime,
 		text: string,
@@ -214,14 +221,7 @@ export function rewriteStallAbortMessage(
  * completion included, is dropped and one logical result reaches the turn (MD11).
  */
 export function stalledRequestEnd(model: Pick<EngineModel, "api" | "provider" | "id">, reason: string) {
-	const usage: Usage = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
+	const usage: Usage = zeroUsage();
 	return {
 		type: "error" as const,
 		reason: "aborted" as const,
@@ -554,12 +554,7 @@ export function createTurnRecovery(deps: TurnRecoveryDeps): TurnRecovery {
 					model: model.id,
 					usage: {
 						callInvoked: false,
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						...zeroUsage(),
 					},
 					stopReason: "error",
 					errorMessage,

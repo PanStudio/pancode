@@ -24,7 +24,7 @@ import { dispatchKeysFromArgs } from "../domains/turn-control/index.js";
 import { completionOfToolResult } from "../tools/finish.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 
-export interface CollectedTurn {
+interface CollectedTurn {
 	readonly control: TurnOutcomeRecord["control"];
 	readonly toolNames: ReadonlyArray<string>;
 	readonly readOnlyCallsBeforeFirstDispatch: number;

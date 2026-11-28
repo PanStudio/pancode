@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shellQuote } from "./shell-quote.js";
 
-export type ExternalEditorProbe = (candidates: ReadonlyArray<string>) => string | null;
+type ExternalEditorProbe = (candidates: ReadonlyArray<string>) => string | null;
 
 export interface ExternalEditResult {
 	ok: boolean;

@@ -79,7 +79,7 @@ export interface QueuedChatMessage {
 export type QueueRemovalReason = "removed" | "sent-now" | "to-editor" | "restored" | "cancelled" | "resubmitted";
 
 /** Where a delivered entry was handed to the engine. */
-export type QueueDeliveryPoint = "finish-turn" | "prepare-next-turn" | "prompt";
+type QueueDeliveryPoint = "finish-turn" | "prepare-next-turn" | "prompt";
 
 /**
  * What became of a queued entry, for the dataset that joins it to the steer
@@ -98,11 +98,11 @@ export type QueueEvent =
 	| { type: "injected"; entry: QueuedChatMessage };
 
 /** What put a queue on hold. */
-export type QueueHoldReason = "operator-stop" | "interrupt" | "prompt-not-started" | "session-move";
+type QueueHoldReason = "operator-stop" | "interrupt" | "prompt-not-started" | "session-move";
 /** What brought an entry back after a hand-over. */
-export type QueueReturnReason = "run-cancelled" | "prompt-not-started" | "session-move";
+type QueueReturnReason = "run-cancelled" | "prompt-not-started" | "session-move";
 
-export interface QueueEnqueueOptions {
+interface QueueEnqueueOptions {
 	front?: boolean;
 	/** Machine provenance; see {@link QueuedChatMessage.origin}. */
 	origin?: string;
@@ -124,7 +124,7 @@ export function heldQueueNotice(count: number): string {
 	return `[PanCode] ${subject} held and nothing was sent. A new prompt takes the queue at its first slot; clearing the queue returns it.`;
 }
 
-export interface TurnQueuesDeps {
+interface TurnQueuesDeps {
 	state: TurnQueuesState;
 	emitQueueUpdateEvent: (messages: QueuedChatMessage[]) => void;
 	/** An operator stop or an unstarted prompt left this many entries held. Falls back to a plain notice. */
@@ -157,13 +157,13 @@ export interface TurnQueuesDeps {
 }
 
 /** A host message waiting for the next tool-batch boundary (X6), with the rule that emitted it. */
-export interface QueuedHostMessage {
+interface QueuedHostMessage {
 	text: string;
 	source: HostInsertSource;
 	rule?: string;
 }
 
-export interface TurnQueues {
+interface TurnQueues {
 	/** `front` puts the entry at the head of the queue: a send-now the operator chose to wait with. Null when nothing is running. */
 	steer(text: string, display?: QueuedChatMessage["display"], options?: QueueEnqueueOptions): QueuedChatMessage | null;
 	queueFollowUp(

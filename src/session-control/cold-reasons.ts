@@ -8,7 +8,7 @@
  * reason renders as itself rather than disappearing. Each reads after "read
  * again after", in words for the operator rather than the engine's terms.
  */
-export function coldReasonText(reason: string): string {
+function coldReasonText(reason: string): string {
 	switch (reason) {
 		case "working_set_evict":
 			return "trimmed tool output";

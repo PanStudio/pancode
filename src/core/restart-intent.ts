@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { noteRestartChain } from "./restart-request.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
 
-export interface RestartIntent {
+interface RestartIntent {
 	sessionId: string;
 	cwd: string;
 	createdAt: string;

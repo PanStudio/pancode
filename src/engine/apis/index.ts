@@ -8,7 +8,6 @@ import { onSessionDeleted } from "../session.js";
 import { ollamaNativeApiProvider } from "./ollama-native.js";
 import { openAICompletionsApiProvider } from "./openai-completions.js";
 
-export { ollamaNativeApiProvider } from "./ollama-native.js";
 export { openAICompletionsApiProvider } from "./openai-completions.js";
 export { setGlobalDefaultMaxOutputTokens } from "./output-budget.js";
 

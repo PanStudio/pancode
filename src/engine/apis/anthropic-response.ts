@@ -10,7 +10,7 @@ import { sha256Hex } from "../../core/hash.js";
 import type { ResponseModelIdObservation } from "../../core/response-model-id.js";
 import type { CacheReadField } from "../../core/token-split.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { AnthropicResponseObservation } from "../types.js";
+import { type AnthropicResponseObservation, zeroUsage } from "../types.js";
 import { withProxyConnectionNote } from "./proxy-connection-error.js";
 
 const RATE_LIMIT_PREFIX = "anthropic-ratelimit-unified-";
@@ -220,14 +220,7 @@ export function observeAnthropicResponse<T extends StreamOptions>(
 				api: model.api,
 				provider: model.provider,
 				model: model.id,
-				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				},
+				usage: zeroUsage(),
 				stopReason: reason,
 				errorMessage: withProxyConnectionNote(cause instanceof Error ? cause.message : String(cause), model.baseUrl),
 				timestamp: Date.now(),

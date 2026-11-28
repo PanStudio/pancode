@@ -19,14 +19,10 @@ import type { ProvidersContract } from "../../src/domains/providers/contract.js"
 import { resolveRuntimeTarget } from "../../src/domains/providers/runtime-resolution.js";
 import codexCliRuntime from "../../src/domains/providers/runtimes/codex/codex-cli.js";
 import { opencodeCliRuntime, piCliRuntime } from "../../src/domains/providers/runtimes/external-cli-peers.js";
-import {
-	buildCodexExecArgs,
-	buildCodexExecPrompt,
-	startCodexCliWorkerRun,
-} from "../../src/engine/codex/subprocess-runtime.js";
+import { buildCodexExecArgs, startCodexCliWorkerRun } from "../../src/engine/codex/subprocess-runtime.js";
 import { bindExternalUsage, observeExternalWorkerRun } from "../../src/engine/external-call-telemetry.js";
 import { externalCliConnector } from "../../src/engine/external-cli/connectors.js";
-import { startJsonlCliRun } from "../../src/engine/external-cli/jsonl-runner.js";
+import { cliWorkOrderPrompt, startJsonlCliRun } from "../../src/engine/external-cli/jsonl-runner.js";
 import { buildOpenCodeCliArgs, OPENCODE_CLI_CONNECTOR } from "../../src/engine/external-cli/opencode.js";
 import { buildPiCliArgs, PI_CLI_CONNECTOR } from "../../src/engine/external-cli/pi.js";
 import { createProcessTreeTerminator } from "../../src/engine/external-subprocess.js";
@@ -256,7 +252,7 @@ describe("PanCode external CLI connectors", { skip: process.platform === "win32"
 		);
 		const observed = JSON.parse(readFileSync(join(root, "observed.json"), "utf8"));
 		deepStrictEqual(observed.args, buildCodexExecArgs(run));
-		equal(observed.stdin, buildCodexExecPrompt(run));
+		equal(observed.stdin, cliWorkOrderPrompt(run));
 		ok(!observed.args.join(" ").includes("PONG"));
 		equal(observed.env.CODEX_HOME, join(root, "codex-home"));
 		equal(observed.env.FAKE_SECRET, undefined);
