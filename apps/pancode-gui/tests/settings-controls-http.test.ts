@@ -8,7 +8,7 @@ import { Workspace } from "../contracts/sessions.js";
 import { SettingsControls, SettingWritten } from "../contracts/settings-controls.js";
 import { STRUCTURED_SETTINGS } from "../contracts/structured-settings.js";
 import { harness, json } from "./harness/app.js";
-import { seedSettings } from "./harness/settings-fixture.js";
+import { seedSettings } from "./harness/hub-fixture.js";
 
 const HIDDEN = [
 	"interface.smoothStreaming",

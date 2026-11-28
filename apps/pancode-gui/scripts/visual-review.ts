@@ -17,11 +17,8 @@ import { parseArgs } from "node:util";
 import { serve } from "@hono/node-server";
 import { chromium } from "playwright-core";
 import { harness } from "../tests/harness/app.js";
-import { seedEvidence } from "../tests/harness/evidence-fixture.js";
-import { seedFleet } from "../tests/harness/fleet-fixture.js";
 import { seedHistory } from "../tests/harness/history-fixture.js";
-import { seedHub } from "../tests/harness/hub-fixture.js";
-import { seedSettings } from "../tests/harness/settings-fixture.js";
+import { seedEvidence, seedFleet, seedHub, seedSettings } from "../tests/harness/hub-fixture.js";
 import { traceFixture } from "../tests/harness/trace-fixture.js";
 import { fixtureLaunch } from "./fixture-launch.js";
 
