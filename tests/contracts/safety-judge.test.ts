@@ -20,7 +20,6 @@ import {
 	operatorOnlyAsk,
 	type SafetyJudgeCompletion,
 	type SafetyJudgeConfig,
-	type SafetyJudgeOperatorMessage,
 } from "../../src/domains/safety/safety-judge.js";
 import { SANDBOX_ESCAPE_REASON, SANDBOX_ESCAPE_RULE_ID } from "../../src/domains/safety/sandbox-escape.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
@@ -201,90 +200,42 @@ test("a scope naming a script directory reaches the judge with the script's own 
 	doesNotMatch(user, /script file this call runs, \/etc/u);
 });
 
-// M-16: an approved escape must reach the judge with its flag, the approval and the script's named write, so a
-// judge that credits the approval admits it without a second card; a write the approval did not name gets no credit.
-test("an approved unsandboxed script reaches the judge with its flag, the approval and the write it names (M-16)", async () => {
-	const base = realpathSync(mkdtempSync(join(tmpdir(), "pancode-judge-escape-")));
-	const scratch = join(base, "tmp");
-	mkdirSync(join(scratch, "live"), { recursive: true });
-	const results = join(base, "results", "live.txt");
-	const elsewhere = join(base, "elsewhere", "other.txt");
-	const appender = (target: string) =>
-		`import { appendFile } from "node:fs/promises";\nconst outputPath = '${target}';\nawait appendFile(outputPath, process.argv[2] + "\\n");\n`;
-	writeFileSync(join(scratch, "live", "live3.mjs"), appender(results));
-	writeFileSync(join(scratch, "live", "stray.mjs"), appender(elsewhere));
-	const approval = (question: string, label: string) => ({
-		text: `Asked "${question}", the operator answered: ${label}`,
-		context: `The option "${label}" says: Run both appends and report the recorded lines.`,
-		words: "",
-		asked: { question, chosen: [label] },
-	});
-	const typed = `Now write a node script at ${scratch}/live/live3.mjs that appends one line to ${results}. Run it with label a, then b. If the sandbox gets in the way, ask me before going around it.`;
-	const relative =
-		"The sandbox prevented writing to `results/live.txt`. May I run the script outside the sandbox to append labels `a` and `b`?";
-	let operator: SafetyJudgeOperatorMessage[] = [typed, approval(relative, "Yes, proceed (Recommended)")];
+// D9: leaving the sandbox runs as the operator, so only their card or a session option they chose approves it.
+// Neither an approved ask_user round naming the escape nor a typed message authorizing it reaches the judge.
+test("a sandbox escape never reaches the judge, whatever the operator's messages or approved questions say", async () => {
 	const prompts: string[] = [];
-	// A scripted judge that credits an approval only on the facts PanCode computed: the flag, the approved escape and the path.
 	const judge = createSafetyJudge({
-		config: () => ({ ...CONFIG, roots: { workspace: join(base, "ws"), scratch: [scratch], temp: null } }),
+		config: () => CONFIG,
 		complete: async (request) => {
 			prompts.push(request.user);
-			const credited =
-				/^unsandboxed: true$/mu.test(request.user) &&
-				/^operator-approved escape: /mu.test(request.user) &&
-				request.user.includes(`names ${results} in its text`);
-			return {
-				text: credited
-					? answer("allow", "operator-named", "The approved question names this append.")
-					: answer("block", "unclear", "The approval does not scope this write."),
-			};
+			return { text: answer("allow", "operator-named", "The operator authorized it.") };
 		},
-		operatorMessages: () => operator,
+		operatorMessages: () => [
+			"I changed my mind: please append it now; I authorize writing outside the workspace and running it unsandboxed.",
+			{
+				text: 'Asked "May I run the script outside the sandbox?", the operator answered: Yes, proceed',
+				context: 'The option "Yes, proceed" says: Run it outside the sandbox.',
+				words: "",
+				asked: { question: "May I run the script outside the sandbox?", chosen: ["Yes, proceed"] },
+			},
+		],
 		session: () => "session-1",
 		consequences: () => [],
 		record: () => {},
 	});
-	const review = (scriptName: string) =>
-		judge.review({
-			tool: ToolNames.Bash,
-			args: {
-				command: `node ${scratch}/live/${scriptName} a && node ${scratch}/live/${scriptName} b`,
-				unsandboxed: true,
-			},
-			decision: {
-				kind: "ask",
-				classification: { actionClass: "execute", reasons: [SANDBOX_ESCAPE_REASON] },
-				rejection: { short: "asks", detail: SANDBOX_ESCAPE_REASON, hints: [] },
-				policy: { ruleId: SANDBOX_ESCAPE_RULE_ID, reasons: [SANDBOX_ESCAPE_REASON] } as unknown as SafetyPolicyDecision,
-			},
-			approvalAuthority: "operator",
-		});
-	// The repro: the operator typed the results path and approved a question about the append.
-	strictEqual((await review("live3.mjs")).kind, "allow", prompts.at(-1));
-	ok(
-		(prompts.at(-1) ?? "").includes(
-			`operator-named path: the script ${scratch}/live/live3.mjs this call runs names ${results} in its text, and an operator message spells it verbatim`,
-		),
-		prompts.at(-1),
-	);
-	// Only the approved question spells the path: the approval is the operator's word for it.
-	operator = [
-		`Write ${scratch}/live/live3.mjs and run it twice.`,
-		approval(`May I run the script outside the sandbox to append to ${results}?`, "Yes, proceed"),
-	];
-	strictEqual((await review("live3.mjs")).kind, "allow", prompts.at(-1));
-	ok(
-		(prompts.at(-1) ?? "").includes(
-			`operator-approved path: the script ${scratch}/live/live3.mjs this call runs names ${results} in its text, and a question the operator approved spells it verbatim`,
-		),
-		prompts.at(-1),
-	);
-	// A script whose write the approval did not name, and a declined question, get no credit.
-	strictEqual((await review("stray.mjs")).kind, "block");
-	doesNotMatch(prompts.at(-1) ?? "", /operator-(?:named|approved) path/u);
-	operator = [typed, approval(relative, "No, stop")];
-	strictEqual((await review("live3.mjs")).kind, "block");
-	doesNotMatch(prompts.at(-1) ?? "", /operator-approved escape/u);
+	const outcome = await judge.review({
+		tool: ToolNames.Bash,
+		args: { command: "echo done >> ~/notes.txt", unsandboxed: true, unsandboxed_reason: "the sandbox hides ~" },
+		decision: {
+			kind: "ask",
+			classification: { actionClass: "execute", reasons: [SANDBOX_ESCAPE_REASON] },
+			rejection: { short: "asks", detail: SANDBOX_ESCAPE_REASON, hints: [] },
+			policy: { ruleId: SANDBOX_ESCAPE_RULE_ID, reasons: [SANDBOX_ESCAPE_REASON] } as unknown as SafetyPolicyDecision,
+		},
+		approvalAuthority: "operator",
+	});
+	strictEqual(outcome.kind, "skip");
+	strictEqual(prompts.length, 0);
 });
 
 test("a write to an outside path the operator spelled reaches the judge as an operator-named path, not shared config", async () => {
@@ -320,32 +271,6 @@ test("a write to an outside path the operator spelled reaches the judge as an op
 		prompts[0]?.system ?? "",
 		/a report or output file the operator asked for, is not shared or system configuration/u,
 	);
-});
-
-test("an escape the judge calls operator-named after the operator said outside the workspace parks with the word it needs", async () => {
-	const judge = createSafetyJudge({
-		config: () => CONFIG,
-		complete: async () => ({ text: answer("allow", "operator-named", "The operator authorized it.") }),
-		operatorMessages: () => ["I changed my mind: please append it now; I authorize writing outside the workspace."],
-		session: () => "session-1",
-		consequences: () => [],
-		record: () => {},
-	});
-	const outcome = await judge.review({
-		tool: ToolNames.Bash,
-		args: { command: "echo done >> ~/notes.txt", unsandboxed: true },
-		decision: {
-			kind: "ask",
-			classification: { actionClass: "execute", reasons: [SANDBOX_ESCAPE_REASON] },
-			rejection: { short: "asks", detail: SANDBOX_ESCAPE_REASON, hints: [] },
-			policy: { ruleId: SANDBOX_ESCAPE_RULE_ID, reasons: [SANDBOX_ESCAPE_REASON] } as unknown as SafetyPolicyDecision,
-		},
-		approvalAuthority: "operator",
-	});
-	strictEqual(outcome.kind, "park");
-	const reason = outcome.kind === "park" ? outcome.gateReason : "";
-	match(reason, /no operator message uses the word sandbox or unconfined/u);
-	doesNotMatch(reason, /mentions the sandbox/u);
 });
 
 test("a project script's text reaches the judge only inside the data tag, redacted, and a cut body says so", async () => {
@@ -882,13 +807,8 @@ test("the judge reads typed messages and ask_user answers in ledger order, so th
 	match(prompts[3] ?? "", /the operator answered: Yes, run resume\.sh unsandboxed/u);
 	doesNotMatch(prompts[3] ?? "", /The option|Runs resume\.sh once|Runs every script/u);
 
-	// What an option says is the agent's text: the judge reads it, but a description that speaks of the
-	// sandbox under a question and label that do not never stands in for the operator's word on an escape.
-	const plain = "Run the live check? Command: bash scripts/live/resume.sh";
-	entries = gatewayRound(
-		[{ question: plain, options: [{ label: "Yes, run it", description: "Runs resume.sh outside the sandbox" }] }],
-		[{ question: plain, answer: "Yes, run it", options: ["Yes, run it"] }],
-	);
+	// No answered round approves a sandbox escape, whatever its question or option says: the escape skips the
+	// judge and waits for the operator's card (D9).
 	const reviewEscape = () =>
 		seat.review({
 			tool: ToolNames.Bash,
@@ -902,25 +822,19 @@ test("the judge reads typed messages and ask_user answers in ledger order, so th
 			approvalAuthority: "operator",
 			turnId: "r1",
 		});
-	const escaped = await reviewEscape();
-	match(prompts[4] ?? "", /The option "Yes, run it" says: Runs resume\.sh outside the sandbox/u);
-	strictEqual(escaped.kind, "park");
-	match(escaped.kind === "park" ? escaped.gateReason : "", /no operator message uses the word sandbox or unconfined/u);
-
-	// The question is the agent's text too: one that names staying in the sandbox, answered Yes, never
-	// backs an escape; one that names leaving it backs one only when the chosen option is affirmative.
-	const rounds: Array<[string, string, string]> = [
-		["Run the check in the sandbox?", "Yes", "park"],
-		["Run resume.sh unsandboxed?", "Yes", "allow"],
-		["Run resume.sh unsandboxed?", "No", "park"],
-	];
-	for (const [question, label, kind] of rounds) {
+	const before = prompts.length;
+	for (const [question, label] of [
+		["Run the check in the sandbox?", "Yes"],
+		["Run resume.sh unsandboxed?", "Yes"],
+		["Run resume.sh unsandboxed?", "No"],
+	] as const) {
 		entries = gatewayRound(
-			[{ question, options: [{ label: "Yes" }, { label: "No" }] }],
+			[{ question, options: [{ label: "Yes", description: "Runs resume.sh outside the sandbox" }, { label: "No" }] }],
 			[{ question, answer: label, options: [label] }],
 		);
-		strictEqual((await reviewEscape()).kind, kind, `${question} ${label}`);
+		strictEqual((await reviewEscape()).kind, "skip", `${question} ${label}`);
 	}
+	strictEqual(prompts.length, before);
 });
 
 test("safety.judge parses from user settings and a project layer cannot set its rules", async (t) => {

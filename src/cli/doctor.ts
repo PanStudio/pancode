@@ -2,10 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
 import { readSettings } from "../core/config.js";
+import { DEFAULT_SETTINGS, type EgressSettings } from "../core/defaults.js";
 import { canonicalizePath } from "../core/path-canonical.js";
 import { proxyEnvSummary } from "../core/proxy-env.js";
-import { sandboxAvailability } from "../core/sandbox/availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation } from "../core/sandbox/availability.js";
+import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/policy.js";
 import {
+	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
 	mainShellContained,
@@ -13,6 +16,7 @@ import {
 	yoloShellState,
 } from "../core/sandbox/main-session.js";
 import { discoverSecretMasks } from "../core/sandbox/secret-files.js";
+import { hostSandboxStatus, sandboxStatusLine } from "../core/sandbox/status.js";
 import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
 import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
 import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
@@ -174,6 +178,31 @@ export function scratchRootFindings(workspaceRoot: string): DoctorFinding[] {
 }
 
 /**
+ * The host's OS sandbox as `pancode version --sandbox` reports it: the setting, the backend found, the seccomp
+ * baseline and what the main shell and a local worker do with them, each on its own.
+ */
+function sandboxStatusFinding(): DoctorFinding {
+	let safety = DEFAULT_SETTINGS.safety;
+	try {
+		safety = readSettings().safety;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the defaults.
+	}
+	const status = hostSandboxStatus(safety);
+	return {
+		ok: true,
+		name: "OS sandbox",
+		level:
+			status.outcome === "available" && status.localWorker === "contained"
+				? "ok"
+				: status.outcome === "off"
+					? "info"
+					: "warn",
+		detail: sandboxStatusLine(status),
+	};
+}
+
+/**
  * How the main session's shell calls run on this host: contained in the
  * main-session sandbox at autonomy default when a backend exists, and where a
  * contained call may write; and whether yolo sandboxes its commands (#419).
@@ -197,6 +226,7 @@ export function shellSandboxFinding(workspaceRoot: string): DoctorFinding {
 			uncontained ||
 			secrets?.capped === true ||
 			socketFallback ||
+			availability.degraded !== undefined ||
 			yoloShellState(confinement, mode, availability) === "refused"
 				? "warn"
 				: "ok",
@@ -209,7 +239,25 @@ export function shellSandboxFinding(workspaceRoot: string): DoctorFinding {
 				? undefined
 				: { count: secrets.masks.length, capped: secrets.capped, cappedRoots: secrets.cappedRoots, workspace },
 			unixSockets,
+			mainEgressFacts(availability),
 		),
+	};
+}
+
+/** The operator's `safety.egress.main` and upstream proxy as the doctor shows them, credentials redacted. */
+function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): MainSandboxEgressFacts {
+	let egress: EgressSettings;
+	try {
+		egress = readSettings().safety.egress;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		egress = DEFAULT_SETTINGS.safety.egress;
+	}
+	return {
+		mode: egress.main.mode,
+		granted: egressGrants(egress.main.allow, egress.main.presets).origins.size,
+		upstreamProxy: egress.upstreamProxy === null ? null : redactedUpstreamProxy(egress.upstreamProxy),
+		isolationFailure: egress.main.mode === "open" ? null : sandboxNetworkIsolation(availability),
 	};
 }
 
@@ -509,7 +557,12 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 	const contractChecks = [validationContractFinding(workspaceRoot)];
 	const scratchChecks = untouched
 		? []
-		: [...scratchRootFindings(workspaceRoot), shellSandboxFinding(workspaceRoot), ...schedulerClientFindings()];
+		: [
+				...scratchRootFindings(workspaceRoot),
+				sandboxStatusFinding(),
+				shellSandboxFinding(workspaceRoot),
+				...schedulerClientFindings(),
+			];
 	// Task worktrees live in the workspace too. The sweep reads claims and asks
 	// git; it removes nothing.
 	const worktreeChecks = taskWorktreeFindings(workspaceRoot, { fix });

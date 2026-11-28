@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { statSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { artifactDefaultPath } from "../../core/artifact-paths.js";
 import { asDirectoryPathBoundary, writeRootsCover } from "../../core/path-boundary.js";
@@ -8,13 +9,14 @@ import type { PathWalkMemo } from "../../core/path-canonical.js";
 import { canonicalizePath, canonicalizeRawPath, createPathWalkMemo } from "../../core/path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../../core/path-containment.js";
 import { mainSandboxGitControlPaths } from "../../core/sandbox/main-session.js";
+import { protectedStartupPath } from "../../core/sandbox/startup-paths.js";
 import { isSessionAuthoredFile } from "../../core/session-authored-files.js";
 import { storeBookkeepingPaths, storeGrantProbes, storeWriteSet } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { expandPath } from "../../tools/path-utils.js";
 import type { Classification, ClassifierCall } from "./action-classifier.js";
 import { classify, STORE_UNGRANTED_ARG } from "./action-classifier.js";
-import { GIT_CONTROL_FILE_RULE_ID } from "./containment.js";
+import { GIT_CONTROL_FILE_RULE_ID, STARTUP_PATH_RULE_ID, startupPathReason } from "./containment.js";
 import { commandArg, isUnderOrSame, pathArg } from "./policy-call-args.js";
 import type { SafetyPolicyDecision } from "./policy-engine.js";
 import type { mutationCandidates } from "./skill-authority.js";
@@ -213,7 +215,7 @@ const foldPathCase: (location: string) => string =
  * files the main-session sandbox keeps read-only, each as listed and as
  * resolved, so a link on the control side cannot hide one.
  */
-export function resolveGitControls(cwd: string): GitControl[] {
+function resolveGitControls(cwd: string): GitControl[] {
 	return mainSandboxGitControlPaths(cwd).map((control) => {
 		const real = canonicalizePath(control);
 		const forms = real === null || real === control ? [control] : [control, real];
@@ -263,11 +265,84 @@ function isGitControlName(location: string): boolean {
 }
 
 /**
+ * Captured once when a policy engine is built so typed startup-path checks
+ * share `PROTECTED_STARTUP_NAMES` and `PROTECTED_HOME_NAMES` with the shell
+ * sandbox (`startup-paths.ts`) and pay zero per-call filesystem calls.
+ */
+export function createStartupPathChecker(
+	cwd: string,
+): (
+	call: ClassifierCall,
+	candidates: ReturnType<typeof mutationCandidates>,
+	extraRoots?: ReadonlyArray<string>,
+) => string | null {
+	const workspaceReal = canonicalizePath(cwd);
+	const workspaceForms = workspaceReal === null || workspaceReal === cwd ? [cwd] : [cwd, workspaceReal];
+	const initialHome = homedir();
+	const homeReal = canonicalizePath(initialHome);
+	const initialHomeForms = homeReal === null || homeReal === initialHome ? [initialHome] : [initialHome, homeReal];
+	return (call, candidates, extraRoots) => {
+		if (EXECUTION_TOOLS.has(call.tool) || call.tool === ToolNames.RunScript || candidates.length === 0) return null;
+		const currentHome = homedir();
+		const homeForms = currentHome === initialHome ? initialHomeForms : [...initialHomeForms, currentHome];
+		const roots = extraRoots !== undefined && extraRoots.length > 0 ? [...workspaceForms, ...extraRoots] : workspaceForms;
+		for (const candidate of candidates) {
+			for (const location of [candidate.lexical, candidate.resolved]) {
+				const hit = protectedStartupPath(location, roots, homeForms);
+				if (hit !== null) return hit;
+			}
+		}
+		return null;
+	};
+}
+
+/** Policy input for a typed mutation landing on a protected startup path. */
+export function startupPathPolicyInput(startupPath: string): {
+	ruleId: string;
+	reasonCode: string;
+	reasons: string[];
+	policySource: "builtin-classifier";
+} {
+	return {
+		ruleId: STARTUP_PATH_RULE_ID,
+		reasonCode: STARTUP_PATH_RULE_ID,
+		reasons: [startupPathReason(startupPath)],
+		policySource: "builtin-classifier",
+	};
+}
+
+/**
+ * The cwd repository's git control paths (resolved once when the engine is
+ * built and refreshed only after a call that may have rewritten git config),
+ * keeping typed writes at zero per-call filesystem calls.
+ */
+export function createGitControlChecker(cwd: string): {
+	hit: (call: ClassifierCall, candidates: ReturnType<typeof mutationCandidates>) => string | null;
+	markStale: () => void;
+} {
+	let controls = resolveGitControls(cwd);
+	let stale = false;
+	return {
+		markStale: () => {
+			stale = true;
+		},
+		hit: (call, candidates) => {
+			if (!WRITE_ROOT_TOOLS.has(call.tool)) return null;
+			if (stale) {
+				controls = resolveGitControls(cwd);
+				stale = false;
+			}
+			return gitControlLanding(candidates, controls);
+		},
+	};
+}
+
+/**
  * The git control path a typed file mutation lands on, or null. Each target
  * is judged as named and where the admission walk already resolved it, by
  * name and against the resolved set, so this costs no filesystem call.
  */
-export function gitControlLanding(
+function gitControlLanding(
 	candidates: ReturnType<typeof mutationCandidates>,
 	controls: ReadonlyArray<GitControl>,
 ): string | null {

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { spawnSync } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
+import { endianness, homedir, machine, tmpdir } from "node:os";
 import path from "node:path";
-import { buildBwrapInvocation, DEFAULT_BWRAP_PATH } from "./bwrap.js";
+import { isSameOrDescendant } from "../path-containment.js";
+import { buildBwrapInvocation, DEFAULT_BWRAP_PATH, SECCOMP_FILTER_STDIN } from "./bwrap.js";
 import { buildSeatbeltInvocation, SEATBELT_EXECUTABLE } from "./seatbelt.js";
-import type { SandboxAvailability, SandboxInvocation } from "./types.js";
+import { SECCOMP_COVERED_MACHINES, sandboxFilterProgram } from "./seccomp.js";
+import type { SandboxAvailability, SandboxInvocation, SandboxMode } from "./types.js";
 
 const PROBE_TIMEOUT_MS = 5000;
 
@@ -22,26 +25,82 @@ function executable(candidate: string): boolean {
 	}
 }
 
-function findBwrap(env: NodeJS.ProcessEnv): string | null {
-	if (executable(DEFAULT_BWRAP_PATH)) return DEFAULT_BWRAP_PATH;
-	for (const dir of (env.PATH ?? "").split(path.delimiter)) {
-		if (dir.length === 0 || !path.isAbsolute(dir)) continue;
-		const candidate = path.join(dir, "bwrap");
-		if (executable(candidate)) return candidate;
+/**
+ * Why a bwrap binary cannot be trusted to build the sandbox, else null. The
+ * file and every directory above its real path must be root's and closed to
+ * writes by group and others (a sticky directory, such as /nix/store, only
+ * lets its root-owned entries be replaced by root). Anything else lets a
+ * process of the operator's uid, a sandboxed one included where the path is
+ * a writable root, swap in a binary that builds no sandbox at all. Running as
+ * root, every path is root's, so a binary under the home, the working
+ * directory or a temp directory is refused as well.
+ */
+export function untrustedBwrapReason(candidate: string, uid: number = process.getuid?.() ?? -1): string | null {
+	let real: string;
+	try {
+		real = realpathSync(candidate);
+	} catch (error) {
+		return `${candidate} cannot be resolved: ${error instanceof Error ? error.message : String(error)}`;
+	}
+	for (let entry = real; ; entry = path.dirname(entry)) {
+		let stat: ReturnType<typeof statSync>;
+		try {
+			stat = statSync(entry);
+		} catch (error) {
+			return `${entry} cannot be read: ${error instanceof Error ? error.message : String(error)}`;
+		}
+		if (stat.uid !== 0) return `${entry} is owned by uid ${stat.uid}, not root`;
+		if ((Number(stat.mode) & 0o022) !== 0 && !(stat.isDirectory() && (Number(stat.mode) & 0o1000) !== 0)) {
+			return `${entry} is writable by group or others`;
+		}
+		if (entry === path.dirname(entry)) break;
+	}
+	if (uid === 0) {
+		const open = [homedir(), process.cwd(), tmpdir(), "/tmp", "/var/tmp"].find((root) => isSameOrDescendant(real, root));
+		if (open !== undefined) return `${real} is under ${open}, which sandboxed commands may write`;
 	}
 	return null;
+}
+
+/** The first trusted bwrap, /usr/bin/bwrap before PATH order, or why none was taken. */
+function findBwrap(env: NodeJS.ProcessEnv): { path: string } | { skipped: string[] } {
+	const skipped: string[] = [];
+	const seen = new Set<string>();
+	const dirs = (env.PATH ?? "").split(path.delimiter).filter((dir) => dir.length > 0 && path.isAbsolute(dir));
+	for (const candidate of [DEFAULT_BWRAP_PATH, ...dirs.map((dir) => path.join(dir, "bwrap"))]) {
+		if (seen.has(candidate) || !executable(candidate)) continue;
+		seen.add(candidate);
+		const untrusted = untrustedBwrapReason(candidate);
+		if (untrusted === null) {
+			// Return the verified real path so a symlink in a writable PATH directory cannot be swapped before launch.
+			return { path: realpathSync(candidate) };
+		}
+		if (!skipped.includes(untrusted)) skipped.push(untrusted);
+	}
+	return { skipped };
+}
+
+/** The kind of Windows Subsystem for Linux kernel this is, read from its release string; null off WSL. */
+export function wslKind(osrelease?: string): "wsl1" | "wsl2" | null {
+	let release = osrelease;
+	if (release === undefined) {
+		try {
+			release = readFileSync("/proc/sys/kernel/osrelease", "utf8");
+		} catch {
+			return null;
+		}
+	}
+	// WSL1 reports "<build>-Microsoft"; every WSL2 kernel is "<version>-microsoft-standard[-WSL2]".
+	if (/microsoft-standard/iu.test(release)) return "wsl2";
+	return /Microsoft/u.test(release) ? "wsl1" : null;
 }
 
 /**
  * Run the probe directly rather than through safe-exec: safe-exec is the seam
  * that consults this module, and the probe is a fixed argv with no model
- * input and a hard timeout. Null when it succeeded, else why it failed.
+ * input and a hard timeout. A timed-out probe says nothing about the host, so
+ * callers must not cache it.
  */
-export function probeSandboxInvocation(invocation: SandboxInvocation, input?: Buffer): string | null {
-	return probe(invocation, input).failure;
-}
-
-/** A timed-out probe says nothing about the host, so callers must not cache it. */
 function probe(invocation: SandboxInvocation, input?: Buffer): { failure: string | null; timedOut: boolean } {
 	const result = spawnSync(invocation.file, invocation.args, {
 		stdio: [input === undefined ? "ignore" : "pipe", "ignore", "pipe"],
@@ -69,15 +128,55 @@ function bwrapProbe(bwrap: string, network: boolean): SandboxInvocation {
 
 type Detected = { availability: SandboxAvailability; timedOut: boolean };
 
-function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Detected {
+/**
+ * Null when bubblewrap loads the full seccomp program here, which proves the
+ * kernel accepts it; else why not. The program travels on stdin, so the probe
+ * writes no file.
+ */
+function seccompFailure(bwrap: string): { failure: string | null; timedOut: boolean } {
+	const program = sandboxFilterProgram({ unixSockets: true });
+	if (program === null || !SECCOMP_COVERED_MACHINES.has(machine())) {
+		return { failure: `no seccomp filter for ${machine()} (${endianness()})`, timedOut: false };
+	}
+	const { failure, timedOut } = probe(
+		buildBwrapInvocation(
+			{
+				command: { argv: ["/bin/true"] },
+				cwd: "/",
+				writableRoots: [],
+				network: true,
+				maskedPaths: [],
+				seccompFilter: SECCOMP_FILTER_STDIN,
+			},
+			bwrap,
+		),
+		program,
+	);
+	return { failure: failure === null ? null : `bubblewrap did not load the seccomp filter: ${failure}`, timedOut };
+}
+
+function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, osrelease?: string): Detected {
 	if (platform === "linux") {
-		const bwrap = findBwrap(env);
-		if (bwrap === null) {
+		if (wslKind(osrelease) === "wsl1") {
 			return {
-				availability: { available: false, backend: null, executable: null, reason: "bubblewrap (bwrap) is not installed" },
+				availability: {
+					available: false,
+					backend: null,
+					executable: null,
+					reason: "WSL1 is unsupported: its kernel has no user namespaces for bubblewrap; convert the distribution to WSL2",
+				},
 				timedOut: false,
 			};
 		}
+		const found = findBwrap(env);
+		if (!("path" in found)) {
+			const reason =
+				found.skipped.length === 0
+					? "bubblewrap (bwrap) is not installed"
+					: `no trusted bubblewrap (bwrap): ${found.skipped.join("; ")}`;
+			return { availability: { available: false, backend: null, executable: null, reason }, timedOut: false };
+		}
+		const bwrap = found.path;
 		// The probe uses the namespaces every sandbox does, so a kernel that
 		// forbids unprivileged user namespaces (or an outer container that
 		// strips them) reports unavailable here instead of failing every call.
@@ -97,11 +196,22 @@ function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Detected {
 					backend: null,
 					executable: null,
 					reason: `bubblewrap cannot create a sandbox here: ${failure}${cause}`,
+					found: bwrap,
 				},
 				timedOut,
 			};
 		}
-		return { availability: { available: true, backend: "bwrap", executable: bwrap, reason: null }, timedOut: false };
+		const seccomp = seccompFailure(bwrap);
+		return {
+			availability: {
+				available: true,
+				backend: "bwrap",
+				executable: bwrap,
+				reason: null,
+				...(seccomp.failure !== null ? { degraded: seccomp.failure } : {}),
+			},
+			timedOut: seccomp.timedOut,
+		};
 	}
 	if (platform === "darwin") {
 		if (!executable(SEATBELT_EXECUTABLE)) {
@@ -130,6 +240,7 @@ function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Detected {
 					backend: null,
 					executable: null,
 					reason: `sandbox-exec rejected the worker profile: ${failure}`,
+					found: SEATBELT_EXECUTABLE,
 				},
 				timedOut,
 			};
@@ -163,10 +274,12 @@ function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Detected {
 export function sandboxAvailability(
 	platform: NodeJS.Platform = process.platform,
 	env: NodeJS.ProcessEnv = process.env,
+	osrelease?: string,
 ): SandboxAvailability {
-	// Only the real host answer is cached; an explicit platform or env is a
-	// one-off question and must not poison the process-wide probe.
-	if (platform !== process.platform || env !== process.env) return detect(platform, env).availability;
+	// Only the real host answer is cached; an explicit platform, env or kernel
+	// release is a one-off question and must not poison the process-wide probe.
+	if (platform !== process.platform || env !== process.env || osrelease !== undefined)
+		return detect(platform, env, osrelease).availability;
 	if (cached !== null) return cached;
 	const detected = detect(platform, env);
 	if (!detected.timedOut) cached = detected.availability;
@@ -191,4 +304,14 @@ export function sandboxNetworkIsolation(availability: SandboxAvailability = sand
 	const result = failure === null ? null : `bubblewrap cannot isolate the network here: ${failure}`;
 	if (cacheable && !timedOut) cachedNetIsolation = result;
 	return result;
+}
+
+/**
+ * Whether launches under `mode` may use this backend. `required` takes only a
+ * full sandbox, so a partial one (the baseline seccomp filter cannot load)
+ * counts as none; `auto` uses it and says what is missing.
+ */
+export function sandboxUsable(mode: SandboxMode, availability: SandboxAvailability): boolean {
+	if (!availability.available || availability.backend === null) return false;
+	return mode !== "required" || availability.degraded === undefined;
 }

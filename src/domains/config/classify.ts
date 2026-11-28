@@ -69,6 +69,8 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	// Read the same way: per contained call in the main session, into each
 	// new WorkerSpec for workers.
 	"safety.sandboxUnixSockets",
+	// Read at every dispatch admission, so the next dispatch observes a change; a running worker keeps its spec.
+	"safety.sandboxUnconfinedLocalWorkers",
 	// The startup prune reads it from the live snapshot when it runs and doctor reads the file, so neither keeps an old
 	// value; it takes effect at the next prune.
 	"safety.sandboxCacheMaxGiB",
@@ -133,7 +135,9 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	// Dispatch reads both into each new WorkerSpec; a running worker keeps the
 	// policy it was spawned with.
 	"safety.sandbox",
-	"safety.sandboxNetwork",
+	// The main registry reads the session shell's egress at each call; dispatch seals the workers' into each new
+	// WorkerSpec. A running command keeps the grants it launched with.
+	"safety.egress",
 	"interface.terminalProgress",
 	"interface.desktopNotifications",
 	// The graphical app applies a change made in its settings to the next turn it admits; a change

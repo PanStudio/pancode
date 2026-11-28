@@ -22,6 +22,7 @@
  * leave without an entry. Pure: no I/O, no clock; the caller passes every host fact in.
  */
 
+import type { EgressMode } from "../../core/sandbox/types.js";
 import {
 	isBuiltinToolName,
 	isHarnessExtensionToolName,
@@ -119,7 +120,12 @@ export interface WorkerEnvelope {
 	network: { shell: boolean; tools: ReadonlyArray<string>; mcp: ReadonlyArray<string> };
 	approval: EnvelopeApproval;
 	/** Host facts of the placement that runs the worker, computed once by the host (M6, M7). */
-	sandbox: { backend: EnvelopeSandboxBackend; confinesWrites: boolean };
+	/**
+	 * `unconfined`: no usable OS sandbox where the worker runs and the operator allowed its commands to run without
+	 * one there (`safety.sandboxUnconfinedLocalWorkers`, a fleet node's `allowUnsandboxed`). Absent, a worker with no
+	 * backend refuses its commands.
+	 */
+	sandbox: { backend: EnvelopeSandboxBackend; confinesWrites: boolean; unconfined?: true };
 	withheld: ReadonlyArray<WithheldCapability>;
 	/** `workerStaticHead` of the request head the worker sends; empty until the host compiles the prompt. */
 	staticHead: string;
@@ -215,10 +221,12 @@ export interface EnvelopeInput {
 		backend: EnvelopeSandboxBackend;
 		/** The worker's own commands run under an OS sandbox policy. */
 		applies: boolean;
-		/** `safety.sandboxNetwork`: the operator opened the sandbox's network. */
-		networkSetting: boolean;
+		/** `safety.egress.workers.mode`: how the operator lets the sandboxed commands reach the network. */
+		egress: EgressMode;
 		/** The run's contract forbids network for its commands (a Hoare proof). */
 		networkOff: boolean;
+		/** Admission let the worker's commands run with no OS sandbox; see {@link WorkerEnvelope.sandbox}. */
+		unconfined?: true;
 	};
 	approval: EnvelopeApproval;
 	permitDigest: string;
@@ -307,7 +315,11 @@ export function resolveWorkerEnvelope(input: EnvelopeInput): WorkerEnvelope {
 		write: { mode: input.write.mode, roots: [...input.write.roots], commandsBounded },
 		...resolveExecAndNetwork(input, surface),
 		approval: { ...input.approval },
-		sandbox: { backend: input.sandbox.backend, confinesWrites: input.host.confinesWrites },
+		sandbox: {
+			backend: input.sandbox.backend,
+			confinesWrites: input.host.confinesWrites,
+			...(input.sandbox.unconfined === true ? { unconfined: true as const } : {}),
+		},
 		withheld,
 		staticHead: "",
 		permitDigest: input.permitDigest,
@@ -338,12 +350,10 @@ function resolveExecAndNetwork(
 			? "declared"
 			: "any";
 	const networkTools = surface.filter((tool) => NETWORK_TOOLS.has(tool));
-	// Sandboxed commands follow the retrieval grant: a run trusted with web_fetch or web_read already has egress, so an
-	// isolated shell would protect nothing while breaking package installs. Unsandboxed commands have the host's network.
+	// Sandboxed commands reach the network only as the operator's safety.egress.workers grants it: a web tool grant
+	// opens nothing for the shell (D2). Unsandboxed commands have the host's network.
 	const commands = hasShell || surface.includes(ToolNames.Verify);
-	const shellNetwork = input.sandbox.applies
-		? !input.sandbox.networkOff && (input.sandbox.networkSetting || networkTools.length > 0)
-		: commands;
+	const shellNetwork = input.sandbox.applies ? !input.sandbox.networkOff && input.sandbox.egress !== "off" : commands;
 	const mcp = sortedUnique(
 		(input.mcp?.tools ?? [])
 			.filter((entry) => entry.network === true && surface.includes(`mcp_${entry.serverId}__${entry.tool}` as ToolName))

@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
+import { type AddressInfo, connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
-import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
-import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
+import { runBashCommand } from "../../src/core/bash-exec.js";
+import { readSettings } from "../../src/core/config.js";
+import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
+import { egressResultNote } from "../../src/core/sandbox/egress/bridge.js";
+import {
+	egressGrants,
+	isDeniedEgressAddress,
+	redactedUpstreamProxy,
+	upstreamProxyProblem,
+} from "../../src/core/sandbox/egress/policy.js";
+import { createEgressProxy } from "../../src/core/sandbox/egress/proxy.js";
+import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
+import { mainLaunchEgress, mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import {
@@ -16,7 +28,10 @@ import {
 	configureWorkerProcessSandbox,
 	planSandboxedSpawn,
 } from "../../src/core/sandbox/worker-process.js";
+import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
+import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
+import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
 import { workerSandboxFor } from "../../src/domains/dispatch/worker-spec.js";
 import { createTaskWorktree } from "../../src/tools/task-worktree.js";
@@ -54,18 +69,22 @@ function envelopeOf(tools: ToolName[], overrides: Partial<EnvelopeInput> = {}) {
 		host: { networkStripped: false, shellStripped: false, confinesWrites: false, harnessTools: new Set() },
 		skills: { names: [], paths: [], disabled: false, contextAttached: () => false },
 		read: { roots: [], outside: [] },
-		sandbox: { backend: "bwrap", applies: true, networkSetting: false, networkOff: false },
+		sandbox: { backend: "bwrap", applies: true, egress: "off", networkOff: false },
 		approval: { autonomy: "default", asks: "deny" },
 		permitDigest: "",
 		...overrides,
 	});
 }
 
-test("a worker granted any network tool, web_read included, gets shell network (M6, envelope M7)", () => {
-	const network = (tools: ToolName[]) => envelopeOf(tools).network.shell;
-	assert.equal(network([ToolNames.Bash]), false);
-	assert.equal(network([ToolNames.Bash, ToolNames.WebFetch]), true);
-	assert.equal(network([ToolNames.Bash, ToolNames.WebRead]), true);
+test("a worker's shell network follows safety.egress.workers, not its web tools (P3)", () => {
+	const network = (tools: ToolName[], egress: "off" | "proxied" | "open", networkOff = false) =>
+		envelopeOf(tools, { sandbox: { backend: "bwrap", applies: true, egress, networkOff } }).network.shell;
+	assert.equal(network([ToolNames.Bash], "off"), false);
+	assert.equal(network([ToolNames.Bash, ToolNames.WebFetch], "off"), false);
+	assert.equal(network([ToolNames.Bash, ToolNames.WebRead], "off"), false);
+	assert.equal(network([ToolNames.Bash], "proxied"), true);
+	assert.equal(network([ToolNames.Bash], "open"), true);
+	assert.equal(network([ToolNames.Bash], "proxied", true), false);
 });
 
 test("every role holds code_nav whatever its recipe lists; a runtime without it withholds nothing unasked (PV-5)", () => {
@@ -342,7 +361,7 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 	writeFileSync(join(root, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
 	const unsandboxedWorktree = createTaskWorktree(root, "unsandboxed", undefined, "merge", externalParent);
 	const sandboxedWorktree = createTaskWorktree(root, "sandboxed", undefined, "merge", externalParent);
-	const baseEnvelope = (backend: "none" | "bwrap") =>
+	const baseEnvelope = (backend: "none" | "bwrap", unconfined?: true) =>
 		resolveWorkerEnvelope({
 			role: "builder",
 			capabilityClass: "builder",
@@ -356,7 +375,7 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 			host: { networkStripped: false, shellStripped: false, confinesWrites: backend === "bwrap", harnessTools: new Set() },
 			skills: { names: [], paths: [], disabled: true, contextAttached: () => false },
 			read: { roots: [root], outside: [] },
-			sandbox: { backend, applies: true, networkSetting: false, networkOff: false },
+			sandbox: { backend, applies: true, egress: "off", networkOff: false, ...(unconfined ? { unconfined } : {}) },
 			approval: { autonomy: "default", asks: "deny" },
 			permitDigest: "test",
 		});
@@ -383,6 +402,21 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 	});
 	assert.equal(existsSync(join(unsandboxedWorktree.path, "node_modules")), false);
 	assert.equal(unsandboxed.spec?.backendExpected, undefined);
+	assert.equal(
+		unsandboxed.spec?.unconfined,
+		undefined,
+		"no backend without consent seals a worker that refuses commands",
+	);
+	const consented = baseEnvelope("none", true);
+	assert.equal(consented.sandbox.unconfined, true);
+	const allowed = workerSandboxFor({
+		runtimeKind: "http",
+		req: { agentId: "coder", executionRole: "builder", task: "edit", cwd: root },
+		pathScope: emptyScope(root),
+		envelope: consented,
+		settings: undefined,
+	});
+	assert.equal(allowed.spec?.unconfined, true);
 
 	const sandboxed = workerSandboxFor({
 		runtimeKind: "http",
@@ -400,4 +434,294 @@ test("workerSandboxFor shares task worktree dependencies only when the placed en
 	assert.equal(existsSync(join(sandboxedWorktree.path, "node_modules", "dep")), true);
 	assert.equal(sandboxed.spec?.backendExpected, true);
 	assert.equal(sandboxed.spec?.readableRoots.includes(root), true);
+});
+
+/** Sends a CONNECT for `authority` through the proxy listening on `port` and returns the status line's code. */
+function proxyConnect(port: number, authority: string): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const socket = connect(port, "127.0.0.1", () =>
+			socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`),
+		);
+		let head = "";
+		socket.on("data", (chunk: Buffer) => {
+			head += chunk.toString("latin1");
+			const match = /^HTTP\/1\.1 (\d{3})/u.exec(head);
+			if (match === null) return;
+			socket.destroy();
+			resolve(Number(match[1]));
+		});
+		socket.on("error", reject);
+	});
+}
+
+async function servedEgressProxy(options: Parameters<typeof createEgressProxy>[0]) {
+	const proxy = createEgressProxy(options);
+	const listener = createServer();
+	await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+	const { port } = listener.address() as AddressInfo;
+	proxy.serve(listener);
+	return { proxy, port };
+}
+
+test("the egress proxy checks names before any lookup, screens every answer and asks once per origin (P3)", async (t) => {
+	const target = createServer((socket) => socket.end());
+	await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+	t.after(() => target.close());
+	const targetPort = (target.address() as AddressInfo).port;
+	const looked: string[] = [];
+	const dialed: string[] = [];
+	const asked: string[] = [];
+	const answers: Record<string, string[]> = {
+		"svc.test": ["8.8.8.8"],
+		"rebind.test": ["8.8.4.4", "10.0.0.1"],
+		"asked.test": ["8.8.8.8"],
+	};
+	const { proxy, port } = await servedEgressProxy({
+		grants: egressGrants(["svc.test:443", "rebind.test:443", `127.0.0.1:${targetPort}`], []),
+		denyHint: "add it to safety.egress.main.allow",
+		lookup: async (host) => {
+			looked.push(host);
+			return (answers[host] ?? []).map((address) => ({ address, family: 4 }));
+		},
+		dial: (address, dialPort) => {
+			dialed.push(`${address}:${dialPort}`);
+			return connect(targetPort, "127.0.0.1");
+		},
+		ask: async (origin) => {
+			asked.push(`${origin.host}:${origin.port}`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			return origin.host === "asked.test";
+		},
+	});
+	t.after(() => proxy.close());
+
+	assert.equal(await proxyConnect(port, "svc.test:443"), 200);
+	assert.deepEqual(dialed, ["8.8.8.8:443"]);
+	// An origin outside the grants is asked about and, refused, never resolved.
+	assert.equal(await proxyConnect(port, "nope.test:443"), 403);
+	assert.equal(looked.includes("nope.test"), false);
+	// One internal answer refuses the name, whichever answer a later dial would pick.
+	assert.equal(await proxyConnect(port, "rebind.test:443"), 403);
+	// Concurrent connections to one origin share one ask.
+	assert.deepEqual(
+		await Promise.all([proxyConnect(port, "asked.test:443"), proxyConnect(port, "asked.test:443")]),
+		[200, 200],
+	);
+	assert.equal(asked.filter((origin) => origin === "asked.test:443").length, 1);
+	// A private literal is refused unasked; an explicit grant of one reaches it.
+	assert.equal(await proxyConnect(port, "10.1.2.3:80"), 403);
+	assert.equal(asked.includes("10.1.2.3:80"), false);
+	assert.equal(await proxyConnect(port, `127.0.0.1:${targetPort}`), 200);
+
+	const refused = Object.fromEntries(
+		proxy
+			.receipts()
+			.filter((receipt) => receipt.decision === "denied")
+			.map((receipt) => [`${receipt.host}:${receipt.port}`, receipt.reason]),
+	);
+	assert.equal(refused["nope.test:443"], EGRESS_UNGRANTED);
+	assert.match(refused["rebind.test:443"] ?? "", /resolves to 10\.0\.0\.1, a local or private address/u);
+	assert.match(refused["10.1.2.3:80"] ?? "", /local or private address/u);
+	const note = egressResultNote({
+		receipts: proxy.receipts(),
+		listeningPorts: [],
+		setupFailed: false,
+		denyHint: "add it to safety.egress.main.allow",
+	});
+	assert.match(
+		note ?? "",
+		/refused nope\.test:443 \(not in this shell's egress grants; add it to safety\.egress\.main\.allow\)/u,
+	);
+	assert.equal(
+		egressResultNote({
+			receipts: [{ host: "svc.test", port: 443, decision: "allowed", count: 1 }],
+			listeningPorts: [],
+			setupFailed: false,
+			denyHint: "",
+		}),
+		null,
+	);
+});
+
+test("allowed egress leaves through safety.egress.upstreamProxy by name with its credentials, which no surface shows (P3)", async (t) => {
+	const requests: string[] = [];
+	const upstream = createServer((socket) => {
+		socket.once("data", (chunk: Buffer) => {
+			requests.push(chunk.toString("latin1"));
+			socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+		});
+	});
+	await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+	t.after(() => upstream.close());
+	const upstreamUrl = `http://ops:s3cr%20t@127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+	assert.equal(upstreamProxyProblem(upstreamUrl), null);
+	assert.notEqual(upstreamProxyProblem("socks5://127.0.0.1:1080"), null);
+	assert.equal(redactedUpstreamProxy(upstreamUrl).includes("s3cr"), false);
+	const { proxy, port } = await servedEgressProxy({
+		grants: egressGrants(["internal.corp.test:443"], []),
+		upstreamProxy: upstreamUrl,
+		lookup: async () => [],
+	});
+	t.after(() => proxy.close());
+	assert.equal(await proxyConnect(port, "internal.corp.test:443"), 200);
+	assert.match(requests[0] ?? "", /^CONNECT internal\.corp\.test:443 HTTP\/1\.1\r\n/u);
+	assert.match(
+		requests[0] ?? "",
+		new RegExp(`Proxy-Authorization: Basic ${Buffer.from("ops:s3cr t").toString("base64")}`, "u"),
+	);
+	// The upstream proxy carries only what the grants admit.
+	assert.equal(await proxyConnect(port, "elsewhere.test:443"), 403);
+	assert.equal(requests.length, 1);
+});
+
+test("under bwrap a proxied command reaches only its grants through the bridge and its own servers stay inside (P3)", async (t) => {
+	const availability = sandboxAvailability();
+	if (!availability.available || availability.backend !== "bwrap" || sandboxNetworkIsolation(availability) !== null) {
+		t.skip("bubblewrap with network isolation is not available");
+		return;
+	}
+	if (spawnSync("curl", ["--version"]).status !== 0) {
+		t.skip("curl is not installed");
+		return;
+	}
+	const host = createHttpServer((_request, response) => response.end("granted-body"));
+	await new Promise<void>((resolve) => host.listen(0, "127.0.0.1", resolve));
+	t.after(() => host.close());
+	const hostPort = (host.address() as AddressInfo).port;
+	const workspace = mkdtempSync(join(tmpdir(), "pancode-egress-"));
+	t.after(() => rmSync(workspace, { recursive: true, force: true }));
+	const policy = {
+		...mainSandboxPolicy({ workspace, scratchRoots: [] }),
+		egress: { grants: egressGrants([`127.0.0.1:${hostPort}`], []), denyHint: "add it to safety.egress.main.allow" },
+	};
+	const node = JSON.stringify(process.execPath);
+	const result = await runBashCommand(
+		[
+			// Loopback inside the sandbox is the sandbox's own: a direct dial finds nothing, and no proxy setting bypasses it.
+			`curl -sS -m 5 --noproxy '*' http://127.0.0.1:${hostPort}/ >/dev/null 2>&1 && echo direct-reached || echo direct-blocked`,
+			`curl -sS -m 5 --noproxy '' http://127.0.0.1:${hostPort}/; echo`,
+			`curl -sS -m 5 --noproxy '' -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:${hostPort + 1}/`,
+			`${node} -e "require('http').createServer((q, s) => s.end('own-body')).listen(4555, '127.0.0.1')" & sleep 1.5`,
+			// The sandbox's own server answers on its loopback directly; the proxy env bypasses only loopback.
+			"curl -sS -m 5 http://localhost:4555/; echo",
+		].join("\n"),
+		{ cwd: workspace, timeoutMs: 60_000, shellSandbox: policy },
+	);
+	assert.match(result.stdout, /direct-blocked/u);
+	assert.match(result.stdout, /granted-body/u);
+	assert.match(result.stdout, /\n403\n/u);
+	assert.match(result.stdout, /own-body/u);
+	assert.equal(result.egress?.setupFailed, false);
+	assert.deepEqual(result.egress?.listeningPorts, [4555]);
+	const note = egressResultNote(result.egress) ?? "";
+	assert.match(note, /refused 127\.0\.0\.1:\d+ \(a local or private address/u);
+	assert.match(note, /listening on port 4555 inside the sandbox/u);
+});
+
+test("safety.egress is user-set, a project may only lower a mode, and the launch follows the backend (P3)", () => {
+	const userFile = join(pancodeHome.dir, "config", "settings.yaml");
+	const workspace = join(pancodeHome.dir, "egress-workspace");
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	mkdirSync(join(pancodeHome.dir, "config"), { recursive: true });
+	try {
+		writeFileSync(userFile, "version: 2\n");
+		const defaults = readSettings().safety.egress;
+		assert.equal(defaults.main.mode, "proxied");
+		assert.equal(defaults.workers.mode, "off");
+		assert.equal(defaults.upstreamProxy, null);
+		writeFileSync(userFile, "version: 2\nsafety:\n  sandboxNetwork: true\n");
+		assert.throws(() => readSettings(), /safety\.sandboxNetwork/u);
+		writeFileSync(userFile, "version: 2\nsafety:\n  egress:\n    main:\n      allow: ['*.example.com']\n");
+		assert.throws(() => readSettings(), /safety\.egress\.main\.allow/u);
+		writeFileSync(userFile, "version: 2\nsafety:\n  egress:\n    upstreamProxy: socks5://127.0.0.1:1080\n");
+		assert.throws(() => readSettings(), /safety\.egress\.upstreamProxy/u);
+
+		writeFileSync(userFile, "version: 2\nsafety:\n  egress:\n    workers:\n      mode: proxied\n");
+		writeFileSync(
+			join(workspace, ".pancode", "settings.local.yaml"),
+			"safety:\n  egress:\n    main:\n      mode: off\n    workers:\n      mode: open\n      allow: ['evil.test:443']\n    upstreamProxy: http://evil.test:8080\n",
+		);
+		const snapshot = captureProjectSurface(workspace, "settings");
+		if (!snapshot.contentHash) throw new Error("missing project settings hash");
+		recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+		const layered = readLayeredSettings(workspace);
+		assert.equal(layered.settings.safety.egress.main.mode, "off");
+		assert.equal(layered.settings.safety.egress.workers.mode, "proxied");
+		assert.deepEqual(layered.settings.safety.egress.workers.allow, []);
+		assert.equal(layered.settings.safety.egress.upstreamProxy, null);
+		const paths = layered.issues.map((issue) => issue.path);
+		for (const path of ["safety.egress.workers.mode", "safety.egress.workers.allow", "safety.egress.upstreamProxy"])
+			assert.ok(paths.includes(path), path);
+	} finally {
+		writeFileSync(userFile, "version: 2\n");
+		rmSync(workspace, { recursive: true, force: true });
+	}
+
+	// A proxied caller with no bridge to serve it runs with the network off, never open; seatbelt has no bridge yet.
+	const proxied = { network: true, egress: { grants: egressGrants([], []), denyHint: "" } };
+	assert.equal(mainLaunchEgress(proxied, "bwrap", true), "proxied");
+	assert.equal(mainLaunchEgress(proxied, "bwrap", false), "off");
+	assert.equal(mainLaunchEgress(proxied, "seatbelt", true), "open");
+	assert.equal(mainLaunchEgress({ network: true }, "bwrap", true), "open");
+	assert.equal(mainLaunchEgress({ network: false, egress: proxied.egress }, "bwrap", true), "off");
+});
+
+test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6, and redacts upstreamProxy control values (P3)", async (t) => {
+	assert.equal(isDeniedEgressAddress("::ffff:0:169.254.169.254"), true);
+	assert.equal(isDeniedEgressAddress("::ffff:0:127.0.0.1"), true);
+	const secretProxy = "http://user:s3cr3t@proxy.corp.test:3128";
+	assert.equal(formatControlValue(secretProxy, "safety.egress.upstreamProxy"), "http://***@proxy.corp.test:3128");
+	assert.equal(hasRedactedControlCredentials("safety.egress.upstreamProxy", secretProxy), true);
+	assert.equal(hasRedactedControlCredentials("safety.egress.upstreamProxy", "http://proxy.corp.test:3128"), false);
+
+	const target = createHttpServer((req, res) => res.end(`host=${req.headers.host}`));
+	await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+	t.after(() => target.close());
+	const targetPort = (target.address() as AddressInfo).port;
+	let asked = 0;
+	const proxy = createEgressProxy({
+		grants: egressGrants([`allowed.test:${targetPort}`], []),
+		ask: async () => {
+			asked += 1;
+			return false;
+		},
+		lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+		dial: () => connect({ host: "127.0.0.1", port: targetPort }),
+	});
+	const listener = createServer();
+	await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+	proxy.serve(listener);
+	t.after(() => proxy.close());
+	const proxyPort = (listener.address() as AddressInfo).port;
+	const send = (raw: string): Promise<string> =>
+		new Promise((resolve, reject) => {
+			const sock = connect({ host: "127.0.0.1", port: proxyPort });
+			const chunks: Buffer[] = [];
+			sock.on("connect", () => sock.write(raw));
+			sock.on("data", (c) => chunks.push(c));
+			sock.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+			sock.on("error", reject);
+		});
+
+	assert.match(
+		await send(
+			`GET http://allowed.test:${targetPort}/ HTTP/1.1\r\nHost: evil.test:${targetPort}\r\nConnection: close\r\n\r\n`,
+		),
+		/^HTTP\/1\.1 400 /u,
+	);
+	assert.match(
+		await send(`CONNECT allowed.test:${targetPort} HTTP/1.1\r\nHost: evil.test:${targetPort}\r\n\r\n`),
+		/^HTTP\/1\.1 400 /u,
+	);
+	assert.match(
+		await send("CONNECT [::ffff:0:169.254.169.254]:80 HTTP/1.1\r\nHost: [::ffff:0:169.254.169.254]:80\r\n\r\n"),
+		/^HTTP\/1\.1 403 /u,
+	);
+	assert.equal(asked, 0);
+	assert.match(
+		await send(
+			`GET http://allowed.test:${targetPort}/ HTTP/1.1\r\nHost: allowed.test:${targetPort}\r\nConnection: close\r\n\r\n`,
+		),
+		new RegExp(`host=allowed\\.test:${targetPort}`, "u"),
+	);
 });

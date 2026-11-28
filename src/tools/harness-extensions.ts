@@ -14,6 +14,7 @@ import { extensionContentDigestWithCapture } from "../domains/extensions/integri
 import { listExtensionEntries } from "../domains/extensions/listing.js";
 import type { LoadableExtension } from "../domains/extensions/types.js";
 import { isLoadableExtension } from "../domains/extensions/types.js";
+import { UNSANDBOXED_REASON_ARG, UNSANDBOXED_REASON_DESCRIPTION } from "../domains/safety/unsandboxed-reason.js";
 import type { ToolRegistry } from "./registry-contract.js";
 import type { ToolSpec } from "./tool-spec.js";
 
@@ -34,12 +35,17 @@ const UNSANDBOXED = "unsandboxed";
 
 /**
  * Bash parity for a contained command: the call may ask to leave the main-session
- * sandbox with `unsandboxed: true`, projected onto the bash call so it asks like
- * bash does. A tool that declares its own `unsandboxed` input keeps it as input.
+ * sandbox with `unsandboxed: true` and its `unsandboxed_reason`, projected onto the
+ * bash call so it asks like bash does. A tool that declares either name keeps its
+ * own input.
  */
 function escapable(tool: ExtensionCommandTool): boolean {
 	const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties;
-	return properties !== undefined && !Object.hasOwn(properties, UNSANDBOXED);
+	return (
+		properties !== undefined &&
+		!Object.hasOwn(properties, UNSANDBOXED) &&
+		!Object.hasOwn(properties, UNSANDBOXED_REASON_ARG)
+	);
 }
 
 function parametersOf(tool: ExtensionCommandTool): TSchema {
@@ -52,20 +58,24 @@ function parametersOf(tool: ExtensionCommandTool): TSchema {
 			[UNSANDBOXED]: {
 				type: "boolean",
 				description:
-					"Leave the sandbox, only after the command failed because of it (a path outside the writable roots); the call is reviewed. Not passed to the command.",
+					"Leave the sandbox, only after the command failed because of it (a path outside the writable roots); the operator decides. Not passed to the command.",
+			},
+			[UNSANDBOXED_REASON_ARG]: {
+				type: "string",
+				description: `${UNSANDBOXED_REASON_DESCRIPTION} Not passed to the command.`,
 			},
 		},
 	} as TSchema;
 }
 
-/** The command's own input and whether the call asks to leave the sandbox. */
+/** The command's own input, whether the call asks to leave the sandbox, and the reason it states. */
 function splitArgs(
 	tool: ExtensionCommandTool,
 	args: Record<string, unknown>,
-): { input: Record<string, unknown>; unsandboxed: boolean } {
-	if (!escapable(tool) || !Object.hasOwn(args, UNSANDBOXED)) return { input: args, unsandboxed: false };
-	const { [UNSANDBOXED]: flag, ...input } = args;
-	return { input, unsandboxed: flag === true };
+): { input: Record<string, unknown>; unsandboxed: boolean; reason: unknown } {
+	if (!escapable(tool)) return { input: args, unsandboxed: false, reason: undefined };
+	const { [UNSANDBOXED]: flag, [UNSANDBOXED_REASON_ARG]: reason, ...input } = args;
+	return { input, unsandboxed: flag === true, reason };
 }
 
 function commandVector(extension: LoadableExtension, tool: ExtensionCommandTool): { file: string; args: string[] } {
@@ -122,7 +132,8 @@ function createCommandTool(extension: LoadableExtension, tool: ExtensionCommandT
 				/* The body reports bounded input validation. */
 			}
 			const command = [vector.file, ...vector.args, input].map(quoted).join(" ");
-			return { tool: "bash", args: { command, cwd, ...(split.unsandboxed ? { unsandboxed: true } : {}) } };
+			const leaving = split.unsandboxed ? { unsandboxed: true, [UNSANDBOXED_REASON_ARG]: split.reason } : {};
+			return { tool: "bash", args: { command, cwd, ...leaving } };
 		},
 		async run(args, options) {
 			try {

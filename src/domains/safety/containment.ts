@@ -19,8 +19,8 @@ import { normalizedGitCommands } from "./git-command-normalization.js";
  * exists, and a contained call needs no approval ask for what PanCode cannot see
  * or bound in its command text, because the OS bounds where it writes and
  * hides the operator's credentials. A call leaves containment when it asks to
- * (`unsandboxed: true`), which always asks so the safety judge reviews it
- * first, or when it reaches outward: publishing, a code host's API, a cloud
+ * (`unsandboxed: true`), which only the operator can approve, on its card or
+ * a session option they chose, or when it reaches outward: publishing, a code host's API, a cloud
  * CLI or a network write all need the credentials the sandbox hides, so they
  * run unsandboxed after the ordinary default rails and the safety judge.
  */
@@ -981,6 +981,20 @@ export const SNAPSHOT_RECOVERABLE_REASON_CODE = "snapshot-recoverable";
  * snapshot-recoverable.
  */
 export const SCRATCH_DISPOSABLE_REASON_CODE = "scratch-disposable";
+
+/**
+ * Rule of a typed file mutation that lands on a protected editor, agent, git or
+ * shell startup path (`startup-paths.ts`), which the shell sandbox keeps
+ * read-only even when absent. In the main session it goes straight to the
+ * operator approval card (never silent, never the safety judge); headless runs
+ * and dispatched workers deny it.
+ */
+export const STARTUP_PATH_RULE_ID = "startup-path-confirm";
+
+/** Why a typed write, edit or delete to `startupPath` requires operator approval. */
+export function startupPathReason(startupPath: string): string {
+	return `'${startupPath}' is a protected editor, agent, git or shell startup path that host programs load outside the sandbox; changing it requires operator approval and is denied for workers and headless runs`;
+}
 
 /**
  * Rule of a typed file mutation that lands on a git hook, config or git dir

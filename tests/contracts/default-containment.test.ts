@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
 	existsSync,
@@ -15,13 +15,14 @@ import {
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { networkInterfaces, tmpdir } from "node:os";
+import { homedir, networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { isSameOrDescendant } from "../../src/core/path-containment.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { isGrantedEgressOrigin } from "../../src/core/sandbox/egress/policy.js";
 import { AUTONOMY_HELP } from "../../src/core/settings-awareness.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
@@ -45,7 +46,7 @@ import {
 	resolveSafetyJudgeConfig,
 	type SafetyJudgeSubject,
 } from "../../src/domains/safety/safety-judge.js";
-import { asksToLeaveSandbox } from "../../src/domains/safety/sandbox-escape.js";
+import { UNSANDBOXED_REASON_REQUIRED_CODE } from "../../src/domains/safety/unsandboxed-reason.js";
 import {
 	createWorkspaceSnapshots,
 	type WorkspaceSnapshotOutcome,
@@ -137,15 +138,27 @@ test("a contained unrecognized command and a named script run at default without
 	deepStrictEqual(session.reviewed, []);
 });
 
-test("unsandboxed: true and an outward call leave containment and reach the safety judge", async () => {
+test("unsandboxed: true leaves containment for the operator alone; an outward call reaches the safety judge", async () => {
 	const cwd = workspace("pancode-contained-leave-");
 	const session = defaultSession(cwd, { sandbox: true, snapshots: false });
-	for (const call of [bash("make bench", { unsandboxed: true }), bash("git push origin main"), bash("gh pr create")]) {
+	const leave = bash("make bench", { unsandboxed: true, unsandboxed_reason: "it writes ~/.cache" });
+	for (const call of [leave, bash("git push origin main"), bash("gh pr create")]) {
 		strictEqual((await session.registry.invoke(call)).kind, "blocked", JSON.stringify(call.args));
 	}
 	deepStrictEqual(session.ran, []);
-	deepStrictEqual(reviewedCommands(session.reviewed), ["make bench", "git push origin main", "gh pr create"]);
+	deepStrictEqual(reviewedCommands(session.reviewed), ["git push origin main", "gh pr create"]);
 	for (const subject of session.reviewed) strictEqual(operatorOnlyAsk(subject), null, String(subject.args?.command));
+	// An escape that states no reason is refused before anyone reviews it: the card would have nothing to weigh.
+	for (const unsandboxed_reason of [undefined, "  \n "]) {
+		const unstated = await session.registry.invoke(
+			bash("make bench", { unsandboxed: true, ...(unsandboxed_reason === undefined ? {} : { unsandboxed_reason }) }),
+		);
+		ok(unstated.kind === "blocked");
+		strictEqual(unstated.decision.policy?.reasonCode, UNSANDBOXED_REASON_REQUIRED_CODE);
+		match(unstated.reason, /unsandboxed: true needs unsandboxed_reason/u);
+	}
+	deepStrictEqual(reviewedCommands(session.reviewed), ["git push origin main", "gh pr create"]);
+	deepStrictEqual(session.ran, []);
 });
 
 test("a verify check that runs a command is contained at default like bash; listing runs nothing and is not", async (t) => {
@@ -382,20 +395,23 @@ test("a browser page reaches loopback and granted hosts only: every redirect hop
 });
 
 // ob-yolo Q7: a recognized command with unsandboxed: true ran unconfined at default with no review.
-test("unsandboxed: true asks at default even for a recognized command; the judge decides it first", async (t) => {
+// D9: an escape runs as the operator, so only their card approves it; no judge verdict does.
+test("unsandboxed: true asks at default even for a recognized command, and only the operator's card runs it", async (t) => {
 	const cwd = workspace("pancode-contained-escape-");
 	writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
 	writeFileSync(join(cwd, "x.sh"), "echo hi\n");
 	const saved = process.cwd();
 	process.chdir(cwd);
 	t.after(() => process.chdir(saved));
+	const why = { unsandboxed: true, unsandboxed_reason: "the sandbox hid the npm cache" };
 	const escapes: ClassifierCall[] = [
-		bash("npm test", { unsandboxed: true }),
-		{ tool: ToolNames.Verify, args: { check: "test", unsandboxed: true } },
-		{ tool: ToolNames.RunScript, args: { interpreter: "bash", script: "x.sh", unsandboxed: true } },
+		bash("npm test", why),
+		{ tool: ToolNames.Verify, args: { check: "test", ...why } },
+		{ tool: ToolNames.RunScript, args: { interpreter: "bash", script: "x.sh", ...why } },
 	];
-	const session = (verdict: "skip" | "allow") => {
+	const session = () => {
 		const ran: Array<{ tool: string; sandboxed: boolean }> = [];
+		const reviewed: SafetyJudgeSubject[] = [];
 		const recorder = (spec: ToolSpec): ToolSpec => ({
 			...spec,
 			run: async (_args, options) => {
@@ -408,108 +424,68 @@ test("unsandboxed: true asks at default even for a recognized command; the judge
 			{ sandbox: true, snapshots: false },
 			{
 				safetyJudge: {
-					review: () =>
-						verdict === "skip"
-							? { kind: "skip" }
-							: { kind: "allow", rule: "operator-named", reason: "the operator asked for it", build: "t", latencyMs: 0 },
+					review: (subject) => {
+						reviewed.push(subject);
+						return { kind: "allow", rule: "operator-named", reason: "the operator asked for it", build: "t", latencyMs: 0 };
+					},
 					operatorApproved: () => {},
 				},
 			},
 		);
 		for (const spec of [bashTool, verifyTool, createRunScriptTool({ getWorkspaceRoot: () => cwd })])
 			judge.registry.register(recorder(spec));
-		return { registry: judge.registry, ran };
+		return { registry: judge.registry, ran, reviewed };
 	};
-	const unjudged = session("skip");
+	// A judge that would allow anything is never asked, and with nobody to answer the escape is refused.
+	const unanswered = session();
 	for (const call of escapes) {
-		const verdict = await unjudged.registry.invoke(call);
+		const verdict = await unanswered.registry.invoke(call);
 		strictEqual(verdict.kind, "blocked", call.tool);
 		strictEqual(verdict.decision.policy?.reasonCode, "sandbox-escape", call.tool);
+		const { unsandboxed_reason: _, ...unstated } = call.args ?? {};
+		const refused = await unanswered.registry.invoke({ tool: call.tool, args: unstated });
+		strictEqual(
+			refused.kind === "blocked" ? refused.decision.policy?.reasonCode : refused.kind,
+			UNSANDBOXED_REASON_REQUIRED_CODE,
+		);
 	}
-	strictEqual(unjudged.ran.length, 0);
+	deepStrictEqual([unanswered.ran, unanswered.reviewed], [[], []]);
 	// The same calls without the flag run contained with no ask.
 	for (const call of escapes) {
-		const { unsandboxed: _, ...args } = call.args ?? {};
-		strictEqual((await unjudged.registry.invoke({ tool: call.tool, args })).kind, "ok", call.tool);
+		const { unsandboxed: _, unsandboxed_reason: __, ...args } = call.args ?? {};
+		strictEqual((await unanswered.registry.invoke({ tool: call.tool, args })).kind, "ok", call.tool);
 	}
 	deepStrictEqual(
-		unjudged.ran.map((entry) => entry.sandboxed),
+		unanswered.ran.map((entry) => entry.sandboxed),
 		[true, true, true],
 	);
-	const allowed = session("allow");
-	for (const call of escapes) strictEqual((await allowed.registry.invoke(call)).kind, "ok", call.tool);
+	// The operator's card approves each escape, which then runs outside the sandbox.
+	const carded = session();
+	const cards: Array<{ requestId: string }> = [];
+	carded.registry.onPermissionRequired((_call, _decision, meta) => cards.push(meta));
+	for (const call of escapes) {
+		const pending = carded.registry.invoke(call);
+		await new Promise((settle) => setTimeout(settle, 20));
+		const card = cards.at(-1);
+		ok(card !== undefined, call.tool);
+		await carded.registry.resumeParkedCalls({
+			actionClass: "execute",
+			requestId: card.requestId,
+			requestedBy: "operator",
+		});
+		strictEqual((await pending).kind, "ok", call.tool);
+	}
+	strictEqual(cards.length, 3);
+	deepStrictEqual(carded.reviewed, []);
 	deepStrictEqual(
-		allowed.ran.map((entry) => entry.sandboxed),
+		carded.ran.map((entry) => entry.sandboxed),
 		[false, false, false],
 	);
 });
 
-// ob-yolo batch7: a judge allowed npm test unsandboxed as task-local on a repository file's say-so.
-// ob-yolo batch8: a judge cited operator-named for it when the operator had only asked to fix the tests.
-test("a sandbox escape runs only when the judge finds the operator named it and they did", async (t) => {
-	const cwd = workspace("pancode-escape-named-");
-	writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
-	const saved = process.cwd();
-	process.chdir(cwd);
-	t.after(() => process.chdir(saved));
-	const escapes = [bash("npm test", { unsandboxed: true }), bash("rm -rf build", { unsandboxed: true })];
-	const session = (rule: string, operator = "fix the tests, running them outside the sandbox") => {
-		const ran: boolean[] = [];
-		const reviewed: SafetyJudgeSubject[] = [];
-		const judge = createSafetyJudge({
-			config: () => ({ enabled: true, target: "local", model: "m", environment: [], allow: [], deny: [] }),
-			complete: async () => ({ text: JSON.stringify({ verdict: "allow", rule, reason: "serves the task" }) }),
-			operatorMessages: () => [operator],
-			session: () => "s",
-			consequences: () => [],
-		});
-		const { registry } = defaultSession(
-			cwd,
-			{ sandbox: true, snapshots: false },
-			{
-				safetyJudge: {
-					review: (subject) => {
-						reviewed.push(subject);
-						return judge.review(subject);
-					},
-					operatorApproved: () => {},
-				},
-			},
-		);
-		registry.register({
-			...bashTool,
-			run: async (_args, options) => {
-				ran.push(options?.shellSandbox !== undefined);
-				return { kind: "ok" as const, output: "" };
-			},
-		});
-		return { registry, ran, reviewed };
-	};
-	const inferred = session("task-local");
-	for (const call of escapes) {
-		const verdict = await inferred.registry.invoke(call);
-		strictEqual(verdict.kind, "blocked", String(call.args?.command));
-	}
-	deepStrictEqual(inferred.ran, []);
-	// The delete asks under its own rule; the escape rides along as a reason.
-	deepStrictEqual(
-		inferred.reviewed.map((subject) => [subject.decision.policy?.ruleId, asksToLeaveSandbox(subject.decision)]),
-		[
-			["sandbox-escape", true],
-			["delete-without-snapshot", true],
-		],
-	);
-	const misread = session("operator-named", "The tests fail. Fix calc.js so npm test passes.");
-	for (const call of escapes)
-		strictEqual((await misread.registry.invoke(call)).kind, "blocked", String(call.args?.command));
-	deepStrictEqual(misread.ran, []);
-	const named = session("operator-named");
-	for (const call of escapes) strictEqual((await named.registry.invoke(call)).kind, "ok", String(call.args?.command));
-	deepStrictEqual(named.ran, [false, false]);
-});
-
 // bt-21: a shell write to an outside path the operator named was blocked, and no approval card ever appeared.
-test("a blocked escape whose outside target the operator named goes to the approval card, never runs on its own", async (t) => {
+// D9: such an escape goes to the card unjudged; with nobody to answer it is refused.
+test("an escape the operator's words name still goes to the approval card unjudged, never runs on its own", async (t) => {
 	const cwd = workspace("pancode-escape-target-");
 	const outside = workspace("pancode-escape-outside-");
 	const saved = process.cwd();
@@ -517,12 +493,14 @@ test("a blocked escape whose outside target the operator named goes to the appro
 	t.after(() => process.chdir(saved));
 	const named = join(outside, "log.txt");
 	const session = (attends: boolean) => {
+		let consulted = 0;
 		const judge = createSafetyJudge({
 			config: () => ({ enabled: true, target: "local", model: "m", environment: [], allow: [], deny: [] }),
-			complete: async () => ({
-				text: JSON.stringify({ verdict: "block", rule: "unsandboxed", reason: "No message asks to leave the sandbox." }),
-			}),
-			operatorMessages: () => [`Append the line \`median fixed\` to ${named} using a shell command.`],
+			complete: async () => {
+				consulted += 1;
+				return { text: JSON.stringify({ verdict: "allow", rule: "operator-named", reason: "Named." }) };
+			},
+			operatorMessages: () => [`Append the line \`median fixed\` to ${named} running it unsandboxed.`],
 			session: () => "s",
 			consequences: () => [],
 		});
@@ -532,29 +510,24 @@ test("a blocked escape whose outside target the operator named goes to the appro
 			{ safetyJudge: judge, operatorAttends: () => attends },
 		);
 		const cards: Array<{ requestId: string; gateReason?: string }> = [];
-		registry.onPermissionRequired((_call, _decision, meta) => cards.push(meta));
-		return { registry, ran, cards };
+		if (attends) registry.onPermissionRequired((_call, _decision, meta) => cards.push(meta));
+		return { registry, ran, cards, consulted: () => consulted };
 	};
-	const append = (target: string) => bash(`printf '%s\\n' 'median fixed' >> ${target}`, { unsandboxed: true });
-
+	const append = bash(`printf '%s\\n' 'median fixed' >> ${named}`, {
+		unsandboxed: true,
+		unsandboxed_reason: "the target is outside the writable roots",
+	});
 	const attended = session(true);
-	const pending = attended.registry.invoke(append(named));
+	const pending = attended.registry.invoke(append);
 	await new Promise((resolve) => setTimeout(resolve, 20));
 	strictEqual(attended.cards.length, 1);
-	match(attended.cards[0]?.gateReason ?? "", /would block this sandbox escape \(rule unsandboxed\).*name its target/u);
+	strictEqual(attended.cards[0]?.gateReason, undefined);
 	attended.registry.cancelParkedCall(attended.cards[0]?.requestId ?? "", "denied", { denied: true });
 	strictEqual((await pending).kind, "blocked");
-	deepStrictEqual(attended.ran, []);
-	// A path the operator never named stays the judge's block, as does a run with nobody to answer.
-	const unnamed = await attended.registry.invoke(append(join(outside, "other.txt")));
-	strictEqual(unnamed.kind, "blocked");
-	if (unnamed.kind === "blocked") match(unnamed.reason, /safety judge blocked this bash call/u);
 	const headless = session(false);
-	const refused = await headless.registry.invoke(append(named));
-	strictEqual(refused.kind, "blocked");
-	if (refused.kind === "blocked") match(refused.reason, /safety judge blocked this bash call/u);
-	deepStrictEqual([...attended.ran, ...headless.ran, ...headless.cards], []);
-	strictEqual(attended.cards.length, 1);
+	strictEqual((await headless.registry.invoke(append)).kind, "blocked");
+	deepStrictEqual([...attended.ran, ...headless.ran], []);
+	strictEqual(attended.consulted() + headless.consulted(), 0);
 });
 
 test("with no sandbox backend the default rails still ask", async () => {
@@ -876,24 +849,152 @@ test("a typed write into the core.hooksPath directory asks at default, also once
 	process.chdir(cwd);
 	t.after(() => process.chdir(saved));
 	spawnSync("git", ["init", "-q"], { cwd });
-	mkdirSync(join(cwd, ".husky"));
+	mkdirSync(join(cwd, ".githooks"));
 	const before = createWorkerSafety({ cwd });
-	spawnSync("git", ["config", "core.hooksPath", ".husky"], { cwd });
+	spawnSync("git", ["config", "core.hooksPath", ".githooks"], { cwd });
 	const main = createWorkerSafety({ cwd });
 	const worker = createWorkerSafety({ cwd, writeRoots: [`${cwd}/`] });
 	const operatorDefault: OperatorDefaultScope = { level: "default", scratchRoots: [], sandbox: true, snapshots: true };
 	const write = (path: string): ClassifierCall => ({ tool: ToolNames.Write, args: { path, content: "x" } });
 	const admitMain = (safety: typeof main, call: ClassifierCall) =>
 		evaluateAdmission({ principal: "main", effects: [call], safety, autonomy: "default", operatorDefault });
-	const asked = admitMain(main, write(".husky/pre-commit"));
+	const asked = admitMain(main, write(".githooks/pre-commit"));
 	strictEqual(asked.kind === "ask" && asked.decision.policy?.reasonCode, "git-control-file");
-	const workerAsked = evaluateAdmission({ principal: "worker", effects: [write(".husky/pre-commit")], safety: worker });
+	const workerAsked = evaluateAdmission({
+		principal: "worker",
+		effects: [write(".githooks/pre-commit")],
+		safety: worker,
+	});
 	strictEqual(workerAsked.kind === "ask" && workerAsked.approvalAuthority, "main");
 	strictEqual(admitMain(main, write("src/app.py")).kind, "allow");
 	// An engine built before the setting re-reads it after an admitted command that may have written it.
-	strictEqual(admitMain(before, bash("git config core.hooksPath .husky")).kind, "allow");
-	const refreshed = admitMain(before, write(".husky/pre-commit"));
+	strictEqual(admitMain(before, bash("git config core.hooksPath .githooks")).kind, "allow");
+	const refreshed = admitMain(before, write(".githooks/pre-commit"));
 	strictEqual(refreshed.kind === "ask" && refreshed.decision.policy?.reasonCode, "git-control-file");
+});
+
+test("typed writes and edits to protected startup paths require operator approval, bypass the judge, and deny in headless, contained yolo, and workers", async (t) => {
+	const cwd = workspace("pancode-startup-paths-typed-");
+	const saved = process.cwd();
+	process.chdir(cwd);
+	t.after(() => process.chdir(saved));
+	mkdirSync(join(cwd, ".vscode"), { recursive: true });
+	mkdirSync(join(cwd, ".claude"), { recursive: true });
+	mkdirSync(join(cwd, ".husky"), { recursive: true });
+	writeFileSync(join(cwd, ".vscode", "tasks.json"), "{}\n");
+	writeFileSync(join(cwd, ".claude", "settings.json"), "{}\n");
+	writeFileSync(join(cwd, ".envrc"), "export A=1\n");
+	const main = createWorkerSafety({ cwd });
+	const worker = createWorkerSafety({ cwd, writeRoots: [`${cwd}/`] });
+	const operatorDefault: OperatorDefaultScope = { level: "default", scratchRoots: [], sandbox: true, snapshots: true };
+	const writeCall = (path: string) => ({ tool: ToolNames.Write, args: { path, content: "x" } });
+	const editCall = (path: string) => ({
+		tool: ToolNames.Edit,
+		args: { path, old_string: "{}\n", new_string: '{"x":1}\n' },
+	});
+	const askCases = [
+		writeCall(".vscode/tasks.json"),
+		editCall(".vscode/tasks.json"),
+		writeCall(".husky/pre-commit"),
+		writeCall(".idea/workspace.xml"),
+		writeCall(".devcontainer/devcontainer.json"),
+		writeCall(".envrc"),
+		writeCall(".mcp.json"),
+		writeCall(".gitmodules"),
+		writeCall(join(homedir(), ".zprofile")),
+	];
+	for (const call of askCases) {
+		const asked = evaluateAdmission({
+			principal: "main",
+			effects: [call],
+			safety: main,
+			autonomy: "default",
+			operatorDefault,
+		});
+		strictEqual(asked.kind, "ask", `${call.tool} ${String(call.args.path)} should ask in main`);
+		if (asked.kind !== "ask") continue;
+		strictEqual(asked.approvalAuthority, "operator");
+		strictEqual(asked.decision.policy?.ruleId, "startup-path-confirm");
+		strictEqual(
+			operatorOnlyAsk({
+				tool: call.tool,
+				args: call.args,
+				decision: asked.decision,
+				source: asked.source,
+				approvalAuthority: asked.approvalAuthority,
+			}),
+			"rule startup-path-confirm",
+		);
+		const confirmed = evaluateAdmission({
+			principal: "main",
+			effects: [call],
+			safety: main,
+			autonomy: "default",
+			operatorDefault,
+			authorization: { issuer: "operator", actionClass: asked.decision.classification.actionClass },
+		});
+		strictEqual(
+			confirmed.kind,
+			"allow",
+			`${call.tool} ${String(call.args.path)} should allow after operator confirmation`,
+		);
+		for (const workerOpts of [{}, { workerExecuteAutonomy: "yolo" as const }]) {
+			const workerDenied = evaluateAdmission({
+				principal: "worker",
+				effects: [call],
+				safety: worker,
+				...workerOpts,
+			});
+			strictEqual(workerDenied.kind, "deny", `worker should deny ${call.tool} ${String(call.args.path)}`);
+		}
+	}
+	// Startup paths already hard-blocked by path policy (foreign agent dirs, shell rc) remain denied in main and workers.
+	for (const call of [
+		writeCall(".claude/settings.json"),
+		editCall(".claude/settings.json"),
+		writeCall(join(homedir(), ".bashrc")),
+	]) {
+		strictEqual(
+			evaluateAdmission({ principal: "main", effects: [call], safety: main, autonomy: "default", operatorDefault }).kind,
+			"deny",
+			`main should keep denying ${call.tool} ${String(call.args.path)}`,
+		);
+		strictEqual(
+			evaluateAdmission({ principal: "worker", effects: [call], safety: worker, workerExecuteAutonomy: "yolo" }).kind,
+			"deny",
+			`worker should keep denying ${call.tool} ${String(call.args.path)}`,
+		);
+	}
+	// Headless main session (no park listener) denies without consulting the judge; contained yolo also denies.
+	let judgedCalls = 0;
+	const judge = createSafetyJudge({
+		config: () => ({ enabled: true, target: "local", model: "m", environment: [], allow: [], deny: [] }),
+		complete: async () => {
+			judgedCalls += 1;
+			return { text: JSON.stringify({ verdict: "allow", rule: "operator-named", reason: "ok" }) };
+		},
+		operatorMessages: () => ["update .vscode/tasks.json"],
+		session: () => "s",
+		consequences: () => [],
+	});
+	for (const unattendedAsks of [false, true]) {
+		const registry = createRegistry({
+			safety: createWorkerSafety({ cwd }),
+			autonomy: () => "default",
+			unattendedAsks: () => unattendedAsks,
+			scratchRoots: () => [],
+			containment: () => ({ sandbox: true, snapshots: true }),
+			safetyJudge: judge,
+		});
+		registry.register(writeTool);
+		const verdict = await registry.invoke(writeCall(".vscode/tasks.json"));
+		strictEqual(
+			verdict.kind,
+			"blocked",
+			`${unattendedAsks ? "contained yolo" : "headless default"} should deny startup-path write`,
+		);
+	}
+	strictEqual(judgedCalls, 0, "safety judge must never review startup-path asks");
 });
 
 test("the default scratch roots include $TMPDIR and /tmp", () => {
@@ -1193,7 +1294,7 @@ test("a sandbox escape approved for this session covers reruns of the same uncha
 			append: (grant) => entries.push({ kind: "custom", customType: ESCAPE_SCOPE_CUSTOM_TYPE, data: grant }),
 			roots: () => [cwd],
 		});
-	const unsandboxed = (command: string) => bash(command, { unsandboxed: true });
+	const unsandboxed = (command: string) => bash(command, { unsandboxed: true, unsandboxed_reason: "it needs the host" });
 
 	// The approval card: the parked escape carries its scope, and the session option grants it.
 	const card = defaultSession(cwd, { sandbox: true, snapshots: false }, { escapeScopes: ledger() });
@@ -1325,7 +1426,7 @@ test("a contained-yolo escape refusal tells when to retry, and a granted rerun i
 		}),
 	);
 	const turn = { sessionId: "session-1", turnId: "turn-1" };
-	const call = bash("bash probe.sh", { unsandboxed: true });
+	const call = bash("bash probe.sh", { unsandboxed: true, unsandboxed_reason: "it needs the host" });
 	const refused = await yolo.registry.invoke(call, turn);
 	ok(refused.kind === "blocked" && refused.denial !== undefined);
 	const [account, remedy] = denialLines(refused.denial);
@@ -1348,9 +1449,9 @@ test("a contained-yolo escape refusal tells when to retry, and a granted rerun i
 	for (const rerun of [1, 2]) strictEqual((await yolo.registry.invoke(call, turn)).kind, "ok", `rerun ${rerun}`);
 });
 
-// Row 328: a judge block of a contained-yolo escape gives one account of retrying. With a session option on offer
-// the judge's no-retry route yields to it; with none, the refusal says why no option exists.
-test("a judge-blocked contained-yolo escape gives one retry account: the scoped remedy, or why no option exists", async (t) => {
+// Row 328: a contained-yolo escape gives one account of retrying. With a session option on offer it names the
+// option; with none, the refusal says why no option exists. The judge is never asked either way (D9).
+test("a contained-yolo escape is refused unjudged with one retry account: the scoped remedy, or why no option exists", async (t) => {
 	const cwd = workspace("pancode-escape-judged-");
 	writeFileSync(join(cwd, "probe.sh"), "echo hi\n");
 	const outside = workspace("pancode-escape-outside-");
@@ -1364,37 +1465,16 @@ test("a judge-blocked contained-yolo escape gives one retry account: the scoped 
 		append: () => {},
 		roots: () => [cwd],
 	});
-	const judge = createSafetyJudge({
-		config: () => ({ enabled: true, target: "local", model: "m", environment: [], allow: [], deny: [] }),
-		complete: async () => ({
-			text: JSON.stringify({ verdict: "block", rule: "unclear", reason: "The approval does not scope this write." }),
-		}),
-		operatorMessages: () => ["run the probes"],
-		session: () => "session-1",
-		consequences: () => [],
-		record: () => {},
-	});
-	const yolo = defaultSession(
-		cwd,
-		{ sandbox: true, snapshots: false },
-		{ escapeScopes, unattendedAsks: () => true, safetyJudge: judge },
-	);
+	const yolo = defaultSession(cwd, { sandbox: true, snapshots: false }, { escapeScopes, unattendedAsks: () => true });
 	const turn = { sessionId: "session-1", turnId: "turn-1" };
-	const scoped = await yolo.registry.invoke(bash("bash probe.sh && bash probe.sh", { unsandboxed: true }), turn);
+	const why = { unsandboxed: true, unsandboxed_reason: "it needs the host" };
+	const scoped = await yolo.registry.invoke(bash("bash probe.sh && bash probe.sh", why), turn);
 	ok(scoped.kind === "blocked" && scoped.denial !== undefined);
-	match(scoped.reason, /safety judge blocked this bash call \(rule unclear\)/u);
-	strictEqual(
-		/Do not retry (?:this call|the compound command) or a reworded|Run each sub-command/u.test(scoped.reason),
-		false,
-		scoped.reason,
-	);
-	match(scoped.reason, /Until the operator answers, do not retry this call or a reworded form of it/u);
 	match(scoped.reason, /rerun the call after they choose it/u);
-	match(denialLines(scoped.denial)[0], /Retry only after the operator answers/u);
+	doesNotMatch(scoped.reason, /safety judge/u);
 
-	const unscoped = await yolo.registry.invoke(bash(`bash ${outside}/far.sh`, { unsandboxed: true }), turn);
+	const unscoped = await yolo.registry.invoke(bash(`bash ${outside}/far.sh`, why), turn);
 	ok(unscoped.kind === "blocked" && unscoped.denial !== undefined);
-	match(unscoped.reason, /Do not retry this call or a reworded form of it/u);
 	strictEqual(
 		/rerun the call after they choose it|Approve for this session/u.test(unscoped.reason),
 		false,
@@ -1406,5 +1486,110 @@ test("a judge-blocked contained-yolo escape gives one retry account: the scoped 
 		),
 		unscoped.reason,
 	);
-	deepStrictEqual(yolo.ran, []);
+	match(unscoped.reason, /only when the operator approves it on an approval card/u);
+	deepStrictEqual([yolo.ran, yolo.reviewed], [[], []]);
+});
+
+test("an attended contained shell asks once per origin outside its egress grants and remembers the answer for the session (P3)", async () => {
+	const egress = (mode: "off" | "proxied" | "open") => () => ({
+		main: { mode, allow: ["granted.test:443"], presets: [] },
+		upstreamProxy: null,
+	});
+	let attends = true;
+	const session = defaultSession(
+		workspace("pancode-contained-egress-"),
+		{ sandbox: true, snapshots: false },
+		{ operatorAttends: () => attends, sandboxEgress: egress("proxied") },
+	);
+	const { registry } = session;
+	// The body stands in for the proxy: an origin outside the grants is put to the launch's ask.
+	registry.register({
+		...bashTool,
+		run: async (args, options) => {
+			const plan = options?.shellSandbox?.egress;
+			if (plan === undefined) return { kind: "ok", output: `network:${options?.shellSandbox?.network}` };
+			const [host = "", port = "443"] = String(args.command).split(":");
+			const origin = { host, port: Number(port) };
+			if (isGrantedEgressOrigin(plan.grants, origin)) return { kind: "ok", output: "granted" };
+			return { kind: "ok", output: (await plan.ask?.(origin)) === true ? "approved" : "refused" };
+		},
+	});
+	const cards: Array<{ requestId: string; actionClass: ActionClass; ruleId: string | undefined }> = [];
+	registry.onPermissionRequired((_call, decision, meta) =>
+		cards.push({
+			requestId: meta.requestId,
+			actionClass: decision.classification.actionClass,
+			ruleId: decision.kind === "ask" ? decision.confirmationRuleId : undefined,
+		}),
+	);
+	const reach = async (origin: string, answer: "approve" | "deny", sessionId = "A") => {
+		const before = cards.length;
+		const pending = registry.invoke(bash(origin), { sessionId });
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		const card = cards.length > before ? cards.at(-1) : undefined;
+		if (card !== undefined) {
+			if (answer === "approve") await registry.resumeParkedCalls({ ...card, requestedBy: "contract-operator" });
+			else registry.cancelParkedCall(card.requestId, "contract denial");
+		}
+		const result = await pending;
+		return {
+			asked: card?.ruleId ?? false,
+			output: result.kind === "ok" && result.result.kind === "ok" ? result.result.output : result.kind,
+		};
+	};
+	deepStrictEqual(
+		[
+			await reach("granted.test:443", "deny"),
+			await reach("docs.example.org:443", "approve"),
+			await reach("docs.example.org:443", "deny"),
+			await reach("db.example.org:5432", "deny"),
+			await reach("db.example.org:5432", "approve"),
+			await reach("docs.example.org:443", "deny", "B"),
+		],
+		[
+			{ asked: false, output: "granted" },
+			{ asked: "shell-egress", output: "approved" },
+			{ asked: false, output: "granted" },
+			{ asked: "shell-egress", output: "refused" },
+			{ asked: false, output: "refused" },
+			{ asked: "shell-egress", output: "refused" },
+		],
+	);
+	// A command that gives up before the answer leaves the card up, and the answer holds for the next command.
+	const before = cards.length;
+	const gaveUp = await Promise.race([
+		registry.invoke(bash("slow.example.org:443"), { sessionId: "A" }).then(() => "answered"),
+		new Promise((resolve) => setTimeout(() => resolve("gave up"), 30)),
+	]);
+	const card = cards.at(-1);
+	deepStrictEqual([gaveUp, cards.length - before, registry.parkedCount()], ["gave up", 1, 1]);
+	if (card !== undefined) await registry.resumeParkedCalls({ ...card, requestedBy: "contract-operator" });
+	deepStrictEqual(await reach("slow.example.org:443", "deny"), { asked: false, output: "granted" });
+	// An operator who is away is never asked; the origin is refused and named in the result.
+	attends = false;
+	deepStrictEqual(await reach("away.example.org:443", "approve"), { asked: false, output: "refused" });
+
+	for (const [mode, output] of [
+		["off", "network:false"],
+		["open", "network:true"],
+	] as const) {
+		const other = defaultSession(
+			workspace(`pancode-contained-egress-${mode}-`),
+			{ sandbox: true, snapshots: false },
+			{ sandboxEgress: egress(mode) },
+		);
+		other.registry.register({
+			...bashTool,
+			run: async (_args, options) => ({
+				kind: "ok",
+				output: options?.shellSandbox?.egress === undefined ? `network:${options?.shellSandbox?.network}` : "proxied",
+			}),
+		});
+		const result = await other.registry.invoke(bash("make"));
+		deepStrictEqual(
+			result.kind === "ok" && result.result.kind === "ok" ? result.result.output : result.kind,
+			output,
+			mode,
+		);
+	}
 });

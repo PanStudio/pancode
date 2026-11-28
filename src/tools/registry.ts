@@ -38,13 +38,7 @@ import { GIT_CONTROL_FILE_RULE_ID } from "../domains/safety/containment.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { confirmationRuleOf } from "../domains/safety/decision-events.js";
 import { type DenialLayer, repeatedDenialReason, type ToolDenial } from "../domains/safety/denial.js";
-import {
-	describeEscapeScope,
-	type EscapeScope,
-	escapeScopeOptionConsequence,
-	escapeScopeOptionLabel,
-	scopedEscapeRoute,
-} from "../domains/safety/escape-scope.js";
+import { escapeScopeOptionConsequence, escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
 import type { GitHookDriftReport } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
 import {
@@ -62,7 +56,13 @@ import {
 	SAFETY_JUDGE_ALLOW_REASON_CODE,
 	type SafetyJudgeOutcome,
 } from "../domains/safety/safety-judge.js";
+import { asksToLeaveSandbox } from "../domains/safety/sandbox-escape.js";
 import { UNATTENDED_ALLOWED_BY } from "../domains/safety/unattended.js";
+import {
+	missingUnsandboxedReason,
+	UNSANDBOXED_REASON_ARG,
+	UNSANDBOXED_REASON_REQUIRED_CODE,
+} from "../domains/safety/unsandboxed-reason.js";
 import { YOLO_FLOOR_REASON_PREFIX } from "../domains/safety/yolo-floor.js";
 import type { WorkspaceSnapshotOutcome } from "../domains/workspace-snapshots/store.js";
 import { type WorkspaceSnapshotTrigger, workspaceSnapshotTrigger } from "../domains/workspace-snapshots/trigger.js";
@@ -118,6 +118,7 @@ import {
 	recordedExecution,
 	withRegistryScope,
 } from "./registry-nested-calls.js";
+import { createShellEgress, enqueueOperatorAsk, type OperatorAskQueue } from "./registry-operator-asks.js";
 import {
 	askUserAnswered,
 	blockDecision,
@@ -131,7 +132,6 @@ import {
 	DENIED_REPEAT_REASON_CODE,
 	ESCAPE_SCOPE_ALLOW_REASON_CODE,
 	ESCAPE_SCOPE_ALLOWED_BY,
-	ESCAPE_SCOPE_WAIT,
 	escapeNoScopeLine,
 	escapeScopeAllowedDecision,
 	escapeScopeAskHint,
@@ -186,6 +186,26 @@ const WORKSPACE_WRITING_TOOLS: ReadonlySet<string> = new Set([
 	ToolNames.Browser,
 ]);
 
+/**
+ * An escape the operator would decide on must say why, so the card has something to weigh (D9): the refusal of
+ * one whose tool declares `unsandboxed_reason` and that left it out, else null.
+ */
+function unstatedEscapeVerdict(
+	call: ClassifierCall,
+	spec: ToolSpec,
+	admission: AdmissionDisposition,
+): Extract<RegistryVerdict, { kind: "blocked" }> | null {
+	if (admission.kind !== "ask" || !asksToLeaveSandbox(admission.decision)) return null;
+	const properties = (spec.parameters as { properties?: Record<string, unknown> }).properties;
+	if (properties === undefined || !Object.hasOwn(properties, UNSANDBOXED_REASON_ARG)) return null;
+	const unstated = missingUnsandboxedReason(call.tool, call.args);
+	if (unstated === null) return null;
+	return blockedVerdict(admission.decision, `${call.tool} blocked: unsandboxed without a reason`, unstated, {
+		kind: "block",
+		reasonCode: UNSANDBOXED_REASON_REQUIRED_CODE,
+	});
+}
+
 interface ParkedCall {
 	readRootApproval?: true;
 	call: ClassifierCall;
@@ -204,6 +224,8 @@ interface ParkedCall {
 	hookDrift?: GitHookDriftReport;
 	/** Set when a before_tool hook's `request_approval` parked the call: what its hook stage decided. */
 	settledHookEffects?: ReadonlyArray<MiddlewareEffect>;
+	/** Settles an operator-only ask once the operator approves it (a contained command's egress ask). */
+	approve?: (requestedBy: string | undefined) => void;
 }
 
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
@@ -334,20 +356,20 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	};
 	const shellSandboxPolicy = (
 		roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
-		sessionId: string | undefined,
+		options: ToolInvokeOptions | undefined,
 	): MainSandboxPolicy => {
 		const env = deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {};
 		const unixSockets = deps.sandboxUnixSockets !== undefined ? { unixSockets: deps.sandboxUnixSockets() } : {};
-		if (roots.readOnly === true) {
-			return readOnlyMainSandboxPolicy({
-				workspace: roots.workspace,
-				scratchRoots: roots.scratchRoots,
-				scratchDir: readOnlyScratchDir(sessionId ?? deps.currentSessionId?.()),
-				...env,
-				...unixSockets,
-			});
-		}
-		return mainSandboxPolicy({ workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets });
+		const scope = { workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets };
+		return shellEgress.apply(
+			roots.readOnly === true
+				? readOnlyMainSandboxPolicy({
+						...scope,
+						scratchDir: readOnlyScratchDir(options?.sessionId ?? deps.currentSessionId?.()),
+					})
+				: mainSandboxPolicy(scope),
+			options,
+		);
 	};
 	/**
 	 * True yolo for this registry's calls (#407): the operator's session at
@@ -363,6 +385,15 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const permissionListeners = new Set<
 		(call: ClassifierCall, decision: SafetyDecision, meta: PermissionRequiredMeta) => void
 	>();
+	const askQueue: OperatorAskQueue = {
+		parked,
+		cardsRendered: () => permissionListeners.size > 0,
+		nextRequestId: () => nextApprovalRequestId(),
+		cancel: (requestId, reason) => cancelParkedCallById(requestId, reason),
+		record: (call, decision, disposition, overrides) => recordRegistryDisposition(call, decision, disposition, overrides),
+		notify: (call, decision, meta) => notifyPermissionRequired(call, decision, meta),
+	};
+	const shellEgress = createShellEgress(deps, askQueue);
 	const admissionReviewListeners = new Set<(event: AdmissionReviewEvent) => void>();
 	const bodyStartListeners = new Set<(toolCallId: string) => void>();
 	const notifyBodyStart = (options: ToolInvokeOptions | undefined): void => {
@@ -738,7 +769,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 						? { operatorYolo: true as const }
 						: {}),
 					...(decision.policy?.shellSandbox !== undefined
-						? { shellSandbox: shellSandboxPolicy(decision.policy.shellSandbox, options?.sessionId) }
+						? { shellSandbox: shellSandboxPolicy(decision.policy.shellSandbox, options) }
 						: {}),
 					...(landing !== undefined && landing !== null ? { hookLanding: landing } : {}),
 					...(deps.flow !== undefined && !trueYolo()
@@ -1243,6 +1274,15 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 					policy?.ruleId ?? policy?.reasonCode,
 					policy?.floorBasis,
 				),
+			};
+		}
+		const unstated = unstatedEscapeVerdict(call, spec, admission);
+		if (unstated !== null) {
+			recordRegistryDisposition(call, unstated.decision, "blocked", { reasonCode: UNSANDBOXED_REASON_REQUIRED_CODE });
+			const allowedBy = `the same call with ${UNSANDBOXED_REASON_ARG} set; the operator then decides on an approval card.`;
+			return {
+				kind: "terminal",
+				verdict: withDenial(unstated, "pancode_policy", allowedBy, UNSANDBOXED_REASON_REQUIRED_CODE),
 			};
 		}
 		const hostEffects = admitHostEffects(call, spec, admission, level);
@@ -1811,10 +1851,11 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		call: ClassifierCall,
 		outcome: Extract<AdmitOutcome, { kind: "park" }>,
 		options: ToolInvokeOptions | undefined,
-		escapeScope?: EscapeScope,
 	): SafetyJudgeOutcome | Promise<SafetyJudgeOutcome> => {
 		const judge = deps.safetyJudge;
 		if (judge === undefined || (deps.principal ?? "main") !== "main") return SAFETY_JUDGE_SKIP;
+		// Leaving the sandbox is the operator's alone: no judge, whatever it would say, approves it (D9).
+		if (asksToLeaveSandbox(outcome.decision)) return SAFETY_JUDGE_SKIP;
 		if ((deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) !== "default" || options?.signal?.aborted === true) {
 			return SAFETY_JUDGE_SKIP;
 		}
@@ -1838,7 +1879,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 				...(outcome.source !== undefined ? { source: outcome.source } : {}),
 				approvalAuthority: outcome.approvalAuthority,
 				...(outcome.planScale === true ? { dispatchPlan: true } : {}),
-				...(escapeScope !== undefined ? { escapeScope: describeEscapeScope(escapeScope) } : {}),
 				...(options?.origin === "harness" ? { harness: true } : {}),
 				...(deps.operatorAttends?.() === true && deps.unattendedAsks?.() !== true && permissionListeners.size > 0
 					? { operatorAttends: true }
@@ -1898,26 +1938,23 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		// The hook stage already showed the loop guard this attempt; running it again would count it twice.
 		const rejected = (): string | null =>
 			hookEffects !== undefined ? null : observeRejectedAttempt(admissionCall, outcome.decision, options);
-		// A sandbox escape inside a scope the operator approved for this session (M-7) runs as an approved card does,
-		// or, when the route says so, goes to the judge with the grant as the operator's approval of the escape.
+		// A sandbox escape inside a scope the operator approved for this session (M-7) runs as an approved card does.
 		const mainAsk = deps.principal !== "worker";
 		const scopeGrant = mainAsk ? (deps.escapeScopes?.covering(admissionCall, outcome.decision) ?? null) : null;
 		const scopedSpec = scopeGrant === null ? undefined : tools.get(admissionCall.tool as ToolName);
-		const runScoped = (spec: ToolSpec): Promise<RegistryVerdict> => {
+		if (scopedSpec !== undefined) {
 			const allowed = escapeScopeAllowedDecision(outcome.decision);
 			recordRegistryDisposition(admissionCall, allowed, "allowed", { reasonCode: ESCAPE_SCOPE_ALLOW_REASON_CODE });
-			return runSpec(spec, admissionCall, allowed, options);
-		};
-		if (scopedSpec !== undefined && scopedEscapeRoute() === "run") return runScoped(scopedSpec);
+			return runSpec(scopedSpec, admissionCall, allowed, options);
+		}
 		// The scope a session option would offer for this escape: on the card, or to contained yolo's next ask_user.
 		const offeredScope = mainAsk ? (deps.escapeScopes?.scopeFor(admissionCall, outcome.decision) ?? null) : null;
 		// The safety judge reviews the ask before anyone is asked. An allow runs
 		// the call, a block refuses it back to the model, and anything else parks
 		// exactly as before, with the judge's reason on the card when it had one.
 		// The judge reads the admission facts, so a store put's replace marker is admission's, never the model's.
-		const pendingJudgement = judgeParkedCall(factCall, outcome, options, scopeGrant?.scope);
+		const pendingJudgement = judgeParkedCall(factCall, outcome, options);
 		const judged = pendingJudgement instanceof Promise ? await pendingJudgement : pendingJudgement;
-		if (scopedSpec !== undefined && judged.kind === "skip") return runScoped(scopedSpec);
 		const judgedSpec = tools.get(admissionCall.tool as ToolName);
 		const unattended = deps.principal !== "worker" && deps.unattendedAsks?.() === true;
 		// Contained yolo cannot raise the card, so the scope goes to the next ask_user question about the escape.
@@ -1949,13 +1986,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		if (judged.kind === "block") {
 			disposeAdmissionArgs(judgedSpec, admissionCall.args ?? {});
 			const reasonCode = `${SAFETY_JUDGE_REASON_PREFIX}${judged.rule}`;
-			// One account of retrying: an offered session option replaces the judge's no-retry route (row 328).
-			const judgeReason =
-				scopeHint !== null
-					? [judged.account, ESCAPE_SCOPE_WAIT, scopeHint].join("\n")
-					: noScopeLine !== null
-						? `${judged.refusal}\n${noScopeLine}`
-						: judged.refusal;
+			const judgeReason = judged.refusal;
 			const blocked = blockDecision(
 				outcome.decision,
 				{
@@ -1974,14 +2005,10 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 					decision: blocked,
 				},
 				"pancode_policy",
-				scopeHint === null ? judged.allowedBy : ESCAPE_SCOPE_ALLOWED_BY,
+				judged.allowedBy,
 				reasonCode,
 			);
-			if (scopeHint === null)
-				return (hookEffects !== undefined ? null : observeBlockedAttempt(admissionCall, verdict, options)) ?? verdict;
-			const answerable = escapeAnswerable(verdict);
-			if (firstEscapeRefusal(admissionCall, options)) return answerable;
-			return (hookEffects !== undefined ? null : observeBlockedAttempt(admissionCall, answerable, options)) ?? answerable;
+			return (hookEffects !== undefined ? null : observeBlockedAttempt(admissionCall, verdict, options)) ?? verdict;
 		}
 		const judgeGate = judged.kind === "park" ? { gateReason: judged.gateReason, gateBuild: judged.build } : {};
 		if (unattended) {
@@ -2309,17 +2336,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 							);
 						},
 					};
-					if (options?.signal) {
-						const abort = () => cancelParkedCallById(meta.requestId, PARK_ABORT_REASON);
-						options.signal.addEventListener("abort", abort, { once: true });
-						entry.abortCleanup = () => options.signal?.removeEventListener("abort", abort);
-					}
-					parked.push(entry);
-					recordRegistryDisposition(call, decision, "permission_requested", {
-						requestId: meta.requestId,
-						reasonCode: "confirmation:dispatch-external-read",
-					});
-					notifyPermissionRequired(call, decision, meta);
+					enqueueOperatorAsk(askQueue, entry, "confirmation:dispatch-external-read");
 				});
 			});
 		},
@@ -2352,12 +2369,13 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			}
 			for (const { entry, reparkIndex } of pending) {
 				await withRegistryScope(entry.options, async () => {
-					if (entry.readRootApproval === true) {
+					if (entry.readRootApproval === true || entry.approve !== undefined) {
 						if (grant === undefined || grant.actionClass !== "read" || (grant.issuer ?? "operator") !== "operator") {
 							reparkEntry(entry, reparkIndex);
 							return;
 						}
 						cleanupParkedEntry(entry);
+						if (entry.approve !== undefined) return entry.approve(grant.requestedBy);
 						const disposition = evaluateAdmission({
 							principal: "main",
 							effects: [entry.call],

@@ -74,6 +74,48 @@ test("a yolo session dispatches a default worker as version 8 and rejects a wire
 	}
 });
 
+test("a proxied worker's spec carries its egress grants and a local upstream proxy, and the worker rejects a malformed one (P3)", async () => {
+	const env = await isolatePancodeEnv("pancode-egress-worker-");
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.safety.egress.workers = { mode: "proxied", allow: ["api.example.com:443"], presets: ["npm"] };
+	settings.safety.egress.upstreamProxy = "http://proxy.corp.test:3128";
+	let observed: WorkerSpec | undefined;
+	const bundle = makeDispatchBundle(dispatchStubContext({ settings }), {
+		spawnWorker(spec) {
+			observed = spec;
+			throw new Error("worker spec observed");
+		},
+	});
+	try {
+		await bundle.extension.start();
+		await rejects(
+			bundle.contract.dispatch({ agentId: "coder", task: "Inspect the task", executionRole: "builder", cwd: env.dir }),
+			/worker spec observed/u,
+		);
+		const spec = observed;
+		if (spec?.sandbox === undefined) throw new Error("no sandboxed worker spec");
+		strictEqual(spec.sandbox.network, true);
+		strictEqual(spec.envelope.network.shell, true);
+		ok(spec.sandbox.egress?.origins.includes("api.example.com:443"));
+		ok(spec.sandbox.egress?.origins.includes("registry.npmjs.org:443"));
+		strictEqual(spec.sandbox.egress?.upstreamProxy, "http://proxy.corp.test:3128");
+		strictEqual(
+			parseWorkerSpec(JSON.parse(JSON.stringify(spec))).sandbox?.egress?.origins.length,
+			spec.sandbox.egress?.origins.length,
+		);
+		const withSandbox = (sandbox: Record<string, unknown>) => ({ ...spec, sandbox: { ...spec.sandbox, ...sandbox } });
+		throws(() => parseWorkerSpec(withSandbox({ network: false })), /egress/u);
+		throws(() => parseWorkerSpec(withSandbox({ egress: { origins: ["*.example.com:443"] } })), /exact host:port/u);
+		throws(
+			() => parseWorkerSpec(withSandbox({ egress: { origins: [], upstreamProxy: "socks5://x:1" } })),
+			/upstreamProxy/u,
+		);
+	} finally {
+		await bundle.extension.stop?.();
+		env.restore();
+	}
+});
+
 /** The worker allowance dispatch seals when the operator's live autonomy is `operatorAutonomy`, settings.yaml at unconfined yolo. */
 async function allowanceUnderYoloSettings(prefix: string, operatorAutonomy?: () => "default" | "yolo") {
 	const env = await isolatePancodeEnv(prefix);
@@ -311,6 +353,29 @@ test("a worker refuses a permit or tool surface edited after the host sealed it"
 	const outside = structuredClone(edited);
 	resealEnvelope(outside);
 	throws(() => parseWorkerSpec(outside), /WorkerSpec\.envelope tools exceed the permit ceiling: dispatch/u);
+});
+
+test("a worker accepts unconfined commands only as admission sealed them: in the envelope, with no backend, under auto", async () => {
+	const sealed = await sealedCoderSpec("pancode-unconfined-seal-");
+	ok(sealed.sandbox);
+	const policyOnly = structuredClone(sealed);
+	ok(policyOnly.sandbox);
+	policyOnly.sandbox.unconfined = true;
+	throws(() => parseWorkerSpec(policyOnly), /WorkerSpec\.sandbox\.unconfined disagrees with the envelope/u);
+	const required = structuredClone(policyOnly);
+	ok(required.sandbox);
+	required.sandbox.mode = "required";
+	throws(
+		() => parseWorkerSpec(required),
+		/WorkerSpec\.sandbox\.unconfined must be true when present and only under mode auto/u,
+	);
+	const backed = structuredClone(sealed);
+	backed.envelope = { ...backed.envelope, sandbox: { ...backed.envelope.sandbox, backend: "bwrap", unconfined: true } };
+	resealEnvelope(backed);
+	throws(
+		() => parseWorkerSpec(backed),
+		/WorkerSpec\.envelope\.sandbox\.unconfined must be true and only with no backend/u,
+	);
 });
 
 test("a scout handed a batch's write roots seals a read-only permit its worker accepts", async () => {

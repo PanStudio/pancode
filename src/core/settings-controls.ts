@@ -14,6 +14,7 @@ import {
 	THINKING_LEVELS,
 	WORKER_PERMISSION_MODES,
 } from "./defaults.js";
+import { redactedUpstreamProxy } from "./sandbox/egress/policy.js";
 import { getAtPath, setAtPath } from "./session-routing.js";
 import {
 	SETTINGS_AREA_GROUPS,
@@ -508,7 +509,8 @@ const MENU_ROWS = new Set([
 	"safety.limits.bashIdleSeconds",
 	"fleet.limits.runTimeoutMs",
 	"safety.sandbox",
-	"safety.sandboxNetwork",
+	"safety.egress.main.mode",
+	"safety.egress.workers.mode",
 	"safety.scratchRoots",
 	"safety.sandboxCacheMaxGiB",
 	"safety.snapshots",
@@ -551,6 +553,8 @@ const CHOICES: Record<string, readonly string[]> = {
 	"safety.autonomy": ["default", "yolo"],
 	"safety.yoloConfinement": ["contained", "unconfined"],
 	"safety.sandbox": ["auto", "required", "off"],
+	"safety.egress.main.mode": ["proxied", "off", "open"],
+	"safety.egress.workers.mode": ["off", "proxied", "open"],
 	"safety.sandboxUnixSockets": ["block", "owned", "allow"],
 	"safety.snapshots": ["auto", "off"],
 	"chat.thinkingLevel": THINKING_LEVELS,
@@ -707,11 +711,35 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"safety.sandbox": [
 		"Command sandbox",
-		"Run shell commands in an OS sandbox. At autonomy default your session's commands may write the workspace, scratch roots and package caches, with the network on and credentials hidden, and run without asking; dispatched workers' commands write only the run's writable roots and a private /tmp. auto uses it when available, required refuses worker commands without it, off never sandboxes. Under required, scripts the yolo session runs are sandboxed too, or refused without a backend.",
+		"Run shell commands in an OS sandbox. At autonomy default your session's commands may write the workspace, scratch roots and package caches, with network through PanCode's egress proxy and credentials hidden, and run without asking; dispatched workers' commands write only the run's writable roots and a private /tmp. auto uses it when available, required refuses worker commands without it, off never sandboxes. Under required, scripts the yolo session runs are sandboxed too, or refused without a backend.",
 	],
-	"safety.sandboxNetwork": [
-		"Worker sandbox network",
-		"Let sandboxed worker commands reach the network. Workers that have web_fetch get network either way.",
+	"safety.egress.main.mode": [
+		"Session shell network",
+		"Network for your session's sandboxed commands. proxied gives them only PanCode's proxy: each host and port you have not allowed asks you once for this session, and headless runs deny it. A server a command starts listens only inside the sandbox, so your browser cannot reach it; run it from your own shell. off gives them no network; open leaves them on your network, unmonitored. A project layer may only lower it.",
+	],
+	"safety.egress.main.allow": [
+		"Session shell allowed hosts",
+		"Exact host:port origins your session's proxied commands reach without asking, such as registry.npmjs.org:443. IPv6 in brackets; no wildcards. User settings only.",
+	],
+	"safety.egress.main.presets": [
+		"Session shell host presets",
+		"Named exact host lists your session's proxied commands reach without asking: npm, pypi, github, crates, go. User settings only.",
+	],
+	"safety.egress.workers.mode": [
+		"Worker shell network",
+		"Network for dispatched workers' sandboxed commands. off, the default, gives them none, whatever web tools a worker holds. proxied lets them reach only the hosts allowed below, with no asks. open leaves them on your network, unmonitored. A project layer may only lower it.",
+	],
+	"safety.egress.workers.allow": [
+		"Worker shell allowed hosts",
+		"Exact host:port origins workers' proxied commands may reach. IPv6 in brackets; no wildcards. User settings only.",
+	],
+	"safety.egress.workers.presets": [
+		"Worker shell host presets",
+		"Named exact host lists workers' proxied commands may reach: npm, pypi, github, crates, go. User settings only.",
+	],
+	"safety.egress.upstreamProxy": [
+		"Upstream proxy",
+		"An http:// or https:// proxy PanCode's egress proxy sends allowed traffic through, for a network that reaches the internet only through one. Never read from HTTP_PROXY or a project. Credentials in it are never shown. User settings only.",
 	],
 	"safety.snapshots": [
 		"Workspace snapshots",
@@ -768,6 +796,10 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	"safety.sandboxUnixSockets": [
 		"Sandbox unix sockets",
 		"Block stops sandboxed commands from opening Unix sockets, because a socket they can reach (tmux, an X11 display, a daemon's control socket) can run commands outside the sandbox. Database sockets, Docker and other local IPC then fail inside it, and a command that needs one runs unsandboxed after review. Owned hides only the sockets you own (tmux, an X11 socket file, your agents) and leaves other users' reachable, such as the MUNGE and SSSD sockets cluster commands need; abstract sockets stay reachable. Allow leaves every socket reachable. User settings only.",
+	],
+	"safety.sandboxUnconfinedLocalWorkers": [
+		"Unconfined local workers",
+		"When this host has no usable OS sandbox, lets dispatched workers here run their shell and check commands with no sandbox, under your account with your files and network. Off refuses such a worker before it starts. safety.sandbox: required ignores it; fleet nodes keep their own allowUnsandboxed. User settings only.",
 	],
 	"safety.validationWrappers": [
 		"Validation wrappers",
@@ -1063,7 +1095,16 @@ export function settingControl(path: string): SettingControl | undefined {
 	return SETTING_CONTROLS.find((control) => control.path === path);
 }
 
-export function formatControlValue(value: unknown): string {
+export const REDACTED_PROXY_PATH = "safety.egress.upstreamProxy";
+
+/** True when a setting value carries credentials that no display or prefill may show. */
+export function hasRedactedControlCredentials(path: string, value: unknown): boolean {
+	if (path !== REDACTED_PROXY_PATH || typeof value !== "string") return false;
+	return redactedUpstreamProxy(value) !== value;
+}
+
+export function formatControlValue(value: unknown, path?: string): string {
+	if (path === REDACTED_PROXY_PATH && typeof value === "string") return redactedUpstreamProxy(value);
 	return value === undefined || value === null
 		? "(automatic)"
 		: typeof value === "object"

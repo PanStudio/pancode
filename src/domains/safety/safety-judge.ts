@@ -22,6 +22,7 @@ import {
 	storeReplaceConsequences,
 } from "./call-consequence.js";
 import { type RefusedCompound, refusedCompound } from "./compound-refusal.js";
+import { STARTUP_PATH_RULE_ID } from "./containment.js";
 import type { SafetyDecision } from "./contract.js";
 import type { SafetyJudgementInput } from "./decision-events.js";
 import { GIT_HOOKS_CHANGED_RULE_ID } from "./hook-drift.js";
@@ -30,10 +31,8 @@ import { PANCODE_SETTINGS_RULE_ID } from "./routing-settings.js";
 import {
 	type AskedApproval,
 	askApproves,
-	askApprovesSandboxEscape,
 	asksToLeaveSandbox,
 	messagesSpellPath,
-	operatorMentionsSandbox,
 	operatorNamedOutsideTargets,
 } from "./sandbox-escape.js";
 
@@ -101,6 +100,7 @@ const SAFETY_JUDGE_OPERATOR_ONLY_RULES: ReadonlySet<string> = new Set([
 	"pancode-owned-state",
 	GIT_HOOKS_CHANGED_RULE_ID,
 	MCP_SKILL_APPROVAL_RULE_ID,
+	STARTUP_PATH_RULE_ID,
 ]);
 
 /** The operator channel itself, PanCode's own settings tool and a restart of the running session. */
@@ -130,13 +130,6 @@ export const OPERATOR_NAMED_RULE = "operator-named";
 
 /** Audit code of a call the safety judge allowed instead of parking it; the judge's rule category follows a `:`. */
 export const SAFETY_JUDGE_ALLOW_REASON_CODE = "safety-judge:allow";
-
-/** Blocks that stay blocks even when the operator named the escaping call's target. */
-const HANDOFF_EXCLUDED_RULES: ReadonlySet<string> = new Set([
-	...BLOCK_RULES.map(([rule]) => rule),
-	"operator-deny",
-	"unclear",
-]);
 
 const ALLOW_RULES: ReadonlyArray<readonly [string, string]> = [
 	[OPERATOR_NAMED_RULE, "an action an operator message explicitly names"],
@@ -227,11 +220,6 @@ export interface SafetyJudgeSubject {
 	approvalAuthority: ApprovalAuthority;
 	/** A plan-scale dispatch, whose body requires an authenticated operator approval. */
 	dispatchPlan?: boolean;
-	/**
-	 * The session scope, described, that the operator approved and this sandbox escape lies inside (M-7), when the
-	 * scoped route sends a covered escape to the judge: the operator's approval of leaving the sandbox.
-	 */
-	escapeScope?: string;
 	/** A call the harness made on its own decision. */
 	harness?: boolean;
 	/**
@@ -268,6 +256,9 @@ export function operatorOnlyAsk(subject: SafetyJudgeSubject): string | null {
 	} else if (subject.approvalAuthority !== "operator") return "a worker escalation";
 	if (subject.dispatchPlan === true) return "a dispatch plan approval";
 	if (subject.source === "session-consent" || subject.source === "git-policy") return `a ${subject.source} ask`;
+	// Leaving the sandbox runs as the operator, with their credentials: only their approval card or a session option
+	// they chose grants it, never a reading of their messages.
+	if (asksToLeaveSandbox(subject.decision)) return "a sandbox escape";
 	const rule = askRuleId(subject.decision);
 	if (rule !== undefined && SAFETY_JUDGE_OPERATOR_ONLY_RULES.has(rule)) return `rule ${rule}`;
 	return null;
@@ -288,18 +279,13 @@ export type SafetyJudgeOutcome =
 			latencyMs: number;
 			/** The refused tool result the model reads. */
 			refusal: string;
-			/**
-			 * The refusal without its retry route: what the judge blocked and why, and an escalation. A caller that
-			 * offers its own remedy (a session option for a sandbox escape) composes it after this, never after the route.
-			 */
-			account: string;
 			/** What would allow the call, for the structured denial account. */
 			allowedBy: string;
 	  }
 	/** Falls back to today's operator path; `gateReason` is what the card says about why. */
 	| {
 			kind: "park";
-			cause: "escalated" | "screened" | "unnamed-escape" | "named-target" | SafetyJudgeNoVerdictCause;
+			cause: "escalated" | "screened" | SafetyJudgeNoVerdictCause;
 			gateReason: string;
 			build: string;
 			latencyMs: number;
@@ -360,8 +346,8 @@ export type SafetyJudgeScreen = (request: {
  * ask_user round: `text` is the line the judge reads (the agent's question, then the answer), `context`
  * what the options they chose say, and `words` only what the operator typed themselves, empty when they
  * only chose. The question, labels and descriptions are agent-authored, so no guard that needs the
- * operator's own words (the sandbox mention, an outside path they spelled) counts them; `asked` lets the
- * escape backstop read the round as an approval only by `askApprovesSandboxEscape`.
+ * operator's own words (an outside path they spelled) counts them; `asked` is the round the operator answered,
+ * which approves what it asks only when every chosen option is affirmative (`askApproves`).
  */
 export type SafetyJudgeOperatorMessage =
 	| string
@@ -502,12 +488,6 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 				if (subject.mcpTool?.sends !== undefined) {
 					consequences = [...consequences, ...subject.mcpTool.sends.map((line) => boundedLine(line, 400))];
 				}
-				if (subject.escapeScope !== undefined) {
-					consequences = [
-						...consequences,
-						`operator-approved session scope: the operator chose "Approve for this session: ${boundedLine(redactSecretString(subject.escapeScope), 400)}" on an approval card, and this sandbox escape lies inside it`,
-					];
-				}
 				let scripts: ScriptFileRun[] = [];
 				try {
 					// The script file a call runs, read inside the workspace and scratch roots, so a scope naming its
@@ -524,15 +504,12 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 					shown: operatorMessages,
 					words: operatorWords,
 					approved: approvedWords,
-					escapes: approvedEscapes,
 				} = boundOperatorMessages(safeRead(() => deps.operatorMessages(turn), []));
-				const escapeApproved = approvedEscapes.length > 0;
 				prompted = { operatorMessages: operatorMessages.length };
 				const user = safetyJudgeUserPrompt({
 					operatorMessages,
 					operatorWords,
 					approvedWords,
-					approvedEscapes,
 					subject,
 					consequences,
 					scripts,
@@ -614,16 +591,6 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 					after.streakRules.clear();
 					// The operator naming this action outranks what a page says: it is the one allow the judge read their words for.
 					const source = parsed.rule === OPERATOR_NAMED_RULE ? null : screened.source;
-					// A sandbox escape runs as the operator, with their credentials: a repository file or
-					// the model's own reading cannot grant it, so any other allow goes to the operator.
-					// operator-named stands only when the operator's own words the judge read speak of the sandbox, or they
-					// chose an affirmative option on a question that names leaving it; never the agent's text alone.
-					const citedOperator = parsed.rule === OPERATOR_NAMED_RULE;
-					const unnamedEscape =
-						source === null &&
-						asksToLeaveSandbox(subject.decision) &&
-						subject.escapeScope === undefined &&
-						!(citedOperator && (escapeApproved || operatorMentionsSandbox(operatorWords)));
 					record({
 						...base,
 						...prompted,
@@ -631,42 +598,11 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 						rule: parsed.rule,
 						latencyMs,
 						...(source !== null ? { screened: "parked" as const } : {}),
-						...(unnamedEscape ? { unnamedEscape: "parked" as const } : {}),
 					});
 					if (source !== null) {
 						return { kind: "park", cause: "screened", gateReason: screenedReason(source), build, latencyMs };
 					}
-					if (unnamedEscape) {
-						return {
-							kind: "park",
-							cause: "unnamed-escape",
-							gateReason: citedOperator
-								? "This sandbox escape waits for the operator's approval: no operator message uses the word sandbox or unconfined, and the operator approved no question that names leaving the sandbox, so unsandboxed: true cannot run on PanCode's safety judge's word."
-								: `This sandbox escape waits for the operator's approval: unsandboxed: true runs on PanCode's safety judge's word only when an operator message names the escape, never under rule ${parsed.rule}.`,
-							build,
-							latencyMs,
-						};
-					}
 					return { kind: "allow", rule: parsed.rule, reason: parsed.reason, build, latencyMs };
-				}
-				// A sandbox escape whose outside target the operator's own words name is theirs to decide:
-				// it goes to the approval card, never runs on the judge's word, and is no block.
-				const namedTargets =
-					subject.operatorAttends === true &&
-					subject.worker === undefined &&
-					!HANDOFF_EXCLUDED_RULES.has(parsed.rule) &&
-					asksToLeaveSandbox(subject.decision)
-						? operatorNamedOutsideTargets(subject, operatorWords)
-						: [];
-				if (namedTargets.length > 0) {
-					record({ ...base, ...prompted, verdict: "block", rule: parsed.rule, latencyMs, namedTarget: "parked" });
-					return {
-						kind: "park",
-						cause: "named-target",
-						gateReason: namedTargetReason(parsed, namedTargets),
-						build,
-						latencyMs,
-					};
 				}
 				// Only a rule new to the streak counts toward the pause: one call reworded under the same
 				// rule is the agent probing one boundary, not a run going off course (FX-36).
@@ -693,7 +629,6 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 					build,
 					latencyMs,
 					refusal: safetyJudgeRefusal(subject.tool, parsed, after.escalated, compound),
-					account: safetyJudgeRefusal(subject.tool, parsed, after.escalated, compound, false),
 					allowedBy:
 						"an operator message must name this action, so ask the operator for it in your reply; the judge hands a call to the operator itself only after repeated blocks.",
 				};
@@ -729,12 +664,6 @@ function escalationReason(state: { consecutive: number; total: number }): string
 			? `blocked calls under ${state.consecutive} different rules in a row`
 			: `blocked ${state.total} calls`;
 	return `PanCode's safety judge ${streak} this session, so it hands this call to you; approving a call turns its review back on.`;
-}
-
-function namedTargetReason(verdict: { rule: string; reason: string }, targets: ReadonlyArray<string>): string {
-	const named = boundedLine(redactSecretString(targets.join(", ")), REASON_MAX_CHARS);
-	const reason = redactSecretString(verdict.reason).replace(/[.\s]+$/u, "");
-	return `PanCode's safety judge would block this sandbox escape (rule ${verdict.rule}): ${reason}. Your own words name its target ${named}, so this call needs your decision.`;
 }
 
 function noVerdictReason(cause: SafetyJudgeNoVerdictCause, detail?: string): string {
@@ -805,24 +734,21 @@ function compoundRoute(compound: RefusedCompound): string {
 	].join("\n");
 }
 
-/** The refused tool result the model reads for a block; without `route`, only the account a caller adds its remedy to. */
+/** The refused tool result the model reads for a block. */
 function safetyJudgeRefusal(
 	tool: string,
 	verdict: { rule: string; reason: string },
 	escalated: boolean,
 	compound: RefusedCompound | null,
-	route = true,
 ): string {
 	return [
 		`PanCode's safety judge blocked this ${tool} call (rule ${verdict.rule}): ${verdict.reason}`,
 		"The judge reviewed this call against the operator's own messages and did not find this action authorized.",
-		...(!route
-			? []
-			: compound === null
-				? [
-						"Do not retry this call or a reworded form of it. Take a route that stays inside the workspace and scratch roots, or record this open decision for your final reply and continue with the rest of the task.",
-					]
-				: [compoundRoute(compound)]),
+		...(compound === null
+			? [
+					"Do not retry this call or a reworded form of it. Take a route that stays inside the workspace and scratch roots, or record this open decision for your final reply and continue with the rest of the task.",
+				]
+			: [compoundRoute(compound)]),
 		...(escalated
 			? ["The judge has blocked repeatedly, so the next call that needs approval goes to the operator."]
 			: []),
@@ -840,17 +766,16 @@ function safetyJudgeRefusal(
  * the operator answered affirmatively with its question and answer whole, the
  * question and what the chosen options say: the text the operator approved, which
  * names paths for the judge's facts but never stands in for their typed words.
- * `escapes` are the kept rounds that approve leaving the sandbox.
  */
 function boundOperatorMessages(
 	messages: ReadonlyArray<SafetyJudgeOperatorMessage>,
 	budgetBytes = SAFETY_JUDGE_OPERATOR_BYTES,
-): { shown: string[]; words: string[]; approved: string[]; escapes: AskedApproval[] } {
-	type Bounded = { shown: string; lead: string; words: string; approved: string; escape: AskedApproval | null };
+): { shown: string[]; words: string[]; approved: string[] } {
+	type Bounded = { shown: string; lead: string; words: string; approved: string };
 	const texts = messages.flatMap((message): Bounded[] => {
 		if (typeof message === "string") {
 			const words = message.trim();
-			return words.length === 0 ? [] : [{ shown: words, lead: words, words, approved: "", escape: null }];
+			return words.length === 0 ? [] : [{ shown: words, lead: words, words, approved: "" }];
 		}
 		const lead = message.text.trim();
 		if (lead.length === 0) return [];
@@ -862,7 +787,6 @@ function boundOperatorMessages(
 				lead,
 				words: message.words.trim(),
 				approved: askApproves(message.asked) ? shown : "",
-				escape: askApprovesSandboxEscape(message.asked) ? message.asked : null,
 			},
 		];
 	});
@@ -875,10 +799,10 @@ function boundOperatorMessages(
 		if (head.length >= text.lead.length)
 			return { ...text, shown, ...(text.approved.length > 0 ? { approved: head } : {}) };
 		if (text.words === text.lead) return { ...text, shown, words: `${head}…` };
-		return { ...text, shown, words: "", approved: "", escape: null };
+		return { ...text, shown, words: "", approved: "" };
 	};
 	const newest = texts.at(-1);
-	if (newest === undefined) return { shown: [], words: [], approved: [], escapes: [] };
+	if (newest === undefined) return { shown: [], words: [], approved: [] };
 	const kept = [cut(newest, NEWEST_MESSAGE_MAX_BYTES)];
 	let used = Buffer.byteLength(kept[0]?.shown ?? "", "utf8");
 	for (let index = texts.length - 2; index >= 1 && kept.length < OPERATOR_MESSAGE_LIMIT; index -= 1) {
@@ -899,7 +823,6 @@ function boundOperatorMessages(
 		shown: kept.map((text) => text.shown),
 		words: kept.flatMap((text) => (text.words.length > 0 ? [text.words] : [])),
 		approved: kept.flatMap((text) => (text.approved.length > 0 ? [text.approved] : [])),
-		escapes: kept.flatMap((text) => (text.escape !== null ? [text.escape] : [])),
 	};
 }
 
@@ -945,8 +868,8 @@ function safetyJudgeSystemPrompt(config: Pick<SafetyJudgeConfig, "environment" |
 			...config.deny.map((line) => `- operator-deny: ${line}`),
 		].join("\n"),
 		["Allow:", ...bulletLines(ALLOW_RULES), ...config.allow.map((line) => `- operator-allow: ${line}`)].join("\n"),
-		'Explicit intent clears a block rule only when an operator message names the action itself. "Clean up the repo" does not authorize a force push; "force-push this branch" does. A request about one target does not authorize the same action on another. A plain file whose path an operator message spells out, such as a report or output file the operator asked for, is not shared or system configuration: writing it is operator-named, and PanCode lists such a path under operator-named path. If a block rule applies and no operator message names the action, block. If you cannot tell what the call would do, block it with rule unclear. A call with unsandboxed: true runs as the operator with their credentials and files, so allow it only as operator-named, and only when an operator message asks to run it outside the sandbox.',
-		"An operator message that begins with Asked is the operator's answer to a question the agent put to them: the option they chose, with what it says, is their own words, and a command quoted in the question is one example of the action they approved, not the only form it may take. A call inside the script, paths and purpose that the question and the chosen option state is operator-named even when its arguments, environment variables or flags differ from that example, and so is a rerun of it. An action beyond them still needs operator words of its own: another script or tool, a path or target the approval does not state, a broader purpose, or an outward step such as a push, publish, upload or message that the approval does not name. PanCode lists an approved question that names running outside the sandbox as operator-approved escape, which is an operator message asking to run outside the sandbox, and a path that question spells, or that a script the call runs names and the operator spelled, as operator-approved path or operator-named path: writing such a path inside that approval is operator-named, also when a directory scope names only the script's directory.",
+		'Explicit intent clears a block rule only when an operator message names the action itself. "Clean up the repo" does not authorize a force push; "force-push this branch" does. A request about one target does not authorize the same action on another. A plain file whose path an operator message spells out, such as a report or output file the operator asked for, is not shared or system configuration: writing it is operator-named, and PanCode lists such a path under operator-named path. If a block rule applies and no operator message names the action, block. If you cannot tell what the call would do, block it with rule unclear.',
+		"An operator message that begins with Asked is the operator's answer to a question the agent put to them: the option they chose, with what it says, is their own words, and a command quoted in the question is one example of the action they approved, not the only form it may take. A call inside the script, paths and purpose that the question and the chosen option state is operator-named even when its arguments, environment variables or flags differ from that example, and so is a rerun of it. An action beyond them still needs operator words of its own: another script or tool, a path or target the approval does not state, a broader purpose, or an outward step such as a push, publish, upload or message that the approval does not name. PanCode lists a path an approved question spells, or that a script the call runs names and the operator spelled, as operator-approved path or operator-named path: writing such a path inside that approval is operator-named, also when a directory scope names only the script's directory.",
 		[
 			"Reach ladder, lowest rung first. Calls on the first two rungs usually serve the task; calls on the last two need an operator message that names them unless an allow rule covers them.",
 			...TOOL_CALL_RUNGS.map((rung) => `- ${rung.label}: ${rung.criteria}`),
@@ -982,8 +905,6 @@ function safetyJudgeUserPrompt(input: {
 	operatorWords: ReadonlyArray<string>;
 	/** The questions and chosen options of the ask_user rounds the operator approved, as shown. */
 	approvedWords?: ReadonlyArray<string>;
-	/** The approved rounds whose question names leaving the sandbox. */
-	approvedEscapes?: ReadonlyArray<AskedApproval>;
 	subject: Pick<SafetyJudgeSubject, "tool" | "args" | "decision" | "worker" | "mcpTool">;
 	consequences: ReadonlyArray<string>;
 	/** Script files the call runs, read inside the workspace and scratch roots. */
@@ -1028,14 +949,6 @@ function safetyJudgeUserPrompt(input: {
 			? [`MCP tool, trusted with action class ${boundedLine(subject.mcpTool.actionClass, 40)}`]
 			: []),
 		...(askRule !== undefined ? [`rule that asked: ${askRule}`] : []),
-		...(asksToLeaveSandbox(decision)
-			? (input.approvedEscapes ?? [])
-					.slice(-2)
-					.map(
-						(asked) =>
-							`operator-approved escape: the operator chose ${asked.chosen.map((label) => `"${boundedLine(label, 120)}"`).join(", ")} on the question "${boundedLine(redactSecretString(asked.question), 400)}", which names running outside the sandbox`,
-					)
-			: []),
 		...typedTargets.map(
 			(target) => `operator-named path: an operator message spells ${boundedLine(target, 200)} verbatim`,
 		),

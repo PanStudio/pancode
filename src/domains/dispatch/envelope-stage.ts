@@ -7,21 +7,19 @@
 
 import { resolve as resolvePath } from "node:path";
 import { bashShellPath } from "../../core/bash-shell.js";
-import { sandboxAvailability, sandboxNetworkIsolation } from "../../core/sandbox/availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable } from "../../core/sandbox/availability.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
-import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../core/tool-names.js";
+import { isHarnessExtensionToolName, isMcpToolName, type ToolName } from "../../core/tool-names.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { isClaudeSdkTool } from "../../engine/claude/tool-safety.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import { type AutonomyLevel, admissionAutonomy, effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 import { networkToolsDisabled } from "../../tools/network-policy.js";
-import { applyToolProfile } from "../../tools/profiles.js";
 import { runtimeAttachesGateway } from "../../tools/surface.js";
 import { gitCheckoutRoot } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import { INTERNAL_HELPER_RESULT_KINDS } from "../agents/result-contract.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
-import { roleExcludes, toolActionClass } from "../agents/role-class.js";
 import type { normalizeAgentSpec } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import { enabledHarnessExtensionToolNames } from "../extensions/command-tools.js";
@@ -103,20 +101,7 @@ export function writeModeInput(input: {
 		capabilityClass: input.spec.capabilityClass,
 		hoareContract: hoare,
 	});
-	const role = resolveRunRole({
-		gateRole: req.gate?.role,
-		capabilityClass: input.spec.capabilityClass,
-		readOnly: writeNone,
-	});
-	const network = sandboxAllowsNetwork({
-		req,
-		role,
-		capabilityClass: input.spec.capabilityClass,
-		allowedTools: applyToolProfile(input.recipe.tools as ReadonlyArray<ToolName>, req.toolProfile),
-		target: input.target,
-		settings: input.settings,
-		hoare,
-	});
+	const network = sandboxKeepsHostNetwork(input.settings, hoare);
 	return {
 		writeNone,
 		roots: writeNone ? [] : input.pathScope.writeBoundaries,
@@ -156,15 +141,7 @@ export function resolveDispatchEnvelopeStage(input: {
 		capabilityClass: spec.capabilityClass,
 		readOnly: writeNone,
 	});
-	const network = sandboxAllowsNetwork({
-		req,
-		role,
-		capabilityClass: spec.capabilityClass,
-		allowedTools: admission.allowedTools,
-		target,
-		settings: input.settings,
-		hoare,
-	});
+	const network = sandboxKeepsHostNetwork(input.settings, hoare);
 	const {
 		confinesWrites,
 		availability: placedAvailability,
@@ -410,27 +387,14 @@ function deniedToolNames(req: DispatchRequest): ReadonlySet<string> {
 	);
 }
 
-/** Whether a native worker's sandboxed commands keep network on (mirrors `resolveExecAndNetwork`). */
-function sandboxAllowsNetwork(input: {
-	req: DispatchRequest;
-	role: ReturnType<typeof resolveRunRole>;
-	capabilityClass: ReturnType<typeof normalizeAgentSpec>["capabilityClass"];
-	allowedTools: ReadonlyArray<ToolName>;
-	target: ResolvedTarget;
-	settings: EffectiveSettings;
-	hoare: boolean;
-}): boolean {
-	if (input.hoare) return false;
-	if (input.settings?.safety.sandboxNetwork === true) return true;
-	if (networkToolsDisabled() || !targetToolCapability(input.target)) return false;
-	const denied = deniedToolNames(input.req);
-	for (const tool of input.allowedTools) {
-		if (tool !== ToolNames.WebFetch && tool !== ToolNames.WebRead) continue;
-		if (denied.has(tool)) continue;
-		if (roleExcludes(input.role, input.capabilityClass, tool, toolActionClass(tool)) !== null) continue;
-		return true;
-	}
-	return false;
+/**
+ * Whether a native worker's sandboxed commands keep the host network, so the
+ * placement needs no network isolation: only `safety.egress.workers.mode: open`.
+ * Proxied reaches the network through PanCode's proxy inside an isolated
+ * namespace, and web tools grant the shell nothing (D2).
+ */
+function sandboxKeepsHostNetwork(settings: EffectiveSettings, hoare: boolean): boolean {
+	return !hoare && settings?.safety.egress.workers.mode === "open";
 }
 
 /**
@@ -449,27 +413,41 @@ function placementSandboxAvailability(placement: FleetPlacementPreview, network:
 }
 
 /**
- * A native worker on an SSH node with no OS sandbox would run its commands unconfined, so admission refuses it unless
- * the node's entry opts in with `allowUnsandboxed`, which a required sandbox ignores.
+ * A native worker with no usable OS sandbox where it runs would run its commands unconfined, so admission refuses it
+ * unless the operator opted in for that host: `fleet.nodes[].allowUnsandboxed` for an SSH node,
+ * `safety.sandboxUnconfinedLocalWorkers` for this one. A required sandbox ignores both and also refuses a partial one.
  */
-function assertNodeSandboxAdmitted(
+function assertSandboxAdmitted(
 	node: FleetPlacementPreview["node"],
 	availability: SandboxAvailability,
 	mode: "auto" | "required",
 	hoare: boolean,
 	settings: Readonly<ReturnType<ConfigContract["get"]>> | undefined,
 ): void {
-	if (availability.available) return;
-	const optedIn = settings?.fleet.nodes.find((entry) => entry.id === node.id)?.allowUnsandboxed === true;
+	if (sandboxUsable(mode, availability)) return;
+	const local = node.kind === "local";
+	const optedIn = local
+		? settings?.safety.sandboxUnconfinedLocalWorkers === true
+		: settings?.fleet.nodes.find((entry) => entry.id === node.id)?.allowUnsandboxed === true;
 	if (mode === "auto" && optedIn) return;
-	const lacking = `dispatch: admission denied: node '${node.id}' has no OS sandbox for worker commands (${availability.reason ?? "no sandbox backend"})`;
-	const fix = `install bubblewrap with user namespaces on the node and run 'pancode fleet nodes test ${node.id} --record'`;
+	const why =
+		availability.available && availability.degraded !== undefined
+			? `its OS sandbox is partial: ${availability.degraded}`
+			: (availability.reason ?? "no sandbox backend");
+	const lacking = local
+		? `dispatch: admission denied: this host has no OS sandbox for worker commands (${why})`
+		: `dispatch: admission denied: node '${node.id}' has no OS sandbox for worker commands (${why})`;
+	const fix = local
+		? "install bubblewrap with user namespaces and check it with 'pancode doctor'"
+		: `install bubblewrap with user namespaces on the node and run 'pancode fleet nodes test ${node.id} --record'`;
 	if (mode === "required")
 		throw new Error(
 			`${lacking} and ${hoare ? "a verifier report with an assurance level needs one" : "safety.sandbox is required"}; ${fix}, or place the worker on another node.`,
 		);
 	throw new Error(
-		`${lacking}; ${fix}, or set allowUnsandboxed: true on its fleet.nodes entry to run its commands unsandboxed.`,
+		local
+			? `${lacking}; ${fix}, or set safety.sandboxUnconfinedLocalWorkers: true in your user settings to run local worker commands unconfined.`
+			: `${lacking}; ${fix}, or set allowUnsandboxed: true on its fleet.nodes entry to run its commands unsandboxed.`,
 	);
 }
 
@@ -489,13 +467,15 @@ function placementSandboxFacts(
 	const mode = hoare ? "required" : (settings?.safety.sandbox ?? "auto");
 	const applies = runtimeKind === "http" && mode !== "off";
 	const availability = placementSandboxAvailability(placement, network);
-	if (applies && placement.node.kind === "ssh")
-		assertNodeSandboxAdmitted(placement.node, availability, mode, hoare, settings);
-	const backend = applies && availability.available && availability.backend !== null ? availability.backend : "none";
+	if (applies) assertSandboxAdmitted(placement.node, availability, mode, hoare, settings);
+	const backend =
+		applies && sandboxUsable(mode, availability) && availability.backend !== null ? availability.backend : "none";
 	return {
 		backend,
 		applies: applies && (backend !== "none" || mode === "required"),
-		networkSetting: !hoare && settings?.safety.sandboxNetwork === true,
+		egress: hoare ? "off" : (settings?.safety.egress.workers.mode ?? "off"),
+		// Admission passed with no usable backend, so the operator allowed this host's worker commands unconfined.
+		...(applies && backend === "none" ? { unconfined: true as const } : {}),
 		networkOff: hoare,
 		confinesWrites: backend === "bwrap",
 		availability,

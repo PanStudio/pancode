@@ -23,6 +23,8 @@ import {
 	actionClassWords,
 	decisionTierLabel,
 	reversibilityWords,
+	SHELL_EGRESS_EFFECT_TEXT,
+	SHELL_EGRESS_RULE_ID,
 	safetyNetRailText,
 	UNREAD_COMMAND_EFFECT,
 	unansweredWords,
@@ -51,6 +53,18 @@ export const SAFETY_POSTURE = "Nothing runs until you answer. PanCode never answ
 /** The "one use" is load-bearing: there is deliberately no allow-always on the wire. */
 export const CARD_EYEBROW = "Approval needed · one use";
 export const KEYBOARD_HINT = "Alt + A allows once · Alt + R rejects";
+
+function isShellEgress(decision: PermissionDecisionFacts | undefined): boolean {
+	return decision?.axis?.kind === "safety-net" && decision.axis.ruleId === SHELL_EGRESS_RULE_ID;
+}
+
+export const cardEyebrow = (decision: PermissionDecisionFacts | undefined): string =>
+	isShellEgress(decision) ? "Approval needed · this session" : CARD_EYEBROW;
+
+export const keyboardHint = (permission: Pick<Permission, "canStopTurn" | "decision">): string => {
+	const base = isShellEgress(permission.decision) ? "Alt + A allows for this session · Alt + R rejects" : KEYBOARD_HINT;
+	return permission.canStopTurn ? `${base} · Alt + X rejects and stops the turn` : base;
+};
 
 export const bannerEyebrow = (escalated: boolean): string =>
 	escalated ? "APPROVAL WAITING · ESCALATED" : "APPROVAL NEEDED";
@@ -248,7 +262,10 @@ export function decisionChips(
 ): readonly string[] {
 	if (decision === undefined) return [];
 	const tier = decision.tierLabel.length > 0 ? decision.tierLabel : decisionTierLabel(decision.tier);
-	const chips = [tier, actionClassWords(decision.actionClass, approvedWorkers(plan))];
+	const effect = isShellEgress(decision)
+		? SHELL_EGRESS_EFFECT_TEXT
+		: actionClassWords(decision.actionClass, approvedWorkers(plan));
+	const chips = [tier, effect];
 	// An unknown reach has no chip: naming the workspace would claim a reach the agent could not see.
 	return decision.affectedScope === "unknown"
 		? chips
@@ -394,6 +411,20 @@ const ALLOW_ONCE: ApprovalAction = {
 	description: "Allows this one call. PanCode asks again next time.",
 	keybinding: "allowOnce",
 };
+const EGRESS_REJECT: ApprovalAction = {
+	decision: "reject",
+	label: "Reject",
+	variant: "quiet",
+	description: "Refuses this origin; this session does not ask about it again.",
+	keybinding: "reject",
+};
+const EGRESS_ALLOW: ApprovalAction = {
+	decision: "allow-once",
+	label: "Allow for this session",
+	variant: "primary",
+	description: "Lets this session's sandboxed commands reach this origin until the session ends.",
+	keybinding: "allowOnce",
+};
 
 /**
  * Destructive-safe first, affirmative last. The turn-ending refusal is drawn only when the agent
@@ -401,8 +432,11 @@ const ALLOW_ONCE: ApprovalAction = {
  * with the two answers that have always been on the wire.
  */
 export function approvalActions(
-	permission: Pick<Permission, "canStopTurn" | "sessionScope">,
+	permission: Pick<Permission, "canStopTurn" | "sessionScope" | "decision">,
 ): readonly ApprovalAction[] {
+	if (isShellEgress(permission.decision)) {
+		return permission.canStopTurn ? [EGRESS_REJECT, REJECT_AND_STOP, EGRESS_ALLOW] : [EGRESS_REJECT, EGRESS_ALLOW];
+	}
 	const allow = permission.sessionScope === undefined ? [ALLOW_ONCE] : [ALLOW_SESSION, ALLOW_ONCE];
 	return permission.canStopTurn ? [REJECT, REJECT_AND_STOP, ...allow] : [REJECT, ...allow];
 }

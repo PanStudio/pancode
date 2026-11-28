@@ -11,7 +11,10 @@ exact rules, with every reason code, are in the
    commands run inside an OS sandbox on this host: bubblewrap on Linux, or
    `sandbox-exec` on macOS, whose profile has not yet been verified on a real
    macOS build. `WARN` means they run uncontained and more of them
-   ask first. See [Shell sandbox rows](doctor.md#shell-sandbox-rows).
+   ask first. See [Shell sandbox rows](doctor.md#shell-sandbox-rows). The
+   `OS sandbox` row adds whether the seccomp baseline loaded and what the main
+   shell and a dispatched worker get; `pancode version --sandbox` prints the
+   same facts as one JSON line.
 2. Work at the `default` autonomy level. It needs no setup.
 3. In your request, name any action that reaches beyond the project, such as
    "push the branch when the tests pass". The safety judge reads your words
@@ -23,7 +26,7 @@ exact rules, with every reason code, are in the
 
 | Level | Use it for | In short |
 | --- | --- | --- |
-| `default` | Everyday work, attended or not. | Edits and contained shell work run. What escapes the sandbox goes to the safety judge, and you are asked only when the judge has no verdict or the choice is yours. |
+| `default` | Everyday work, attended or not. | Edits and contained shell work run. Outward commands go to the safety judge, and you are asked only when the judge has no verdict or the choice is yours, such as rerunning a command outside the sandbox. |
 | `yolo` | Long jobs you leave running. | Nothing waits for you. It is contained by default: the sandbox, snapshots and judge work as at `default`, and a call that would ask you is refused back to PanCode instead. |
 
 Unconfined yolo is a separate choice for containers and other disposable
@@ -47,7 +50,8 @@ for the full comparison.
 
 At `default`, and at contained yolo, the main session's `bash`, `run_script`
 and command-running `verify` calls run inside the sandbox. A contained command
-can read the filesystem, use the network and write only to:
+can read the filesystem, reach the network through PanCode's egress proxy (see
+[Shell network](#shell-network)) and write only to:
 
 - the workspace;
 - the scratch roots: the temp directories (`$TMPDIR`, `/tmp`, `/var/tmp`, and
@@ -62,6 +66,22 @@ because anything written there would later run outside the sandbox. So do the
 project's `.pancode` folder, your own `~/.cache`, `~/.npm` and `~/.local`,
 and PanCode's own config, data, state and cache directories. The command
 runs in its own process namespace and cannot signal your other programs.
+
+Startup files that an editor, an agent or git later runs outside the sandbox
+stay read-only in every writable root, present or absent: `.vscode`, `.idea`,
+`.cursor`, `.zed`, `.devcontainer`, `.husky`, `.claude`, `.codex`, `.gemini`,
+`.envrc`, `.mcp.json`, `.gitmodules`, `.gitconfig` and `.ripgreprc`, and the
+shell startup files such as `.bashrc` and `.profile` when your home directory
+is a writable root. A shell command that edits one needs `unsandboxed: true`,
+`unsandboxed_reason` and your approval; a typed `write`, `edit` or `artifact`
+call targeting the same paths goes straight to the operator approval card
+(never silent, never the safety judge), and headless runs and dispatched
+workers deny it.
+
+Under bubblewrap a seccomp baseline also refuses `ptrace`, reading or writing
+another process's memory, `io_uring`, vsock sockets and new namespaces. Where
+the baseline cannot load the sandbox is partial: `auto` runs commands in it and
+says what is missing, and `required` treats it as no sandbox.
 
 ## What the sandbox hides
 
@@ -116,10 +136,13 @@ sandbox only in the narrow cases described in
 [Make the sandbox stricter or looser](#make-the-sandbox-stricter-or-looser).
 
 When a contained command fails because of the sandbox, PanCode can rerun it
-with `unsandboxed: true`. That rerun also goes to the judge, which lets it run
-only when one of your messages mentions leaving the sandbox; otherwise it asks
-you. An `ask_user` answer approves the escape only when its question names
-leaving the sandbox, so "Run it in the sandbox?" answered yes approves nothing.
+with `unsandboxed: true` and an `unsandboxed_reason` saying what the sandbox
+blocked; a rerun without the reason is refused. Only you approve the rerun, on
+its approval card, which shows the reason as `agent says`. The safety judge
+does not review it, and neither your messages nor an `ask_user` answer approve
+it. Where no card can be shown, at contained `yolo` or unattended, the rerun is
+refused and PanCode names it in its report as left for you, unless a session
+scope below covers it.
 
 An escape whose only reason to ask is leaving the sandbox can be approved for
 the rest of the session with `Approve for this session: <scope>`: `Alt+P` on
@@ -171,7 +194,8 @@ Once a question lapses with no key pressed since, later questions wait at most
 `safety.sandbox` takes three values:
 
 - `auto` (the default): use the sandbox when the host has one.
-- `required`: workers' commands are refused on a host without a sandbox. At
+- `required`: workers' commands are refused on a host without a sandbox, and a
+  partial sandbox counts as none. At
   unconfined yolo, every command `default` would contain, and every script,
   runs in the sandbox, and `unsandboxed: true` is refused. An outward command
   then leaves the sandbox only as one literal command whose options are all
@@ -254,14 +278,70 @@ every target lies inside a scratch root takes no snapshot: scratch contents
 are disposable, so at `default` it runs without asking. See
 [Undoing file changes with /rewind](commands-and-modes.md#undoing-file-changes-with-rewind).
 
+## Shell network
+
+On Linux a sandboxed command has no network interface of its own. It reaches
+the network only through PanCode's egress proxy, which reads the host and
+port of every connection: `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` point
+at it, so curl, npm, pip, git over HTTPS and most language runtimes use it
+without setup. The proxy resolves names itself and refuses a name that
+resolves to a loopback, private, link-local or cloud-metadata address, even a
+granted one; such an address is reachable only by granting the address
+itself, such as `10.0.0.5:8080`.
+
+`safety.egress.main.mode` sets the session's commands; `safety.egress.workers.mode`
+sets dispatched workers' commands:
+
+| Mode | What a sandboxed command reaches |
+|---|---|
+| `proxied` | Hosts in `allow` and `presets` without asking. In an attended session any other host and port asks you once, on a card naming it, and the answer holds for the session; a headless run, or an operator who is away, refuses it. Workers are never asked. Default for the session. |
+| `off` | No network. Default for workers. |
+| `open` | Your network, unmonitored, as before PanCode 0.9.2. |
+
+`allow` lists exact `host:port` origins (`registry.npmjs.org:443`, IPv6 in
+brackets, no wildcards). `presets` names bundles of exact hosts: `npm`,
+`pypi`, `github`, `crates` and `go`. A refused connection is named in the
+command's result, which also lists any port the command was listening on.
+
+```yaml
+safety:
+  egress:
+    main:
+      mode: proxied
+      presets: [npm, github]
+      allow: ["docs.example.org:443"]
+    workers:
+      mode: proxied
+      presets: [npm]
+    upstreamProxy: http://user:secret@proxy.corp.example:3128
+```
+
+`upstreamProxy` is for a network that reaches the internet only through a
+proxy of its own: PanCode's proxy sends allowed connections through it. It is
+never read from `HTTP_PROXY` or a project, and its credentials are never
+shown. A project layer may only lower a mode (`open`, then `proxied`, then
+`off`); `allow`, `presets` and `upstreamProxy` are read only from user
+settings.
+
+A connection that does not honor the proxy variables, such as SSH or a raw
+socket, fails. A server a command starts listens inside the sandbox, so
+another command in the same call can reach it on `localhost`, but your
+browser cannot; start a dev server you want to open from your own shell, or
+with `unsandboxed: true`. On macOS `proxied` runs as `open`, unmonitored,
+until egress is supported there, and `/doctor` says so.
+
 ## Workers
 
 Native workers you dispatch run their commands in their own sandbox when the
-host has a backend. Without one, `auto` runs them unsandboxed and `required`
-refuses them. Subprocess and SDK runtimes, and workers on a `fleet.nodes`
-node, are not sandboxed by PanCode. A sandboxed worker has no network
-unless `safety.sandboxNetwork` is on or it holds `web_fetch` or `web_read`; an MCP server it
-starts reaches the network only with its own grant
+host they run on has a backend. Without one, admission refuses them, naming
+the reason and the fix, unless you allowed that host in your user settings:
+`safety.sandboxUnconfinedLocalWorkers: true` for this machine, or
+`allowUnsandboxed: true` on a `fleet.nodes` entry. An allowed worker runs its
+commands unconfined and says so. `required` ignores both and also refuses a
+partial sandbox. Subprocess and SDK runtimes are not sandboxed by PanCode. A
+sandboxed worker's commands have no network unless `safety.egress.workers.mode`
+says otherwise, whatever web tools the worker holds; an MCP server it starts
+reaches the network only with its own grant
 (`pancode mcp trust <id> --network`). Ordinary asks go to the same safety
 judge by default, and a worker cannot raise its own level.
 See [Workers at each level](../architecture/safety-model.md#workers-at-each-level).
@@ -286,10 +366,13 @@ your own operating-system permissions:
 An api 2 extension runs inside the sandbox when the host has a backend, and
 under Node permission flags alone when it has none. Provider calls send only
 the request PanCode builds; a provider gets no access to local files.
-Windows has no sandbox backend; WSL uses the Linux one.
+Windows has no sandbox backend. WSL2 uses the Linux one and also hides the
+Windows interop socket and WSLg (`/run/WSL`, `/mnt/wslg`, `WSL_INTEROP`), so a
+contained command cannot start Windows programs. WSL1 has no sandbox.
 
 The masks match known names and value shapes, so a credential stored under an
-unusual name stays readable. The network stays on, so a contained command can
-send what it can read. For full isolation, run PanCode inside a container
+unusual name stays readable. A contained command can still send what it can
+read to a host you allowed or approved, and `open` mode does not watch it at
+all. For full isolation, run PanCode inside a container
 or a virtual machine. See
 [Platform limits](../architecture/safety-model.md#platform-limits).
