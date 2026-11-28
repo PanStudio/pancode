@@ -17,7 +17,6 @@ import { factKnownValue } from "../../core/telemetry/known.js";
 import { normalizeTokenUsage } from "../../core/token-split.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
-import { runCapStopCode } from "../../core/turn-constraints.js";
 import {
 	applyModelCapabilityPatch,
 	canonicalEndpointKey,
@@ -25,7 +24,6 @@ import {
 	refineRuntimeTargetWithModelHints,
 } from "../../domains/providers/index.js";
 import type { HostInsertSource } from "../../domains/session/entries.js";
-import { missingOutputRefusal } from "../../domains/session/output-obligations.js";
 import { readDiffusionFrame } from "../../engine/apis/diffusion-frames.js";
 import { setGlobalDefaultMaxOutputTokens } from "../../engine/apis/index.js";
 import { hasAssistantGenerationDelta } from "../../engine/generation-delta.js";
@@ -34,15 +32,7 @@ import { createRequestStructures } from "../../engine/request-structure.js";
 import type { AgentEvent, AgentMessage, EngineModel, Usage } from "../../engine/types.js";
 import type { resolveAgentTools } from "../../tools/agent-tools.js";
 import { closeAskUserInterviewOnAssistantTurn } from "../../tools/ask-user.js";
-import {
-	bareFinishVerdict,
-	completionOfToolResult,
-	FINISH_DECLARATION_REMINDER,
-	FINISH_WITHOUT_REPLY_REFUSAL,
-	finishRoundDue,
-	finishSiblingRefusal,
-	withoutReplyResult,
-} from "../../tools/finish.js";
+import { completionOfToolResult, FINISH_DECLARATION_REMINDER, finishRoundDue } from "../../tools/finish.js";
 import {
 	type AssistantCallTiming,
 	type BackendCacheVerdict,
@@ -67,7 +57,6 @@ import {
 	toolNamesFromAgentState,
 	toolResultSummary,
 } from "../chat-loop-messages.js";
-import { selfCompactSiblingRefusal } from "../continuity-controller.js";
 import { withSettledHistory } from "../message-list-digest.js";
 import {
 	assessDraftLoop,
@@ -87,6 +76,7 @@ import { createCallTelemetry } from "./calls.js";
 import { TurnAdmissionError } from "./errors.js";
 import type { AgentBuildScope, TurnRuntimeScope } from "./scope.js";
 import { createTranscriptStream } from "./stream.js";
+import { createToolGates } from "./tool-gates.js";
 import { createStallWatchdog } from "./watchdog.js";
 
 function isCollectedBatchResult(toolName: string, result: unknown): boolean {
@@ -267,18 +257,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	const watchdog = createStallWatchdog(scope);
 	const { clearStallTimer, armStallTimer, callWait, noteFirstOutput, firstOutputMs } = watchdog;
 	let requiredToolReminder: string | null = null;
-	// FX-40: bare finish calls admitted after their user turn's one refusal; each result records the missing reply.
-	const bareFinishCalls = new Set<string>();
-	// M-4: the first finish(done) of an operator prompt while an output its session named is absent does not run.
-	const missingOutputGate = (toolCall: { name: string; arguments: unknown }) => {
-		if (state.finishOutputRefused) return undefined;
-		const effective = effectiveToolCall(toolCall.name, toolCall.arguments);
-		if (effective.toolName !== ToolNames.Finish || effective.args?.state !== "done") return undefined;
-		const missing = deps.missingOutputs?.() ?? [];
-		if (missing.length === 0) return undefined;
-		state.finishOutputRefused = true;
-		return { block: true as const, reason: missingOutputRefusal(missing) };
-	};
+	const toolGates = createToolGates(scope);
 	rt.clearCurrentWatchdog();
 	let runIdentity = deps.turnIdentity?.();
 	const currentRun = (): boolean => runIdentity === deps.turnIdentity?.();
@@ -301,54 +280,9 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		steeringMode: "all",
 		followUpMode: "all",
 		...(gatewaySessionId ? { sessionId: gatewaySessionId } : {}),
-		// Refused calls count toward the run's tool-call cap as executed ones do.
-		beforeToolBatch: ({ assistantMessage }) => {
-			const calls = assistantMessage.content.filter((block) => block.type === "toolCall");
-			const capRefusal = deps.runCaps?.admitToolCalls(calls.length);
-			if (capRefusal === undefined) return undefined;
-			// The engine refuses these calls before the registry, so no finish event says they were refused.
-			const reasonCode = runCapStopCode(capRefusal);
-			for (const call of calls)
-				rt.toolOutcomes.set(call.id, {
-					outcome: "blocked",
-					reason: capRefusal,
-					durationMs: 0,
-					...(reasonCode === undefined ? {} : { reasonCode }),
-				});
-			return { reason: capRefusal };
-		},
-		beforeToolCall: async ({ assistantMessage, toolCall }) => {
-			rt.protocolRetryCalls.delete(toolCall.id);
-			const compactSibling = selfCompactSiblingRefusal(toolCall, assistantMessage);
-			if (compactSibling !== undefined) return compactSibling;
-			const finishSibling = finishSiblingRefusal(toolCall, assistantMessage);
-			if (finishSibling !== undefined) {
-				rt.protocolRetryCalls.add(toolCall.id);
-				return finishSibling;
-			}
-			const verdict = bareFinishVerdict(toolCall, assistantMessage, {
-				headless: deps.headless === true,
-				origin: state.currentTurnOrigin?.origin,
-				promptOrigin: state.promptOrigin,
-				refusedThisTurn: state.finishReplyRefused,
-				repliedThisTurn: state.turnReplied,
-			});
-			if (verdict === "admit") bareFinishCalls.add(toolCall.id);
-			if (verdict !== "refuse") return missingOutputGate(toolCall);
-			state.finishReplyRefused = true;
-			const active = state.activeUserTurnId;
-			// Keyed like turnCalls (bt-26 N2h): a refusal after a steer settles under the user turn the run started under.
-			const refusedTurn = active && (rt.steeredTurns.get(active) ?? scope.runTurnId ?? active);
-			if (refusedTurn) rt.bareFinishRefusals.set(refusedTurn, (rt.bareFinishRefusals.get(refusedTurn) ?? 0) + 1);
-			rt.protocolRetryCalls.add(toolCall.id);
-			return { block: true, reason: FINISH_WITHOUT_REPLY_REFUSAL };
-		},
-		// FX-40: an admitted bare finish files its missing reply in the result itself, which the transcript shows, the
-		// session ledger keeps and the turn's declaration is read from.
-		afterToolCall: async ({ toolCall, result, isError }) => {
-			const bare = bareFinishCalls.delete(toolCall.id);
-			return bare && !isError ? withoutReplyResult(result, deps.headless === true) : undefined;
-		},
+		beforeToolBatch: toolGates.beforeToolBatch,
+		beforeToolCall: toolGates.beforeToolCall,
+		afterToolCall: toolGates.afterToolCall,
 		beforeStreamRequest: streamAdmission.beforeStreamRequest,
 		onStreamInvocation: streamAdmission.onStreamInvocation,
 		authResolvedByHost: true,
