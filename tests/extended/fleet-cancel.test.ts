@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { deepStrictEqual, strictEqual } from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { runFleetCancel, runFleetStop } from "../../src/cli/fleet-cancel.js";
 import { runFleetWait } from "../../src/cli/fleet-wait.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
+import { parsePlaybook } from "../../src/domains/agents/playbook.js";
 import { getStoredAssignment, registerAssignment } from "../../src/domains/dispatch/assignment-store.js";
 import {
 	clearRootCancelRequest,
@@ -15,6 +17,8 @@ import {
 	writeRootCancelRequest,
 	writeRunCancelRequest,
 } from "../../src/domains/dispatch/cancel-requests.js";
+import { compileFleetExecutionPlan } from "../../src/domains/dispatch/fleet-plan.js";
+import { planFleetResume } from "../../src/domains/dispatch/fleet-resume.js";
 import {
 	fleetRootState,
 	matchFleetRootIds,
@@ -22,9 +26,11 @@ import {
 	writeFleetResult,
 	writeFleetRootRecord,
 } from "../../src/domains/dispatch/fleet-root-record.js";
-import { openLedger, writeFleetRun } from "../../src/domains/dispatch/state.js";
+import { executeFleetRun } from "../../src/domains/dispatch/fleet-run.js";
+import { openLedger, readFleetRun, writeFleetRun } from "../../src/domains/dispatch/state.js";
 import type { RunLineage } from "../../src/domains/dispatch/types.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
+import { loadKeptTaskWorktree } from "../../src/tools/task-worktree-claims.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 describe("fleet cancel requests", () => {
@@ -233,6 +239,87 @@ describe("fleet cancel requests", () => {
 		}
 		const document = JSON.parse(written.join(""));
 		deepStrictEqual([code, document.causes[0]?.code, document.planHash], [1, "owner_gone", "b".repeat(64)]);
+	});
+
+	it("keeps a stopped worktree run's idle task worktree for --resume, and the completed resume removes it", async () => {
+		ensurePancodeState();
+		const root = join(scratch.dir, "repo");
+		mkdirSync(root);
+		const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+		git("init", "-q");
+		git("config", "user.name", "Contract");
+		git("config", "user.email", "contract@example.invalid");
+		writeFileSync(join(root, "base.txt"), "base");
+		git("add", ".");
+		git("commit", "-qm", "base");
+		const playbook = parsePlaybook(
+			[
+				"---",
+				"version: 3",
+				"name: wt",
+				"steps:",
+				"  - {kind: code, id: plan, command: noop, scope: readonly, dependencies: []}",
+				"  - {kind: code, id: build, command: noop, scope: worktree, dependencies: [plan]}",
+				"maxWorkers: 1",
+				"onFailure: stop",
+				"---",
+				"build it",
+			].join("\n"),
+			join(root, "wt.md"),
+		);
+		const noop = {
+			id: "noop",
+			argv: [process.execPath, "-e", "0"],
+			cwd: "",
+			timeoutMs: 10000,
+			env: [],
+			description: "noop",
+		};
+		const commands = { version: 1 as const, path: join(root, "commands.yaml"), commands: new Map([["noop", noop]]) };
+		const plan = compileFleetExecutionPlan({
+			playbook,
+			commands,
+			task: "build it",
+			resolveAgent: () => {
+				throw new Error("no agent steps");
+			},
+		});
+		const notices: string[] = [];
+		const run = (fleetRootId: string, extra: Partial<Parameters<typeof executeFleetRun>[0]>) =>
+			executeFleetRun({
+				plan,
+				playbookName: "wt",
+				commands,
+				workspaceRoot: root,
+				fleetRootId,
+				dispatch: {} as Parameters<typeof executeFleetRun>[0]["dispatch"],
+				agents: {} as Parameters<typeof executeFleetRun>[0]["agents"],
+				attributionEnabled: false,
+				onNotice: (text) => notices.push(text),
+				...extra,
+			});
+		// The stop arrives while the plan step runs, so the build step is never admitted and nothing was written.
+		const stop = new AbortController();
+		let admissions = 0;
+		await run("fleet-dd0001", {
+			signal: stop.signal,
+			stopped: () => stop.signal.aborted,
+			beforeStepAdmission: () => {
+				if (++admissions === 2) stop.abort();
+			},
+		}).catch(() => undefined);
+		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0001")?.kind, "kept");
+		ok(
+			notices.some((text) => text.includes("for fleet run --resume fleet-dd0001")),
+			notices.join("\n"),
+		);
+		const record = readFleetRun("fleet-dd0001");
+		const planned = record !== null ? planFleetResume(record, plan, playbook, {}, root) : null;
+		if (record === null || planned?.ok !== true) throw new Error(`not resumable: ${JSON.stringify(planned)}`);
+		const outcome = await run("fleet-dd0002", { resume: { record, replayed: planned.replayed } });
+		strictEqual(outcome.cleanRun, true);
+		strictEqual(loadKeptTaskWorktree(root, "fleet-dd0001"), null);
+		ok(notices.includes("fleet fleet-dd0002 changed nothing; removed its task worktree"), notices.join("\n"));
 	});
 
 	// A hosted worker publishes the main run as its lineage root, and a running attempt is not yet among the

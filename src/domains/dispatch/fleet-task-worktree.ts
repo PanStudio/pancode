@@ -86,20 +86,31 @@ export interface FleetKeptWorktree {
 
 /**
  * Keep the worktree for `fleet land` when it holds work, remove it when the run changed nothing, and say which.
+ * A stopped run that changed nothing keeps it settled for `fleet run --resume` instead, with nothing to land.
  * The run's work is committed onto the task branch first, as a preserve-mode dispatch commits its own, so the branch
- * holds it even if the worktree directory is removed by hand. Returns what was kept, or null when nothing was.
- * Never throws: the run's own outcome stands, and a claim left active is what restart recovery reads as a crash.
+ * holds it even if the worktree directory is removed by hand. Returns what was kept for `fleet land`, or null when
+ * nothing was. Never throws: the run's own outcome stands, and a claim left active is what restart recovery reads as a
+ * crash.
  */
 export function keepFleetTaskWorktree(
 	worktree: TaskWorktree,
-	run: { fleetRootId: string; playbookName: string },
+	run: { fleetRootId: string; playbookName: string; stopped: boolean },
 	onNotice?: (text: string) => void,
 ): FleetKeptWorktree | null {
 	const { fleetRootId } = run;
 	try {
-		if (!taskWorktreeHoldsWork(worktree) && discardIdleTaskWorktree(worktree)) {
-			onNotice?.(`fleet ${fleetRootId} changed nothing; removed its task worktree`);
-			return null;
+		if (!taskWorktreeHoldsWork(worktree)) {
+			if (run.stopped) {
+				settleTaskWorktree(worktree);
+				onNotice?.(
+					`fleet ${fleetRootId} stopped before it changed anything; kept its task worktree ${worktree.path} for fleet run --resume ${fleetRootId}`,
+				);
+				return null;
+			}
+			if (discardIdleTaskWorktree(worktree)) {
+				onNotice?.(`fleet ${fleetRootId} changed nothing; removed its task worktree`);
+				return null;
+			}
 		}
 		let accounted: TaskWorktreePreview | undefined;
 		let commit: string | null = null;

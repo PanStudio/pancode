@@ -863,6 +863,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 		const stop = new AbortController();
 		const args: Parameters<typeof executeFleetRun>[0] = {
 			signal: stop.signal,
+			stopped: () => stop.signal.aborted,
 			plan: preview.plan,
 			playbookName: preview.name,
 			commands: preview.commands,

@@ -771,6 +771,7 @@ async function runFleetTracked(
 					registerEmergencySeal,
 					plan,
 					signal: combined,
+					stopped: () => track.stopCause === "stopped",
 					playbookName: playbook.name,
 					commands,
 					workspaceRoot: process.cwd(),

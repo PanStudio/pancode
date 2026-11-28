@@ -121,7 +121,7 @@ export async function executeFleetRun(input: ExecuteFleetRunInput): Promise<Flee
 	} finally {
 		const kept = keepFleetTaskWorktree(
 			worktree,
-			{ fleetRootId: input.fleetRootId, playbookName: input.playbookName },
+			{ fleetRootId: input.fleetRootId, playbookName: input.playbookName, stopped: input.stopped?.() === true },
 			(text) => input.onNotice?.(text),
 		);
 		if (kept !== null) input.onWorktreeKept?.(kept);

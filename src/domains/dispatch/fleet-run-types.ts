@@ -87,6 +87,11 @@ export interface ExecuteFleetRunInput {
 	/** Cancel the fleet, including queued and running proposals. */
 	signal?: AbortSignal;
 	/**
+	 * True once the run was stopped (`fleet stop`, the board, the main agent): a stopped run stays resumable, so its task
+	 * worktree is kept for `fleet run --resume` even when no step has written to it yet.
+	 */
+	stopped?: () => boolean;
+	/**
 	 * Called synchronously before each step starts. It may abort `signal` (a durable root cancel request), and a step
 	 * whose start finds `signal` aborted is refused before it is announced or launched.
 	 */
