@@ -833,7 +833,7 @@ test("each provider failure names its own way out", () => {
 	match(cut, /The model will not see the partial reply\./u);
 	doesNotMatch(cut, /configure/u);
 	doesNotMatch(providerFailureAdvice({ ...route, stage: "provider", errorClass: "http_503" }), /configure/u);
-	match(providerFailureAdvice(route), /pancode configure --id gw edits this target/u);
+	match(providerFailureAdvice(route), /pancode configure --id gw edits this connection/u);
 });
 
 test("a provider failure leads with a plain sentence and the rail gives the block's way out", () => {
@@ -2572,7 +2572,7 @@ test("Connect asks for a replacement key when the target refused the stored one,
 				damageReason: () => null,
 			},
 		} as never,
-		getSettings: () => ({ targets: [target] }) as never,
+		getSettings: () => ({ connections: [target] }) as never,
 		notify: (_level, text) => notices.push(text),
 		refreshFooter() {},
 		renderContextIsland() {},
