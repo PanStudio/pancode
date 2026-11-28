@@ -58,13 +58,13 @@ import { disableExtension, installExtension } from "../../src/domains/extensions
 import {
 	CLAUDE_AGENT_SDK_VERSION,
 	ClaudeAgentSdkUnavailableError,
-} from "../../src/domains/lifecycle/claude-sdk-install.js";
+} from "../../src/domains/install/claude-sdk-install.js";
 import {
 	COPILOT_SDK_PACKAGE,
 	COPILOT_SDK_VERSION,
 	CopilotSdkUnavailableError,
 	resolveCopilotSdkEntry,
-} from "../../src/domains/lifecycle/copilot-sdk-install.js";
+} from "../../src/domains/install/copilot-sdk-install.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { foldRunDigest } from "../../src/domains/session/run-digest.js";
 import { findPinnedTool, resolveVendoredBinary } from "../../src/lib/programs/index.js";

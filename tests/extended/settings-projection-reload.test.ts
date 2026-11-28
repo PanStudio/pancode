@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type SettingsMutator, updateSettings } from "../../src/core/config.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { createStdioTransport } from "../../src/engine/acp/transport.js";
 import { isolatePancodeEnv, scratchPancodeEnvVars } from "../harness/scratch-env.js";
 

@@ -20,7 +20,7 @@ import { SHARED_SETTINGS_AREAS, type SharedSettingsAreaId, settingsPlacementForP
 import { formatControlValue, orderSettingsEntries, type SettingControl } from "../core/settings-controls.js";
 import { renderUsdLimit } from "../core/telemetry/render.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import { getVersionInfo } from "../domains/lifecycle/version.js";
+import { getVersionInfo } from "../domains/install/version.js";
 import { targetFundingEvidence } from "../domains/providers/funding-evidence.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import {

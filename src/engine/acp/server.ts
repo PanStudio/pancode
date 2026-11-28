@@ -36,7 +36,7 @@ import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { narrowTurnConstraints, snapshotTurnConstraints, turnAllowsTool } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
-import { missingRuntimeComponent } from "../../domains/lifecycle/components.js";
+import { missingRuntimeComponent } from "../../domains/install/components.js";
 import { PROVIDER_PROBE_TIMEOUT_MS } from "../../domains/providers/contract.js";
 import { resolveRuntimeTarget } from "../../domains/providers/runtime-resolution.js";
 import { jobIsComplete } from "../../domains/scheduling/index.js";

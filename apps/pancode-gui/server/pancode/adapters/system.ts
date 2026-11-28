@@ -13,7 +13,7 @@ import {
 	interopProposals,
 	resolveOnPath,
 } from "../../../../../src/domains/interop/index.js";
-import { runDoctor } from "../../../../../src/domains/lifecycle/doctor.js";
+import { runDoctor } from "../../../../../src/domains/install/doctor.js";
 
 export function inspectSystem() {
 	return {

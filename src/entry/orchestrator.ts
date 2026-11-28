@@ -95,13 +95,13 @@ import {
 	isLoadableExtension,
 } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
-import { InteropDomainModule } from "../domains/interop/module.js";
 import {
 	describeUpgradeNotice,
 	ensurePancodeState,
 	takeContainedYoloNotice,
 	takeUpgradeNotice,
-} from "../domains/lifecycle/index.js";
+} from "../domains/install/index.js";
+import { InteropDomainModule } from "../domains/interop/module.js";
 import {
 	createBackgroundCallJournal,
 	createBackgroundMemoryRouting,

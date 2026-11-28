@@ -6,7 +6,7 @@ import {
 	type InvalidAdmissionRecord,
 	repairDispatchAdmissionStore,
 } from "../domains/dispatch/capacity-lease.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 
 const KINDS = [
 	{

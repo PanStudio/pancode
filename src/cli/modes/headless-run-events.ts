@@ -14,7 +14,7 @@ import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface
 import { settledVerifyCall, verifyCallStart } from "../../domains/dispatch/run-findings.js";
 import { resultNotExecuted } from "../../domains/dispatch/tool-stats.js";
 import type { SafetyBlockedAttempt, ToolCallStat } from "../../domains/dispatch/types.js";
-import { describeMissing, missingFromFailedCall } from "../../domains/lifecycle/setup-status.js";
+import { describeMissing, missingFromFailedCall } from "../../domains/install/setup-status.js";
 import { CITATION_CHECK_PREFIX } from "../../domains/safety/citation-grounding.js";
 import { type RunEffectsRecorder, recordToolExecutionEffects } from "../../domains/safety/run-effects.js";
 import { SAFETY_JUDGE_ALLOW_REASON_CODE } from "../../domains/safety/safety-judge.js";

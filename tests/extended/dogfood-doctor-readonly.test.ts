@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { windowsCredentialsFinding } from "../../src/domains/lifecycle/doctor.js";
+import { windowsCredentialsFinding } from "../../src/domains/install/doctor.js";
 import { FileAuthStorageBackend } from "../../src/domains/providers/auth/backend-file.js";
 import { openAuthStorage } from "../../src/domains/providers/auth/index.js";
 

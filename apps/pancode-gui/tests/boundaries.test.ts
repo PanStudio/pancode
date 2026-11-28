@@ -42,8 +42,8 @@ const httpModules = new Map([
 	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
 	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],
 	["src/core/process-identity.ts", new Set(["processAlive", "processBirthToken"])],
-	["src/domains/lifecycle/install-method.ts", new Set(["readInstallerRecord"])],
-	["src/domains/lifecycle/version.ts", new Set(["getVersionInfo"])],
+	["src/domains/install/install-method.ts", new Set(["readInstallerRecord"])],
+	["src/domains/install/version.ts", new Set(["getVersionInfo"])],
 	// The approval card reads the scope out of the session option the engine names with this prefix.
 	["src/domains/safety/escape-scope.ts", new Set(["ESCAPE_SCOPE_OPTION_PREFIX"])],
 	// A file preview withholds the same secret names the agent's read tool and shell sandbox refuse.
@@ -83,8 +83,8 @@ const adapters = new Set([
 	"src/domains/report/dialog-flow.ts",
 	// The bundle builder and offer rules for the Attach step and the offer notice, through the domain's index.
 	"src/domains/report/index.ts",
-	"src/domains/lifecycle/doctor.ts",
-	"src/domains/lifecycle/setup-status.ts",
+	"src/domains/install/doctor.ts",
+	"src/domains/install/setup-status.ts",
 	"src/domains/resources/hub-inventory.ts",
 	"src/domains/resources/hub-actions.ts",
 	"src/domains/extensions/state.ts",

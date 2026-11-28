@@ -15,7 +15,7 @@ import {
 	sisterRepositoryRoot,
 	sisterRepositoryRules,
 } from "../context/sister-repository.js";
-import { ensureClaudeAgentSdk } from "../lifecycle/claude-sdk-install.js";
+import { ensureClaudeAgentSdk } from "../install/claude-sdk-install.js";
 import { resolveClaudeLaunchCredential } from "../providers/auth/index.js";
 import { targetRequiresAuth } from "../providers/index.js";
 import { type WorkerMcpAttestation, workerPermissionModeForPermit } from "../safety/worker-permit.js";

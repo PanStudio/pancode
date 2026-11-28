@@ -5,19 +5,19 @@ import {
 	PLAYWRIGHT_CORE_PACKAGE,
 	PLAYWRIGHT_CORE_VERSION,
 	resolveBrowserComponent,
-} from "../domains/lifecycle/browser-component.js";
+} from "../domains/install/browser-component.js";
 import {
 	CLAUDE_AGENT_SDK_PACKAGE,
 	CLAUDE_AGENT_SDK_VERSION,
 	installClaudeAgentSdk,
 	resolveClaudeAgentSdkEntry,
-} from "../domains/lifecycle/claude-sdk-install.js";
+} from "../domains/install/claude-sdk-install.js";
 import {
 	COPILOT_SDK_PACKAGE,
 	COPILOT_SDK_VERSION,
 	installCopilotSdk,
 	resolveCopilotSdkEntry,
-} from "../domains/lifecycle/copilot-sdk-install.js";
+} from "../domains/install/copilot-sdk-install.js";
 import { describeYaziProfile, inspectCurrentYaziProfile, resetYaziProfile } from "../domains/mux/index.js";
 import {
 	describeFloorRejection,

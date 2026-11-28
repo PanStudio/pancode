@@ -6,7 +6,7 @@ import { userInfo } from "node:os";
 import { parse as parseYaml } from "yaml";
 import type { PancodeSettings } from "../core/config.js";
 import { settingsPath, updateSettings } from "../core/config.js";
-import type { Candidate } from "../domains/lifecycle/setup-status.js";
+import type { Candidate } from "../domains/install/setup-status.js";
 import { openAuthStorage, resolveAuthTarget, targetRequiresAuth } from "../domains/providers/auth/index.js";
 import { detectCopilotLogin } from "../domains/providers/copilot-setup.js";
 import { isOrchestratorEligibleRuntime } from "../domains/providers/eligibility.js";

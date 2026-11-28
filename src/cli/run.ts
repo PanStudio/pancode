@@ -862,7 +862,7 @@ async function runDispatch(
 	const { configureRunEventJournal } = await import("../domains/dispatch/run-event-journal.js");
 	const { WORKER_PROCESS_CLEANUP_BOUND_MS } = await import("../domains/dispatch/worker-spawn.js");
 	const { ExtensionsDomainModule } = await import("../domains/extensions/module.js");
-	const { ensurePancodeState } = await import("../domains/lifecycle/index.js");
+	const { ensurePancodeState } = await import("../domains/install/index.js");
 	const { buildDispatchMemorySection } = await import("../domains/memory/index.js");
 	const { createPromptsDomainModule } = await import("../domains/prompts/module.js");
 	const { resolveEffectivePricing } = await import("../domains/providers/catalog.js");

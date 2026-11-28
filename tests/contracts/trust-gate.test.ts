@@ -20,8 +20,8 @@ import {
 	workspaceTrustDirectory,
 } from "../../src/core/workspace-trust.js";
 import { disableExtension, installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
+import { runDoctorHarnessChecks } from "../../src/domains/install/doctor.js";
 import { INTEROP_AGENT_KINDS } from "../../src/domains/interop/registry.js";
-import { runDoctorHarnessChecks } from "../../src/domains/lifecycle/doctor.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
 import { loadUserHooks, userHookToRegistration } from "../../src/domains/middleware/hooks.js";
 import { buildUserHookRegistrations, spawnSyncCommandRunner } from "../../src/domains/middleware/hooks-io.js";

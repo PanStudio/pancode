@@ -11,7 +11,7 @@ import {
 	browserComponentInstallable,
 	installBrowserComponent,
 	resolveBrowserComponent,
-} from "../../domains/lifecycle/browser-component.js";
+} from "../../domains/install/browser-component.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { ImageContent } from "../../engine/types.js";
 import { prepareBoundedImage } from "../file-references.js";

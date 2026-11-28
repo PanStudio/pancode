@@ -16,7 +16,7 @@ import type { JobRecord } from "../core/job-types.js";
 import { presentationTier } from "../core/presentation-tier.js";
 import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
 import type { ContextState } from "../domains/context/index.js";
-import { type Missing, missingFromTargetStatus } from "../domains/lifecycle/setup-status.js";
+import { type Missing, missingFromTargetStatus } from "../domains/install/setup-status.js";
 import type { TaskMemoryOperatorStatus } from "../domains/memory/index.js";
 import type { ProvidersContract, RuntimeTier, TargetHealthStatus, TargetStatus } from "../domains/providers/index.js";
 import { modelResidencyForStatus, resolveModelRuntimeCapabilitiesForProviders } from "../domains/providers/index.js";

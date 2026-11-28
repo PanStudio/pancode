@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { activatedPackageRoot, pendingInstalledVersion } from "../../src/core/running-build.js";
-import { describeTracking } from "../../src/domains/lifecycle/install-plan.js";
+import { describeTracking } from "../../src/domains/install/install-plan.js";
 
 const helper = fileURLToPath(new URL("../../scripts/native-install.cjs", import.meta.url));
 const lifecycle = createRequire(import.meta.url)(helper) as {

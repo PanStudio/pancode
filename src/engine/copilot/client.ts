@@ -17,7 +17,7 @@ import type { ChildProcess } from "node:child_process";
 import type { CopilotClient, ModelInfo } from "@github/copilot-sdk";
 import { COPILOT_HEADLESS_LOGIN_FIX, copilotKeychainAllowed } from "../../core/copilot-keychain.js";
 import { THINKING_LEVELS, type ThinkingLevel } from "../../core/views/thinking-levels.js";
-import type { COPILOT_SDK_VERSION } from "../../domains/lifecycle/copilot-sdk-install.js";
+import type { COPILOT_SDK_VERSION } from "../../domains/install/copilot-sdk-install.js";
 import { type CopilotSdkModule, loadCopilotSdk } from "./sdk-module.js";
 import { copilotSessionFsConfig } from "./session-fs.js";
 

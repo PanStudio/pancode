@@ -7,7 +7,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { HPC_TOOLS, hpcToolchainFindings } from "../../src/cli/doctor-hpc.js";
 import { pdfAttachmentFinding } from "../../src/cli/doctor-toolchain.js";
-import { formatDoctorReport } from "../../src/domains/lifecycle/doctor.js";
+import { formatDoctorReport } from "../../src/domains/install/doctor.js";
 import { popplerInstallHint } from "../../src/tools/read-documents/pdf.js";
 
 let root: string;

@@ -40,7 +40,7 @@ import { ToolNames } from "../core/tool-names.js";
 import { toolSpecPlacement } from "../core/tool-surface.js";
 import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
 import { asRecord } from "../core/type-guards.js";
-import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import { describeMissing } from "../domains/install/setup-status.js";
 import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
 import { ceilChars } from "../domains/session/context-accounting.js";

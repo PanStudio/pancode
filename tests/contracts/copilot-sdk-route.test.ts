@@ -636,7 +636,7 @@ test("the copilot-sdk route sends no other client's identity anywhere", () => {
 		...filesUnder("src/engine/copilot"),
 		...filesUnder("src/domains/providers/runtimes/copilot"),
 		"src/domains/providers/copilot-setup.ts",
-		"src/domains/lifecycle/copilot-sdk-install.ts",
+		"src/domains/install/copilot-sdk-install.ts",
 	];
 	for (const file of files) {
 		const source = readFileSync(file, "utf8");

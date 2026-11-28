@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { tmpdir } from "node:os";
 import { runCommandVector } from "../core/safe-exec.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { resolveOnPath } from "../domains/interop/detect.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import {
 	describeYaziProfile,
 	ensureYaziProfile,

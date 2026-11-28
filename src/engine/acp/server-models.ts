@@ -9,7 +9,7 @@
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { mainShellContained, yoloShellState } from "../../core/sandbox/main-session.js";
 import { THINKING_LEVELS, type ThinkingLevel } from "../../core/views/thinking-levels.js";
-import { missingRuntimeComponent } from "../../domains/lifecycle/components.js";
+import { missingRuntimeComponent } from "../../domains/install/components.js";
 import type { ProvidersContract } from "../../domains/providers/contract.js";
 import { isOrchestratorEligibleRuntime } from "../../domains/providers/eligibility.js";
 import { modelIdsForStatus } from "../../domains/providers/model-discovery.js";

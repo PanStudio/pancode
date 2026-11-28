@@ -11,7 +11,7 @@
  */
 
 import { compatibilityVersion } from "../../core/build-info.js";
-import { getVersionInfo } from "../lifecycle/version.js";
+import { getVersionInfo } from "../install/version.js";
 
 const MAX_RANGE_CHARS = 256;
 

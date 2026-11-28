@@ -584,7 +584,7 @@ export async function runHomes(): Promise<NonNullable<ExtensionWorkOptions["home
 		{ OPERATOR_TOOLS_ENV, operatorToolchainRoot },
 		{ loadRunDigest },
 	] = await Promise.all([
-		import("../domains/lifecycle/components.js"),
+		import("../domains/install/components.js"),
 		import("../lib/programs/paths.js"),
 		import("../domains/session/run-digest.js"),
 	]);
@@ -618,7 +618,7 @@ function cliServiceDomains(): { providers: () => Promise<ProvidersContract>; sto
 					import("../domains/providers/module.js"),
 					import("../domains/session/module.js"),
 					import("../domains/telemetry/module.js"),
-					import("../domains/lifecycle/index.js"),
+					import("../domains/install/index.js"),
 				]);
 				ensurePancodeState();
 				return loadDomains([ConfigDomainModule, ProvidersDomainModule, SessionDomainModule, TelemetryDomainModule]);

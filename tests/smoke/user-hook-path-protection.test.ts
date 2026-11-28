@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import {
 	closeServer,
 	type OpenAICompatToolCallScript,

@@ -12,7 +12,7 @@ import {
 	runDoctorHarnessChecks,
 	runDoctorModelChecks,
 	withDoctorCommand,
-} from "../../src/domains/lifecycle/doctor.js";
+} from "../../src/domains/install/doctor.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
