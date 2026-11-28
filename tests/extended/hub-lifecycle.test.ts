@@ -146,7 +146,7 @@ function cli(args: string[]): { code: number; json: Record<string, unknown> } {
 	return { code: result.status ?? 1, json: JSON.parse(text) };
 }
 
-describe("PanHub lifecycle plans", () => {
+describe("The hub lifecycle plans", () => {
 	it("lifecycle receipts retain committed identity", () => {
 		const name = "telemetry-lifecycle";
 		const first = source({ name, version: "1.0.0" });

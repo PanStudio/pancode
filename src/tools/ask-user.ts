@@ -9,6 +9,7 @@ import { isPlanCloseQuestion } from "../core/plan-request.js";
 import { safeResourceWriteAsync } from "../core/safe-resource-write.js";
 import { stripSkillInstallOfferTag } from "../core/skill-activation.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import { isRecord } from "../core/type-guards.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { classifyDecisionPresentation, decisionFactsForAnswer } from "../domains/safety/decision-presentation.js";
@@ -24,7 +25,6 @@ import type {
 	ScriptedAnswerSource,
 	ToolInvokeOptions,
 } from "./registry-contract.js";
-import { effectiveToolCall } from "./surface.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 const MAX_DECISIONS = 24;

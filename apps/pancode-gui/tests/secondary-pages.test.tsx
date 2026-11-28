@@ -444,20 +444,20 @@ for (const path of ["/research", "/arena"]) {
 	});
 }
 
-test("Skills opens with the settings rail, as PanHub beside it does", () => {
+test("Skills opens with the settings rail, as the hub beside it does", () => {
 	assert.ok(isSettingsPath("/skills"));
 	assert.ok(isSettingsPath("/hub"));
 	assert.ok(!isSettingsPath("/sessions/s1"));
 });
 
-test("a direct load of PanHub or System opens the settings rail; reached from the work rail they keep it (gui-verify 3)", () => {
+test("a direct load of the hub or System opens the settings rail; reached from the work rail they keep it (gui-verify 3)", () => {
 	for (const path of ["/hub", "/system", "/system/interop", "/toolchain", "/settings/safety"]) {
 		assert.ok(showsSettingsRail(path, undefined), `${path} loads on the settings rail`);
 		assert.ok(showsSettingsRail(path, true), `${path} keeps the settings rail`);
 	}
 	assert.ok(!showsSettingsRail("/hub", false));
 	assert.ok(!showsSettingsRail("/system/interop", false));
-	assert.ok(showsSettingsRail("/toolchain", false), "only PanHub and System are linked from the work rail");
+	assert.ok(showsSettingsRail("/toolchain", false), "only the hub and System are linked from the work rail");
 	assert.ok(!showsSettingsRail("/sessions/s1", undefined));
 	assert.ok(!showsSettingsRail("/", true));
 });

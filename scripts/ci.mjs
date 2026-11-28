@@ -25,7 +25,7 @@ import { buildRelease } from "./release/build.mjs";
 import { hostTarget } from "./release/bundle.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-// lint holds the PanHub pins (check-hygiene runs `pin-hub.ts --check`).
+// lint holds the hub pins (check-hygiene runs `pin-hub.ts --check`).
 const CHECKS = ["typecheck:compare", "lint", "check:gui"];
 
 function pnpmScript(script) {

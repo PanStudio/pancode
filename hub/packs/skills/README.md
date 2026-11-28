@@ -1,7 +1,7 @@
 # PanCode skill packages
 
 This tree contains reviewed skill instructions and authoring evidence. Complete
-packages participate in the same [PanHub](../../../docs/guide/panhub.md) as
+packages participate in the same [hub](../../../docs/guide/panhub.md) as
 plugins, agents, prompts and playbooks. Bundling a package does not activate it.
 Inside a detected PanCode source checkout, the two self-development skills described
 below are also available directly from their authoring directories.
@@ -11,7 +11,7 @@ package includes the whole `hub/` tree, with this directory and the
 `hub/index.yaml` index.
 The index points to these bundled directories relative to its own location,
 so discovery and installation work from a source checkout or an installed
-package without fetching PanHub from GitHub. Skill source URLs point
+package without fetching the hub from GitHub. Skill source URLs point
 back to this repository; they do not replace the bundled package source.
 
 ## Install and use
@@ -36,7 +36,7 @@ PanCode extensions do not contribute skills.
 
 Installations, updates and active resource trees belong to the operator. Models
 may draft outside active roots and inspect or validate the result, but recognized
-model shell mutations of PanHub packs are refused at every autonomy level.
+model shell mutations of hub packs are refused at every autonomy level.
 Interactive offers commit only after the bound operator answer. Skill tool
 restrictions last for the session until replaced or cleared with `/skill off`;
 worker activations remain scoped to their run. A skill can narrow tools but never

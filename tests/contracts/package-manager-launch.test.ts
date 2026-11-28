@@ -4,7 +4,7 @@ import { deepStrictEqual, throws } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { packageManagerLaunch } from "../../src/core/self-update.js";
 import { fleetPackLaunch } from "../../src/domains/dispatch/fleet-node-install.js";
-import { pnpmAddLaunch } from "../../src/domains/lifecycle/deferred-update.js";
+import { pnpmAddLaunch } from "../../src/domains/install/deferred-update.js";
 
 describe("packageManagerLaunch", () => {
 	it("runs pnpm directly off Windows", () => {

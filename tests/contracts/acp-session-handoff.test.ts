@@ -3,6 +3,8 @@
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { realpathSync } from "node:fs";
 import { test } from "node:test";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import type { DomainContext } from "../../src/core/domain-loader.js";
 import { collectSessionEntries } from "../../src/domains/session/compaction/session-entries.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
@@ -15,8 +17,6 @@ import {
 	type HandoffServiceDeps,
 	prepareHandoff,
 } from "../../src/domains/session/handoff-service.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { openSession, sessionPaths } from "../../src/engine/session.js";
 import type { AgentMessage } from "../../src/engine/types.js";
 import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";

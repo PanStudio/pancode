@@ -9,7 +9,7 @@ import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import type { AgentsContract } from "../../src/domains/agents/index.js";
 import { AgentsDomainModule } from "../../src/domains/agents/module.js";
 import { ConfigDomainModule } from "../../src/domains/config/module.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { createPromptsDomainModule } from "../../src/domains/prompts/module.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import { ResourcesDomainModule } from "../../src/domains/resources/module.js";

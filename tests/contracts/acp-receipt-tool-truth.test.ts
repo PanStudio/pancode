@@ -5,14 +5,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createAntigravityShims } from "../../src/acp/antigravity-shims.js";
+import { AcpEventMapper } from "../../src/acp/event-mapper.js";
+import type { AcpToolCallUpdate } from "../../src/acp/types.js";
 import { DEFAULT_SETTINGS, type WorkerPermissionMode } from "../../src/core/defaults.js";
 import type { DomainContractMap, DomainName } from "../../src/core/domain-loader.js";
 import type { DispatchBundleOptions } from "../../src/domains/dispatch/extension.js";
 import type { SpawnedWorker } from "../../src/domains/dispatch/worker-spawn.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
-import { createAntigravityShims } from "../../src/engine/acp/antigravity-shims.js";
-import { AcpEventMapper } from "../../src/engine/acp/event-mapper.js";
-import type { AcpToolCallUpdate } from "../../src/engine/acp/types.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

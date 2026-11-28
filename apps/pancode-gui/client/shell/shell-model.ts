@@ -254,7 +254,7 @@ export function isSettingsPath(pathname: string): boolean {
 }
 
 /**
- * Whether the sidebar shows the settings rail. PanHub and System are also linked from the work rail, and reached
+ * Whether the sidebar shows the settings rail. The hub and System are also linked from the work rail, and reached
  * from there they keep it; `previous` is the rail the last route showed. A direct load or reload has no previous
  * rail, so it opens on the settings rail that lists them (gui-verify 3).
  */
@@ -346,7 +346,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		group: "settings",
 		owns: ["/settings", "/settings/advanced", "/settings/effective", "/settings/why"],
 	},
-	{ id: "hub", label: "PanHub", path: "/hub", icon: "skills", group: "capabilities", owns: ["/hub"] },
+	{ id: "hub", label: "Hub", path: "/hub", icon: "skills", group: "capabilities", owns: ["/hub"] },
 	{
 		id: "toolchain",
 		label: "Toolchain",

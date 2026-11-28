@@ -10,7 +10,7 @@
  * evidence. It downloads every asset of the latest release, hashes the bytes
  * that crossed the network, and reads `herdr api schema --json` from the asset
  * for the running platform to say whether any wire method PanCode sends is gone.
- * It prints the values `src/domains/toolchain/registry.ts` needs and edits
+ * It prints the values `src/lib/programs/registry.ts` needs and edits
  * nothing: moving a pin is a reviewed change, not a side effect of a check.
  *
  * Exit 0 when the pin is current or the newer release keeps every method;
@@ -23,7 +23,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentToolPlatform, findPinnedTool } from "../src/domains/toolchain/registry.js";
+import { currentToolPlatform, findPinnedTool } from "../src/lib/programs/registry.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RELEASES = "https://api.github.com/repos/herdrdev/herdr/releases/latest";

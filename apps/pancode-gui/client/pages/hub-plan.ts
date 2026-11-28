@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-// Sentences for PanHub catalog and its reviewed plans. Pure, so the wording is testable without a browser.
+// Sentences for the hub catalog and its reviewed plans. Pure, so the wording is testable without a browser.
 
 import type { Static } from "typebox";
 import { type HubOriginShape, hubCopyStateWords, hubOriginLabel } from "../../../../src/core/views/hub-words.js";

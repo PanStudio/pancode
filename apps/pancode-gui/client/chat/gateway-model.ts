@@ -8,7 +8,7 @@
  * gateway; a chain lists each step on its own line.
  *
  * The ACP server already titles an op=call with its capability
- * (src/engine/acp/server-tool-updates.ts), but `rawInput` stays the wire arguments, so the
+ * (src/acp/server-tool-updates.ts), but `rawInput` stays the wire arguments, so the
  * capability's own arguments are read from `rawInput.args` here. A replayed or
  * older item titled `gateway` is unwrapped the same way. The client cannot
  * import root `src/`, which holds the canonical unwrap (`src/tools/gateway-display.ts`);

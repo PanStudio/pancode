@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { resolve } from "node:path";
 import type { ShareImportPlan } from "./archive.js";
-import type { ShareContract } from "./contract.js";
+import type { ShareArchiver } from "./archiver.js";
 
 /**
  * `/archive export` and `/archive import` as every host wires them: paths
@@ -10,7 +10,7 @@ import type { ShareContract } from "./contract.js";
  * dry run plans without writing. The terminal and ACP hosts both bind this, so
  * a GUI archive and a terminal archive are the same archive.
  */
-export function archiveCommandHost(share: ShareContract | undefined): {
+export function archiveCommandHost(share: ShareArchiver | undefined): {
 	exportShareArchive(outPath: string): { fileCount: number; path: string };
 	importShareArchive(archivePath: string, options: { dryRun?: boolean; force?: boolean }): ShareImportPlan;
 } {

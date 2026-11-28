@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "node:test";
 import { mcpCommandOutput } from "../../src/cli/mcp.js";
-import { MCP_USER_CONFIG_FILENAME } from "../../src/domains/gateway/mcp/index.js";
+import { MCP_USER_CONFIG_FILENAME } from "../../src/domains/mcp/index.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 it("mcp list never displays an mcp.yaml env token value", () => {

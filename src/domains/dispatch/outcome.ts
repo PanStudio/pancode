@@ -11,7 +11,7 @@
  */
 
 import type { RunBoundKind, RunTerminalReason } from "../../core/telemetry/enums.js";
-import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../worker/spec-contract.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../lib/worker-wire/spec-contract.js";
 import type { AbortReason } from "./contract.js";
 import type { Obligation } from "./obligation.js";
 import type { RunOutcome, RunOutcomeCode, RunStatus } from "./types.js";

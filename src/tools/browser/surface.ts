@@ -7,7 +7,7 @@ import {
 	BROWSER_INSTALL_COMMAND,
 	PLAYWRIGHT_CORE_VERSION,
 	resolveBrowserComponent,
-} from "../../domains/lifecycle/browser-component.js";
+} from "../../domains/install/browser-component.js";
 import { StringEnum } from "../../engine/ai.js";
 import type { ToolSurface } from "../lazy-tool.js";
 import type { ToolConfirmation, ToolConfirmationContext } from "../tool-spec.js";

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { PassThrough } from "node:stream";
-import type { AcpCommandHost } from "../../src/engine/acp/commands.js";
-import { type AcpJsonRpcPeerTransport, createStdioServerTransport } from "../../src/engine/acp/transport.js";
+import type { AcpCommandHost } from "../../src/acp/commands.js";
+import { type AcpJsonRpcPeerTransport, createStdioServerTransport } from "../../src/acp/transport.js";
 
 /** A JSON-RPC error frame the server wrote, thrown by `stdioPeer().call`. */
 class AcpWireError extends Error {

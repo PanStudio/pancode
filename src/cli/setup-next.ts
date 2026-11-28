@@ -7,8 +7,8 @@
  */
 import { readSettings } from "../core/config.js";
 import { readPancodeVersion } from "../core/package-root.js";
-import type { Candidate } from "../domains/lifecycle/setup-status.js";
-import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import type { Candidate } from "../domains/install/setup-status.js";
+import { describeMissing } from "../domains/install/setup-status.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 
 const INDENT = "       ";

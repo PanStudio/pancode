@@ -24,8 +24,8 @@ import {
 	mcpOAuthScopes,
 	parseWwwAuthenticate,
 	storeMcpOAuthGrant,
-} from "../../src/domains/gateway/mcp/index.js";
-import { mcpOAuthLogin } from "../../src/domains/gateway/mcp/oauth-login.js";
+} from "../../src/domains/mcp/index.js";
+import { mcpOAuthLogin } from "../../src/domains/mcp/oauth-login.js";
 import { AuthStorage, InMemoryAuthStorageBackend } from "../../src/domains/providers/auth/index.js";
 
 const RS = "https://rs.example";

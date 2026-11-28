@@ -28,7 +28,7 @@ import {
 } from "../plugins/index.js";
 import type { HubEntryKind } from "./hub-types.js";
 
-/** PanHub-only projection: a standalone extension never acquires a plugin.json or plugin install record. */
+/** Hub-only projection: a standalone extension never acquires a plugin.json or plugin install record. */
 function extensionManifest(entry: Pick<InstalledExtension, "id" | "version" | "description">): PluginManifest {
 	return {
 		$schema: "",
@@ -55,12 +55,12 @@ export function readHubManifest(root: string): PluginCandidate {
 		...(candidate.valid ? { contentDigest: pluginContentDigest(root) } : {}),
 	};
 }
-/** An installed package as PanHub lists it; an extension copy also names the plugin it serves. */
+/** An installed package as the hub lists it; an extension copy also names the plugin it serves. */
 export type HubInstalledPackage = InstalledPlugin & { plugin?: string };
 
-/** PanHub lists installed packages; a dev package is a session overlay and never one of them. */
+/** The hub lists installed packages; a dev package is a session overlay and never one of them. */
 export function extensionHubCopy(entry: InstalledExtension): HubInstalledPackage {
-	if (entry.scope === "dev") throw new Error(`dev extension ${entry.id} is not a PanHub pack`);
+	if (entry.scope === "dev") throw new Error(`dev extension ${entry.id} is not a hub pack`);
 	const { provenance, overriddenBy, ...rest } = entry;
 	return {
 		...rest,

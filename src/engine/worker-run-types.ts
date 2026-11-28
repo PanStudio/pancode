@@ -21,16 +21,16 @@ import type {
 	WorkerMcpAttestation,
 	WorkerPermitAllowance,
 } from "../domains/safety/worker-permit.js";
-import type { createMcpCapabilitySource } from "../tools/gateway/mcp-capabilities.js";
-import type { ToolProfileName } from "../tools/profiles.js";
-import type { TaskWorktree } from "../tools/task-worktree.js";
-import type { AgentLedgerPort, WorkerExtensionHook, WorkerGrantRequestFrame } from "../worker/protocol.js";
+import type { AgentLedgerPort, WorkerExtensionHook, WorkerGrantRequestFrame } from "../lib/worker-wire/protocol.js";
 import type {
 	WorkerBudget,
 	WorkerEscalationConfig,
 	WorkerPromptMessage,
 	WorkerProtectedArtifactState,
-} from "../worker/spec-contract.js";
+} from "../lib/worker-wire/spec-contract.js";
+import type { createMcpCapabilitySource } from "../tools/gateway/mcp-capabilities.js";
+import type { ToolProfileName } from "../tools/profiles.js";
+import type { TaskWorktree } from "../tools/task-worktree.js";
 import type { WorkerDecisionBinding } from "../worker/stdin-demux.js";
 import type { AgentEvent, AgentMessage } from "./types.js";
 import type { PancodeWorkerEvent } from "./worker-events.js";

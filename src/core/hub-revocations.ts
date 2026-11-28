@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The pack digests PanHub has revoked: the union of `revoked` in the bundled
+ * The pack digests the hub has revoked: the union of `revoked` in the bundled
  * `hub/index.yaml` and in the last verified remote index, kept in
  * `<stateDir>/hub-trust.json`. Both loaders read this on every listing, so it
  * imports only core modules and re-parses a file only when its bytes change.

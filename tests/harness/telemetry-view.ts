@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createAcpLiveTelemetry } from "../../src/acp/live-telemetry.js";
 import type { AgentRole, Disposition } from "../../src/core/telemetry/enums.js";
 import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
@@ -20,7 +21,6 @@ import { callsReport, sessionTelemetry } from "../../src/domains/telemetry/read-
 import { runsReport } from "../../src/domains/telemetry/read-model-runs.js";
 import type { JournalSource } from "../../src/domains/telemetry/read-model-sources.js";
 import { createLiveTelemetryModel, telemetryView } from "../../src/domains/telemetry/telemetry-live.js";
-import { createAcpLiveTelemetry } from "../../src/engine/acp/live-telemetry.js";
 import { dispatchRunUsage } from "../../src/interactive/dispatch-board-store.js";
 import type { DispatchRunUsage } from "../../src/interactive/dispatch-row-model.js";
 

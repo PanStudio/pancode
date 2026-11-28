@@ -8,16 +8,16 @@
  * and the approvals `mcp-trust.json` holds for them. Activation is the context
  * tool's, which launches the server, fetches the skill and verifies it.
  */
-import type { McpServerScope } from "../../gateway/mcp/config.js";
-import { mcpCatalogDigest } from "../../gateway/mcp/remote-credentials.js";
-import { type McpAttestedSkill, type McpRecordedSkill, readMcpSkillCatalog } from "../../gateway/mcp/skill-catalog.js";
-import { mcpSkillDisplayNames } from "../../gateway/mcp/skills.js";
+import type { McpServerScope } from "../../mcp/config.js";
+import { mcpCatalogDigest } from "../../mcp/remote-credentials.js";
+import { type McpAttestedSkill, type McpRecordedSkill, readMcpSkillCatalog } from "../../mcp/skill-catalog.js";
+import { mcpSkillDisplayNames } from "../../mcp/skills.js";
 import {
 	canonicalProjectRoot,
 	judgeMcpSkillApproval,
 	mcpSkillApprovalsFor,
 	resolveMcpServers,
-} from "../../gateway/mcp/trust.js";
+} from "../../mcp/trust.js";
 import type { ResourceDiagnostic } from "../collision.js";
 
 export type { McpAttestedSkill };

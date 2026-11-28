@@ -37,10 +37,10 @@ import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine
 import { isSubset, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
 import { openStoreBackend } from "../../src/domains/store/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { parseWorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { dispatchRequestsFromArgs } from "../../src/tools/dispatch-arguments.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { createStoreTool, storeAdmissionFacts } from "../../src/tools/store/store-tool.js";
-import { parseWorkerSpec } from "../../src/worker/spec-contract.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

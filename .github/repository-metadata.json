@@ -1,5 +1,5 @@
 {
-	"description": "PanCode is the harness for development work, with knowledge work through PanHub packs, skills and MCP servers. It routes tasks across any provider, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, and brings the coding agents you already use under one harness through ACP and delegation.",
+	"description": "PanCode is the harness for development work, with knowledge work through hub packs, skills and MCP servers. It routes tasks across any provider, sandboxes commands, checks finished work against what ran, keeps memory and runs fleets of workers, and brings the coding agents you already use under one harness through ACP and delegation.",
 	"homepage": "https://pancode.dev",
 	"topics": [
 		"agent-client-protocol",

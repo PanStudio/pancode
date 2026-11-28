@@ -7,7 +7,7 @@ import type { SafetyDecision } from "../domains/safety/contract.js";
 import { describeCallTarget } from "../lib/call-target/call-target.js";
 import { redactCommandOutputSecrets } from "../lib/secrets/redact.js";
 import { redactSecretString } from "../lib/secrets/redaction.js";
-import { WORKER_REFUSAL_LIMIT_PREFIX } from "../worker/spec-contract.js";
+import { WORKER_REFUSAL_LIMIT_PREFIX } from "../lib/worker-wire/spec-contract.js";
 
 const REFUSED_COMMAND_MAX_CHARS = 200;
 

@@ -15,10 +15,14 @@ import { createProvidersBundle } from "../../src/domains/providers/extension.js"
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type { AgentMessage } from "../../src/engine/types.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
+import {
+	parseWorkerSpec,
+	WORKER_SPEC_VERSION_SKEW,
+	workerSpecToolNames,
+} from "../../src/lib/worker-wire/spec-contract.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { resolvedDispatchPlanFromArgs } from "../../src/tools/dispatch-plan.js";
 import { CODE_NAV_TASK_STEERING, codeNavTaskSteering } from "../../src/tools/profiles.js";
-import { parseWorkerSpec, WORKER_SPEC_VERSION_SKEW, workerSpecToolNames } from "../../src/worker/spec-contract.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { startGatewayThinkingFixture } from "../harness/gateway-thinking-fixture.js";

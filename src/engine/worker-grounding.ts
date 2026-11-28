@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import path from "node:path";
+import { CHAIN_OUTPUT_TRUNCATED_MARKER, type GatewayChainReceipt } from "../core/tool-surface.js";
 import type { ObservedReadRanges } from "../domains/agents/result-contract-types.js";
-import { CHAIN_OUTPUT_TRUNCATED_MARKER, type GatewayChainReceipt } from "../tools/surface.js";
 
 export interface ReadCitationRequest {
 	path: string;

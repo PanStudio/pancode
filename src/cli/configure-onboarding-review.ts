@@ -3,7 +3,7 @@
 import chalk from "chalk";
 import { isLoopbackUrl } from "../core/project-target-urls.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { backgroundPackageRoot } from "../domains/lifecycle/install-plan.js";
+import { backgroundPackageRoot } from "../domains/install/install-plan.js";
 import { authStoragePath } from "../domains/providers/auth/index.js";
 import { observeHostCapacityFacts, resolveLocalConcurrency } from "../domains/scheduling/local-capacity.js";
 import type { ChatTestOutcome, SendChatTest } from "./chat-test.js";

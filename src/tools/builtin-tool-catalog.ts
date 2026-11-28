@@ -175,7 +175,7 @@ const TOOL_METADATA: Readonly<Record<string, ToolMetadata>> = {
 		examples: [
 			{ goal: "Find review workflows and specialists with their readiness and invocation", args: { query: "review" } },
 		],
-		uiLabel: "PanHub",
+		uiLabel: "Hub",
 		resultSizePolicy: observePolicy(
 			OBSERVE_SELF_CAPS.contextHub,
 			"Use kind, query, or ref to narrow the rows, or follow nextOffset.",

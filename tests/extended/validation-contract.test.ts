@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { validationContractFinding } from "../../src/cli/doctor-validation-contract.js";
+import { discoverVerifierAuthoring } from "../../src/cli/verifier-authoring.js";
 import { resolveRigor, rigorResolution } from "../../src/domains/safety/rigor.js";
 import {
 	loadValidationContract,
 	parseValidationContractText,
 	VALIDATION_CONTRACT_CAPS,
 } from "../../src/domains/safety/validation-contract.js";
-import { discoverVerifierAuthoring } from "../../src/tools/verify/authoring.js";
 
 /** The example contract from docs/process/scientific-validation.md, verbatim. */
 const DOCUMENTED_EXAMPLE = `version: 1

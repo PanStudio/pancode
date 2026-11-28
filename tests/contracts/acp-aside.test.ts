@@ -3,10 +3,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { type AcpAsideControl, projectAsideAnswer, projectDraftOutcome } from "../../src/engine/acp/aside.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { type AcpAsideControl, projectAsideAnswer, projectDraftOutcome } from "../../src/acp/aside.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 
 /**
  * `/btw` and `/draft` over ACP: out-of-turn rounds that answer the operator

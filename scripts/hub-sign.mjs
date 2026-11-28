@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub index signing tool, run by CI with a certified signing key.
+ * The hub index signing tool, run by CI with a certified signing key.
  *
  *   keygen --out <dir>
  *          write a signing key pair as <dir>/hub-signing.key.pem (mode 0600) and <dir>/hub-signing.pub, and

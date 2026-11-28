@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import { operatorMessagesForJudge } from "../../src/entry/safety-judge-host.js";
 import { createTurnPersistence } from "../../src/session-control/turn-persistence.js";
 

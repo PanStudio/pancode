@@ -4,8 +4,8 @@ import type { PendingSkillRequest, PendingSkillToolPolicy, SkillSurfaceChange } 
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { MiddlewareToolChoiceControl } from "../domains/middleware/index.js";
 import type { RetrySettings } from "../domains/session/retry.js";
-import type { TurnFailureRecord } from "../domains/turn-control/outcome.js";
 import type { EngineAgentHandle, EngineAgentOptions } from "../engine/agent.js";
+import type { TurnFailureRecord } from "../lib/turn-control/outcome.js";
 import type { HeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions } from "../tools/registry-contract.js";
 import type {

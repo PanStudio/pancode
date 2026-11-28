@@ -29,8 +29,8 @@
 import { basename, isAbsolute, join, normalize, resolve } from "node:path";
 import { canonicalJson } from "../../../core/canonical-json.js";
 import { ToolNames } from "../../../core/tool-names.js";
+import { effectiveToolCall, expandChainMessages } from "../../../core/tool-surface.js";
 import { isRecord } from "../../../core/type-guards.js";
-import { effectiveToolCall, expandChainMessages } from "../../../tools/surface.js";
 import type { MessageEntry, SessionEntry, WorkingSetRef } from "../../session/entries.js";
 import { isTurnStart } from "./horizon.js";
 import { isRefusedVerdict, toolResultText } from "./payload.js";

@@ -34,7 +34,7 @@ import {
 	resetXdgCache,
 	resolvePancodeDirs,
 } from "../core/xdg.js";
-import type { Installation } from "../domains/lifecycle/install-method.js";
+import type { Installation } from "../domains/install/install-method.js";
 import {
 	INSTALLER_LAUNCHER_MARK,
 	INSTALLER_OWNED_ENTRIES,
@@ -42,7 +42,7 @@ import {
 	inspectInstallation,
 	installationCommand,
 	launcherPathFor,
-} from "../domains/lifecycle/install-method.js";
+} from "../domains/install/install-method.js";
 import {
 	inactiveInstallerLauncher,
 	inactiveInstallerRoots,
@@ -50,7 +50,7 @@ import {
 	installRootHolders,
 	installRootServiceFiles,
 	launchReceipts,
-} from "../domains/lifecycle/install-plan.js";
+} from "../domains/install/install-plan.js";
 import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import { CliUsageError } from "./kit/usage-error.js";

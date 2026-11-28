@@ -17,7 +17,7 @@ import type { createSdkMcpServer, query } from "@anthropic-ai/claude-agent-sdk";
 import {
 	ClaudeAgentSdkUnavailableError,
 	resolveClaudeAgentSdkEntry,
-} from "../../domains/lifecycle/claude-sdk-install.js";
+} from "../../domains/install/claude-sdk-install.js";
 
 /** The slice of the SDK surface the worker runtime calls. */
 interface ClaudeAgentSdkModule {

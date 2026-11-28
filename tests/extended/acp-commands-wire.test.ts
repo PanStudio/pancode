@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
 import { fakeTransport } from "../harness/acp-fake-transport.js";
 
 /** A prompt that never settles, so the test can observe the active-prompt window. */

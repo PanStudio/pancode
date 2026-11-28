@@ -4,12 +4,10 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { DomainContext } from "../../src/core/domain-loader.js";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/index.js";
-import { createShareBundle } from "../../src/domains/share/extension.js";
-import { archiveCommandHost } from "../../src/domains/share/index.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
+import { archiveCommandHost, shareArchiver } from "../../src/domains/share/index.js";
 import { followWorkerRuns } from "../../src/session-control/worker-run-ledger.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -152,7 +150,7 @@ test("archive exports the project, plans an import dry run, and reports a bad pa
 		process.chdir(root);
 		mkdirSync(join(root, ".pancode", "prompts"), { recursive: true });
 		writeFileSync(join(root, ".pancode", "prompts", "survey.md"), "---\ndescription: Survey\n---\nSurvey the site.\n");
-		const share = createShareBundle({} as DomainContext).contract;
+		const share = shareArchiver;
 		const control = acpCommandControl(host(archiveCommandHost(share)));
 		assert.ok(names(control).includes("archive"));
 		const exported = await control.invoke({ command: "archive", argv: ["export", "survey.pancode-share"] });

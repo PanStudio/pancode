@@ -922,7 +922,7 @@ function stripProjectRuntimeTrust(
 }
 
 /**
- * A project cannot say where the operator's disks keep PanStore tags, so its
+ * A project cannot say where the operator's disks keep the store tags, so its
  * roots and placement go. Its id stays, from the tracked file only: the
  * private local file does not travel with the checkout to another host.
  */

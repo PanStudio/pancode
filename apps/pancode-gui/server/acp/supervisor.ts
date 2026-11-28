@@ -1017,7 +1017,7 @@ export class Supervisor {
 				payload: { resource: entry.id, revision: this.revision(entry.id), telemetry: { autonomy } },
 			});
 		}
-		// Startup notices arrive as session metadata, not reply text (`src/engine/acp/server.ts`).
+		// Startup notices arrive as session metadata, not reply text (`src/acp/server.ts`).
 		const sessionNotice = record(record(update._meta)[ACP_NOTICE_META_KEY]);
 		if (update.sessionUpdate === "session_info_update" && typeof sessionNotice.text === "string")
 			this.notice(entry, sessionNotice.text);

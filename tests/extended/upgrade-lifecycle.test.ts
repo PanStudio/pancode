@@ -7,8 +7,8 @@ import { describe, it } from "node:test";
 
 import { runUpgradeCommand, type UpgradeDependencies } from "../../src/cli/upgrade.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
-import { type Installation, inspectInstallation } from "../../src/domains/lifecycle/install-method.js";
-import { getVersionInfo } from "../../src/domains/lifecycle/version.js";
+import { type Installation, inspectInstallation } from "../../src/domains/install/install-method.js";
+import { getVersionInfo } from "../../src/domains/install/version.js";
 import { createLifecycleHome, type LifecycleHome, runInHome } from "../harness/lifecycle-home.js";
 
 const installation = (kind: Installation["kind"]): Installation => ({

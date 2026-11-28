@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { getVersionInfo, inspectInstallation } from "../lifecycle/index.js";
+import { getVersionInfo, inspectInstallation } from "../install/index.js";
 import { carriesPath, isBuiltinRuntimeId } from "../telemetry/index.js";
 import {
 	isOneOf,

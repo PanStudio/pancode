@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { HUB_COMPONENT_KINDS, type HubComponentKind } from "../../core/views/hub-words.js";
 
-/** PanHub distributes packs; kind describes the pack's public contents. */
+/** The hub distributes packs; kind describes the pack's public contents. */
 export type HubEntryKind = "skill" | "plugin" | "extension";
 export type HubRequirementRef = `${HubEntryKind}:${string}`;
 
@@ -30,7 +30,7 @@ export function isHubAuditState(value: unknown): value is HubAuditState {
 	return typeof value === "string" && (HUB_AUDIT_STATES as readonly string[]).includes(value);
 }
 
-/** What PanHub browses and filters by: a pack kind or a component kind. */
+/** What the hub browses and filters by: a pack kind or a component kind. */
 export type HubCategory = HubEntryKind | HubComponentKind;
 
 /**
@@ -75,7 +75,7 @@ export interface HubRowSource {
 	subdir: string;
 }
 
-/** The same record is used in bundled, user, and project PanHub indexes. */
+/** The same record is used in bundled, user, and project hub indexes. */
 export interface HubPackageEntry {
 	kind: HubEntryKind;
 	name: string;

@@ -10,7 +10,7 @@ import type { CacheReadField } from "../core/token-split.js";
 import type { EffectivePricing } from "../domains/providers/catalog.js";
 import { callSettlementFromMessage, type InterruptedUsageEstimate } from "../domains/telemetry/call-facts.js";
 import { addCallTotals, type CallTotals, emptyCallTotals } from "../domains/telemetry/folds.js";
-import type { TurnFailureRecord } from "../domains/turn-control/outcome.js";
+import type { TurnFailureRecord } from "../lib/turn-control/outcome.js";
 /**
  * Pure helpers over agent messages, tool policies, and session payload
  * shaping for the chat loop. Everything here is stateless: functions take
@@ -37,15 +37,15 @@ import {
 import type { PendingSkillRequest, PendingSkillToolPolicy, SkillDeclaredToolPolicy } from "../core/skill-activation.js";
 import { proseAnnouncesCall, readTrailingWrittenCalls, stripDeadToolCallMarkup } from "../core/tool-call-markup.js";
 import { ToolNames } from "../core/tool-names.js";
+import { toolSpecPlacement } from "../core/tool-surface.js";
 import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
 import { asRecord } from "../core/type-guards.js";
-import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import { describeMissing } from "../domains/install/setup-status.js";
 import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
 import { ceilChars } from "../domains/session/context-accounting.js";
 import type { AgentMessage } from "../engine/types.js";
 import type { AskUserToolPolicy, ToolRegistry } from "../tools/registry-contract.js";
-import { toolSpecPlacement } from "../tools/surface.js";
 import { attachedToolSchemaBytes, attachedToolSchemasFromState } from "./prompt-cache-identity.js";
 
 /** Minimal structural view of the engine agent used by state-inspection helpers. */

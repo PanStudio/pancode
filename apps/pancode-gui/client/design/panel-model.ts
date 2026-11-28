@@ -101,7 +101,7 @@ export const PANELS = {
 	},
 	hub: {
 		eyebrow: eyebrow("Capabilities", "you and this project", "plan, then apply"),
-		title: "PanHub",
+		title: "Hub",
 		boundary:
 			"Recipes are read from the roots on this machine, and their contents stay there. A catalog change is planned first and applied only after you have read the plan; viewing a verifier never runs it.",
 	},

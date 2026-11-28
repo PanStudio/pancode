@@ -23,7 +23,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { policyManifest, type ToolServer } from "pancode/sdk/tool";
-import { parsePassedVariables } from "../src/domains/gateway/mcp/passed-environment.js";
+import { parsePassedVariables } from "../src/domains/mcp/passed-environment.js";
 
 const PLUGIN_SERVER_FILE = "server.mjs";
 const ENTRY = path.join("src", "main.ts");

@@ -11,7 +11,7 @@ import {
 	MCP_TRUST_FILENAME,
 	MCP_USER_CONFIG_FILENAME,
 	readMcpTrustState,
-} from "../../src/domains/gateway/mcp/index.js";
+} from "../../src/domains/mcp/index.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 const CLI = new URL("../../dist/cli/index.js", import.meta.url).pathname;
@@ -191,7 +191,7 @@ it("prints the hashed real path of a symlinked entry and marks one bound by path
 it("rejects excessive ULP contracts and explains skipped numeric authoring proposals", async () => {
 	const { parseValidationContractText } = await import("../../src/domains/safety/validation-contract.js");
 	const { MAX_ULP_TOLERANCE } = await import("../../src/tools/verify/numeric.js");
-	const { discoverVerifierAuthoring } = await import("../../src/tools/verify/authoring.js");
+	const { discoverVerifierAuthoring } = await import("../../src/cli/verifier-authoring.js");
 	const contract = (tolerance: unknown) =>
 		JSON.stringify({ version: 1, artifacts: [{ path: "result.json", numerical_tolerances: tolerance }] });
 	strictEqual(parseValidationContractText(contract({ ulp: MAX_ULP_TOLERANCE }), "validation.yaml").ok, true);

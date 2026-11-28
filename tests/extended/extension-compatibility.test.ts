@@ -12,7 +12,7 @@ import {
 } from "../../src/domains/extensions/compatibility.js";
 import { loadManifestFromRoot, parseExtensionManifest } from "../../src/domains/extensions/discovery.js";
 import { enableExtension, installExtension, listInstalledExtensions } from "../../src/domains/extensions/index.js";
-import { getVersionInfo } from "../../src/domains/lifecycle/version.js";
+import { getVersionInfo } from "../../src/domains/install/version.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
 
 const roots: string[] = [];

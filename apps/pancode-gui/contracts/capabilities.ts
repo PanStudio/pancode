@@ -106,7 +106,7 @@ export const AgentCapabilities = Type.Object(
 		interviews: Type.Optional(InterviewCapability),
 		/** MCP servers' forms and links, put to the person at this GUI. */
 		elicitation: Type.Optional(ElicitationCapability),
-		/** Plugin reload, so a PanHub change reaches an open session. */
+		/** Plugin reload, so a hub change reaches an open session. */
 		hub: Type.Optional(HubCapability),
 		/** ACP promptCapabilities.image: the agent accepts image blocks with a request. */
 		images: Type.Optional(Type.Boolean()),

@@ -3,7 +3,7 @@
 import { readSettings } from "../../../../../src/core/config.js";
 import { projectChosenTargetUrl } from "../../../../../src/core/project-target-urls.js";
 import { readLayeredSettings } from "../../../../../src/core/settings-layers.js";
-import { describeMissing, setupStatus } from "../../../../../src/domains/lifecycle/setup-status.js";
+import { describeMissing, setupStatus } from "../../../../../src/domains/install/setup-status.js";
 import {
 	openAuthStorage,
 	resolveAuthTarget,

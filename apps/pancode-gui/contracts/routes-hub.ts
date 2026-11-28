@@ -31,7 +31,7 @@ export const hubRoutes = {
 		params: operationParams,
 		body: HubPlanRequest,
 		response: HubPlan,
-		summary: "Stage one reviewed PanHub lifecycle plan; writes nothing",
+		summary: "Stage one reviewed hub lifecycle plan; writes nothing",
 		...runtimeRoutes.hubPlan,
 	}),
 	hubPlanApply: defineRoute({
@@ -74,7 +74,7 @@ export const hubRoutes = {
 	installationHub: defineRoute({
 		...get,
 		response: HubInventory,
-		summary: "The same PanHub inventory with no workspace open; only user and built-in layers apply",
+		summary: "The same hub inventory with no workspace open; only user and built-in layers apply",
 		...runtimeRoutes.installationHub,
 	}),
 	installationHubPlan: defineRoute({
@@ -83,7 +83,7 @@ export const hubRoutes = {
 		params: Empty,
 		body: HubPlanRequest,
 		response: HubPlan,
-		summary: "Stage a reviewed user-scope PanHub plan with no workspace open; writes nothing",
+		summary: "Stage a reviewed user-scope hub plan with no workspace open; writes nothing",
 		...runtimeRoutes.installationHubPlan,
 	}),
 	installationHubPlanApply: defineRoute({

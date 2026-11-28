@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ToolNames } from "../core/tool-names.js";
-import { effectiveToolCall } from "../tools/surface.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import { SIZE_ONLY_ARG_KEYS } from "./loop-guard-repeat.js";
 
 /** formatModelRejection clips each line at 300 characters, so a quoted failure spans at most two lines under that. */

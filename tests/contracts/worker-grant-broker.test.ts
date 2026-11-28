@@ -30,8 +30,12 @@ import type { PancodeWorkerEvent } from "../../src/engine/worker-events.js";
 import type { WorkerRunHandle, WorkerRunInput } from "../../src/engine/worker-run-types.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
-import { CONTROL_FRAME_PREFIX, parseControlFrame, type WorkerGrantRequestFrame } from "../../src/worker/protocol.js";
-import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../src/worker/spec-contract.js";
+import {
+	CONTROL_FRAME_PREFIX,
+	parseControlFrame,
+	type WorkerGrantRequestFrame,
+} from "../../src/lib/worker-wire/protocol.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../src/lib/worker-wire/spec-contract.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
 import { fixtureEnvelope } from "../harness/receipt.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

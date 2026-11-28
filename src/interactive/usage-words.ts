@@ -11,6 +11,7 @@ import type { AgentRole } from "../core/telemetry/enums.js";
 import type { Fact, FactSum } from "../core/telemetry/fact.js";
 import { factKnownValue } from "../core/telemetry/known.js";
 import { renderCountSum, renderUnitTotal, renderUsdSum } from "../core/telemetry/render.js";
+import { expandChainMessages } from "../core/tool-surface.js";
 import {
 	economyTotalKnown,
 	economyTotalUnknown,
@@ -26,7 +27,6 @@ import {
 	type VerifiedOutcomeCount,
 } from "../domains/evidence/verified-outcomes.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
-import { expandChainMessages } from "../tools/surface.js";
 
 const count = (value: number): string => value.toLocaleString("en-US");
 

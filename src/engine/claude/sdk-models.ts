@@ -5,7 +5,7 @@ import { withClaudeCredential } from "../../core/claude-environment.js";
 import { resolveClaudeLaunchCredential } from "../../domains/providers/auth/index.js";
 import type { ProbeContext } from "../../domains/providers/types/runtime-descriptor.js";
 import type { TargetDescriptor } from "../../domains/providers/types/target-descriptor.js";
-import { findExecutableOnPath } from "../../domains/toolchain/resolve.js";
+import { findExecutableOnPath } from "../../lib/programs/resolve.js";
 import { loadClaudeAgentSdk } from "./sdk-module.js";
 
 /** #416: one initialization-only subprocess, with no user message or inference turn. */

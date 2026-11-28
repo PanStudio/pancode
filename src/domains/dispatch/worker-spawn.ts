@@ -70,8 +70,8 @@ import {
 	type WorkerGrantRequestFrame,
 	type WorkerHookRequest,
 	type WorkerModelLoad,
-} from "../../worker/protocol.js";
-import type { WorkerSpec } from "../../worker/spec-contract.js";
+} from "../../lib/worker-wire/protocol.js";
+import type { WorkerSpec } from "../../lib/worker-wire/spec-contract.js";
 import type { HeartbeatStamp } from "./heartbeat.js";
 import {
 	type ApprovedWorkerIdentity,
@@ -85,7 +85,7 @@ import {
 	WorkerChannelFailure,
 } from "./worker-protocol.js";
 
-export type { WorkerSpec } from "../../worker/spec-contract.js";
+export type { WorkerSpec } from "../../lib/worker-wire/spec-contract.js";
 export { WorkerChannelFailure } from "./worker-protocol.js";
 
 /**

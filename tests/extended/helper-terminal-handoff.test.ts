@@ -12,8 +12,8 @@ import type { PancodeWorkerEvent } from "../../src/engine/worker-events.js";
 import type { WorkerRunHandle } from "../../src/engine/worker-run-types.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { attestedToolSignature } from "../../src/engine/worker-tools.js";
+import { isReceiptBearingFrame, toolSignatureOf } from "../../src/lib/worker-wire/protocol.js";
 import { projectWorkerEventForStdout } from "../../src/worker/event-projection.js";
-import { isReceiptBearingFrame, toolSignatureOf } from "../../src/worker/protocol.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

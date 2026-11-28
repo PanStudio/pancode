@@ -78,11 +78,11 @@ import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
-import { currentToolPlatform } from "../../src/domains/toolchain/index.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { startExtensionHost } from "../../src/entry/extension-host.js";
 import { createKeybindingManagerForTesting } from "../../src/interactive/keybinding-manager.js";
 import { settleExtensionKeys } from "../../src/interactive/surfaces/extension-pane-keys.js";
+import { currentToolPlatform } from "../../src/lib/programs/index.js";
 import { resolveExtensionLine } from "../../src/session-control/extension-line.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -936,7 +936,7 @@ describe("extension binaries service", () => {
 		const pinned = binary(sha256Hex(script));
 		const missing = packBinaryPath("fixture", pinned);
 		strictEqual("reason" in missing && /pancode hub install extension:fixture/u.test(missing.reason), true);
-		strictEqual("reason" in missing && /pancode tools install/u.test(missing.reason), false);
+		strictEqual("reason" in missing && /pancode programs install/u.test(missing.reason), false);
 		const [installed] = await installPackBinaries("fixture", [pinned], { fetch: async () => script, mirror: null });
 		strictEqual(installed?.ok, true);
 		strictEqual(resolvePackBinary("fixture", pinned).source, "vendored");

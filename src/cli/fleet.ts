@@ -85,7 +85,7 @@ import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.
 import { WRITE_BOUNDARY_VIOLATION_REASON } from "../domains/dispatch/write-boundary.js";
 import { preflightWriteBoundaries } from "../domains/dispatch/write-boundary-enforcer.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
-import { ensurePancodeState } from "../domains/lifecycle/index.js";
+import { ensurePancodeState } from "../domains/install/index.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { foregroundStreamUsage } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";

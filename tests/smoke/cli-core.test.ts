@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { readVerifiedRun, telemetryRunsDirectory } from "../../src/domains/telemetry/index.js";
-import { findPinnedTool } from "../../src/domains/toolchain/registry.js";
 import { formatUserTaskHandoff } from "../../src/domains/user-tasks/handoff.js";
+import { findPinnedTool } from "../../src/lib/programs/registry.js";
 import { initializeScratchHome } from "../harness/headless-run.js";
 
 const ROOT = new URL("../..", import.meta.url).pathname;

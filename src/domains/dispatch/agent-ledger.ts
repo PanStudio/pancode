@@ -16,7 +16,7 @@
 
 import { isAbsolute, relative } from "node:path";
 import { relativePathEscapes } from "../../core/path-containment.js";
-import type { AgentLedgerBody, AgentLedgerEntry } from "../../worker/protocol.js";
+import type { AgentLedgerBody, AgentLedgerEntry } from "../../lib/worker-wire/protocol.js";
 import type { SettledRunRecord } from "../telemetry/index.js";
 import type { RunEnvelope, RunLedgerProjection, RunOutcome, RunStatus } from "./types.js";
 

@@ -7,7 +7,7 @@ import { pancodeStateDir } from "../core/xdg.js";
 import type { DispatchContract } from "../domains/dispatch/index.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import { readSettledRun } from "../domains/telemetry/run-record.js";
-import type { TurnTokens } from "../domains/turn-control/index.js";
+import type { TurnTokens } from "../lib/turn-control/index.js";
 
 type ReceiptDispatch = Pick<DispatchContract, "getRun">;
 

@@ -22,7 +22,6 @@ import type { BudgetBlockData, SessionEntry } from "../domains/session/entries.j
 import { BUDGET_BLOCK_ENTRY, IN_RUN_CONTINUATION_ENTRY } from "../domains/session/entries.js";
 import { appendSessionThinkingLevel } from "../domains/session/thinking-route.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
-import type { TurnTokens } from "../domains/turn-control/index.js";
 import { replaceEngineMessages, setEngineCodexUserTurn } from "../engine/agent.js";
 import type { PancodeTurnRecord } from "../engine/session.js";
 import type {
@@ -34,6 +33,7 @@ import type {
 	ResponsesCacheDiagnostic,
 	Usage,
 } from "../engine/types.js";
+import type { TurnTokens } from "../lib/turn-control/index.js";
 import { type DisplayToolCall, displayToolCall, gatewayChainSteps, VIA_GATEWAY } from "../tools/gateway-display.js";
 import {
 	type AssistantCallTiming,

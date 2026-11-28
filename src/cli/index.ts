@@ -98,11 +98,11 @@ Setup:
   pancode paths|reset|uninstall|upgrade  directories, state recovery, removal, upgrade
   pancode gui                  open the alpha graphical application
 
-Project and PanHub:
+Project and hub:
   pancode context <verb>       PANCODE.md, codemap, wiki and working set for this project
   pancode agents|tasks|verifiers|memory|claims|store  recipes, tasks, checks, memory, claims, store
   pancode hub|extensions|mcp|share  packs, extension authoring, MCP servers, archives
-  pancode tools|interop|panes  pinned programs, external coding agents, the pane host
+  pancode programs|interop|panes  pinned programs, external coding agents, the pane host
   pancode semantic             search
   pancode report|usage         reports to the maintainers, cross-session usage facts
   pancode <verb> [--json]      a verb an installed extension declares; built-in names always win
@@ -522,7 +522,7 @@ const COMMAND_HANDLERS = new Map<string, CommandHandler>([
 			return (await import("./run.js")).runPancodeRun(subArgs, bootOptions);
 		},
 	],
-	["tools", async (subArgs) => (await import("./tools.js")).runToolsCommand(subArgs)],
+	["programs", async (subArgs) => (await import("./programs.js")).runProgramsCommand(subArgs)],
 	["interop", async (subArgs) => (await import("./interop.js")).runInteropCommand(subArgs)],
 	["panes", async (subArgs) => (await import("./panes.js")).runPanesCommand(subArgs)],
 	["doctor", async (subArgs) => (await import("./doctor.js")).runDoctorCommand(subArgs)],

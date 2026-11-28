@@ -15,7 +15,7 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { createBoundedEventQueue, WORKER_EVENT_QUEUE_HARD_BYTES } from "../../src/domains/dispatch/worker-protocol.js";
 import { type SpawnedWorker, spawnWorkerProcess } from "../../src/domains/dispatch/worker-spawn.js";
 import { INTERNAL_HELPER_RESULT_TOOL } from "../../src/engine/worker-tools.js";
-import { WORKER_BULK_FRAME_MAX_BYTES } from "../../src/worker/protocol.js";
+import { WORKER_BULK_FRAME_MAX_BYTES } from "../../src/lib/worker-wire/protocol.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

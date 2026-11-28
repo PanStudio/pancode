@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runDoctorModelChecks } from "../../src/domains/lifecycle/doctor.js";
+import { runDoctorModelChecks } from "../../src/domains/install/doctor.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 function settings(url: string, contextWindow?: number): string {

@@ -18,7 +18,7 @@ import {
 import { harness, json } from "./harness/app.js";
 import { hubOracle, seedHub, sourceCliEnv } from "./harness/hub-fixture.js";
 
-test("all PanHub collections agree with the canonical CLI in the same scratch home and never run a verifier", async () => {
+test("all hub collections agree with the canonical CLI in the same scratch home and never run a verifier", async () => {
 	const h = await harness({}, { env: sourceCliEnv });
 	try {
 		await seedHub(h.home.path, h.home.env);

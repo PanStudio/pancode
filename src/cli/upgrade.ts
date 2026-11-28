@@ -8,9 +8,9 @@ import { initializePancodeHome, recordHomeDowngrade } from "../core/init.js";
 import { runCommandVector } from "../core/safe-exec.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { pancodeDirLayoutProblems, resolvePancodeDirs } from "../core/xdg.js";
-import { createUpdateLog, deferredUpdateTarget, installHold } from "../domains/lifecycle/deferred-update.js";
-import { runDoctor } from "../domains/lifecycle/doctor.js";
-import type { Installation, UpgradeInvocation } from "../domains/lifecycle/install-method.js";
+import { createUpdateLog, deferredUpdateTarget, installHold } from "../domains/install/deferred-update.js";
+import { runDoctor } from "../domains/install/doctor.js";
+import type { Installation, UpgradeInvocation } from "../domains/install/install-method.js";
 import {
 	formatUpgradeInvocation,
 	inspectInstallation,
@@ -20,7 +20,7 @@ import {
 	launcherPathFor,
 	npmUpgradeInvocation,
 	readInstallerRecord,
-} from "../domains/lifecycle/install-method.js";
+} from "../domains/install/install-method.js";
 import {
 	backgroundPackageRoot,
 	describeTracking,
@@ -28,17 +28,17 @@ import {
 	inactiveInstallerRoots,
 	installIdentity,
 	launcherWinsOnPath,
-} from "../domains/lifecycle/install-plan.js";
-import type { ReleaseSource } from "../domains/lifecycle/release-version.js";
+} from "../domains/install/install-plan.js";
+import type { ReleaseSource } from "../domains/install/release-version.js";
 import {
 	compareReleaseVersions,
 	fetchReleaseVersion,
 	parseReleaseVersion,
 	releaseVersionUrl,
-} from "../domains/lifecycle/release-version.js";
-import { readStateInfo } from "../domains/lifecycle/state.js";
-import { updateFingerprint } from "../domains/lifecycle/update-check.js";
-import { getVersionInfo } from "../domains/lifecycle/version.js";
+} from "../domains/install/release-version.js";
+import { readStateInfo } from "../domains/install/state.js";
+import { updateFingerprint } from "../domains/install/update-check.js";
+import { getVersionInfo } from "../domains/install/version.js";
 import { printError } from "./argv.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { LifecyclePresenter } from "./lifecycle-presenter.js";
