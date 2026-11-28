@@ -85,16 +85,8 @@ import {
 } from "./aside.js";
 import { ACP_BOARD_METHOD, projectSessionBoard } from "./board.js";
 import { budgetBlockFrame } from "./budget-notice.js";
-import type { AcpCommandCatalog } from "./commands.js";
 import { ACP_CONTEXT_LEDGER_METHOD, ACP_CONTEXT_META_KEY, projectContextLedger } from "./context-ledger.js";
 import { ACP_TURN_FAILED_MESSAGE, AcpRequestError, acpErrorMessage } from "./errors.js";
-import {
-	ACP_EXTENSIONS_LIST_METHOD,
-	ACP_EXTENSIONS_RELOAD_METHOD,
-	ACP_HUB_RELOAD_METHOD,
-	projectExtensionReload,
-	projectExtensions,
-} from "./extensions.js";
 import type { AcpFleetControl } from "./fleet-run.js";
 import {
 	ACP_FLEET_MAX_REASON_BYTES,
@@ -118,6 +110,7 @@ import {
 	safeStoredString,
 	utf8Bytes,
 } from "./server-bounds.js";
+import { createAcpServerCommands } from "./server-commands.js";
 import {
 	ACP_MAX_DISPATCH_ID_BYTES,
 	ACP_MAX_DISPATCH_PROGRESS_EVENTS,
@@ -137,7 +130,7 @@ import {
 	trackDispatchRun,
 } from "./server-event-frames.js";
 import { compileFleet, fleetName, fleetResume, fleetVars, requireFleet } from "./server-fleet.js";
-import { ACP_MAX_SESSION_ID_BYTES, createAcpServerGuards, sessionIdOf } from "./server-guards.js";
+import { ACP_MAX_SESSION_ID_BYTES, assertParamKeys, createAcpServerGuards, sessionIdOf } from "./server-guards.js";
 import { assertNoAdditionalDirectories, createAcpHandshake, parseClientMcpServers } from "./server-handshake.js";
 import type { AcpSafeTargetProjection } from "./server-models.js";
 import {
@@ -341,14 +334,6 @@ async function settleAcpWork(pending: readonly Promise<unknown>[]): Promise<void
 	} finally {
 		clearTimeout(timer);
 	}
-}
-
-function assertParamKeys(params: unknown, allowed: ReadonlySet<string>): Record<string, unknown> {
-	if (params === undefined) return {};
-	if (!isRecord(params) || Object.keys(params).some((key) => key !== "_meta" && !allowed.has(key))) {
-		throw new AcpRequestError(-32602, "invalid method parameters", { code: "invalid_params" });
-	}
-	return params;
 }
 
 async function attachClientMcpServers(
@@ -688,6 +673,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		get guards() {
 			return guards;
 		},
+		get commands() {
+			return commands;
+		},
 	};
 	const guards = createAcpServerGuards(scope);
 	const telemetry: AcpLiveTelemetry = createAcpLiveTelemetry({
@@ -839,7 +827,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		};
 		unsubscribeEvents.push(
 			bus.subscribe("context.pruned", () => scope.telemetry.contextFolded()),
-			subscribeAcpNotices(bus, runtimeNotices, noticeSession, (sessionId) => announceCommands(sessionId)),
+			subscribeAcpNotices(bus, runtimeNotices, noticeSession, (sessionId) => commands.announceCommands(sessionId)),
 			bus.subscribe("session.eggs_changed", (event) =>
 				sessionMeta(event.sessionId, { [ACP_EGGS_META_KEY]: event.active }),
 			),
@@ -1381,43 +1369,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		});
 		notifyConfigOptions(session);
 	};
-	// The catalog is rebuilt from `commandReference()` on every call and a
-	// palette legitimately re-reads it after a reload, so it is memoized against
-	// a client that polls and against every prompt that checks for a typed
-	// command. Availability is fixed by the host callbacks wired when this server
-	// is created; session/route changes do not alter that wiring.
-	let commandCatalog: AcpCommandCatalog | null = null;
-	const catalog = () => {
-		if (options.commands === undefined) return undefined;
-		commandCatalog ??= options.commands.catalog();
-		return commandCatalog;
-	};
-	const availableCommands = () =>
-		catalog()
-			?.commands.filter(
-				(command) =>
-					(command.injectsUserTurn !== true || options.chat.whenSettled !== undefined) &&
-					(command.streams === undefined || command.injectsUserTurn === true || command.promptTurn === true),
-			)
-			.map((command) => ({
-				name: command.name,
-				description: command.summary,
-				input: { hint: command.usage },
-			})) ?? [];
-	// The announcement also names the prompts and extension commands a line may
-	// type, so a client's palette offers what the terminal's does (WTF-P F05).
-	// They are screened as typed lines, never invoked as built-in commands.
-	const announceCommands = (sessionId: string) => {
-		if (options.commands === undefined) return;
-		const builtIn = availableCommands();
-		const typed = (options.commands.typedCommands?.() ?? []).filter(
-			(entry) => !builtIn.some((command) => command.name === entry.name),
-		);
-		options.transport.notify("session/update", {
-			sessionId,
-			update: { sessionUpdate: "available_commands_update", availableCommands: [...builtIn, ...typed] },
-		});
-	};
+	const commands = createAcpServerCommands(scope);
 
 	options.transport.onRequest("initialize", (params) => scope.handshake.initialize(params));
 	options.transport.onRequest("authenticate", (params) => scope.handshake.authenticate(params));
@@ -1469,7 +1421,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			scope.boundSessionId = id;
 			options.bindTelemetrySession?.(id);
 			const ceilingEcho = guards.applySessionCeiling(session);
-			announceCommands(id);
+			commands.announceCommands(id);
 			scope.telemetry.bind(false);
 			await listTargetModels(session.target);
 			refreshThinkingOption(session);
@@ -1538,7 +1490,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		scope.sessions.set(session.id, session);
 		scope.boundSessionId = session.id;
 		options.bindTelemetrySession?.(session.id);
-		announceCommands(session.id);
+		commands.announceCommands(session.id);
 		if (replay !== undefined) {
 			for (const replayParams of replay.params) options.transport.notify("session/update", replayParams);
 			replayDispatchTerminals(forwardEvent, replay.runs);
@@ -1609,7 +1561,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		if (replay !== undefined)
 			replay = withReplayUsage(replay, guards.liveSessionView(), scope.handshake.fullUsageEnabled);
 		const ceilingEcho = guards.applySessionCeiling(session);
-		announceCommands(session.id);
+		commands.announceCommands(session.id);
 		if (replay !== undefined) {
 			for (const replayParams of replay.params) options.transport.notify("session/update", replayParams);
 			replayDispatchTerminals(forwardEvent, replay.runs);
@@ -2363,52 +2315,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return { cancelled: round !== null };
 	});
 
-	// The /extensions view: what this session loaded, never paths or provenance.
-	options.transport.onRequest(ACP_EXTENSIONS_LIST_METHOD, (params) => {
-		guards.requireInitialized();
-		const request = assertParamKeys(params, new Set(["sessionId"]));
-		if (options.extensions === undefined) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		guards.getSession(request);
-		return projectExtensions(options.extensions.list());
-	});
-
-	// /reload extensions. Hooks and extension resources change together, so a
-	// reload waits for a running turn rather than swapping them under it.
-	options.transport.onRequest(ACP_EXTENSIONS_RELOAD_METHOD, (params) => {
-		guards.requireInitialized();
-		const request = assertParamKeys(params, new Set(["sessionId"]));
-		if (options.extensions === undefined) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		const session = guards.getSession(request);
-		guards.requireIdle(session, "reload extensions");
-		const outcome = projectExtensionReload(options.extensions.reload());
-		announceCommands(session.id);
-		return outcome;
-	});
-
-	// /reload hub, so a hub change made outside this session reaches it.
-	// A failed reload is reported as failed; the previous resources stay live.
-	options.transport.onRequest(ACP_HUB_RELOAD_METHOD, (params) => {
-		guards.requireInitialized();
-		const request = assertParamKeys(params, new Set(["sessionId"]));
-		if (options.hubReload === undefined) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		const session = guards.getSession(request);
-		guards.requireIdle(session, "reload the hub");
-		try {
-			const refreshed = { status: "refreshed" as const, ...options.hubReload() };
-			announceCommands(session.id);
-			return refreshed;
-		} catch (error) {
-			options.diagnostics?.(`hub reload failed: ${acpErrorMessage(error)}`);
-			return { status: "failed" as const, error: boundString(acpErrorMessage(error), 1024) };
-		}
-	});
-
 	options.transport.onRequest(ACP_CONTEXT_STATUS_METHOD, (params): ContextOperationStatus => {
 		guards.requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId"]));
@@ -2901,81 +2807,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		} catch {
 			throw new AcpRequestError(-32603, "safe settings could not be updated", { code: "internal_error" });
 		}
-	});
-
-	options.transport.onRequest(ACP_COMMANDS_LIST_METHOD, (params) => {
-		guards.requireInitialized();
-		assertParamKeys(params, new Set());
-		const listed = catalog();
-		if (listed === undefined) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		const prompts = options.commands?.prompts?.();
-		const extensionCommands = options.commands?.extensionCommands?.();
-		return {
-			...listed,
-			...(prompts !== undefined ? { prompts } : {}),
-			...(extensionCommands !== undefined ? { extensionCommands } : {}),
-		};
-	});
-
-	options.transport.onRequest(ACP_COMMANDS_INVOKE_METHOD, (params) => {
-		guards.requireInitialized();
-		const request = assertParamKeys(params, new Set(["sessionId", "command", "argv"]));
-		const session = guards.getSession(request);
-		if (request.command === "context" || request.command === "compact")
-			guards.requireIdle(session, "run a context operation");
-		if (options.commands === undefined) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		// Jobs belong to the one session this process hosts. The generic path forwards only command and
-		// argv, so the requested identity is checked here, before anything is created, listed or stopped.
-		if (request.command === "loop" && session.id !== scope.boundSessionId) {
-			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
-		}
-		// Four of the thirteen put a user turn into the session. Doing that while
-		// a prompt is in flight is the steering path, not the submit path: the
-		// turn already running owns the stopReason, and a second unrequested
-		// submission folds content into it that the client never asked for. Those
-		// four are refused here and the client is told to use
-		// `_pancode/session/steer` instead; the other nine are unaffected.
-		if (session.activePrompt !== null && options.commands.injectsUserTurn(request.command, request.argv)) {
-			throw new AcpRequestError(-32602, "this command submits a user turn and a prompt is active", {
-				code: "prompt_active",
-				reason: "steer-instead",
-			});
-		}
-		if (scope.activeShell !== null && options.commands.injectsUserTurn(request.command, request.argv)) {
-			throw new AcpRequestError(-32602, "this command submits a user turn and a shell line is running", {
-				code: "shell_active",
-			});
-		}
-		// A prompt-turn command asks for approvals that bind to a call on the
-		// wire, and outside a prompt there is no turn to put that call in. It is
-		// refused here with the path that works, rather than admitted and denied.
-		if (options.commands.promptTurn?.(request.command, request.argv) === true) {
-			throw new AcpRequestError(-32602, "this command runs as a conversation turn; send it as a prompt", {
-				code: "prompt_turn_required",
-			});
-		}
-		guards.assertCommandWithinCeiling(options.commands, request.command, request.argv);
-		if (request.command !== "context" && request.command !== "compact")
-			return options.commands.invoke({
-				command: request.command,
-				argv: request.argv,
-				askConsent: reportConsentAsk(options.transport, session.id),
-			});
-		if (session.id !== scope.boundSessionId)
-			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
-		if (scope.activeShell !== null)
-			throw new AcpRequestError(-32602, "a shell line is running", { code: "shell_active" });
-		const command = Promise.resolve().then(() =>
-			options.commands?.invoke({ command: request.command, argv: request.argv }),
-		);
-		scope.contextCommandInFlight = command;
-		return command.finally(() => {
-			if (scope.contextCommandInFlight === command) scope.contextCommandInFlight = null;
-		});
 	});
 
 	options.transport.onRequest(ACP_TARGETS_LIST_METHOD, (params): AcpTargetList => {
@@ -3723,7 +3554,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32002, "session is not the bound session", { code: "session_not_bound" });
 		}
 		const screened =
-			text.length === 0 || (typed !== undefined && availableCommands().some((entry) => entry.name === typed))
+			text.length === 0 || (typed !== undefined && commands.availableCommands().some((entry) => entry.name === typed))
 				? undefined
 				: options.commands?.screenPrompt?.(text);
 		if (screened?.kind === "refuse") throw new AcpRequestError(-32602, screened.message, { code: screened.code });
@@ -3817,7 +3648,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			} else if (
 				command !== undefined &&
 				resources.names.length === 0 &&
-				availableCommands().some((entry) => entry.name === command)
+				commands.availableCommands().some((entry) => entry.name === command)
 			) {
 				let argv = commandMatch?.[2]?.trim().split(/\s+/u) ?? [];
 				if (command === "loop") {

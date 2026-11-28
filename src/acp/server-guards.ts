@@ -16,6 +16,14 @@ import { ceilingBinds, ceilingMeta } from "./server-prompt-input.js";
 import type { AcpServerScope } from "./server-scope.js";
 import type { AcpServerSession } from "./server-tool-updates.js";
 
+export function assertParamKeys(params: unknown, allowed: ReadonlySet<string>): Record<string, unknown> {
+	if (params === undefined) return {};
+	if (!isRecord(params) || Object.keys(params).some((key) => key !== "_meta" && !allowed.has(key))) {
+		throw new AcpRequestError(-32602, "invalid method parameters", { code: "invalid_params" });
+	}
+	return params;
+}
+
 export const ACP_MAX_SESSION_ID_BYTES = 128;
 
 export function sessionIdOf(params: unknown): string {
