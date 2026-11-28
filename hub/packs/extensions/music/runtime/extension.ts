@@ -179,16 +179,20 @@ end)
 }
 
 async function cliamp(player: Player, args: string[]): Promise<{ ok: boolean; stdout: string; error: string }> {
-	const result = await player.binaries.run("cliamp", args, {
-		env: { CLIAMP_CONFIG_DIR: player.home },
-		timeoutMs: 5_000,
-	});
-	const ok = result.exitCode === 0 && !result.timedOut;
-	return {
-		ok,
-		stdout: result.stdout,
-		error: ok ? "" : (result.stderr || result.stdout).trim() || "cliamp did not answer",
-	};
+	try {
+		const result = await player.binaries.run("cliamp", args, {
+			env: { CLIAMP_CONFIG_DIR: player.home },
+			timeoutMs: 5_000,
+		});
+		const ok = result.exitCode === 0 && !result.timedOut;
+		return {
+			ok,
+			stdout: result.stdout,
+			error: ok ? "" : (result.stderr || result.stdout).trim() || "cliamp did not answer",
+		};
+	} catch (error) {
+		return { ok: false, stdout: "", error: message(error) };
+	}
 }
 
 async function playerStatus(player: Player): Promise<{ state: string; title: string | null } | null> {
@@ -282,7 +286,13 @@ async function on(player: Player): Promise<Result> {
 		const station = await chosenStation(player);
 		return "error" in station ? { status: "failed", reason: station.error } : open(player, station);
 	}
-	if (pane === "hidden") await player.pane.reveal();
+	if (pane === "hidden") {
+		try {
+			await player.pane.reveal();
+		} catch (error) {
+			return { status: "failed", reason: message(error) };
+		}
+	}
 	const status = await playerStatus(player);
 	if (status === null) return { status: "failed", reason: "cliamp is not answering; the pane may still be starting" };
 	if (status.state !== "playing") {
@@ -297,7 +307,11 @@ async function off(player: Player): Promise<Result> {
 	if ((await player.pane.state()) === "closed") return { status: "stopped" };
 	// Stop first so the stream ends even if the pane host is slow to close.
 	await cliamp(player, ["stop"]);
-	await player.pane.close();
+	try {
+		await player.pane.close();
+	} catch (error) {
+		return { status: "failed", reason: message(error) };
+	}
 	return { status: "stopped" };
 }
 
@@ -334,7 +348,11 @@ async function station(player: Player, input: string): Promise<Result> {
 	await player.context.store.set(STATION_KEY, picked);
 	if ((await player.pane.state()) === "closed") return open(player, picked);
 	// `load` swaps the running player's playlist and starts its first entry, so the pane keeps its place.
-	writeIfChanged(join(player.home, "playlists", `${PLAYLIST}.toml`), renderPlaylist(playlist(picked)));
+	try {
+		writeIfChanged(join(player.home, "playlists", `${PLAYLIST}.toml`), renderPlaylist(playlist(picked)));
+	} catch (error) {
+		return { status: "failed", reason: `could not write the player playlist: ${message(error)}` };
+	}
 	const loaded = await cliamp(player, ["load", PLAYLIST]);
 	if (!loaded.ok) return { status: "failed", reason: `cliamp load failed: ${loaded.error}` };
 	return { status: "playing", title: picked.title, opened: false };

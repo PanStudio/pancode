@@ -16,7 +16,7 @@ On Windows, run `irm https://pancode.dev/install.ps1 | iex` in PowerShell. Both 
 PanCode installs with `scripts/install.sh` (or `scripts/install.ps1` on Windows), which unpacks a bundle that carries its own Node.js; from the npm registry as
 `@panstudio/pancode` using npm, pnpm, or Bun; or from a source checkout using the
 pinned pnpm workflow. The [README quick start](../../README.md#get-started) covers
-installing and first run. The package routes require Node.js `>=22.19.0`,
+installing and first run. A bare npm, pnpm, or Bun install gets the default first-party packs from `pancode upgrade --post-install`. The package routes require Node.js `>=22.19.0`,
 including installations managed by Bun; the installer satisfies that itself. On
 an older Node, the package's `pancode` command says so before loading anything
 else and names the installer, or a newer Node given by `PANCODE_NODE`.

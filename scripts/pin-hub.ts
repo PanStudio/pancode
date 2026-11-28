@@ -209,17 +209,23 @@ const localEntries: RegistryRow[] = validatedPackages.map(({ directory, expected
 // their rows carry `default: true` for `upgrade --post-install` to read.
 // ---------------------------------------------------------------------------
 const defaultsFile = path.join(root, "hub", "defaults.yaml");
-const defaultRefs = existsSync(defaultsFile)
-	? ((parse(readFileSync(defaultsFile, "utf8")) as { defaults?: unknown } | null)?.defaults ?? [])
-	: [];
+let defaultRefs: unknown = [];
+if (existsSync(defaultsFile)) {
+	const parsed = parse(readFileSync(defaultsFile, "utf8")) as unknown;
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		process.stderr.write("hub/defaults.yaml: must be a YAML mapping with a defaults list\n");
+		process.exit(1);
+	}
+	defaultRefs = (parsed as { defaults?: unknown }).defaults ?? [];
+}
 if (!Array.isArray(defaultRefs) || defaultRefs.some((ref) => typeof ref !== "string")) {
 	process.stderr.write("hub/defaults.yaml: defaults must be a list of kind:name refs\n");
 	process.exit(1);
 }
 for (const ref of defaultRefs as string[]) {
 	const row = localEntries.find((item) => `${item.kind}:${item.name}` === ref);
-	if (!row) {
-		process.stderr.write(`hub/defaults.yaml: ${ref} is not a first-party pack under hub/packs\n`);
+	if (row?.tier !== "core" || row.publisher !== "pancode") {
+		process.stderr.write(`hub/defaults.yaml: ${ref} is not a core pancode pack under hub/packs\n`);
 		process.exit(1);
 	}
 	row.default = true;

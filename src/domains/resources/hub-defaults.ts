@@ -9,10 +9,11 @@
  * written. A later post-install moves an installed default to the bundled row only
  * when its envelope reaches no further than the installed copy.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { pancodeConfigPath } from "../../core/xdg.js";
+import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { ENVELOPE_SEAT_BELT, envelopeLines } from "../extensions/envelope-review.js";
 import { bundledPluginCatalog } from "../plugins/catalog.js";
 import { hubEntryRef } from "./hub.js";
@@ -59,11 +60,9 @@ function readGiven(file: string): Set<string> {
 }
 
 function writeGiven(file: string, given: ReadonlySet<string>): void {
-	mkdirSync(path.dirname(file), { recursive: true });
+	pancodeConfigDir();
 	const record: GivenRecord = { version: 1, given: [...given].sort() };
-	const temp = `${file}.${process.pid}.tmp`;
-	writeFileSync(temp, `${JSON.stringify(record, null, "\t")}\n`, { mode: 0o600 });
-	renameSync(temp, file);
+	safeResourceWrite(file, `${JSON.stringify(record, null, "\t")}\n`, { mode: 0o600 });
 }
 
 /** Why the staged tree is not the one the release reviewed, or null when it is. */
@@ -131,7 +130,7 @@ async function refreshDefault(out: DefaultPackOutput, row: HubPackageEntry, cwd:
 	const ref = hubEntryRef(row);
 	const installed = readHubInstallRecord(row.name, { cwd, scope: "user" }, row.kind);
 	if (!installed || installed.contentDigest === row.sha256) return;
-	// An update writes the copy enabled; a pack the operator turned off stays off.
+	// A pack the operator turned off is left untouched.
 	const copy = listInstalledHubPackages(cwd, { scope: "user", all: true }).find(
 		(item) => item.id === row.name && (item.kind ?? "plugin") === row.kind,
 	);
