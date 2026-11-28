@@ -725,6 +725,19 @@ export type ChatLoopRouteMoveState = TurnStateView<
 	"routeMove" | "streamStallReason" | "streamStallStage"
 >;
 
+/** chat-loop/context-commands: reads the idle turn an operator context command runs between. */
+export type ChatLoopContextCommandsState = TurnStateView<
+	"activeUserTurnId" | "lastTurnId" | "streaming" | "turnPreparation",
+	| "activeInterruptByAutonomy"
+	| "activeInterruptByJobClock"
+	| "activeInterruptByLoopGuard"
+	| "activeInterruptByOperator"
+	| "activeInterruptByTriage"
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "streaming"
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

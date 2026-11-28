@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/context-operation.js";
 import { enterAutonomousCommitScope } from "../core/git-commit-attribution.js";
 import { JobClockExpired } from "../core/job-types.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
@@ -19,14 +18,12 @@ export { runOutOfTurnRound } from "./side-question.js";
 export { createTurnControlRunner } from "./turn-control-runner.js";
 
 import type { RouteName, RouteSource } from "../core/route-provenance.js";
-import { runOverrides } from "../core/run-overrides.js";
 import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
-import { SMALL_WINDOW_TOKENS } from "../domains/context/fold/pressure.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
 import { captureWorkerContext } from "../domains/context/worker/snapshot.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
-import { continueEngineWithoutInput, replaceEngineMessages } from "../engine/agent.js";
+import { replaceEngineMessages } from "../engine/agent.js";
 /**
  * The chat loop: one turn's state machine.
  *
@@ -44,7 +41,6 @@ import { continueEngineWithoutInput, replaceEngineMessages } from "../engine/age
 
 import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
-import { formatCount } from "../core/format-time.js";
 import {
 	evaluateSkillToolSurface,
 	type PendingSkillRequest,
@@ -81,7 +77,6 @@ import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import { protectedArtifactStateFromSessionEntries } from "../domains/session/protected-artifacts.js";
-import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import { createEngineAgent } from "../engine/agent.js";
 import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js";
@@ -91,15 +86,14 @@ import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tool
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
 import { createChatLoopCancel } from "./chat-loop/cancel.js";
+import { createChatLoopContextCommands } from "./chat-loop/context-commands.js";
 import { createChatLoopNotices } from "./chat-loop/notices.js";
 import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { createChatLoopRouteMove } from "./chat-loop/route-move.js";
 import { createChatLoopSideRounds } from "./chat-loop/side-rounds.js";
-import { compactionFailureReason } from "./chat-loop/submit-fit.js";
 import { createChatLoopToolOptions, toolInvokeOptions } from "./chat-loop/tool-options.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
 import { createChatLoopComposition } from "./chat-loop-composition.js";
-import { notConfiguredNotice } from "./chat-loop-messages.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
@@ -126,7 +120,6 @@ import type { AssistantDeltaEvent } from "./turn-runtime-types.js";
 import {
 	type AgentRuntime,
 	type ChatLoopRunSnapshot,
-	clearActiveInterrupt,
 	createTurnState,
 	type TurnPreparationPhase,
 	type TurnPreparationStep,
@@ -1009,9 +1002,6 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	const { emit, refuseSkillRequests, emitFooterNotice, emitNotice, armSkillSurface, emitAdmissionNotice } =
 		createChatLoopNotices(deps, state, listeners);
 
-	/** An operator `/context compact` is between its start and its settled card. */
-	let operatorCompactionRunning = false;
-
 	const {
 		visionModelOptions,
 		nullRuntimeAdmissionReason,
@@ -1043,6 +1033,8 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		missingOutputs,
 		hostRunContext,
 		sideQuestionRound,
+		enterPreparation,
+		leavePreparation,
 		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
@@ -1567,153 +1559,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		...createChatLoopSideRounds(loop),
 
 		requestSelfCompact: (note, toolCallId, signal) => continuity.request(note, toolCallId, signal),
-		async recoverHandoff(handoffId, action) {
-			if (state.streaming || state.turnPreparation !== "idle")
-				throw new Error("Wait for the current turn to settle before recovery.");
-			const runtime = turnRuntime.ensureRuntime();
-			if (!runtime) throw new Error("No native runtime is configured.");
-			clearActiveInterrupt(state);
-			if (!state.activeUserTurnId) {
-				const operator = findLastEntry(
-					activePath(deps.readSessionEntries?.() ?? [], state.lastTurnId ?? undefined),
-					(entry) => entry.kind === "message" && entry.role === "user",
-				);
-				state.activeUserTurnId = operator?.turnId ?? null;
-			}
-			const operationSession = deps.session?.current()?.id ?? null;
-			const operationCwd = process.cwd();
-			const operation = createContextOperation(
-				{
-					kind: "context-recover",
-					sessionId: operationSession,
-					cwd: operationCwd,
-					origin: "operator",
-					reason: `handoff ${action}`,
-				},
-				(event) => {
-					if (operationSession !== (deps.session?.current()?.id ?? null) || operationCwd !== process.cwd()) return;
-					deps.bus?.emit("context.activity_changed", event);
-					if (event.operation?.outcome && operationSession)
-						deps.session?.appendEntry({
-							kind: "custom",
-							customType: CONTEXT_OPERATION_CUSTOM_TYPE,
-							parentTurnId: state.lastTurnId,
-							data: event.operation,
-						});
-				},
-			);
-			state.streaming = true;
-			operation.start("state", "Recovering paused handoff");
-			try {
-				await new Promise<void>((resolve) => setImmediate(resolve));
-				if (
-					state.activeInterruptReason ||
-					operationSession !== (deps.session?.current()?.id ?? null) ||
-					operationCwd !== process.cwd()
-				)
-					throw new DOMException("Handoff recovery cancelled", "AbortError");
-				await continuity.recover(handoffId, action);
-				await continueEngineWithoutInput(runtime.agent);
-				operation.finish(state.activeInterruptReason ? "cancelled" : "completed", "Handoff recovery settled");
-			} catch (error) {
-				operation.finish(
-					error instanceof Error && error.name === "AbortError" ? "cancelled" : "failed",
-					error instanceof Error ? error.message : String(error),
-				);
-				throw error;
-			} finally {
-				state.streaming = false;
-				await continuity.pause();
-			}
-		},
-		async compact(instructions?: string): Promise<void> {
-			const reply = (text: string, level: ChatNoticeEvent["level"] = "info"): void =>
-				emit({ type: "notice", level, surface: "transcript", text, commandReply: true });
-			// Session check runs BEFORE orchestrator-configuration so a fresh
-			// TUI with nothing configured still reports the actionable "no
-			// current session" message rather than the "not configured"
-			// banner.
-			if (!deps.session?.current()) {
-				reply("[/context compact] no current session to compact; start one with /new or /resume first");
-				return;
-			}
-			let agentRuntime: AgentRuntime | null;
-			try {
-				await turnRuntime.ensureLiveCapabilitiesForSelectedModel();
-				agentRuntime = turnRuntime.ensureRuntime({ silent: true });
-			} catch (err) {
-				reply(`[/context compact] ${err instanceof Error ? err.message : String(err)}`);
-				return;
-			}
-			if (!agentRuntime) {
-				reply(`[/context compact] ${notConfiguredNotice(deps.getSettings().chat)}`);
-				return;
-			}
-			// A second request while one runs would join it and report the same ending twice, and drop its own instructions.
-			if (operatorCompactionRunning) {
-				reply(
-					"[/context compact] a compaction is already running; its card reports how it ends. Run /context compact again after that if it is still needed.",
-					"warning",
-				);
-				return;
-			}
-			operatorCompactionRunning = true;
-			let compacted = false;
-			const paintCompaction = prepareCompactionPaint();
-			enterPreparation();
-			setTurnPreparation("compacting");
-			try {
-				await paintCompaction();
-				compacted = await context.runAutoCompact(agentRuntime, true, instructions, "force");
-			} catch (err) {
-				if (err instanceof Error && err.name === "AbortError") {
-					// A forced compaction skips every cheaper stage, so a stop before the summary saved left the context as it was.
-					// Its card already says so with the size it stayed at; a notice beside it said the same thing twice.
-					if (context.lastCompactionCardSettled()) return;
-					const tokens = context.contextUsage().tokens;
-					reply(
-						`[/context compact] cancelled; context unchanged${tokens !== null ? ` at ${formatCount(tokens)} tokens` : ""}`,
-					);
-					return;
-				}
-				// A failed summary saved nothing either, and the operator needs that, the reason in words and the way on (HS14).
-				const tokens = context.contextUsage().tokens;
-				reply(
-					`[/context compact] failed; context unchanged${tokens !== null ? ` at ${formatCount(tokens)} tokens` : ""}. ${compactionFailureReason(err)}. /context compact tries again; /model picks another route to summarize on.`,
-					"error",
-				);
-				return;
-			} finally {
-				operatorCompactionRunning = false;
-				leavePreparation();
-				endPreparationCompaction();
-			}
-			if (!compacted && !context.lastCompactionWasNoGain()) {
-				const entries = deps.readSessionEntries?.() ?? [];
-				const hasMessages =
-					entries.some((entry) => entry.kind === "message") || agentRuntime.agent.state.messages.length > 0;
-				const usage = context.contextUsage();
-				const used = usage.tokens !== null ? `${formatCount(usage.tokens)} tokens` : "unknown usage";
-				const budget =
-					usage.tokens !== null && usage.contextWindow > 0
-						? `${formatCount(usage.tokens)} of ${formatCount(usage.contextWindow)} tokens used`
-						: used;
-				// Nothing was summarized, so instructions given for the summary went unused, and the operator should know (bt-11).
-				const unused = instructions?.trim() ? ". Your compaction instructions were not used" : "";
-				// A window this run capped small has no later turn that frees room, so the way on is a larger cap (memory-audit 13).
-				const capped =
-					usage.contextWindow > 0 &&
-					usage.contextWindow < SMALL_WINDOW_TOKENS &&
-					runOverrides().maxContextTokens === usage.contextWindow
-						? `. This run's --max-context-tokens ${usage.contextWindow} leaves no older history to summarize; start again with a larger --max-context-tokens, or /new`
-						: "";
-				reply(
-					hasMessages
-						? `[/context compact] too short to compact (${budget}); every turn is still inside the kept recent window, so no older history can be summarized yet${capped}${unused}`
-						: `[/context compact] session is empty; start a conversation first${unused}`,
-				);
-			}
-		},
+		...createChatLoopContextCommands(loop, state),
 	};
 
 	const submitInner = api.submit.bind(api);
