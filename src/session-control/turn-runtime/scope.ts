@@ -19,7 +19,7 @@ import type { CallSettled } from "../../core/telemetry/schemas.js";
 import type { CacheBaseline } from "../../domains/telemetry/cache-physics.js";
 import type { TelemetrySessionLease } from "../../domains/telemetry/session-journals.js";
 import type { createRequestStructures } from "../../engine/request-structure.js";
-import type { EngineModel } from "../../engine/types.js";
+import type { AgentMessage, EngineModel } from "../../engine/types.js";
 import type { ToolFinishEvent } from "../../tools/agent-tools.js";
 import type { AttemptReceipt, RequestCursor } from "../attempt-receipt.js";
 import type { ExpectedColdReason } from "../turn-context.js";
@@ -143,6 +143,12 @@ export interface AgentBuildScope {
 	pinnedInputTokens: number | null;
 	// The last request carried the local placeholder key, so an endpoint that refuses it was sent no credential at all.
 	placeholderKeySent: boolean;
+	/** Spend this run's calls have made that no journal holds yet; the session ceiling counts it until the run ends. */
+	unsettledSpendUsd: number;
+	/** The messages and system prompt the last admitted request carried, handed to memory once it is sent. */
+	admittedMessages: readonly AgentMessage[];
+	admittedSystemPrompt: string;
+	getCurrentAgentSignal: () => AbortSignal | undefined;
 	readonly requestStructure: RequestStructures;
 	readonly currentRun: () => boolean;
 	readonly localRuntime: AgentRuntime;

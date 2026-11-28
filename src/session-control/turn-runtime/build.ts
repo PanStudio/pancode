@@ -12,39 +12,24 @@ import { outputLimitCutOffToolCallIds } from "../../core/assistant-output.js";
 import type { BackendCompletionTimings } from "../../core/cache-telemetry.js";
 import { gatewayRoutingObservationFromRecord, gatewayRoutingObservationLabel } from "../../core/gateway-routing.js";
 import { isHostAuthored } from "../../core/message-accounting.js";
-import { applyModelAdmission } from "../../core/model-admission.js";
-import { modelRouteGuarded, modelRouteRefusalMessage } from "../../core/response-model-id.js";
+import { modelRouteGuarded } from "../../core/response-model-id.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
-import type { BudgetAlertPayload } from "../../core/telemetry/live-events.js";
-import { pricesCalls } from "../../core/telemetry/pricing.js";
 import { normalizeTokenUsage } from "../../core/token-split.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { runCapStopCode } from "../../core/turn-constraints.js";
-import { requestFits } from "../../domains/context/budget/request-fit.js";
-import { observationTracing, traceObservation } from "../../domains/memory/observation-events.js";
 import {
 	applyModelCapabilityPatch,
 	canonicalEndpointKey,
 	recordEndpointThroughput,
 	refineRuntimeTargetWithModelHints,
-	targetRequiresAuth,
 } from "../../domains/providers/index.js";
-import {
-	SessionCostCeilingError,
-	sessionCeilingReached,
-	suggestedSessionCostCeilingUsd,
-} from "../../domains/scheduling/budget.js";
 import type { HostInsertSource } from "../../domains/session/entries.js";
 import { missingOutputRefusal } from "../../domains/session/output-obligations.js";
-import type { createEngineAgent } from "../../engine/agent.js";
 import { readDiffusionFrame } from "../../engine/apis/diffusion-frames.js";
 import { setGlobalDefaultMaxOutputTokens } from "../../engine/apis/index.js";
-import { estimateInputTokensFromContext } from "../../engine/apis/output-budget.js";
-import { resolvedRequestContext } from "../../engine/context.js";
 import { hasAssistantGenerationDelta } from "../../engine/generation-delta.js";
 import { sanitizeLockedSynthesisMessage } from "../../engine/loop-guard-synthesis.js";
-import { applyToolRounds, firstToolRoundAttempt } from "../../engine/provider-payload.js";
 import { createRequestStructures } from "../../engine/request-structure.js";
 import type { AgentEvent, AgentMessage, EngineModel, Usage } from "../../engine/types.js";
 import type { resolveAgentTools } from "../../tools/agent-tools.js";
@@ -84,7 +69,6 @@ import {
 } from "../chat-loop-messages.js";
 import { selfCompactSiblingRefusal } from "../continuity-controller.js";
 import { withSettledHistory } from "../message-list-digest.js";
-import { resolveFitOutputReserve, turnAdmissionRemedy } from "../output-reserve.js";
 import {
 	assessDraftLoop,
 	assessRepetition,
@@ -94,20 +78,16 @@ import {
 	thinkingOverrunReason,
 	toolCallFloodAbortReason,
 } from "../repetition-detector.js";
-import type { ModelRequestFacts } from "../status-types.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls, shouldAssessToolProse } from "../tool-prose-loop.js";
 import { OVERSIZED_RESULT_STOP } from "../turn-context.js";
 import { stalledRequestEnd } from "../turn-recovery.js";
 import type { AgentRuntime, ChatLoopTarget } from "../turn-state.js";
+import { createStreamAdmission } from "./admission.js";
 import { createCallTelemetry } from "./calls.js";
 import { TurnAdmissionError } from "./errors.js";
 import type { AgentBuildScope, TurnRuntimeScope } from "./scope.js";
-import { attemptToolRounds, createTranscriptStream, finalizeAttempt } from "./stream.js";
+import { createTranscriptStream } from "./stream.js";
 import { createStallWatchdog } from "./watchdog.js";
-
-const LOCAL_API_KEY_FALLBACK = "pancode-local-target";
-type StreamAdmission = NonNullable<NonNullable<Parameters<typeof createEngineAgent>[0]>["beforeStreamRequest"]>;
-type AdmissionHold = { waitedOn?: "budget"; inputTokens?: number; anchored?: boolean; outputReserveTokens?: number };
 
 function isCollectedBatchResult(toolName: string, result: unknown): boolean {
 	const details = (result as { details?: unknown } | undefined)?.details as
@@ -243,7 +223,6 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	const { deps, state, context, persistence, middleware, middlewareToolChoice } = rt;
 	const { target, model, initialThinkingLevel, tools, priorMessages, targetSettings, hadPriorRuntime, options } = inputs;
 
-	let getCurrentAgentSignal: () => AbortSignal | undefined = () => undefined;
 	const gatewaySessionId = target.runtime.id === "litellm" ? deps.sessionId?.() : undefined;
 	const scope: AgentBuildScope = {
 		rt,
@@ -268,6 +247,10 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		admittedCursor: null,
 		pinnedInputTokens: null,
 		placeholderKeySent: false,
+		unsettledSpendUsd: 0,
+		admittedMessages: [],
+		admittedSystemPrompt: "",
+		getCurrentAgentSignal: () => undefined,
 		get requestStructure() {
 			return requestStructure;
 		},
@@ -282,10 +265,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	const calls = createCallTelemetry(scope);
 	const { stampCallFailure, settleModelCall, abandonModelCall, openModelCall } = calls;
 	const watchdog = createStallWatchdog(scope);
-	const { clearStallTimer, firstTokenLimitMs, armStallTimer, callWait, noteFirstOutput, firstOutputMs } = watchdog;
-	let unsettledSpendUsd = 0;
-	let admittedMessages: readonly AgentMessage[] = [];
-	let admittedSystemPrompt = "";
+	const { clearStallTimer, armStallTimer, callWait, noteFirstOutput, firstOutputMs } = watchdog;
 	let requiredToolReminder: string | null = null;
 	// FX-40: bare finish calls admitted after their user turn's one refusal; each result records the missing reply.
 	const bareFinishCalls = new Set<string>();
@@ -302,20 +282,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	rt.clearCurrentWatchdog();
 	let runIdentity = deps.turnIdentity?.();
 	const currentRun = (): boolean => runIdentity === deps.turnIdentity?.();
-	// One span covers Pi's whole pre-invocation gate; `waitedOn` names the ceiling that held it, so a
-	// budget wait reads as admission and never as a stall (#424, #434).
-	const stageAdmission =
-		(admit: (request: Parameters<StreamAdmission>[0], hold: AdmissionHold) => ReturnType<StreamAdmission>) =>
-		async (request: Parameters<StreamAdmission>[0]): Promise<Awaited<ReturnType<StreamAdmission>>> => {
-			const call = scope.modelCall;
-			const hold: AdmissionHold = {};
-			call?.stage("admission", "start");
-			try {
-				return await admit(request, hold);
-			} finally {
-				call?.stage("admission", "end", hold);
-			}
-		};
+	const streamAdmission = createStreamAdmission(scope, watchdog);
 	// Everything below reads the route when it is used: a hot swap or a moved request changes it under this agent.
 	const handle = deps.createAgent({
 		// Row 384 backstop: a provider that accepts the id and serves another model is refused at its first response.
@@ -382,245 +349,12 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			const bare = bareFinishCalls.delete(toolCall.id);
 			return bare && !isError ? withoutReplyResult(result, deps.headless === true) : undefined;
 		},
-		beforeStreamRequest: stageAdmission(async ({ model, context: request, options: streamOptions }, hold) => {
-			setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
-			scope.callTracking = null;
-			delete localRuntime.lastProviderStatus;
-			if (!currentRun() || state.activeInterruptReason !== null || state.runtime !== localRuntime) {
-				return { block: true, reason: "Request ownership changed before invocation." };
-			}
-			const unavailable = await rt.modelOfferRefusal(
-				localRuntime.targetId,
-				localRuntime.wireModelId,
-				streamOptions?.signal,
-			);
-			if (unavailable !== null)
-				return { block: true, reason: modelRouteRefusalMessage(unavailable), modelRouteRefusal: unavailable };
-			const flowViolation =
-				deps.admitFlow?.({
-					targetId: localRuntime.targetId,
-					runtimeId: localRuntime.runtimeId,
-					wireModelId: localRuntime.wireModelId,
-				}) ?? null;
-			if (flowViolation !== null) {
-				if (state.lastRunSnapshot) state.lastRunSnapshot.outcomeCode = "information_flow_blocked";
-				return { block: true, reason: flowViolation };
-			}
-			if (state.lastRunSnapshot) delete state.lastRunSnapshot.outcomeCode;
-			if (deps.hasQueuedSteering?.() && deps.continuity?.admission().block === false) {
-				const handoff = deps.continuity.admission();
-				if (!handoff.block && handoff.correlationId)
-					return { block: true, reason: "Operator steering arrived during handoff preparation; handoff paused." };
-			}
-			// One settled stretch (SC-6): nothing from the view to the anchored count edits a message in place, so the
-			// anchored count reads the history the view just checked instead of walking every message again.
-			const { view, resolved, actual, anchored } = withSettledHistory(() => {
-				const view = context.refreshLiveBudget();
-				const resolved = resolvedRequestContext(request);
-				scope.admittedCursor = deps.requestCursor?.() ?? null;
-				// The first invocation as the send path builds it; a #426 retry after a rejection is not re-admitted.
-				const middlewareChoice = middlewareToolChoice.current();
-				const controlled = applyToolRounds(
-					model,
-					request,
-					streamOptions,
-					attemptToolRounds(state.synthesisToolLock, middlewareChoice),
-					localRuntime.targetId,
-				);
-				const actual = finalizeAttempt(
-					firstToolRoundAttempt(model, controlled, localRuntime.targetId),
-					state.synthesisToolLock,
-					middlewareChoice,
-				);
-				// The view is the one count: after an overflow fold that fit it publishes the A4 count, otherwise the live
-				// estimate. Admission sizes the request on it, and the provider-bound copy hands Pi's clamp the same figure
-				// on every main request, so Pi never refuses what admission passed (SPEC §0; cf-x6 r2 m3a residual).
-				context.takeOverflowInputPin?.();
-				// With a measured anchor on this route the anchored count replaces the chars/4 floor, and what finalize
-				// added to the request (a synthesis directive) rides on it at chars/4 (bt3 drv-rv5).
-				const anchored = context.anchoredInputTokens?.(localRuntime) ?? null;
-				return { view, resolved, actual, anchored };
-			});
-			const counted = estimateInputTokensFromContext(actual);
-			const input =
-				anchored === null
-					? Math.max(counted, view.inputTokens ?? 0)
-					: anchored + Math.max(0, counted - estimateInputTokensFromContext(request));
-			scope.pinnedInputTokens = input;
-			hold.inputTokens = input;
-			hold.anchored = anchored !== null;
-			const output = resolveFitOutputReserve(localRuntime, input);
-			hold.outputReserveTokens = output;
-			if (view.effectiveWindow !== null && !requestFits(input, output, view.effectiveWindow))
-				return {
-					block: true,
-					reason: `Context window exceeded: input ${input} + output ${output}, window ${view.effectiveWindow ?? "unknown"}. ${turnAdmissionRemedy(localRuntime, input)}`,
-				};
-			if (
-				deps.scheduling &&
-				// A provider that reports its own per-call cost reaches the ceiling even with no rates to project.
-				(pricesCalls(localRuntime.runtimeResolution.pricedBy) ||
-					localRuntime.runtimeResolution.runtime.reportsCallCost === true)
-			) {
-				const recordBlock = (block: BudgetAlertPayload): void => {
-					hold.waitedOn = "budget";
-					persistence.appendBudgetBlock({
-						...block,
-						raiseToUsd: suggestedSessionCostCeilingUsd(block.currentUsd + (block.projectedUsd ?? 0), block.ceilingUsd),
-						setting: "safety.limits.sessionCostUsd",
-					});
-				};
-				try {
-					if (deps.scheduling.admitPaidRequest) {
-						// A ceiling wait is the operator's decision, not a silent provider.
-						// The watchdog re-arms through it as it does through a running
-						// tool, so a budget stop is never aborted and retried as a stream
-						// stall (#423).
-						scope.preInvocationStage = "budget admission";
-						scope.stallSuspendDepth += 1;
-						// Parked at the ceiling this is PanCode's queue, and no provider has heard of the request.
-						let parked: ModelRequestFacts | null = null;
-						try {
-							await deps.scheduling.admitPaidRequest({
-								waitForRaise: deps.headless !== true,
-								additionalUsd: () => unsettledSpendUsd,
-								getCeilingUsd: () => deps.getSettings().safety.limits.sessionCostUsd,
-								contextTokens: input,
-								onBlocked: (block) => {
-									recordBlock(block);
-									parked = {
-										sentAt: Date.now(),
-										modelId: localRuntime.wireModelId,
-										firstByteAt: null,
-										bytesObservable: false,
-									};
-									applyModelAdmission(
-										parked,
-										{
-											stage: "ceiling",
-											spentUsd: block.currentUsd + (block.projectedUsd ?? 0),
-											ceilingUsd: block.ceilingUsd,
-											...(block.pricing ? { pricing: block.pricing } : {}),
-										},
-										Date.now(),
-									);
-									state.modelRequest = parked;
-								},
-								...(scope.modelCall && scope.journalLease
-									? {
-											telemetry: {
-												...scope.journalLease.context,
-												callId: scope.modelCall.callId,
-												attemptId: scope.modelCall.attemptId,
-											},
-										}
-									: {}),
-								...(streamOptions?.signal ? { signal: streamOptions.signal } : {}),
-							});
-						} finally {
-							scope.stallSuspendDepth -= 1;
-							scope.lastActivityAt = performance.now();
-							if (parked !== null) (parked as ModelRequestFacts).admission = null;
-						}
-					} else {
-						const { currentUsd, ceilingUsd, pricing } = deps.scheduling.preflight();
-						if (sessionCeilingReached(currentUsd + unsettledSpendUsd, ceilingUsd)) {
-							recordBlock({
-								level: currentUsd + unsettledSpendUsd > ceilingUsd ? "over" : "at",
-								currentUsd,
-								...(unsettledSpendUsd > 0 ? { projectedUsd: unsettledSpendUsd } : {}),
-								ceilingUsd,
-								contextTokens: input,
-								...(pricing ? { pricing } : {}),
-							});
-							throw new SessionCostCeilingError(currentUsd + unsettledSpendUsd, ceilingUsd, undefined, input, pricing);
-						}
-					}
-				} catch (error) {
-					return { block: true, reason: error instanceof Error ? error.message : String(error) };
-				}
-			}
-			if (state.activeInterruptReason !== null || state.runtime !== localRuntime) {
-				return { block: true, reason: "Request ownership changed while waiting for budget approval." };
-			}
-			if (observationTracing())
-				traceObservation("actor-input", {
-					sessionId: deps.sessionId?.() ?? null,
-					target: localRuntime.targetId,
-					model: localRuntime.wireModelId,
-					window: view.effectiveWindow,
-					inputTokens: input,
-					outputTokens: output,
-					context: resolved,
-				});
-			scope.preInvocationStage = "admission";
-			const admission = deps.continuity?.admission() ?? { block: false };
-			// Counted only here, once nothing else blocks: the request is about to be sent.
-			const capRefusal = admission.block ? undefined : deps.runCaps?.admitRequest();
-			if (capRefusal !== undefined) return { block: true, reason: capRefusal };
-			admittedMessages = admission.block ? [] : resolved.messages;
-			admittedSystemPrompt = admission.block ? "" : (resolved.systemPrompt ?? "");
-			return admission;
-		}),
-		onStreamInvocation: () => {
-			deps.onMemoryRequestSubmitted?.(admittedMessages, admittedSystemPrompt);
-			setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
-			// This ttftMs counts from here, so it includes PanCode's request shaping and any provider-replay
-			// rebuild; the journal's TTFT starts at send.end, the handoff to Pi's provider (#434).
-			scope.apiCallStartedAt = performance.now();
-			scope.apiCallFirstDeltaAt = null;
-			scope.outputHeld = false;
-			scope.modelCall?.stage("send", "start");
-			// The request is out, so its first token is held to the route's first-token limit from now; the run's
-			// timer was armed for the mid-stream window, which a calibrated hosted route undercuts (MD11).
-			const retry = deps.retrySettings();
-			const firstTokenMs = retry.streamStallMs > 0 ? firstTokenLimitMs(retry) : null;
-			if (firstTokenMs !== null && firstTokenMs < retry.streamStallMs) {
-				clearStallTimer();
-				armStallTimer(firstTokenMs);
-			}
-		},
+		beforeStreamRequest: streamAdmission.beforeStreamRequest,
+		onStreamInvocation: streamAdmission.onStreamInvocation,
 		authResolvedByHost: true,
-		getApiKey: async () => {
-			// Pi converts the conversation between turn_start and this call; that is the transform stage (#434).
-			const call = scope.modelCall;
-			call?.stage("transform", "end");
-			scope.placeholderKeySent = !targetRequiresAuth(
-				localRuntime.runtimeResolution.target,
-				localRuntime.runtimeResolution.runtime,
-			);
-			if (scope.placeholderKeySent) return LOCAL_API_KEY_FALLBACK;
-			scope.preInvocationStage = "auth";
-			call?.stage("auth", "start");
-			let refreshed: boolean | undefined;
-			try {
-				const signal = getCurrentAgentSignal();
-				const resolved = await deps.providers.auth.resolveForTarget(
-					localRuntime.runtimeResolution.target,
-					localRuntime.runtimeResolution.runtime,
-					signal ? { signal } : undefined,
-				);
-				refreshed = resolved.refreshed;
-				if (!currentRun() || signal?.aborted) throw new Error("Request ownership changed while resolving authentication.");
-				localRuntime.lastAuthResolution = resolved;
-				// A refusal is not "no credential": Pi's "No API key" error would hide why, and the engine's env fallback must not run.
-				if (resolved.refused)
-					throw new Error(resolved.detail ?? `PanCode refuses to send a credential to target '${localRuntime.targetId}'.`);
-				// A failed OAuth refresh carries its remedy in detail; Pi's own "No API key" error would drop it.
-				if (
-					resolved.apiKey === undefined &&
-					resolved.source === "stored-oauth" &&
-					resolved.detail &&
-					resolved.detail !== resolved.providerId
-				)
-					throw new Error(resolved.detail);
-				return resolved.apiKey;
-			} finally {
-				call?.stage("auth", "end", refreshed === undefined ? {} : { refreshed });
-			}
-		},
+		getApiKey: streamAdmission.getApiKey,
 	});
-	getCurrentAgentSignal = () => handle.agent.signal;
+	scope.getCurrentAgentSignal = () => handle.agent.signal;
 	// The stream Pi's loop reads for each request of a run. Only a request under the run's own signal can be cut: a
 	// prewarm sends through the same function without it (MD11).
 	const runStream = handle.agent.streamFunction;
@@ -1116,10 +850,10 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			// A call no journal holds is counted against the ceiling for the rest of its run only (#434).
 			const priced = factKnownValue(completed.cost.usd);
 			if ((!deps.telemetry || !journalAccounted) && completed.hadUsage && Number.isFinite(priced) && priced > 0) {
-				unsettledSpendUsd += priced;
+				scope.unsettledSpendUsd += priced;
 			}
 		}
-		if (enrichedEvent.type === "agent_end") unsettledSpendUsd = 0;
+		if (enrichedEvent.type === "agent_end") scope.unsettledSpendUsd = 0;
 		// Suppress the hollow transcript event while its closing turn keeps the call's accounting (#430).
 		if (
 			state.activeInterruptReason !== null &&
