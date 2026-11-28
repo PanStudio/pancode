@@ -92,8 +92,8 @@ export function formatSettingsValue(path: string, value: string): string {
 	if (value === "(off)") return "Off";
 	if (value === "(unset)") return "Not set";
 	if (value === "(connection default)") return "Connection default";
-	if (value === "(session target)") return "Chat connection";
-	if (value === "(orchestrator target)") return "Chat model";
+	if (value === "(session connection)") return "Chat connection";
+	if (value === "(orchestrator connection)") return "Chat model";
 	if (value === "(config directory)") return "Default location";
 	if (value === "(local only)") return "Local only";
 	if (value === "(unconfirmed)") return "Not confirmed";
@@ -161,7 +161,7 @@ export function settingsPathLabel(path: string): string {
 	if (path.startsWith("fleet.profiles.")) {
 		const [, name, field] = path.match(/^fleet\.profiles\.([^.]+)(?:\.(.+))?$/) ?? [];
 		const part =
-			field === "target"
+			field === "connection"
 				? "connection"
 				: field === "thinkingLevel"
 					? "thinking level"

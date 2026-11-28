@@ -305,7 +305,7 @@ export function planDetailText(text: string): string {
  * model than the session's without saying so read as a silent switch (F17).
  */
 function routeWords(route: string): string {
-	return route === "target named in the call"
+	return route === "connection named in the call"
 		? route
 		: `${route}; workers follow fleet routing, not the session's /model (set it in /settings)`;
 }

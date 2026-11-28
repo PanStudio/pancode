@@ -9,6 +9,7 @@ import { visibleWidth } from "../../src/engine/tui.js";
 import { SETTINGS_LABELS_BY_ID, SettingsCenter } from "../../src/interactive/overlays/settings.js";
 import { SETTINGS_SECTION_ROWS } from "../../src/interactive/overlays/settings-center-model.js";
 import { buildSettingItems } from "../../src/interactive/overlays/settings-items.js";
+import { formatSettingsValue } from "../../src/interactive/overlays/settings-presentation.js";
 import { buildSettingsSections } from "../../src/interactive/overlays/settings-sections.js";
 import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
 
@@ -202,4 +203,9 @@ test("Space previews only rows a preview can show, and Means explains the previe
 	ok(!before.includes("[Space] preview"), "a restart-only row offers no preview");
 	center.handleInput(" ");
 	strictEqual(screen(), before);
+});
+
+test("settings presentation maps connection fallback sentinels to human labels", () => {
+	strictEqual(formatSettingsValue("safety.review.connection", "(session connection)"), "Chat connection");
+	strictEqual(formatSettingsValue("fleet.default.connection", "(orchestrator connection)"), "Chat model");
 });

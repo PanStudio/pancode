@@ -396,7 +396,7 @@ function resolveSelectedDispatchTarget(
 		return {
 			ok: false,
 			reason: `no model for connection '${targetId}'`,
-			message: `dispatch: no model for connection '${targetId}' (set a fleet profile model or target.defaultModel)`,
+			message: `dispatch: no model for connection '${targetId}' (set a fleet profile model or connection.defaultModel)`,
 		};
 	}
 	const wireModelId = status ? canonicalizeWireModelId(status, requestedWireModelId) : requestedWireModelId;

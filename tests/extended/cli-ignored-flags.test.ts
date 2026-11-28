@@ -484,18 +484,22 @@ describe("run --task-file envelope (SPEC 6.3)", () => {
 	};
 
 	it("merges the envelope's task and flags into the run arguments", async () => {
-		const file = envelope("ok", { schemaVersion: 1, task: "say hi", route: { model: "m1" } });
+		const file = envelope("ok", { schemaVersion: 1, task: "say hi", route: { connection: "local", model: "m1" } });
 		const parsed = await parseRunArgsWithTaskFile(["--task-file", file]);
 		equal(parsed.diagnostics.filter((diagnostic) => diagnostic.type === "error").length, 0);
 		deepStrictEqual(parsed.messages, ["say hi"]);
+		equal(parsed.target, "local");
 		equal(parsed.model, "m1");
 	});
 
 	it("refuses a key given in the file and on the command line, naming the dotted path", async () => {
-		const file = envelope("conflict", { schemaVersion: 1, task: "say hi", route: { model: "m1" } });
+		const file = envelope("conflict", { schemaVersion: 1, task: "say hi", route: { connection: "local", model: "m1" } });
 		const { slug, message } = await refusal(["--model", "m2", "--task-file", file]);
 		equal(slug, "task_flag_conflict");
 		match(message, /route\.model/);
+		const connConflict = await refusal(["--connection", "other", "--task-file", file]);
+		equal(connConflict.slug, "task_flag_conflict");
+		match(connConflict.message, /route\.connection/);
 	});
 
 	it("refuses an unknown key and malformed JSON as usage, and a schemaVersion other than 1 as schema_unsupported", async () => {
@@ -505,6 +509,12 @@ describe("run --task-file envelope (SPEC 6.3)", () => {
 		]);
 		equal(unknown.slug, "usage");
 		match(unknown.message, /route\.bogus/);
+		const oldTarget = await refusal([
+			"--task-file",
+			envelope("old-target", { schemaVersion: 1, task: "x", route: { target: "local" } }),
+		]);
+		equal(oldTarget.slug, "usage");
+		match(oldTarget.message, /route\.target/);
 		equal((await refusal(["--task-file", envelope("bad", "{")])).slug, "usage");
 		// SPEC 6.6: the envelope names the version it cannot read at the source.
 		equal((await refusal(["--task-file", envelope("v2", { schemaVersion: 2, task: "x" })])).slug, "schema_unsupported");

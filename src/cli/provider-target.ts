@@ -230,7 +230,7 @@ export function renderConnectableProviderRows(rows: ReadonlyArray<ConnectablePro
 					: "disconnected";
 		return {
 			group: row.entry.group,
-			cells: [row.entry.runtimeId, row.entry.label, status, `targets=${row.targetCount}`],
+			cells: [row.entry.runtimeId, row.entry.label, status, `connections=${row.targetCount}`],
 		};
 	});
 	const widths = columnWidths(renderedRows.map((row) => row.cells));

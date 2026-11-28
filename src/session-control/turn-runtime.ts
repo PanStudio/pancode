@@ -323,7 +323,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		if (!resolved.ok) {
 			const failure = resolved.diagnostics.find((entry) => entry.severity === "error") ?? resolved.diagnostics[0];
 			throw new TurnAdmissionError(
-				`[PanCode] ${failure?.message ?? "orchestrator target resolution failed"}`,
+				`[PanCode] ${failure?.message ?? "orchestrator connection resolution failed"}`,
 				failure?.code ?? "admission-failed",
 			);
 		}
@@ -1465,7 +1465,9 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 					localRuntime.lastAuthResolution = resolved;
 					// A refusal is not "no credential": Pi's "No API key" error would hide why, and the engine's env fallback must not run.
 					if (resolved.refused)
-						throw new Error(resolved.detail ?? `PanCode refuses to send a credential to target '${localRuntime.targetId}'.`);
+						throw new Error(
+							resolved.detail ?? `PanCode refuses to send a credential to connection '${localRuntime.targetId}'.`,
+						);
 					// A failed OAuth refresh carries its remedy in detail; Pi's own "No API key" error would drop it.
 					if (
 						resolved.apiKey === undefined &&

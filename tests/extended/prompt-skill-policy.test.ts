@@ -242,7 +242,7 @@ it("names a gateway capability only for a strong match, and PanCode's own only f
 		assert.ok(!note(task).includes("[Capabilities]"), task);
 	}
 	assert.match(
-		note("How do I add a second target to PanCode?"),
+		note("How do I add a second connection to PanCode?"),
 		/\[Capabilities\] Likely useful: [^.]*\bpancode_docs\b/u,
 	);
 	assert.match(note("Summarize the columns of data/run.parquet"), /\[Capabilities\] Likely useful: data\b/u);

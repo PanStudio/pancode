@@ -762,7 +762,7 @@ function runSkillsScope(
 	const reviewName = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(skill.name) ? skill.name : "<name>";
 	const driftWarning =
 		driftReport?.verdict === "mismatch"
-			? `WARNING skill_drift: ${driftReport.authority === "pinned-manifest" ? "catalog" : "install-record"} sha256=${driftReport.expected} installed normalized sha256=${skill.normalizedHash}. Review the body-free owner with pancode hub components ${reviewName} --kind skill --json; if managed, preview pancode hub update <owner-ref> --dry-run --json with --user or --project for that copy before replacing local changes. A loose skill has no hub update connection.`
+			? `WARNING skill_drift: ${driftReport.authority === "pinned-manifest" ? "catalog" : "install-record"} sha256=${driftReport.expected} installed normalized sha256=${skill.normalizedHash}. Review the body-free owner with pancode hub components ${reviewName} --kind skill --json; if managed, preview pancode hub update <owner-ref> --dry-run --json with --user or --project for that copy before replacing local changes. A loose skill has no hub update target.`
 			: null;
 	const body = [
 		...(driftWarning !== null ? [driftWarning] : []),

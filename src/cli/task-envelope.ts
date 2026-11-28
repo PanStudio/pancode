@@ -55,7 +55,7 @@ const SAMPLING: Readonly<Record<string, EnvelopeLeaf>> = {
 /** Keyed groups; `task`, `schemaVersion`, `attachments`, `verify`, `answers` and `output.schema` are handled apart. */
 const GROUPS: Readonly<Record<string, Readonly<Record<string, EnvelopeLeaf>>>> = {
 	route: {
-		target: leaf("string", ["--connection"], valueFlag("--connection")),
+		connection: leaf("string", ["--connection"], valueFlag("--connection")),
 		model: leaf("string", ["--model"], valueFlag("--model")),
 		thinking: leaf("string", ["--thinking"], valueFlag("--thinking")),
 	},
