@@ -88,7 +88,7 @@ async function setup(beforeMetadata?: () => Promise<void>) {
 			agent: "oracle",
 			tasks: ["Compute 17 times 19.", "Check the computed result."],
 			mode: "sequential",
-			target: "worker",
+			connection: "worker",
 			model: fixture.modelId,
 			cwd: env.dir,
 		},

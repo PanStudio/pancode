@@ -81,7 +81,7 @@ for (const mode of ["isolated", "fork", "splice"] as const) {
 				agent: "researcher",
 				task: "Compute 17 times 19.",
 				context: { mode },
-				target: "worker",
+				connection: "worker",
 				cwd: env.dir,
 			});
 			const outcome = await tool.run(args, {});
