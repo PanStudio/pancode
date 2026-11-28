@@ -128,14 +128,14 @@ export function createWorkerResult(scope: WorkerRunScope) {
 	const terminalHandoffActive = (api: string): boolean =>
 		scope.helperToolAvailable && (phase.toolsLocked || phase.resultForced) && supportsNamedToolChoice(api);
 	const pushHelperTool = (tools: ReturnType<typeof resolveAgentTools>): void => {
-		if (scope.helperToolAvailable) {
+		if (scope.helperToolAvailable && helperSchema !== null) {
 			tools.push({
 				name: INTERNAL_HELPER_RESULT_TOOL,
 				label: "Submit helper result",
 				description:
 					"Submit the final internal result as this tool's arguments. Call alone, after gathering evidence. A validated submission finishes the run; no prose response follows." +
 					(mutationResult ? ` ${MUTATION_FAILURE_RULE}` : ""),
-				parameters: Type.Unsafe<Record<string, unknown>>(helperSchema as Record<string, unknown>),
+				parameters: Type.Unsafe<Record<string, unknown>>(helperSchema),
 				async execute(id, args) {
 					if (scope.acceptedHelperResult !== null || phase.sealedBy !== null) {
 						return {
