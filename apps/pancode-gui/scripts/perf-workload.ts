@@ -12,7 +12,7 @@ import { parseArgs } from "node:util";
 import { serve } from "@hono/node-server";
 import { chromium, type Page } from "playwright-core";
 import { harness } from "../tests/harness/app.js";
-import { seedSettings } from "../tests/harness/settings-fixture.js";
+import { seedSettings } from "../tests/harness/hub-fixture.js";
 import { fixtureLaunch } from "./fixture-launch.js";
 
 const { values } = parseArgs({

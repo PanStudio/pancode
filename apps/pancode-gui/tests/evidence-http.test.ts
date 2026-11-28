@@ -8,7 +8,7 @@ import type { Static } from "typebox";
 import { EvidenceDetail, EvidencePage } from "../contracts/evidence.js";
 import { Accepted } from "../contracts/operations.js";
 import { harness, json, terminal } from "./harness/app.js";
-import { seedEvidence } from "./harness/evidence-fixture.js";
+import { seedEvidence } from "./harness/hub-fixture.js";
 
 test("evidence REST pages all 40 runs newest first with their sealed assessments and admitted provenance", async () => {
 	const h = await harness();
