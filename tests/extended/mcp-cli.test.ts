@@ -112,7 +112,12 @@ it("lists, trusts, detects stale declarations, untrusts and returns error exits"
 		match(run("list").text, /trust=untrusted/);
 		result = run("untrust", "files");
 		deepStrictEqual(result.data, { ok: true, removed: false });
-		strictEqual(run("trust", "files").code, 0);
+		// A confined server's egress grants (P8): exact origins only, recorded once each, shown by list.
+		strictEqual(run("trust", "files", "--allow", "*.example.com").code, 2);
+		result = run("trust", "files", "--allow", "api.example.com:443", "--allow", "api.example.com:443");
+		strictEqual(result.code, 0, result.text);
+		deepStrictEqual((result.data as { record: { allow?: string[] } }).record.allow, ["api.example.com:443"]);
+		match(run("list").text, /files scope=project .* allow=api\.example\.com:443/);
 		result = run("untrust", "files");
 		deepStrictEqual(result.data, { ok: true, removed: true });
 		result = run("trust", "missing");
@@ -357,6 +362,11 @@ it("tests one trusted server through the gateway's client and never launches an 
 				text,
 			})),
 			[{ tool: "echo", isError: false, text: '{"text":"hi"}' }],
+		);
+		const launch = data.calls[0].sandbox;
+		deepStrictEqual(
+			{ launcher: launch.launcher, integration: launch.integration, confinement: launch.confinement, why: launch.why },
+			{ launcher: "mcp-stdio", integration: "mcp:fake", confinement: "unconfined", why: "not-opted-in" },
 		);
 	} finally {
 		scratch.cleanup();

@@ -123,7 +123,13 @@ export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps
 		requestedMcp === false
 			? null
 			: (requestedMcp ??
-				createMcpCapabilitySource({ cwd, registry, store: { writable: true }, ...(elicitation ? { elicitation } : {}) }));
+				createMcpCapabilitySource({
+					cwd,
+					registry,
+					store: { writable: true },
+					...(elicitation ? { elicitation } : {}),
+					...(deps.getSettings !== undefined ? { confine: () => deps.getSettings?.().safety.confine ?? [] } : {}),
+				}));
 	const registration = registerCoreTools(registry, {
 		...coreDeps,
 		storeWritable: true,

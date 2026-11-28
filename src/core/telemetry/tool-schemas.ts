@@ -4,6 +4,22 @@
 
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import {
+	EGRESS_DECISIONS,
+	EGRESS_MODES,
+	EGRESS_REASONS,
+	EGRESS_SOURCES,
+	SANDBOX_BACKENDS,
+	SANDBOX_CALLERS,
+	SANDBOX_CONFINEMENTS,
+	SANDBOX_LAUNCH_HINTS,
+	SANDBOX_LAUNCH_OUTCOMES,
+	SANDBOX_LAUNCH_WHYS,
+	SANDBOX_LAUNCHERS,
+	SANDBOX_MODES,
+	SANDBOX_RECORD_MAX_DESTINATIONS,
+	SANDBOX_RECORD_MAX_LISTENING_PORTS,
+} from "../sandbox/types.js";
 import { vocabulary } from "./enums.js";
 import { CallIdSchema, ExistingId } from "./id-schemas.js";
 import { closed, count, duration } from "./schemas.js";
@@ -256,6 +272,75 @@ export const ToolBudgetExceededSchema = Type.Object(
 		template: Type.Optional(ExistingId),
 		stepTool: Type.Optional(ExistingId),
 		rolled: Type.Optional(Type.Literal(true)),
+	},
+	closed,
+);
+
+const port = Type.Integer({ minimum: 1, maximum: 65535 });
+/** One origin a proxied launch tried: no path, query, header, payload or upstream proxy (sandbox P6). */
+export const SandboxDestinationSchema = Type.Object(
+	{
+		/** Verbatim when granted; otherwise its rightmost labels, clipped (`hostClipped`). */
+		host: Type.String({ minLength: 1, maxLength: 255 }),
+		port,
+		decision: vocabulary(EGRESS_DECISIONS),
+		/** Why it was denied or failed; absent on an allowed origin. */
+		reason: Type.Optional(vocabulary(EGRESS_REASONS)),
+		/** What admitted it; absent on a denied origin. */
+		source: Type.Optional(vocabulary(EGRESS_SOURCES)),
+		/** Sent through `safety.egress.upstreamProxy`, which is never named. */
+		viaUpstream: Type.Optional(Type.Literal(true)),
+		count,
+		hostClipped: Type.Optional(Type.Literal(true)),
+	},
+	closed,
+);
+/**
+ * One process launch a sandbox policy decided, as it settled: whose policy, which launcher and backend, how it was
+ * confined and why, how it ended, and, for a proxied network, every origin it tried. ctx names the tool call. An open
+ * or unconfined network was not observed, so it carries no destinations rather than an empty list (sandbox P6).
+ */
+export const SandboxLaunchedSchema = Type.Object(
+	{
+		caller: vocabulary(SANDBOX_CALLERS),
+		launcher: vocabulary(SANDBOX_LAUNCHERS),
+		/** The MCP server or extension an integration launch belongs to. */
+		integration: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+		confinement: vocabulary(SANDBOX_CONFINEMENTS),
+		why: vocabulary(SANDBOX_LAUNCH_WHYS),
+		backend: Type.Union([vocabulary(SANDBOX_BACKENDS), Type.Null()]),
+		outcome: vocabulary(SANDBOX_LAUNCH_OUTCOMES),
+		exitCode: Type.Optional(Type.Integer()),
+		network: Type.Object(
+			{
+				mode: vocabulary(EGRESS_MODES),
+				/** True only when PanCode's proxy carried the launch's network and saw every origin it tried. */
+				observed: Type.Boolean(),
+			},
+			closed,
+		),
+		destinations: Type.Optional(Type.Array(SandboxDestinationSchema, { maxItems: SANDBOX_RECORD_MAX_DESTINATIONS })),
+		/** Connection attempts the destinations do not list, past the proxy's or this record's bound. */
+		dropped: Type.Optional(count),
+		/** Connections the proxy closed unread at its connection limit, before any origin was known. */
+		shed: Type.Optional(count),
+		/** Servers the command left listening inside its own network namespace, unreachable from outside. */
+		listeningPorts: Type.Optional(Type.Array(port, { maxItems: SANDBOX_RECORD_MAX_LISTENING_PORTS })),
+		/** Heuristic, from the output's wording; never a kernel event. */
+		hint: Type.Optional(vocabulary(SANDBOX_LAUNCH_HINTS)),
+	},
+	closed,
+);
+/**
+ * The session's shell ran a command without the OS sandbox, once per session and reason, so no record of it reads
+ * as contained by omission (sandbox P6). Per-launch records cover only launches a sandbox policy decided.
+ */
+export const SandboxUncontainedSchema = Type.Object(
+	{
+		caller: vocabulary(SANDBOX_CALLERS),
+		why: vocabulary(SANDBOX_LAUNCH_WHYS),
+		mode: vocabulary(SANDBOX_MODES),
+		backend: Type.Union([vocabulary(SANDBOX_BACKENDS), Type.Null()]),
 	},
 	closed,
 );

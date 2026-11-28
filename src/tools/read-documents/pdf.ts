@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { basename, dirname } from "node:path";
 import { runCommandVector } from "../../core/safe-exec.js";
+import { seamLaunchLabel, seamOrHostLaunch } from "../../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
+import { documentReaderLaunch } from "../../core/sandbox/main-session.js";
+import { layeredSandboxMode } from "../../core/settings-layers.js";
 import { formatSize } from "../truncate.js";
 import { type DocumentRequest, RENDER_CAP_BYTES, type Rendered } from "./shared.js";
 
@@ -46,17 +51,29 @@ export async function renderPdf(
 	filePath: string,
 	request: DocumentRequest,
 ): Promise<
-	Rendered & { pageCount?: number; headerLength?: number; pageStarts?: Array<{ page: number; offset: number }> }
+	Rendered & {
+		pageCount?: number;
+		headerLength?: number;
+		pageStarts?: Array<{ page: number; offset: number }>;
+	}
 > {
 	const cwd = dirname(filePath);
-	const exec = (file: string, args: string[]) =>
-		runCommandVector(file, args, {
+	// poppler writes nothing, so in the main session it runs read-only with no network where bubblewrap can (P8).
+	const { shellSandbox, label } = documentReaderLaunch("pdf", cwd, layeredSandboxMode(process.cwd()));
+	let launch: SandboxLaunchRecord | undefined;
+	const exec = async (file: string, args: string[]) => {
+		const result = await runCommandVector(file, args, {
 			cwd,
 			workspaceRoot: cwd,
 			timeoutMs: PDF_TIMEOUT_MS,
 			maxOutputBytes: RENDER_CAP_BYTES,
+			launchLabel: seamLaunchLabel(label),
+			...(shellSandbox !== undefined ? { shellSandbox } : {}),
 			...(request.signal !== undefined ? { signal: request.signal } : {}),
 		});
+		launch = seamOrHostLaunch(result.sandbox, label, result);
+		return result;
+	};
 	const info = await exec("pdfinfo", [filePath]);
 	if (info.stderr.includes("ENOENT") && info.exitCode === null) return { error: POPPLER_MISSING };
 	if (info.aborted) return { error: "cancelled" };
@@ -108,5 +125,11 @@ export async function renderPdf(
 		lines.push("", heading, body);
 		return { page: pageNumber, offset: start };
 	});
-	return { text: lines.join("\n"), pageCount, headerLength: (lines[0] ?? "").length, pageStarts };
+	return {
+		text: lines.join("\n"),
+		pageCount,
+		headerLength: (lines[0] ?? "").length,
+		pageStarts,
+		...(launch !== undefined ? { launch } : {}),
+	};
 }

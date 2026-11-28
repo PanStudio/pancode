@@ -32,12 +32,22 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "../../core/git-commit-attribution.js";
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
+import { type HostLaunchLabel, hostAuthorityLabel } from "../../core/sandbox/host-launch.js";
+import { settleHostLaunch } from "../../core/sandbox/host-launch-record.js";
+import {
+	confinedIntegrationPolicy,
+	type MainSandboxPolicy,
+	optInLaunch,
+	planMainSandboxSpawn,
+} from "../../core/sandbox/main-session.js";
+import { layeredConfineList, layeredMainHomeReads } from "../../core/settings-layers.js";
 import {
 	captureProjectSurface,
 	type ProjectSurfaceSnapshot,
 	projectSurfaceTrustNotice,
 } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
+import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
 import {
 	type HookReceiptSink,
 	loadUserHooks,
@@ -45,6 +55,7 @@ import {
 	type UserHookCommandRunner,
 	type UserHookDeclarationBatch,
 	type UserHookLoadResult,
+	type UserHookOrigin,
 	type UserHookPackageProvenance,
 	type UserHookSource,
 	userHookToRegistration,
@@ -207,7 +218,7 @@ export function buildUserHookRegistrations(
 	if (options.capturedSources !== undefined) readOptions.capturedSources = options.capturedSources;
 	const { batches, fileIssues, projectSurface } = readHookSources(readOptions);
 	const loaded = loadUserHooks(batches, { workspaceRoot });
-	const runCommand = options.runCommand ?? spawnSyncCommandRunner();
+	const runCommand = options.runCommand ?? spawnSyncCommandRunner(workspaceRoot);
 	let reportedUntrusted = false;
 	const projectStillTrusted = (): boolean => {
 		const current = captureProjectSurface(options.cwd, "hooks");
@@ -233,17 +244,58 @@ export function buildUserHookRegistrations(
 	return { ...loaded, fileIssues, registrations };
 }
 
+/** Where one command hook runs (P8): its label, and the policy when it runs in the sandbox; or why it may not start. */
+export type HookLaunch = { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string };
+
+/**
+ * Where a command hook runs. The operator's own hooks.yaml is operator
+ * authority and runs on the host. Project and extension hooks run in the
+ * main-session sandbox, network off, when `safety.confine` names `hooks`;
+ * otherwise on the host, as before, and labelled so.
+ */
+function hookLaunch(
+	origin: UserHookOrigin | undefined,
+	workspaceRoot: string,
+	confine: ReadonlyArray<string>,
+): HookLaunch {
+	if (origin === "user") return { label: hostAuthorityLabel("yaml-hook") };
+	const decided = optInLaunch("yaml-hook", "hooks", confine);
+	if ("refused" in decided || !decided.confined) return "refused" in decided ? decided : { label: decided.label };
+	return {
+		label: decided.label,
+		policy: confinedIntegrationPolicy({
+			workspace: workspaceRoot,
+			scratchRoots: effectiveScratchRoots([], workspaceRoot),
+			stateDirs: [],
+			network: "off",
+			homeReads: layeredMainHomeReads(workspaceRoot),
+		}),
+	};
+}
+
 /**
  * Production command runner. Runs the argv with no shell (so there is no string
- * to inject into), a wall-clock timeout, and a bounded output buffer.
+ * to inject into), a wall-clock timeout, and a bounded output buffer, where
+ * {@link hookLaunch} says; `confine` is read on each run.
  */
-export function spawnSyncCommandRunner(): UserHookCommandRunner {
+export function spawnSyncCommandRunner(
+	workspaceRoot: string = process.cwd(),
+	confine: () => ReadonlyArray<string> = () => layeredConfineList(workspaceRoot),
+): UserHookCommandRunner {
 	return (argv, options): UserHookCommandResult => {
-		const [command, ...args] = argv;
+		const launch = hookLaunch(options.origin, workspaceRoot, options.origin === "user" ? [] : confine());
+		if ("refused" in launch) return { code: null, timedOut: false, stdout: "", stderr: launch.refused };
+		const cwd = options.cwd ?? process.cwd();
+		const planned = launch.policy !== undefined ? planMainSandboxSpawn(launch.policy, { argv }, cwd) : undefined;
+		if (planned?.kind === "refused") {
+			const record = settleHostLaunch(launch.label, { outcome: "refused" }, planned.launch);
+			return { code: null, timedOut: false, stdout: "", stderr: planned.message, launch: record };
+		}
+		const [command, ...args] = planned !== undefined ? [planned.file, ...planned.args] : argv;
 		// A user hook is operator automation, not PanCode work: the environment is
 		// normalized so a nested seam sees consistent state, but no role is claimed.
 		const attribution = withManagedGitCommitAttributionEnvironment(buildSafeToolEnv(), {
-			cwd: options.cwd ?? process.cwd(),
+			cwd,
 			enabled: gitCommitAttributionEnabled(process.env),
 			evidence: {},
 			author: "human",
@@ -258,12 +310,19 @@ export function spawnSyncCommandRunner(): UserHookCommandRunner {
 			shell: false,
 			env: attribution.env,
 		});
+		planned?.afterExit();
+		const record = settleHostLaunch(
+			launch.label,
+			{ outcome: result.pid === undefined || result.pid === 0 ? "launch-failed" : "ran", exitCode: result.status },
+			planned?.launch,
+		);
 		const timedOut = result.error !== undefined && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
 		return {
 			code: result.status,
 			timedOut,
 			stdout: typeof result.stdout === "string" ? result.stdout : "",
 			stderr: typeof result.stderr === "string" ? result.stderr : "",
+			launch: record,
 		};
 	};
 }

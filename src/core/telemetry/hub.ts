@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { AsyncLocalStorage } from "node:async_hooks";
 import { writeDiagnostic } from "../diagnostics.js";
 import type { TelemetryContext } from "./context.js";
 import type { EventName, EventPayload, PreimageData, PreimageEventName } from "./events.js";
+
+/**
+ * The async telemetry context, kept beside the emit path rather than with the context schemas, so a launch seam on a
+ * pre-boot path captures its call's context without loading typebox.
+ */
+export const telemetryContexts = new AsyncLocalStorage<TelemetryContext>();
+
+export function telemetryContext(): TelemetryContext | undefined {
+	return telemetryContexts.getStore();
+}
 
 /**
  * Listener invoked by {@link TelemetryHub.emit}.

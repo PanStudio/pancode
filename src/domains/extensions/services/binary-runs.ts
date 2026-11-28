@@ -9,10 +9,26 @@ import type { ExtensionBinaryDeclaration } from "@pancode/sdk/pack";
 import { recordPackageActivity } from "../../../core/package-activity.js";
 import type { PackageIdentity } from "../../../core/package-identity.js";
 import { runCommandVector } from "../../../core/safe-exec.js";
+import { type HostLaunchLabel, notConfinedLabel } from "../../../core/sandbox/host-launch.js";
+import { seamLaunchLabel, seamOrHostLaunch, settleHostLaunch } from "../../../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../../core/sandbox/launch-record.js";
+import {
+	confinedIntegrationPolicy,
+	type MainSandboxPolicy,
+	optInLaunch,
+	planMainSandboxSpawn,
+} from "../../../core/sandbox/main-session.js";
+import { layeredMainHomeReads } from "../../../core/settings-layers.js";
 import { ownerTelemetryContext } from "../../../core/telemetry/context.js";
 import { telemetryHub } from "../../../core/telemetry/hub.js";
 import { isSecretArgKey, redactSecretString } from "../../../lib/secrets/redaction.js";
-import { BINARY_RUN_LIMITS, type PackBinaryRunRequest, packBinaryPath, packBinarySha256 } from "./binaries.js";
+import {
+	BINARY_RUN_LIMITS,
+	type PackBinaryRunRequest,
+	packBinaryPath,
+	packBinaryRoot,
+	packBinarySha256,
+} from "./binaries.js";
 
 export interface PackBinaryRunResult {
 	exitCode: number | null;
@@ -46,7 +62,53 @@ function normalizeParent(parent: string): BinaryParentKind {
 		: "unknown";
 }
 
-export type PackBinaryRefusalCode = "background-request" | "read-only" | "not-installed";
+export type PackBinaryRefusalCode = "background-request" | "read-only" | "not-installed" | "no-sandbox";
+
+/** Where one pinned program runs (P8): its label, and the policy when `safety.confine` names the extension. */
+export type PackLaunch = { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string };
+
+/**
+ * Where an extension's program runs now. A confined one sees the session's
+ * workspace and its store directory writable, the rest of the host read-only,
+ * and no network; any other runs on the host, as before, and says so.
+ */
+export function packLaunch(
+	extensionId: string,
+	via: "run" | "pane",
+	confine: ReadonlyArray<string>,
+	workspace: string,
+	storeDir: string,
+): PackLaunch {
+	const decided = optInLaunch(
+		via === "pane" ? "extension-pane" : "extension-binary",
+		`extension:${extensionId}`,
+		confine,
+	);
+	if ("refused" in decided) return decided;
+	if (!decided.confined) return { label: decided.label };
+	return {
+		label: decided.label,
+		policy: confinedIntegrationPolicy({
+			workspace,
+			scratchRoots: [],
+			stateDirs: [storeDir],
+			extraReadableRoots: [packBinaryRoot(extensionId)],
+			network: "off",
+			homeReads: layeredMainHomeReads(workspace),
+		}),
+	};
+}
+
+/** A pane program's argv inside the sandbox, and the cleanup to run once the pane is gone; or why it cannot start. */
+export function confinedPaneArgv(
+	policy: MainSandboxPolicy,
+	argv: ReadonlyArray<string>,
+	cwd: string,
+): { argv: string[]; release: () => void } | { refused: string } {
+	const plan = planMainSandboxSpawn(policy, { argv: [...argv] }, cwd);
+	if (plan.kind === "refused") return { refused: plan.message };
+	return { argv: [plan.file, ...plan.args], release: plan.afterExit };
+}
 
 /** Who asks for a program, read when the call arrives: the request it serves and whether this turn is read-only. */
 export interface PackBinaryCaller {
@@ -85,6 +147,8 @@ function shownArgs(args: ReadonlyArray<string>): string[] {
 
 interface PackBinaryOutcome {
 	outcome: "ok" | "failed" | "timeout" | "refused";
+	/** Where the program ran and how its launch settled; absent when it was refused before a launch was decided. */
+	launch?: SandboxLaunchRecord;
 	reasonCode?: PackBinaryRefusalCode | undefined;
 	reason?: string;
 	exitCode?: number | null;
@@ -122,6 +186,7 @@ function recordPackBinaryRun(
 				parent,
 				outcome: result.outcome,
 				...(result.reasonCode !== undefined ? { reasonCode: result.reasonCode } : {}),
+				...(result.launch !== undefined ? { confinement: result.launch.confinement } : {}),
 				...(typeof result.exitCode === "number" ? { exitCode: result.exitCode } : {}),
 				argCount: args.length,
 				...(result.durationMs !== undefined ? { durationMs: Math.max(0, Math.round(result.durationMs)) } : {}),
@@ -144,6 +209,7 @@ function recordPackBinaryRun(
 			...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
 			...(result.durationMs !== undefined ? { durationMs: Math.round(result.durationMs) } : {}),
 			...(result.reason !== undefined ? { reason: result.reason } : {}),
+			...(result.launch !== undefined ? { sandbox: result.launch } : {}),
 		},
 	});
 }
@@ -155,6 +221,7 @@ function admitPackBinary(
 	via: "run" | "pane",
 	args: ReadonlyArray<string>,
 	caller: PackBinaryCaller,
+	launch: PackLaunch,
 ): string {
 	const callerRefusal = packBinaryRefusal(via === "pane" ? "pane" : "binaries", caller);
 	if (callerRefusal !== null) {
@@ -174,13 +241,22 @@ function admitPackBinary(
 		});
 		throw new Error(resolved.reason);
 	}
+	if ("refused" in launch) {
+		recordPackBinaryRun(caller, binary, via, args, {
+			outcome: "refused",
+			reasonCode: "no-sandbox",
+			reason: launch.refused,
+		});
+		throw new Error(launch.refused);
+	}
 	return resolved.path;
 }
 
 /**
  * Runs a declared binary once, in the extension's store directory, with the
  * host's safe tool environment plus the declared keys. No shell is involved.
- * The caller is checked first, on every call, and the run or its refusal is journaled.
+ * The caller is checked first, on every call, and the run or its refusal is
+ * journaled with where it ran (`launch`, read when the call arrives).
  */
 export async function runPackBinary(
 	extensionId: string,
@@ -189,10 +265,13 @@ export async function runPackBinary(
 	storeDir: string,
 	caller: PackBinaryCaller,
 	signal?: AbortSignal,
+	launchFor: () => PackLaunch = () => ({ label: notConfinedLabel("extension-binary", `extension:${extensionId}`) }),
 ): Promise<PackBinaryRunResult> {
 	const binary = binaries.find((entry) => entry.name === request.name);
 	if (!binary) throw new Error(`binary '${request.name}' is not declared`);
-	const binaryPath = admitPackBinary(extensionId, binary, "run", request.args, caller);
+	const launch = launchFor();
+	const binaryPath = admitPackBinary(extensionId, binary, "run", request.args, caller, launch);
+	const { label, policy } = launch as Exclude<PackLaunch, { refused: string }>;
 	const started = performance.now();
 	let result: Awaited<ReturnType<typeof runCommandVector>>;
 	try {
@@ -202,11 +281,14 @@ export async function runPackBinary(
 			env: request.env,
 			timeoutMs: request.timeoutMs,
 			maxOutputBytes: BINARY_RUN_LIMITS.outputBytes * 2,
+			launchLabel: seamLaunchLabel(label),
+			...(policy !== undefined ? { shellSandbox: policy } : {}),
 			...(signal ? { signal } : {}),
 		});
 	} catch (error) {
 		recordPackBinaryRun(caller, binary, "run", request.args, {
 			outcome: "failed",
+			launch: settleHostLaunch(label, { outcome: "launch-failed" }),
 			durationMs: performance.now() - started,
 			reason: error instanceof Error ? error.message : String(error),
 		});
@@ -214,8 +296,10 @@ export async function runPackBinary(
 	}
 	recordPackBinaryRun(caller, binary, "run", request.args, {
 		outcome: result.timedOut ? "timeout" : result.exitCode === 0 ? "ok" : "failed",
+		launch: seamOrHostLaunch(result.sandbox, label, result),
 		exitCode: result.exitCode,
 		durationMs: performance.now() - started,
+		...(result.launched === false && typeof result.failure === "string" ? { reason: result.failure } : {}),
 	});
 	return {
 		exitCode: result.exitCode,
@@ -227,7 +311,8 @@ export async function runPackBinary(
 
 /**
  * One `ctx.pane` call for this caller. Every op is checked against the caller; an `open`, which starts the pinned
- * program in the pane, is journaled with its outcome, as is any refusal.
+ * program in the pane, is journaled with its outcome and where it ran, as is any refusal. `call` gets the
+ * policy a confined program's pane runs under.
  */
 export async function servePackPane(
 	extensionId: string,
@@ -235,7 +320,8 @@ export async function servePackPane(
 	op: string,
 	payload: unknown,
 	caller: PackBinaryCaller,
-	call: () => Promise<unknown>,
+	call: (policy?: MainSandboxPolicy) => Promise<unknown>,
+	launchFor: () => PackLaunch = () => ({ label: notConfinedLabel("extension-pane", `extension:${extensionId}`) }),
 ): Promise<unknown> {
 	const raw = payload !== null && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
 	const binary = op === "open" ? binaries.find((entry) => entry.name === raw.binary) : undefined;
@@ -245,15 +331,22 @@ export async function servePackPane(
 		return call();
 	}
 	const args = Array.isArray(raw.args) ? raw.args.filter((arg): arg is string => typeof arg === "string") : [];
-	admitPackBinary(extensionId, binary, "pane", args, caller);
+	const launch = launchFor();
+	admitPackBinary(extensionId, binary, "pane", args, caller, launch);
+	const { label, policy } = launch as Exclude<PackLaunch, { refused: string }>;
 	const started = performance.now();
 	try {
-		const state = await call();
-		recordPackBinaryRun(caller, binary, "pane", args, { outcome: "ok", durationMs: performance.now() - started });
+		const state = await call(policy);
+		recordPackBinaryRun(caller, binary, "pane", args, {
+			outcome: "ok",
+			launch: settleHostLaunch(label, { outcome: "ran" }),
+			durationMs: performance.now() - started,
+		});
 		return state;
 	} catch (error) {
 		recordPackBinaryRun(caller, binary, "pane", args, {
 			outcome: "failed",
+			launch: settleHostLaunch(label, { outcome: "launch-failed" }),
 			durationMs: performance.now() - started,
 			reason: error instanceof Error ? error.message : String(error),
 		});
