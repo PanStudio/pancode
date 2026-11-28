@@ -222,8 +222,15 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 
 	const answerRefresh = (req: http.IncomingMessage, res: http.ServerResponse): void => {
 		req.resume();
+		if (req.method !== "POST") {
+			record({ method: req.method ?? "GET", path: MODEL_ROUTE_REFRESH_PATH, status: 0, refused: "refresh requires POST" });
+			res.writeHead(405, { "content-type": "text/plain; charset=utf-8", allow: "POST", connection: "close" });
+			res.end("PanCode model route: refresh requires POST\n");
+			return;
+		}
 		void refresh().then((outcome) => {
 			record({ method: "POST", path: MODEL_ROUTE_REFRESH_PATH, status: 200, refresh: outcome });
+			if (res.destroyed || res.writableEnded) return;
 			res.writeHead(200, { "content-type": "application/json" });
 			res.end(JSON.stringify({ outcome }));
 		});

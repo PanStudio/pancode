@@ -154,12 +154,17 @@ export function resolveDispatchEnvelopeStage(input: {
 	} = placementSandboxFacts(target.runtime.kind, input.settings, input.placement, hoare, network);
 	// D14: refused here, before the permit, so a preview names the same refusal a launch would.
 	const workerIsolation = input.settings?.safety.workerIsolation;
+	const isolationNet =
+		workerIsolation === "process" && input.placement.node.kind === "local" && sandbox.applies
+			? sandboxNetworkIsolation(placedAvailability)
+			: null;
 	assertWorkerIsolationAdmitted(workerIsolation, {
 		target,
 		localPlacement: input.placement.node.kind === "local",
 		sandbox: {
 			backend: sandbox.applies ? sandbox.backend : "none",
 			...(placedAvailability.degraded !== undefined ? { degraded: placedAvailability.degraded } : {}),
+			...(isolationNet !== null ? { networkIsolation: isolationNet } : {}),
 		},
 	});
 	const facts: Parameters<typeof resolveWriteMode>[0] = {

@@ -37,8 +37,8 @@ interface IsolationFacts {
 	target: Pick<ResolvedTarget, "target" | "runtime" | "wireModelId">;
 	/** Null or a local node. */
 	localPlacement: boolean;
-	/** The backend the run's sandbox placement resolved, and why its seccomp baseline is missing, if it is. */
-	sandbox?: { backend: "bwrap" | "seatbelt" | "none"; degraded?: string };
+	/** The backend the run's sandbox placement resolved, and why its seccomp baseline or network namespace is missing, if either is. */
+	sandbox?: { backend: "bwrap" | "seatbelt" | "none"; degraded?: string; networkIsolation?: string };
 	platform?: NodeJS.Platform;
 }
 
@@ -69,6 +69,8 @@ export function workerIsolationRefusal(facts: IsolationFacts): string | null {
 		);
 	if (facts.sandbox?.degraded !== undefined)
 		return unsupported(`${SETTING} needs the seccomp baseline (${facts.sandbox.degraded})`);
+	if (facts.sandbox?.networkIsolation !== undefined)
+		return unsupported(`${SETTING} needs a network namespace (${facts.sandbox.networkIsolation})`);
 	if (runtime.tier === "local-native")
 		return unsupported(`${runtime.id} is a local model server whose residency control needs host loopback`);
 	if (!targetRequiresAuth(target, runtime))

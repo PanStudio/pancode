@@ -141,7 +141,18 @@ async function requestProxiedWebUrl(
 		url.protocol === "https:"
 			? connectTls({ socket, host: hostname, ...(isIP(hostname) === 0 ? { servername: hostname } : {}) })
 			: socket;
-	return requestWebUrl(url, init, { createConnection: () => connection });
+	let attached = false;
+	try {
+		return await requestWebUrl(url, init, {
+			createConnection: () => {
+				attached = true;
+				return connection;
+			},
+		});
+	} catch (error) {
+		if (!attached) connection.destroy();
+		throw error;
+	}
 }
 
 async function requestWebUrl(
