@@ -14,10 +14,11 @@ import { resolvePackPathReference, resolvePackReferences } from "../resources/pa
  * logic, no partial rendering.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { sameDirectory } from "../../core/leading-cd.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { normalizePathBoundary, PATH_BOUNDARY_MAX_ENTRIES } from "../../core/path-boundary.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
@@ -1116,14 +1117,6 @@ function locatePlaybook(cwd: string, name: string): { path: string; source: Play
 			return { path: candidate, source: source.source, ...(source.rootPath ? { rootPath: source.rootPath } : {}) };
 	}
 	return null;
-}
-
-function sameDirectory(left: string, right: string): boolean {
-	try {
-		return realpathSync(left) === realpathSync(right);
-	} catch {
-		return false;
-	}
 }
 
 /**

@@ -11,11 +11,11 @@ import {
 	settleDispatchedRuns,
 	settledRunEnvelopes,
 } from "../../src/cli/modes/headless-dispatched-runs.js";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { mergeWithheldDetail } from "../../src/domains/dispatch/merge-gate.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
 import { openRunTelemetry } from "../../src/domains/dispatch/run-telemetry.js";
 import type { RunEnvelope, RunOutcome, RunResultDraft } from "../../src/domains/dispatch/types.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 
 const ROOT = "root-run";

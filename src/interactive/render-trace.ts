@@ -239,10 +239,8 @@ interface TraceWriter {
 
 interface AsyncTraceWriterOptions {
 	maxRecords?: number;
-	batchRecords?: number;
 	append?: (path: string, payload: string) => Promise<void>;
 	recordTime?: () => number;
-	appendTimeoutMs?: number;
 }
 
 /**
@@ -252,7 +250,7 @@ interface AsyncTraceWriterOptions {
  */
 function createAsyncTraceWriter(path: string, options: AsyncTraceWriterOptions = {}): TraceWriter {
 	const maxRecords = options.maxRecords ?? 4_096;
-	const batchRecords = options.batchRecords ?? 128;
+	const batchRecords = 128;
 	const append = options.append ?? ((target, payload) => appendFile(target, payload, "utf8"));
 	const recordTime = options.recordTime ?? (() => performance.now());
 	// Stage 0 deliberately commits immediately before a large synchronous ESM
@@ -260,7 +258,7 @@ function createAsyncTraceWriter(path: string, options: AsyncTraceWriterOptions =
 	// append callback when that evaluation held the event loop, falsely disabling
 	// the trace after its first frame. Five seconds still bounds a genuinely
 	// wedged filesystem while surviving boot-time callback starvation.
-	const appendTimeoutMs = options.appendTimeoutMs ?? 5_000;
+	const appendTimeoutMs = 5_000;
 	const pending: string[] = [];
 	let dropped = 0;
 	let inFlight = false;

@@ -16,19 +16,18 @@
 
 import { effectiveToolCall } from "../../../core/tool-surface.js";
 import { expandPath } from "../../../tools/path-utils.js";
-import { foldWorkingSet } from "../../context/working-set/fold.js";
 import {
 	canonicalize,
+	compactionCut,
 	createPathIndexBuilder,
+	foldWorkingSet,
 	type PathIndexBuilder,
 	type PathObservation,
-} from "../../context/working-set/path-index.js";
-import { recalledRef } from "../../context/working-set/payload.js";
-import { compactionCut } from "../../context/working-set/visible.js";
+	recalledRef,
+} from "../../context/index.js";
 import type { MiddlewareEffect, MiddlewareHookRegistration } from "../../middleware/index.js";
-import type { CompactionSummaryEntry, SessionEntry } from "../entries.js";
-import { activePath, extendsSnapshot, findLastEntry } from "../tree/active-path.js";
-import { recordPriorFileOperations } from "./exact-facts.js";
+import type { CompactionSummaryEntry, SessionEntry } from "../../session/entries.js";
+import { activePath, extendsSnapshot, findLastEntry, recordPriorFileOperations } from "../../session/index.js";
 
 const STALE_EDIT_GUARD_REGISTRATION_ID = "guard.stale-file-edit";
 

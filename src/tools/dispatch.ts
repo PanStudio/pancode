@@ -25,11 +25,6 @@ import type { ToolResult, ToolSpec } from "./tool-spec.js";
  */
 type DispatchRunnerModule = Pick<typeof import("./dispatch-runner.js"), "runDispatchTool">;
 
-export interface DispatchToolSurfaceOptions {
-	/** Test-only loader seam for proving admission failures do not load the implementation graph. */
-	loadRunner?: () => Promise<DispatchRunnerModule>;
-}
-
 function landingCwd(cwd: string | undefined): string {
 	return canonicalizeExistingPath(resolve(process.cwd(), cwd ?? "."));
 }
@@ -160,10 +155,7 @@ function withReadRootTasks(deps: DispatchToolDeps, snapshot: DispatchExecutionSn
 	};
 }
 
-export function createDispatchTool(
-	inputDeps: DispatchToolDeps,
-	surfaceOptions: DispatchToolSurfaceOptions = {},
-): ToolSpec {
+export function createDispatchTool(inputDeps: DispatchToolDeps): ToolSpec {
 	const deps: DispatchToolDeps = {
 		...inputDeps,
 		runEvents: inputDeps.runEvents ?? createDispatchRunEventRegistry(),
@@ -171,7 +163,7 @@ export function createDispatchTool(
 	const admission = createDispatchAdmissionController(deps);
 	let runnerPromise: Promise<DispatchRunnerModule> | null = null;
 	const loadRunner = (): Promise<DispatchRunnerModule> => {
-		runnerPromise ??= (surfaceOptions.loadRunner ?? (() => import("./dispatch-runner.js")))();
+		runnerPromise ??= import("./dispatch-runner.js");
 		return runnerPromise;
 	};
 

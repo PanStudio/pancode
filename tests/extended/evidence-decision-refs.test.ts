@@ -4,6 +4,7 @@ import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:asse
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { telemetryJournalPath, telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { inspectRunEvidence } from "../../src/domains/evidence/index.js";
 import { activeDecisionRefs, createDecisionBoardStore } from "../../src/domains/session/decision-board.js";
@@ -13,7 +14,6 @@ import {
 	type MessageEntry,
 	type SessionEntry,
 } from "../../src/domains/session/entries.js";
-import { telemetryJournalPath, telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { createDecideTool } from "../../src/tools/decide.js";
 import { agentDecision } from "../harness/decision.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";

@@ -28,6 +28,7 @@ import { sha256Hex } from "../../src/core/hash.js";
 import { recentPackActivity } from "../../src/core/pack-activity.js";
 import { ExtensionBinaryRanSchema } from "../../src/core/telemetry/host-schemas.js";
 import { createTelemetryHub, telemetryHub } from "../../src/core/telemetry/hub.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
@@ -75,7 +76,6 @@ import type { SessionContract } from "../../src/domains/session/contract.js";
 import { openStoreBackend } from "../../src/domains/store/index.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { startExtensionHost } from "../../src/entry/extension-host.js";

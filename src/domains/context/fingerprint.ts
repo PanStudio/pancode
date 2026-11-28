@@ -8,7 +8,7 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { enumerateWorkspaceFiles } from "../../core/workspace-files.js";
 import { pancodeCacheDir } from "../../core/xdg.js";
 import { readCodewiki } from "./codewiki/artifact.js";
-import { isIndexablePath, streamFile } from "./codewiki/paths.js";
+import { extensionOf, isIndexablePath, streamFile } from "./codewiki/paths.js";
 import type { Codewiki } from "./codewiki/schema.js";
 import { EXCLUDED_DIRS } from "./excluded-dirs.js";
 import { currentWikiGitHead } from "./wiki/meta.js";
@@ -41,11 +41,6 @@ const LOC_EXTENSIONS = new Set([
 	".java",
 	".kt",
 ]);
-
-function extensionOf(name: string): string {
-	const index = name.lastIndexOf(".");
-	return index === -1 ? "" : name.slice(index);
-}
 
 function locFromCodewiki(codewiki: Codewiki | null): number | null {
 	if (!codewiki) return null;

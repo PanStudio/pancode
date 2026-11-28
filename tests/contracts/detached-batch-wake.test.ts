@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DispatchContract } from "../../src/domains/dispatch/contract.js";
-import type { DetachedBatchNudgeView } from "../../src/domains/middleware/index.js";
+import type { DetachedBatchNudgeView } from "../../src/domains/dispatch/nudges/dispatch-nudge.js";
 import {
 	createDetachedBatchWake,
 	DETACHED_BATCH_WAKE_ORIGIN,

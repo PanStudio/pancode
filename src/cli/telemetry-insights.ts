@@ -3,6 +3,7 @@
 import { join, resolve } from "node:path";
 import { cwdHash } from "../core/cwd-hash.js";
 import { listStateDirectorySync, readStateFileSync } from "../core/state-boundary.js";
+import { telemetrySessionDirectory } from "../core/telemetry/paths.js";
 import type { ObjectRef } from "../core/telemetry/schemas.js";
 import { expandChainMessages } from "../core/tool-surface.js";
 import { isRecord } from "../core/type-guards.js";
@@ -25,7 +26,6 @@ import {
 	sessionSignals,
 } from "../domains/telemetry/insights.js";
 import { CONTENT_SUBJECTS, readTelemetryObjectSync } from "../domains/telemetry/objects.js";
-import { telemetrySessionDirectory } from "../domains/telemetry/paths.js";
 import { loadRepoTelemetrySources } from "../domains/telemetry/telemetry-source.js";
 import { printError } from "./argv.js";
 

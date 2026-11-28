@@ -225,7 +225,7 @@ async function decideGrantRecordAsMain(
 		});
 		return failed(
 			`approval refused: ${verdict.reason}. Request ${input.requestId} is ${result.ok ? "denied" : (result.record?.state ?? "settled")} and the worker continues without the call`,
-			result.ok ? result.record : result.record,
+			result.record,
 		);
 	}
 	// Main below yolo, attended: the operator decides; the main agent's

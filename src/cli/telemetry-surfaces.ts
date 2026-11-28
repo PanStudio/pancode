@@ -3,15 +3,15 @@
 import { join } from "node:path";
 import { listStateDirectorySync, statStatePathSync, withinStateRoot } from "../core/state-boundary.js";
 import type { TelemetryRecord } from "../core/telemetry/envelope.js";
-import { renderCountSum } from "../core/telemetry/render.js";
-import { pancodeStateDir } from "../core/xdg.js";
-import { readCallJournal } from "../domains/telemetry/call-journal.js";
 import {
 	telemetryRunDirectory,
 	telemetryRunsDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
-} from "../domains/telemetry/paths.js";
+} from "../core/telemetry/paths.js";
+import { renderCountSum } from "../core/telemetry/render.js";
+import { pancodeStateDir } from "../core/xdg.js";
+import { readCallJournal } from "../domains/telemetry/call-journal.js";
 import {
 	foldSideSurfaces,
 	SIDE_SURFACE_RECORD_KINDS,

@@ -3,7 +3,7 @@
 
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { canonicalJson } from "../../../core/canonical-json.js";
 import { sha256Hex } from "../../../core/hash.js";
@@ -295,9 +295,7 @@ async function isFile(path: string): Promise<boolean> {
 }
 
 function toRepoPath(root: string, filePath: string): string {
-	const rel = relative(root, filePath);
-	const normalized = rel.split(sep).join("/");
-	return isAbsolute(normalized) ? normalized : normalized;
+	return relative(root, filePath).split(sep).join("/");
 }
 
 function sortComponents(components: ReadonlyArray<HarnessComponent>): HarnessComponent[] {

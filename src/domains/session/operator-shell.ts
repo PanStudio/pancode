@@ -16,7 +16,7 @@ import {
 	runBashCommand,
 } from "../../core/bash-exec.js";
 import { combineSafeOutput } from "../../core/safe-exec.js";
-import { CumulativeOutputMask, maskCommandOutput } from "../evidence/output-mask.js";
+import { CumulativeOutputMask, maskCommandOutput } from "../../lib/output-mask/output-mask.js";
 import type { SessionEntryInput } from "./contract.js";
 
 export const OPERATOR_SHELL_TIMEOUT_MS = 300_000;

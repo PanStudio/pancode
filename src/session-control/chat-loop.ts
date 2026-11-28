@@ -74,6 +74,7 @@ import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import type { DispatchContract } from "../domains/dispatch/index.js";
 import type { PinnedContextBlock } from "../domains/extensions/pinned-context.js";
+import type { CompactInput, CompactResult } from "../domains/memory/compaction/compact.js";
 import {
 	type CompletionFact,
 	createMiddlewareToolChoiceControl,
@@ -87,7 +88,6 @@ import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities }
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
-import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import {

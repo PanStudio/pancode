@@ -91,8 +91,6 @@ export interface HubOverlayDeps {
 	openImport?: () => void;
 	/** Injectable for tests; defaults to the shared inventory read. */
 	readInventory?: (options: HubInventoryOptions) => HubInventory;
-	/** Injectable for tests; defaults to the catalog and install pairing of plugins with their extensions. */
-	readPairs?: (options: { cwd: string }) => HubPairs;
 	/** Injectable for tests; defaults to the shared explicit copy inspection. */
 	inspectCopy?: (ref: string, options: { cwd?: string; scope?: PluginScope }) => HubCopyInspection;
 	/** Injectable for tests; defaults to the framed review overlay. */
@@ -158,7 +156,6 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 	const cwd = deps.cwd ?? process.cwd();
 	const read = deps.readInventory ?? readHubInventory;
 	const inspect = deps.inspectCopy ?? inspectHubCopy;
-	const readPairs = deps.readPairs ?? readHubPairs;
 	const openReview = deps.openReview ?? openHubReviewOverlay;
 	const columns = deps.columns ?? (() => (typeof process.stdout.columns === "number" ? process.stdout.columns : 100));
 
@@ -217,7 +214,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 	const pairs = (): HubPairs | undefined => {
 		if (pairsCache === undefined) {
 			try {
-				pairsCache = readPairs({ cwd });
+				pairsCache = readHubPairs({ cwd });
 			} catch {
 				pairsCache = null;
 			}
