@@ -20,7 +20,7 @@ use system `/tmp` or commit run output under `scripts/`.
 | `pnpm run check` | Run `typecheck` and Biome (errors only) at once: the few-second loop before `pnpm run lint`. |
 | `pnpm run typecheck` / `pnpm run typecheck:tsc` / `pnpm run typecheck:compare` | Typecheck source, tests and scripts with `tsrs --fast` (falling back to `tsc` with a notice where tsrs cannot run), with TypeScript's own `tsc`, or with both, failing if their diagnostics differ; `pnpm run ci` runs the last. See "Typechecking" in `CONTRIBUTING.md`. |
 | `pnpm run format` / `pnpm run lint` | Format with Biome, or check formatting and Biome rules (any warning fails), source boundaries, license headers, catalog pins, resource paths and configuration consistency. No remote package refresh. |
-| `pnpm run check:lane` | Run the gates a lane branch most often fails, for its diff against the base: environment guards, typecheck, lint, the GUI check, OpenAPI and PanHub freshness, and the test files the diff adds or imports. |
+| `pnpm run check:lane` | Run the gates a lane branch most often fails, for its diff against the base: environment guards, typecheck, lint (with the PanHub pins), the GUI check, OpenAPI freshness, and the test files the diff adds or imports. |
 | `pnpm run check:gui` | Typecheck and lint the GUI app. |
 | `pnpm run test:file -- <files>` | Run focused test files under `tests/harness/tmp-root.ts`, which gives each file its own temporary directory and PanCode home. |
 | `pnpm run test` / `pnpm run test:gui` / `pnpm run test:list` | Run the default root or GUI selection in `ci-tests.mjs`, or list every selection. Root tests need a build. |
@@ -36,7 +36,7 @@ use system `/tmp` or commit run output under `scripts/`.
 | `pnpm run acp:schema` / `acp:schema:write` / `acp:schema:bump` | Check that the generated ACP wire-shape module matches the pinned upstream schemas, regenerate it from the pin, or move the pin to the newest upstream tags and regenerate. |
 | `pnpm run herdr:pin` | Download and hash upstream Herdr's latest release, report whether a wire method PanCode sends is gone, and print the values a pin update needs. Edits nothing. |
 | `pnpm run install:local -- --dry-run` | Preview installing this checkout. A real run can build, replace the launcher and run local repair. |
-| `pnpm run ci` | The whole gate on this machine's Node, with the time zone, locale and pinned `rg` and `fd` that CI uses: the checks (`typecheck:compare`, `lint`, `check:gui`, `hub:check`) beside a release build, the core, GUI and package test tiers against the built tarball, the npm install check, then the install smoke of this machine's bundle. `node scripts/ci.mjs check` and `node scripts/ci.mjs test <release dir>` run one part. |
+| `pnpm run ci` | The whole gate on this machine's Node, with the time zone, locale and pinned `rg` and `fd` that CI uses: the checks (`typecheck:compare`, `lint` with the PanHub pins, `check:gui`) beside a release build, the core, GUI and package test tiers against the built tarball, the npm install check, then the install smoke of this machine's bundle. `node scripts/ci.mjs check` and `node scripts/ci.mjs test <release dir>` run one part. |
 | `pnpm run release:build -- --out <dir>` | Build the release directory: the npm tarball, the bundle for this machine (`--targets all` builds every platform), the installers, `SHA256SUMS` and the website. |
 | `pnpm run release:smoke -- <dir>/assets` | Install this machine's bundle in a throwaway home with the release's installer, then run it, upgrade it, roll it back and uninstall it. |
 | `pnpm run eval:onboarding` | Run the onboarding prompts against a live model in isolated homes and score each run. Calls the model. |
@@ -46,7 +46,7 @@ use system `/tmp` or commit run output under `scripts/`.
 
 Build:
 
-- `build.ts`: runs tsup for the CLI and worker bundles; `--clean` empties `dist/` first and `--watch` rebuilds on change.
+- `build.ts`: `pnpm run build`. Runs tsup for the CLI and worker bundles, then the three asset steps below in order; `--clean` empties `dist/` first and `--watch` rebuilds the bundles on change.
 - `build-output.ts`: shared stage timing, size and color output for the build steps.
 - `chunk-merge.ts`: tsup plugin that merges esbuild's split chunks into the few files each boot path loads.
 - `build-source-pack.ts`: packs the TypeScript source PanCode never reads at runtime into `dist/assets/source.pack`.
@@ -69,7 +69,7 @@ Checks and tests:
 - `check-dist.mjs`: refuses a `dist/` built from another commit before `test:full`.
 - `check-economy-rates.ts`: `pnpm run economy:check`.
 - `check-packed-install.mjs`: `pnpm run check:packed-install`.
-- `pnpm.mjs`: starts pnpm from scripts, falling back to `corepack pnpm` when no `pnpm` command is on `PATH`.
+- `pnpm.mjs` (+ `.d.mts`): starts pnpm from scripts, falling back to `corepack pnpm` when no `pnpm` command is on `PATH`.
 - `package-files.ts`: decides whether a repository path ships, from the `package.json` `files` list.
 - `license-headers.mjs` (+ `.d.mts`): inserts or checks the two SPDX lines on every tracked source file in scope; lint runs the check.
 - `third-party-notices.mjs`: writes or checks `THIRD-PARTY-NOTICES.md` for every third-party package the build copies into `dist/`; lint runs the check.
@@ -108,12 +108,11 @@ Release (see [release/README.md](release/README.md)):
 - `release/smoke.mjs`: `pnpm run release:smoke`.
 - `release/publish.mjs`: the `publish` job's step: npm, the GitHub release, `main`, then the website and the channel files.
 - `release/tested-run.mjs`: the `tested run` and `publish` jobs' check: finds the green push run of the commit being released and checks its `release` artifact against `SHA256SUMS` and the commit.
-- `release/installed-commands.mjs`: checks of the installed `pancode` command.
 - `release-version-policy.mjs` (+ `.d.mts`): which package versions and changelog headings a checkout or release accepts.
 - `check-release.mjs`: audits the built `dist/` and the packed tarball's contents.
 - `release-manifest.json`: runtime files the installed package must contain.
 - `release-audit.mjs` (+ `.d.mts`): audits the exact bundled dependency versions for advisories.
-- `packed-license.mjs` (+ `.d.mts`): checks the packed LICENSE and NOTICE against the committed files.
+- `packed-license.mjs`: checks the packed LICENSE and NOTICE against the committed files.
 - `report-credits.mjs`: lists reporters who opted in to credit and regenerates `CHAMPIONS.md`.
 - `report-dataset.ts`: turns consented report bundles into a dataset release.
 

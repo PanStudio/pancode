@@ -8,34 +8,30 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-export const PI_PACKAGES = [
-	"@earendil-works/pi-ai",
-	"@earendil-works/pi-agent-core",
-	"@earendil-works/pi-tui",
-] as const;
+const PI_PACKAGES = ["@earendil-works/pi-ai", "@earendil-works/pi-agent-core", "@earendil-works/pi-tui"] as const;
 
 const SNAPSHOT_SCHEMA_VERSION = 1;
 
-export interface PiSurfaceEntryPoint {
+interface PiSurfaceEntryPoint {
 	declaration: string;
 	exports: Record<string, string>;
 }
 
-export interface PiSurfacePackage {
+interface PiSurfacePackage {
 	version: string;
 	entryPoints: Record<string, PiSurfaceEntryPoint>;
 }
 
-export interface PiSurfaceSnapshot {
+interface PiSurfaceSnapshot {
 	schemaVersion: number;
 	packages: Record<string, PiSurfacePackage>;
 }
 
-export interface PiSurfaceImports {
+interface PiSurfaceImports {
 	[specifier: string]: ReadonlyArray<string>;
 }
 
-export interface PiSurfaceComparison {
+interface PiSurfaceComparison {
 	errors: string[];
 	infos: string[];
 }
@@ -178,7 +174,7 @@ function sortedRecord<T>(entries: Iterable<readonly [string, T]>): Record<string
 	return Object.fromEntries([...entries].sort(([left], [right]) => left.localeCompare(right)));
 }
 
-export function buildPiSurfaceSnapshot(root: string): {
+function buildPiSurfaceSnapshot(root: string): {
 	snapshot: PiSurfaceSnapshot;
 	imports: PiSurfaceImports;
 } {
@@ -243,7 +239,7 @@ function importedNames(imports: PiSurfaceImports, packageName: string, entryPoin
 	return imports[specifier] ?? [];
 }
 
-export function comparePiSurfaceSnapshots(
+function comparePiSurfaceSnapshots(
 	baseline: PiSurfaceSnapshot,
 	current: PiSurfaceSnapshot,
 	imports: PiSurfaceImports,
@@ -285,7 +281,7 @@ export function comparePiSurfaceSnapshots(
 	return { errors, infos };
 }
 
-export function readPiSurfaceSnapshot(path: string): PiSurfaceSnapshot {
+function readPiSurfaceSnapshot(path: string): PiSurfaceSnapshot {
 	const snapshot = JSON.parse(readFileSync(path, "utf8")) as PiSurfaceSnapshot;
 	if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
 		throw new Error(`unsupported Pi surface snapshot schema ${String(snapshot.schemaVersion)}`);

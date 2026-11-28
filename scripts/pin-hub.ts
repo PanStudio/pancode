@@ -6,7 +6,7 @@ import path from "node:path";
 import { parse, stringify } from "yaml";
 import { validateHubPackage } from "../src/domains/resources/hub-validation.js";
 import { buildPluginServers } from "./build-plugin-servers.js";
-import { generateClaudeMcpFiles, generateHubMarketplace } from "./generate-hub-marketplace.js";
+import { generateClaudeMcpFiles, generateHubMarketplace, REMOTE_SOURCE_URL } from "./generate-hub-marketplace.js";
 import {
 	buildRegistryRow,
 	mergeCommunityRows,
@@ -358,7 +358,7 @@ if (checkMode) {
 const marketplace = generateHubMarketplace({ root, check: checkMode });
 for (const skip of marketplace.excluded) {
 	process.stdout.write(
-		`not published to Claude Code: ${skip.name} (${/^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(skip.sourceUrl) ? skip.sourceUrl : `hub/${skip.sourceUrl}`}) — ${skip.reason}\n`,
+		`not published to Claude Code: ${skip.name} (${REMOTE_SOURCE_URL.test(skip.sourceUrl) ? skip.sourceUrl : `hub/${skip.sourceUrl}`}) — ${skip.reason}\n`,
 	);
 }
 if (!marketplace.ok) {
