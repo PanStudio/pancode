@@ -460,7 +460,7 @@ export const AcpRuntimeComponent = Type.Union([Type.Literal("copilot-sdk"), Type
 /** `_meta["pancode/session"]` on a `session/new`, `session/load`, `session/resume`, fork or handoff result. */
 export interface AcpSessionResultMeta {
 	sessionId: string;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	autonomy: string;
 	createdAt: string;
@@ -541,7 +541,7 @@ export type AcpCompactUsageMeta = Static<typeof AcpCompactUsageMetaSchema>;
 export const AcpTurnMetaSchema = Type.Object(
 	{
 		model: Type.Optional(Type.String({ maxLength: ACP_MAX_MODEL_ID_BYTES })),
-		target: Type.Optional(Type.String({ maxLength: ACP_MAX_TARGET_ID_BYTES })),
+		connection: Type.Optional(Type.String({ maxLength: ACP_MAX_TARGET_ID_BYTES })),
 		ttftMs: Type.Optional(Type.Number({ minimum: 0 })),
 		outputTokensPerSecond: Type.Optional(Type.Number({ minimum: 0 })),
 	},

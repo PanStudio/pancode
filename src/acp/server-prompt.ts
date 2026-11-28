@@ -53,7 +53,7 @@ function promptResponse(
 			[ACP_USAGE_META_KEY]: fullUsage ? usage : compactUsage(usage),
 			[ACP_TURN_META_KEY]: {
 				...(active.model ? { model: active.model } : {}),
-				...(active.target ? { target: active.target } : {}),
+				...(active.target ? { connection: active.target } : {}),
 				...(active.ttftMs !== undefined ? { ttftMs: active.ttftMs } : {}),
 				// A rate over less than RATE_MIN_WINDOW_MS of generation measured the delivery, not the model, so it is left out.
 				...(active.generationMs !== undefined && active.generationMs >= RATE_MIN_WINDOW_MS && active.timedOutputTokens
@@ -109,7 +109,7 @@ export function registerAcpServerPrompt(scope: AcpServerScope): void {
 		const target = targetId ? options.providers?.getTarget(targetId) : undefined;
 		const runtime = target ? options.providers?.getRuntime(target.runtime) : undefined;
 		if (target && runtime && options.providers && !options.providers.auth.statusForTarget(target, runtime).available) {
-			throw new AcpRequestError(-32000, "credentials for the selected target are unavailable", {
+			throw new AcpRequestError(-32000, "credentials for the selected connection are unavailable", {
 				code: "prompt_not_admitted",
 				reason: "authentication-required",
 			});

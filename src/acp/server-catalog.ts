@@ -106,7 +106,7 @@ export function registerAcpServerCatalog(scope: AcpServerScope): void {
 					[ACP_SESSION_META_KEY]: {
 						createdAt: row.createdAt,
 						endedAt: row.endedAt,
-						target: row.target,
+						connection: row.target,
 						model: row.model,
 						...(row.firstMessagePreview !== undefined ? { firstMessagePreview: row.firstMessagePreview } : {}),
 						...(row.messageCount !== undefined ? { messageCount: row.messageCount } : {}),
