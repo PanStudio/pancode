@@ -167,6 +167,7 @@ import type {
 	AcpBoardActions,
 	AcpForwardableEventKind,
 	AcpHandoffControl,
+	AcpHandshake,
 	AcpPromptExpansion,
 	AcpQueuedEntryKind,
 	AcpRoutingSnapshot,
@@ -349,8 +350,255 @@ async function settleAcpWork(pending: readonly Promise<unknown>[]): Promise<void
 	}
 }
 
-export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Promise<number> {
-	const handshake =
+function sessionIdOf(params: unknown): string {
+	return requireBoundedClientString(
+		isRecord(params) ? params.sessionId : undefined,
+		"sessionId",
+		ACP_MAX_SESSION_ID_BYTES,
+	);
+}
+
+function assertParamKeys(params: unknown, allowed: ReadonlySet<string>): Record<string, unknown> {
+	if (params === undefined) return {};
+	if (!isRecord(params) || Object.keys(params).some((key) => key !== "_meta" && !allowed.has(key))) {
+		throw new AcpRequestError(-32602, "invalid method parameters", { code: "invalid_params" });
+	}
+	return params;
+}
+
+async function attachClientMcpServers(
+	options: PancodeAcpServerOptions,
+	servers: ReadonlyArray<McpClientServerSpec>,
+	ceiling: TurnConstraints | undefined,
+): Promise<void> {
+	if (servers.length === 0) return;
+	if (!options.mcpCapabilities) {
+		throw new AcpRequestError(-32602, "client MCP servers are unavailable in this host", { code: "invalid_params" });
+	}
+	try {
+		// A read-only or no-tools session starts no client server: what one does is unknown until it runs.
+		const operator = options.operatorToolLimits;
+		const start = !(
+			operator?.readOnly === true ||
+			ceiling?.readOnly === true ||
+			operator?.allowedTools?.length === 0 ||
+			ceiling?.allowedTools?.length === 0
+		);
+		await options.mcpCapabilities.attachClientServers(servers, { start });
+	} catch (error) {
+		await options.mcpCapabilities.detachClientServers();
+		options.diagnostics?.(`client MCP launch failed: ${acpErrorMessage(error)}`);
+		throw new AcpRequestError(-32603, "client MCP servers could not start", { code: "internal_error" });
+	}
+}
+
+function routingSnapshot(options: PancodeAcpServerOptions): AcpRoutingSnapshot {
+	const route = options.routing?.() ?? { target: null, model: null };
+	return {
+		target: safeConfiguredIdentifier(route.target, ACP_MAX_TARGET_ID_BYTES),
+		model: safeConfiguredIdentifier(route.model, ACP_MAX_MODEL_ID_BYTES),
+	};
+}
+
+function assertCeilingEnforceable(options: PancodeAcpServerOptions, ceiling: TurnConstraints | undefined): void {
+	if (ceiling !== undefined && options.chat.setToolCeiling === undefined) {
+		throw new AcpRequestError(-32602, `this agent cannot enforce ${ACP_CEILING_META_KEY}`, {
+			code: "ceiling_unsupported",
+		});
+	}
+}
+
+/**
+ * A successor's ceiling: the source session's narrowed by the one sent with
+ * the request, so a fork or handoff can tighten what it inherits and never
+ * loosen it (Z1).
+ */
+function successorCeiling(
+	options: PancodeAcpServerOptions,
+	source: AcpServerSession,
+	params: unknown,
+): TurnConstraints | undefined {
+	const requested = requestCeiling(params);
+	assertCeilingEnforceable(options, requested);
+	return snapshotTurnConstraints(narrowTurnConstraints(source.ceiling, requested));
+}
+
+function refuseYolo(options: PancodeAcpServerOptions, level: AutonomyLevel): void {
+	const refusal = level === "yolo" ? (options.yoloRefusal?.() ?? null) : null;
+	if (refusal !== null) throw new AcpRequestError(-32602, refusal, { code: "yolo_refused" });
+}
+
+interface PreparedRestore {
+	leafTurnId: string | null;
+	replayMessages: ReadonlyArray<AgentMessage>;
+	replay: PreparedAcpReplay | undefined;
+}
+
+function requireBranches(options: PancodeAcpServerOptions) {
+	const session = options.session;
+	const resetForSession = options.chat.resetForSession;
+	const readEntries = options.readSessionEntries;
+	const buildMessages = options.buildReplayMessages;
+	if (
+		!branchesWired(options) ||
+		session === undefined ||
+		resetForSession === undefined ||
+		readEntries === undefined ||
+		buildMessages === undefined
+	) {
+		throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
+	}
+	return { session, resetForSession: resetForSession.bind(options.chat), readEntries, buildMessages };
+}
+
+/**
+ * A path that stops hosting a live, loaded session checkpoints it first, so meta.json records why its ledger
+ * closed, as shutdown records its own. A failed checkpoint is reported and the close goes on.
+ */
+async function checkpointBeforeClose(
+	options: PancodeAcpServerOptions,
+	sessionId: string,
+	reason: "close" | "fork" | "handoff",
+): Promise<void> {
+	const durable = options.session;
+	if (durable?.current()?.id !== sessionId) return;
+	await durable.checkpoint(reason).catch((err: unknown) => {
+		process.stderr.write(
+			`[pancode:acp] ${reason} checkpoint failed: ${err instanceof Error ? err.message : String(err)}\n`,
+		);
+	});
+}
+
+function selectableTurn(contract: SessionContract, sessionId: string, value: unknown): string {
+	const turnId = requireBoundedClientString(value, "turnId", ACP_MAX_SESSION_ID_BYTES);
+	let kind: string | undefined;
+	try {
+		kind = contract.tree(sessionId).nodesById[turnId]?.kind;
+	} catch {
+		throw new AcpRequestError(-32603, "session tree could not be read", { code: "internal_error" });
+	}
+	if (kind === undefined || !isSelectableTreeNode(kind)) {
+		throw new AcpRequestError(-32602, "turn is not in this session", { code: "turn_unknown" });
+	}
+	return turnId;
+}
+
+function handoffRefusal(level: "warn" | "error", code: string, reason: string) {
+	return {
+		status: "refused" as const,
+		level,
+		code,
+		reason: boundString(reason, ACP_MAX_HANDOFF_REASON_BYTES),
+	};
+}
+
+function requireHandoff(options: PancodeAcpServerOptions) {
+	const control = options.handoff;
+	const branches = requireBranches(options);
+	if (control === undefined) throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
+	return { control, ...branches };
+}
+
+/** Reviewed text keeps its line structure; any other control character is refused. */
+function handoffDocument(value: unknown): string {
+	if (typeof value !== "string" || utf8Bytes(value) > ACP_MAX_HANDOFF_DOCUMENT_BYTES) {
+		throw new AcpRequestError(-32602, "document is invalid", { code: "invalid_params" });
+	}
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: a control character other than a line break is the refusal.
+	if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
+		throw new AcpRequestError(-32602, "document is invalid", { code: "invalid_params" });
+	}
+	return value;
+}
+
+function requireAside(options: PancodeAcpServerOptions) {
+	if (options.aside === undefined) throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
+	return options.aside;
+}
+
+function asideText(value: unknown, field: string) {
+	const text = typeof value === "string" ? value.trim() : "";
+	if (text.length === 0 || text.length > ACP_ASIDE_QUESTION_MAX_CHARS)
+		throw new AcpRequestError(-32602, `${field} must be 1 to ${ACP_ASIDE_QUESTION_MAX_CHARS} characters`, {
+			code: "invalid_params",
+		});
+	return text;
+}
+
+function artifactFailure(options: PancodeAcpServerOptions, what: string, error: unknown): never {
+	if (error instanceof AcpRequestError) throw error;
+	options.diagnostics?.(`artifact ${what} failed: ${acpErrorMessage(error)}`);
+	throw new AcpRequestError(-32603, `artifacts could not be ${what === "list" ? "listed" : "read"}`, {
+		code: "internal_error",
+	});
+}
+
+function requireBoardActions(options: PancodeAcpServerOptions): AcpBoardActions {
+	if (options.boardActions === undefined || options.board === undefined) {
+		throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
+	}
+	return options.boardActions;
+}
+
+function contextCancellationId(params: unknown): string | undefined {
+	if (!isRecord(params) || params._meta === undefined) return undefined;
+	if (!isRecord(params._meta))
+		throw new AcpRequestError(-32602, "cancel metadata must be an object", { code: "invalid_params" });
+	if (!Object.hasOwn(params._meta, ACP_CONTEXT_META_KEY)) return undefined;
+	const context = params._meta[ACP_CONTEXT_META_KEY];
+	if (!isRecord(context))
+		throw new AcpRequestError(-32602, "context cancellation requires operationId", { code: "invalid_params" });
+	return requireBoundedClientString(context.operationId, "operationId", 128);
+}
+
+/**
+ * Windows in which a steer must not be queued, or null when it may be.
+ *
+ * The engine resubmits a steer it never drained as a fresh prompt
+ * (`resubmitStrandedSteers`). In a terminal that is the right answer; here it
+ * is a prompt-shaped turn the client never requested, whose stop reason has
+ * no request to ride home on. The two windows where stranding is certain are
+ * knowable from the session, so the server refuses in them and says why,
+ * rather than accepting a steer that would come back as an unrequested turn.
+ */
+function steerRefusal(options: PancodeAcpServerOptions, session: AcpServerSession): string | null {
+	if (session.activePrompt === null) {
+		return "no prompt is active on this session; send session/prompt instead of steering";
+	}
+	if (session.activePrompt.cancelled) {
+		return "this prompt is cancelled and its queues are being cleared; prompt again once it returns";
+	}
+	// A steer the engine never drains is resubmitted as a fresh turn, and a scheduled turn has no request to carry that one home.
+	if (session.activePrompt.scheduled !== undefined) {
+		return "a scheduled job turn is running; cancel it, or prompt once it finishes";
+	}
+	if (!options.chat.isStreaming()) {
+		return "the run is not streaming, so the engine has no slot to drain this steer into";
+	}
+	return null;
+}
+
+/** The chat loop's per-entry queue operations, bound, or a refusal when this build has none. */
+function queueControl(options: PancodeAcpServerOptions) {
+	const chat = options.chat;
+	if (
+		chat.queueEntries === undefined ||
+		chat.removeQueuedEntry === undefined ||
+		chat.moveQueuedEntry === undefined ||
+		chat.setQueuedEntryKind === undefined
+	) {
+		throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
+	}
+	return {
+		entries: chat.queueEntries.bind(chat),
+		remove: chat.removeQueuedEntry.bind(chat),
+		move: chat.moveQueuedEntry.bind(chat),
+		setKind: chat.setQueuedEntryKind.bind(chat),
+	};
+}
+
+function acpHandshakeFor(options: PancodeAcpServerOptions): AcpHandshake {
+	return (
 		options.handshake ??
 		createAcpHandshake({
 			...(options.version === undefined ? {} : { version: options.version }),
@@ -396,7 +644,12 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			workerPermissions: options.workerPermissions !== undefined,
 			shell: shellWired(options),
 			queueEdit: queueEditWired(options),
-		});
+		})
+	);
+}
+
+export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Promise<number> {
+	const handshake = acpHandshakeFor(options);
 	const workspaceInstanceId = handshake.workspaceInstanceId;
 	const now = options.now ?? Date.now;
 	let eventSequence = 0;
@@ -1089,22 +1342,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32600, "initialize must be called first", { code: "not_initialized" });
 	};
 
-	const sessionIdOf = (params: unknown): string => {
-		return requireBoundedClientString(
-			isRecord(params) ? params.sessionId : undefined,
-			"sessionId",
-			ACP_MAX_SESSION_ID_BYTES,
-		);
-	};
-
-	const assertParamKeys = (params: unknown, allowed: ReadonlySet<string>): Record<string, unknown> => {
-		if (params === undefined) return {};
-		if (!isRecord(params) || Object.keys(params).some((key) => key !== "_meta" && !allowed.has(key))) {
-			throw new AcpRequestError(-32602, "invalid method parameters", { code: "invalid_params" });
-		}
-		return params;
-	};
-
 	const canonicalSessionCwd = (requested: unknown): string => {
 		const mismatch = (): AcpRequestError =>
 			new AcpRequestError(-32602, `session cwd does not match bound workspace root ${scope.canonicalCwd}`, {
@@ -1119,30 +1356,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		if (sessionCwd !== scope.canonicalCwd) throw mismatch();
 		return sessionCwd;
-	};
-	const attachClientMcpServers = async (
-		servers: ReadonlyArray<McpClientServerSpec>,
-		ceiling: TurnConstraints | undefined,
-	): Promise<void> => {
-		if (servers.length === 0) return;
-		if (!options.mcpCapabilities) {
-			throw new AcpRequestError(-32602, "client MCP servers are unavailable in this host", { code: "invalid_params" });
-		}
-		try {
-			// A read-only or no-tools session starts no client server: what one does is unknown until it runs.
-			const operator = options.operatorToolLimits;
-			const start = !(
-				operator?.readOnly === true ||
-				ceiling?.readOnly === true ||
-				operator?.allowedTools?.length === 0 ||
-				ceiling?.allowedTools?.length === 0
-			);
-			await options.mcpCapabilities.attachClientServers(servers, { start });
-		} catch (error) {
-			await options.mcpCapabilities.detachClientServers();
-			options.diagnostics?.(`client MCP launch failed: ${acpErrorMessage(error)}`);
-			throw new AcpRequestError(-32603, "client MCP servers could not start", { code: "internal_error" });
-		}
 	};
 
 	const workspaceHistory = (): SessionMeta[] => {
@@ -1163,13 +1376,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return meta;
 	};
 
-	const routingSnapshot = (): AcpRoutingSnapshot => {
-		const route = options.routing?.() ?? { target: null, model: null };
-		return {
-			target: safeConfiguredIdentifier(route.target, ACP_MAX_TARGET_ID_BYTES),
-			model: safeConfiguredIdentifier(route.model, ACP_MAX_MODEL_ID_BYTES),
-		};
-	};
 	const applyCeilings = (
 		ceilings: ReadonlyArray<TurnConstraints | undefined>,
 		lifetime: "session" | "prompt" = "session",
@@ -1185,13 +1391,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				: control.ceilingRefusal(command, argv, scope.standingLimits);
 		if (refusal !== null) throw new AcpRequestError(-32602, refusal, { code: "ceiling_refused" });
 	};
-	const assertCeilingEnforceable = (ceiling: TurnConstraints | undefined): void => {
-		if (ceiling !== undefined && options.chat.setToolCeiling === undefined) {
-			throw new AcpRequestError(-32602, `this agent cannot enforce ${ACP_CEILING_META_KEY}`, {
-				code: "ceiling_unsupported",
-			});
-		}
-	};
 	/**
 	 * Apply the bound session's ceiling as the chat's standing limits and return
 	 * the echo for its response. Every way a session becomes bound goes through
@@ -1199,16 +1398,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	 */
 	const applySessionCeiling = (session: AcpServerSession): Record<string, unknown> =>
 		options.chat.setToolCeiling !== undefined ? ceilingMeta(applyCeilings([session.ceiling])) : {};
-	/**
-	 * A successor's ceiling: the source session's narrowed by the one sent with
-	 * the request, so a fork or handoff can tighten what it inherits and never
-	 * loosen it (Z1).
-	 */
-	const successorCeiling = (source: AcpServerSession, params: unknown): TurnConstraints | undefined => {
-		const requested = requestCeiling(params);
-		assertCeilingEnforceable(requested);
-		return snapshotTurnConstraints(narrowTurnConstraints(source.ceiling, requested));
-	};
 	const getSession = (params: unknown): AcpServerSession => {
 		const id = sessionIdOf(params);
 		const session = scope.sessions.get(id);
@@ -1288,13 +1477,9 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			() => {},
 		);
 	};
-	const refuseYolo = (level: AutonomyLevel): void => {
-		const refusal = level === "yolo" ? (options.yoloRefusal?.() ?? null) : null;
-		if (refusal !== null) throw new AcpRequestError(-32602, refusal, { code: "yolo_refused" });
-	};
 	const setAutonomy = (session: AcpServerSession, level: unknown): void => {
 		if (!isAutonomyLevel(level)) throw new AcpRequestError(-32602, "invalid autonomy level", { code: "invalid_params" });
-		refuseYolo(level);
+		refuseYolo(options, level);
 		if (session.activePrompt !== null)
 			throw new AcpRequestError(-32602, "cannot change autonomy during an active prompt", { code: "prompt_active" });
 		if (session.autonomy === level) return;
@@ -1352,15 +1537,15 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return withSessionSlot(async () => {
 			const request = assertParamKeys(params, new Set(["cwd", "mcpServers", "additionalDirectories"]));
 			const ceiling = requestCeiling(request);
-			assertCeilingEnforceable(ceiling);
+			assertCeilingEnforceable(options, ceiling);
 			assertNoAdditionalDirectories(request.additionalDirectories);
 			const sessionCwd = canonicalSessionCwd(request.cwd);
 			const clientMcpServers = parseClientMcpServers(request.mcpServers, true);
-			const route = routingSnapshot();
+			const route = routingSnapshot(options);
 			const createInput: { cwd: string; target?: string; model?: string } = { cwd: sessionCwd };
 			if (route.target !== null) createInput.target = route.target;
 			if (route.model !== null) createInput.model = route.model;
-			await attachClientMcpServers(clientMcpServers, ceiling);
+			await attachClientMcpServers(options, clientMcpServers, ceiling);
 			let meta: SessionMeta | undefined;
 			try {
 				meta = options.session?.create(createInput);
@@ -1415,11 +1600,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		});
 	});
 
-	interface PreparedRestore {
-		leafTurnId: string | null;
-		replayMessages: ReadonlyArray<AgentMessage>;
-		replay: PreparedAcpReplay | undefined;
-	}
 	/**
 	 * Everything a restore reads, gathered before anything changes, so a read
 	 * failure leaves the bound session exactly as it was. `session/load`, a
@@ -1572,7 +1752,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			const request = assertParamKeys(params, new Set(["sessionId", "cwd", "mcpServers", "additionalDirectories"]));
 			// Composed exactly like session/new; without one the operator's limits apply.
 			const ceiling = requestCeiling(request);
-			assertCeilingEnforceable(ceiling);
+			assertCeilingEnforceable(options, ceiling);
 			assertNoAdditionalDirectories(request.additionalDirectories);
 			const id = sessionIdOf(request);
 			canonicalSessionCwd(request.cwd);
@@ -1602,7 +1782,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				throw loadFailure(error);
 			}
 			const recordedRoute = resumedSessionRoute(stored, entries);
-			await attachClientMcpServers(clientMcpServers, ceiling);
+			await attachClientMcpServers(options, clientMcpServers, ceiling);
 			try {
 				const restored = restoreControlledSession(
 					{
@@ -1803,22 +1983,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return { jobs };
 	});
 
-	const requireBranches = () => {
-		const session = options.session;
-		const resetForSession = options.chat.resetForSession;
-		const readEntries = options.readSessionEntries;
-		const buildMessages = options.buildReplayMessages;
-		if (
-			!branchesWired(options) ||
-			session === undefined ||
-			resetForSession === undefined ||
-			readEntries === undefined ||
-			buildMessages === undefined
-		) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		return { session, resetForSession: resetForSession.bind(options.chat), readEntries, buildMessages };
-	};
 	/** A branch change rewrites the context a running turn is reading, so it waits for the turn. */
 	const requireIdle = (session: AcpServerSession, action: string): void => {
 		if (scope.activeShell !== null)
@@ -1832,19 +1996,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32602, `cannot ${action} during an active prompt`, { code: "prompt_active" });
 		}
 	};
-	/**
-	 * A path that stops hosting a live, loaded session checkpoints it first, so meta.json records why its ledger
-	 * closed, as shutdown records its own. A failed checkpoint is reported and the close goes on.
-	 */
-	const checkpointBeforeClose = async (sessionId: string, reason: "close" | "fork" | "handoff"): Promise<void> => {
-		const durable = options.session;
-		if (durable?.current()?.id !== sessionId) return;
-		await durable.checkpoint(reason).catch((err: unknown) => {
-			process.stderr.write(
-				`[pancode:acp] ${reason} checkpoint failed: ${err instanceof Error ? err.message : String(err)}\n`,
-			);
-		});
-	};
 	/** The checkpoint yields, so a request that arrived meanwhile may have closed or started work on the session. */
 	const requireStillIdle = (session: AcpServerSession, action: string): void => {
 		if (scope.sessions.get(session.id) !== session || scope.closingSessions.has(session.id)) {
@@ -1852,24 +2003,11 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		requireIdle(session, action);
 	};
-	const selectableTurn = (contract: SessionContract, sessionId: string, value: unknown): string => {
-		const turnId = requireBoundedClientString(value, "turnId", ACP_MAX_SESSION_ID_BYTES);
-		let kind: string | undefined;
-		try {
-			kind = contract.tree(sessionId).nodesById[turnId]?.kind;
-		} catch {
-			throw new AcpRequestError(-32603, "session tree could not be read", { code: "internal_error" });
-		}
-		if (kind === undefined || !isSelectableTreeNode(kind)) {
-			throw new AcpRequestError(-32602, "turn is not in this session", { code: "turn_unknown" });
-		}
-		return turnId;
-	};
 
 	options.transport.onRequest(ACP_SESSION_TREE_METHOD, (params) => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId"]));
-		const { session } = requireBranches();
+		const { session } = requireBranches(options);
 		const bound = getSession(request);
 		try {
 			return projectSessionTree(session.tree(bound.id));
@@ -1967,7 +2105,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	options.transport.onRequest(ACP_SESSION_SWITCH_TURN_METHOD, (params) => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "turnId"]));
-		const { session, resetForSession } = requireBranches();
+		const { session, resetForSession } = requireBranches(options);
 		const bound = getSession(request);
 		requireIdle(bound, "switch branches");
 		const turnId = selectableTurn(session, bound.id, request.turnId);
@@ -2015,22 +2153,22 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		replayToClient: boolean,
 		clientMcpServers?: ReadonlyArray<McpClientServerSpec>,
 	) => {
-		const { session, resetForSession, readEntries, buildMessages } = requireBranches();
+		const { session, resetForSession, readEntries, buildMessages } = requireBranches(options);
 		const bound = getSession(request);
 		requireIdle(bound, "fork");
-		const ceiling = successorCeiling(bound, request);
+		const ceiling = successorCeiling(options, bound, request);
 		const requested = chooseTurn === "request" ? request.turnId : session.leafId(bound.id);
 		if (requested === null)
 			throw new AcpRequestError(-32602, "the session has no turn to fork from", { code: "turn_unknown" });
 		const turnId = selectableTurn(session, bound.id, requested);
 		// The fork closes the parent's ledger.
-		await checkpointBeforeClose(bound.id, "fork");
+		await checkpointBeforeClose(options, bound.id, "fork");
 		requireStillIdle(bound, "fork");
 		if (clientMcpServers !== undefined) {
 			// Standard fork names the child's client servers, so the parent's go first; a launch failure refuses the fork
 			// before the session changes, as on an opener.
 			await options.mcpCapabilities?.detachClientServers();
-			await attachClientMcpServers(clientMcpServers, ceiling);
+			await attachClientMcpServers(options, clientMcpServers, ceiling);
 			requireStillIdle(bound, "fork");
 		}
 		let meta: SessionMeta;
@@ -2138,36 +2276,12 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return forkBoundSession(request, "leaf", false, clientMcpServers);
 	});
 
-	const handoffRefusal = (level: "warn" | "error", code: string, reason: string) => ({
-		status: "refused" as const,
-		level,
-		code,
-		reason: boundString(reason, ACP_MAX_HANDOFF_REASON_BYTES),
-	});
-	const requireHandoff = () => {
-		const control = options.handoff;
-		const branches = requireBranches();
-		if (control === undefined) throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		return { control, ...branches };
-	};
-	/** Reviewed text keeps its line structure; any other control character is refused. */
-	const handoffDocument = (value: unknown): string => {
-		if (typeof value !== "string" || utf8Bytes(value) > ACP_MAX_HANDOFF_DOCUMENT_BYTES) {
-			throw new AcpRequestError(-32602, "document is invalid", { code: "invalid_params" });
-		}
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: a control character other than a line break is the refusal.
-		if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
-			throw new AcpRequestError(-32602, "document is invalid", { code: "invalid_params" });
-		}
-		return value;
-	};
-
 	// /handoff, first half: extract with one repair and render the document a
 	// person reviews. Nothing is written; the draft waits here under an id.
 	options.transport.onRequest(ACP_HANDOFF_PREPARE_METHOD, async (params): Promise<AcpHandoffPrepareResult> => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "goal"]));
-		const { control } = requireHandoff();
+		const { control } = requireHandoff(options);
 		const bound = getSession(request);
 		requireIdle(bound, "hand off");
 		const goal = requireBoundedClientString(request.goal, "goal", ACP_MAX_HANDOFF_GOAL_BYTES, { allowEmpty: true });
@@ -2217,10 +2331,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	options.transport.onRequest(ACP_HANDOFF_COMMIT_METHOD, async (params): Promise<AcpHandoffCommitResult> => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "handoffId", "document"]));
-		const { control, session, resetForSession } = requireHandoff();
+		const { control, session, resetForSession } = requireHandoff(options);
 		const bound = getSession(request);
 		requireIdle(bound, "hand off");
-		const ceiling = successorCeiling(bound, request);
+		const ceiling = successorCeiling(options, bound, request);
 		const handoffId = requireBoundedClientString(request.handoffId, "handoffId", ACP_MAX_SESSION_ID_BYTES);
 		const document = handoffDocument(request.document);
 		const pending = scope.pendingHandoff;
@@ -2233,7 +2347,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		// The successor replaces the bound session, whose ledger closes. An empty review changes nothing.
 		if (document.trim().length > 0) {
-			await checkpointBeforeClose(bound.id, "handoff");
+			await checkpointBeforeClose(options, bound.id, "handoff");
 			requireStillIdle(bound, "hand off");
 		}
 		if (scope.pendingHandoff !== pending) {
@@ -2292,7 +2406,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	options.transport.onRequest(ACP_HANDOFF_CANCEL_METHOD, (params): AcpHandoffCancelResult => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "handoffId"]));
-		requireHandoff();
+		requireHandoff(options);
 		const bound = getSession(request);
 		const handoffId = requireBoundedClientString(request.handoffId, "handoffId", ACP_MAX_SESSION_ID_BYTES);
 		const cancelled = scope.pendingHandoff?.handoffId === handoffId && scope.pendingHandoff.sessionId === bound.id;
@@ -2340,22 +2454,10 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			settle();
 		}
 	};
-	const requireAside = () => {
-		if (options.aside === undefined) throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		return options.aside;
-	};
-	const asideText = (value: unknown, field: string) => {
-		const text = typeof value === "string" ? value.trim() : "";
-		if (text.length === 0 || text.length > ACP_ASIDE_QUESTION_MAX_CHARS)
-			throw new AcpRequestError(-32602, `${field} must be 1 to ${ACP_ASIDE_QUESTION_MAX_CHARS} characters`, {
-				code: "invalid_params",
-			});
-		return text;
-	};
 	options.transport.onRequest(ACP_ASIDE_ASK_METHOD, async (params) => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "question"]));
-		const aside = requireAside();
+		const aside = requireAside(options);
 		const session = getSession(request);
 		const question = asideText(request.question, "question");
 		return projectAsideAnswer(await runAside(session.id, (signal) => aside.ask(question, signal)), options.diagnostics);
@@ -2363,7 +2465,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	options.transport.onRequest(ACP_ASIDE_DRAFT_METHOD, async (params) => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "request", "count"]));
-		const aside = requireAside();
+		const aside = requireAside(options);
 		const session = getSession(request);
 		const text = asideText(request.request, "request");
 		const count = request.count ?? ACP_ASIDE_DRAFT_COUNTS.default;
@@ -2384,7 +2486,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	options.transport.onRequest(ACP_ASIDE_CANCEL_METHOD, (params) => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId"]));
-		requireAside();
+		requireAside(options);
 		getSession(request);
 		const round = scope.asideRound;
 		round?.abort.abort();
@@ -2492,13 +2594,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 		return deps;
 	};
-	const artifactFailure = (what: string, error: unknown): never => {
-		if (error instanceof AcpRequestError) throw error;
-		options.diagnostics?.(`artifact ${what} failed: ${acpErrorMessage(error)}`);
-		throw new AcpRequestError(-32603, `artifacts could not be ${what === "list" ? "listed" : "read"}`, {
-			code: "internal_error",
-		});
-	};
 	options.transport.onRequest(ACP_ARTIFACTS_LIST_METHOD, async (params) => {
 		const request = assertParamKeys(params, new Set(["sessionId", "categories"]));
 		const deps = artifactDeps(request);
@@ -2506,7 +2601,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		try {
 			return await listAcpArtifacts(deps, categories);
 		} catch (error) {
-			return artifactFailure("list", error);
+			return artifactFailure(options, "list", error);
 		}
 	});
 	options.transport.onRequest(ACP_ARTIFACTS_READ_METHOD, async (params) => {
@@ -2516,7 +2611,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		try {
 			return await readAcpArtifact(deps, read);
 		} catch (error) {
-			return artifactFailure("read", error);
+			return artifactFailure(options, "read", error);
 		}
 	});
 
@@ -2601,20 +2696,13 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		};
 	});
 
-	const requireBoardActions = (): AcpBoardActions => {
-		if (options.boardActions === undefined || options.board === undefined) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		return options.boardActions;
-	};
-
 	// The /decisions overlay's `s` and `c`. The record keeps the decision,
 	// marked superseded; a correction's turn is returned for the client to send,
 	// so it lands in the conversation as the terminal's does.
 	options.transport.onRequest(ACP_DECISION_SUPERSEDE_METHOD, (params): AcpDecisionSupersedeResult => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "interviewId", "key", "correction"]));
-		const actions = requireBoardActions();
+		const actions = requireBoardActions(options);
 		const bound = getSession(request);
 		requireIdle(bound, "revise a decision");
 		const interviewId = requireBoundedClientString(request.interviewId, "interviewId", 256);
@@ -2649,7 +2737,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	options.transport.onRequest(ACP_MEMORY_PROPOSE_METHOD, async (params): Promise<AcpMemoryProposeResult> => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "entryId", "scope", "acknowledgeGlobal"]));
-		const actions = requireBoardActions();
+		const actions = requireBoardActions(options);
 		getSession(request);
 		const entryId = requireBoundedClientString(request.entryId, "entryId", 256);
 		if (request.scope !== "repo" && request.scope !== "global") {
@@ -2914,7 +3002,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 					if (!isAutonomyLevel(value)) {
 						throw new AcpRequestError(-32602, "invalid autonomy level", { code: "invalid_params" });
 					}
-					refuseYolo(value);
+					refuseYolo(options, value);
 					patch[key] = value;
 					break;
 			}
@@ -3146,16 +3234,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return true;
 	};
 
-	const contextCancellationId = (params: unknown): string | undefined => {
-		if (!isRecord(params) || params._meta === undefined) return undefined;
-		if (!isRecord(params._meta))
-			throw new AcpRequestError(-32602, "cancel metadata must be an object", { code: "invalid_params" });
-		if (!Object.hasOwn(params._meta, ACP_CONTEXT_META_KEY)) return undefined;
-		const context = params._meta[ACP_CONTEXT_META_KEY];
-		if (!isRecord(context))
-			throw new AcpRequestError(-32602, "context cancellation requires operationId", { code: "invalid_params" });
-		return requireBoundedClientString(context.operationId, "operationId", 128);
-	};
 	const cancel = (params: unknown): Record<string, unknown> => {
 		requireInitialized();
 		const operationId = contextCancellationId(params);
@@ -3198,33 +3276,6 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		}
 	});
 
-	/**
-	 * Windows in which a steer must not be queued, or null when it may be.
-	 *
-	 * The engine resubmits a steer it never drained as a fresh prompt
-	 * (`resubmitStrandedSteers`). In a terminal that is the right answer; here it
-	 * is a prompt-shaped turn the client never requested, whose stop reason has
-	 * no request to ride home on. The two windows where stranding is certain are
-	 * knowable from the session, so the server refuses in them and says why,
-	 * rather than accepting a steer that would come back as an unrequested turn.
-	 */
-	const steerRefusal = (session: AcpServerSession): string | null => {
-		if (session.activePrompt === null) {
-			return "no prompt is active on this session; send session/prompt instead of steering";
-		}
-		if (session.activePrompt.cancelled) {
-			return "this prompt is cancelled and its queues are being cleared; prompt again once it returns";
-		}
-		// A steer the engine never drains is resubmitted as a fresh turn, and a scheduled turn has no request to carry that one home.
-		if (session.activePrompt.scheduled !== undefined) {
-			return "a scheduled job turn is running; cancel it, or prompt once it finishes";
-		}
-		if (!options.chat.isStreaming()) {
-			return "the run is not streaming, so the engine has no slot to drain this steer into";
-		}
-		return null;
-	};
-
 	options.transport.onRequest(ACP_SESSION_STEER_METHOD, async (params): Promise<AcpSteerResult> => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "text", "mode"]));
@@ -3242,7 +3293,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		if (enqueue === undefined) {
 			return { accepted: false, queue, refusal: "this agent build does not expose the engine steering queues" };
 		}
-		const refusal = steerRefusal(session);
+		const refusal = steerRefusal(options, session);
 		if (refusal !== null) return { accepted: false, queue, refusal };
 		if (options.chat.discoverOperatorEgg && (await options.chat.discoverOperatorEgg(text)))
 			return { accepted: true, queue };
@@ -3295,30 +3346,11 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		};
 	});
 
-	/** The chat loop's per-entry queue operations, bound, or a refusal when this build has none. */
-	const queueControl = () => {
-		const chat = options.chat;
-		if (
-			chat.queueEntries === undefined ||
-			chat.removeQueuedEntry === undefined ||
-			chat.moveQueuedEntry === undefined ||
-			chat.setQueuedEntryKind === undefined
-		) {
-			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
-		}
-		return {
-			entries: chat.queueEntries.bind(chat),
-			remove: chat.removeQueuedEntry.bind(chat),
-			move: chat.moveQueuedEntry.bind(chat),
-			setKind: chat.setQueuedEntryKind.bind(chat),
-		};
-	};
-
 	options.transport.onRequest(ACP_QUEUE_EDIT_METHOD, (params): AcpQueueEditResult => {
 		requireInitialized();
 		const request = assertParamKeys(params, new Set(["sessionId", "id", "op", "delta", "kind"]));
 		const session = getSession(request);
-		const queue = queueControl();
+		const queue = queueControl(options);
 		const id = requireBoundedClientString(request.id, "id", ACP_MAX_QUEUE_ENTRY_ID_BYTES);
 		if (typeof request.op !== "string" || !(ACP_QUEUE_EDIT_OPS as ReadonlyArray<string>).includes(request.op)) {
 			throw new AcpRequestError(-32602, `op must be one of ${ACP_QUEUE_EDIT_OPS.join(", ")}`, {
@@ -3652,7 +3684,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			if (scope.activeShell?.sessionId === session.id) await scope.activeShell.settled;
 			if (aside !== null) await settleAcpWork([aside.settled]);
 			if (options.session?.current()?.id === session.id) {
-				await checkpointBeforeClose(session.id, "close");
+				await checkpointBeforeClose(options, session.id, "close");
 				await options.session.close();
 			}
 			await options.mcpCapabilities?.detachClientServers();
@@ -3795,7 +3827,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		requireInitialized();
 		const session = getSession(params);
 		const promptCeiling = requestCeiling(params, "ACP prompt ceiling");
-		assertCeilingEnforceable(promptCeiling);
+		assertCeilingEnforceable(options, promptCeiling);
 		if (scope.contextCommandInFlight !== null || session.activePrompt || options.chat.isStreaming()) {
 			throw new AcpRequestError(-32602, "this session already has an active prompt", { code: "prompt_active" });
 		}
@@ -3829,7 +3861,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32602, "this agent does not accept image blocks", { code: "invalid_params" });
 		// Check the same credential authority as the runtime, without resolving or
 		// echoing a secret. Desktop services do not inherit a terminal's API keys.
-		const targetId = routingSnapshot().target;
+		const targetId = routingSnapshot(options).target;
 		const target = targetId ? options.providers?.getTarget(targetId) : undefined;
 		const runtime = target ? options.providers?.getRuntime(target.runtime) : undefined;
 		if (target && runtime && options.providers && !options.providers.auth.statusForTarget(target, runtime).available) {
