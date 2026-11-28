@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveToolBudgetEnvelope } from "../../src/domains/dispatch/budget-envelope.js";
+import { resolveToolBudgetEnvelope } from "../../src/core/run-budget-envelope.js";
 import { stripTerminalSequences, type Terminal, TuiMainScreen, visibleWidth } from "../../src/engine/tui.js";
 import { createDispatchBoardView } from "../../src/interactive/dispatch-board.js";
 import type { DispatchBoardRow } from "../../src/interactive/dispatch-row-model.js";

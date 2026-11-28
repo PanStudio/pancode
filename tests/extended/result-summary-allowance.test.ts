@@ -4,6 +4,7 @@ import { deepStrictEqual, doesNotMatch, match, ok, strictEqual, throws } from "n
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, it } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { WORKER_OUTPUT_MAX_BYTES } from "../../src/core/worker-output.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
 	parseResultContract,
@@ -20,11 +21,7 @@ import {
 import { resultContractAuthorship } from "../../src/domains/agents/result-contract-builder-report.js";
 import { resultContractSourceId } from "../../src/domains/agents/result-contract-payload.js";
 import { resultContractRepairMessages, resultContractShape } from "../../src/domains/agents/result-contract-repair.js";
-import {
-	createWorkerOutputCapture,
-	WORKER_OUTPUT_MAX_BYTES,
-	workerOutputCaptureBytes,
-} from "../../src/domains/dispatch/event-pump.js";
+import { createWorkerOutputCapture, workerOutputCaptureBytes } from "../../src/domains/dispatch/event-pump.js";
 import { dispatchResultContract } from "../../src/domains/dispatch/execution-role.js";
 import type { SettledRunRecord } from "../../src/domains/telemetry/index.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";

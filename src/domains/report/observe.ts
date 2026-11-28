@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { loadSessionTelemetrySource, loadSessionTelemetrySourceAsync } from "../session/index.js";
-import { whyStopped } from "../telemetry/index.js";
+import { loadSessionTelemetrySource, loadSessionTelemetrySourceAsync, whyStopped } from "../telemetry/index.js";
 
 /**
  * What the harness recorded about a session, as typed facts. The model has no field that reaches this section of a

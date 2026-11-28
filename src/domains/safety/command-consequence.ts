@@ -26,13 +26,13 @@ import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { type ShellCommandStep, sedInPlaceOperands, shellCommandSteps } from "./command-path-walks.js";
 
 /** Sentences shown before the rest collapse into `and N more`, unless more of them are severe. */
-export const COMMAND_CONSEQUENCE_MAX_LINES = 3;
+const COMMAND_CONSEQUENCE_MAX_LINES = 3;
 
 /** Severe sentences (deletes, stops, history rewrites) are never folded into `and N more` up to this many. */
 export const COMMAND_CONSEQUENCE_MAX_SEVERE = 8;
 
 /** Characters of one sentence. The host and the worker use this one limit, so a cut happens once. */
-export const COMMAND_CONSEQUENCE_LINE_CHARS = 240;
+const COMMAND_CONSEQUENCE_LINE_CHARS = 240;
 
 /** Operands named in one sentence before the rest collapse into `and N more`. */
 const MAX_OPERANDS_PER_LINE = 3;

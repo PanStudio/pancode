@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Type } from "typebox";
+import { PANE_PEER_IDS } from "../core/pane-peers.js";
 import { ToolNames } from "../core/tool-names.js";
-import { PANE_INTERRUPT_KEYS, PANE_PEER_IDS, PANES_PRESET_IDS } from "../domains/mux/operations.js";
+import { PANE_INTERRUPT_KEYS, PANES_PRESET_IDS } from "../domains/mux/operations.js";
 import { StringEnum } from "../engine/ai.js";
 import type { ToolSurface } from "./lazy-tool.js";
 

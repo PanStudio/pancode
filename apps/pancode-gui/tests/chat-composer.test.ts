@@ -10,10 +10,7 @@ import {
 	composerKeyAction,
 	DEFAULT_STEER_MODE,
 	type Draft,
-	DraftStore,
 	draftEstimate,
-	draftStore,
-	MAX_DRAFT_STORES,
 	messageActionOffers,
 	NO_ACTIVITY,
 	NO_STEERING,
@@ -25,7 +22,6 @@ import {
 	queueActions,
 	queueRowLabel,
 	queueSummary,
-	resetDraftStores,
 	restoredDraft,
 	type SteeringAffordances,
 	slashNotice,
@@ -40,6 +36,7 @@ import {
 	usageSummary,
 	usageTitle,
 } from "../client/chat/composer-model.js";
+import { DraftStore, draftStore, MAX_DRAFT_STORES, resetDraftStores } from "../client/chat/draft-store.js";
 import { OUTPUT_DETAILS, outputDetailLabel } from "../client/chat/output-detail-model.js";
 import type { KeyEventLike } from "../client/interaction/keybindings.js";
 import type { AgentCapabilities } from "../contracts/capabilities.js";

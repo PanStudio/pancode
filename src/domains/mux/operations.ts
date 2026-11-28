@@ -16,6 +16,7 @@
  * shell-escape territory (spec 4.8, and the risk register's "tool misuse" row).
  */
 
+import type { PanePeerId } from "../../core/pane-peers.js";
 import type { DockSlot } from "./dock-controller.js";
 
 /**
@@ -49,10 +50,6 @@ export const PANES_PRESETS = [
 ] as const;
 
 export type PanesPresetId = (typeof PANES_PRESETS)[number]["id"];
-
-/** Fixed interactive coding peers. The pane tool never accepts an executable name. */
-export const PANE_PEER_IDS = ["pancode", "claude-code", "codex", "opencode", "antigravity", "pi"] as const;
-export type PanePeerId = (typeof PANE_PEER_IDS)[number];
 
 /** The executable a peer runs as, which is what a missing install is reported under. */
 export function panePeerBinary(peer: PanePeerId): string {

@@ -119,7 +119,6 @@ export interface ReportCliDeps {
 	interactive?: boolean;
 	stdout?: (text: string) => void;
 	stderr?: (text: string) => void;
-	readStdin?: () => string;
 	cwd?: string;
 	stateDir?: string;
 	identitySettings?: IdentitySettings;
@@ -394,8 +393,8 @@ async function identityFor(io: Io): Promise<LocalIdentity> {
 	});
 }
 
-function readBody(io: Io, path: string): string {
-	if (path === "-") return io.deps.readStdin !== undefined ? io.deps.readStdin() : readFileSync(0, "utf8");
+function readBody(path: string): string {
+	if (path === "-") return readFileSync(0, "utf8");
 	return readFileSync(path, "utf8");
 }
 
@@ -685,7 +684,7 @@ async function compose(args: ComposeArgs, io: Io): Promise<number> {
 	let openEditor = false;
 	if (args.bodyFile !== null) {
 		try {
-			happened = readBody(io, args.bodyFile);
+			happened = readBody(args.bodyFile);
 		} catch (error) {
 			fail(io, `cannot read ${args.bodyFile}: ${error instanceof Error ? error.message : String(error)}`);
 			return 2;

@@ -11,7 +11,6 @@ import type { BudgetProvider } from "../domains/context/budget/inspection.js";
 import type { WorkerRecall } from "../domains/context/worker/recall.js";
 import type { ReadRecallPort } from "../domains/context/working-set/reread.js";
 import type { BudgetEconomicsPort } from "../domains/dispatch/contract.js";
-import type { VisionSidecar } from "../domains/providers/vision-sidecar.js";
 import type { LoadSkillsInput } from "../domains/resources/index.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import type { DecisionBoardStore } from "../domains/session/decision-board.js";
@@ -56,6 +55,7 @@ import { prepareStoreAdmissionArguments, storeToolSurface } from "./store/surfac
 import { createTasksTool } from "./tasks.js";
 import { verifyToolSurface } from "./verify/surface.js";
 import { createVisionTool } from "./vision.js";
+import type { VisionSidecar } from "./vision-sidecar.js";
 import { webFetchToolSurface, webReadToolSurface } from "./web-fetch-surface.js";
 import { writeTool } from "./write.js";
 

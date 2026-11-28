@@ -14,7 +14,7 @@ const SANDBOX_TMP = "/tmp";
  * the Node IPC channel an extension runtime child holds on descriptor 3, and
  * stays a single digit because a POSIX shell redirects only 0 through 9.
  */
-export const SECCOMP_FILTER_FD = 9;
+const SECCOMP_FILTER_FD = 9;
 
 /** A `seccompFilter` that reads the program from the launch's stdin, so probing support writes no file. */
 export const SECCOMP_FILTER_STDIN = "-";

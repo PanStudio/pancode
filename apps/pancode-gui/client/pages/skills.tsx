@@ -5,6 +5,7 @@ import { useEffect, useId } from "react";
 import { Link, useSearchParams } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import { type Client, emptyInput } from "../api/client.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import { setPageTitle } from "../interaction/announcer.js";
 import { useShell } from "../shell/shell-context.js";
@@ -118,12 +119,9 @@ export function SkillsPage({ client }: { client: Client }) {
 					</p>
 					{id === "" ? <p className="skills__note">Open a workspace to see the skills available in it.</p> : null}
 					{inventory.error ? (
-						<p role="alert">
-							{inventory.error.message}{" "}
-							<button type="button" className="wb-link" onClick={() => void inventory.refetch()}>
-								Try again
-							</button>
-						</p>
+						<RetryAlert retry={() => void inventory.refetch()} buttonClassName="wb-link">
+							{inventory.error.message}
+						</RetryAlert>
 					) : null}
 					{inventory.isPending && id !== "" ? (
 						<p className="skills__note" role="status">

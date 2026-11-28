@@ -9,5 +9,5 @@ export const TelemetryManifest: DomainManifest<"telemetry"> = {
 	// -> scheduling) without a topological cycle.
 	name: "telemetry",
 	// Telemetry capture follows the operator's `telemetry` settings (#434).
-	dependsOn: ["config", "providers", "session"],
+	dependsOn: ["config", "providers"],
 };

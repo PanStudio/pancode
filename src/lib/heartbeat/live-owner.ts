@@ -3,8 +3,8 @@
 import { hostname } from "node:os";
 import { formatWaitClock } from "../../core/format-time.js";
 import { processAlive, processBirthToken } from "../../core/process-identity.js";
+import type { SessionMeta } from "../../domains/session/contract.js";
 import type { PancodeSessionOwner } from "../../engine/session.js";
-import type { SessionMeta } from "./contract.js";
 import { liveSessionView, ownerOnThisHost } from "./heartbeat.js";
 
 /**

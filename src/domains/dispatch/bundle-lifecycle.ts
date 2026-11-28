@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { sha256Hex } from "../../core/hash.js";
+import { workerBudgetFromEnvelope } from "../../core/run-budget-envelope.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerEgressMode, workerMcpNoNetworkNotice } from "../../core/sandbox/worker-policy.js";
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
@@ -27,7 +28,6 @@ import {
 	resolveDispatchAdmissionStage,
 	withStoreGrantBoundaries,
 } from "./admission-scope.js";
-import { workerBudgetFromEnvelope } from "./budget-envelope.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import { operatorContainedYolo } from "./bundle-support.js";
 import type { DispatchLifecycleStage, PeerPromptComposition } from "./bundle-types.js";

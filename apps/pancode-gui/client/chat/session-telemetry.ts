@@ -5,31 +5,14 @@
 import { queryOptions, skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ContextLedger } from "../../contracts/context-ledger.js";
 import { routes } from "../../contracts/runtime-routes.js";
-import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
 import { sessionCapabilitiesQuery } from "../api/queries.js";
 import { heldSessionQuery } from "../api/session-query.js";
 import { sessionReadScope } from "../api/sessions.js";
-import { type Spend, tokensText, usageReadable } from "./session-usage-model.js";
+import { settledKey, usageReadable } from "./session-usage-model.js";
 
-type Turns = SessionSnapshot["turns"];
 // A GET may supersede the push it began after, but cannot overwrite a newer push that raced it.
 const contextReadBasis = new WeakMap<ContextLedger, number>();
-
-/** How many of the retained turns have settled. The projection keeps only the newest turns, so this stops at its cap. */
-export const settledTurns = (turns: Turns): number => turns.filter((turn) => turn.status !== "running").length;
-
-/**
- * Changes on every settle, which is when the ledger and the accounting can have moved, and has no ceiling: the id
- * of the newest settled turn. A count of settled turns stops moving once the projection drops its oldest turns.
- */
-export function settledKey(turns: Turns): string {
-	for (let index = turns.length - 1; index >= 0; index--) {
-		const turn = turns[index];
-		if (turn && turn.status !== "running") return turn.id;
-	}
-	return "none";
-}
 
 /** The settle key of the session snapshot every view of this task reads, so each read of a session keys alike. */
 function useSettledKey(client: Client, sessionId: string): string {
@@ -152,9 +135,4 @@ export function useTelemetrySession(client: Client, sessionId: string, enabled: 
 		retry: false,
 		staleTime: 30_000,
 	});
-}
-
-export function spendLine(spend: Spend): string | null {
-	const parts = [spend.tokens === null ? null : tokensText(spend.tokens), spend.cost].filter(Boolean);
-	return parts.length > 0 ? parts.join(" · ") : null;
 }

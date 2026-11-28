@@ -39,9 +39,6 @@ function resolveWorkerRuntimeBudget(input: Pick<WorkerRunInput, "budget">): Work
 export function createWorkerGating(scope: WorkerRunScope) {
 	const { input, emit, phase, safety, workerSettings, activeWorkerTools } = scope;
 	const workerBudget = resolveWorkerRuntimeBudget(input);
-	// The reserve window ends discovery, not the run's own product. An agent that was
-	// granted mutation tools delivers by writing, so those stay admitted inside it;
-	// a read-only agent has none and ends in synthesis.
 	const deliveryTools = resolveDeliveryTools(input.allowedTools, input.product);
 	const middlewareToolChoice = createMiddlewareToolChoiceControl();
 	// The model round that may only report: the one after the refusal limit tripped.
@@ -55,7 +52,6 @@ export function createWorkerGating(scope: WorkerRunScope) {
 		// A worker's blocks all land in one run-long bucket, so the bound on
 		// them is a statement about this run's length, not about a turn.
 		turnBlockBudget: workerLoopBlockBudget(workerBudget.toolCalls),
-		...(deliveryTools.length > 0 ? { deliveryTools } : {}),
 		turnSynthesisLockout: workerBudget.synthesis,
 		// Once locked, the next model round is forced text-only at the
 		// request level. The lockout directive alone relies on model compliance.

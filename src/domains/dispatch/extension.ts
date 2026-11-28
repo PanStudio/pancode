@@ -25,8 +25,7 @@ import { createDispatchCore } from "./bundle-runtime.js";
 import type { DispatchBundleOptions } from "./bundle-types.js";
 import type { DispatchContract } from "./contract.js";
 
-export { UNKNOWN_PRICING_ADMISSION_ESTIMATE_USD } from "./bundle-support.js";
-export type { ActiveRun, DispatchBundleOptions, DispatchNodePlacement } from "./bundle-types.js";
+export type { DispatchBundleOptions } from "./bundle-types.js";
 
 /**
  * The dispatch domain, composed of one machine per piece of state (bundle-*.ts), each built over one DispatchRuntime.

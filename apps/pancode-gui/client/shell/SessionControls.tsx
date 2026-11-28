@@ -9,7 +9,7 @@ import { useNoticeLead } from "../design/notifications.js";
 import { StatusMark } from "../design/status.js";
 import { Dialog } from "../interaction/Dialog.js";
 import { type SessionControls, useSessionControls } from "../pages/session-control-actions.js";
-import type { SessionControlTarget } from "../pages/session-control-model.js";
+import { type SessionControlTarget, sessionControlNotice } from "../pages/session-control-model.js";
 import "./session-controls.css";
 
 /** How long a settled stop or close request stays in the task bar before it clears itself. */
@@ -96,21 +96,11 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 		if (active !== document.body && active?.getAttribute("data-control-wait") !== key) return;
 		results.current?.querySelector<HTMLElement>(`[data-control-key="${key}"] [data-control-focus]`)?.focus();
 	}, [controls.records, reviewing]);
-	const unresolved = controls.records.filter((row) => row.stage === "unresolved");
-	const pending = controls.records.filter((row) => row.stage === "sending");
-	const latest = pending.at(-1) ?? controls.records.at(-1);
+	const view = sessionControlNotice(controls.records, controls.notice);
 	// A pointer over the banner or focus inside it holds a settled request on screen; leaving restarts the wait.
 	const [held, setHeld] = useState({ hover: false, focus: false });
-	const settled =
-		latest?.stage === "complete" && unresolved.length === 0 && pending.length === 0 && controls.notice === null;
-	const expiring =
-		settled && !held.hover && !held.focus && !reviewing
-			? controls.records
-					.filter((row) => row.stage === "complete")
-					.map((row) => row.key)
-					.join(" ")
-			: "";
-	const shown = latest !== undefined || controls.notice !== null;
+	const expiring = view.settled && !held.hover && !held.focus && !reviewing ? view.completedKeys : "";
+	const { shown, needsReview } = view;
 	// The section unmounts under the pointer when dismissed, so no leave event ever arrives.
 	useEffect(() => {
 		if (!shown) setHeld({ hover: false, focus: false });
@@ -131,25 +121,6 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 			(field ?? document.getElementById("main"))?.focus();
 		});
 	if (!shown) return null;
-	const needsReview = unresolved.length > 0 || controls.notice !== null;
-	const idle = !needsReview && !pending.length && latest?.nothingStopped === true;
-	// A settled request is titled by what happened, so a stop reads "Stopped" rather than a generic check.
-	const label = needsReview
-		? "Check session"
-		: pending.length
-			? "Request in progress"
-			: latest?.action === "close"
-				? "Closed"
-				: idle
-					? "Nothing to stop"
-					: "Stopped";
-	const summary = needsReview
-		? `${unresolved.length || 1} session ${unresolved.length > 1 ? "requests need" : "request needs"} your review.`
-		: pending.length > 1
-			? `${pending.length} session requests in progress…`
-			: latest?.action === "close"
-				? `${pending.length ? "Close request" : "Closed"} · ${latest.title}`
-				: `${pending.length ? "Stop request" : idle ? "Nothing stopped" : "Stop confirmed"} · ${latest?.title ?? "Session"}`;
 	const dismissCompleted = () => {
 		for (const row of controls.records) if (row.stage === "complete") controls.dismiss(row.key);
 		controls.clearNotice();
@@ -159,7 +130,7 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 	const banner = (
 		<section
 			className="session-control-notice"
-			data-state={needsReview ? "unresolved" : pending.length ? "sending" : "complete"}
+			data-state={view.state}
 			aria-label="Session control status"
 			onMouseEnter={() => setHeld((state) => ({ ...state, hover: true }))}
 			onMouseLeave={() => setHeld((state) => ({ ...state, hover: false }))}
@@ -169,15 +140,15 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 			}}
 		>
 			<div className="session-control-notice__message" role="status">
-				<StatusMark tone={needsReview ? "warn" : pending.length ? "running" : idle ? "neutral" : "success"} label={label} />
-				<span>{summary}</span>
+				<StatusMark tone={view.tone} label={view.label} />
+				<span>{view.summary}</span>
 			</div>
 			<div className="session-control-notice__actions">
 				<button type="button" ref={reviewButton} onClick={() => setReviewing(true)} aria-haspopup="dialog">
 					{needsReview ? "Review request" : "Details"}
 					<Icon name="arrowUp" />
 				</button>
-				{!needsReview && !pending.length ? (
+				{!needsReview && !view.sending ? (
 					<button type="button" onClick={dismissCompleted} aria-label="Dismiss completed session controls">
 						<Icon name="close" />
 					</button>
