@@ -39,6 +39,22 @@ export interface SessionFleetRuns {
 }
 
 /**
+ * The session a launch binds. A terminal session opens on its first entry, so a `/fleet run` typed before any turn
+ * opens it here, as that entry would, instead of running unbound.
+ */
+export function launchSessionId(session: SessionContract | undefined, settings: PancodeSettings): string | null {
+	if (!session) return null;
+	const current = session.current();
+	if (current) return current.id;
+	const { connection, model } = settings.chat;
+	return session.create({
+		cwd: process.cwd(),
+		...(connection ? { target: connection } : {}),
+		...(model ? { model } : {}),
+	}).id;
+}
+
+/**
  * The session's fleet runs: one launcher holds the single-run guard, the durable root and the sealed result for the
  * operator's `/fleet run` on any surface and the main agent's `dispatch(playbook=...)`. Absent without agents.
  */
@@ -52,7 +68,7 @@ export function createSessionFleetRuns(input: SessionFleetRunsInput): SessionFle
 		workspaceRoot,
 		getSettings: getCurrentSettings,
 		getDecisionBoard: () => decisionBoard.snapshot(),
-		sessionId: () => session?.current()?.id ?? null,
+		sessionId: () => launchSessionId(session, getCurrentSettings()),
 	});
 	const preview = (name: string, vars: Readonly<Record<string, string>>, resume?: string): FleetRunPreviewResult => {
 		const roleFacts = agentRoleFactsResolver((id: string) => agents.getSpec(id));

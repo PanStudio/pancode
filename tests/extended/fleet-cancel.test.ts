@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { runFleetCancel, runFleetStop } from "../../src/cli/fleet-cancel.js";
 import { runFleetWait } from "../../src/cli/fleet-wait.js";
+import type { PancodeSettings } from "../../src/core/config.js";
 import { telemetryContext } from "../../src/core/telemetry/context.js";
 import { sumPricing } from "../../src/core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
@@ -32,6 +33,8 @@ import type { FleetRunOutcome } from "../../src/domains/dispatch/fleet-run-types
 import { openLedger, writeFleetRun } from "../../src/domains/dispatch/state.js";
 import type { RunLineage } from "../../src/domains/dispatch/types.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
+import type { SessionContract } from "../../src/domains/session/contract.js";
+import { launchSessionId } from "../../src/entry/boot/fleet-runs.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 describe("fleet cancel requests", () => {
@@ -372,5 +375,23 @@ describe("fleet cancel requests", () => {
 		strictEqual(launcher.inFlight(), null);
 		deepStrictEqual(runSessions, ["session-launch", "session-launch"]);
 		deepStrictEqual(watched, ["started:model", "dispatched:build", "settled:fleet_stop"]);
+	});
+
+	it("opens the terminal's session for a run typed before its first turn, so the run never goes unbound", () => {
+		const opened: unknown[] = [];
+		let current: { id: string } | null = null;
+		const session = {
+			current: () => current,
+			create: (input: unknown) => {
+				opened.push(input);
+				current = { id: "session-opened" };
+				return current;
+			},
+		} as unknown as SessionContract;
+		const settings = { chat: { connection: "openai-codex", model: "gpt-6-luna" } } as PancodeSettings;
+		strictEqual(launchSessionId(session, settings), "session-opened");
+		strictEqual(launchSessionId(session, settings), "session-opened");
+		deepStrictEqual(opened, [{ cwd: process.cwd(), target: "openai-codex", model: "gpt-6-luna" }]);
+		strictEqual(launchSessionId(undefined, settings), null);
 	});
 });
