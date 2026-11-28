@@ -69,8 +69,7 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 		return 0;
 	}
 	if (flags.sandbox) {
-		const { hostSandboxStatus } = await import("../core/sandbox/status.js");
-		const { hostResourceStatus } = await import("../core/sandbox/resource-limits.js");
+		const { hostSandboxReport } = await import("../core/sandbox/status.js");
 		const { readSettings } = await import("../core/config.js");
 		const { DEFAULT_SETTINGS } = await import("../core/defaults.js");
 		let safety = DEFAULT_SETTINGS.safety;
@@ -80,9 +79,7 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 			// An unreadable settings file is doctor's to report; the host facts do not depend on it.
 		}
 		// One line: fleet preflight reads only the first.
-		process.stdout.write(
-			`${JSON.stringify({ ...hostSandboxStatus(safety), resources: hostResourceStatus(safety.resources) })}\n`,
-		);
+		process.stdout.write(`${JSON.stringify(hostSandboxReport(safety))}\n`);
 		return 0;
 	}
 	if (flags["worker-specs"]) {

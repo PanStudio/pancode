@@ -2,11 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
 import { readSettings } from "../core/config.js";
-import { DEFAULT_SETTINGS } from "../core/defaults.js";
+import { DEFAULT_SETTINGS, type EgressSettings } from "../core/defaults.js";
 import { canonicalizePath } from "../core/path-canonical.js";
 import { proxyEnvSummary } from "../core/proxy-env.js";
-import { sandboxAvailability } from "../core/sandbox/availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation } from "../core/sandbox/availability.js";
+import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/policy.js";
 import {
+	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
 	mainShellContained,
@@ -259,7 +261,25 @@ export function shellSandboxFinding(workspaceRoot: string): DoctorFinding {
 				? undefined
 				: { count: secrets.masks.length, capped: secrets.capped, cappedRoots: secrets.cappedRoots, workspace },
 			unixSockets,
+			mainEgressFacts(availability),
 		),
+	};
+}
+
+/** The operator's `safety.egress.main` and upstream proxy as the doctor shows them, credentials redacted. */
+function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): MainSandboxEgressFacts {
+	let egress: EgressSettings;
+	try {
+		egress = readSettings().safety.egress;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		egress = DEFAULT_SETTINGS.safety.egress;
+	}
+	return {
+		mode: egress.main.mode,
+		granted: egressGrants(egress.main.allow, egress.main.presets).origins.size,
+		upstreamProxy: egress.upstreamProxy === null ? null : redactedUpstreamProxy(egress.upstreamProxy),
+		isolationFailure: egress.main.mode === "open" ? null : sandboxNetworkIsolation(availability),
 	};
 }
 

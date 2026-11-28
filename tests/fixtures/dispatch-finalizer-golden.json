@@ -434,7 +434,8 @@
 					"available": true,
 					"writableRoots": [],
 					"gitWritablePaths": [],
-					"network": false
+					"network": false,
+					"egress": "off"
 				}
 			},
 			"reproducibility": {

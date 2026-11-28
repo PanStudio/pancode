@@ -11,6 +11,7 @@ import {
 	RUNTIME_AUTHS,
 	RUNTIME_KINDS,
 } from "../core/runtime-vocabulary.js";
+import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
 import {
 	RESOURCE_LIMIT_KEYS,
 	RESOURCE_LIMIT_MAX,
@@ -1207,6 +1208,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"unixSockets",
 	"maskSettings",
 	"backendExpected",
+	"egress",
 	"unconfined",
 ]);
 
@@ -1241,8 +1243,29 @@ function validateWorkerSandbox(value: unknown): void {
 		throw new Error("WorkerSpec.sandbox.maskSettings must be true when present");
 	if (sandbox.backendExpected !== undefined && sandbox.backendExpected !== true)
 		throw new Error("WorkerSpec.sandbox.backendExpected must be true when present");
+	if (sandbox.egress !== undefined) {
+		if (sandbox.network !== true) throw new Error("WorkerSpec.sandbox.egress needs network true");
+		validateWorkerEgress(sandbox.egress);
+	}
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.mode === "required"))
 		throw new Error("WorkerSpec.sandbox.unconfined must be true when present and only under mode auto");
+}
+
+/** The proxied worker's grants: canonical host:port origins, and the operator's upstream proxy only from this host. */
+function validateWorkerEgress(value: unknown): void {
+	const source = "WorkerSpec.sandbox.egress";
+	const egress = readRecord(value, source);
+	exactKeys(egress, ["origins", "upstreamProxy"], source);
+	for (const [index, entry] of readStringArray(egress.origins, `${source}.origins`).entries()) {
+		const parsed = parseEgressAllowEntry(entry);
+		if (typeof parsed === "string" || originKey(parsed) !== entry)
+			throw new Error(`${source}.origins[${index}] must be an exact host:port origin`);
+	}
+	if (egress.upstreamProxy !== undefined) {
+		const proxy = egress.upstreamProxy;
+		if (typeof proxy !== "string" || upstreamProxyProblem(proxy) !== null)
+			throw new Error(`${source}.upstreamProxy must be an http(s) proxy URL`);
+	}
 }
 
 function validateWorkerFlowPolicy(value: unknown): void {

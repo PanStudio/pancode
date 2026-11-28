@@ -49,6 +49,7 @@ import {
 	type FleetNodeConfig,
 	normalizeCycleSet,
 	normalizeModelRefs,
+	validateEgress,
 	validateExternalAgent,
 	validateFleetNode,
 	validateKeybindings,
@@ -84,11 +85,15 @@ const TOP_LEVEL_KEYS = [
 	"store",
 ] as const;
 
-function readSandboxBooleans(issues: Issues, safety: Record<string, unknown>, target: PancodeSettings["safety"]): void {
-	for (const key of ["sandboxNetwork", "sandboxUnconfinedLocalWorkers"] as const) {
-		if (!(key in safety)) continue;
-		const parsed = expectBoolean(issues, `safety.${key}`, safety[key]);
-		if (parsed !== undefined) target[key] = parsed;
+function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, settings: PancodeSettings): void {
+	if ("egress" in safety) validateEgress(issues, safety.egress, settings);
+	if ("sandboxUnconfinedLocalWorkers" in safety) {
+		const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
+		if (parsed !== undefined) settings.safety.sandboxUnconfinedLocalWorkers = parsed;
+	}
+	if ("sandboxUnixSockets" in safety) {
+		const parsed = expectEnum(issues, "safety.sandboxUnixSockets", safety.sandboxUnixSockets, UNIX_SOCKET_MODES);
+		if (parsed !== undefined) settings.safety.sandboxUnixSockets = parsed;
 	}
 }
 
@@ -1004,7 +1009,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"review",
 				"resources",
 				"sandbox",
-				"sandboxNetwork",
+				"egress",
 				"scratchRoots",
 				"sandboxPassEnv",
 				"liveCheckTargets",
@@ -1027,7 +1032,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
 				if (parsed !== undefined) settings.safety.sandbox = parsed;
 			}
-			readSandboxBooleans(issues, safety, settings.safety);
+			readSandboxOptions(issues, safety, settings);
 			if ("snapshots" in safety) {
 				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
 				if (parsed !== undefined) settings.safety.snapshots = parsed;
@@ -1081,10 +1086,6 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 						return problem === null;
 					});
 				}
-			}
-			if ("sandboxUnixSockets" in safety) {
-				const parsed = expectEnum(issues, "safety.sandboxUnixSockets", safety.sandboxUnixSockets, UNIX_SOCKET_MODES);
-				if (parsed !== undefined) settings.safety.sandboxUnixSockets = parsed;
 			}
 			if ("sandboxCacheMaxGiB" in safety) {
 				const parsed = expectNumber(issues, "safety.sandboxCacheMaxGiB", safety.sandboxCacheMaxGiB, { min: 0 });

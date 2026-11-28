@@ -14,6 +14,7 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "./git-commit-attribution.js";
 import { SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
+import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
 import {
@@ -68,6 +69,8 @@ export interface BashCommandResult extends Partial<BashStreamByteCounts> {
 	timeoutLimit?: BashTimeoutLimit;
 	/** A resource ceiling that ended the command (`safety.resources`), as one line for the tool result. */
 	resourceNote?: string;
+	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
+	egress?: EgressReport;
 }
 
 export interface BashTimeoutLimit {
@@ -632,10 +635,14 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 	// direct spawn.
 	const containedPlan =
 		options.shellSandbox !== undefined
-			? planMainSandboxSpawn(options.shellSandbox, { argv: shellArgv }, options.cwd ?? process.cwd())
+			? planMainSandboxSpawn(options.shellSandbox, { argv: shellArgv }, options.cwd ?? process.cwd(), undefined, {
+					bridge: true,
+				})
 			: undefined;
-	const sandbox = containedPlan ?? planSandboxedSpawn({ argv: shellArgv }, options.cwd ?? process.cwd());
+	const sandbox =
+		containedPlan ?? planSandboxedSpawn({ argv: shellArgv }, options.cwd ?? process.cwd(), [], { bridge: true });
 	if (sandbox.kind === "refused") return notSpawnedResult(sandbox.message);
+	const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
 	// A sandboxed command reaches the network without a judgment, so its
 	// environment loses every credential variable before the sandbox starts;
 	// the scrub covers the names the plain filter drops and more.
@@ -713,8 +720,12 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			...(options.cwd === undefined ? {} : { cwd: options.cwd }),
 			env: scope?.env ?? attribution.env,
 			detached: process.platform !== "win32",
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: egressPlan === undefined ? ["ignore", "pipe", "pipe"] : egressStdio(["ignore", "pipe", "pipe"]),
 		});
+		// A proxied command's network is PanCode's proxy, served from here until the command exits.
+		const egress = egressPlan === undefined ? null : bridgeEgress(child, egressPlan);
+		const egressField = (code: number | null): { egress?: EgressReport } =>
+			egress === null ? {} : { egress: egress.report(code) };
 		if (child.pid !== undefined) options.onSpawn?.(child.pid);
 		const groupId = process.platform !== "win32" ? child.pid : undefined;
 		if (groupId !== undefined) liveCommandGroups.add(groupId);
@@ -785,6 +796,8 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		const killChild = (): void => {
 			if (killSent) return;
 			killSent = true;
+			// A server the command started dies with it; note it while it still listens.
+			egress?.sampleListeners();
 			sendSignal("SIGTERM");
 			killGraceTimer = setTimeout(() => {
 				killGraceTimer = null;
@@ -874,6 +887,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			if (timeoutId) clearTimeout(timeoutId);
 			clearIdleTimer();
 			if (drainTimer) clearTimeout(drainTimer);
+			egress?.close();
 			const finalOutput = output.settle();
 			options.signal?.removeEventListener("abort", onAbort);
 			resolveAfterCancellation({
@@ -885,6 +899,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				aborted,
 				timedOut,
 				...stopLimitField(),
+				...egressField(null),
 			});
 		});
 		child.on("close", (code, signalName) => {
@@ -905,6 +920,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 							code: code ?? undefined,
 							signal: signalName ?? undefined,
 						} as NodeJS.ErrnoException);
+			egress?.close();
 			resolveAfterCancellation({
 				error,
 				...finalOutput,
@@ -914,6 +930,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				aborted,
 				timedOut,
 				...stopLimitField(),
+				...egressField(code),
 			});
 		});
 	});

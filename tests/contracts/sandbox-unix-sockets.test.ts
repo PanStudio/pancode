@@ -265,7 +265,7 @@ test("the sandbox status says what the main shell and a local worker get for eac
 		"refused",
 	]);
 	assert.deepEqual(pick(status("off", full)), ["off", "loaded", "off", "off"]);
-	// A worker command keeps no network unless safety.sandboxNetwork, so a bwrap that cannot isolate it refuses workers.
+	// A worker command keeps no network unless safety.egress.workers.mode is open, so a bwrap that cannot isolate it refuses workers.
 	const netless = status("auto", full, { networkIsolation: "cannot unshare net" });
 	assert.deepEqual(pick(netless), ["available", "loaded", "contained", "refused"]);
 	assert.equal(status("auto", full, { networkIsolation: "x", workerNetwork: true }).localWorker, "contained");

@@ -10,6 +10,7 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "./git-commit-attribution.js";
 import { relativePathEscapes } from "./path-containment.js";
+import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
 import {
 	launchResourceLimits,
@@ -103,6 +104,8 @@ export interface SafeCommandResult {
 	failure?: string | null;
 	/** A resource ceiling that ended the command (`safety.resources`), as one line for the caller to show. */
 	resourceNote?: string;
+	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
+	egress?: EgressReport;
 }
 
 /**
@@ -593,9 +596,10 @@ export function runCommandVector(
 		// receipts and verification evidence describe the command, not bwrap.
 		const containedPlan =
 			options.shellSandbox !== undefined
-				? planMainSandboxSpawn(options.shellSandbox, { argv: [file, ...args] }, cwd)
+				? planMainSandboxSpawn(options.shellSandbox, { argv: [file, ...args] }, cwd, undefined, { bridge: true })
 				: undefined;
-		const sandbox = containedPlan ?? planSandboxedSpawn({ argv: [file, ...args] }, cwd, options.typedGitWritablePaths);
+		const sandbox =
+			containedPlan ?? planSandboxedSpawn({ argv: [file, ...args] }, cwd, options.typedGitWritablePaths, { bridge: true });
 		if (sandbox.kind === "refused") {
 			settled = true;
 			deliver(notLaunched(sandbox.message));
@@ -644,6 +648,10 @@ export function runCommandVector(
 				deliver(note === null ? result : { ...result, resourceNote: note });
 			});
 		};
+		const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
+		const stdio: Array<"inherit" | "ignore" | "pipe"> = inherit
+			? ["inherit", "inherit", "inherit"]
+			: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"];
 		const child = spawn(
 			scope?.file ?? (sandbox.kind === "sandboxed" ? sandbox.file : file),
 			scope?.args ?? (sandbox.kind === "sandboxed" ? sandbox.args : [...args]),
@@ -651,9 +659,11 @@ export function runCommandVector(
 				cwd,
 				env: scope?.env ?? env,
 				detached: process.platform !== "win32",
-				stdio: inherit ? "inherit" : [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+				stdio: egressPlan === undefined ? stdio : egressStdio(stdio),
 			},
 		);
+		// A proxied command's network is PanCode's proxy, served from here until the command exits.
+		const egress = egressPlan === undefined ? null : bridgeEgress(child, egressPlan);
 		// A spawn that fails (ENOENT, EACCES) leaves no pid and reports through `error` later.
 		const launched = child.pid !== undefined;
 		// The sandbox removes git config and commondir files its command planted, and the mount points of absent
@@ -726,7 +736,11 @@ export function runCommandVector(
 		};
 		for (const signal of signals) process.on(signal, forward);
 
-		const killChild = (): void => cleanup.kill();
+		const killChild = (): void => {
+			// A server the command started dies with it; note it while it still listens.
+			egress?.sampleListeners();
+			cleanup.kill();
+		};
 
 		const finish = (exitCode: number | null, signalName: NodeJS.Signals | null, spawnError?: Error): void => {
 			if (settled) return;
@@ -743,6 +757,7 @@ export function runCommandVector(
 			child.stdout?.destroy();
 			child.stderr?.destroy();
 			child.unref();
+			egress?.close();
 			const output = captured();
 			resolve({
 				file,
@@ -769,6 +784,7 @@ export function runCommandVector(
 						: pipeDrainIncomplete
 							? "output pipe draining incomplete after leader exit; logs may be incomplete and escaped processes are not contained"
 							: null,
+				...(egress === null ? {} : { egress: egress.report(exitCode) }),
 			});
 		};
 

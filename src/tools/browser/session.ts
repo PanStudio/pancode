@@ -258,6 +258,17 @@ class BrowserWorker {
 	}
 }
 
+/**
+ * The driver's sandbox: hermetic loses the network namespace; otherwise the
+ * driver keeps the host network, because its own route gate admits only the
+ * granted hosts and it cannot be served PanCode's shell egress proxy.
+ */
+function browserSandbox(sandbox: MainSandboxPolicy | undefined, hermetic: boolean): MainSandboxPolicy | undefined {
+	if (sandbox === undefined) return undefined;
+	const { egress: _shellEgress, ...driver } = sandbox;
+	return hermetic ? { ...driver, network: false } : driver;
+}
+
 /** What a session's worker is keyed on: a call admitted under another sandbox policy gets a fresh worker. */
 function workerKey(sandbox: MainSandboxPolicy | undefined, workspace: string, hermetic: boolean): string {
 	return JSON.stringify({
@@ -293,7 +304,7 @@ export class BrowserSessions {
 			this.workers.delete(sessionId);
 			await other.close();
 		}
-		const sandbox = call.hermetic && call.sandbox !== undefined ? { ...call.sandbox, network: false } : call.sandbox;
+		const sandbox = browserSandbox(call.sandbox, call.hermetic);
 		const key = workerKey(sandbox, call.workspace, call.hermetic);
 		const existing = this.workers.get(call.sessionId);
 		let restarted = false;

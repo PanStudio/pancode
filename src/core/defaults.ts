@@ -16,7 +16,13 @@ import type { AutonomyLevel, YoloConfinement } from "../lib/autonomy/autonomy.js
 import type { FundingDefinitions } from "./funding-config.js";
 import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
-import type { ResourceLimitSettings, SandboxMode, UnixSocketMode } from "./sandbox/types.js";
+import type {
+	EgressMode,
+	EgressPresetName,
+	ResourceLimitSettings,
+	SandboxMode,
+	UnixSocketMode,
+} from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
 import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
 import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
@@ -803,8 +809,12 @@ export interface SafetySettings {
 	 * does; auto and off leave yolo unsandboxed (#407).
 	 */
 	sandbox: SandboxMode;
-	/** Let sandboxed worker commands reach the network even without web_fetch. */
-	sandboxNetwork: boolean;
+	/**
+	 * Network for sandboxed shell commands, per caller. Web tools never open a
+	 * shell's network. `allow`, `presets` and `upstreamProxy` are read only from
+	 * the operator's own settings file; a project layer may only lower a mode.
+	 */
+	egress: EgressSettings;
 	/**
 	 * Strict per-command ceilings on Linux (D13): memory, process count and CPU for the main session's agent
 	 * commands and for a dispatched worker's. Each runs in its own systemd user scope; a set limit this host cannot
@@ -905,6 +915,23 @@ export interface SafetySettings {
 	 * operator's own settings file.
 	 */
 	judge: SafetyJudgeSettings;
+}
+
+/** One caller's shell egress: its mode and, for `proxied`, the exact origins it may reach. */
+export interface EgressCallerSettings {
+	mode: EgressMode;
+	/** Exact `host:port` origins, IPv6 in brackets; no wildcards. */
+	allow: string[];
+	presets: EgressPresetName[];
+}
+
+export interface EgressSettings {
+	/** The main session's contained commands. */
+	main: EgressCallerSettings;
+	/** Dispatched workers' sandboxed commands. */
+	workers: EgressCallerSettings;
+	/** An http(s) proxy PanCode's egress proxy sends allowed traffic through; null dials directly. */
+	upstreamProxy: string | null;
 }
 
 interface SafetyJudgeSettings {
@@ -1084,7 +1111,11 @@ export const DEFAULT_SETTINGS = {
 		},
 		review: { enabled: false } as ReviewSettings,
 		sandbox: "auto" as SandboxMode,
-		sandboxNetwork: false,
+		egress: {
+			main: { mode: "proxied", allow: [] as string[], presets: [] as EgressPresetName[] },
+			workers: { mode: "off", allow: [] as string[], presets: [] as EgressPresetName[] },
+			upstreamProxy: null,
+		} as EgressSettings,
 		resources: {
 			main: { memoryMiB: null, tasks: null, cpuPercent: null },
 			workers: { memoryMiB: null, tasks: null, cpuPercent: null },
