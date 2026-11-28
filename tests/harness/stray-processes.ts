@@ -36,7 +36,7 @@ export interface StrayProcess {
  * esbuild service carries the run root, and a process a test abandoned has lost
  * the parent that started it by the time anyone looks.
  */
-export function processesCarrying(name: string, value: string): StrayProcess[] {
+function processesCarrying(name: string, value: string): StrayProcess[] {
 	if (process.platform !== "linux" || value.length === 0) return [];
 	const needle = `${name}=${value}`;
 	const found: StrayProcess[] = [];
