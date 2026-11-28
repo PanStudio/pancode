@@ -252,7 +252,7 @@ function CampaignView({
 }
 
 function LiveLog({ client, live }: { client: Client; live: Live }) {
-	const lines = live.messages.filter((message) => message.startsWith("research ")).map(logLine);
+	const lines = live.messages.filter((message) => message.startsWith("pancode research: ")).map(logLine);
 	return (
 		<section className="research-live" aria-label="Live log">
 			<h2>{live.running ? "Running" : "Run log"}</h2>

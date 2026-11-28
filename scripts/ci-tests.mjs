@@ -181,7 +181,7 @@ export const coreTests = [
 	"plugin-engine",
 	"plugin-verified-tree",
 	"claims-ledger",
-	"research-campaign",
+	"research-pack",
 	"cli-leaf-help",
 	"mux-platform-win32",
 	"keyboard-model",

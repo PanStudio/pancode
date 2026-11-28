@@ -20,7 +20,6 @@ import { afterEach, beforeEach, test } from "node:test";
 import { InternalGitRefusedError, installInternalGitPolicy, internalGitArgv } from "../../src/core/internal-git.js";
 import { gitExecFileSync } from "../../src/core/internal-git-run.js";
 import { createGitHooksFingerprinter } from "../../src/core/sandbox/git-hooks-fingerprint.js";
-import { git as researchGit } from "../../src/domains/research/git.js";
 import { createGitHookDriftGuard } from "../../src/domains/safety/hook-drift.js";
 import { createInternalGitPolicy, type InternalGitDriftRecord } from "../../src/domains/safety/internal-git-policy.js";
 import { probeGit } from "../../src/domains/session/workspace/git-probe.js";
@@ -30,6 +29,7 @@ import {
 	createTaskWorktree,
 	snapshotTaskWorktree,
 } from "../../src/tools/task-worktree.js";
+import { git as worktreeGit } from "../../src/tools/worktree-git.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let env: IsolatedPancodeEnv;
@@ -562,7 +562,7 @@ test("PanCode's internal git writers ignore a GIT_DIR a git-driven runner export
 	const saved = process.env.GIT_DIR;
 	process.env.GIT_DIR = join(other.root, ".git");
 	try {
-		strictEqual(researchGit(fixture.root, ["rev-parse", "--absolute-git-dir"]), join(fixture.root, ".git"));
+		strictEqual(worktreeGit(fixture.root, ["rev-parse", "--absolute-git-dir"]), join(fixture.root, ".git"));
 	} finally {
 		if (saved === undefined) delete process.env.GIT_DIR;
 		else process.env.GIT_DIR = saved;

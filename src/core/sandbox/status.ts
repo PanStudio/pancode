@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable, wslKind } from "./availability.js";
-import type { EgressMode, SandboxAvailability, SandboxBackend, SandboxMode, UnixSocketMode } from "./types.js";
+import { hostResourceStatus, type ResourceStatus } from "./resource-limits.js";
+import type {
+	EgressMode,
+	ResourceLimitSettings,
+	SandboxAvailability,
+	SandboxBackend,
+	SandboxMode,
+	UnixSocketMode,
+} from "./types.js";
 
 /**
  * What the host's OS sandbox is, apart from what the setting asks of it.
@@ -108,6 +116,15 @@ export function hostSandboxStatus(safety: {
 		unconfinedLocalWorkers: safety.sandboxUnconfinedLocalWorkers,
 		workerNetwork: safety.egress.workers.mode === "open",
 	});
+}
+
+/** Impure: what `version --sandbox` prints, the OS sandbox and the resource ceilings this host can enforce. */
+export function hostSandboxReport(
+	safety: Parameters<typeof hostSandboxStatus>[0] & {
+		resources: { main: ResourceLimitSettings; workers: ResourceLimitSettings };
+	},
+): SandboxStatus & { resources: ResourceStatus } {
+	return { ...hostSandboxStatus(safety), resources: hostResourceStatus(safety.resources) };
 }
 
 /** One line for doctor and diagnostics: each fact on its own, in the order of the status object. */

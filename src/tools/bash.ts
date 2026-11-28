@@ -509,6 +509,7 @@ export const bashTool: ToolSpec = {
 				...(options?.signal === undefined ? {} : { signal: options.signal }),
 				...(options?.shellSandbox === undefined ? {} : { shellSandbox: options.shellSandbox }),
 				...(options?.bashIdleMs !== undefined && options.bashIdleMs > 0 ? { idleMs: options.bashIdleMs } : {}),
+				...(options?.resourceLimits === undefined ? {} : { resourceLimits: options.resourceLimits }),
 				// Each piece is masked as it arrives, so a large output is not masked in one stall when the command ends (SC-7).
 				onOutput: (target, text) => (target === "stdout" ? stdoutMask : stderrMask).append(text),
 			};
@@ -599,7 +600,9 @@ export const bashTool: ToolSpec = {
 				const code = typeof error.code === "number" ? error.code : (error as { code?: string }).code;
 				const sandboxHint =
 					options?.shellSandbox === undefined ? null : mainSandboxWriteHint(rawOutput, options.shellSandbox);
-				const hints = [sandboxHint, noTerminalHint(rawOutput)].filter((hint): hint is string => hint !== null);
+				const hints = [result.resourceNote ?? null, sandboxHint, noTerminalHint(rawOutput)].filter(
+					(hint): hint is string => hint !== null,
+				);
 				const status = `bash: command failed (exit ${code ?? "?"})${hints.map((hint) => `\n${hint}`).join("")}`;
 				const message = `${output.length > 0 ? `${output}\n\n${status}` : `${status}: ${error.message}`}${pancodeIssueNudge(args.command)}`;
 				return noted({
