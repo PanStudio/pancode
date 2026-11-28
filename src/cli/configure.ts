@@ -31,7 +31,7 @@ import {
 	runNonInteractive,
 	runTargetSetupInteractive,
 } from "./configure-target-setup.js";
-import { createLifecyclePresenter, type LifecyclePresenter, shortenPath } from "./lifecycle-presenter.js";
+import { createInstallPresenter, type InstallPresenter, shortenPath } from "./install-presenter.js";
 import { canSelect, promptSelect } from "./select.js";
 import { terminalColumns, wrapPlain } from "./text-layout.js";
 
@@ -159,8 +159,8 @@ async function pickEntry(
 }
 
 /** Header, source file, and current values for one screen. */
-function renderSection(spec: SectionSpec, out: NodeJS.WritableStream): LifecyclePresenter {
-	const presenter = createLifecyclePresenter({ stream: out });
+function renderSection(spec: SectionSpec, out: NodeJS.WritableStream): InstallPresenter {
+	const presenter = createInstallPresenter({ stream: out });
 	presenter.header(spec.title, "configure");
 	presenter.note(spec.summary);
 	presenter.note(`Source: ${shortenPath(settingsPath())} · saves globally`);
@@ -224,7 +224,7 @@ async function runConfigSectionsMenu(
 	let selected = 0;
 	for (;;) {
 		rl.clearScreen();
-		const presenter = createLifecyclePresenter({ stream: streams.out });
+		const presenter = createInstallPresenter({ stream: streams.out });
 		presenter.header("PanCode Settings", "configure");
 		presenter.note(`Source: ${shortenPath(settingsPath())}`);
 		presenter.note("Changes here become your saved defaults.");
@@ -250,7 +250,7 @@ async function runConfigLauncher(rl: ConfigurePrompts, streams: ConfigureStreams
 	const exitCode = () => (readSettings().chat.target ? 0 : 130);
 	for (;;) {
 		rl.clearScreen();
-		const presenter = createLifecyclePresenter({ stream: streams.out });
+		const presenter = createInstallPresenter({ stream: streams.out });
 		presenter.header("PanCode", "configure");
 		presenter.note("Start with what you recognize. PanCode explains and checks the technical details.");
 		presenter.blank();

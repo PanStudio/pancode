@@ -10,7 +10,7 @@ import {
 } from "../domains/telemetry/consent.js";
 import { applyTelemetryPrune, DEFAULT_PRUNE_POLICY, planTelemetryPrune } from "../domains/telemetry/retention.js";
 import { printError } from "./argv.js";
-import { formatBytes } from "./lifecycle-presenter.js";
+import { formatBytes } from "./install-presenter.js";
 
 const HELP = `pancode telemetry consent [--workspace <dir>] [--revoke | --list]
 pancode telemetry prune [--apply] [--days N] [--max-gib N] [--research-days N] [--research-max-gib N]

@@ -22,7 +22,7 @@ import {
 	writeShare,
 } from "../domains/telemetry/share.js";
 import { printError } from "./argv.js";
-import { formatBytes } from "./lifecycle-presenter.js";
+import { formatBytes } from "./install-presenter.js";
 import { canSelect, promptMultiSelect, promptSelect } from "./select.js";
 
 export const SHARE_HELP = `pancode telemetry share [--session <id>]... [--run <id>]... [--process <id>]... [--repo <path>]

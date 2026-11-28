@@ -80,8 +80,8 @@ import {
 import { storeFindings } from "./doctor-store.js";
 import { taskWorktreeFindings } from "./doctor-task-worktrees.js";
 import { validationContractFinding } from "./doctor-validation-contract.js";
+import { createInstallPresenter } from "./install-presenter.js";
 import { writeCliFailure } from "./lib/json-out.js";
-import { createLifecyclePresenter } from "./lifecycle-presenter.js";
 
 const HELP = `pancode doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <seconds>]]
 
@@ -775,7 +775,7 @@ export async function runDoctorCommand(args: ReadonlyArray<string> = []): Promis
 	const confirm: ((question: string) => Promise<boolean>) | undefined = parsed.yes
 		? async () => true
 		: fix && process.stdin.isTTY
-			? (question: string) => createLifecyclePresenter({ json }).confirm(question)
+			? (question: string) => createInstallPresenter({ json }).confirm(question)
 			: undefined;
 	const all = await collectDoctorFindings({
 		fix,

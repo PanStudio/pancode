@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { workerData } from "node:worker_threads";
 import { restrictNetwork } from "../network-policy.js";
-import { hubLifecycleAdapter } from "../pancode/adapters/hub-lifecycle.js";
+import { hubActionsAdapter } from "../pancode/adapters/hub-actions.js";
 import { closeMachines, mutateMachine } from "../pancode/adapters/machines.js";
 import { runtimeInfo } from "../pancode/adapters/runtime.js";
 import { recoverSession } from "../pancode/adapters/sessions.js";
@@ -19,7 +19,7 @@ const fixture =
 		? await import("../../tests/fixtures/toolchain.js")
 		: undefined;
 const adapter = toolchainAdapter(fixture?.fixtureOptions(settings) ?? { fetcher: toolDownloader(download) });
-const hub = hubLifecycleAdapter();
+const hub = hubActionsAdapter();
 serveWorker(async (call, progress) => {
 	if (call.method === "machines.mutate") return mutateMachine(call.params.cwd, call.params.mutation);
 	if (call.method === "runtime.info" && process.env.NODE_ENV === "test") return runtimeInfo(import.meta.url);

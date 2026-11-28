@@ -15,7 +15,7 @@ import {
 	type Wizard,
 } from "./configure-onboarding-state.js";
 import { describeAuthStatus, LOCAL_APP_RUNTIME_IDS } from "./configure-target.js";
-import { shortenPath } from "./lifecycle-presenter.js";
+import { shortenPath } from "./install-presenter.js";
 import { credentialFileProtection } from "./shared.js";
 
 /** The credential source the screen opens on, which is the one that is usually right. */

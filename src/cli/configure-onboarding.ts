@@ -72,8 +72,8 @@ import {
 	setOrchestratorPointer,
 	setWorkerDefaultPointer,
 } from "./configure-target.js";
-import type { LifecyclePresenter } from "./lifecycle-presenter.js";
-import { createLifecyclePresenter, shortenPath } from "./lifecycle-presenter.js";
+import type { InstallPresenter } from "./install-presenter.js";
+import { createInstallPresenter, shortenPath } from "./install-presenter.js";
 import { canSelect, promptSelect, promptText } from "./select.js";
 import { credentialFileProtection, credentialWriteFailed } from "./shared.js";
 import { truncate } from "./text-layout.js";
@@ -167,7 +167,7 @@ export async function runOnboardingWizard(
 	const writer = host
 		? { stream: streams.out, mark: () => 0, rewindTo: () => host.clearMessages() }
 		: railWriter(streams.out);
-	const presenter = createLifecyclePresenter({ stream: writer.stream, ...(host ? { plain: true } : {}) });
+	const presenter = createInstallPresenter({ stream: writer.stream, ...(host ? { plain: true } : {}) });
 	const rail = railPrefix(presenter.isPlain());
 	const columns = (streams.out as { columns?: number }).columns ?? 80;
 	const wizard: Wizard = {
@@ -354,7 +354,7 @@ export async function runOnboardingWizard(
 }
 
 function cancel(
-	presenter: LifecyclePresenter,
+	presenter: InstallPresenter,
 	answers: Answers,
 	options: { quit?: boolean; advise?: boolean } = {},
 ): number {

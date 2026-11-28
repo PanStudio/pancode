@@ -13,29 +13,29 @@
  */
 
 import type {
+	HubActionPlan,
+	HubActionRequest,
 	HubApplyResult,
 	HubExtensionRefresh,
-	HubLifecyclePlan,
-	HubLifecycleRequest,
 	HubRefreshHost,
 	HubRefreshResult,
 	HubRefreshTouch,
 } from "../../domains/resources/index.js";
 import {
-	applyHubLifecycle,
+	applyHubAction,
 	hubRefreshTouch,
-	planHubLifecycle,
-	releaseHubLifecycle,
+	planHubAction,
+	releaseHubAction,
 	retryHubRefresh,
 	syncHubPackBinaries,
 } from "../../domains/resources/index.js";
 
 /** What the browser needs from the lifecycle domain, and nothing more. */
-export interface HubLifecyclePort {
-	plan(request: HubLifecycleRequest): HubLifecyclePlan;
-	apply(plan: HubLifecyclePlan): HubApplyResult;
+export interface HubActionPort {
+	plan(request: HubActionRequest): HubActionPlan;
+	apply(plan: HubActionPlan): HubApplyResult;
 	/** Cancel: release staged sources, write nothing. */
-	release(plan: HubLifecyclePlan): void;
+	release(plan: HubActionPlan): void;
 	/**
 	 * Refresh only. Never repeats a committed install or removal. `touched` names
 	 * what a change outside `apply` reached, such as an import; later retries
@@ -52,25 +52,25 @@ export interface HubLifecyclePort {
  * never restates a successful write as a failure, and retrying it never
  * re-applies the plan.
  */
-export function createHubLifecycle(
+export function createHubActions(
 	refresh: HubRefreshHost,
 	/** A pinned program an extension declared did not download; the install itself stands. */
 	onBinaryFailure?: (message: string) => void,
-): HubLifecyclePort {
+): HubActionPort {
 	// A retry follows the apply it belongs to, so it reloads extensions exactly
 	// when that apply committed one.
 	let touched: HubRefreshTouch = { extensions: false };
 	return {
-		plan: (request) => planHubLifecycle(request),
+		plan: (request) => planHubAction(request),
 		apply: (plan) => {
-			const result = applyHubLifecycle(plan, { refresh });
+			const result = applyHubAction(plan, { refresh });
 			touched = hubRefreshTouch(result.outcomes);
 			void syncHubPackBinaries(result, plan.cwd).then((failures) => {
 				for (const failure of failures) onBinaryFailure?.(failure);
 			});
 			return result;
 		},
-		release: (plan) => releaseHubLifecycle(plan),
+		release: (plan) => releaseHubAction(plan),
 		retryRefresh: (cwd, reached) => {
 			if (reached) touched = reached;
 			return retryHubRefresh(cwd, refresh, touched);

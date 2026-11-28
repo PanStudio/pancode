@@ -44,7 +44,7 @@ import {
 	runTargetRename,
 	runTargetSetupInteractive,
 } from "./configure-target-setup.js";
-import { shortenPath } from "./lifecycle-presenter.js";
+import { shortenPath } from "./install-presenter.js";
 
 /**
  * The runtime configuration screens.

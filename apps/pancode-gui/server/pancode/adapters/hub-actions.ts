@@ -3,15 +3,18 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-	applyHubLifecycle,
-	type HubLifecyclePlan,
-	type HubLifecycleRequest,
-	planHubLifecycle,
-	releaseHubLifecycle,
+	applyHubAction,
+	type HubActionPlan,
+	type HubActionRequest,
+	planHubAction,
+	releaseHubAction,
 } from "../../../../../src/domains/resources/hub-actions.js";
 import { AppProblem } from "../../services/problem.js";
 
-export type LifecycleRequest = Pick<HubLifecycleRequest, "operation" | "ref" | "scope" | "force" | "withRequirements">;
+export type HubActionAdapterRequest = Pick<
+	HubActionRequest,
+	"operation" | "ref" | "scope" | "force" | "withRequirements"
+>;
 const TTL_MS = 10 * 60_000;
 const MAX_PLANS = 8;
 const clip = (text: string) => (text.length > 600 ? `${text.slice(0, 599)}…` : text);
@@ -22,14 +25,14 @@ const message = (error: unknown) => clip(error instanceof Error ? error.message 
  * is the plan that commits. An abandoned review is released by its timer; a lost worker loses only
  * staged temp sources, and apply then answers not_found so the page plans again.
  */
-export function hubLifecycleAdapter(ttlMs = TTL_MS) {
-	const held = new Map<string, { plan: HubLifecyclePlan; timer: NodeJS.Timeout }>();
+export function hubActionsAdapter(ttlMs = TTL_MS) {
+	const held = new Map<string, { plan: HubActionPlan; timer: NodeJS.Timeout }>();
 	const drop = (id: string) => {
 		const entry = held.get(id);
 		if (!entry) return false;
 		clearTimeout(entry.timer);
 		held.delete(id);
-		releaseHubLifecycle(entry.plan);
+		releaseHubAction(entry.plan);
 		return true;
 	};
 	const take = (cwd: string, id: string) => {
@@ -39,13 +42,13 @@ export function hubLifecycleAdapter(ttlMs = TTL_MS) {
 		return entry.plan;
 	};
 	return {
-		plan(cwd: string, request: LifecycleRequest) {
+		plan(cwd: string, request: HubActionAdapterRequest) {
 			// Root resolution tries a local path before the catalog; the browser may only name catalog rows.
 			if (existsSync(resolve(cwd, request.ref)))
 				throw new AppProblem("validation", "A local path shadows this package reference. Install it from a terminal.");
-			let plan: HubLifecyclePlan;
+			let plan: HubActionPlan;
 			try {
-				plan = planHubLifecycle({ ...request, cwd });
+				plan = planHubAction({ ...request, cwd });
 			} catch (error) {
 				const detail = message(error);
 				throw new AppProblem(/not installed|is not a hub pack/i.test(detail) ? "not_found" : "operation_failed", detail);
@@ -69,8 +72,8 @@ export function hubLifecycleAdapter(ttlMs = TTL_MS) {
 			const plan = take(cwd, id);
 			clearTimeout(held.get(id)?.timer);
 			held.delete(id);
-			// applyHubLifecycle releases the staged sources itself, on every path.
-			const result = applyHubLifecycle(plan);
+			// applyHubAction releases the staged sources itself, on every path.
+			const result = applyHubAction(plan);
 			return {
 				planId: result.planId,
 				committed: result.committed,

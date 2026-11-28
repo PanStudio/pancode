@@ -21,8 +21,8 @@ import { formatColumns, printError, printOk } from "./argv.js";
 import { askYesNo } from "./ask.js";
 import { railPrefix } from "./configure-target.js";
 import { offerCopilotSignIn } from "./copilot-sign-in.js";
+import { createInstallPresenter } from "./install-presenter.js";
 import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
-import { createLifecyclePresenter } from "./lifecycle-presenter.js";
 import { createDelayedManualCodeInput } from "./oauth-manual-input.js";
 import {
 	chooseOAuthMethod,
@@ -484,7 +484,7 @@ export async function readApiKey(
 		if (process.env.TERM === "dumb") return readHiddenLine(io.input, field, label);
 		const result = await promptText({
 			heading: ["", label],
-			railPrefix: railPrefix(createLifecyclePresenter({ stream: field }).isPlain()),
+			railPrefix: railPrefix(createInstallPresenter({ stream: field }).isPlain()),
 			mask: true,
 			backLabel: "cancel",
 			clearOnExit: true,

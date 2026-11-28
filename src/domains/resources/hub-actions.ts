@@ -84,7 +84,7 @@ export interface HubPackIdentity {
 	scope: PluginScope;
 }
 
-export interface HubLifecycleRequest {
+export interface HubActionRequest {
 	operation: HubOperation;
 	/** "kind:name", a bare name when unambiguous, or (install) a local path / GitHub tree. */
 	ref: string;
@@ -151,12 +151,12 @@ export interface HubStepReview {
 	pairs: HubPair[];
 }
 
-export interface HubLifecyclePlan {
+export interface HubActionPlan {
 	version: 1;
 	id: string;
 	createdAt: string;
 	cwd: string;
-	request: HubLifecycleRequest;
+	request: HubActionRequest;
 	steps: HubPlanStep[];
 	/** One entry per step that has an envelope or a pair to report; absent on a plan built before this field. */
 	reviews?: HubStepReview[];
@@ -249,7 +249,7 @@ function retain(planId: string, identity: HubPackIdentity, plan: HubInstallPlan)
 }
 
 /** Cancel: release every staged source and write nothing. Idempotent. */
-export function releaseHubLifecycle(plan: Pick<HubLifecyclePlan, "id">): void {
+export function releaseHubAction(plan: Pick<HubActionPlan, "id">): void {
 	const byStep = staged.get(plan.id);
 	staged.delete(plan.id);
 	for (const item of byStep?.values() ?? []) releaseHubPlan(item);
@@ -430,7 +430,7 @@ function requirementRefs(status: ReturnType<typeof classifyHubRequirements>): Hu
 	};
 }
 
-export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan {
+export function planHubAction(request: HubActionRequest): HubActionPlan {
 	const cwd = path.resolve(request.cwd ?? process.cwd());
 	const id = randomBytes(8).toString("hex");
 	const diagnostics: string[] = [];
@@ -628,7 +628,7 @@ export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan
 			});
 		}
 	} catch (error) {
-		releaseHubLifecycle({ id });
+		releaseHubAction({ id });
 		throw error;
 	}
 	return {
@@ -802,7 +802,7 @@ function writerError(diagnostics: PluginDiagnostic[]): PluginDiagnostic | undefi
 	return diagnostics.find((item) => item.type === "error");
 }
 
-function runWriter(plan: HubLifecyclePlan, step: HubPlanStep): PluginMutationResult {
+function runWriter(plan: HubActionPlan, step: HubPlanStep): PluginMutationResult {
 	const { identity } = step;
 	if (identity.kind === "extension")
 		return withHubScopeLock("extension", identity.scope, plan.cwd, () => {
@@ -838,7 +838,7 @@ function runWriter(plan: HubLifecyclePlan, step: HubPlanStep): PluginMutationRes
 
 type InstallBaselines = Partial<Record<"extensions" | "plugins", ProjectInstallBaseline | null>>;
 
-function applyStep(plan: HubLifecyclePlan, step: HubPlanStep, baselines: InstallBaselines): HubStepOutcome {
+function applyStep(plan: HubActionPlan, step: HubPlanStep, baselines: InstallBaselines): HubStepOutcome {
 	const peer = peerOf(step.identity.scope);
 	const holdPeer =
 		step.expected.some((fact) => fact.scope === peer) && existsSync(hubPackBaseDir(step.identity.kind, peer, plan.cwd));
@@ -930,8 +930,8 @@ function unattempted(step: HubPlanStep): HubStepOutcome {
 	return { status: "unattempted", operation: step.operation, identity: step.identity, diagnostics: [] };
 }
 
-export function applyHubLifecycle(
-	plan: HubLifecyclePlan,
+export function applyHubAction(
+	plan: HubActionPlan,
 	options: { dryRun?: boolean; refresh?: HubRefreshHost } = {},
 ): HubApplyResult {
 	const outcomes: HubStepOutcome[] = [];
@@ -966,7 +966,7 @@ export function applyHubLifecycle(
 			if (outcome.status !== "committed" || outcome.error) aborted = true;
 		}
 	} finally {
-		releaseHubLifecycle(plan);
+		releaseHubAction(plan);
 	}
 	const committed = outcomes.filter((item) => item.status === "committed");
 	const refresh = committed.length
@@ -999,7 +999,7 @@ export async function syncHubPackBinaries(
 }
 
 function summarize(
-	plan: HubLifecyclePlan,
+	plan: HubActionPlan,
 	dryRun: boolean,
 	outcomes: HubStepOutcome[],
 	refresh: HubRefreshResult,

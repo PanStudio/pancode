@@ -52,10 +52,10 @@ import {
 	launchReceipts,
 } from "../domains/install/install-plan.js";
 import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
+import type { InstallItem, InstallPresenter } from "./install-presenter.js";
+import { createInstallPresenter, measurePath, shortenPath } from "./install-presenter.js";
 import { writeCliFailure } from "./lib/json-out.js";
 import { CliUsageError } from "./lib/usage-error.js";
-import type { LifecycleItem, LifecyclePresenter } from "./lifecycle-presenter.js";
-import { createLifecyclePresenter, measurePath, shortenPath } from "./lifecycle-presenter.js";
 import type { RemovalFailure } from "./removal.js";
 import { refuseForOpenSessions, removePath, reportRemovalFailures } from "./removal.js";
 
@@ -521,7 +521,7 @@ function survivingPancodeOnPath(localLink: string): string | null {
  * the inventory is the difference between an operator who knows a launcher
  * survived and one who finds out from the next `pancode`.
  */
-function launcherItemStatus(verdict: LauncherVerdict, removeRequested: boolean): LifecycleItem["status"] {
+function launcherItemStatus(verdict: LauncherVerdict, removeRequested: boolean): InstallItem["status"] {
 	if (verdict.kind === "absent") return "absent";
 	if (verdict.kind === "keep") return "skip";
 	return removeRequested ? "remove" : "skip";
@@ -556,7 +556,7 @@ function binaryRemovalAdvice(installation: Installation, linkPath: string): { le
 async function uninstallInactive(
 	installation: Installation,
 	args: ParsedUninstallArgs,
-	presenter: LifecyclePresenter,
+	presenter: InstallPresenter,
 ): Promise<number> {
 	presenter.header("Remove inactive installs", "uninstall");
 	const roots = inactiveInstallerRoots(installation);
@@ -565,7 +565,7 @@ async function uninstallInactive(
 		presenter.done("Done");
 		return 0;
 	}
-	const items: LifecycleItem[] = [];
+	const items: InstallItem[] = [];
 	const launchers = new Map<string, string[]>();
 	for (const record of roots) {
 		const size = measurePath(record.root);
@@ -705,7 +705,7 @@ function planUninstall(args: ParsedUninstallArgs, dirs: PancodeDirs, installatio
 	// and go with it; listing them again as separate removals double-counted the
 	// bytes and promised per-child results that one recursive delete never
 	// produces.
-	const items: LifecycleItem[] = [
+	const items: InstallItem[] = [
 		{
 			label: "Data",
 			path: dirs.data,
@@ -742,7 +742,7 @@ function planUninstall(args: ParsedUninstallArgs, dirs: PancodeDirs, installatio
 			detail: launcherItemDetail(launcher, !args.keepBinary),
 		},
 		...launcherFiles.map(
-			(file): LifecycleItem => ({
+			(file): InstallItem => ({
 				label: "Launcher file",
 				path: file,
 				bytes: measurePath(file).bytes,
@@ -890,7 +890,7 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	}
 	const installation = inspectInstallation();
 	const method = installation.kind;
-	const presenter = createLifecyclePresenter({ json: args.json, dryRun: args.dryRun });
+	const presenter = createInstallPresenter({ json: args.json, dryRun: args.dryRun });
 	if (args.inactive) return uninstallInactive(installation, args, presenter);
 
 	presenter.header("Uninstall PanCode", "uninstall");

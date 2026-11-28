@@ -27,7 +27,7 @@ import {
 	setWorkerDefaultPointer,
 	targetApiKeyRef,
 } from "./configure-target.js";
-import { createLifecyclePresenter } from "./lifecycle-presenter.js";
+import { createInstallPresenter } from "./install-presenter.js";
 import { credentialFileProtection, credentialWriteFailed } from "./shared.js";
 
 interface Connection {
@@ -131,7 +131,7 @@ export async function runQuickConnect(prompts: ConfigurePrompts): Promise<"conne
 	let askedKey = false;
 	let optionalKey = false;
 	let notice = "";
-	const presenter = createLifecyclePresenter({ stream: prompts.output });
+	const presenter = createInstallPresenter({ stream: prompts.output });
 	for (;;) {
 		prompts.clearScreen();
 		presenter.header("Quick Connect", "configure");

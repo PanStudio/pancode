@@ -19,7 +19,7 @@ import type {
 } from "../../src/domains/resources/index.js";
 import { type OverlayHandle, type TUI, visibleWidth } from "../../src/engine/tui.js";
 import { openHubOverlay } from "../../src/interactive/overlays/hub.js";
-import type { HubLifecyclePort } from "../../src/interactive/overlays/hub-lifecycle.js";
+import type { HubActionPort } from "../../src/interactive/overlays/hub-actions.js";
 import {
 	buildHubRows,
 	type HubView,
@@ -444,7 +444,7 @@ function harness(
 		fleetRuns: [] as string[],
 		imports: 0,
 	};
-	const lifecycle: HubLifecyclePort = {
+	const lifecycle: HubActionPort = {
 		plan: (request) => {
 			state.planned.push({
 				operation: request.operation,

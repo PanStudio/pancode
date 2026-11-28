@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, lstatSync, rmSync, unlinkSync } from "node:fs";
 import { openSessions, printable } from "../domains/session/heartbeat.js";
-import type { LifecyclePresenter } from "./lifecycle-presenter.js";
+import type { InstallPresenter } from "./install-presenter.js";
 
 /**
  * Shared deletion accounting for `pancode reset` and `pancode uninstall`.
@@ -68,7 +68,7 @@ export function removePath(label: string, path: string, dryRun: boolean): Remova
  * `stateRootRemoved()` never tells them. `--force` skips a prompt and does not
  * answer this. A preview reports the same sessions and goes on.
  */
-export function refuseForOpenSessions(stateDir: string, presenter: LifecyclePresenter, dryRun: boolean): boolean {
+export function refuseForOpenSessions(stateDir: string, presenter: InstallPresenter, dryRun: boolean): boolean {
 	const open = existsSync(stateDir) ? openSessions(stateDir) : [];
 	if (open.length === 0) return false;
 	const count = open.length === 1 ? "1 session is" : `${open.length} sessions are`;

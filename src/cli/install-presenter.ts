@@ -9,7 +9,7 @@ import chalk from "chalk";
 
 import { terminalColumns, wrapPlain } from "./text-layout.js";
 
-export interface LifecyclePresenterOptions {
+export interface InstallPresenterOptions {
 	json?: boolean;
 	plain?: boolean;
 	stream?: NodeJS.WritableStream;
@@ -22,25 +22,25 @@ export interface LifecyclePresenterOptions {
 	dryRun?: boolean;
 }
 
-export type LifecycleItemStatus = "remove" | "keep" | "absent" | "skip" | "clean";
+export type InstallItemStatus = "remove" | "keep" | "absent" | "skip" | "clean";
 
 // `| undefined` on every optional field is required, not decorative: the repo
 // compiles with exactOptionalPropertyTypes, and every inventory in reset and
 // uninstall builds these rows from a conditional that can produce undefined.
-export interface LifecycleItem {
+export interface InstallItem {
 	label: string;
 	path: string;
 	bytes?: number | null | undefined;
-	status?: LifecycleItemStatus | undefined;
+	status?: InstallItemStatus | undefined;
 	detail?: string | undefined;
 }
 
-export interface LifecycleReport {
+export interface InstallReport {
 	command: string;
 	title: string;
 	method?: string;
 	status: "success" | "skipped" | "dry-run" | "error";
-	items: LifecycleItem[];
+	items: InstallItem[];
 	steps: Array<{ type: string; message: string }>;
 	warnings: string[];
 	errors: string[];
@@ -136,18 +136,18 @@ export function shortenPath(targetPath: string, home = homedir()): string {
  */
 type Block = "header" | "step" | "list" | "warn" | "note" | "advice" | "completed" | "message" | "confirm";
 
-export class LifecyclePresenter {
+export class InstallPresenter {
 	private readonly json: boolean;
 	private readonly plain: boolean;
 	private readonly out: NodeJS.WritableStream;
 	private readonly in: NodeJS.ReadableStream;
 	private readonly promptOut: NodeJS.WritableStream;
 	private readonly columns: number;
-	private readonly report: LifecycleReport;
+	private readonly report: InstallReport;
 	private lastBlock: Block | null = null;
 	private emitted = false;
 
-	constructor(options: LifecyclePresenterOptions = {}) {
+	constructor(options: InstallPresenterOptions = {}) {
 		this.json = Boolean(options.json);
 		const stream = options.stream ?? defaultOutput;
 		const isTty = Boolean((stream as { isTTY?: boolean }).isTTY);
@@ -178,7 +178,7 @@ export class LifecyclePresenter {
 		return this.plain;
 	}
 
-	getReport(): LifecycleReport {
+	getReport(): InstallReport {
 		return this.report;
 	}
 
@@ -272,7 +272,7 @@ export class LifecyclePresenter {
 		this.out.write(`${chalk.blue("●")}    ${coloredGlyph} ${text}\n`);
 	}
 
-	listItems(header: string, items: ReadonlyArray<LifecycleItem>): void {
+	listItems(header: string, items: ReadonlyArray<InstallItem>): void {
 		for (const item of items) {
 			this.report.items.push(item);
 		}
@@ -467,6 +467,6 @@ export class LifecyclePresenter {
 	}
 }
 
-export function createLifecyclePresenter(options: LifecyclePresenterOptions = {}): LifecyclePresenter {
-	return new LifecyclePresenter(options);
+export function createInstallPresenter(options: InstallPresenterOptions = {}): InstallPresenter {
+	return new InstallPresenter(options);
 }

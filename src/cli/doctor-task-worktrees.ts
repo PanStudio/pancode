@@ -13,7 +13,7 @@ import {
 	resolveWorktreeRoot,
 	type WorktreeRootFacts,
 } from "../tools/worktree-root.js";
-import { formatBytes } from "./lifecycle-presenter.js";
+import { formatBytes } from "./install-presenter.js";
 
 function ageLabel(createdAt: string | null, now: number): string {
 	const created = createdAt === null ? Number.NaN : Date.parse(createdAt);

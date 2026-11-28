@@ -39,7 +39,7 @@ import {
 	resolveHubPack,
 	resolveHubRequirements,
 } from "../../src/domains/resources/hub.js";
-import { applyHubLifecycle, planHubLifecycle, releaseHubLifecycle } from "../../src/domains/resources/hub-actions.js";
+import { applyHubAction, planHubAction, releaseHubAction } from "../../src/domains/resources/hub-actions.js";
 import { discoverMarketplaceSkills } from "../../src/domains/resources/skills/marketplace.js";
 import { HUB_TABS } from "../../src/interactive/overlays/hub-tabs.js";
 import { createSlashCommandAutocompleteProvider } from "../../src/interactive/slash-autocomplete.js";
@@ -213,22 +213,22 @@ describe("plugin hub lifecycle", () => {
 		equal(installed.code, 0, installed.output);
 		const item = entry(source);
 
-		const disable = planHubLifecycle({ operation: "disable", ref: "plugin:fixture", scope: "user", cwd: root });
+		const disable = planHubAction({ operation: "disable", ref: "plugin:fixture", scope: "user", cwd: root });
 		equal(disable.applicable, true, JSON.stringify(disable.diagnostics));
-		equal(applyHubLifecycle(disable).committed, 1);
+		equal(applyHubAction(disable).committed, 1);
 		equal(listInstalledPlugins(root)[0]?.enabled, false);
 		equal((await captureCli(["enable", "fixture"])).code, 0);
 
 		// Cancel is the whole contract of the review gate: a released plan leaves
 		// the installation exactly as it found it.
-		const cancelled = planHubLifecycle({ operation: "remove", ref: "plugin:fixture", scope: "user", cwd: root });
-		releaseHubLifecycle(cancelled);
+		const cancelled = planHubAction({ operation: "remove", ref: "plugin:fixture", scope: "user", cwd: root });
+		releaseHubAction(cancelled);
 		equal(hubEntryInstalled(item), true);
 
-		const remove = planHubLifecycle({ operation: "remove", ref: "plugin:fixture", scope: "user", cwd: root });
+		const remove = planHubAction({ operation: "remove", ref: "plugin:fixture", scope: "user", cwd: root });
 		equal(remove.steps[0]?.identity.scope, "user");
 		equal(remove.steps[0]?.destination, hubInstallPath(item));
-		const result = applyHubLifecycle(remove);
+		const result = applyHubAction(remove);
 		equal(result.committed, 1, JSON.stringify(result.outcomes));
 		equal(result.outcomes[0]?.verification?.tree, "absent");
 		equal(result.refresh.status, "not-applicable");

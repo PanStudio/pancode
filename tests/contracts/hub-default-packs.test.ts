@@ -18,7 +18,7 @@ import { stringify } from "yaml";
 import { buildRegistryRow, type RegistryRow } from "../../scripts/pin-hub-remote.js";
 import { pancodeConfigPath } from "../../src/core/xdg.js";
 import { parseHubIndexRows } from "../../src/domains/plugins/catalog.js";
-import { applyHubLifecycle, type HubOperation, planHubLifecycle } from "../../src/domains/resources/hub-actions.js";
+import { applyHubAction, type HubOperation, planHubAction } from "../../src/domains/resources/hub-actions.js";
 import type { DefaultPackOutput } from "../../src/domains/resources/hub-defaults.js";
 import { listInstalledHubPacks } from "../../src/domains/resources/hub-packs.js";
 import { validateHubPack } from "../../src/domains/resources/hub-validation.js";
@@ -99,7 +99,7 @@ function copy(): { version: string; enabled: boolean } | undefined {
 }
 
 function lifecycle(operation: HubOperation): void {
-	const apply = applyHubLifecycle(planHubLifecycle({ operation, ref: REF, scope: "user", cwd: scratch.dir }));
+	const apply = applyHubAction(planHubAction({ operation, ref: REF, scope: "user", cwd: scratch.dir }));
 	equal(apply.outcomes[0]?.status, "committed", JSON.stringify(apply.outcomes));
 }
 

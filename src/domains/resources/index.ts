@@ -3,11 +3,11 @@
 export type { ResourceDiagnostic } from "./collision.js";
 export type { ResourceList, ResourcesContract } from "./contract.js";
 export {
-	applyHubLifecycle,
+	applyHubAction,
+	type HubActionPlan,
+	type HubActionRequest,
 	type HubApplyResult,
 	type HubExtensionRefresh,
-	type HubLifecyclePlan,
-	type HubLifecycleRequest,
 	type HubOperation,
 	type HubPlanStep,
 	type HubRefreshHost,
@@ -18,8 +18,8 @@ export {
 	type HubStepVerification,
 	hubImportOutcome,
 	hubRefreshTouch,
-	planHubLifecycle,
-	releaseHubLifecycle,
+	planHubAction,
+	releaseHubAction,
 	retryHubRefresh,
 	syncHubPackBinaries,
 } from "./hub-actions.js";

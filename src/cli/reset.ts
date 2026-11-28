@@ -12,9 +12,9 @@ import {
 	resolvePancodeDirs,
 } from "../core/xdg.js";
 import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
+import { createInstallPresenter, type InstallItem, measurePath } from "./install-presenter.js";
 import { writeCliFailure } from "./lib/json-out.js";
 import { CliUsageError } from "./lib/usage-error.js";
-import { createLifecyclePresenter, type LifecycleItem, measurePath } from "./lifecycle-presenter.js";
 import { type RemovalFailure, refuseForOpenSessions, removePath, reportRemovalFailures } from "./removal.js";
 
 const HELP = `pancode reset --state|--data|--cache|--auth|--settings|--all [--dry-run] [--yes] [--json]
@@ -224,7 +224,7 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 	}
 	const settingsPath = join(dirs.config, "settings.yaml");
 	const credentialsPath = join(dirs.config, "credentials.yaml");
-	const presenter = createLifecyclePresenter({ json: args.json, dryRun: args.dryRun });
+	const presenter = createInstallPresenter({ json: args.json, dryRun: args.dryRun });
 
 	presenter.header("Reset PanCode", "reset");
 
@@ -248,7 +248,7 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 	const stateSize = measurePath(dirs.state);
 	const cacheSize = measurePath(dirs.cache);
 
-	const items: LifecycleItem[] = [];
+	const items: InstallItem[] = [];
 
 	// State
 	if (resetState) {

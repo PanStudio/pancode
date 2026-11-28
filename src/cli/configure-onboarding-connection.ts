@@ -43,8 +43,8 @@ import {
 	targetUrlProblem,
 } from "./configure-target.js";
 import { offerCopilotSignIn } from "./copilot-sign-in.js";
+import { shortenPath } from "./install-presenter.js";
 import { inferKeyProvider } from "./key-prefix.js";
-import { shortenPath } from "./lifecycle-presenter.js";
 import { credentialFileProtection } from "./shared.js";
 
 /** Screen 1 when PanCode found something: each route it found, best first, and a way out to the rest. */

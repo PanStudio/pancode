@@ -17,7 +17,7 @@ import {
 	type Wizard,
 } from "./configure-onboarding-state.js";
 import { describeAuthStatus } from "./configure-target.js";
-import { shortenPath } from "./lifecycle-presenter.js";
+import { shortenPath } from "./install-presenter.js";
 import { credentialFileProtection } from "./shared.js";
 import { truncate } from "./text-layout.js";
 

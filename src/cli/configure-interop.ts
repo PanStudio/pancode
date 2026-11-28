@@ -18,7 +18,7 @@ import {
 import { printOk } from "./argv.js";
 import { askYesNo } from "./ask.js";
 import { railPrefix } from "./configure-target.js";
-import { createLifecyclePresenter, type LifecyclePresenter, shortenPath } from "./lifecycle-presenter.js";
+import { createInstallPresenter, type InstallPresenter, shortenPath } from "./install-presenter.js";
 import { canSelect, promptMultiSelect } from "./select.js";
 
 /** What a peer can and cannot see, in the words the operator decides with. */
@@ -57,7 +57,7 @@ export interface InteropReviewIo {
 	rl: Pick<ReturnType<typeof createInterface>, "question"> | null;
 	streams?: InteropReviewStreams;
 	/** Rail to draw on when the caller already owns one. */
-	presenter?: LifecyclePresenter;
+	presenter?: InstallPresenter;
 	rail?: string;
 	/** Skip the "nothing to connect" line, for a caller whose transcript says enough. */
 	quiet?: boolean;
@@ -108,7 +108,7 @@ async function reviewInteropAgents(io: InteropReviewIo): Promise<InteropReviewOu
 	const declined: InteropAgentId[] = [];
 
 	if (interactive && streams) {
-		const presenter = io.presenter ?? createLifecyclePresenter({ stream: streams.out });
+		const presenter = io.presenter ?? createInstallPresenter({ stream: streams.out });
 		const rail = io.rail ?? railPrefix(presenter.isPlain());
 		for (const reason of unoffered) presenter.note(reason);
 		presenter.note(
