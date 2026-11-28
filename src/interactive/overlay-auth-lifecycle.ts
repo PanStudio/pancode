@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { PancodeSettings } from "../core/config.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import {
 	getRuntimeRegistry,
 	type ProvidersContract,
@@ -10,7 +11,6 @@ import {
 } from "../domains/providers/index.js";
 import type { OAuthSelectPrompt } from "../engine/oauth.js";
 import type { OverlayHandle, TUI } from "../engine/tui.js";
-import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
 import { maybeOpenExternalUrl } from "./open-external-url.js";
 import type { OverlayState } from "./overlay-key-routing.js";
 import { type AuthDialogHandle, openAuthDialog } from "./overlays/auth-dialog.js";
@@ -24,7 +24,7 @@ export interface OverlayAuthLifecycleDeps {
 	tui: TUI;
 	providers: AuthProviders;
 	getSettings?: () => Readonly<PancodeSettings> | undefined;
-	notify: (level: InteractiveNoticeLevel, text: string, key?: string) => void;
+	notify: (level: NotificationLevel, text: string, key?: string) => void;
 	refreshFooter: () => void;
 	renderContextIsland: () => void;
 	renderTaskIsland: () => void;

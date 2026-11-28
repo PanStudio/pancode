@@ -31,8 +31,6 @@ import {
 	workerSettledFields,
 } from "./worker-replay.js";
 
-export type InteractiveNoticeLevel = NotificationLevel;
-
 const WORKER_PAINT_INTERVAL_MS = 16;
 /** A failover's next attempt starts within this, so a failure it overturns never reaches the footer. */
 const FAILED_RUN_NOTICE_HOLD_MS = 400;
@@ -47,7 +45,7 @@ export interface InteractiveSubscriptionsDeps {
 	renderTaskIsland: () => void;
 	renderContextIsland: () => void;
 	requestRender: () => void;
-	notify: (level: InteractiveNoticeLevel, text: string, key?: string, ttlMs?: number) => void;
+	notify: (level: NotificationLevel, text: string, key?: string, ttlMs?: number) => void;
 	/**
 	 * Place or refresh a worker's transcript block. Optional only so a host
 	 * without a chat panel still gets the footer and island repaints. Without it

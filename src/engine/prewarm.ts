@@ -41,13 +41,6 @@ export interface PrewarmContext {
 	tools: ReadonlyArray<AgentTool>;
 }
 
-/**
- * The roles pi-agent-core's default `convertToLlm` keeps when it turns the
- * agent's message list into provider messages. The pre-warm applies the same
- * filter so its message array is the one a turn would send, not the agent's
- * internal list.
- */
-
 export interface PrewarmRoundInput {
 	telemetry?: CallJournalOptions;
 	model: EngineModel;

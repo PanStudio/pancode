@@ -10,6 +10,7 @@
 import type { SandboxMode } from "../../core/sandbox/types.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
+import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
 import type { StartupHint } from "../../domains/context/contract.js";
 import type { McpElicitationHost } from "../../domains/gateway/mcp/index.js";
 import type { ProvidersContract } from "../../domains/providers/contract.js";
@@ -34,7 +35,7 @@ import type { AcpExtensionsControl, AcpHubReload } from "./extensions.js";
 import type { AcpFleetControl } from "./fleet-run.js";
 import type { AcpAutonomyPosture } from "./readouts.js";
 import type { AcpJsonRpcPeerTransport } from "./transport.js";
-import type { AcpInitializeResponse, AcpThinkingLevel } from "./types.js";
+import type { AcpInitializeResponse } from "./types.js";
 import type { AcpCommandsCapability } from "./types-capabilities.js";
 import type { AcpSafeSettingsPatch } from "./types-settings.js";
 
@@ -222,7 +223,7 @@ export interface AcpRoutingSnapshot {
 }
 
 export interface AcpSafeSettingsSnapshot extends AcpRoutingSnapshot {
-	thinkingLevel: AcpThinkingLevel;
+	thinkingLevel: ThinkingLevel;
 	autonomy: AutonomyLevel;
 	/** What the yolo mode description reads to state the real sandbox and judge; never sent to the client. */
 	containment?: { sandbox: SandboxMode; judgeEnabled: boolean };
@@ -392,7 +393,7 @@ export interface PancodeAcpServerOptions {
 	) => ReadonlyArray<AgentMessage>;
 	/** Apply a route change only to this hosted session, leaving saved defaults alone. */
 	setSessionRouting?: (
-		patch: { target?: string; model?: string; thinkingLevel?: AcpThinkingLevel },
+		patch: { target?: string; model?: string; thinkingLevel?: ThinkingLevel },
 		source: AcpClientSurface,
 	) => void;
 	onActiveSessionAutonomyChange?: (level: AutonomyLevel | null) => void;

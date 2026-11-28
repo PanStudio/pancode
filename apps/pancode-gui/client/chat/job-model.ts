@@ -8,7 +8,7 @@ import { USAGE_NOT_MEASURED } from "../../../../src/core/views/usage-words.js";
 import type { AcpJob } from "../../contracts/wire.js";
 import type { StatusTone } from "../design/status.js";
 
-export type JobAction = JobControlAction;
+export type { JobControlAction };
 
 export interface JobRowView {
 	readonly jobId: string;
@@ -20,7 +20,7 @@ export interface JobRowView {
 	readonly facts: readonly string[];
 	/** One sentence the operator needs when something is held, failing or unresolved. */
 	readonly note: string | null;
-	readonly actions: readonly JobAction[];
+	readonly actions: readonly JobControlAction[];
 }
 
 /** Finished jobs kept in the strip after the live ones; the rest are history the session already counted. */
@@ -101,7 +101,7 @@ function stateOf(job: AcpJob): { state: string; tone: StatusTone; working: boole
 		: { state: "Waiting", tone: "warn", working };
 }
 
-function actionsOf(job: AcpJob): readonly JobAction[] {
+function actionsOf(job: AcpJob): readonly JobControlAction[] {
 	if (job.state === "terminal") return job.complete ? [] : ["cancel"];
 	return job.state === "paused" ? ["resume", "stop", "cancel"] : ["pause", "stop", "cancel"];
 }
@@ -168,7 +168,7 @@ export const JOB_CONFIRMATIONS: Readonly<
 	},
 };
 
-export const JOB_ACTION_LABELS: Readonly<Record<JobAction, string>> = {
+export const JOB_ACTION_LABELS: Readonly<Record<JobControlAction, string>> = {
 	pause: "Pause",
 	resume: "Resume",
 	stop: "Stop",

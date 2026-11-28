@@ -8,7 +8,7 @@
 
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { mainShellContained, yoloShellState } from "../../core/sandbox/main-session.js";
-import { THINKING_LEVELS } from "../../core/views/thinking-levels.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../../core/views/thinking-levels.js";
 import { missingRuntimeComponent } from "../../domains/lifecycle/components.js";
 import type { ProvidersContract } from "../../domains/providers/contract.js";
 import { isOrchestratorEligibleRuntime } from "../../domains/providers/eligibility.js";
@@ -27,7 +27,6 @@ import {
 } from "./server-bounds.js";
 import type { AcpSafeSettingsSnapshot, PancodeAcpServerOptions } from "./server-options.js";
 import type { AcpServerSession } from "./server-tool-updates.js";
-import type { AcpThinkingLevel } from "./types.js";
 import {
 	ACP_MAX_MODEL_ID_BYTES,
 	ACP_MAX_TARGET_ID_BYTES,
@@ -40,7 +39,7 @@ import {
 import type { AcpSafeSettings, AcpTarget } from "./types-settings.js";
 import { ACP_SAFE_SETTINGS_KEYS } from "./types-settings.js";
 
-export const ACP_THINKING_LEVEL_SET = new Set<AcpThinkingLevel>(THINKING_LEVELS);
+export const ACP_THINKING_LEVEL_SET = new Set<ThinkingLevel>(THINKING_LEVELS);
 // The frozen client reader ceiling is 256 KiB per JSON-RPC line. Reserve
 // 16 KiB for the response envelope/request id and keep this result a stable
 // prefix of whole targets/model ids.

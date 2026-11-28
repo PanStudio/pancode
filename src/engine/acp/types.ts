@@ -5,7 +5,6 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 import { PricedByCountsSchema, QuantitySchema, TurnQuantitiesSchema } from "../../core/telemetry/dto.js";
 import { MAX_TIMER_DELAY_MS } from "../../core/timers.js";
-import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
 import type { ACP_V1_TOOL_CALL_STATUSES } from "./upstream-schema.js";
 
 /**
@@ -235,9 +234,6 @@ export const ACP_TELEMETRY_METHODS = {
 } as const;
 /** A coalesced `telemetry_update` notice, at most 10 Hz and never per token; a client re-reads the topics it shows. */
 export const ACP_TELEMETRY_UPDATE_NOTIFICATION = "_pancode/telemetry/update";
-
-/** Every thinking level a safe-settings patch or the `thinkingLevel` config option may name, weakest first. */
-export type AcpThinkingLevel = ThinkingLevel;
 
 /** Wire bounds on `_pancode/targets/list`: targets per response and model ids per target. */
 export const ACP_MAX_TARGETS = 64;

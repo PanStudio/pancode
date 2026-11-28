@@ -7,6 +7,7 @@
 
 import { editTextExternally, resolveExternalEditor } from "../core/external-editor.js";
 import { canOpenBrowser, openBrowser } from "../core/open-browser.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import { formatBundleSummary } from "../domains/report/bundle-flow.js";
 import {
 	applyReportEdit,
@@ -46,7 +47,6 @@ import {
 } from "../domains/report/index.js";
 import type { TUI } from "../engine/tui.js";
 import type { SlashReportRequest } from "../session-control/slash-command-types.js";
-import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
 import type { OverlayTransitions } from "./overlay-transitions.js";
 import { openListOverlay } from "./overlays/list-overlay.js";
 import type { ListOverlayItem } from "./overlays/list-overlay-model.js";
@@ -61,7 +61,7 @@ export interface ReportHostDeps {
 	tui: TUI;
 	transitions: OverlayTransitions;
 	stateDir: string;
-	notify(level: InteractiveNoticeLevel, text: string, key?: string): void;
+	notify(level: NotificationLevel, text: string, key?: string): void;
 	terminal?: { columns: number };
 	/** Stop and restart the terminal around `$EDITOR`. */
 	suspendTerminal?<T>(run: () => T): T;

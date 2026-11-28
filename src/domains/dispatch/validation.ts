@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { parseWorkerContextPolicy, type WorkerContextPolicy } from "../context/worker/contract.js";
+
 /**
  * Validate a dispatch job spec before it enters the queue. Pure function, no
  * I/O. Accepts unknown input so callers can hand it raw JSON or CLI args
@@ -17,6 +17,7 @@ import { DISPATCH_REQUEST_ORIGINS } from "../../core/telemetry/run-vocabulary.js
 import { isRecord } from "../../core/type-guards.js";
 import { isToolProfileName, type ToolProfileName } from "../../tools/profiles.js";
 import type { AgentProduct } from "../agents/spec.js";
+import { parseWorkerContextPolicy, type WorkerContextPolicy } from "../context/worker/contract.js";
 import { cloneDispatchBudgetRequest, type DispatchBudgetRequest } from "./budget-envelope.js";
 import {
 	EXECUTION_HANDOFF_MAX_ITEMS,
@@ -38,9 +39,6 @@ import type {
 	RunPlanProvenance,
 } from "./types.js";
 import { DISPATCH_PLAN_TOPOLOGIES } from "./types.js";
-
-/** Dispatch speaks the same thinking vocabulary as the rest of the product. */
-export type JobThinkingLevel = ThinkingLevel;
 
 /** Maximum UTF-8 size of caller-supplied parent-to-worker briefing data. */
 export const DISPATCH_BRIEFING_MAX_BYTES = 12_000;
@@ -87,7 +85,7 @@ export interface JobSpec {
 	delegationAgentId?: string;
 	target?: string;
 	model?: string;
-	thinkingLevel?: JobThinkingLevel;
+	thinkingLevel?: ThinkingLevel;
 	/** An earlier settled ACP delegation of the same agent whose peer session this run continues. */
 	continueRunId?: string;
 	/** Invocation phase and optional preauthorized retry or revision ceiling. */
@@ -638,7 +636,7 @@ export function validateJobSpec(spec: unknown): Validated {
 	if (Array.isArray(spec.reroutes) && spec.reroutes.every((hop) => isValidReroute(hop))) {
 		out.reroutes = spec.reroutes.map((hop) => ({ ...hop }));
 	}
-	if (typeof spec.thinkingLevel === "string") out.thinkingLevel = spec.thinkingLevel as JobThinkingLevel;
+	if (typeof spec.thinkingLevel === "string") out.thinkingLevel = spec.thinkingLevel as ThinkingLevel;
 	if (typeof spec.continueRunId === "string") out.continueRunId = spec.continueRunId.trim();
 	if (budget !== undefined) out.budget = budget;
 	if (Array.isArray(spec.requiredCapabilities)) {

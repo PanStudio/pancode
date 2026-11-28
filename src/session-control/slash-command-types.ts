@@ -5,12 +5,12 @@ import type { ExtensionOutputV2 } from "@pancode/sdk/extension";
 import type { SettingsAreaId } from "../core/settings-areas.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { ThinkingLevel } from "../core/views/thinking-levels.js";
 import type { AgentSpec } from "../domains/agents/spec.js";
 import type { AttachOperations } from "../domains/attach/host.js";
 import type { ContextInitOptions } from "../domains/context/init-options.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
-import type { JobThinkingLevel } from "../domains/dispatch/validation.js";
 import type { InstalledExtension } from "../domains/extensions/index.js";
 import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import type { InteropAgentId, InteropProposal, InteropReport } from "../domains/interop/index.js";
@@ -283,7 +283,7 @@ export interface RunCommandOptions {
 	/** Place this run in a PanCode-created task worktree and retain it for review. */
 	worktree?: boolean;
 	model?: string;
-	thinkingLevel?: JobThinkingLevel;
+	thinkingLevel?: ThinkingLevel;
 	toolProfile?: ToolProfileName;
 	requiredCapabilities?: string[];
 	/** Hand the receipt's answer to the main agent when the run finishes. Off by default. */

@@ -22,6 +22,7 @@ import type { RunUsageFacts } from "../core/telemetry/schemas.js";
 import { runWithBudget, writeShutdownNotice } from "../core/termination.js";
 import { ALL_TOOL_NAMES, ToolNames } from "../core/tool-names.js";
 import { isRecord } from "../core/type-guards.js";
+import type { ThinkingLevel } from "../core/views/thinking-levels.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { AgentsDomainModule } from "../domains/agents/module.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
@@ -49,7 +50,7 @@ import { DISPATCH_INTENT_PATH_LIST_CAP } from "../domains/dispatch/index.js";
 import { declaredScopeIntent } from "../domains/dispatch/intent.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { callLevelUpstreamResponses, type RunResult } from "../domains/dispatch/types.js";
-import type { JobSpec, JobThinkingLevel } from "../domains/dispatch/validation.js";
+import type { JobSpec } from "../domains/dispatch/validation.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { canonicalizeWireModelId } from "../domains/providers/index.js";
@@ -84,7 +85,7 @@ export interface WikiModelRoute {
 	workerProfile?: string;
 	target?: string;
 	model?: string;
-	thinkingLevel?: JobThinkingLevel;
+	thinkingLevel?: ThinkingLevel;
 }
 
 export interface ModelWikiGenerateOptions {

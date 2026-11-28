@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import type { Quantity, RunTelemetryV1 } from "../core/telemetry/dto.js";
 /** The dispatch board's row model and the shared presentation of one run: status, origin, usage, evidence, and card key-value lines. */
+
+import type { Quantity, RunTelemetryV1 } from "../core/telemetry/dto.js";
 import type { HostVerificationStatus } from "../core/telemetry/run-vocabulary.js";
 import type { AgentAudience } from "../domains/agents/spec.js";
 import type { RunToolBudgetEnvelope } from "../domains/dispatch/budget-envelope.js";
