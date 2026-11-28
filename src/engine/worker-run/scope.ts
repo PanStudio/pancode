@@ -14,6 +14,7 @@
 import type { trackCallFetch } from "../../core/call-failure.js";
 import type { StructuredHelperResult } from "../../domains/agents/result-contract-types.js";
 import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
+import type { RunEffectsRecorder } from "../../domains/safety/run-effects.js";
 import type { McpCapabilitySource } from "../../tools/gateway/index.js";
 import type { createEngineAgent } from "../agent.js";
 import type { createRunPhase } from "../run-phase.js";
@@ -88,4 +89,8 @@ export interface WorkerRunScope {
 	readonly workerCanPlan: boolean;
 	readonly helperToolAvailable: boolean;
 	readonly observeBoundReason: (reason: string) => void;
+	readonly mutationResult: boolean;
+	readonly activeWorkerTools: ReturnType<typeof prepareNativeWorker>["activeWorkerTools"];
+	readonly model: ReturnType<typeof prepareNativeWorker>["model"];
+	readonly runEffects: RunEffectsRecorder;
 }
