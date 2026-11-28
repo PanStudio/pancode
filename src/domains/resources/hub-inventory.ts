@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { readSettings } from "../../core/config.js";
 import { discoveryScore, discoveryTermsMatch } from "../../core/harness-discovery.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
@@ -13,9 +14,21 @@ import type { AgentRecipe } from "../agents/recipe.js";
 import { type AgentRecipeDiagnostic, discoverAgentRecipes } from "../agents/registry.js";
 import type { AgentAudience } from "../agents/spec.js";
 import { isSemanticVersion, satisfiesSemVerRange } from "../extensions/compatibility.js";
-import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
 import { bundledHubIndexPath, parsePluginGithubSource } from "../plugins/catalog.js";
-import { withPluginDiscoveryPass } from "../plugins/index.js";
+import type {
+	HubComponentKind,
+	HubEntryKind,
+	HubPackageEntry,
+	HubProvidedResource,
+	HubRequirementRef,
+} from "../plugins/index.js";
+import {
+	clipAtWord,
+	type HubCategory,
+	isHubComponentKind,
+	isHubKind,
+	withPluginDiscoveryPass,
+} from "../plugins/index.js";
 import type { ForeignPackageFormat, InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
 import type { ResourceDiagnostic } from "./collision.js";
 import { discoverHub } from "./hub.js";
@@ -26,14 +39,6 @@ import {
 	listInstalledHubPackages as listInstalledPlugins,
 	readHubInstallRecord,
 } from "./hub-packages.js";
-import type {
-	HubComponentKind,
-	HubEntryKind,
-	HubPackageEntry,
-	HubProvidedResource,
-	HubRequirementRef,
-} from "./hub-types.js";
-import { clipAtWord, type HubCategory, isHubComponentKind, isHubKind } from "./hub-types.js";
 import { type HubValidationPrerequisite, validateHubPackage } from "./hub-validation.js";
 import { loadPromptTemplates, type PromptTemplate } from "./prompts/loader.js";
 import { loadSkills, type Skill } from "./skills/loader.js";

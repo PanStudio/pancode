@@ -21,7 +21,7 @@ import { pathToFileURL } from "node:url";
 import { parse } from "yaml";
 import { reviewExtensionEnvelope } from "../src/domains/extensions/envelope-review.js";
 import { fetchPluginCommit, type PluginSource } from "../src/domains/plugins/catalog.js";
-import type { HubRowSource, HubTier } from "../src/domains/resources/hub-types.js";
+import type { HubRowSource, HubTier } from "../src/domains/plugins/hub-types.js";
 import { type HubPackageValidationResult, validateHubPackage } from "../src/domains/resources/hub-validation.js";
 import { buildRegistryRow, packLicense, type RegistryRow, rowFileProblems } from "./pin-hub-remote.js";
 

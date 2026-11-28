@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { INTEROP_AGENT_KINDS } from "./registry.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import type { InteropAgentKind, InteropAgentRecord } from "./types.js";
 
 export type PeerModeStatus = "ready" | "experimental" | "unavailable";

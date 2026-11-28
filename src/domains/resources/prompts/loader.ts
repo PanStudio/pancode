@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../../core/interop-agents.js";
 import { isModelTier, type ModelTier } from "../../../core/model-tier.js";
 import { isStrictDescendant, relativePathEscapes } from "../../../core/path-containment.js";
 import { parseCommandArgs, substituteArgs } from "../../../engine/prompt-templates.js";
-import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../interop/registry.js";
 import {
 	type ResourceCandidate,
 	type ResourceDiagnostic,
