@@ -32,6 +32,7 @@ import type { DispatchReservationRecord, ReservationTopology } from "./reservati
 import type { ApprovedAssignmentRoute } from "./route-approval.js";
 import type { RouteDecisionV1 } from "./route-decision.js";
 import type { RouteCandidateForecast } from "./route-policy.js";
+import type { BreakerState } from "./target-breaker.js";
 import type { DispatchRequestOrigin, RunEnvelope, RunLineage, RunNodeIdentity, RunResult, RunStatus } from "./types.js";
 import type { DispatchFailoverCandidate, JobSpec } from "./validation.js";
 import type { WorkerApprovalWindowView } from "./worker-approval-window.js";
@@ -421,7 +422,7 @@ export interface RouteBreakerView {
 	targetId: string;
 	runtimeId: string;
 	wireModelId: string;
-	state: "open" | "half-open" | "probing" | "closed";
+	state: BreakerState;
 	remainingMs: number;
 	reason: string;
 	consecutiveFailures: number;

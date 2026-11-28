@@ -4,13 +4,11 @@ import { readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeDiagnostic } from "../../core/diagnostics.js";
+import { RUNTIME_AUTHS, RUNTIME_KINDS } from "../../core/runtime-vocabulary.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { markPluginProviderIds, unmarkPluginProviderIds } from "./plugin-provider-ids.js";
 
 import type { RuntimeDescriptor } from "./types/runtime-descriptor.js";
-
-const RUNTIME_KINDS = ["http", "sdk", "subprocess"] as const;
-const RUNTIME_AUTHS = ["api-key", "oauth", "vertex-adc", "claude-cli", "none"] as const;
 
 export interface RuntimeRegistry {
 	register(desc: RuntimeDescriptor): void;

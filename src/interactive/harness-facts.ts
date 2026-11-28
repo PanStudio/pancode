@@ -18,7 +18,7 @@ import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
 import type { ContextState } from "../domains/context/index.js";
 import { type Missing, missingFromTargetStatus } from "../domains/lifecycle/setup-status.js";
 import type { TaskMemoryOperatorStatus } from "../domains/memory/index.js";
-import type { ProvidersContract, RuntimeTier, TargetStatus } from "../domains/providers/index.js";
+import type { ProvidersContract, RuntimeTier, TargetHealthStatus, TargetStatus } from "../domains/providers/index.js";
 import { modelResidencyForStatus, resolveModelRuntimeCapabilitiesForProviders } from "../domains/providers/index.js";
 import { effectiveYoloConfinement } from "../domains/safety/autonomy.js";
 import type { AutonomyStatus } from "../domains/safety/autonomy-window.js";
@@ -99,7 +99,7 @@ export interface HarnessRouteReadinessData {
 	readonly targetId: string;
 	readonly available: boolean;
 	readonly reason: string;
-	readonly health: "healthy" | "degraded" | "unknown" | "down";
+	readonly health: TargetHealthStatus;
 	readonly lastStop: TurnSummary["stopReason"] | null;
 	readonly lastFailure?: TurnSummary["failure"];
 	readonly notResident?: boolean;

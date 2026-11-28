@@ -10,6 +10,7 @@
  * exactly as it would with System One absent.
  */
 
+import type { BreakerState } from "../dispatch/target-breaker.js";
 import type { ReadoutKind, RendererId, SemanticKind } from "./contract.js";
 import type { ProfileId } from "./profiles.js";
 
@@ -209,7 +210,7 @@ export interface RouteInfo {
 export interface SystemOneBreakerView {
 	readonly engine: string;
 	/** `closed` while it counts timeouts, `open` while it cools down, `probing` during the one call past the cooldown, `half-open` once the next call may probe. */
-	readonly state: "closed" | "open" | "probing" | "half-open";
+	readonly state: BreakerState;
 	readonly failures: number;
 	readonly remainingMs: number;
 }

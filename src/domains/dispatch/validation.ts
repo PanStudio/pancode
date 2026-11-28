@@ -37,6 +37,7 @@ import type {
 	RunNodeReroute,
 	RunPlanProvenance,
 } from "./types.js";
+import { DISPATCH_PLAN_TOPOLOGIES } from "./types.js";
 
 /** Dispatch speaks the same thinking vocabulary as the rest of the product. */
 export type JobThinkingLevel = ThinkingLevel;
@@ -770,16 +771,7 @@ const VALID_GATE_ROLES = new Set(["builder", "reviewer", "candidate", "judge", "
 const VALID_GATE_VERDICTS = new Set(["pass", "fail", "revise"]);
 const VALID_WORKTREE_BACKENDS = new Set(["herdr", "native"]);
 const VALID_WORKTREE_FALLBACKS = new Set(["mux-unavailable", "mux-operation-failed"]);
-const VALID_PLAN_TOPOLOGIES = new Set([
-	"parallel",
-	"sequential",
-	"pipeline",
-	"review",
-	"compete",
-	"council",
-	"detached",
-	"fleet",
-]);
+const VALID_PLAN_TOPOLOGIES: ReadonlySet<string> = new Set(DISPATCH_PLAN_TOPOLOGIES);
 const VALID_PLAN_APPROVALS = new Set(["operator", "yolo", "read-only"]);
 
 function isValidGate(value: unknown): value is RunGateProvenance {

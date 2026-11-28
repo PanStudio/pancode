@@ -37,15 +37,17 @@ import {
  * owns the mapping from (tool, args) to an ActionClass.
  */
 
-export type ActionClass =
-	| "read"
-	| "write"
-	| "execute"
-	| "dispatch"
-	| "system_modify"
-	| "git_destructive"
-	| "destructive"
-	| "unknown";
+export const ACTION_CLASSES = [
+	"read",
+	"write",
+	"execute",
+	"dispatch",
+	"system_modify",
+	"git_destructive",
+	"destructive",
+	"unknown",
+] as const;
+export type ActionClass = (typeof ACTION_CLASSES)[number];
 
 export interface ClassifierCall {
 	tool: string;

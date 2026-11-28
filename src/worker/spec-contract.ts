@@ -5,6 +5,12 @@ import { THINKING_LEVELS } from "../core/defaults.js";
 import { MODEL_TIERS } from "../core/model-tier.js";
 import type { ProtectedModelRef, ResidencyRole } from "../core/residency-protection.js";
 import { assertValidResponseSchema, runtimeSpeaksResponseSchemaDialect } from "../core/response-schema.js";
+import {
+	BOOLEAN_CAPABILITY_KEYS,
+	RUNTIME_API_FAMILIES,
+	RUNTIME_AUTHS,
+	RUNTIME_KINDS,
+} from "../core/runtime-vocabulary.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
@@ -347,30 +353,6 @@ export interface WorkerGrantBinding {
 export const DEFAULT_ESCALATION_TIMEOUT_MS = 120_000;
 export const DEFAULT_ESCALATION_FALLBACK: "deny" | "fail" = "deny";
 
-const RUNTIME_KINDS = ["http", "sdk", "subprocess"] as const satisfies ReadonlyArray<RuntimeKind>;
-const RUNTIME_API_FAMILIES = [
-	"openai-completions",
-	"openai-responses",
-	"openai-codex-responses",
-	"anthropic-messages",
-	"google-generative-ai",
-	"google-vertex",
-	"mistral-conversations",
-	"ollama-native",
-	"rerank-http",
-	"embeddings-http",
-	"claude-agent-sdk",
-	"copilot-sdk",
-	"claude-code-subprocess",
-	"external-agent-subprocess",
-] as const satisfies ReadonlyArray<RuntimeApiFamily>;
-const RUNTIME_AUTHS = [
-	"api-key",
-	"oauth",
-	"vertex-adc",
-	"claude-cli",
-	"none",
-] as const satisfies ReadonlyArray<RuntimeAuth>;
 const TOOL_PROFILE_NAMES = [
 	"minimal-local",
 	"science-local",
@@ -587,7 +569,7 @@ function validateTargetPricing(value: unknown): void {
 
 function validateCapabilityPatch(value: unknown, source: string): void {
 	const caps = readRecord(value, source);
-	for (const key of ["chat", "tools", "reasoning", "vision", "audio", "embeddings", "rerank", "fim"] as const) {
+	for (const key of BOOLEAN_CAPABILITY_KEYS) {
 		readOptionalBoolean(caps, key, source);
 	}
 	for (const key of ["contextWindow", "maxTokens"] as const) {

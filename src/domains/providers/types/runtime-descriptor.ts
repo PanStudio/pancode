@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { RuntimeApiFamily, RuntimeAuth, RuntimeKind } from "../../../core/runtime-vocabulary.js";
 import type { ThinkingLevel } from "../../../core/views/thinking-levels.js";
 import type { Api, Model } from "../../../engine/types.js";
 import type { ProfileId } from "../../system-one/profiles.js";
@@ -17,26 +18,8 @@ import type {
 import type { KnowledgeBaseHit } from "./knowledge-base.js";
 import type { CopilotContextTier, TargetDescriptor } from "./target-descriptor.js";
 
-export type RuntimeKind = "http" | "sdk" | "subprocess";
+export type { RuntimeApiFamily, RuntimeAuth, RuntimeKind };
 export type RuntimeTier = "protocol" | "cloud" | "local-native" | "subscription";
-
-export type RuntimeApiFamily =
-	| "openai-completions"
-	| "openai-responses"
-	| "openai-codex-responses"
-	| "anthropic-messages"
-	| "google-generative-ai"
-	| "google-vertex"
-	| "mistral-conversations"
-	| "ollama-native"
-	| "rerank-http"
-	| "embeddings-http"
-	| "claude-agent-sdk"
-	| "copilot-sdk"
-	| "claude-code-subprocess"
-	| "external-agent-subprocess";
-
-export type RuntimeAuth = "api-key" | "oauth" | "vertex-adc" | "claude-cli" | "none";
 
 export interface ProbeContext {
 	credentialsPresent: ReadonlySet<string>;

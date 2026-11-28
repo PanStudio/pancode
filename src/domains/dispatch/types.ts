@@ -257,6 +257,18 @@ export interface RunCouncilProvenance {
 	round: number;
 }
 
+export const DISPATCH_PLAN_TOPOLOGIES = [
+	"parallel",
+	"sequential",
+	"pipeline",
+	"review",
+	"compete",
+	"council",
+	"detached",
+	"fleet",
+] as const;
+export type DispatchPlanTopology = (typeof DISPATCH_PLAN_TOPOLOGIES)[number];
+
 /**
  * Plan-approval provenance for multi-task, compete, or remote dispatch.
  * `approval: "operator"` records that default autonomy parked the
@@ -267,7 +279,7 @@ export interface RunCouncilProvenance {
  */
 export interface RunPlanProvenance {
 	hash: string;
-	topology: "parallel" | "sequential" | "pipeline" | "review" | "compete" | "council" | "detached" | "fleet";
+	topology: DispatchPlanTopology;
 	taskCount: number;
 	/** `read-only`: an all read-only plan admitted at default autonomy without the plan stop. */
 	approval: "operator" | "yolo" | "read-only";
