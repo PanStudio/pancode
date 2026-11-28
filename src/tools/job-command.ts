@@ -22,7 +22,7 @@ import { effectiveScratchRoots } from "../lib/scratch-roots/scratch-roots.js";
 import type { HostEffectCall } from "./registry-contract.js";
 
 const EXECUTABLE_HASH_LIMIT = 128 * 1024 * 1024;
-export const JOB_COMMAND_CAPTURE_BYTES = 16 * 1024;
+const JOB_COMMAND_CAPTURE_BYTES = 16 * 1024;
 
 export function canonicalJobCwd(cwd: string, requested?: string): string {
 	const root = realpathSync(resolve(cwd));

@@ -20,7 +20,7 @@ import { truncateUtf8 } from "./truncate-utf8.js";
  * the child to drain.
  */
 
-export const SEARCH_SPAWN_TIMEOUT_MS = 30_000;
+const SEARCH_SPAWN_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 3_000;
 export const SEARCH_STDERR_CAP_BYTES = 16 * 1024;
 /** Stdout lines longer than this are dropped unbuffered (e.g. rg --json over a minified bundle). */
@@ -91,7 +91,7 @@ export class BoundedDiagnosticDecoder {
  * of leaking the platform fault, and the pure-Node fallbacks never compile a
  * multi-hundred-KB regex either. 64 KiB is far past any real search pattern.
  */
-export const MAX_SEARCH_PATTERN_BYTES = 64 * 1024;
+const MAX_SEARCH_PATTERN_BYTES = 64 * 1024;
 
 /**
  * Validate a search pattern's byte size before it reaches spawn (or a fallback

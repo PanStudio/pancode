@@ -29,7 +29,7 @@ import {
  * carry its own copy of the list, which drifted the moment `product` was added.
  * A contract test holds the gate against these two arrays.
  */
-export const RECIPE_KEYS = [
+const RECIPE_KEYS = [
 	"version",
 	"name",
 	"description",
@@ -45,7 +45,7 @@ export const RECIPE_KEYS = [
 	"tags",
 ] as const;
 
-export const OPTIONAL_RECIPE_KEYS = ["product", "permissions", "traits", "handbook"] as const;
+const OPTIONAL_RECIPE_KEYS = ["product", "permissions", "traits", "handbook"] as const;
 const ALL_RECIPE_KEYS = [...RECIPE_KEYS, ...OPTIONAL_RECIPE_KEYS] as const;
 
 export interface ParseRecipeSchemaInput {

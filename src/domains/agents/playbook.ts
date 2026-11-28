@@ -48,8 +48,8 @@ export type PlaybookOnFailure = "stop" | "continue";
  * one of its steps declares one, including `readonly`, which is the empty
  * allowlist stated out loud.
  */
-export const PLAYBOOK_WRITE_BOUNDARY_VERSION = 4;
-export const PLAYBOOK_DYNAMIC_STEP_VERSION = 5;
+const PLAYBOOK_WRITE_BOUNDARY_VERSION = 4;
+const PLAYBOOK_DYNAMIC_STEP_VERSION = 5;
 
 /**
  * Upper bound on any declared loop. A loop is bounded in the playbook, and the
@@ -57,7 +57,7 @@ export const PLAYBOOK_DYNAMIC_STEP_VERSION = 5;
  * four repair dispatches, and a workflow that needs more than that is not
  * converging.
  */
-export const PLAYBOOK_LOOP_MAX_ATTEMPTS = 5;
+const PLAYBOOK_LOOP_MAX_ATTEMPTS = 5;
 
 /**
  * A step a model runs. Its authority, role, and route come from its recipe.

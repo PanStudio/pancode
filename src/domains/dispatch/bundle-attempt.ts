@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { type CheckoutRootLookup, checkoutRootLookup } from "../../tools/task-worktree.js";
 import { admitAttemptRoute, delegateToAcpPeer, openAttemptAdmission } from "./attempt-admit.js";
 import { createAttemptFold } from "./attempt-fold.js";
 import { prepareAttemptWorker } from "./attempt-prepare.js";
@@ -22,6 +23,7 @@ export function createNativeAttempt(rt: DispatchRuntime) {
 		observer?: DispatchAdmissionObserver,
 		preparation?: DispatchPreparationOptions,
 		settlement?: BatchVerificationGate,
+		checkoutRoot?: CheckoutRootLookup,
 	): Promise<{
 		runId: string;
 		events: AsyncIterableIterator<unknown>;
@@ -30,6 +32,7 @@ export function createNativeAttempt(rt: DispatchRuntime) {
 	}> {
 		// Filled phase by phase; each phase reads only what an earlier one set.
 		const attempt = {} as NativeAttemptState;
+		attempt.checkoutRoot = checkoutRoot ?? checkoutRootLookup();
 		const openedAttempt = Object.assign(
 			attempt,
 			openAttemptAdmission(rt, attempt, req, probeClaims, observer, preparation, settlement),

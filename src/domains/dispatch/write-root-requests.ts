@@ -23,7 +23,7 @@ import { resolveDispatchPathScope } from "./path-scope.js";
  * running worker: an approval continues the assignment as a new attempt
  * admitted with the wider roots, and a denial settles it as no work done.
  */
-export const WRITE_ROOT_LIMITATION_REASON = "write-root";
+const WRITE_ROOT_LIMITATION_REASON = "write-root";
 
 /** The `tool` a write-root request carries in the grant broker and its views. */
 export const WRITE_ROOTS_GRANT_TOOL = "write_roots";

@@ -13,7 +13,7 @@ import type { AgentLatencyClass } from "../agents/spec.js";
 import type { RouteQualityLabel } from "./route-quality.js";
 
 export const ROUTE_POLICY_VERSION = "route-policy/4";
-export const MINIMUM_QUALITY_LABELED_OUTCOMES = 6;
+const MINIMUM_QUALITY_LABELED_OUTCOMES = 6;
 
 export type { RoutingPosture };
 
@@ -90,7 +90,7 @@ export const DEFAULT_ROUTE_PRIOR: RoutePrior = {
 };
 
 /** Cold-start latency only. Completed route timing supersedes these priors. */
-export const LATENCY_CLASS_ROUTE_PRIORS: Readonly<Record<AgentLatencyClass, RoutePrior>> = {
+const LATENCY_CLASS_ROUTE_PRIORS: Readonly<Record<AgentLatencyClass, RoutePrior>> = {
 	fast: { ...DEFAULT_ROUTE_PRIOR, expectedEndToEndMs: 30_000 },
 	balanced: { ...DEFAULT_ROUTE_PRIOR, expectedEndToEndMs: 120_000 },
 	deep: { ...DEFAULT_ROUTE_PRIOR, expectedEndToEndMs: 300_000 },
@@ -111,7 +111,7 @@ export interface RouteObservation {
 	queueWaitMs: number | null;
 }
 
-export const ROUTE_ESTIMATE_SHRINKAGE = 5;
+const ROUTE_ESTIMATE_SHRINKAGE = 5;
 
 function mean(values: ReadonlyArray<number>, fallback: number): number {
 	if (values.length === 0) return fallback;
@@ -204,7 +204,7 @@ export function estimateRoute(
 }
 
 /** Fewest counted attempts a forecast stands on; fewer is cold evidence and reads insufficient. */
-export const MINIMUM_FORECAST_ATTEMPTS = 6;
+const MINIMUM_FORECAST_ATTEMPTS = 6;
 
 /**
  * One sent attempt as the route forecast reads it (R4), kept apart from `RouteObservation` so the ranking input never

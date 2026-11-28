@@ -28,7 +28,7 @@ import {
 	centeredWindow,
 	fitRows,
 	type HintEntry,
-	type RowBudgetedBody,
+	isRowBudgeted,
 	showPancodeOverlayFrame,
 } from "../overlay-frame.js";
 import { editSettingsFile } from "../settings-file-edit.js";
@@ -121,10 +121,6 @@ const DETAIL_LANE_MAX_WIDTH = 72;
 const INSPECTOR_ROWS = 4;
 /** List rows the strip may never take from the lanes above it. */
 const MIN_LIST_ROWS = 6;
-
-function isRowBudgeted(child: Component): child is Component & RowBudgetedBody {
-	return typeof (child as Partial<RowBudgetedBody>).setBodyRows === "function";
-}
 
 /**
  * `9 settings`, or `3 connections` for the targets table, where the rows are not

@@ -44,7 +44,7 @@ export interface ChangeSummary {
 
 export const NO_CHANGES: ChangeSummary = { files: [], adds: 0, dels: 0, applied: 0, pending: 0 };
 
-export function relativeTo(path: string, root: string | undefined): string {
+function relativeTo(path: string, root: string | undefined): string {
 	if (root !== undefined && root.length > 0) {
 		const prefix = root.endsWith("/") ? root : `${root}/`;
 		if (path.startsWith(prefix)) return path.slice(prefix.length);

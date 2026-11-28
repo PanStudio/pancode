@@ -37,6 +37,6 @@ export function isConversationItem(item: TimelineItem): boolean {
 	return item.kind !== "notice" || isTranscriptNotice(item);
 }
 
-export function isTranscriptNotice(item: TimelineItem): boolean {
+function isTranscriptNotice(item: TimelineItem): boolean {
 	return item.kind === "notice" && item.toolKind === TRANSCRIPT_NOTICE_KIND;
 }

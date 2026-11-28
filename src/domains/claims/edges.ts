@@ -156,7 +156,7 @@ function edgeIdentity(claim: Keyed, layouts: ReadonlyMap<string, SweepRunLayout 
 }
 
 /** The digest of a claim's pinned conditions; equal keys mean opposite verdicts contradict. Null when unpinned. */
-export function claimConditionsKey(claim: ClaimRecord): string | null {
+function claimConditionsKey(claim: ClaimRecord): string | null {
 	const pins = pinnedConditions(claim);
 	return pins === null ? null : sha256Hex(canonicalJson({ kind: claim.kind, check: claim.keys.check, pins }));
 }

@@ -5,7 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import { isRecord } from "../../../core/type-guards.js";
 
 export const YAZI_STREAM_POLL_MS = 250;
-export const YAZI_STREAM_MAX_BYTES = 1024 * 1024;
+const YAZI_STREAM_MAX_BYTES = 1024 * 1024;
 export const YAZI_PICK_EVENT = "pancode-pick";
 /** Alt+E inside Yazi: the same tap PanCode's own files key makes, sent from the pane that has the keyboard. */
 export const YAZI_DOCK_EVENT = "pancode-dock";

@@ -21,7 +21,7 @@ import yaml from "yaml";
 import { resolvePackageRoot } from "../../../core/package-root.js";
 import { isRecord } from "../../../core/type-guards.js";
 
-export const SKILL_PIN_MANIFEST_FILENAME = "registry.yaml";
+const SKILL_PIN_MANIFEST_FILENAME = "registry.yaml";
 
 export interface SkillPinEntry {
 	name: string;

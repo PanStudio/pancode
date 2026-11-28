@@ -14,7 +14,7 @@
 import type { TimelineItem } from "../../contracts/sessions.js";
 
 const DRAWABLE_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const TOOL_IMAGES_SHOWN = 4;
+const TOOL_IMAGES_SHOWN = 4;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export interface ToolImageView {

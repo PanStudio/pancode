@@ -154,15 +154,19 @@ export function assessDispatchFinishContract(
 		entries: unknown[];
 		assistantText: string;
 		assistantTurnId: string | null;
+		/** The run's git helper answer at `cwd`, from its run-effects recorder. */
+		gitHelpers?: boolean;
 	},
 ): DispatchFinishContractSnapshot | null {
 	if (input.assistantText.trim().length === 0) return null;
+	const { gitHelpers } = input;
 	const rigor = resolveRigor({ cwd: input.cwd, override: parseRigorOverride(process.env.PANCODE_RIGOR) });
 	const assessment = assessFinishContract({
 		sessionEntries: input.entries,
 		assistantTurnId: input.assistantTurnId,
 		workspaceRoot: input.cwd,
 		rigor,
+		...(gitHelpers === undefined ? {} : { readGitHelpers: () => gitHelpers }),
 	});
 	try {
 		safety.decisions.recordCompletionContract?.({

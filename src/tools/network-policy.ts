@@ -7,7 +7,7 @@
  * requires an OS network sandbox supplied by the operator or an outer harness.
  * The environment setting propagates to child registries without per-run wiring.
  */
-export const NO_NETWORK_TOOLS_ENV = "PANCODE_DISABLE_RETRIEVE_TOOLS";
+const NO_NETWORK_TOOLS_ENV = "PANCODE_DISABLE_RETRIEVE_TOOLS";
 
 /** Not a sandbox: it removes tools, nothing else. */
 export function networkToolsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {

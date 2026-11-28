@@ -8,7 +8,7 @@ import { isRouteDecisionAgentSelection, type RouteDecisionV1, sameRouteIdentity 
 import { ROUTE_POLICY_VERSION } from "./route-policy.js";
 import type { DispatchFailoverCandidate } from "./validation.js";
 
-export const APPROVED_ASSIGNMENT_ROUTE_VERSION = 1;
+const APPROVED_ASSIGNMENT_ROUTE_VERSION = 1;
 
 export interface ApprovedAssignmentRoute {
 	version: 1;

@@ -9,7 +9,7 @@ import { REPORT_ID } from "./draft.js";
 import { deleteReportDraft, reportBundlePath, reportsDirectory } from "./store.js";
 import type { ReportKind } from "./vocabulary.js";
 
-export const OUTBOX_STATES = ["draft", "sending", "sent", "opened", "written", "withdrawn"] as const;
+const OUTBOX_STATES = ["draft", "sending", "sent", "opened", "written", "withdrawn"] as const;
 export type OutboxState = (typeof OUTBOX_STATES)[number];
 
 export interface OutboxBundle {
@@ -42,7 +42,7 @@ interface OutboxDocument {
 }
 
 /** Sends past which the caller warns; GitHub's own abuse limits are far higher, these protect the maintainers. */
-export const REPORT_RATE_LIMITS = { day: 3, month: 10 } as const;
+const REPORT_RATE_LIMITS = { day: 3, month: 10 } as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function reportOutboxPath(stateDir: string): string {

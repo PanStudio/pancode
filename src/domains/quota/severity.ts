@@ -20,7 +20,7 @@ export type QuotaSeverity = "normal" | "caution" | "warning" | "critical";
  * Anthropic sends its own `severity` and that is preferred; these floors exist
  * for Codex and Antigravity, which send none.
  */
-export const QUOTA_SEVERITY_FLOORS: Readonly<Record<Exclude<QuotaSeverity, "normal">, number>> = {
+const QUOTA_SEVERITY_FLOORS: Readonly<Record<Exclude<QuotaSeverity, "normal">, number>> = {
 	caution: 60,
 	warning: 80,
 	critical: 95,

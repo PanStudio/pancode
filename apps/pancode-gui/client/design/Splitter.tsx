@@ -38,12 +38,12 @@ const KEY_STEP_LARGE = 64;
 /** Dragging this far past the minimum asks the owner to collapse the panel instead. */
 const COLLAPSE_SLACK = 72;
 
-export function clampWidth(spec: SplitterSpec, width: number, hostWidth: number): number {
+function clampWidth(spec: SplitterSpec, width: number, hostWidth: number): number {
 	const ceiling = Math.max(spec.min, Math.min(spec.max, hostWidth > 0 ? hostWidth * spec.maxShare : spec.max));
 	return Math.round(Math.min(ceiling, Math.max(spec.min, width)));
 }
 
-export function storedWidth(spec: SplitterSpec): number | null {
+function storedWidth(spec: SplitterSpec): number | null {
 	try {
 		const value = Number(localStorage.getItem(spec.storageKey));
 		return Number.isFinite(value) && value >= spec.min ? Math.min(value, spec.max) : null;

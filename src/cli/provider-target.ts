@@ -49,7 +49,7 @@ export interface ConnectableProviderRow {
 }
 
 /** Signs in through its own CLI, which `pancode auth login copilot-sdk` drives, so `auth` lists it beside the rest. */
-export const OWN_LOGIN_RUNTIME = "copilot-sdk";
+const OWN_LOGIN_RUNTIME = "copilot-sdk";
 
 function ensureSetupRuntimeRegistry(): void {
 	registerPancodeOAuthProviders();

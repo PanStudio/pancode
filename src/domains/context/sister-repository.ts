@@ -14,9 +14,7 @@
  * its ledger are cached under the PanCode state root, keyed by the repository root.
  */
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import { basename, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { sha256Hex } from "../../core/hash.js";
 import { gitVia } from "../../core/internal-git-run.js";
@@ -34,6 +32,7 @@ import type {
 	SisterCompileResult,
 	SisterCompileWorkerMessage,
 } from "./sister-repository-compile.js";
+import { sourceWorkerUrl } from "./source-worker-url.js";
 
 /** The handbook text a sister-repository run receives, and how it was chosen. */
 export interface SisterRepositoryRules {
@@ -219,7 +218,6 @@ const LISTING_TIMEOUT_MS = 30_000;
 const HEAD_TIMEOUT_MS = 5_000;
 /** Sister compiles running at once; more wait their turn, so many dispatches never start many tree walks. */
 const MAX_CONCURRENT_COMPILES = 2;
-const require = createRequire(import.meta.url);
 
 let running = 0;
 const waiting: Array<() => void> = [];
@@ -240,12 +238,7 @@ async function withCompileSlot<T>(work: () => Promise<T>): Promise<T> {
 
 function buildWorkerUrl(): URL {
 	if (!import.meta.url.endsWith(".ts")) return new URL("./context/sister-compile-worker.js", import.meta.url);
-	// Source execution: the same absolute-loader bootstrap as the handbook compile worker.
-	const loaderApi = pathToFileURL(require.resolve("tsx/esm/api")).href;
-	const source = new URL("./sister-compile-worker.ts", import.meta.url).href;
-	return new URL(
-		`data:text/javascript,${encodeURIComponent(`const { tsImport } = await import(${JSON.stringify(loaderApi)}); await tsImport(${JSON.stringify(source)}, import.meta.url);`)}`,
-	);
+	return sourceWorkerUrl(new URL("./sister-compile-worker.ts", import.meta.url));
 }
 
 /** Verify on a worker thread, so the walk over every rule never blocks the prompt, dispatch or tool path. */
@@ -399,7 +392,7 @@ export function sisterRepositoryNotice(rules: SisterRepositoryRules): string | n
 	return `Rules of ${rules.name}: ${rules.withheld} handbook rule${rules.withheld === 1 ? "" : "s"} the tree cannot check left out, because ${rules.root} is a repository this session did not start in and its handbook is not trusted. Review it with pancode config trust handbook, run in ${rules.root}.`;
 }
 
-export const SISTER_REPOSITORY_REMINDER_MAX_CHARS = 1_500;
+const SISTER_REPOSITORY_REMINDER_MAX_CHARS = 1_500;
 
 /**
  * The invariants of a sister repository's compile as one labeled reminder for

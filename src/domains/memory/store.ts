@@ -15,9 +15,9 @@ import {
 } from "./types.js";
 import { validateMemoryRecord } from "./validate.js";
 
-export const MEMORY_STORE_MAX_RECORDS = 500;
-export const MEMORY_STALE_APPROVED_DAYS = 180;
-export const MEMORY_STALE_UNAPPROVED_DAYS = 30;
+const MEMORY_STORE_MAX_RECORDS = 500;
+const MEMORY_STALE_APPROVED_DAYS = 180;
+const MEMORY_STALE_UNAPPROVED_DAYS = 30;
 /** Prompt compilation fails closed above this read ceiling; store writers are unchanged. */
 export const MEMORY_PROMPT_STORE_MAX_BYTES = 16 * 1024 * 1024;
 

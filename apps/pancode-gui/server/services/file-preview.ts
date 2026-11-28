@@ -35,7 +35,7 @@ export function withheldPath(relativePath: string): boolean {
  * The workspace-relative form of what a transcript named, or null when it names a place outside the workspace.
  * An absolute path counts when it lies inside the root; `~`, `..` and NUL never do.
  */
-export function workspaceRelative(root: string, input: string): string | null {
+function workspaceRelative(root: string, input: string): string | null {
 	if (input.includes("\0") || input.startsWith("~")) return null;
 	const spelled = isAbsolute(input) ? relative(root, input).split(sep).join("/") : input;
 	const segments = spelled.split("/").filter((segment) => segment !== "" && segment !== ".");

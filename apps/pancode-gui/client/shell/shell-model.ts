@@ -49,7 +49,7 @@ export interface TaskRow {
 	readonly liveElsewhere?: LiveElsewhere;
 }
 
-export const NEW_TASK_TITLE = "New task";
+const NEW_TASK_TITLE = "New task";
 
 /** What the sidebar and the top bar call a task: its reported label, else the first request. */
 export function taskTitle(

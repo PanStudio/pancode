@@ -81,7 +81,7 @@ const HISTORY_CANDIDATE_MAX_FILES = 64;
  */
 const HISTORY_CANDIDATE_LOCK_TIMEOUT_MS = 100;
 /** Pending history files read per replay wake. */
-export const HISTORY_REPLAY_BATCH = 4;
+const HISTORY_REPLAY_BATCH = 4;
 
 export class MemoryLessonFeedback {
 	readonly #ports: LessonFeedbackPorts;

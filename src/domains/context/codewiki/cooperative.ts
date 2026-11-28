@@ -8,7 +8,7 @@ import { setImmediate as yieldToEventLoop } from "node:timers/promises";
  * write a frame between slices. Indexing that respects this never shows up as
  * a dropped frame, however long the whole scan takes.
  */
-export const INDEX_SLICE_MS = 8;
+const INDEX_SLICE_MS = 8;
 
 export interface CooperativeSlicer {
 	/**

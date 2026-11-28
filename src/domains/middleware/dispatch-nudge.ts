@@ -34,10 +34,10 @@ import { turnCanCallTool } from "./types.js";
  * loop against a wall).
  */
 
-export const DETACHED_DISPATCH_NUDGE_REGISTRATION_ID = "nudge.detached-dispatch";
-export const READ_ONLY_EXPLORATION_NUDGE_REGISTRATION_ID = "nudge.read-only-exploration";
-export const READ_ONLY_EXPLORATION_NUDGE_CALL_THRESHOLD = 9;
-export const UNBACKED_WORKER_CLAIM_REGISTRATION_ID = "rail.unbacked-worker-claim";
+const DETACHED_DISPATCH_NUDGE_REGISTRATION_ID = "nudge.detached-dispatch";
+const READ_ONLY_EXPLORATION_NUDGE_REGISTRATION_ID = "nudge.read-only-exploration";
+const READ_ONLY_EXPLORATION_NUDGE_CALL_THRESHOLD = 9;
+const UNBACKED_WORKER_CLAIM_REGISTRATION_ID = "rail.unbacked-worker-claim";
 
 const EXPLORATION_NUDGE_TURN_LIMIT = 32;
 const NO_TURN = "no-turn";

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { boundedExternalDiagnostic } from "../../../../core/external-diagnostic.js";
 import { runCommandVector, type SafeCommandResult } from "../../../../core/safe-exec.js";
+import { asRecord } from "../../../../core/type-guards.js";
 import type { Api, Model } from "../../../../engine/types.js";
-
 import { synthesizeCatalogBackedModel } from "../../catalog.js";
 import { UNMEDIATED_ENFORCEMENT } from "../../runtime-enforcement.js";
 import type { CapabilityFlags } from "../../types/capability-flags.js";
@@ -20,13 +20,13 @@ import type { TargetDescriptor } from "../../types/target-descriptor.js";
  * and translates the documented structured result into a worker result.
  */
 
-export const ANTIGRAVITY_AUTH_NOTICE =
+const ANTIGRAVITY_AUTH_NOTICE =
 	"Experimental local delegation through your installed Antigravity (`agy`) CLI. PanCode neither signs in nor stores " +
 	"or inspects Antigravity credentials. Run `agy` yourself and complete sign-in before probing this target.";
 
 // Hints only until an account returns a live catalog. They are never used to
 // validate a model after a successful live probe.
-export const ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
+const ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
 	"gemini-3.8-flash-high",
 	"gemini-3.8-flash-medium",
 	"gemini-3.8-flash-low",
@@ -35,7 +35,7 @@ export const ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
 ];
 
 /** Typed PanCode capabilities only. Antigravity's own opaque tools are declared separately. */
-export const antigravityCapabilities: CapabilityFlags = {
+const antigravityCapabilities: CapabilityFlags = {
 	chat: true,
 	tools: false,
 	reasoning: false,
@@ -48,7 +48,7 @@ export const antigravityCapabilities: CapabilityFlags = {
 	maxTokens: 0,
 };
 
-export const ANTIGRAVITY_MAX_CATALOG_BYTES = 1024 * 1024;
+const ANTIGRAVITY_MAX_CATALOG_BYTES = 1024 * 1024;
 export const ANTIGRAVITY_MAX_DISCOVERED_MODELS = 4096;
 const MAX_MODEL_ID_CHARS = 1024;
 const MAX_MODEL_LABEL_CHARS = 1024;
@@ -63,12 +63,6 @@ class AntigravityCatalogError extends Error {
 		this.name = "AntigravityCatalogError";
 		this.kind = kind;
 	}
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
 }
 
 export interface AntigravityModelCatalog {
@@ -87,9 +81,9 @@ export function parseAntigravityModelCatalogDetails(output: string): Antigravity
 			"agy returned an unreadable model catalog; update the Antigravity CLI and retry",
 		);
 	}
-	const envelope = record(decoded);
-	const command = record(envelope?.command);
-	const data = record(command?.data);
+	const envelope = asRecord(decoded);
+	const command = asRecord(envelope?.command);
+	const data = asRecord(command?.data);
 	if (envelope?.status !== "SUCCESS") {
 		const detail = boundedExternalDiagnostic(
 			typeof envelope?.error === "string"
@@ -124,7 +118,7 @@ export function parseAntigravityModelCatalogDetails(output: string): Antigravity
 	const labels: Record<string, string> = {};
 	const seen = new Set<string>();
 	for (const value of data.models) {
-		const model = record(value);
+		const model = asRecord(value);
 		const id = typeof model?.id === "string" ? model.id.trim() : "";
 		const label = typeof model?.label === "string" ? model.label.trim() : "";
 		if (id.length === 0 || id.length > MAX_MODEL_ID_CHARS || /[\r\n\0]/u.test(id)) {

@@ -52,7 +52,7 @@ export const LIVE_GLYPHS: Readonly<Record<LiveState, string>> = {
  * glyph and word. A state is only "working" for a turn that is live in an open session, which the
  * caller decides: a replayed or recorded turn never reaches one of these states.
  */
-export const WORKING_STATES: ReadonlySet<LiveState> = new Set<LiveState>(["starting", "thinking", "writing", "acting"]);
+const WORKING_STATES: ReadonlySet<LiveState> = new Set<LiveState>(["starting", "thinking", "writing", "acting"]);
 
 export const isWorking = (state: LiveState): boolean => WORKING_STATES.has(state);
 

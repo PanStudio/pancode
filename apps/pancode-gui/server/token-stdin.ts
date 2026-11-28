@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Readable } from "node:stream";
 
-export const TOKEN_PATTERN = /^[\w-]{32,256}$/;
+const TOKEN_PATTERN = /^[\w-]{32,256}$/;
 
 /**
  * The first line of stdin, which a parent that starts this server over SSH writes as the launch

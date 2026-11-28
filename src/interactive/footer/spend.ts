@@ -7,7 +7,7 @@ import { renderCompactCount, renderCount } from "../../core/telemetry/render.js"
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
 import { RATE_MIN_WINDOW_MS } from "../../session-control/assistant-generation-timing.js";
 import { type ReasoningUsageView, reasoningFromQuantity } from "../status/reasoning.js";
-import { measuredCount, turnQuantityReader, turnSpend } from "../turn-spend.js";
+import { contributed, measuredCount, turnQuantityReader, turnSpend } from "../turn-spend.js";
 
 /**
  * What the footer shows of the session's spend, read from the telemetry read model's live view (#434 §11.3): the
@@ -70,11 +70,6 @@ export interface FooterSpeed {
 }
 /** `unavailable` means no read model; `reading` means the live view is still merging its cold read. */
 export type FooterTelemetry = { kind: "unavailable" } | { kind: "reading" } | ({ kind: "ready" } & FooterSpend);
-
-const contributed = (quantity: Quantity): boolean =>
-	"kind" in quantity.fact
-		? quantity.fact.kind !== "absent"
-		: quantity.fact.coverage.measured + quantity.fact.coverage.estimated + quantity.fact.unknownCount > 0;
 const zero = (quantity: Quantity): boolean =>
 	"kind" in quantity.fact
 		? quantity.fact.kind === "measured" && quantity.fact.value === 0

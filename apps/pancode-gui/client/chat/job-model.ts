@@ -28,7 +28,7 @@ const FINISHED_KEPT = 2;
 const SUMMARY_CHARS = 140;
 
 /** Polling, a held delivery, a cancel in flight or unresolved cleanup: anything that is not settled. */
-export const jobIsLive = (job: AcpJob): boolean => job.state !== "terminal" || !job.complete;
+const jobIsLive = (job: AcpJob): boolean => job.state !== "terminal" || !job.complete;
 
 /** Live jobs in arrival order, then the newest few finished ones. */
 export function visibleJobs(jobs: readonly AcpJob[]): readonly AcpJob[] {
@@ -37,7 +37,7 @@ export function visibleJobs(jobs: readonly AcpJob[]): readonly AcpJob[] {
 	return [...live, ...finished];
 }
 
-export function formatSpan(ms: number): string {
+function formatSpan(ms: number): string {
 	const seconds = Math.max(0, Math.round(ms / 1000));
 	if (seconds < 60) return `${seconds}s`;
 	const minutes = Math.floor(seconds / 60);

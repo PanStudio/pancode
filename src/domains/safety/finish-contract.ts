@@ -183,6 +183,8 @@ export interface FinishContractInput {
 	 * turn first touched them: a create-then-delete probe changed nothing.
 	 */
 	unchangedPaths?: ReadonlySet<string>;
+	/** The run's one git helper answer at `workspaceRoot` (`gitRunsConfiguredHelpers`); absent, the replay reads it. */
+	readGitHelpers?: () => boolean;
 }
 
 export interface ToolCallEvidenceCandidate {
@@ -299,7 +301,12 @@ function assessmentScope(input: FinishContractInput): AssessmentScope {
 		},
 		facts: () => {
 			const root = resolve(input.workspaceRoot ?? ".");
-			facts ??= runCheckFacts(window, root, [...scope.declared(), ...acceptanceScriptChecks(input, root)]);
+			facts ??= runCheckFacts(
+				window,
+				root,
+				[...scope.declared(), ...acceptanceScriptChecks(input, root)],
+				input.readGitHelpers?.(),
+			);
 			return facts;
 		},
 	};

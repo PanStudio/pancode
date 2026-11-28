@@ -64,12 +64,25 @@ export interface TurnWorkerSpend {
 	calls: number | null;
 }
 
+/** One session token metric, optionally for one model group. */
+export function sessionTokenQuantity(view: TelemetryView, metric: FactMetric, model?: string): Quantity | null {
+	return view.quantity(
+		factRef({
+			scope: "session",
+			owner: view.sessionId,
+			metric,
+			...(model === undefined ? {} : { group: { by: "model", key: model } }),
+		}),
+	);
+}
+
 /** The known part of a quantity: a measured or estimated value, or a sum's measured and estimated parts. */
 function known(quantity: Quantity): number {
 	return factKnownValue(quantity.fact);
 }
 
-function contributed(quantity: Quantity): boolean {
+/** Some call fed this sum, so its value (a measured zero, a local `$0.00`, or `not measured`) is worth a row. */
+export function contributed(quantity: Quantity): boolean {
 	const fact = quantity.fact;
 	return "kind" in fact
 		? fact.kind !== "absent"
@@ -91,7 +104,7 @@ function nonZero(quantity: Quantity): boolean {
  * nothing is not usage. Detailed and /usage keep the bounds.
  */
 /** What a receipt says when no call of the turn measured anything, the footer's words for the same fact. */
-export const USAGE_NOT_MEASURED_NOTE = "usage not measured (/usage)";
+const USAGE_NOT_MEASURED_NOTE = "usage not measured (/usage)";
 
 /**
  * A receipt figure in the shared count form (`881`, `2.0k`, `151.5k`): `≈` marks an estimate and `≥` a lower bound, which

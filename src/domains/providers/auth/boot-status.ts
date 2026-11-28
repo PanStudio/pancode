@@ -11,23 +11,18 @@ import {
 	redeclaredTargetSentence,
 	redeclaredUserTarget,
 } from "../../../core/project-target-urls.js";
+import { asRecord } from "../../../core/type-guards.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
 import { findEngineEnvKeys, getEngineEnvApiKey } from "../../../engine/env-api-keys.js";
 import type { TargetDescriptor } from "../types/target-descriptor.js";
 import type { RuntimeAuthMetadata } from "./storage.js";
 
-function record(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function storedCredentialPresent(providerId: string): boolean {
 	const path = join(pancodeConfigDir(), "credentials.yaml");
 	if (!existsSync(path)) return false;
 	try {
-		const root = record(parseYaml(readFileSync(path, "utf8")));
-		const entry = record(record(root?.entries)?.[providerId]);
+		const root = asRecord(parseYaml(readFileSync(path, "utf8")));
+		const entry = asRecord(asRecord(root?.entries)?.[providerId]);
 		if (!entry) return false;
 		if (entry.type === "api_key") return typeof entry.key === "string" && entry.key.trim().length > 0;
 		if (entry.type === "oauth") {

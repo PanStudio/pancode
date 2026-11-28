@@ -17,7 +17,7 @@
  * Words too common in a coding request to distinguish one skill from another.
  * Shared so both matchers agree about what carries no signal.
  */
-export const TOKEN_STOPWORDS = new Set([
+const TOKEN_STOPWORDS = new Set([
 	"the",
 	"a",
 	"an",

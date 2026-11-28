@@ -67,10 +67,10 @@ export function newReportId(now = Date.now()): string {
 	return `rpt_${time}${random}`;
 }
 
-export const REPORT_TITLE_MIN = 10;
-export const REPORT_TITLE_MAX = 120;
-export const REPORT_HAPPENED_MIN = 40;
-export const REPORT_BODY_MAX = 60_000;
+const REPORT_TITLE_MIN = 10;
+const REPORT_TITLE_MAX = 120;
+const REPORT_HAPPENED_MIN = 40;
+const REPORT_BODY_MAX = 60_000;
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what this removes.
 const ESCAPE_SEQUENCE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|[\]P_^X][\s\S]*?(?:\u0007|\u001b\\|$)|[ -/]*[0-~])?/gu;

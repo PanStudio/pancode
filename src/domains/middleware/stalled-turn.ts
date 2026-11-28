@@ -5,7 +5,7 @@ import { ToolNames } from "../../core/tool-names.js";
 import type { MiddlewareRuleDefinition } from "./runtime.js";
 import { type MiddlewareHookInput, metadataNumber, metadataString } from "./types.js";
 
-export const STALLED_TURN_REGISTRATION_ID = "nudge.stalled-turn";
+const STALLED_TURN_REGISTRATION_ID = "nudge.stalled-turn";
 
 /**
  * The prose nudge for an attended turn. On an unattended turn (headless, a job, a yolo continuation) the host spends the

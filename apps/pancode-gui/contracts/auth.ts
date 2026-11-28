@@ -3,8 +3,8 @@
 import { type Static, Type } from "typebox";
 
 /** A browser window, launcher probe or proxy hop the server has issued a credential to. */
-export const ClientId = Type.String({ pattern: "^[A-Za-z0-9_-]{8,64}$" });
-export const ClientLabel = Type.String({ minLength: 1, maxLength: 80 });
+const ClientId = Type.String({ pattern: "^[A-Za-z0-9_-]{8,64}$" });
+const ClientLabel = Type.String({ minLength: 1, maxLength: 80 });
 export const ClientIdentity = Type.Object({ clientId: ClientId, label: ClientLabel }, { additionalProperties: false });
 export type ClientIdentity = Static<typeof ClientIdentity>;
 

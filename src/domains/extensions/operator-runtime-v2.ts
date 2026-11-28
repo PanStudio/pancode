@@ -95,7 +95,7 @@ export interface OperatorReloadResult {
 	degraded?: number;
 }
 /** The runtime closed while a reload ran: a shutdown race, not a failed reload, so it is never reported. */
-export class ClosedDuringReload extends Error {
+class ClosedDuringReload extends Error {
 	constructor() {
 		super("operator runtime is disposed");
 	}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import { type Client, emptyInput } from "../api/client.js";
@@ -258,19 +258,29 @@ export function EvidencePage({ client }: { client: Client }) {
 		maxPages: ARTIFACT_MAX_PAGES,
 	});
 	const live = retainedLinksLive(inventory);
-	const loaded = admittedPages(inventory).flatMap((page) => page.items);
-	const bundles = sortInspectionRecords(
-		loaded.filter(
-			(item) =>
-				(!verdict || item.verdict === verdict) &&
-				matchesText(q, [item.run.runId, item.run.agentId ?? "", item.run.wireModelId ?? "", ...item.run.tags]),
-		),
-		sort,
-		(item) => ({
-			name: runLabel(item.run),
-			date: item.run.settledAt ?? "",
-			id: item.run.runId,
-		}),
+	const { data: pages, isRefetchError } = inventory;
+	// Flattening, filtering and sorting the retained pages reruns only when the pages, the refetch state or a filter
+	// changes, not on every render.
+	const loaded = useMemo(
+		() => admittedPages({ data: pages, isRefetchError }).flatMap((page) => page.items),
+		[pages, isRefetchError],
+	);
+	const bundles = useMemo(
+		() =>
+			sortInspectionRecords(
+				loaded.filter(
+					(item) =>
+						(!verdict || item.verdict === verdict) &&
+						matchesText(q, [item.run.runId, item.run.agentId ?? "", item.run.wireModelId ?? "", ...item.run.tags]),
+				),
+				sort,
+				(item) => ({
+					name: runLabel(item.run),
+					date: item.run.settledAt ?? "",
+					id: item.run.runId,
+				}),
+			),
+		[loaded, verdict, q, sort],
 	);
 	return (
 		<section className="run-inspection">

@@ -836,7 +836,7 @@ export function planShare(input: {
 // ---------------------------------------------------------------------------------------------------------------
 // Archive
 
-export const SHARE_ARCHIVE_FORMAT = "pancode.telemetry.share";
+const SHARE_ARCHIVE_FORMAT = "pancode.telemetry.share";
 const SHARE_MANIFEST_FILE = "manifest.json";
 const ShareManifestSchema = Type.Object(
 	{

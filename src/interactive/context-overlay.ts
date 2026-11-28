@@ -39,7 +39,7 @@ import {
 
 const DEFAULT_CONTENT_WIDTH = 68;
 
-export const CONTEXT_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
+const CONTEXT_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
 
 function formatTokens(n: number): string {
 	return Math.round(Math.max(0, n)).toLocaleString("en-US");

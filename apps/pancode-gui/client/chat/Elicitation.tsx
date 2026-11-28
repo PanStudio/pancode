@@ -32,7 +32,7 @@ type FormPrompt = Extract<ElicitationPrompt, { mode: "form" }>;
 type UrlPrompt = Extract<ElicitationPrompt, { mode: "url" }>;
 
 /** The title block: which MCP server asks, in its own words, kept as plain text. */
-export function ElicitationHeading({ prompt, titleId }: { prompt: ElicitationPrompt; titleId: string }) {
+function ElicitationHeading({ prompt, titleId }: { prompt: ElicitationPrompt; titleId: string }) {
 	return (
 		<div>
 			<p className="eyebrow">MCP server request</p>
@@ -44,7 +44,7 @@ export function ElicitationHeading({ prompt, titleId }: { prompt: ElicitationPro
 }
 
 /** The link as it would open, with the part a lookalike cannot fake set apart, and any reason to look twice. */
-export function ElicitationLink({ prompt }: { prompt: UrlPrompt }) {
+function ElicitationLink({ prompt }: { prompt: UrlPrompt }) {
 	return (
 		<dl className="elicitation__link">
 			<dt>Domain</dt>
@@ -353,7 +353,7 @@ function ElicitationDialog({
 }
 
 /** The review page: every field as it will be sent, so nothing reaches the server unseen. */
-export function FormReview({
+function FormReview({
 	prompt,
 	content,
 	heading,

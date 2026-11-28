@@ -12,7 +12,7 @@ type Category = Entry["category"];
 type ReloadClass = Entry["reloadClass"];
 
 /** Display order. A category the graph reports and this table lacks is a type error, not a blank. */
-export const CATEGORY_PRESENTATION: Record<Category, { short: string; label: string; description: string }> = {
+const CATEGORY_PRESENTATION: Record<Category, { short: string; label: string; description: string }> = {
 	settings: { short: "SET", label: "Settings", description: "Layered values that shape PanCode's behavior." },
 	"pancode-md": {
 		short: "CTX",
@@ -90,7 +90,7 @@ export interface ConfigMapView {
 const count = (value: number) => value.toLocaleString("en-US");
 
 /** A scope is a wire word (`user`, `project`, `package`). It reads as a label, never as an enum. */
-export function scopeLabel(scope: string): string {
+function scopeLabel(scope: string): string {
 	// The graph spells the built-in scope as one word and the settings layers spell it as two. They
 	// are one source, so they count as one.
 	return scope === "builtin" || scope === "built-in" ? SETTING_SOURCE_LABELS["built-in"] : humanizeKey(scope);

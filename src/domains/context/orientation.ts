@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { sha256Hex } from "../../core/hash.js";
 import { shellQuote } from "../../core/shell-quote.js";
+import { asRecord } from "../../core/type-guards.js";
 import type { Codewiki } from "./codewiki/schema.js";
 import type { Fingerprint } from "./fingerprint.js";
 import { packageManager } from "./package-manager.js";
@@ -71,23 +72,18 @@ function hash(text: string | null): string | null {
 function text(value: unknown, max = 240): string | undefined {
 	return typeof value === "string" && value.trim() ? value.replace(/\s+/g, " ").trim().slice(0, max) : undefined;
 }
-function record(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
 
 export function buildProjectOrientation(cwd: string, codewiki: Codewiki, fingerprint: Fingerprint): ProjectOrientation {
 	const captured = Object.fromEntries(INPUTS.map((path) => [path, readInput(cwd, path)]));
 	let identity: ProjectOrientation["identity"] = null;
 	const commands: ProjectOrientation["commands"] = [];
 	try {
-		const pkg = record(JSON.parse(captured["package.json"] ?? "null"));
+		const pkg = asRecord(JSON.parse(captured["package.json"] ?? "null"));
 		if (pkg) {
 			const name = text(pkg.name, 80);
 			if (name) identity = { name, purpose: text(pkg.description), source: "package.json" };
 			const runner = packageManager(cwd);
-			const scripts = record(pkg.scripts);
+			const scripts = asRecord(pkg.scripts);
 			for (const name of ["build", "test:file", "test", "typecheck", "lint", "test:package", "ci"]) {
 				if (typeof scripts?.[name] === "string")
 					commands.push({ name, command: `${runner} run ${name}`, source: `package.json#scripts.${name}` });
@@ -111,7 +107,7 @@ export function buildProjectOrientation(cwd: string, codewiki: Codewiki, fingerp
 	] as const) {
 		if (identity) break;
 		try {
-			const table = record(parseToml(captured[path] ?? "")[key]);
+			const table = asRecord(parseToml(captured[path] ?? "")[key]);
 			const name = text(table?.name, 80);
 			if (name) identity = { name, purpose: text(table?.description), source: `${path}#${key}` };
 		} catch {
@@ -119,7 +115,7 @@ export function buildProjectOrientation(cwd: string, codewiki: Codewiki, fingerp
 		}
 	}
 	try {
-		const presets = record(JSON.parse(captured["CMakePresets.json"] ?? "null"));
+		const presets = asRecord(JSON.parse(captured["CMakePresets.json"] ?? "null"));
 		for (const [key, flag] of [
 			["configurePresets", ""],
 			["buildPresets", "--build "],
@@ -128,7 +124,7 @@ export function buildProjectOrientation(cwd: string, codewiki: Codewiki, fingerp
 			const values = presets?.[key];
 			if (!Array.isArray(values)) continue;
 			const selected = values
-				.map(record)
+				.map(asRecord)
 				.filter((preset) => preset && preset.hidden !== true && presetName(preset.name))
 				.sort((a, b) => {
 					const rank = (preset: Record<string, unknown> | null) =>
@@ -198,7 +194,7 @@ function presetName(value: unknown): string | undefined {
 
 /** Optional additive state field: a damaged orientation must not discard valid lifecycle evidence. */
 export function parseProjectOrientation(value: unknown): ProjectOrientation | undefined {
-	const v = record(value);
+	const v = asRecord(value);
 	if (
 		!v ||
 		Buffer.byteLength(JSON.stringify(v)) > MAX_ORIENTATION_BYTES ||
@@ -210,7 +206,7 @@ export function parseProjectOrientation(value: unknown): ProjectOrientation | un
 		!Number.isFinite(Date.parse(v.observedAt))
 	)
 		return;
-	const inputs = record(v.inputs);
+	const inputs = asRecord(v.inputs);
 	if (
 		!inputs ||
 		Object.keys(inputs).length !== INPUTS.length ||
@@ -222,7 +218,7 @@ export function parseProjectOrientation(value: unknown): ProjectOrientation | un
 		)
 	)
 		return;
-	const identity = v.identity === null ? null : record(v.identity);
+	const identity = v.identity === null ? null : asRecord(v.identity);
 	if (
 		v.identity !== null &&
 		(!identity ||
@@ -236,7 +232,7 @@ export function parseProjectOrientation(value: unknown): ProjectOrientation | un
 		!Array.isArray(v.commands) ||
 		v.commands.length > 7 ||
 		!v.commands.every((c) => {
-			const r = record(c);
+			const r = asRecord(c);
 			return r && typeof r.name === "string" && typeof r.command === "string" && typeof r.source === "string";
 		})
 	)
@@ -246,7 +242,7 @@ export function parseProjectOrientation(value: unknown): ProjectOrientation | un
 		!Array.isArray(v.areas) ||
 		v.areas.length > 6 ||
 		!v.areas.every((a) => {
-			const r = record(a);
+			const r = asRecord(a);
 			return r && typeof r.path === "string" && Number.isSafeInteger(r.files) && (r.files as number) >= 0;
 		})
 	)

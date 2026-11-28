@@ -20,7 +20,7 @@ import { useSessionCommands } from "../shell/SessionControls.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
 import { useSessionOverview, useTaskActions } from "../shell/tasks.js";
-import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
+import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import { useSessionIntent } from "../shell/use-session-intent.js";
 import type { SessionFilter } from "./mission-control-model.js";
 import { ACTIVITY, activityLabel, SESSION_FILTERS, sessionInventory } from "./mission-control-model.js";
@@ -55,15 +55,7 @@ export function MissionControl({ client }: { client: Client }) {
 	const page = useInventoryWindow(JSON.stringify([deferredQuery, project, filter]));
 	const list = useRef<HTMLDivElement>(null);
 	const set = (key: string, value: string) =>
-		setSearch(
-			(previous) => {
-				const next = new URLSearchParams(previous);
-				if (value) next.set(key, value);
-				else next.delete(key);
-				return next;
-			},
-			{ replace: true },
-		);
+		setSearch((previous) => searchWith(previous, key, value), { replace: true });
 	const overview = useSessionOverview(client);
 	const metrics = useOperatorMetrics(client, project);
 	const { controls } = useSessionCommands();

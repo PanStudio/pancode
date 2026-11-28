@@ -216,6 +216,12 @@ export interface WorkerSandboxSpec {
 	 */
 	backendExpected?: true;
 	/**
+	 * A local worker only, with `backendExpected`: the full backend this host's own probes found working, so the
+	 * worker takes it instead of probing again. It names only a working backend, so it can add confinement and never
+	 * remove any: a launch that then fails fails its command. A degraded or missing backend is never carried.
+	 */
+	probedBackend?: ProbedSandboxBackend;
+	/**
 	 * Admission found no backend where the worker runs and the operator allowed
 	 * it to run unconfined: `safety.sandboxUnconfinedLocalWorkers` for a local
 	 * worker, `fleet.nodes[].allowUnsandboxed` for a fleet node. Without it a
@@ -319,6 +325,13 @@ export interface SandboxReadRestriction {
 export interface SandboxInvocation {
 	file: string;
 	args: string[];
+}
+
+/** A full sandbox backend a host probe found working; `networkIsolation` when bubblewrap also isolated the network. */
+export interface ProbedSandboxBackend {
+	backend: SandboxBackend;
+	executable: string;
+	networkIsolation?: true;
 }
 
 export interface SandboxAvailability {

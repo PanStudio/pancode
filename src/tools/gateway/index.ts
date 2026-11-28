@@ -48,10 +48,10 @@ export type { McpCapabilitySource } from "./mcp-capability-types.js";
  * refused capability refuses the gateway call with the same verdict.
  */
 
-export const GATEWAY_OPS = ["find", "describe", "call", "chain"] as const;
+const GATEWAY_OPS = ["find", "describe", "call", "chain"] as const;
 
 /** Entries a find listing returns before it says `truncated` and asks for a narrower query. */
-export const GATEWAY_FIND_MAX_ENTRIES = 300;
+const GATEWAY_FIND_MAX_ENTRIES = 300;
 
 export interface GatewayCapabilityEntry {
 	name: string;
@@ -69,7 +69,7 @@ export interface GatewayCapabilityEntry {
 }
 
 /** Entries an unfiltered listing must exceed before a ranker is asked to order it. */
-export const GATEWAY_RANK_MIN_LISTING = 40;
+const GATEWAY_RANK_MIN_LISTING = 40;
 
 /** How every MCP server's instructions are labelled where the model reads them. */
 const MCP_SERVER_INSTRUCTIONS_NOTE =
@@ -103,7 +103,7 @@ export interface GatewayToolDeps {
 const DESCRIPTION =
 	'Discover builtin, extension and MCP capabilities. op="find" searches; an exact name adds its schema. op="describe" returns a schema; op="call" runs it with args under its own admission; op="chain" runs steps of any tool but gateway. Put capability at top level, its parameters in args. After an argument error, describe the capability before retrying. Discovery grants no authority.';
 
-export const gatewayToolSurface: ToolSurface = {
+const gatewayToolSurface: ToolSurface = {
 	name: ToolNames.Gateway,
 	description: DESCRIPTION,
 	parameters: Type.Object({

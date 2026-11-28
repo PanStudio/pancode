@@ -289,6 +289,10 @@ function competeSettingsFromArgs(args: Record<string, unknown>):
 	return { ok: true, compete: { candidates, ...routes, judge } };
 }
 
+function worktreeDestination(root: string | null): { worktreeDestination?: string } {
+	return root === null ? {} : { worktreeDestination: root };
+}
+
 function deepFreeze<T>(value: T): T {
 	if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
 	for (const child of Object.values(value)) deepFreeze(child);
@@ -617,9 +621,7 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 				? {
 						worktree: true as const,
 						apply: request.apply ?? "merge",
-						...(gitCheckoutRoot(resolve(request.cwd ?? process.cwd())) === null
-							? {}
-							: { worktreeDestination: gitCheckoutRoot(resolve(request.cwd ?? process.cwd())) as string }),
+						...worktreeDestination(gitCheckoutRoot(resolve(request.cwd ?? process.cwd()))),
 					}
 				: {}),
 			target: resolution.targetId,

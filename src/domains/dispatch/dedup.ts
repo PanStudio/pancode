@@ -12,9 +12,10 @@
 
 import { canonicalJson } from "../../core/canonical-json.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { asRecord } from "../../core/type-guards.js";
 import type { MiddlewareEffect, MiddlewareHookInput, MiddlewareHookRegistration } from "../middleware/index.js";
 
-export const DISPATCH_DEDUP_REGISTRATION_ID = "guard.dispatch-dedup";
+const DISPATCH_DEDUP_REGISTRATION_ID = "guard.dispatch-dedup";
 
 /** Bounded turn-id memory, matching the loop guard's policy. */
 const DISPATCH_GUARD_TURN_LIMIT = 32;
@@ -148,12 +149,6 @@ function formatDispatchDuplicateSummary(args: MiddlewareHookInput["toolArgs"]): 
 
 function stringValue(value: unknown): string | null {
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
 }
 
 function stringArrayValue(value: unknown): string[] {

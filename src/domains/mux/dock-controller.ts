@@ -60,7 +60,7 @@ export interface DockSpec {
  * file pane wants rows, and a dock that wanders per terminal width would make
  * the layout feel like weather.
  */
-export const DOCK_SPECS: Readonly<Record<DockSlot, DockSpec>> = {
+const DOCK_SPECS: Readonly<Record<DockSlot, DockSpec>> = {
 	// The workers dashboard reads at 40 columns (src/cli/fleet-board.ts sheds the
 	// task, then the model, never the state or clock), which is half of an
 	// 80-column terminal.
@@ -74,9 +74,9 @@ export const DOCK_SPECS: Readonly<Record<DockSlot, DockSpec>> = {
 export const PARKING_TAB_LABEL = "pancode parked";
 
 /** A dock may never take more than half the axis, whatever the share asks. */
-export const DOCK_MAX_SHARE = 0.5;
+const DOCK_MAX_SHARE = 0.5;
 /** Observed-vs-applied share differences below this are rounding, not a user drag. */
-export const SHARE_EPSILON = 0.02;
+const SHARE_EPSILON = 0.02;
 
 export interface DockState {
 	slot: DockSlot;

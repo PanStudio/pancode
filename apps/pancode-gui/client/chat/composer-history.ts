@@ -12,13 +12,13 @@
  * the stepping rules under plain node:test.
  */
 
-export const HISTORY_MAX_ENTRIES = 100;
+const HISTORY_MAX_ENTRIES = 100;
 /** A pasted file is not a message worth recalling, and it would crowd the storage quota. */
-export const HISTORY_MAX_CHARACTERS = 4000;
+const HISTORY_MAX_CHARACTERS = 4000;
 const HISTORY_KEY = "pancode-prompt-history";
 
 /** Oldest first. A message sent twice in a row is kept once. */
-export function appendHistory(entries: readonly string[], text: string): readonly string[] {
+function appendHistory(entries: readonly string[], text: string): readonly string[] {
 	const sent = text.trim();
 	if (sent === "" || sent.length > HISTORY_MAX_CHARACTERS || entries.at(-1) === sent) return entries;
 	return [...entries, sent].slice(-HISTORY_MAX_ENTRIES);

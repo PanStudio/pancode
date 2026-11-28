@@ -14,7 +14,7 @@ export interface EditorBashCommand {
  * controller removes this envelope before routing the text as an ordinary
  * prompt; it is never persisted or sent to a model.
  */
-export const PASTED_EDITOR_OPERATOR_GUARD = MARKER.pastedOperatorGuard;
+const PASTED_EDITOR_OPERATOR_GUARD = MARKER.pastedOperatorGuard;
 
 export function guardPastedEditorOperator(text: string): string {
 	return `${PASTED_EDITOR_OPERATOR_GUARD}${text}`;

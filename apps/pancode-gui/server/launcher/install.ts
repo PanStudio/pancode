@@ -13,7 +13,7 @@ const names = { entry: `${launcherId}.desktop`, manifest: `${launcherId}.desktop
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 /** A file at a launcher path that is there but is not one PanCode may read: a symlink, a directory, a hard link, too large, or another user's. */
-export class UnsafeLauncherFile extends Error {}
+class UnsafeLauncherFile extends Error {}
 
 export async function contents(path: string) {
 	try {
@@ -27,7 +27,7 @@ export async function contents(path: string) {
 	}
 }
 
-export async function launcherFiles(prefix: string, platform: NodeJS.Platform = process.platform) {
+async function launcherFiles(prefix: string, platform: NodeJS.Platform = process.platform) {
 	if (platform !== "linux") throw new Error(launcherUnsupported);
 	if (!isAbsolute(prefix)) throw new Error("--prefix must be an absolute XDG data directory.");
 	const directory = join(prefix, "applications");

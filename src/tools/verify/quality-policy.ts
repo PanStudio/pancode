@@ -6,6 +6,7 @@ import path from "node:path";
 import { parseDocument } from "yaml";
 import { sha256Hex } from "../../core/hash.js";
 import { gitExecFileSync } from "../../core/internal-git-run.js";
+import { asRecord } from "../../core/type-guards.js";
 import { createRootVerifyResolver, type VerifyResolution } from "./resolve.js";
 
 export const QUALITY_POLICY_PATH = ".pancode/quality.yaml";
@@ -45,12 +46,6 @@ export interface QualityFinding {
 }
 
 type PolicyLoad = { ok: true; policy: QualityPolicy | null } | { ok: false; reason: string };
-
-function record(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
 
 function fields(value: Record<string, unknown>, allowed: string[]): void {
 	const unexpected = Object.keys(value).filter((key) => !allowed.includes(key));
@@ -96,7 +91,7 @@ function qualityFileExists(root: string, relative: string, components?: Map<stri
 			if (lstatSync(current).isSymbolicLink()) throw new Error(`symbolic link in quality input '${relative}'`);
 			components?.set(current, true);
 		} catch (error) {
-			if (record(error)?.code === "ENOENT") {
+			if (asRecord(error)?.code === "ENOENT") {
 				components?.set(current, false);
 				return false;
 			}
@@ -129,14 +124,14 @@ export function loadQualityPolicy(root: string): PolicyLoad {
 		try {
 			lstatSync(path.join(root, QUALITY_POLICY_PATH));
 		} catch (error) {
-			if (record(error)?.code === "ENOENT") return { ok: true, policy: null };
+			if (asRecord(error)?.code === "ENOENT") return { ok: true, policy: null };
 			throw error;
 		}
 		const bytes = boundedFile(root, QUALITY_POLICY_PATH);
 		if (bytes.length > 64 * 1024) throw new Error("policy exceeds 65536 bytes");
 		const document = parseDocument(bytes.toString("utf8"), { uniqueKeys: true });
 		if (document.errors.length) throw new Error(document.errors.map((error) => error.message).join("; "));
-		const raw = record(document.toJS({ maxAliasCount: 0 }));
+		const raw = asRecord(document.toJS({ maxAliasCount: 0 }));
 		if (!raw) throw new Error("policy must be an object");
 		fields(raw, ["version", "rules"]);
 		if (raw.version !== 1) throw new Error("version must be 1");
@@ -144,7 +139,7 @@ export function loadQualityPolicy(root: string): PolicyLoad {
 			throw new Error("rules must contain 1–32 entries");
 		const ids = new Set<string>();
 		const rules = raw.rules.map((value): QualityRule => {
-			const rule = record(value);
+			const rule = asRecord(value);
 			if (!rule) throw new Error("each rule must be an object");
 			fields(rule, ["id", "paths", "inputs", "checks", "allowLimitations"]);
 			if (typeof rule.id !== "string" || !/^[a-z][a-z0-9._-]{0,63}$/u.test(rule.id) || ids.has(rule.id))
@@ -352,7 +347,7 @@ function verifyReceiptPassed(receipt: Record<string, unknown>, details: Record<s
 		details.outputCapped === true
 	)
 		return false;
-	const judgement = record(details.judgement);
+	const judgement = asRecord(details.judgement);
 	if (judgement === null) return details.exitCode === 0;
 	if (judgement.execution !== "succeeded") return false;
 	if (judgement.validation === "passed") return true;
@@ -375,16 +370,16 @@ export function assessQualityPolicy(
 	const latest = new Map<string, Record<string, unknown>>();
 	const limited = new Set<string>();
 	for (const entry of entries) {
-		const row = record(entry);
-		const payload = record(row?.payload);
+		const row = asRecord(entry);
+		const payload = asRecord(row?.payload);
 		if (row?.kind !== "message" || !payload || typeof payload.toolCallId !== "string") continue;
 		if (row.role === "tool_call") {
-			const args = record(payload.args);
+			const args = asRecord(payload.args);
 			if (typeof payload.name === "string" && args) calls.set(payload.toolCallId, { name: payload.name, args });
 		} else if (row.role === "tool_result") {
 			const call = calls.get(payload.toolCallId);
 			if (!call) continue;
-			const result = record(payload.result);
+			const result = asRecord(payload.result);
 			if (call.name === "verify" && typeof call.args.check === "string") {
 				latest.set(call.args.check.trim(), {
 					...result,
@@ -393,7 +388,7 @@ export function assessQualityPolicy(
 				});
 			} else if (
 				call.name === "limitation" &&
-				(result?.kind === "ok" || record(result?.details)?.kind === "ok") &&
+				(result?.kind === "ok" || asRecord(result?.details)?.kind === "ok") &&
 				payload.isError !== true &&
 				payload.error !== true &&
 				Array.isArray(call.args.paths)
@@ -417,13 +412,13 @@ export function assessQualityPolicy(
 			if (rule.allowLimitations && limited.has(check) && !receipt)
 				return finding("limited", "Explicit limitation recorded; check remains unverified.");
 			if (!receipt) return finding("missing", `Run verify(check=${JSON.stringify(check)}) without args or cwd overrides.`);
-			const details = record(receipt.details);
+			const details = asRecord(receipt.details);
 			if (details === null || !verifyReceiptPassed(receipt, details))
 				return rule.allowLimitations && limited.has(check)
 					? finding("limited", "Explicit limitation recorded; latest check did not pass.")
 					: finding("failed", "Latest check did not complete successfully.");
-			const provenance = record(details.quality);
-			const args = record(receipt.args);
+			const provenance = asRecord(details.quality);
+			const args = asRecord(receipt.args);
 			if (typeof provenance?.error === "string")
 				return rule.allowLimitations && limited.has(check)
 					? finding("limited", "Explicit limitation recorded; snapshot unavailable.")

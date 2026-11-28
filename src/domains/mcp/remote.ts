@@ -14,7 +14,7 @@ import { isHttpToken } from "./http-headers.js";
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** A credential key as the operator names it in `headers`. */
-export const MCP_CREDENTIAL_KEY_PATTERN = /^[a-z0-9][a-z0-9_.-]*$/u;
+const MCP_CREDENTIAL_KEY_PATTERN = /^[a-z0-9][a-z0-9_.-]*$/u;
 export const MCP_CREDENTIAL_KEY_CHARS = 64;
 
 /**

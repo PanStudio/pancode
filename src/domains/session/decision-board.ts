@@ -50,7 +50,7 @@ export interface AgentDecisionInput {
 }
 
 /** The shortest quote that can state a ruling; "yes" or "ok" answer something, but name no choice. */
-export const OPERATOR_QUOTE_MIN_CHARS = 12;
+const OPERATOR_QUOTE_MIN_CHARS = 12;
 
 function collapse(text: string): string {
 	return text.replace(/\s+/gu, " ").trim();

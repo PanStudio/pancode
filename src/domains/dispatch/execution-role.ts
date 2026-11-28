@@ -38,7 +38,7 @@ import { type RunRole, requestedWriteNone, resolveRunRole } from "./obligation.j
  */
 export type ExecutionRole = (typeof EXECUTION_ROLE_VOCABULARY)[number];
 
-export const EXECUTION_ROLES: ReadonlyArray<ExecutionRole> = EXECUTION_ROLE_VOCABULARY;
+const EXECUTION_ROLES: ReadonlyArray<ExecutionRole> = EXECUTION_ROLE_VOCABULARY;
 
 export function isExecutionRole(value: unknown): value is ExecutionRole {
 	return typeof value === "string" && (EXECUTION_ROLES as ReadonlyArray<string>).includes(value);
@@ -149,7 +149,7 @@ export function agentRunRoles(agentId: string, resolveFacts: AgentRoleFactsResol
  * the default has to be an agent whose entire contract is independent typed
  * validation.
  */
-export const DEFAULT_GATE_DECIDER_AGENT_ID = "verifier";
+const DEFAULT_GATE_DECIDER_AGENT_ID = "verifier";
 
 /** Resolve a gate decider without ever falling back to the subject builder. */
 export function gateDeciderAgentId(requested: string | undefined): string {
@@ -175,7 +175,7 @@ export function reviewDeciderAgentId(requested: string | undefined, installed?: 
  * `council-read-only` profile does not grant. Oracle is read-only and needs
  * only `read`, so it fits the profile and differs from the default seat.
  */
-export const DEFAULT_COUNCIL_JUDGE_AGENT_ID = "oracle";
+const DEFAULT_COUNCIL_JUDGE_AGENT_ID = "oracle";
 const COUNCIL_JUDGE_ALTERNATE_AGENT_ID = "researcher";
 
 /** Resolve a council judge that is never the seated agent unless the caller names it. */

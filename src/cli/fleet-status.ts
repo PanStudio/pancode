@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { processAlive } from "../core/process-identity.js";
 import type { FactSum } from "../core/telemetry/fact.js";
 import { sumFactSums } from "../core/telemetry/pricing.js";
 import { renderCountSum, renderCountSumKnown, renderDurationSum, renderUsdSum } from "../core/telemetry/render.js";
@@ -205,20 +206,10 @@ async function emptySnapshot(all: boolean, nowMs: number): Promise<StatusSnapsho
 	};
 }
 
-function isProcessAlive(pid: number | null): boolean {
-	if (pid === null || !Number.isFinite(pid) || pid <= 0) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
-
 function rowHeartbeat(row: RunEnvelope): RunningRow["heartbeat"] {
 	if (row.status === "stale") return "stale";
 	if (row.status === "dead") return "dead";
-	return isProcessAlive(row.pid) ? "alive" : "dead";
+	return row.pid !== null && processAlive(row.pid) ? "alive" : "dead";
 }
 
 /**

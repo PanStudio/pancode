@@ -6,7 +6,7 @@ import { type Static, Type } from "typebox";
 const closed = { additionalProperties: false };
 const text = (max: number) => Type.String({ maxLength: max });
 
-export const ProblemReportDraftId = Type.String({ pattern: "^rpt_[0-9A-HJKMNP-TV-Z]{26}$" });
+const ProblemReportDraftId = Type.String({ pattern: "^rpt_[0-9A-HJKMNP-TV-Z]{26}$" });
 export const ProblemReportDraftParams = Type.Object(
 	{ id: Type.String({ minLength: 1, maxLength: 128 }), draft: ProblemReportDraftId },
 	closed,

@@ -8,14 +8,14 @@ const closed = { additionalProperties: false };
 const strings = Type.Array(Type.String());
 const nullable = Type.Union([Type.String(), Type.Null()]);
 const record = Type.Record(Type.String(), Type.Unknown());
-export const Verdict = Type.Union([
+const Verdict = Type.Union([
 	Type.Literal("compromised"),
 	Type.Literal("unverified"),
 	Type.Literal("unknown"),
 	Type.Literal("grounded"),
 	Type.Literal("reviewed"),
 ]);
-export const TrustAxes = Type.Object(
+const TrustAxes = Type.Object(
 	{
 		artifactIntegrity: Type.String(),
 		validationGrounding: Type.String(),
@@ -25,7 +25,7 @@ export const TrustAxes = Type.Object(
 	},
 	closed,
 );
-export const TrustSummary = Type.Object(
+const TrustSummary = Type.Object(
 	{
 		version: Type.Literal(1),
 		verdict: Verdict,
@@ -77,7 +77,7 @@ export const EvidenceRun = Type.Object(
  * `reason` is the one-line verdict the TUI worker card prints, naming the check that decides it: a compromised run whose
  * seal verified says which check failed instead of a generic line (R2-F11).
  */
-export const EvidenceItem = Type.Object({ run: EvidenceRun, verdict: Verdict, reason: Type.String() }, closed);
+const EvidenceItem = Type.Object({ run: EvidenceRun, verdict: Verdict, reason: Type.String() }, closed);
 export const EvidencePage = Type.Object(
 	{ items: Type.Array(EvidenceItem), nextCursor: nullable, present: Type.Boolean() },
 	closed,

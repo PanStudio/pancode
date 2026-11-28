@@ -3,7 +3,7 @@
 import type { FilePreview } from "../../contracts/sessions.js";
 
 /** The most lines a preview lays out at once; a longer file shows the stretch around the named line. */
-export const PREVIEW_WINDOW_LINES = 600;
+const PREVIEW_WINDOW_LINES = 600;
 
 export interface PreviewLine {
 	readonly number: number;

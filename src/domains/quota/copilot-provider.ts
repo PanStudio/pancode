@@ -46,7 +46,7 @@ import {
 } from "./types.js";
 
 export const COPILOT_QUOTA_PROVIDER_ID = "copilot";
-export const NANO_AIU_PER_AI_CREDIT = 1_000_000_000;
+const NANO_AIU_PER_AI_CREDIT = 1_000_000_000;
 
 export interface CopilotQuotaOptions {
 	readQuota?: (options?: CopilotQuotaReadOptions) => Promise<CopilotQuotaReadResult>;

@@ -11,7 +11,7 @@ import { type MiddlewareEffect, metadataNumber } from "./types.js";
 
 /** Task-ranked workflow advice; count-only hosts retain their once-per-session fallback. */
 
-export const SKILLS_REMINDER_REGISTRATION_ID = "observer.skills-reminder";
+const SKILLS_REMINDER_REGISTRATION_ID = "observer.skills-reminder";
 
 export { SKILL_SUGGESTION_ANCHOR };
 

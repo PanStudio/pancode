@@ -7,7 +7,7 @@ import { isRecord } from "../../core/type-guards.js";
 import { atomicWrite } from "../../engine/session.js";
 import { normalizeUserTaskAcceptance, type UserTaskAcceptance } from "./acceptance.js";
 
-export const USER_TASKS_FILE_VERSION = 1 as const;
+const USER_TASKS_FILE_VERSION = 1 as const;
 export const USER_TASKS_RELATIVE_PATH = `${PANCODE_PROJECT_DIR}/user-tasks.json`;
 
 export type UserTaskStatus = "open" | "handed" | "picked" | "done" | "dropped";

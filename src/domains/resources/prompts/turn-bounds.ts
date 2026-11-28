@@ -3,6 +3,7 @@
 import { isToolLimitName } from "../../../core/tool-limit-flags.js";
 import { ToolNames } from "../../../core/tool-names.js";
 import { STEP_POLICY_ROUTES, type StepPolicyRoute } from "../../../core/turn-constraints.js";
+import { asRecord } from "../../../core/type-guards.js";
 
 /**
  * Frontmatter `budget` and `turnPolicy`: what bounds one turn a template
@@ -23,18 +24,12 @@ const TOOL_NAMES_BY_LOWERCASE = new Map(Object.values(ToolNames).map((name) => [
 /** Below one observation slice no observation tool could return anything. */
 const MIN_OBSERVATION_BYTES = 1024;
 
-function record(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function unknownKeys(value: Record<string, unknown>, known: readonly string[]): string[] {
 	return Object.keys(value).filter((key) => !known.includes(key));
 }
 
 function parseBudget(value: unknown): TemplateTurnBounds["budget"] | string {
-	const budget = record(value);
+	const budget = asRecord(value);
 	if (budget === null) return "budget must be a mapping such as {toolCalls: 40, observationBytes: 65536}";
 	const extra = unknownKeys(budget, ["toolCalls", "observationBytes"]);
 	if (extra.length > 0) return `budget has unknown keys ${extra.join(", ")}; it takes toolCalls and observationBytes`;
@@ -58,7 +53,7 @@ function parseTurnPolicy(
 	value: unknown,
 	allowedTools: readonly string[] | undefined,
 ): TemplateTurnBounds["turnPolicy"] | string {
-	const policy = record(value);
+	const policy = asRecord(value);
 	if (policy === null)
 		return "turnPolicy must be a mapping that names its step tool, such as {mode: step, stepTool: extension_desk__next_step}";
 	const extra = unknownKeys(policy, ["mode", "stepTool", "when"]);

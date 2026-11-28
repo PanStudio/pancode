@@ -15,7 +15,7 @@ import { setPageTitle } from "../interaction/announcer.js";
 import { Dialog } from "../interaction/Dialog.js";
 import { attachInstallCommand, attachmentStatus, openAction } from "../shell/machine-switcher-model.js";
 import { useMachineAttach } from "../shell/use-machine-attach.js";
-import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
+import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import type { MachineDraft, MachineRequest } from "./machines-model.js";
 import {
 	acceptMachineRequest,
@@ -400,9 +400,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 	const set = (key: string, value: string) =>
 		setSearch(
 			(previous) => {
-				const next = new URLSearchParams(previous);
-				if (value) next.set(key, value);
-				else next.delete(key);
+				const next = searchWith(previous, key, value);
 				if (key !== "machine") next.delete("machine");
 				return next;
 			},

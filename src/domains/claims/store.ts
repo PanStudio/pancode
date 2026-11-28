@@ -112,7 +112,7 @@ export function claimsIndexPath(projectRoot: string): string {
  * The most bytes one log line may hold. Every record is bounded by capture, so a longer line is damage or a writer
  * bug: it is never appended, and on read it counts as unreadable without being parsed.
  */
-export const CLAIMS_LOG_LINE_MAX_BYTES = 64 * 1024;
+const CLAIMS_LOG_LINE_MAX_BYTES = 64 * 1024;
 
 function withinLineBound(line: string): boolean {
 	return line.length <= CLAIMS_LOG_LINE_MAX_BYTES && Buffer.byteLength(line, "utf8") <= CLAIMS_LOG_LINE_MAX_BYTES;

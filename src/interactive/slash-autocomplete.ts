@@ -214,7 +214,7 @@ export function compactArgumentHint(args: CommandArgsSpec | undefined): string |
 }
 
 /** Explicit attachment manifest: grammar owns positions, providers only own values. */
-export const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
+const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
 	"run:pos:agent": "agents",
 	"run:flag:--agent-profile": "agent-profiles",
 	"run:flag:--target": "targets",

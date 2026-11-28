@@ -35,7 +35,7 @@ import type {
 } from "../../core/telemetry/live-events.js";
 import { deferRecord } from "./deferred-writes.js";
 
-export const RUN_OWNER_FILE = "owner.json";
+const RUN_OWNER_FILE = "owner.json";
 export const RUN_GRANTS_DIR = "grants";
 const RECORD_VERSION = 1;
 

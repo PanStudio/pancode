@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 /** The four facets of the stone, in the order every cut draws them. */
-export const MARK_PARTS = ["left", "top", "right", "point"] as const;
+const MARK_PARTS = ["left", "top", "right", "point"] as const;
 export type MarkPart = (typeof MARK_PARTS)[number];
 
 /** One gradient stop: the palette names the full cut and the light cut give it. */
