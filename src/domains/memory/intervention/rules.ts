@@ -4,7 +4,6 @@
 import { headForRedaction } from "../../../lib/secrets/redact.js";
 import type { MiddlewareEffect } from "../../middleware/types.js";
 import { ceilChars } from "../../session/context-accounting.js";
-import type { MemoryInterventionOffer, MemoryInterventionRegistration } from "../intervention-types.js";
 import { redactForMemoryRoute } from "../secret-text.js";
 import { TASK_MEMORY_DEFAULT_PROCEDURAL_CAP, type TaskMemoryEntry } from "../task-bank.js";
 import { shortText } from "../util.js";
@@ -17,6 +16,7 @@ import {
 	setBounded,
 	type TrajectoryStep,
 } from "./scope.js";
+import type { MemoryInterventionOffer, MemoryInterventionRegistration } from "./types.js";
 
 /** A firing that delivered an approved lesson matched it; the registration's own evidence names a failure recurrence. */
 const DURABLE_LESSON_EVIDENCE = "match:durable-lesson@task-memory";

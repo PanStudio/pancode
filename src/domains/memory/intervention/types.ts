@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { MemoryDeliveryMode, MemorySurfaceSettings } from "../../core/defaults.js";
-import type { MiddlewareHookEvaluationContext, MiddlewareHookRegistration } from "../middleware/runtime.js";
-import type { MiddlewareEffect, MiddlewareHookInput } from "../middleware/types.js";
-import type { CommandSegment } from "./command-evidence.js";
+import type { MemoryDeliveryMode, MemorySurfaceSettings } from "../../../core/defaults.js";
+import type { MiddlewareHookEvaluationContext, MiddlewareHookRegistration } from "../../middleware/runtime.js";
+import type { MiddlewareEffect, MiddlewareHookInput } from "../../middleware/types.js";
+import type { CommandSegment } from "../command-evidence.js";
 import type {
 	MemoryCommitScope,
 	MemoryCommitVerdict,
 	MemoryContentStamp,
 	MemoryRestorationOffer,
 	SuccessfulMemoryContextCommit,
-} from "./commit-state.js";
-import type { MemoryObservationCommands } from "./contract.js";
-import type { KeptLesson } from "./lesson-projection.js";
-import type { TaskMemoryTelemetrySink, TaskMemoryTelemetryTrigger } from "./memory-events.js";
-import type { MemoryNoteArgs, MemoryNoteEvidence } from "./notes.js";
-import type { MemoryRestorationInput } from "./restoration.js";
-import type { TaskMemoryBank, TaskMemoryEntry } from "./task-bank.js";
-import type { TaskMemoryEnvelope, TaskMemoryModelClient, TaskMemoryPolicyResult } from "./task-memory-policy.js";
-import type { TaskMemoryActivityEvent } from "./task-memory-status.js";
+} from "../commit-state.js";
+import type { MemoryObservationCommands } from "../contract.js";
+import type { KeptLesson } from "../lesson-projection.js";
+import type { TaskMemoryTelemetrySink, TaskMemoryTelemetryTrigger } from "../memory-events.js";
+import type { MemoryNoteArgs, MemoryNoteEvidence } from "../notes.js";
+import type { MemoryRestorationInput } from "../restoration.js";
+import type { TaskMemoryBank, TaskMemoryEntry } from "../task-bank.js";
+import type { TaskMemoryEnvelope, TaskMemoryModelClient, TaskMemoryPolicyResult } from "../task-memory-policy.js";
+import type { TaskMemoryActivityEvent } from "../task-memory-status.js";
 
 /**
  * What the session saw after an llm-tier reminder reached the action agent.

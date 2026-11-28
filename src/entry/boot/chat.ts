@@ -30,7 +30,7 @@ import type {
 } from "../../domains/memory/compaction/flow.js";
 import type { MemoryGuardian } from "../../domains/memory/guardian.js";
 import { type MemoryRuntime, memoryRecordStanding, renderTaskMemoryHandoffSource } from "../../domains/memory/index.js";
-import type { MemoryInterventionRegistration } from "../../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../../domains/memory/intervention/types.js";
 import type { MemoryPromptReader } from "../../domains/memory/prompt-cache.js";
 import { readMemoryStoreSnapshot } from "../../domains/memory/store.js";
 import type { TaskMemoryBank } from "../../domains/memory/task-bank.js";

@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { type CommandSegment, commandSegment, receiptVouches } from "../command-evidence.js";
-import type { MemoryDeliveryOutcome, MemoryInterventionOffer } from "../intervention-types.js";
 import { lessonEvidence, readInsideRoot, repositoryRelativePath } from "../lesson-evidence.js";
 import type { TaskMemoryEntry } from "../task-bank.js";
 import { collapseWhitespace, type InterventionScope } from "./scope.js";
+import type { MemoryDeliveryOutcome, MemoryInterventionOffer } from "./types.js";
 
 /** Recurrences after submission of a failure the reminder was about before it counts as contradicted. */
 const MEMORY_DELIVERY_CONTRADICTED_RECURRENCES = 2;

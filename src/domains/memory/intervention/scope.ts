@@ -8,15 +8,6 @@ import type { MiddlewareEffect, MiddlewareHookInput } from "../../middleware/typ
 import { BACKGROUND_SKIP_REASONS, type BackgroundSkipReason } from "../background-budget.js";
 import type { CommandSegment } from "../command-evidence.js";
 import type { MemoryCommitScope, MemoryCommitState } from "../commit-state.js";
-import type { PendingToolStep } from "../intervention-tool-step.js";
-import type {
-	MemoryInterventionDeps,
-	MemoryInterventionOffer,
-	MemoryInterventionSettings,
-	MemoryInterventionTriggerReason,
-	MemoryPromptedStepInput,
-	MemoryPromptedStepResult,
-} from "../intervention-types.js";
 import type { KeptLesson } from "../lesson-projection.js";
 import type {
 	TaskMemoryTelemetryDecision,
@@ -31,6 +22,15 @@ import type {
 	TaskMemoryTrajectoryStep,
 } from "../task-memory-policy.js";
 import type { TaskMemoryActivityEvent } from "../task-memory-status.js";
+import type { PendingToolStep } from "./tool-step.js";
+import type {
+	MemoryInterventionDeps,
+	MemoryInterventionOffer,
+	MemoryInterventionSettings,
+	MemoryInterventionTriggerReason,
+	MemoryPromptedStepInput,
+	MemoryPromptedStepResult,
+} from "./types.js";
 
 export const noTokens: Fact<number> = { kind: "absent", reason: "not-applicable" };
 

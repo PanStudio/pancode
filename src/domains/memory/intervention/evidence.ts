@@ -18,12 +18,12 @@ import {
 	verifyReceiptCommand,
 	verifyRunPassed,
 } from "../command-evidence.js";
-import { WORKSPACE_CHANGING_CLASSES } from "../intervention-tool-step.js";
-import type { MemoryInterventionRegistration } from "../intervention-types.js";
 import { commandSubject, readInsideRoot, repositoryRelativePath } from "../lesson-evidence.js";
 import { exercisesWork, fixPairOf, type MemoryNoteEvidence } from "../notes.js";
 import { redactForMemoryRoute } from "../secret-text.js";
 import { collapseWhitespace, type InterventionScope, setBounded } from "./scope.js";
+import { WORKSPACE_CHANGING_CLASSES } from "./tool-step.js";
+import type { MemoryInterventionRegistration } from "./types.js";
 
 /**
  * Tool calls since the last lesson pass that make a finished turn worth one.

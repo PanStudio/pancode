@@ -7,6 +7,10 @@ import { isRecord } from "../../../core/type-guards.js";
 import { isRefusalToolResultError } from "../../../tools/result-disposition.js";
 import type { MiddlewareEffect, MiddlewareHookInput } from "../../middleware/types.js";
 import { successfulShellReceipt } from "../command-evidence.js";
+import { recordObservedRead, repositoryRelativePath } from "../lesson-evidence.js";
+import { redactForMemoryRoute } from "../secret-text.js";
+import { shortText } from "../util.js";
+import { type InterventionScope, NO_EFFECTS, setBounded, type TrajectoryStep } from "./scope.js";
 import {
 	chainChildText,
 	documentationChange,
@@ -15,11 +19,7 @@ import {
 	resultDigest,
 	verificationGap,
 	WORKSPACE_CHANGING_CLASSES,
-} from "../intervention-tool-step.js";
-import { recordObservedRead, repositoryRelativePath } from "../lesson-evidence.js";
-import { redactForMemoryRoute } from "../secret-text.js";
-import { shortText } from "../util.js";
-import { type InterventionScope, NO_EFFECTS, setBounded, type TrajectoryStep } from "./scope.js";
+} from "./tool-step.js";
 
 const TURN_LOG_LIMIT = 40;
 const TURN_LOG_CALL_MAX_CHARS = 300;

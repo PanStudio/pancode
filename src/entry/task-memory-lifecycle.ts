@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { TelemetryHub } from "../core/telemetry/hub.js";
-import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../domains/memory/intervention/types.js";
 
 /** Saves the bank of a session being parked and hands it back when that session is resumed. */
 interface TaskMemoryBankPersistence {

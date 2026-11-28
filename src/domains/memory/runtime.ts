@@ -33,12 +33,12 @@ import type {
 import type { MemoryGuardian, MemoryGuardianDeps } from "./guardian.js";
 import { createMemoryGuardian } from "./guardian.js";
 import { type CompletedLessonSource, recordReviewedHistoryCalls } from "./history-review.js";
-import { createMemoryInterventionRegistration } from "./intervention.js";
 import type {
 	MemoryInterventionDeps,
 	MemoryInterventionRegistration,
 	MemoryStepLaunchOutcome,
-} from "./intervention-types.js";
+} from "./intervention/types.js";
+import { createMemoryInterventionRegistration } from "./intervention.js";
 import { type HistoryFiling, type HistoryLessons, MemoryLessonFeedback } from "./lesson-feedback.js";
 import { createKeptLessonSource, type KeptLesson, MemoryDeliveryGate, projectKeptLesson } from "./lesson-projection.js";
 import { fileFixNote, type MemoryNoteArgs, type MemoryNoteWritten, writeAgentNote } from "./notes.js";

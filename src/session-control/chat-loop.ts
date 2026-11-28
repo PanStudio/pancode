@@ -28,7 +28,7 @@ import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
 import { SMALL_WINDOW_TOKENS } from "../domains/context/fold/pressure.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
 import { captureWorkerContext } from "../domains/context/worker/snapshot.js";
-import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../domains/memory/intervention/types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessages } from "../engine/agent.js";
 /**

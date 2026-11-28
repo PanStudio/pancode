@@ -4,8 +4,8 @@ import { deepStrictEqual, match, ok, strictEqual, throws } from "node:assert/str
 import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { DomainContext } from "../../src/core/domain-loader.js";
+import type { MemoryInterventionSettings } from "../../src/domains/memory/intervention/types.js";
 import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
-import type { MemoryInterventionSettings } from "../../src/domains/memory/intervention-types.js";
 import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
 import type { TaskMemoryModelResponse } from "../../src/domains/memory/task-memory-policy.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";

@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { neutralizeFraming } from "../../../core/reminder-framing.js";
-import type { MemoryInterventionOffer, MemoryInterventionRegistration } from "../intervention-types.js";
 import type { TaskMemoryEntry } from "../task-bank.js";
 import { entryRevision, type InterventionScope } from "./scope.js";
+import type { MemoryInterventionOffer, MemoryInterventionRegistration } from "./types.js";
 
 /** Produced reminders awaiting submission; the oldest is released first. */
 const PENDING_OFFER_LIMIT = 32;

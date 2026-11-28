@@ -9,7 +9,7 @@ import { telemetryHub } from "../core/telemetry/hub.js";
 import { factKnownValue } from "../core/telemetry/known.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import type { SuccessfulMemoryContextCommit } from "../domains/memory/commit-state.js";
-import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
+import type { MemoryInterventionRegistration } from "../domains/memory/intervention/types.js";
 import { compactionBudget, getCatalogModelForRuntime } from "../domains/providers/catalog.js";
 import { readSessionContextSnapshots } from "../domains/telemetry/index.js";
 import {

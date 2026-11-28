@@ -3,8 +3,8 @@
 
 import type { MiddlewareHookInput } from "../../middleware/types.js";
 import { MemoryCommitState } from "../commit-state.js";
-import type { MemoryInterventionRegistration } from "../intervention-types.js";
 import { type InterventionScope, noTokens } from "./scope.js";
+import type { MemoryInterventionRegistration } from "./types.js";
 
 export function createInterventionLifecycle(scope: InterventionScope) {
 	const { deps } = scope;

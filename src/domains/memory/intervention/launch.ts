@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { MiddlewareEffect } from "../../middleware/types.js";
-import type { MemoryInterventionRegistration, MemoryStepLaunchOutcome } from "../intervention-types.js";
 import type { TaskMemoryPolicyReason } from "../task-memory-policy.js";
 import { budgetSkipped, type InterventionScope, NO_EFFECTS, noTokens, YIELDED_REASONS } from "./scope.js";
+import type { MemoryInterventionRegistration, MemoryStepLaunchOutcome } from "./types.js";
 
 /** Reasons that mean the model tier cannot run right now; deterministic rules keep working. */
 const UNAVAILABLE_REASONS: ReadonlySet<TaskMemoryPolicyReason> = new Set([

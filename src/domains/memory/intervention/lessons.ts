@@ -12,12 +12,12 @@ import {
 	receiptVouches,
 	sameCommandIdentity,
 } from "../command-evidence.js";
-import type { MemoryInterventionRegistration } from "../intervention-types.js";
 import { repositoryRelativePath } from "../lesson-evidence.js";
 import { type KeptLesson, renderKeptLesson } from "../lesson-projection.js";
 import { sharesInvocationTarget } from "../recipes.js";
 import { lessonsForTask } from "../relevance.js";
 import { type InterventionScope, NO_EFFECTS, noTokens } from "./scope.js";
+import type { MemoryInterventionRegistration } from "./types.js";
 
 /** Kept lessons the turn-end pass is shown so it does not rewrite them. */
 const KEPT_LESSONS_FOR_PASS = 10;

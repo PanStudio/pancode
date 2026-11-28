@@ -14,14 +14,14 @@ import { createInterventionPromptedStep } from "./intervention/prompted-step.js"
 import { createInterventionRules } from "./intervention/rules.js";
 import type { FailedAttempt, InterventionScope, PendingOffer, ShownRead } from "./intervention/scope.js";
 import { createInterventionTelemetry } from "./intervention/telemetry.js";
+import type { PendingToolStep } from "./intervention/tool-step.js";
 import { createInterventionToolSteps } from "./intervention/tool-steps.js";
-import type { PendingToolStep } from "./intervention-tool-step.js";
 import type {
 	MemoryInterventionDeps,
 	MemoryInterventionRegistration,
 	MemoryInterventionSettings,
 	MemoryInterventionTriggerReason,
-} from "./intervention-types.js";
+} from "./intervention/types.js";
 import { TASK_MEMORY_POLICY_DEFAULT_TIMEOUT_MS } from "./task-memory-policy.js";
 import { positiveInteger } from "./util.js";
 

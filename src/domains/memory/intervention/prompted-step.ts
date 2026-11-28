@@ -2,12 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { MEMORY_CONSOLIDATION_SYSTEM_PROMPT } from "../../prompts/memory-intervention.js";
-import type {
-	MemoryInterventionOffer,
-	MemoryInterventionRegistration,
-	MemoryPromptedStepInput,
-	MemoryPromptedStepResult,
-} from "../intervention-types.js";
 import type { TaskMemoryTelemetryDecision, TaskMemoryTelemetryTier } from "../memory-events.js";
 import {
 	runTaskMemoryPolicy,
@@ -19,6 +13,12 @@ import {
 } from "../task-memory-policy.js";
 import { positiveInteger } from "../util.js";
 import { budgetSkipped, entryRevision, type InterventionScope, NO_EFFECTS, YIELDED_REASONS } from "./scope.js";
+import type {
+	MemoryInterventionOffer,
+	MemoryInterventionRegistration,
+	MemoryPromptedStepInput,
+	MemoryPromptedStepResult,
+} from "./types.js";
 
 /** Two full deadlines are enough evidence to stop spending this session's endpoint. */
 const MEMORY_INTERVENTION_TIMEOUT_BACKOFF_THRESHOLD = 2;

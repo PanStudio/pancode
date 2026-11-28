@@ -47,7 +47,7 @@ import { MEMORY_HISTORY_REVIEW_SYSTEM_PROMPT } from "../prompts/memory-intervent
 import type { BackgroundSkipReason } from "./background-budget.js";
 import { BACKGROUND_SKIP_REASONS } from "./background-budget.js";
 import type { HistoryReviewSlice, HistoryReviewSource } from "./history-review.js";
-import type { MemoryInterventionRegistration, MemoryStepLaunchOutcome } from "./intervention-types.js";
+import type { MemoryInterventionRegistration, MemoryStepLaunchOutcome } from "./intervention/types.js";
 import { lessonEvidence } from "./lesson-evidence.js";
 import type { HistoryFiling } from "./lesson-feedback.js";
 import type { KeptLesson } from "./lesson-projection.js";
