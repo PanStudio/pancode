@@ -105,3 +105,5 @@ export const continuationContextUpdate = (agentRuntime: AgentRuntime) => ({
 	model: agentRuntime.agent.state.model,
 	thinkingLevel: agentRuntime.agent.state.thinkingLevel,
 });
+
+export const tokenCount = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);

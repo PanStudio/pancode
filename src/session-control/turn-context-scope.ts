@@ -41,6 +41,12 @@ export interface TurnContextScope {
 	readonly memoryOrigin: (runtime: AgentRuntime) => string;
 	readonly classifyCall: ClassifyCall;
 	readonly budgetProducer: LiveBudgetProducer;
+	readonly liveStreamingOutputTokens: () => number;
+	readonly routeSuperseded: (targetId: string | null | undefined, modelId: string | null | undefined) => boolean;
+	readonly previewCompactionRoute: (
+		window: number,
+		settings: Readonly<PancodeSettings>,
+	) => ReturnType<TurnContextScope["routeCompaction"]> | null;
 	readonly windowWithoutRuntime: () => {
 		contextWindow: number;
 		contextWindowSource: ContextWindowSource | null;

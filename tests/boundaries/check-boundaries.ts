@@ -828,7 +828,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
 	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
-	["src/session-control/turn-context.ts#createTurnContext", 1060],
+	["src/session-control/turn-context.ts#createTurnContext", 871],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
 	["src/session-control/turn-recovery.ts#createTurnRecovery", 578],
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
