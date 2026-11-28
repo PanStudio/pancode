@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { relative } from "node:path";
 import { uncachedPrefillTokens } from "../core/cache-telemetry.js";
+import { formatCount } from "../core/format-time.js";
 import { relativePathEscapes } from "../core/path-containment.js";
 import { onPresentationTierChange, tierPolicy } from "../core/presentation-tier.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
@@ -28,7 +29,6 @@ import {
 	dotSep,
 	fitSides,
 	formatContextPercent,
-	formatCount,
 	GLYPH,
 	type PancodeToken,
 	padAnsi,

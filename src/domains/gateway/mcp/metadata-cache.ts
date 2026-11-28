@@ -22,11 +22,13 @@ import { sha256Hex } from "../../../core/hash.js";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { pancodeCacheDir } from "../../../core/xdg.js";
-import { MCP_INSTRUCTIONS_BYTES, MCP_TOOL_LIST_CAP, type McpToolDescriptor } from "./client.js";
+import { MCP_INSTRUCTIONS_BYTES } from "./client-init.js";
+import { MCP_TOOL_LIST_CAP } from "./client-tools.js";
 import type { McpServerScope } from "./config.js";
 import { readBoundedFileText } from "./config.js";
 import { MCP_EVENT_LIST_CAP, type McpEventDescriptor } from "./events.js";
 import { MCP_PROMPT_LIST_CAP } from "./resources.js";
+import type { McpToolDescriptor } from "./tool-results.js";
 
 export const MCP_METADATA_CACHE_VERSION = 1;
 

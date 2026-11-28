@@ -13,12 +13,12 @@
  * Anthropic subscription through the same endpoint.
  */
 
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isRecord } from "../../core/type-guards.js";
 import { explicitAgentHome, interopDisabled, isPancodeHomeRelocated } from "../../core/xdg.js";
 import { ANTHROPIC_USAGE_URL, fetchAnthropicUsage } from "./anthropic-usage.js";
+import { asNumber, readJsonCredentials, snapshotFactory } from "./provider-common.js";
 import type { QuotaProvider, UsageSnapshot } from "./types.js";
 import { credentialFingerprint, formatPlan } from "./types.js";
 
@@ -90,43 +90,18 @@ function expiryMessage(credentials: ClaudeCodeCredentials, nowMs: number): strin
 		: "Sign in with Claude Code again";
 }
 
-async function readCredentialsFile(path: string): Promise<ClaudeCodeCredentials | null> {
-	let text: string;
-	try {
-		text = await readFile(path, "utf8");
-	} catch {
-		return null;
-	}
-	try {
-		return parseClaudeCredentials(JSON.parse(text));
-	} catch {
-		return null;
-	}
-}
-
 /** Build the read-only `claude-code` quota adapter. */
 export function createClaudeCodeQuotaProvider(options: ClaudeCodeQuotaOptions = {}): QuotaProvider {
 	const credentialsPath = options.credentialsPath ?? defaultClaudeCredentialsPath();
 	const readCredentials =
 		options.readCredentials ??
-		(() => (credentialsPath === null ? Promise.resolve(null) : readCredentialsFile(credentialsPath)));
+		(() =>
+			credentialsPath === null ? Promise.resolve(null) : readJsonCredentials(credentialsPath, parseClaudeCredentials));
 	const doFetch = options.fetch ?? globalThis.fetch;
 	const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 	const now = options.now ?? (() => new Date());
 
-	const snapshot = (
-		status: UsageSnapshot["status"],
-		message: string | null,
-		extra: Partial<UsageSnapshot> = {},
-	): UsageSnapshot => ({
-		providerId: CLAUDE_CODE_QUOTA_PROVIDER_ID,
-		displayName: DISPLAY_NAME,
-		status,
-		windows: [],
-		message,
-		fetchedAt: now().toISOString(),
-		...extra,
-	});
+	const snapshot = snapshotFactory(CLAUDE_CODE_QUOTA_PROVIDER_ID, DISPLAY_NAME, now);
 
 	return {
 		id: CLAUDE_CODE_QUOTA_PROVIDER_ID,
@@ -168,13 +143,4 @@ export function createClaudeCodeQuotaProvider(options: ClaudeCodeQuotaOptions = 
 			});
 		},
 	};
-}
-
-function asNumber(value: unknown): number | null {
-	if (typeof value === "number") return Number.isFinite(value) ? value : null;
-	if (typeof value === "string") {
-		const parsed = Number.parseFloat(value.trim());
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
 }

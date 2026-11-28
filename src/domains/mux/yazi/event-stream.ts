@@ -64,7 +64,7 @@ export interface YaziEventStream {
 }
 
 /** Parse the four DDS fields with the same three-comma split Yazi uses. */
-export function parseYaziEventLine(line: string): YaziEvent | null {
+function parseYaziEventLine(line: string): YaziEvent | null {
 	const first = line.indexOf(",");
 	const second = first < 0 ? -1 : line.indexOf(",", first + 1);
 	const third = second < 0 ? -1 : line.indexOf(",", second + 1);

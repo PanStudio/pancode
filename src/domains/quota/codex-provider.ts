@@ -17,7 +17,8 @@ import { readPancodeVersion } from "../../core/package-root.js";
 import { isRecord } from "../../core/type-guards.js";
 import { openAuthStorage } from "../providers/auth/index.js";
 import type { CodexAccountToken } from "./codex-usage.js";
-import { asNumber, fetchCodexUsage } from "./codex-usage.js";
+import { fetchCodexUsage } from "./codex-usage.js";
+import { asNumber, snapshotFactory } from "./provider-common.js";
 import type { QuotaProvider, UsageSnapshot } from "./types.js";
 import { credentialFingerprint } from "./types.js";
 
@@ -81,19 +82,7 @@ export function createCodexQuotaProvider(options: CodexQuotaOptions = {}): Quota
 	const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 	const now = options.now ?? (() => new Date());
 
-	const snapshot = (
-		status: UsageSnapshot["status"],
-		message: string | null,
-		extra: Partial<UsageSnapshot> = {},
-	): UsageSnapshot => ({
-		providerId: CODEX_QUOTA_PROVIDER_ID,
-		displayName: DISPLAY_NAME,
-		status,
-		windows: [],
-		message,
-		fetchedAt: now().toISOString(),
-		...extra,
-	});
+	const snapshot = snapshotFactory(CODEX_QUOTA_PROVIDER_ID, DISPLAY_NAME, now);
 
 	return {
 		id: CODEX_QUOTA_PROVIDER_ID,

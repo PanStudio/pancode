@@ -109,7 +109,7 @@ export function currentWikiGitHead(cwd: string): string | null {
 	}
 }
 
-export function validateWikiMeta(value: unknown): WikiMetaValidation {
+function validateWikiMeta(value: unknown): WikiMetaValidation {
 	const problems: string[] = [];
 	if (!isRecord(value)) {
 		return { ok: false, problems: ["meta must be a JSON object"] };

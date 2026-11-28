@@ -28,8 +28,9 @@ import { isRecord } from "../core/type-guards.js";
  * comparison rather than a parse.
  *
  * This module lives under src/worker because both the worker and the
- * orchestrator need it and src/worker may not value-import src/domains. The
- * orchestrator-facing surface is re-exported from
+ * orchestrator need it and src/worker may not value-import src/domains.
+ * Callers import the wire schema directly from here; orchestrator-only
+ * attestation admission and bounded queue helpers live in
  * src/domains/dispatch/worker-protocol.ts.
  */
 

@@ -20,6 +20,7 @@ import { accountPseudonym } from "./pool-reading.js";
 
 import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
+import { asIsoString, asNumber, describeError, discardBody, untilAborted } from "./provider-common.js";
 import { parseRetryAfterSeconds, type UsageCredits, type UsageSnapshot, type UsageWindow } from "./types.js";
 
 export const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -118,17 +119,6 @@ export async function fetchAnthropicUsage(
 	}
 }
 
-/** Settle with `work`, or reject once `signal` aborts; a body read the abort outran is left to settle unobserved. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-	work.catch(() => undefined);
-	if (signal.aborted) return Promise.reject(new Error("aborted"));
-	return new Promise<T>((resolve, reject) => {
-		const onAbort = (): void => reject(new Error("aborted"));
-		signal.addEventListener("abort", onAbort, { once: true });
-		work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-	});
-}
-
 /** Windows from `limits[]` when the endpoint sends it, otherwise the flat buckets. */
 function usageWindows(body: Record<string, unknown>): UsageWindow[] {
 	const fromLimits = windowsFromLimits(body.limits);
@@ -213,39 +203,9 @@ function majorAmount(raw: unknown): number | null {
 	return minor / 10 ** exponent;
 }
 
-function asNumber(value: unknown): number | null {
-	if (typeof value === "number") return Number.isFinite(value) ? value : null;
-	if (typeof value === "string") {
-		const parsed = Number.parseFloat(value.trim());
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
-}
-
-function asIsoString(value: unknown): string | null {
-	if (typeof value !== "string" || value.trim().length === 0) return null;
-	const parsed = new Date(value);
-	return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
 function slug(value: string): string {
 	return value
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
-}
-
-function describeError(error: unknown, timeoutMs: number): string {
-	if (error instanceof Error) {
-		return error.name === "AbortError" ? `timeout after ${timeoutMs}ms` : error.message;
-	}
-	return String(error);
-}
-
-async function discardBody(response: Response): Promise<void> {
-	try {
-		await response.body?.cancel();
-	} catch {
-		return;
-	}
 }

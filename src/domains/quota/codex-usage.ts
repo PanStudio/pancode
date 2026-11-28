@@ -14,6 +14,7 @@ import { codexAccountScope } from "../../core/codex-account.js";
 import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
 import { accountPseudonym, codexAccess } from "./pool-reading.js";
+import { asNumber, describeError, discardBody, untilAborted } from "./provider-common.js";
 import type { UsageCredits, UsageSnapshot, UsageWindow } from "./types.js";
 import { formatPlan, parseRetryAfterSeconds } from "./types.js";
 
@@ -130,17 +131,6 @@ export async function fetchCodexUsage(
 	}
 }
 
-/** Settle with `work`, or reject once `signal` aborts; a body read the abort outran is left to settle unobserved. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-	work.catch(() => undefined);
-	if (signal.aborted) return Promise.reject(new Error("aborted"));
-	return new Promise<T>((resolve, reject) => {
-		const onAbort = (): void => reject(new Error("aborted"));
-		signal.addEventListener("abort", onAbort, { once: true });
-		work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-	});
-}
-
 /** Windows from the `rate_limit.primary_window` and `.secondary_window` slots. */
 function usageWindows(raw: unknown): UsageWindow[] {
 	if (!isRecord(raw)) return [];
@@ -231,34 +221,10 @@ function usageCredits(raw: unknown): UsageCredits | null {
 	return null;
 }
 
-export function asNumber(value: unknown): number | null {
-	if (typeof value === "number") return Number.isFinite(value) ? value : null;
-	if (typeof value === "string") {
-		const parsed = Number.parseFloat(value.trim());
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
-}
-
 /** Convert a UNIX epoch seconds value into an ISO 8601 instant. */
 function epochSecondsToIso(value: unknown): string | null {
 	const seconds = asNumber(value);
 	if (seconds === null) return null;
 	const date = new Date(seconds * 1000);
 	return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function describeError(error: unknown, timeoutMs: number): string {
-	if (error instanceof Error) {
-		return error.name === "AbortError" ? `timeout after ${timeoutMs}ms` : error.message;
-	}
-	return String(error);
-}
-
-async function discardBody(response: Response): Promise<void> {
-	try {
-		await response.body?.cancel();
-	} catch {
-		return;
-	}
 }

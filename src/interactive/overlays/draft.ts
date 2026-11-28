@@ -11,6 +11,7 @@ import { skinEpoch } from "../theme/tokens.js";
  * `/btw`, nothing here reaches the session.
  */
 
+import { formatWaitClock } from "../../core/format-time.js";
 import {
 	type Component,
 	isKeyRelease,
@@ -25,7 +26,7 @@ import { redactStreamingUrlCredentials, redactUrlCredentials } from "../../lib/s
 import { DRAFT_LABELS, type DraftLabel, hasDeadDraftToolCallMarkup } from "../../session-control/drafts.js";
 import { buildResponsiveHint, FocusBox, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { codeInk } from "../renderers/code-ink.js";
-import { formatWaitClock, GLYPH, markdownTheme, pancodeTheme, rule } from "../theme/index.js";
+import { GLYPH, markdownTheme, pancodeTheme, rule } from "../theme/index.js";
 import { scrollJump } from "./confirm-once.js";
 
 export const DRAFT_OVERLAY_TITLE = "Drafts";

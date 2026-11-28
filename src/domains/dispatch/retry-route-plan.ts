@@ -5,6 +5,8 @@
  * admission, the first eligible alternate route, and the route an unmet-obligation or context-overflow retry
  * may take. Lifted from createDispatchBundle; the bundle passes its contracts, breaker and route readers.
  */
+
+import { endpointIdentityHash } from "../../worker/protocol.js";
 import type { AgentsContract } from "../agents/contract.js";
 import type { ProvidersContract } from "../providers/index.js";
 import type { ActiveRun } from "./bundle-types.js";
@@ -24,7 +26,6 @@ import {
 	targetUsabilityProblem,
 } from "./target-resolution.js";
 import type { DispatchFailoverCandidate, DispatchFailoverMode } from "./validation.js";
-import { endpointIdentityHash } from "./worker-protocol.js";
 
 /** What retry and failover route planning reads from the dispatch bundle; createDispatchBundle passes its own. */
 export interface RetryRouteScope {

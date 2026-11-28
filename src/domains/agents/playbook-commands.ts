@@ -102,7 +102,7 @@ const RegistrySchema = Type.Object(
 const COMMAND_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/u;
 
-export function playbookCommandsPath(cwd: string): string {
+function playbookCommandsPath(cwd: string): string {
 	return join(pancodeProjectRoot(cwd, join("playbooks", "commands.yaml")), ".pancode", "playbooks", "commands.yaml");
 }
 

@@ -14,13 +14,13 @@
  * `codex` adapter for PanCode's own login.
  */
 
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isRecord } from "../../core/type-guards.js";
 import { explicitAgentHome, interopDisabled, isPancodeHomeRelocated } from "../../core/xdg.js";
 import type { CodexAccountToken } from "./codex-usage.js";
 import { fetchCodexUsage } from "./codex-usage.js";
+import { readJsonCredentials, snapshotFactory } from "./provider-common.js";
 import type { QuotaProvider, UsageSnapshot } from "./types.js";
 import { credentialFingerprint } from "./types.js";
 
@@ -60,43 +60,18 @@ function parseCodexCliCredentials(raw: unknown): CodexAccountToken | null {
 	};
 }
 
-async function readCredentialsFile(path: string): Promise<CodexAccountToken | null> {
-	let text: string;
-	try {
-		text = await readFile(path, "utf8");
-	} catch {
-		return null;
-	}
-	try {
-		return parseCodexCliCredentials(JSON.parse(text));
-	} catch {
-		return null;
-	}
-}
-
 /** Build the read-only `codex-cli` quota adapter. */
 export function createCodexCliQuotaProvider(options: CodexCliQuotaOptions = {}): QuotaProvider {
 	const credentialsPath = options.credentialsPath ?? defaultCodexCredentialsPath();
 	const readCredentials =
 		options.readCredentials ??
-		(() => (credentialsPath === null ? Promise.resolve(null) : readCredentialsFile(credentialsPath)));
+		(() =>
+			credentialsPath === null ? Promise.resolve(null) : readJsonCredentials(credentialsPath, parseCodexCliCredentials));
 	const doFetch = options.fetch ?? globalThis.fetch;
 	const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 	const now = options.now ?? (() => new Date());
 
-	const snapshot = (
-		status: UsageSnapshot["status"],
-		message: string | null,
-		extra: Partial<UsageSnapshot> = {},
-	): UsageSnapshot => ({
-		providerId: CODEX_CLI_QUOTA_PROVIDER_ID,
-		displayName: DISPLAY_NAME,
-		status,
-		windows: [],
-		message,
-		fetchedAt: now().toISOString(),
-		...extra,
-	});
+	const snapshot = snapshotFactory(CODEX_CLI_QUOTA_PROVIDER_ID, DISPLAY_NAME, now);
 
 	return {
 		id: CODEX_CLI_QUOTA_PROVIDER_ID,

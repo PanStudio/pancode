@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { McpClient, McpTeardownOutcome, McpToolListing } from "./client.js";
+import type { McpClient, McpToolListing } from "./client.js";
 import { McpError } from "./protocol.js";
+import type { McpTeardownOutcome } from "./transport.js";
 
 export interface McpConnection {
 	readonly ready: Promise<{ client: McpClient; listing: McpToolListing }>;
