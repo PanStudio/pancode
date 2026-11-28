@@ -933,3 +933,51 @@ test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6
 		new RegExp(`host=allowed\\.test:${targetPort}`, "u"),
 	);
 });
+
+test("adoptProbedSandboxBackend only accepts this host's trusted bwrap and configureWorkerProcessSandbox requires backendExpected", (t) => {
+	const availability = sandboxAvailability();
+	if (process.platform !== "linux") {
+		t.skip("bwrap adoption check is Linux-specific");
+		return;
+	}
+	const probe = (script: string) => {
+		const res = spawnSync(process.execPath, ["--import", "tsx", "-e", script], {
+			cwd: process.cwd(),
+			encoding: "utf8",
+			timeout: 15_000,
+		});
+		assert.equal(res.status, 0, res.stderr || res.stdout);
+		return JSON.parse(res.stdout.trim()) as Record<string, unknown>;
+	};
+	const nonBwrap = probe(`
+		import { adoptProbedSandboxBackend, probedSandboxAvailability } from "./src/core/sandbox/availability.js";
+		const spoofed = adoptProbedSandboxBackend({ backend: "bwrap", executable: "/usr/bin/true", networkIsolation: true });
+		const missing = adoptProbedSandboxBackend({ backend: "bwrap", executable: "/nonexistent/bwrap" });
+		console.log(JSON.stringify({ spoofed, missing, cached: probedSandboxAvailability() }));
+	`);
+	assert.deepEqual(nonBwrap, { spoofed: false, missing: false, cached: null });
+	if (availability.available && availability.backend === "bwrap" && availability.executable !== null) {
+		const exe = JSON.stringify(availability.executable);
+		const gated = probe(`
+			import { probedSandboxAvailability } from "./src/core/sandbox/availability.js";
+			import { configureWorkerProcessSandbox } from "./src/core/sandbox/worker-process.js";
+			const base = {
+				version: 1,
+				mode: "auto",
+				writableRoots: ["/tmp"],
+				readOnlyPaths: [],
+				gitWritablePaths: [],
+				readableRoots: [],
+				network: false,
+				probedBackend: { backend: "bwrap", executable: ${exe}, networkIsolation: true },
+			};
+			configureWorkerProcessSandbox(base);
+			const withoutExpected = probedSandboxAvailability();
+			configureWorkerProcessSandbox({ ...base, backendExpected: true });
+			const withExpected = probedSandboxAvailability();
+			console.log(JSON.stringify({ withoutExpected, withExpected }));
+		`);
+		assert.equal(gated.withoutExpected, null);
+		assert.equal((gated.withExpected as { executable?: string } | null)?.executable, availability.executable);
+	}
+});

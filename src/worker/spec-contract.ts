@@ -1525,6 +1525,8 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 			throw new Error("WorkerSpec.sandbox.network disagrees with the envelope's network.shell");
 		if ((sandbox.unconfined === true) !== (envelope.sandbox.unconfined === true))
 			throw new Error("WorkerSpec.sandbox.unconfined disagrees with the envelope's sandbox.unconfined");
+		if (sandbox.probedBackend !== undefined && sandbox.probedBackend.backend !== envelope.sandbox.backend)
+			throw new Error("WorkerSpec.sandbox.probedBackend disagrees with the envelope's sandbox.backend");
 		const unreadable = envelope.read.outside.filter((root) => !(sandbox.readableRoots ?? []).includes(root));
 		if (unreadable.length > 0)
 			throw new Error(`WorkerSpec.sandbox cannot read the envelope's outside roots: ${unreadable.join(", ")}`);

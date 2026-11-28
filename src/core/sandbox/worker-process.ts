@@ -50,7 +50,7 @@ let socketFallbackReported = false;
 export function configureWorkerProcessSandbox(spec: WorkerSandboxSpec | undefined, confinesWrites = false): void {
 	active = spec ?? null;
 	// The orchestrator probed this host moments ago; its working backend stands in for a second probe here.
-	if (spec?.probedBackend !== undefined) adoptProbedSandboxBackend(spec.probedBackend);
+	if (spec?.backendExpected === true && spec.probedBackend !== undefined) adoptProbedSandboxBackend(spec.probedBackend);
 	envelopeConfinesWrites = spec !== undefined && confinesWrites;
 	unavailableReported = false;
 	socketFallbackReported = false;

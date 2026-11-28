@@ -377,6 +377,14 @@ test("a worker accepts unconfined commands only as admission sealed them: in the
 		() => parseWorkerSpec(backed),
 		/WorkerSpec\.envelope\.sandbox\.unconfined must be true and only with no backend/u,
 	);
+	const forged = structuredClone(sealed);
+	ok(forged.sandbox);
+	forged.sandbox.backendExpected = true;
+	forged.sandbox.probedBackend = {
+		backend: forged.envelope.sandbox.backend === "bwrap" ? "seatbelt" : "bwrap",
+		executable: forged.envelope.sandbox.backend === "bwrap" ? "/usr/bin/sandbox-exec" : "/usr/bin/bwrap",
+	};
+	throws(() => parseWorkerSpec(forged), /WorkerSpec\.sandbox\.probedBackend disagrees with the envelope/u);
 });
 
 test("a scout handed a batch's write roots seals a read-only permit its worker accepts", async () => {

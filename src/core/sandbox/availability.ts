@@ -312,20 +312,18 @@ export function probedSandboxBackend(): ProbedSandboxBackend | null {
 
 /**
  * Take a local orchestrator's probe as this process's answer, when nothing here has probed yet. The binary must
- * still pass this host's own trust rule; anything else leaves the process to probe for itself. A working backend
- * only adds confinement, so a stale answer fails a launch rather than widening one. True when adopted.
+ * still match this host's own trusted bwrap lookup and seccomp support; anything else leaves the process to probe
+ * for itself. A working backend only adds confinement, so a stale answer fails a launch rather than widening one.
+ * True when adopted.
  */
 export function adoptProbedSandboxBackend(probed: ProbedSandboxBackend): boolean {
 	if (cached !== null) return false;
 	if (probed.backend === "bwrap") {
-		if (process.platform !== "linux" || wslKind() === "wsl1" || !executable(probed.executable)) return false;
-		if (untrustedBwrapReason(probed.executable) !== null) return false;
-		try {
-			if (realpathSync(probed.executable) !== probed.executable) return false;
-		} catch {
-			return false;
-		}
-		cached = fullBackend("bwrap", probed.executable);
+		if (process.platform !== "linux" || wslKind() === "wsl1") return false;
+		const found = findBwrap(process.env);
+		if (!("path" in found) || found.path !== probed.executable) return false;
+		if (sandboxFilterProgram({ unixSockets: true }) === null || !SECCOMP_COVERED_MACHINES.has(machine())) return false;
+		cached = fullBackend("bwrap", found.path);
 		cachedNetIsolation = probed.networkIsolation === true ? null : undefined;
 		return true;
 	}
