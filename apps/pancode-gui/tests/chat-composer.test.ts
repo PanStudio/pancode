@@ -664,7 +664,7 @@ test("a failed turn shows its problem detail and its stop reason; a stopped one 
 	assert.equal(failed.stopReason, "refusal");
 	const stopped = turnOutcome(turn({ status: "cancelled", problem: null }), 0);
 	assert.equal(stopped.tone, "neutral");
-	assert.equal(stopped.label, "Stopped");
+	assert.equal(stopped.label, "Canceled");
 	assert.equal(stopped.stopReason, null);
 	assert.equal(turnOutcome(turn({ status: "running", usage: null, finishedAt: null }), 0).tone, "running");
 });
