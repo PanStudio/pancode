@@ -9,10 +9,9 @@ import {
 	orderedAreaControls,
 	REDACTED_PROXY_PATH,
 	type SettingControl as RootControl,
-	SETTINGS_LABELS_BY_ID,
-	SETTINGS_VALUE_HELP_BY_ID,
 	settingsPathForRow,
 } from "../../../../../src/core/settings-controls.js";
+import { SETTINGS_LABELS_BY_ID, SETTINGS_VALUE_HELP_BY_ID } from "../../../../../src/core/settings-copy.js";
 import { SettingsValidationError } from "../../../../../src/core/settings-issues.js";
 import { readLayeredSettings, updateLayeredSettings } from "../../../../../src/core/settings-layers.js";
 import { validateSettings } from "../../../../../src/core/settings-validate.js";

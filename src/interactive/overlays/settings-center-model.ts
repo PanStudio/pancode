@@ -8,7 +8,8 @@ import { getAtPath, isRoutingPath } from "../../core/session-routing.js";
 import type { SettingsAreaId as SettingsSectionId } from "../../core/settings-areas.js";
 import { SETTINGS_AREAS as SETTINGS_SECTIONS, settingsPlacementForRow } from "../../core/settings-areas.js";
 /** The settings center's row, section and item types, its layout constants, and the per-setting scope and default reads. */
-import { SETTINGS_LABELS_BY_ID, settingsPathForRow } from "../../core/settings-controls.js";
+import { settingsPathForRow } from "../../core/settings-controls.js";
+import { SETTINGS_LABELS_BY_ID } from "../../core/settings-copy.js";
 import type { RouteBreakerView } from "../../domains/dispatch/contract.js";
 import type { InteropProposal } from "../../domains/interop/index.js";
 import type { ProvidersContract } from "../../domains/providers/index.js";

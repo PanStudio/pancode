@@ -103,6 +103,7 @@ const adapters = new Set([
 	"src/core/settings-issues.ts",
 	"src/core/settings-validate.ts",
 	"src/core/settings-change-kind.ts",
+	"src/core/settings-copy.ts",
 	"src/domains/providers/registry.ts",
 	"src/domains/providers/runtimes/builtins.ts",
 	"src/domains/providers/settings-facts.ts",

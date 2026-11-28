@@ -13,12 +13,14 @@ import {
 	applyControlValue,
 	controlInstructions,
 	formatControlValue,
+	settingsPathForRow,
+} from "../../core/settings-controls.js";
+import {
 	SETTINGS_DESCRIPTIONS_BY_ID,
 	SETTINGS_HELP_BY_ID,
 	SETTINGS_LABELS_BY_ID,
 	SETTINGS_VALUE_HELP_BY_ID,
-	settingsPathForRow,
-} from "../../core/settings-controls.js";
+} from "../../core/settings-copy.js";
 import { SettingsValidationError } from "../../core/settings-issues.js";
 import {
 	type ProvidersContract,
