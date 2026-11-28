@@ -18,7 +18,7 @@ import {
 } from "./dispatch-row-model.js";
 import type { FleetPlanRunView } from "./fleet-plan-runs.js";
 import type { PancodeTheme, PancodeToken } from "./theme/index.js";
-import { dotSep, functionText, GLYPH, pancodeTheme } from "./theme/index.js";
+import { dotSep, formatTargetLabel, functionText, GLYPH, pancodeTheme } from "./theme/index.js";
 
 /** `2/2 steps`, then the first step that failed. Unsettled steps are not counted as anything yet. */
 /** Why a plan ended without its steps settling, without the runner's own prefix. */
@@ -112,6 +112,7 @@ function planStepLines(theme: PancodeTheme, plan: FleetPlanRunView, width: numbe
 			...(caveat !== null ? [caveat] : []),
 			...(detail !== undefined && detail !== caveat ? [detail] : []),
 			step.label,
+			...(step.route !== undefined ? [formatTargetLabel(step.route.targetId, step.route.model)] : []),
 		];
 		const lead = `${theme.fg(mark.token, mark.glyph)} ${theme.fg("body", step.stepId.padEnd(nameWidth))}  `;
 		return truncateToWidth(

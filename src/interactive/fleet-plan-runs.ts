@@ -18,6 +18,8 @@ export interface FleetPlanStepView {
 	detail?: string;
 	/** The worker run an agent step started, so the board can read the step beside that run's own row. */
 	runId?: string;
+	/** The target and model an agent step calls: the route the operator approved, or its recorded run's own. */
+	route?: { targetId: string; model: string };
 	/**
 	 * What the step's worker run says of itself, joined on by the board: whether it has ended, and the caveat its
 	 * own row carries. The plan records a step a moment after its worker ends, and a step that passed can still have
@@ -121,6 +123,9 @@ export function createFleetPlanRuns(
 						kind: step.kind === "agent" ? "agent" : "code",
 						label: step.kind === "agent" ? (step.agentId ?? "agent") : (step.argv?.join(" ") ?? step.commandId ?? "command"),
 						state: "pending",
+						...(step.kind !== "code" && step.route !== undefined
+							? { route: { targetId: step.route.targetId, model: step.route.wireModelId } }
+							: {}),
 					}),
 				),
 			);

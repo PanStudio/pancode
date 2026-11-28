@@ -5,7 +5,7 @@ import { renderPricingSum } from "../core/telemetry/render.js";
 import { readFleetEventJournal } from "../domains/dispatch/fleet-event-journal.js";
 import { inspectFleetRootSeal } from "../domains/dispatch/fleet-root-seal.js";
 import { dispatchOwnership } from "../domains/dispatch/ownership.js";
-import { type FleetRunRecord, listFleetRuns, openLedger } from "../domains/dispatch/state.js";
+import { type FleetRunRecord, type Ledger, listFleetRuns, openLedger } from "../domains/dispatch/state.js";
 import type { FleetPlanRunView, FleetPlanStepView } from "./fleet-plan-runs.js";
 
 /** Plans a restarted board shows. The record directory holds every root the machine ever ran. */
@@ -53,9 +53,13 @@ function recordedDetail(result: RecordedStep): string | undefined {
 	}
 }
 
-function recordedCost(record: FleetRunRecord, steps: ReadonlyArray<FleetPlanStepView>): string | null {
+function recordedCost(
+	record: FleetRunRecord,
+	steps: ReadonlyArray<FleetPlanStepView>,
+	readLedger: () => Ledger,
+): string | null {
 	if (!steps.some((step) => step.kind === "agent")) return null;
-	const ledger = openLedger();
+	const ledger = readLedger();
 	const runs = record.steps.flatMap((entry) => {
 		const run = typeof entry.result.terminalRunId === "string" ? ledger.get(entry.result.terminalRunId) : null;
 		return run === null ? [] : [run];
@@ -71,11 +75,21 @@ function recordedCost(record: FleetRunRecord, steps: ReadonlyArray<FleetPlanStep
  */
 function fleetPlanFromRecord(record: FleetRunRecord): FleetPlanRunView {
 	const results = new Map(record.steps.map((entry) => [entry.stepId, entry.result]));
+	let ledger: Ledger | null = null;
+	const readLedger = (): Ledger => {
+		ledger ??= openLedger();
+		return ledger;
+	};
 	const steps = (record.planSteps ?? []).flatMap((entry): FleetPlanStepView[] => {
 		const planned = plannedStepOf(entry);
 		if (planned === null) return [];
 		const result = results.get(planned.id);
 		const detail = result === undefined ? undefined : recordedDetail(result);
+		// The route the step's run recorded, so an earlier plan reads the model each step called.
+		const run =
+			planned.kind === "agent" && typeof result?.terminalRunId === "string"
+				? readLedger().get(result.terminalRunId)
+				: null;
 		return [
 			{
 				stepId: planned.id,
@@ -83,6 +97,7 @@ function fleetPlanFromRecord(record: FleetRunRecord): FleetPlanRunView {
 				label: planned.label,
 				state: result === undefined ? "pending" : result.succeeded ? "passed" : "failed",
 				...(detail !== undefined ? { detail } : {}),
+				...(run !== null ? { route: { targetId: run.targetId, model: run.wireModelId } } : {}),
 			},
 		];
 	});
@@ -142,7 +157,7 @@ function fleetPlanFromRecord(record: FleetRunRecord): FleetPlanRunView {
 		requiredStepCount: required.length,
 		succeededStepCount,
 		...(loopIds.length > 0 ? { loops: { resolved: resolvedLoops, total: loopIds.length } } : {}),
-		costText: recordedCost(record, steps),
+		costText: recordedCost(record, steps, readLedger),
 		...(!ended ? { failure: "no end recorded" } : {}),
 		earlier: true,
 	};

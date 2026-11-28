@@ -6,6 +6,7 @@ import {
 	executionPlanIsolationText,
 	executionPlanStepScope,
 } from "../domains/dispatch/execution-plan.js";
+import type { FleetRunPreviewInput, FleetRunPreviewRoute } from "../domains/dispatch/fleet-run-preview.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import { inspectPlaybook } from "./playbook-preflight.js";
 import { parsePlaybookVars, playbookVarsOrUndefined } from "./playbook-vars.js";
@@ -23,7 +24,45 @@ function playbookKind(step: ExecutionPlanStep): "agent" | "code" | "gate" | "pla
 	return "agent";
 }
 
-function projectedStep(step: ExecutionPlanStep, plan: Pick<ExecutionPlan, "isolation">): Record<string, unknown> {
+/** Where an agent step's model call goes, as `fleet run` resolves it now; an error says why it could not. */
+export type PlaybookGraphRouteResolver = (
+	step: Parameters<NonNullable<FleetRunPreviewInput["resolveRoute"]>>[0],
+) => FleetRunPreviewRoute | null;
+
+type GraphRoute = { targetId: string; model: string; nodeId: string } | { unresolved: string };
+
+function graphRoute(step: ExecutionPlanStep, resolveRoute: PlaybookGraphRouteResolver | undefined): GraphRoute | null {
+	if (resolveRoute === undefined || step.kind !== "agent") return null;
+	try {
+		const route = resolveRoute({
+			stepId: step.id,
+			agentId: step.agentId,
+			task: step.task,
+			scope: step.scope,
+			...(step.target !== undefined ? { target: step.target } : {}),
+			...(step.profile !== undefined ? { profile: step.profile } : {}),
+		});
+		if (route === null) return { unresolved: "no dispatch route preview in this process" };
+		return { targetId: route.targetId, model: route.wireModelId, nodeId: route.nodeId };
+	} catch (error) {
+		return { unresolved: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+function routeText(route: unknown): string {
+	if (route === undefined) return "";
+	const shown = route as GraphRoute;
+	return "unresolved" in shown
+		? ` route=unresolved reason=${JSON.stringify(shown.unresolved)}`
+		: ` route=${shown.targetId} model=${shown.model}`;
+}
+
+function projectedStep(
+	step: ExecutionPlanStep,
+	plan: Pick<ExecutionPlan, "isolation">,
+	resolveRoute?: PlaybookGraphRouteResolver,
+): Record<string, unknown> {
+	const route = graphRoute(step, resolveRoute);
 	return {
 		id: step.id,
 		kind: playbookKind(step),
@@ -36,13 +75,97 @@ function projectedStep(step: ExecutionPlanStep, plan: Pick<ExecutionPlan, "isola
 			: {}),
 		...(step.kind === "agent" && step.target !== undefined ? { target: step.target } : {}),
 		...(step.kind === "agent" && step.profile !== undefined ? { profile: step.profile } : {}),
+		...(route !== null ? { route } : {}),
 		scope: executionPlanStepScope(plan, step.scope),
 		writes: [...(step.writes ?? [])],
 		dependencies: [...step.dependencies],
 	};
 }
 
-export function runPlaybookGraph(args: ReadonlyArray<string>): number {
+/**
+ * `pancode playbook graph` with each agent step's resolved route: the domains `fleet run` boots, loaded for route
+ * preview only, so a step a `fleet.agentProfiles` entry places reads the target and model it will call.
+ */
+export async function runPlaybookGraphWithRoutes(args: ReadonlyArray<string>): Promise<number> {
+	const [
+		{ loadDomains },
+		{ ensurePancodeState },
+		{ ConfigDomainModule },
+		{ ExtensionsDomainModule },
+		{ PluginsDomainModule },
+		{ InteropDomainModule },
+		{ ResourcesDomainModule },
+		{ ContextDomainModule },
+		{ ProvidersDomainModule },
+		{ SafetyDomainModule },
+		{ createPromptsDomainModule },
+		{ AgentsDomainModule },
+		{ createCliWorkerHooks },
+		{ createTelemetryDomainModule },
+		{ SchedulingDomainModule },
+		{ createDispatchDomainModule },
+		{ SessionDomainModule },
+		{ fleetRouteResolver },
+		{ agentRoleFactsResolver },
+	] = await Promise.all([
+		import("../core/domain-loader.js"),
+		import("../domains/install/index.js"),
+		import("../domains/config/module.js"),
+		import("../domains/extensions/module.js"),
+		import("../domains/plugins/module.js"),
+		import("../domains/interop/module.js"),
+		import("../domains/resources/module.js"),
+		import("../domains/context/module.js"),
+		import("../domains/providers/module.js"),
+		import("../domains/safety/module.js"),
+		import("../domains/prompts/module.js"),
+		import("../domains/agents/module.js"),
+		import("./worker-extension-hooks.js"),
+		import("../domains/telemetry/module.js"),
+		import("../domains/scheduling/module.js"),
+		import("../domains/dispatch/module.js"),
+		import("../domains/session/module.js"),
+		import("../domains/dispatch/fleet-run-preview.js"),
+		import("../domains/dispatch/execution-role.js"),
+	]);
+	ensurePancodeState();
+	// Never started: the graph dispatches no worker, so no extension host runs and no hook is asked.
+	const workerHooks = createCliWorkerHooks("playbook graph");
+	const loaded = await loadDomains([
+		ConfigDomainModule,
+		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
+		ResourcesDomainModule,
+		ContextDomainModule,
+		ProvidersDomainModule,
+		SafetyDomainModule,
+		createPromptsDomainModule({ noContextFiles: true }),
+		AgentsDomainModule,
+		workerHooks.middlewareModule,
+		createTelemetryDomainModule(),
+		SchedulingDomainModule,
+		createDispatchDomainModule({ workerSteering: false, workerHooks: workerHooks.workerHooks }),
+		SessionDomainModule,
+	]);
+	try {
+		const dispatch = loaded.getContract("dispatch");
+		const agents = loaded.getContract("agents");
+		const resolveRoute: PlaybookGraphRouteResolver =
+			dispatch && agents
+				? fleetRouteResolver(
+						dispatch.preview,
+						agentRoleFactsResolver((id) => agents.getSpec(id)),
+					)
+				: () => null;
+		return runPlaybookGraph(args, resolveRoute);
+	} finally {
+		await loaded.stop();
+		await workerHooks.dispose();
+	}
+}
+
+export function runPlaybookGraph(args: ReadonlyArray<string>, resolveRoute?: PlaybookGraphRouteResolver): number {
 	const { vars, rest, error } = parsePlaybookVars(args);
 	const json = rest.includes("--json");
 	const name = rest.find((arg) => !arg.startsWith("-"));
@@ -70,13 +193,13 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 			wave: index + 1,
 			steps: ids.flatMap((id) => {
 				const step = byId.get(id);
-				return step === undefined ? [] : [projectedStep(step, plan)];
+				return step === undefined ? [] : [projectedStep(step, plan, resolveRoute)];
 			}),
 		}));
 		const loops = plan.loops.map((loop) => ({
 			id: loop.id,
-			check: loop.checkStepIds.map((id) => projectedStep(byId.get(id) as ExecutionPlanStep, plan)),
-			repair: loop.repairStepIds.map((id) => projectedStep(byId.get(id) as ExecutionPlanStep, plan)),
+			check: loop.checkStepIds.map((id) => projectedStep(byId.get(id) as ExecutionPlanStep, plan, resolveRoute)),
+			repair: loop.repairStepIds.map((id) => projectedStep(byId.get(id) as ExecutionPlanStep, plan, resolveRoute)),
 		}));
 		const isolation = plan.isolation === "worktree" ? { isolation: "worktree" as const } : {};
 		if (json) {
@@ -105,7 +228,7 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 							? ` profile=${step.profile}`
 							: "";
 				process.stdout.write(
-					`  ${step.id} kind=${step.kind} ${subject}${route} scope=${step.scope} writes=${JSON.stringify(step.writes)}${detail}\n`,
+					`  ${step.id} kind=${step.kind} ${subject}${route}${routeText(step.route)} scope=${step.scope} writes=${JSON.stringify(step.writes)}${detail}\n`,
 				);
 			}
 		}
@@ -113,11 +236,11 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 			process.stdout.write(`loop ${loop.id}\n`);
 			for (const step of loop.check)
 				process.stdout.write(
-					`  check ${step.id} kind=${step.kind} scope=${step.scope} writes=${JSON.stringify(step.writes)}\n`,
+					`  check ${step.id} kind=${step.kind}${routeText(step.route)} scope=${step.scope} writes=${JSON.stringify(step.writes)}\n`,
 				);
 			for (const step of loop.repair)
 				process.stdout.write(
-					`  repair ${step.id} kind=${step.kind} scope=${step.scope} writes=${JSON.stringify(step.writes)}\n`,
+					`  repair ${step.id} kind=${step.kind}${routeText(step.route)} scope=${step.scope} writes=${JSON.stringify(step.writes)}\n`,
 				);
 		}
 		return 0;

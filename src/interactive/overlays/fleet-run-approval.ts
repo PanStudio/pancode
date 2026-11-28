@@ -109,6 +109,15 @@ function stepRunner(step: FleetRunPreviewStep): string {
 	return step.agentId ?? "?";
 }
 
+const UNRESOLVED_ROUTE = "route unresolved";
+
+/** Where an agent step's model call goes, `target · model`, read before approval on every tier. */
+function stepRoute(step: FleetRunPreviewStep, width?: number): string {
+	if (step.replayed === true || step.kind === "code") return "";
+	if (step.route === undefined) return UNRESOLVED_ROUTE;
+	return formatTargetLabel(step.route.targetId, step.route.wireModelId, width === undefined ? {} : { width });
+}
+
 /** A step's task as one line: the agent's compiled task, the command's argv, or the replay. */
 function stepTask(step: FleetRunPreviewStep, planSteps: ReadonlyMap<string, ExecutionPlanStep>): string {
 	if (step.replayed === true) return "prior sealed result, not dispatched";
@@ -133,7 +142,7 @@ function stepFacts(step: FleetRunPreviewStep, plan: Pick<ExecutionPlan, "isolati
 	}
 	const route =
 		step.route === undefined
-			? "route unresolved"
+			? UNRESOLVED_ROUTE
 			: formatTargetLabel(step.route.targetId, step.route.wireModelId, { abbreviate: false });
 	const node = step.route === undefined ? "" : `${sep()}node ${step.route.nodeId}`;
 	const declaredRoute =
@@ -194,7 +203,10 @@ function isolationText(preview: FleetRunPreview): string {
 	return executionPlanIsolationText();
 }
 
-/** One row per step, `w1  build  coder  Implement this change…`, cut with an ellipsis and never wider than `width`. */
+/**
+ * One row per step, `w1  build  coder  copilot · gpt-6-luna  Implement this change…`, cut with an ellipsis and never
+ * wider than `width`. The route column is the model each agent step will call, so no tier approves an unseen route.
+ */
 function stepRows(preview: FleetRunPreview, width: number, policy: TierPolicy): string[] {
 	const theme = pancodeTheme();
 	const planSteps = new Map((preview.plan.steps ?? []).map((step) => [step.id, step]));
@@ -206,13 +218,21 @@ function stepRows(preview: FleetRunPreview, width: number, policy: TierPolicy): 
 		widest(entries.map((entry) => stepRunner(entry.step))),
 		Math.max(5, Math.floor(width / 6)),
 	);
-	const taskWidth = width - waveWidth - idWidth - runnerWidth - 6;
+	const routeWidth = Math.min(
+		widest(entries.map((entry) => stepRoute(entry.step))),
+		Math.max(10, Math.floor(width / 3)),
+	);
+	const taskWidth = width - waveWidth - idWidth - runnerWidth - (routeWidth > 0 ? routeWidth + 8 : 6);
 	const rows: string[] = [];
 	for (const { wave, step } of entries) {
+		const route = stepRoute(step, routeWidth);
 		const cells = [
 			padAnsi(theme.fg("annotation", wave), waveWidth, GLYPH.ellipsis),
 			padAnsi(theme.fg(toneRole("neutral"), stepLabel(step)), idWidth, GLYPH.ellipsis),
 			padAnsi(theme.fg(toneRole("accent"), stepRunner(step)), runnerWidth, GLYPH.ellipsis),
+			...(routeWidth > 0
+				? [padAnsi(theme.fg(toneRole(route === UNRESOLVED_ROUTE ? "warning" : "info"), route), routeWidth, GLYPH.ellipsis)]
+				: []),
 		];
 		const task = stepTask(step, planSteps);
 		const row =
