@@ -257,8 +257,111 @@ export function recoveryAttemptHasOutput(messages: ReadonlyArray<AgentMessage>):
 	});
 }
 
+/**
+ * Shared compact-and-retry worker used by both the post-resolve
+ * (state-based) and catch (throw-based) overflow paths in `submit`.
+ * Emits the "context overflow" notice when compaction is a no-op,
+ * the "compact-on-overflow failed" notice when compaction itself
+ * throws, and a "persisted" notice when the retry still surfaces an
+ * overflow.
+ */
+async function compactAndRetry(
+	deps: TurnRecoveryDeps,
+	agentRuntime: AgentRuntime,
+	text: string,
+	overflow: NonNullable<ReturnType<typeof toContextOverflowError>>,
+	images?: ReadonlyArray<ImageContent>,
+): Promise<void> {
+	const { state, context } = deps;
+	const signal = deps.turnSignal?.();
+	const identity = deps.turnIdentity?.();
+	const cancelled = (): boolean => signal?.aborted === true || identity !== deps.turnIdentity?.();
+	// Set only once the server has taken the request's size. Every other way out, cancel included, must not leave the
+	// refused prompt to be resent whole on the next turn.
+	let sizeAccepted = false;
+	try {
+		if (cancelled()) return;
+		const windowUnknown = agentRuntime.runtimeResolution.contextWindowDetails.effectiveContextWindow <= 0;
+		const refusedLocally = overflow.message.startsWith(LOCAL_CONTEXT_OVERFLOW_PREFIX);
+		deps.emitNotice(
+			refusedLocally
+				? "[PanCode] PanCode refused this request before sending it: it would leave too little of the context window for a reply; compacting and retrying once."
+				: windowUnknown
+					? "[PanCode] Server rejected this request for exceeding its context window. The serving limit is unknown; compacting and retrying once. Probe the target or configure its deployment limit to enable proactive compaction."
+					: "[PanCode] Server rejected this request for exceeding its context window; compacting and retrying once.",
+		);
+		let compacted = false;
+		try {
+			pruneFailedAssistantFromContext(agentRuntime.agent);
+			const mutableState = agentRuntime.agent.state as MutableAgentState;
+			mutableState.errorMessage = undefined;
+			compacted = await context.runAutoCompact(agentRuntime, true, undefined, "overflow");
+		} catch (compactErr) {
+			if (cancelled()) return;
+			state.continuation.recordStop({
+				cause: "compaction",
+				reason: compactErr instanceof Error ? compactErr.message : String(compactErr),
+			});
+			deps.emitNotice(
+				`[PanCode] compact-on-overflow failed: ${compactErr instanceof Error ? compactErr.message : String(compactErr)}`,
+			);
+		}
+		if (cancelled()) return;
+		if (!compacted) {
+			deps.emitNotice(
+				`[PanCode] context overflow could not be compacted: ${overflow.message}. Use ${deps.compactCommand?.() ?? "/context compact"} or reduce the request.`,
+				"info",
+				CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
+			);
+			return;
+		}
+		try {
+			// The rebuild from the ledger already carries a committed request (and any tool batch it started), so the
+			// retry continues it rather than sending the request a second time. A refused prompt is rebuilt as a
+			// bounded copy, though; continuing that would send a truncated request, so the copy is dropped and the
+			// full request goes out once.
+			const messages = agentRuntime.agent.state.messages;
+			const tail = messages.at(-1);
+			const committed = context.activeTurnCommitted?.() === true;
+			const boundedCopy = isBoundedReplayCopy(tail) && userMessageText(tail) !== text;
+			const replayed = committed && (tail?.role === "toolResult" || (tail?.role === "user" && !boundedCopy));
+			if (committed && boundedCopy) agentRuntime.agent.state.messages = messages.slice(0, -1);
+			if (replayed) {
+				if (!cancelled()) await agentRuntime.agent.continue();
+			} else {
+				await deps.markPersistedUserEcho(text, () =>
+					cancelled() ? Promise.resolve() : agentRuntime.agent.prompt(text, images ? [...images] : undefined),
+				);
+			}
+			if (cancelled()) return;
+			const stillOverflowed = detectOverflowFromState(agentRuntime.agent);
+			if (stillOverflowed) {
+				deps.emitNotice(
+					`[PanCode] context overflow persisted after compaction: ${stillOverflowed.message}`,
+					"info",
+					CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
+				);
+			} else {
+				sizeAccepted = true;
+			}
+		} catch (retryErr) {
+			if (cancelled()) return;
+			sizeAccepted = toContextOverflowError(retryErr) === null;
+			deps.emitNotice(
+				`[PanCode] context overflow persisted after compaction: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+				"info",
+				// Only a retry the window refused again is the overflow's stop; any other failure keeps its own cause.
+				sizeAccepted ? undefined : CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
+			);
+		}
+	} finally {
+		// A reset swaps in another session's messages, and those are not this refusal's to bound.
+		if (!sizeAccepted && identity === deps.turnIdentity?.()) boundRefusedPrompt(agentRuntime.agent);
+	}
+}
+
 export function createTurnRecovery(deps: TurnRecoveryDeps): TurnRecovery {
-	const { state, persistence, context } = deps;
+	const { state, persistence } = deps;
 	let retryCountdown: RetryCountdownHandle | null = null;
 	/** Every request this chain has sent again, which the rail and the receipt count. */
 	let chainAttempt = 0;
@@ -413,106 +516,8 @@ export function createTurnRecovery(deps: TurnRecoveryDeps): TurnRecovery {
 		return openForecast;
 	};
 
-	/**
-	 * Shared compact-and-retry worker used by both the post-resolve
-	 * (state-based) and catch (throw-based) overflow paths in `submit`.
-	 * Emits the "context overflow" notice when compaction is a no-op,
-	 * the "compact-on-overflow failed" notice when compaction itself
-	 * throws, and a "persisted" notice when the retry still surfaces an
-	 * overflow.
-	 */
-	const runCompactAndRetry = async (
-		agentRuntime: AgentRuntime,
-		text: string,
-		overflow: NonNullable<ReturnType<typeof toContextOverflowError>>,
-		images?: ReadonlyArray<ImageContent>,
-	): Promise<void> => {
-		const signal = deps.turnSignal?.();
-		const identity = deps.turnIdentity?.();
-		const cancelled = (): boolean => signal?.aborted === true || identity !== deps.turnIdentity?.();
-		// Set only once the server has taken the request's size. Every other way out, cancel included, must not leave the
-		// refused prompt to be resent whole on the next turn.
-		let sizeAccepted = false;
-		try {
-			if (cancelled()) return;
-			const windowUnknown = agentRuntime.runtimeResolution.contextWindowDetails.effectiveContextWindow <= 0;
-			const refusedLocally = overflow.message.startsWith(LOCAL_CONTEXT_OVERFLOW_PREFIX);
-			deps.emitNotice(
-				refusedLocally
-					? "[PanCode] PanCode refused this request before sending it: it would leave too little of the context window for a reply; compacting and retrying once."
-					: windowUnknown
-						? "[PanCode] Server rejected this request for exceeding its context window. The serving limit is unknown; compacting and retrying once. Probe the target or configure its deployment limit to enable proactive compaction."
-						: "[PanCode] Server rejected this request for exceeding its context window; compacting and retrying once.",
-			);
-			let compacted = false;
-			try {
-				pruneFailedAssistantFromContext(agentRuntime.agent);
-				const mutableState = agentRuntime.agent.state as MutableAgentState;
-				mutableState.errorMessage = undefined;
-				compacted = await context.runAutoCompact(agentRuntime, true, undefined, "overflow");
-			} catch (compactErr) {
-				if (cancelled()) return;
-				state.continuation.recordStop({
-					cause: "compaction",
-					reason: compactErr instanceof Error ? compactErr.message : String(compactErr),
-				});
-				deps.emitNotice(
-					`[PanCode] compact-on-overflow failed: ${compactErr instanceof Error ? compactErr.message : String(compactErr)}`,
-				);
-			}
-			if (cancelled()) return;
-			if (!compacted) {
-				deps.emitNotice(
-					`[PanCode] context overflow could not be compacted: ${overflow.message}. Use ${deps.compactCommand?.() ?? "/context compact"} or reduce the request.`,
-					"info",
-					CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
-				);
-				return;
-			}
-			try {
-				// The rebuild from the ledger already carries a committed request (and any tool batch it started), so the
-				// retry continues it rather than sending the request a second time. A refused prompt is rebuilt as a
-				// bounded copy, though; continuing that would send a truncated request, so the copy is dropped and the
-				// full request goes out once.
-				const messages = agentRuntime.agent.state.messages;
-				const tail = messages.at(-1);
-				const committed = context.activeTurnCommitted?.() === true;
-				const boundedCopy = isBoundedReplayCopy(tail) && userMessageText(tail) !== text;
-				const replayed = committed && (tail?.role === "toolResult" || (tail?.role === "user" && !boundedCopy));
-				if (committed && boundedCopy) agentRuntime.agent.state.messages = messages.slice(0, -1);
-				if (replayed) {
-					if (!cancelled()) await agentRuntime.agent.continue();
-				} else {
-					await deps.markPersistedUserEcho(text, () =>
-						cancelled() ? Promise.resolve() : agentRuntime.agent.prompt(text, images ? [...images] : undefined),
-					);
-				}
-				if (cancelled()) return;
-				const stillOverflowed = detectOverflowFromState(agentRuntime.agent);
-				if (stillOverflowed) {
-					deps.emitNotice(
-						`[PanCode] context overflow persisted after compaction: ${stillOverflowed.message}`,
-						"info",
-						CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
-					);
-				} else {
-					sizeAccepted = true;
-				}
-			} catch (retryErr) {
-				if (cancelled()) return;
-				sizeAccepted = toContextOverflowError(retryErr) === null;
-				deps.emitNotice(
-					`[PanCode] context overflow persisted after compaction: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
-					"info",
-					// Only a retry the window refused again is the overflow's stop; any other failure keeps its own cause.
-					sizeAccepted ? undefined : CONTEXT_OVERFLOW_STOP_NOTICE_KEY,
-				);
-			}
-		} finally {
-			// A reset swaps in another session's messages, and those are not this refusal's to bound.
-			if (!sizeAccepted && identity === deps.turnIdentity?.()) boundRefusedPrompt(agentRuntime.agent);
-		}
-	};
+	const runCompactAndRetry: TurnRecovery["runCompactAndRetry"] = (agentRuntime, text, overflow, images) =>
+		compactAndRetry(deps, agentRuntime, text, overflow, images);
 
 	const runLadder = async (
 		agentRuntime: AgentRuntime,

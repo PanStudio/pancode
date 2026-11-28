@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { PancodeSettings, SettingsMutator } from "../../core/config.js";
+import type { ChangeKind } from "../../core/settings-change-kind.js";
 import type { SettingsOrigin } from "../../core/settings-layers.js";
 import type { ConfigChangeScope, ConfigChangeSource } from "../../core/telemetry/live-events.js";
-import type { ChangeKind, ConfigDiff } from "./classify.js";
+import type { ConfigDiff } from "./classify.js";
 
 /**
  * The ConfigDomain's external surface. Other domains import this through the contract

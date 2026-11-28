@@ -6,25 +6,28 @@ import { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { getAtPath } from "../../core/session-routing.js";
 import type { SettingsAreaId as SettingsSectionId } from "../../core/settings-areas.js";
 import { settingsPlacementForRow } from "../../core/settings-areas.js";
+import { settingsChangeKind } from "../../core/settings-change-kind.js";
 /** Row primitives the item builder composes: setting items, group headers, target calls to action, and the common controls. */
 import type { SettingControl } from "../../core/settings-controls.js";
 import {
 	applyControlValue,
 	controlInstructions,
 	formatControlValue,
+	settingsPathForRow,
+} from "../../core/settings-controls.js";
+import {
 	SETTINGS_DESCRIPTIONS_BY_ID,
 	SETTINGS_HELP_BY_ID,
 	SETTINGS_LABELS_BY_ID,
 	SETTINGS_VALUE_HELP_BY_ID,
-	settingsPathForRow,
-} from "../../core/settings-controls.js";
+} from "../../core/settings-copy.js";
 import { SettingsValidationError } from "../../core/settings-issues.js";
-import { settingsChangeKind } from "../../domains/config/classify.js";
 import {
 	type ProvidersContract,
 	resolveModelRuntimeCapabilitiesForProviders,
 	thinkingLevelDisplayWord,
 } from "../../domains/providers/index.js";
+import { settingsRuntimeFacts } from "../../domains/providers/settings-facts.js";
 import type { Component } from "../../engine/tui.js";
 import { Input } from "../../engine/tui.js";
 import { TURN_CONTROL_WORKFLOWS } from "../../lib/turn-control/index.js";
@@ -246,7 +249,7 @@ function controlTextSubmenu(control: SettingControl, live: () => Readonly<Pancod
 		);
 		input.onSubmit = (value) => {
 			try {
-				applyControlValue(structuredClone(live()), control.path, value);
+				applyControlValue(structuredClone(live()), control.path, value, settingsRuntimeFacts());
 				keptSettingDrafts.delete(`control:${control.path}`);
 				done(value);
 			} catch (error) {
