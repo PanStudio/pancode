@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { ownerIdentity, ownerState, relativePathEscapes } from "../pancode/http-shims.js";
+import { makeDirectory, ownerIdentity, ownerState, relativePathEscapes } from "../pancode/http-shims.js";
 import { AppProblem } from "../services/problem.js";
 
 /** A bakery claim. `host`, `pidNs` and `bootId` are absent on claims from before they were recorded. */
@@ -53,14 +53,14 @@ export class AppFiles {
 	constructor(private readonly state: string) {}
 	/** The state directory itself: no project claims it, so user-level reads run here when no workspace is open. */
 	async neutral() {
-		await mkdir(this.state, { recursive: true });
+		await makeDirectory(this.state);
 		return realpath(this.state);
 	}
 	private async directory() {
-		await mkdir(this.state, { recursive: true });
+		await makeDirectory(this.state);
 		const state = await realpath(this.state),
 			path = join(state, "gui");
-		await mkdir(path, { recursive: true });
+		await makeDirectory(path);
 		const root = await realpath(path),
 			part = relative(state, root);
 		if (relativePathEscapes(part))
@@ -86,7 +86,7 @@ export class AppFiles {
 	): Promise<T> {
 		const root = await this.directory(),
 			lockDirectory = join(root, `${name}.locks`);
-		await mkdir(lockDirectory, { recursive: true });
+		await makeDirectory(lockDirectory);
 		if ((await realpath(lockDirectory)) !== lockDirectory)
 			throw new AppProblem("validation", "Web lock directory must not be a symlink.");
 		const { host, birthToken, pidNs, bootId } = ownerIdentity();
