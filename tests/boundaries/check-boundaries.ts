@@ -814,9 +814,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
 	["src/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/acp/server.ts#servePancodeAcpAgent", 1720],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
-	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
 	["src/entry/orchestrator.ts#bootOrchestrator", 953],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
@@ -1172,6 +1170,11 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 		module: "src/engine/tui-primitives.ts",
 		reason:
 			"a pure re-export of the three pi-tui symbols src/cli/fleet-view.ts needs. It has no relative imports at all, and boundaries rule1 forbids the CLI importing pi-tui directly, so this module is why fleet-view does not touch the engine tui barrel.",
+	},
+	{
+		module: "src/engine/text-wrap.ts",
+		reason:
+			"a pure re-export of wrapTextWithAnsi from pi-tui/dist/utils.js with zero relative imports. Composition roots and CLI signal owners register it with core/termination so shutdown notices wrap identically across every TTY exit path while core stays free of engine imports.",
 	},
 	{
 		module: "src/engine/clipboard.ts",

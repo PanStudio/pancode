@@ -127,6 +127,8 @@ const adapters = new Set([
 	"src/domains/session/telemetry-source.ts",
 	// The repository window `usage report` folds, so a repo reference explains to the CLI's number (#434 §11.4).
 	"src/domains/telemetry/usage-window.ts",
+	// The run-history read model the fleet and trace adapters page through.
+	"src/domains/dispatch/index.ts",
 	// The saved-task list row ACP `session/list` sends, so the ledger read redacts and bounds as the engine does.
 	"src/acp/session-list-row.ts",
 	"src/acp/server-bounds.ts",

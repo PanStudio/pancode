@@ -13,6 +13,7 @@ import type { AcpServerConfig } from "./server-config.js";
 import type { AcpServerControl } from "./server-control.js";
 import type { AcpServerEvents } from "./server-events.js";
 import type { AcpServerGuards } from "./server-guards.js";
+import type { AcpServerMachine } from "./server-machine.js";
 import type { AcpServerOpen } from "./server-open.js";
 import type { AcpHandoffDraft, AcpHandshake, PancodeAcpServerOptions } from "./server-options.js";
 import type { AcpPermissionBridge } from "./server-permissions.js";
@@ -20,14 +21,14 @@ import type { AcpServerReadouts } from "./server-readouts.js";
 import type { AcpServerSession, ActivePrompt } from "./server-tool-updates.js";
 
 /** One cancellable piece of work beside the session's turns: an operator shell line or an aside round. */
-export interface AcpSideWork {
+interface AcpSideWork {
 	sessionId: string;
 	abort: AbortController;
 	settled: Promise<void>;
 }
 
 /** The one document awaiting review, keyed by the id its client holds. */
-export interface AcpPendingHandoff {
+interface AcpPendingHandoff {
 	handoffId: string;
 	sessionId: string;
 	draft: AcpHandoffDraft;
@@ -38,7 +39,7 @@ export interface AcpPendingHandoff {
  * release clears it, and only while it is still the holder, so a stale release never touches a
  * successor turn (#411).
  */
-export interface AcpMachineLease {
+interface AcpMachineLease {
 	readonly jobId: string;
 	readonly active: ActivePrompt;
 }
@@ -98,4 +99,5 @@ export interface AcpServerScope {
 	readonly readoutFeed: AcpServerReadouts;
 	readonly config: AcpServerConfig;
 	readonly open: AcpServerOpen;
+	readonly machine: AcpServerMachine;
 }

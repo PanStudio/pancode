@@ -67,7 +67,6 @@ import {
 	removeExtension,
 } from "../../src/domains/extensions/state.js";
 import type { MuxContract, MuxOpenUtilityPaneRequest } from "../../src/domains/mux/contract.js";
-import { createDockKeyGate } from "../../src/domains/mux/dock-keys.js";
 import type { MuxPaneRecord } from "../../src/domains/mux/types.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { modelEndpointKey } from "../../src/domains/providers/index.js";
@@ -82,6 +81,7 @@ import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { startExtensionHost } from "../../src/entry/extension-host.js";
 import { createKeybindingManagerForTesting } from "../../src/interactive/keybinding-manager.js";
 import { settleExtensionKeys } from "../../src/interactive/surfaces/extension-pane-keys.js";
+import { createDockKeyGate } from "../../src/lib/panes/dock-keys.js";
 import { currentToolPlatform } from "../../src/lib/programs/index.js";
 import { resolveExtensionLine } from "../../src/session-control/extension-line.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

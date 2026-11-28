@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 /** The files dock key: a first tap shows or hides the pane, a second inside the window closes it. */
-import type { DockKeyGate } from "../domains/mux/dock-keys.js";
+import type { DockKeyGate } from "../lib/panes/dock-keys.js";
 import { panesInactiveWords } from "../session-control/slash-commands.js";
 import type { InteractiveDeps } from "./interactive-deps.js";
 import type { InteractivePresentation } from "./interactive-presentation.js";

@@ -19,9 +19,9 @@ import { canonicalizeExistingPath } from "../../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { terminalBackground } from "../../../core/terminal-background.js";
 import { roleHex } from "../../../core/theme-roles.js";
+import { createDockKeyGate, type DockKeyGate } from "../../../lib/panes/dock-keys.js";
+import { type TapFileWatcher, watchTapFile } from "../../../lib/panes/tap-file.js";
 import type { MuxContract } from "../../mux/contract.js";
-import { createDockKeyGate, type DockKeyGate } from "../../mux/dock-keys.js";
-import { type TapFileWatcher, watchTapFile } from "../../mux/tap-file.js";
 import type { MuxPaneRecord } from "../../mux/types.js";
 import { packBinaryPath, parseBinaryArgs, parseBinaryEnv } from "./binaries.js";
 

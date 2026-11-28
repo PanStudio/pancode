@@ -73,6 +73,7 @@ import {
 	readOrchTurnToolCallBudget,
 } from "../engine/loop-guard.js";
 import { cwdHash, openSession, readSessionTailTurns, sessionCurrentPath, sessionPaths } from "../engine/session.js";
+import { wrapTextWithAnsi } from "../engine/text-wrap.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
@@ -409,7 +410,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		: undefined;
 	const bus = telemetryHub();
 	const termination = getTerminationCoordinator();
-	termination.installSignalHandlers();
+	termination.installSignalHandlers({ textWrapper: wrapTextWithAnsi });
 
 	ensurePancodeState();
 	// A `.pancode/` without PanCode's own ignore file gets one on open.
