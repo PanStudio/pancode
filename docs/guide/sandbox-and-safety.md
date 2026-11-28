@@ -50,7 +50,8 @@ for the full comparison.
 
 At `default`, and at contained yolo, the main session's `bash`, `run_script`
 and command-running `verify` calls run inside the sandbox. A contained command
-can read the filesystem, use the network and write only to:
+can read the filesystem, reach the network through PanCode's egress proxy (see
+[Shell network](#shell-network)) and write only to:
 
 - the workspace;
 - the scratch roots: the temp directories (`$TMPDIR`, `/tmp`, `/var/tmp`, and
@@ -277,6 +278,58 @@ every target lies inside a scratch root takes no snapshot: scratch contents
 are disposable, so at `default` it runs without asking. See
 [Undoing file changes with /rewind](commands-and-modes.md#undoing-file-changes-with-rewind).
 
+## Shell network
+
+On Linux a sandboxed command has no network interface of its own. It reaches
+the network only through PanCode's egress proxy, which reads the host and
+port of every connection: `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` point
+at it, so curl, npm, pip, git over HTTPS and most language runtimes use it
+without setup. The proxy resolves names itself and refuses a name that
+resolves to a loopback, private, link-local or cloud-metadata address, even a
+granted one; such an address is reachable only by granting the address
+itself, such as `10.0.0.5:8080`.
+
+`safety.egress.main.mode` sets the session's commands; `safety.egress.workers.mode`
+sets dispatched workers' commands:
+
+| Mode | What a sandboxed command reaches |
+|---|---|
+| `proxied` | Hosts in `allow` and `presets` without asking. In an attended session any other host and port asks you once, on a card naming it, and the answer holds for the session; a headless run, or an operator who is away, refuses it. Workers are never asked. Default for the session. |
+| `off` | No network. Default for workers. |
+| `open` | Your network, unmonitored, as before PanCode 0.9.2. |
+
+`allow` lists exact `host:port` origins (`registry.npmjs.org:443`, IPv6 in
+brackets, no wildcards). `presets` names bundles of exact hosts: `npm`,
+`pypi`, `github`, `crates` and `go`. A refused connection is named in the
+command's result, which also lists any port the command was listening on.
+
+```yaml
+safety:
+  egress:
+    main:
+      mode: proxied
+      presets: [npm, github]
+      allow: ["docs.example.org:443"]
+    workers:
+      mode: proxied
+      presets: [npm]
+    upstreamProxy: http://user:secret@proxy.corp.example:3128
+```
+
+`upstreamProxy` is for a network that reaches the internet only through a
+proxy of its own: PanCode's proxy sends allowed connections through it. It is
+never read from `HTTP_PROXY` or a project, and its credentials are never
+shown. A project layer may only lower a mode (`open`, then `proxied`, then
+`off`); `allow`, `presets` and `upstreamProxy` are read only from user
+settings.
+
+A connection that does not honor the proxy variables, such as SSH or a raw
+socket, fails. A server a command starts listens inside the sandbox, so
+another command in the same call can reach it on `localhost`, but your
+browser cannot; start a dev server you want to open from your own shell, or
+with `unsandboxed: true`. On macOS `proxied` runs as `open`, unmonitored,
+until egress is supported there, and `/doctor` says so.
+
 ## Workers
 
 Native workers you dispatch run their commands in their own sandbox when the
@@ -286,9 +339,9 @@ the reason and the fix, unless you allowed that host in your user settings:
 `allowUnsandboxed: true` on a `fleet.nodes` entry. An allowed worker runs its
 commands unconfined and says so. `required` ignores both and also refuses a
 partial sandbox. Subprocess and SDK runtimes are not sandboxed by PanCode. A
-sandboxed worker has no network
-unless `safety.sandboxNetwork` is on or it holds `web_fetch` or `web_read`; an MCP server it
-starts reaches the network only with its own grant
+sandboxed worker's commands have no network unless `safety.egress.workers.mode`
+says otherwise, whatever web tools the worker holds; an MCP server it starts
+reaches the network only with its own grant
 (`pancode mcp trust <id> --network`). Ordinary asks go to the same safety
 judge by default, and a worker cannot raise its own level.
 See [Workers at each level](../architecture/safety-model.md#workers-at-each-level).
@@ -318,7 +371,8 @@ Windows interop socket and WSLg (`/run/WSL`, `/mnt/wslg`, `WSL_INTEROP`), so a
 contained command cannot start Windows programs. WSL1 has no sandbox.
 
 The masks match known names and value shapes, so a credential stored under an
-unusual name stays readable. The network stays on, so a contained command can
-send what it can read. For full isolation, run PanCode inside a container
+unusual name stays readable. A contained command can still send what it can
+read to a host you allowed or approved, and `open` mode does not watch it at
+all. For full isolation, run PanCode inside a container
 or a virtual machine. See
 [Platform limits](../architecture/safety-model.md#platform-limits).

@@ -74,6 +74,48 @@ test("a yolo session dispatches a default worker as version 8 and rejects a wire
 	}
 });
 
+test("a proxied worker's spec carries its egress grants and a local upstream proxy, and the worker rejects a malformed one (P3)", async () => {
+	const env = await isolatePancodeEnv("pancode-egress-worker-");
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.safety.egress.workers = { mode: "proxied", allow: ["api.example.com:443"], presets: ["npm"] };
+	settings.safety.egress.upstreamProxy = "http://proxy.corp.test:3128";
+	let observed: WorkerSpec | undefined;
+	const bundle = makeDispatchBundle(dispatchStubContext({ settings }), {
+		spawnWorker(spec) {
+			observed = spec;
+			throw new Error("worker spec observed");
+		},
+	});
+	try {
+		await bundle.extension.start();
+		await rejects(
+			bundle.contract.dispatch({ agentId: "coder", task: "Inspect the task", executionRole: "builder", cwd: env.dir }),
+			/worker spec observed/u,
+		);
+		const spec = observed;
+		if (spec?.sandbox === undefined) throw new Error("no sandboxed worker spec");
+		strictEqual(spec.sandbox.network, true);
+		strictEqual(spec.envelope.network.shell, true);
+		ok(spec.sandbox.egress?.origins.includes("api.example.com:443"));
+		ok(spec.sandbox.egress?.origins.includes("registry.npmjs.org:443"));
+		strictEqual(spec.sandbox.egress?.upstreamProxy, "http://proxy.corp.test:3128");
+		strictEqual(
+			parseWorkerSpec(JSON.parse(JSON.stringify(spec))).sandbox?.egress?.origins.length,
+			spec.sandbox.egress?.origins.length,
+		);
+		const withSandbox = (sandbox: Record<string, unknown>) => ({ ...spec, sandbox: { ...spec.sandbox, ...sandbox } });
+		throws(() => parseWorkerSpec(withSandbox({ network: false })), /egress/u);
+		throws(() => parseWorkerSpec(withSandbox({ egress: { origins: ["*.example.com:443"] } })), /exact host:port/u);
+		throws(
+			() => parseWorkerSpec(withSandbox({ egress: { origins: [], upstreamProxy: "socks5://x:1" } })),
+			/upstreamProxy/u,
+		);
+	} finally {
+		await bundle.extension.stop?.();
+		env.restore();
+	}
+});
+
 /** The worker allowance dispatch seals when the operator's live autonomy is `operatorAutonomy`, settings.yaml at unconfined yolo. */
 async function allowanceUnderYoloSettings(prefix: string, operatorAutonomy?: () => "default" | "yolo") {
 	const env = await isolatePancodeEnv(prefix);
