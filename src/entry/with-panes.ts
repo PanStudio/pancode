@@ -8,7 +8,7 @@
  * glue built on it. The orchestrator imports it dynamically, and only when
  * `resolvePanesEnablement` (src/entry/panes-activation.ts) says the extension
  * is active, so a plain `pancode` boot never loads any of it. The built
- * import graph is pinned by tests/contracts/instant-shell-import-graph.test.ts:
+ * import graph is pinned by tests/extended/instant-shell-import-graph.test.ts:
  * the default boot chunk must carry no mux domain code.
  *
  * Everything re-exported here is a value the orchestrator wires; types cross

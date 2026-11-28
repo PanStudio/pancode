@@ -8,7 +8,7 @@
  * extension: no socket probe, no guest-mode detection, and none of the mux
  * domain's code in the import closure. The orchestrator dynamically imports
  * `src/entry/with-panes.ts` only when this resolves to `auto`, and a
- * built-graph contract test (tests/contracts/instant-shell-import-graph.test.ts)
+ * built-graph contract test (tests/extended/instant-shell-import-graph.test.ts)
  * pins that the default boot chunk carries no mux domain code.
  *
  * Hosting is the launcher's job (src/cli/workspace-launch.ts), which runs
