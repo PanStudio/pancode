@@ -5,20 +5,27 @@ import { THINKING_LEVELS } from "../core/defaults.js";
 import { MODEL_TIERS } from "../core/model-tier.js";
 import type { ProtectedModelRef, ResidencyRole } from "../core/residency-protection.js";
 import { assertValidResponseSchema, runtimeSpeaksResponseSchemaDialect } from "../core/response-schema.js";
+import {
+	BOOLEAN_CAPABILITY_KEYS,
+	RUNTIME_API_FAMILIES,
+	RUNTIME_AUTHS,
+	RUNTIME_KINDS,
+} from "../core/runtime-vocabulary.js";
 import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
+import { MIDDLEWARE_HOOKS, PROTECTED_ARTIFACT_SOURCES } from "../core/telemetry/session-vocabulary.js";
 import { isMcpToolName, mcpToolName, type ToolName } from "../core/tool-names.js";
 import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
+import { RUN_ROLES, type RunRole } from "../core/views/run-roles.js";
 import type { ResultContract } from "../domains/agents/result-contract-types.js";
 import type { AgentProduct } from "../domains/agents/spec.js";
 import type { WorkerContextSeed } from "../domains/context/worker/contract.js";
 import type { WorkerEnvelope } from "../domains/dispatch/envelope.js";
-import type { RunRole } from "../domains/dispatch/obligation.js";
 import type { RunLimits } from "../domains/dispatch/run-limits.js";
-import type { MiddlewareEffectKind, MiddlewareHook, MiddlewareSnapshot } from "../domains/middleware/index.js";
+import type { MiddlewareEffectKind, MiddlewareSnapshot } from "../domains/middleware/index.js";
 import type {
 	CapabilityFlags,
 	RuntimeApiFamily,
@@ -347,30 +354,6 @@ export interface WorkerGrantBinding {
 export const DEFAULT_ESCALATION_TIMEOUT_MS = 120_000;
 export const DEFAULT_ESCALATION_FALLBACK: "deny" | "fail" = "deny";
 
-const RUNTIME_KINDS = ["http", "sdk", "subprocess"] as const satisfies ReadonlyArray<RuntimeKind>;
-const RUNTIME_API_FAMILIES = [
-	"openai-completions",
-	"openai-responses",
-	"openai-codex-responses",
-	"anthropic-messages",
-	"google-generative-ai",
-	"google-vertex",
-	"mistral-conversations",
-	"ollama-native",
-	"rerank-http",
-	"embeddings-http",
-	"claude-agent-sdk",
-	"copilot-sdk",
-	"claude-code-subprocess",
-	"external-agent-subprocess",
-] as const satisfies ReadonlyArray<RuntimeApiFamily>;
-const RUNTIME_AUTHS = [
-	"api-key",
-	"oauth",
-	"vertex-adc",
-	"claude-cli",
-	"none",
-] as const satisfies ReadonlyArray<RuntimeAuth>;
 const TOOL_PROFILE_NAMES = [
 	"minimal-local",
 	"science-local",
@@ -378,23 +361,8 @@ const TOOL_PROFILE_NAMES = [
 	"council-read-only",
 ] as const satisfies ReadonlyArray<ToolProfileName>;
 const WORKER_PRODUCTS = ["orientation"] as const satisfies ReadonlyArray<AgentProduct>;
-const WORKER_RUN_ROLES = [
-	"explorer",
-	"builder",
-	"checker",
-	"reviewer",
-	"judge",
-	"seat",
-] as const satisfies ReadonlyArray<RunRole>;
 const TARGET_LIFECYCLES = ["user-managed", "pancode-managed"] as const;
 const RESIDENCY_ROLES = ["chat", "memory", "worker", "target-default"] as const satisfies ReadonlyArray<ResidencyRole>;
-const MIDDLEWARE_HOOKS = [
-	"before_tool",
-	"after_tool",
-	"turn_start",
-	"turn_end",
-	"on_compaction",
-] as const satisfies ReadonlyArray<MiddlewareHook>;
 // notify_operator is deliberately absent: a worker has no operator surface, and
 // createMiddlewareSnapshot strips rules that declare it before a spec is built.
 const MIDDLEWARE_EFFECT_KINDS = [
@@ -602,7 +570,7 @@ function validateTargetPricing(value: unknown): void {
 
 function validateCapabilityPatch(value: unknown, source: string): void {
 	const caps = readRecord(value, source);
-	for (const key of ["chat", "tools", "reasoning", "vision", "audio", "embeddings", "rerank", "fim"] as const) {
+	for (const key of BOOLEAN_CAPABILITY_KEYS) {
 		readOptionalBoolean(caps, key, source);
 	}
 	for (const key of ["contextWindow", "maxTokens"] as const) {
@@ -620,7 +588,6 @@ function validateCapabilityPatch(value: unknown, source: string): void {
 	}
 }
 
-const ENVELOPE_ROLES = ["explorer", "builder", "checker", "reviewer", "judge", "seat"] as const;
 const ENVELOPE_SKILL_DISCOVERY = ["off", "bound-only", "ranked"] as const;
 const ENVELOPE_SHELLS = ["none", "sandboxed", "host"] as const;
 const ENVELOPE_CHECKS = ["none", "declared", "any"] as const;
@@ -734,7 +701,7 @@ function validateWorkerEnvelope(value: unknown): void {
 		"WorkerSpec.envelope",
 	);
 	if (envelope.version !== 1) throw new Error("WorkerSpec.envelope.version must be 1");
-	readEnum(envelope.role, "WorkerSpec.envelope.role", ENVELOPE_ROLES);
+	readEnum(envelope.role, "WorkerSpec.envelope.role", RUN_ROLES);
 	const tools = readRecord(envelope.tools, "WorkerSpec.envelope.tools");
 	exactKeys(tools, ["direct", "gateway"], "WorkerSpec.envelope.tools");
 	for (const key of ["direct", "gateway"] as const) {
@@ -962,14 +929,13 @@ function validateProtectedArtifactState(value: unknown): void {
 	if (!Array.isArray(state.artifacts)) {
 		throw new Error("WorkerSpec.protectedArtifactState.artifacts must be an array");
 	}
-	const sources = ["validation", "middleware", "user", "session"] as const;
 	for (let index = 0; index < state.artifacts.length; index += 1) {
 		const source = `WorkerSpec.protectedArtifactState.artifacts[${index}]`;
 		const artifact = readRecord(state.artifacts[index], source);
 		readString(artifact.path, `${source}.path`);
 		readString(artifact.protectedAt, `${source}.protectedAt`);
 		readString(artifact.reason, `${source}.reason`);
-		readEnum(artifact.source, `${source}.source`, sources);
+		readEnum(artifact.source, `${source}.source`, PROTECTED_ARTIFACT_SOURCES);
 		readOptionalString(artifact, "validationCommand", source);
 		readOptionalNumber(artifact, "validationExitCode", source);
 	}
@@ -1425,7 +1391,7 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 	}
 	readOptionalEnum(spec, "toolProfile", "WorkerSpec", TOOL_PROFILE_NAMES);
 	readOptionalEnum(spec, "product", "WorkerSpec", WORKER_PRODUCTS);
-	readOptionalEnum(spec, "role", "WorkerSpec", WORKER_RUN_ROLES);
+	readOptionalEnum(spec, "role", "WorkerSpec", RUN_ROLES);
 	if (spec.escalation !== undefined) {
 		const escalation = readRecord(spec.escalation, "WorkerSpec.escalation");
 		const timeoutMs = escalation.timeoutMs;

@@ -31,6 +31,7 @@ import type { TelemetryContext } from "../core/telemetry/context.js";
 import { telemetryContext, withToolTelemetryContext } from "../core/telemetry/context.js";
 import { toolFileKind } from "../core/telemetry/file-kind.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
+import { DECLARED_CHECK_KINDS } from "../core/telemetry/session-vocabulary.js";
 import type { ToolSettled } from "../core/telemetry/tool-schemas.js";
 import type { ToolName } from "../core/tool-names.js";
 import { isMcpToolName, ToolNames } from "../core/tool-names.js";
@@ -445,7 +446,7 @@ async function runValidatedToolCall(input: RunValidatedToolCallInput): Promise<W
 	return result;
 }
 
-const CHECK_KINDS: ReadonlySet<string> = new Set(["command", "numeric-compare", "perf-budget", "reproduce", "browser"]);
+const CHECK_KINDS: ReadonlySet<string> = new Set(DECLARED_CHECK_KINDS);
 
 type ToolSettledFacets = Pick<ToolSettled, "fileExt" | "checkKind" | "skill" | "capabilities">;
 

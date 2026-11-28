@@ -16,7 +16,7 @@
 import type { ChildProcess } from "node:child_process";
 import type { CopilotClient, ModelInfo } from "@github/copilot-sdk";
 import { COPILOT_HEADLESS_LOGIN_FIX, copilotKeychainAllowed } from "../../core/copilot-keychain.js";
-import type { ThinkingLevel } from "../../core/defaults.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../../core/views/thinking-levels.js";
 import type { COPILOT_SDK_VERSION } from "../../domains/lifecycle/copilot-sdk-install.js";
 import { type CopilotSdkModule, loadCopilotSdk } from "./sdk-module.js";
 import { copilotSessionFsConfig } from "./session-fs.js";
@@ -486,7 +486,7 @@ function tierPrices(model: ModelInfo, tier: CopilotContextTier): CopilotModelPri
 	};
 }
 
-const EFFORT_ORDER: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const EFFORT_ORDER: readonly ThinkingLevel[] = THINKING_LEVELS;
 
 /** A listed effort value in PanCode's vocabulary; the runtime's `none` is PanCode's `off`. */
 function listedLevel(effort: string | undefined): ThinkingLevel | undefined {

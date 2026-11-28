@@ -14,7 +14,7 @@ import {
 	validateInitOptions,
 } from "../domains/context/init-options.js";
 import { bootstrapOperationFacts } from "../domains/context/operation-result.js";
-import { type ThinkingLevel, VALID_THINKING_LEVELS } from "../domains/providers/index.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../domains/providers/index.js";
 import { modelBootstrapGenerate } from "./bootstrap-generate.js";
 import { createContextCliOperation, createContextCliProgress } from "./context-progress.js";
 
@@ -45,7 +45,7 @@ Options:
   --depth <level>  bounded exploration: quick (8 calls, 2m), standard (16 calls, 4m), deep (32 calls, 8m)
   --target <id>    override the configured bootstrap target for this noninteractive run
   --model <id>     override the bootstrap wire model (requires --target)
-  --thinking <n>   override bootstrap thinking: ${VALID_THINKING_LEVELS.join("|")} (requires --target)
+  --thinking <n>   override bootstrap thinking: ${THINKING_LEVELS.join("|")} (requires --target)
   --verify         re-check every rule of the effective handbook against the current tree without a model;
                    lists rules as verified, stale, contradicted or unverifiable with file:line, records the
                    verdicts in the handbook ledger, and exits 1 when any rule is stale or contradicted.
@@ -166,7 +166,7 @@ function parseContextInitArgs(args: ReadonlyArray<string>): {
 	let target: string | undefined;
 	let model: string | undefined;
 	let thinkingLevel: ThinkingLevel | undefined;
-	const thinkingLevels = new Set<ThinkingLevel>(VALID_THINKING_LEVELS);
+	const thinkingLevels = new Set<ThinkingLevel>(THINKING_LEVELS);
 	for (let index = 0; index < args.length; index += 1) {
 		const arg = args[index] as string;
 		if (arg === "--help" || arg === "-h") continue;

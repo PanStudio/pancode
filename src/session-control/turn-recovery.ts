@@ -9,6 +9,7 @@
  */
 
 import { isHostAuthored } from "../core/message-accounting.js";
+import type { RetryStatusPhase } from "../core/telemetry/session-vocabulary.js";
 import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import type { RecoveryFailure, RetryCountdownHandle, RetrySettings } from "../domains/session/retry.js";
@@ -42,7 +43,7 @@ import type { TurnContext } from "./turn-context.js";
 import type { TurnPersistence } from "./turn-persistence.js";
 import type { AgentRuntime, StallAbortReadState, StallAbortState, TurnRecoveryState } from "./turn-state.js";
 
-export type RetryStatusPhase = "scheduled" | "waiting" | "retrying" | "moved" | "cancelled" | "exhausted" | "recovered";
+export type { RetryStatusPhase };
 
 /** One route as a status row names it. */
 export interface MovedRoute {

@@ -49,6 +49,12 @@ export interface TelemetryHub {
 		preimage: unknown,
 		ctx?: TelemetryContext,
 	): boolean;
+	/**
+	 * Deliver a journal record its owner already wrote to in-process subscribers, without journaling it again. A run's
+	 * `run.settled` is written by the run's own journal writer and published once it is on disk, so a listener hears the
+	 * run's end from the record a disk reader finds.
+	 */
+	publish<N extends EventName>(name: N, payload: EventPayload<N>, ctx?: TelemetryContext): void;
 	subscribe<N extends EventName>(name: N, listener: TelemetryListener<N>): () => void;
 	listeners(name: EventName): TelemetryListener[];
 	clear(): void;
@@ -155,6 +161,9 @@ export function createTelemetryHub(): TelemetryHub {
 		// Content reaches the writer alone, never a subscriber: consent and the research cap govern it there (#434).
 		emitContent(name, payload, preimage, ctx) {
 			return journal(name, payload, preimage, ctx);
+		},
+		publish(name, payload, ctx) {
+			deliver(name, payload, ctx);
 		},
 		subscribe(name, listener) {
 			const set = registry.get(name) ?? new Set<StoredListener>();

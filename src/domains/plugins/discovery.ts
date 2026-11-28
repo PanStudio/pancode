@@ -7,7 +7,7 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
 import { evaluatePancodeCompatibility, isSemanticVersion } from "../extensions/compatibility.js";
-import { type HubRequirementRef, isHubKind } from "../resources/hub-types.js";
+import { type HubRequirementRef, isHubComponentKind, isHubKind } from "../resources/hub-types.js";
 import { pluginContentDigestWithCapture } from "./integrity.js";
 import type {
 	PancodePluginConfiguration,
@@ -170,7 +170,7 @@ function pancodeConfiguration(value: unknown, root: string): PancodePluginConfig
 			throw new Error(`component ${item.kind}:${item.id} is outside its declared resource root`);
 	}
 	if (kind !== "plugin") {
-		const publicItems = inventory.filter((item) => ["prompt", "agent", "skill", "playbook"].includes(item.kind));
+		const publicItems = inventory.filter((item) => isHubComponentKind(item.kind));
 		if (publicItems.length !== 1 || publicItems[0]?.kind !== kind)
 			throw new Error(`a ${kind} package must declare exactly one public ${kind} component`);
 		if (Object.keys(resources).some((resource) => resource !== `${kind}s`))

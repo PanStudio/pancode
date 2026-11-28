@@ -5,6 +5,7 @@ import type { ThinkingLevel } from "../core/defaults.js";
 import { formatCount } from "../core/format-time.js";
 import { GLYPH } from "../core/glyphs.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { RouteBreakerView } from "../domains/dispatch/contract.js";
 import type { InteropProposal } from "../domains/interop/index.js";
 import { type ProvidersContract, resolveModelRuntimeCapabilitiesForProviders } from "../domains/providers/index.js";
@@ -13,7 +14,6 @@ import type { TUI } from "../engine/tui.js";
 import type { RouteMoveFit, RouteMoveResult, RouteMoveWait } from "../session-control/chat-loop.js";
 import type { FooterDashboardPanel } from "./footer/dashboard.js";
 import { routeAppliedNoticeKey } from "./footer/notifications.js";
-import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
 import type { OverlayTransitions } from "./overlay-transitions.js";
 import {
 	formatPendingModelScope,
@@ -34,7 +34,7 @@ export interface OverlayModelSelectorsDeps {
 	providers: ProvidersContract;
 	bus: TelemetryHub;
 	refreshFooter: Pick<FooterDashboardPanel, "refresh">["refresh"];
-	notify: (level: InteractiveNoticeLevel, text: string, key?: string) => void;
+	notify: (level: NotificationLevel, text: string, key?: string) => void;
 	closeOverlay: () => void;
 	getSettings?: () => Readonly<PancodeSettings>;
 	writeSettings?: (next: PancodeSettings) => void;

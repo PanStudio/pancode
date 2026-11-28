@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { GLYPH } from "../core/glyphs.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
 import { inspectInstallation } from "../domains/lifecycle/install-method.js";
 import { describeTracking } from "../domains/lifecycle/install-plan.js";
@@ -14,12 +15,10 @@ import {
 } from "../domains/lifecycle/self-upgrade.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 
-export type InteractiveUpgradeNoticeLevel = "info" | "success" | "warning" | "error";
-
 export interface InteractiveUpgradeFlowDeps {
 	runningVersion: string;
 	openAskUser: AskUserHandler;
-	notify(level: InteractiveUpgradeNoticeLevel, text: string, key?: string, ttlMs?: number): void;
+	notify(level: NotificationLevel, text: string, key?: string, ttlMs?: number): void;
 	/**
 	 * Scrollback copy of an outcome the operator has to act on. The footer shows
 	 * one line and cut the manager command off; the transcript keeps it whole.

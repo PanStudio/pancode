@@ -20,6 +20,9 @@
  *   admitted as internal-origin, so the block carries the first attempt's origin.
  * - Only the current attempt moves the block: a late event for a superseded
  *   attempt is dropped, and a settled block takes no more progress.
+ * - Whether a run is live or over is the shared run lifecycle
+ *   (`src/core/views/run-lifecycle.ts`), so a run that ended is never opened or
+ *   moved again by a late start, progress or abort frame.
  */
 
 import type {
@@ -29,6 +32,13 @@ import type {
 	DispatchStartedPayload,
 	RunAbortedPayload,
 } from "../core/telemetry/live-events.js";
+import {
+	type RunLifecycle,
+	type RunLifecycleKind,
+	reduceRunLifecycle,
+	runLifecycleEvent,
+	runLifecycleLive,
+} from "../core/views/run-lifecycle.js";
 import type { AgentTrait } from "../domains/agents/spec.js";
 import type { RunResultSummary } from "../domains/dispatch/run-result-facts.js";
 import type { RunKind } from "../domains/dispatch/types.js";
@@ -296,6 +306,16 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 	const progressByAssignment = new Map<string, WorkerProgressFold>();
 	/** Plan steps named before their run started. */
 	const pendingPlanSteps = new Map<string, string>();
+	/** Each run's lifecycle by run id, so a frame that arrives after its run ended moves nothing. */
+	const lifecycles = new Map<string, RunLifecycle>();
+	/** Fold a lifecycle frame into its run's lifecycle; null for a frame that names no run. */
+	const advance = (topic: `run.${RunLifecycleKind | "completed" | "failed"}`, payload: unknown): RunLifecycle | null => {
+		const event = runLifecycleEvent(topic, payload);
+		if (event === null) return null;
+		const next = reduceRunLifecycle(lifecycles.get(event.runId), event);
+		lifecycles.set(event.runId, next);
+		return next;
+	};
 	/** Runs still underway when the transcript reset, by current run id, until a replay adopts or a terminal event drops them. */
 	const parked = new Map<string, { entry: WorkerEntryState; fold: WorkerProgressFold | undefined; attempt: number }>();
 
@@ -341,6 +361,9 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 			const sharedId = nonEmptyString(payload.assignmentId) ?? runId;
 			if (runId === undefined || sharedId === undefined) return null;
 			if (assignmentByRun.has(runId)) return null;
+			// A start that arrives after its run ended opens no card that nothing would ever settle.
+			if (!runLifecycleLive(lifecycles.get(runId))) return null;
+			advance("run.started", payload);
 			// The steps of one plan dispatch under the plan's root as siblings, all at attempt 0. A run this stream has not
 			// seen, at an attempt it has, is such a sibling rather than a retry, so it is its own work item and its own card.
 			// A loop repair enters at its cycle number (attempt 1, 2) under that same root, so a higher attempt alone is no
@@ -427,7 +450,7 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 
 		progress(payload): WorkerStreamChange | null {
 			const entry = currentEntryForRun(payload.runId);
-			if (entry === undefined || !entry.pending) return null;
+			if (entry === undefined || !entry.pending || !runLifecycleLive(lifecycles.get(entry.runId))) return null;
 			const fold = progressByAssignment.get(entry.assignmentId);
 			// Everything the block shows about the stream comes from the canonical
 			// projection, so an event that moved nothing visible repaints nothing.
@@ -438,6 +461,7 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 
 		completed(payload): WorkerStreamChange | null {
 			parked.delete(payload.runId);
+			advance("run.completed", payload);
 			const entry = currentEntryForRun(payload.runId);
 			if (entry === undefined) return null;
 			return settle(entry, terminalFacts(payload));
@@ -445,6 +469,7 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 
 		failed(payload): WorkerStreamChange | null {
 			parked.delete(payload.runId);
+			advance("run.failed", payload);
 			const entry = currentEntryForRun(payload.runId);
 			if (entry === undefined) return null;
 			return settle(entry, terminalFacts(payload));
@@ -456,6 +481,7 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 			// A cancelled stream or a loop-guard stop names no dispatched run; only
 			// an abort that hits a live worker of ours settles anything.
 			if (entry === undefined || !entry.pending) return null;
+			if (advance("run.aborted", payload)?.phase !== "cancelling") return null;
 			const durationMs = finiteNumber(payload.elapsedMs);
 			const failureMessage = nonEmptyString(payload.reason);
 			entry.pending = false;
@@ -484,6 +510,7 @@ export function createWorkerStream(options: WorkerStreamOptions = {}): WorkerStr
 			byAssignment.clear();
 			attemptByAssignment.clear();
 			assignmentByRun.clear();
+			for (const runId of lifecycles.keys()) if (!parked.has(runId)) lifecycles.delete(runId);
 			progressByAssignment.clear();
 			pendingPlanSteps.clear();
 		},

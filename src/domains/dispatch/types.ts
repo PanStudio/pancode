@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { GrantExecution } from "../../core/telemetry/session-vocabulary.js";
 import type { ToolRoundRecord } from "../../engine/types.js";
 import type { WorkerContextProvenance } from "../context/worker/contract.js";
 import type { FlowRestrictionSet } from "../safety/information-flow.js";
@@ -19,7 +20,17 @@ import type { WorkerSandboxReceipt } from "../../core/sandbox/worker-policy.js";
 import type { SkillActivation } from "../../core/skill-activation.js";
 import type { RunTerminalReason } from "../../core/telemetry/enums.js";
 import type { RunSpendSums } from "../../core/telemetry/pricing.js";
-import type { RunOutcome, RunOutcomeCode } from "../../core/telemetry/run-vocabulary.js";
+import type {
+	CallStopReason,
+	DispatchRequestOrigin,
+	HostCheckNotRunReason,
+	HostVerificationStatus,
+	ReceiptVerificationBasis,
+	ReceiptVerificationState,
+	RunOutcome,
+	RunOutcomeCode,
+	ValidationGroundingBasis,
+} from "../../core/telemetry/run-vocabulary.js";
 import { RUN_OUTCOME_CODES } from "../../core/telemetry/run-vocabulary.js";
 import type { CallUsage, RunUsageFacts } from "../../core/telemetry/schemas.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
@@ -43,7 +54,7 @@ export type RunStatus = "queued" | "running" | "completed" | "failed" | "interru
  * Retry policy and audit semantics branch on the outcome, not on RunStatus,
  * which is kept for backward compatibility with pre-existing ledgers.
  */
-export type { RunOutcome, RunOutcomeCode };
+export type { DispatchRequestOrigin, RunOutcome, RunOutcomeCode };
 
 export function isRunOutcomeCode(value: unknown): value is RunOutcomeCode {
 	return typeof value === "string" && (RUN_OUTCOME_CODES as ReadonlyArray<string>).includes(value);
@@ -246,6 +257,18 @@ export interface RunCouncilProvenance {
 	round: number;
 }
 
+export const DISPATCH_PLAN_TOPOLOGIES = [
+	"parallel",
+	"sequential",
+	"pipeline",
+	"review",
+	"compete",
+	"council",
+	"detached",
+	"fleet",
+] as const;
+export type DispatchPlanTopology = (typeof DISPATCH_PLAN_TOPOLOGIES)[number];
+
 /**
  * Plan-approval provenance for multi-task, compete, or remote dispatch.
  * `approval: "operator"` records that default autonomy parked the
@@ -256,7 +279,7 @@ export interface RunCouncilProvenance {
  */
 export interface RunPlanProvenance {
 	hash: string;
-	topology: "parallel" | "sequential" | "pipeline" | "review" | "compete" | "council" | "detached" | "fleet";
+	topology: DispatchPlanTopology;
 	taskCount: number;
 	/** `read-only`: an all read-only plan admitted at default autonomy without the plan stop. */
 	approval: "operator" | "yolo" | "read-only";
@@ -294,8 +317,6 @@ export type RunKind = "http" | "sdk" | "subprocess" | "acp-delegation";
 export function runKindSupportsLiveSteering(kind: RunKind): boolean {
 	return kind === "http" || kind === "sdk";
 }
-/** Harness runs start on the harness's own decision, never a model tool call or operator command; always read-only. */
-export type DispatchRequestOrigin = "user" | "agent" | "internal" | "harness";
 
 /**
  * Durable routing-system phase marks. They live on the ledger envelope, not the
@@ -368,7 +389,7 @@ export interface RunValidationGrounding {
 	 * `unobserved-lane` means the run's tool lane was not observed (a CLI subprocess): its claims read unknown.
 	 * `grounded` means every claim matched an executed command.
 	 */
-	basis: "grounded" | "no-command-executed" | "unmatched-command" | "unattributable-status" | "unobserved-lane";
+	basis: ValidationGroundingBasis;
 }
 
 /**
@@ -530,7 +551,7 @@ interface RunGrantAudit {
 	/** True when the main agent asked the operator instead of deciding itself. */
 	forwardedByMain?: true;
 	decision: "approved" | "denied" | "expired" | "canceled";
-	execution: "not_executed" | "executed" | "unknown";
+	execution: Exclude<GrantExecution, "executing">;
 	reason?: string;
 }
 
@@ -824,7 +845,7 @@ export interface RunResultUpstreamResponse {
 	/** Physical route and proxy attempts reported by LiteLLM, when this call used that gateway. */
 	gatewayRouting?: GatewayRoutingObservation;
 	/** How the call ended as the engine reported it; absent where no runtime reports it. */
-	stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted";
+	stopReason?: CallStopReason;
 	/** The engine's error text for an `error` or `aborted` call, clipped to 512 characters. */
 	errorMessage?: string;
 }
@@ -862,12 +883,6 @@ export interface RunResultOutput {
 	structured?: import("../agents/result-contract-types.js").StructuredHelperResult;
 }
 
-/**
- * Evidence confidence is descriptive receipt provenance, orthogonal to the
- * execution outcome. It must never drive retry, reroute, or finish gating.
- */
-type ReceiptVerificationState = "verified" | "unverified" | "not_applicable" | "unknown";
-
 export interface RunResultUnclassifiedCommands {
 	count: number;
 	/** The first few, redacted and bounded to one line each. */
@@ -876,24 +891,7 @@ export interface RunResultUnclassifiedCommands {
 
 export interface RunResultVerification {
 	state: ReceiptVerificationState;
-	basis:
-		| "validation-tool"
-		/** Only shell checks the host observed the worker run answered; no validation tool did. */
-		| "host-observed-command"
-		| "read-only-agent"
-		| "no-validation-tool"
-		/** A check ran and passed, then a later change to the tree retired it; no pass judged the final tree. */
-		| "retired-by-change"
-		/**
-		 * The run ran no standing check of its own, and a dispatched worker's sealed run record passed with no later change
-		 * by this run; `detail` names it as `run <id> agent <agent>`.
-		 */
-		| "dispatch-run-record"
-		| "acp-external-unobserved"
-		/** The host ran the declared checks after the worker finished, and their verdict outranks the worker's own. */
-		| "host-verification"
-		/** No sealed receipt to read: it is missing, unreadable, or failed integrity. */
-		| "result-unavailable";
+	basis: ReceiptVerificationBasis;
 	/** What the basis rests on beyond its name: the credited worker runs for `dispatch-run-record`. */
 	detail?: string;
 }
@@ -917,7 +915,7 @@ export interface RunHostVerificationCheck {
 	 * no test (CLI-P51): it judged nothing, so like `nothing-changed` it is sealed with exit code 0 and its output tail
 	 * keeps the runner's own exit. Absent when it started, and on receipts sealed before the field existed.
 	 */
-	notRun?: "refused" | "unconfigured" | "spawn-failed" | "nothing-changed" | "shutdown" | "no-tests";
+	notRun?: HostCheckNotRunReason;
 	outputTail: string;
 	artifactPath?: string;
 	/** Structured verdict of a numeric-compare or perf-budget check; absent for a command check. Covered by the receipt digest through `hostVerification`. */
@@ -975,7 +973,7 @@ export interface RunHostVerification {
 	 * for the batch and this run's `checks` carries its non-zero exit code, but
 	 * the failure was charged elsewhere, so no validator speaks for this run.
 	 */
-	status: "verified" | "rejected" | "skipped" | "not_implicated";
+	status: HostVerificationStatus;
 	reason?: string;
 	checks: RunHostVerificationCheck[];
 	/**

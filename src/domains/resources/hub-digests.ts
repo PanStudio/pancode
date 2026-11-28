@@ -12,6 +12,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
 import { reviewExtensionEnvelope } from "../extensions/envelope-review.js";
 import { mcpServerDigest } from "../gateway/mcp/config.js";
+import type { McpTrustActionClass } from "../gateway/mcp/trust.js";
 
 /** The pack's capability envelope digest, or undefined when it declares no runtime. */
 export function hubEnvelopeDigest(root: string): string | undefined {
@@ -42,7 +43,7 @@ export function hubMcpDigest(root: string, treeSha256: string): string | undefin
 			envVars: Array.isArray(value.envVars) ? value.envVars.map(String) : [],
 			timeoutMs: typeof value.timeoutMs === "number" ? value.timeoutMs : null,
 			toolActionClasses: isRecord(value.toolActionClasses)
-				? (value.toolActionClasses as Record<string, "read" | "execute" | "destructive" | "unknown">)
+				? (value.toolActionClasses as Record<string, McpTrustActionClass>)
 				: {},
 			toolPathArguments: isRecord(value.toolPathArguments)
 				? (value.toolPathArguments as Record<string, Record<string, "read" | "write">>)

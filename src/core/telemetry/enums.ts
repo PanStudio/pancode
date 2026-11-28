@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { Static, TEnum } from "typebox";
+import type { Static, TEnum, TLiteral, TUnion } from "typebox";
 import { Type } from "typebox";
-import { RUN_OUTCOME_CODES, RUN_OUTCOMES } from "./run-vocabulary.js";
+import { CALL_STOP_REASONS, RUN_OUTCOME_CODES, RUN_OUTCOMES } from "./run-vocabulary.js";
 
 export function vocabulary<const T extends readonly string[]>(values: T): TEnum<T[number][]> {
 	return Type.Enum<T[number][]>([...values]);
+}
+
+type LiteralTuple<T extends readonly string[]> = { -readonly [K in keyof T]: TLiteral<T[K]> };
+
+/** A closed set spelled as a union of string literals (`anyOf` consts), for wire schemas written that way. */
+export function literalUnion<const T extends readonly string[]>(values: T): TUnion<LiteralTuple<T>> {
+	return Type.Union(values.map((value) => Type.Literal(value))) as TUnion<LiteralTuple<T>>;
 }
 
 /**
@@ -78,7 +85,7 @@ export const TurnNoAnswerCause = vocabulary([
 	"empty",
 ]);
 export type TurnNoAnswerCause = Static<typeof TurnNoAnswerCause>;
-export const StopReason = vocabulary(["stop", "toolUse", "length", "error", "aborted", "unknown"]);
+export const StopReason = vocabulary([...CALL_STOP_REASONS, "unknown"]);
 export const RoundKind = vocabulary(["normal", "text-only", "required", "tools-removed", "unknown"]);
 export const TransportKind = vocabulary(["websocket", "sse", "http", "local", "subprocess", "unknown"]);
 export const Tier = vocabulary(["accountability", "operational", "research"]);

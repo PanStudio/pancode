@@ -12,6 +12,7 @@ import { mainShellContained } from "../core/sandbox/main-session.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { CompactionPayload } from "../core/telemetry/live-events.js";
 import { motionEnabled } from "../core/terminal-preferences.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import { listPlaybooks } from "../domains/agents/playbook.js";
 import { isUserVisibleAgent } from "../domains/agents/spec.js";
@@ -78,7 +79,6 @@ import type { HarnessFactsSource } from "./harness-facts.js";
 import { createHarnessFactsSource } from "./harness-facts.js";
 import { getActiveRenderTrace } from "./interactive-shell.js";
 import { resolveThinkingCapability } from "./interactive-slash-runtime.js";
-import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
 import type { PancodeKeybindingManager } from "./keybinding-manager.js";
 import { actionKeyLabel, createKeybindingManager, formatKeyLabel } from "./keybinding-manager.js";
 import { buildLayout, preserveTranscriptScroll } from "./layout.js";
@@ -251,7 +251,7 @@ export interface InteractivePresentation {
 	fleetOwnsLiveProgress(): boolean;
 	footer: FooterDashboardPanel;
 	notifications: NotificationCenter;
-	notify(level: InteractiveNoticeLevel, text: string, key?: string, ttlMs?: number): void;
+	notify(level: NotificationLevel, text: string, key?: string, ttlMs?: number): void;
 	dismissContextBootstrapNotices(): void;
 	announceTaskMemorySeedOffer(): void;
 	collapseWelcomeDashboard(): void;
@@ -619,7 +619,7 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 		},
 		stillTrue: routeNoticeStands,
 	});
-	const notify = (level: InteractiveNoticeLevel, text: string, key?: string, ttlMs?: number): void => {
+	const notify = (level: NotificationLevel, text: string, key?: string, ttlMs?: number): void => {
 		notifications.add({ level, text, ...(key ? { key } : {}), ...(ttlMs === undefined ? {} : { ttlMs }) });
 	};
 	const dismissContextBootstrapNotices = (): void => {

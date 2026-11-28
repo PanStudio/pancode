@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { PancodeSettings } from "../../core/config.js";
 import { semanticUsable } from "../../core/config.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { SEMANTIC_SOURCE_KINDS } from "../../domains/semantic/types.js";
 import { StringEnum } from "../../engine/ai.js";
 import type { ToolSurface } from "../lazy-tool.js";
 
@@ -40,7 +41,7 @@ export function createContextToolSurface(semantic?: PancodeSettings["context"]["
 			...(usable
 				? {
 						kinds: Type.Optional(
-							Type.Array(StringEnum(["code", "wiki", "memory", "evidence", "inbox", "recording"]), {
+							Type.Array(StringEnum([...SEMANTIC_SOURCE_KINDS]), {
 								minItems: 1,
 								maxItems: 6,
 								description: "semantic: source kinds to include.",

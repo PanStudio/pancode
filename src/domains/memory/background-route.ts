@@ -41,7 +41,7 @@ import {
 	refineRuntimeTargetWithModelHints,
 	resolveEndpointCapacities,
 	resolveRuntimeTarget,
-	VALID_THINKING_LEVELS,
+	THINKING_LEVELS,
 } from "../providers/index.js";
 import { hasLiveModelCatalog, modelResidencyForStatus } from "../providers/model-discovery.js";
 import { memoryInterventionModelMaxTokens } from "../providers/model-runtime-capabilities.js";
@@ -368,7 +368,7 @@ export function prepareBackgroundMemoryModel(
 function leastThinkingLevel(refined: ResolvedRuntimeTarget): ThinkingLevel {
 	const { mechanism, supportedLevels } = refined.modelRuntime.thinking;
 	if (supportedLevels.includes("off") || mechanism === "none" || mechanism === "always-on") return "off";
-	return VALID_THINKING_LEVELS.find((level) => supportedLevels.includes(level)) ?? "off";
+	return THINKING_LEVELS.find((level) => supportedLevels.includes(level)) ?? "off";
 }
 
 /** A bounded preparation capacity when no foreground actor budget exists. Never activates actor context. */

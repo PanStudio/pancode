@@ -40,6 +40,7 @@ import type { JobRecord } from "../../core/job-types.js";
 import type { PendingSkillRequest } from "../../core/skill-activation.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { type TurnConstraints, turnAllowsTool } from "../../core/turn-constraints.js";
+import { NOTICE_LEVELS, type NoticeLevel } from "../../core/views/notice-words.js";
 import type { OperatorExtensions } from "../../domains/extensions/operator-extensions.js";
 import { consentText } from "../../domains/report/index.js";
 import {
@@ -49,7 +50,6 @@ import {
 	typedLineCommands,
 } from "../../session-control/extension-line.js";
 import { parseLoopArgv } from "../../session-control/loop-command.js";
-import type { NoticeLevel } from "../../session-control/notice-source.js";
 import type { ReloadTarget } from "../../session-control/reload-report.js";
 import type { SlashCommand, SlashCommandContext, SlashCommandKind } from "../../session-control/slash-command-types.js";
 import { BUILTIN_SLASH_COMMANDS, parseSlashCommand } from "../../session-control/slash-commands.js";
@@ -440,9 +440,6 @@ export type AcpPromptLineVerdict =
 	/** An extension command or takeover, answered by its runtime with no model turn (WTF-P F04). */
 	| { kind: "extension"; run(signal?: AbortSignal): Promise<ExtensionLineAnswer> }
 	| { kind: "refuse"; code: "unknown_command" | "command_unavailable"; message: string };
-
-/** A result's level is the loudest notice the command emitted, so the levels need an order. */
-const NOTICE_LEVELS: ReadonlyArray<NoticeLevel> = ["info", "success", "warn", "error"];
 
 /** Every refusal on this surface is the client's mistake, so they all carry one shape. */
 function invalid(reason: string, message: string): AcpRequestError {

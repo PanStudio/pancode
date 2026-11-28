@@ -19,10 +19,11 @@ import { safeResourceWrite } from "./safe-resource-write.js";
 import { withStateFileLockSync } from "./state-file-lock.js";
 import { taskWorktreeOrigin } from "./task-worktree-claim.js";
 import { isRecord } from "./type-guards.js";
+import { PROJECT_TRUST_SURFACES, type ProjectTrustSurface } from "./views/trust-words.js";
 import { configRootRemoved, pancodeConfigDir, resolvePancodeDirs } from "./xdg.js";
 
 export type WorkspaceTrustVerdict = "trusted" | "untrusted" | "changed";
-export type ProjectTrustSurface = "safety" | "hooks" | "settings" | "extensions" | "plugins" | "handbook";
+export type { ProjectTrustSurface };
 
 export interface ProjectSurfaceFile {
 	path: string;
@@ -65,14 +66,6 @@ interface PackageIdentities {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/;
-const SURFACES: ReadonlyArray<ProjectTrustSurface> = [
-	"safety",
-	"hooks",
-	"settings",
-	"extensions",
-	"plugins",
-	"handbook",
-];
 
 /** The repository-root handbook files a `handbook` approval pins. */
 export const HANDBOOK_TRUST_FILES: ReadonlyArray<string> = ["PANCODE.override.md", "PANCODE.md", "PANCODE-DEV.md"];
@@ -174,7 +167,7 @@ function readRecord(canonicalRoot: string): WorkspaceTrustRecord | null {
 		if (record.version !== 2 || record.workspaceRoot !== canonicalRoot) return null;
 		if (!isRecord(record.surfaces)) return null;
 		const surfaces: WorkspaceTrustRecord["surfaces"] = {};
-		for (const surface of SURFACES) {
+		for (const surface of PROJECT_TRUST_SURFACES) {
 			const approval = record.surfaces[surface];
 			if (approval === undefined) continue;
 			if (typeof approval === "string" && SHA256.test(approval)) {
@@ -218,7 +211,7 @@ export function projectSurfaceTrust(
 	contentHash: string,
 ): WorkspaceTrustVerdict {
 	if (isPackageSurface(surface)) throw new Error(`project ${surface} trust needs captureProjectSurface, not a digest`);
-	if (!SURFACES.includes(surface) || !SHA256.test(contentHash)) return "untrusted";
+	if (!PROJECT_TRUST_SURFACES.includes(surface) || !SHA256.test(contentHash)) return "untrusted";
 	try {
 		const root = surfaceRoot(workspaceRoot, surface);
 		const approved = readRecord(root)?.surfaces[surface];
@@ -234,7 +227,8 @@ export function recordProjectSurfaceTrust(
 	surface: ProjectTrustSurface,
 	contentHash: string,
 ): void {
-	if (!SURFACES.includes(surface) || !SHA256.test(contentHash)) throw new Error("trust requires a full SHA-256 digest");
+	if (!PROJECT_TRUST_SURFACES.includes(surface) || !SHA256.test(contentHash))
+		throw new Error("trust requires a full SHA-256 digest");
 	writeSurfaceApproval(workspaceRoot, surface, contentHash);
 }
 

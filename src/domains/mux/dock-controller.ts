@@ -42,8 +42,9 @@ import {
 	type MuxTabGeometry,
 } from "./types.js";
 
-/** The managed dock positions. */
-export type DockSlot = "workers" | "files" | "extension";
+/** The managed dock positions, in the order the dock report lists them. */
+export const DOCK_SLOTS = ["files", "workers", "extension"] as const;
+export type DockSlot = (typeof DOCK_SLOTS)[number];
 
 export interface DockSpec {
 	slot: DockSlot;

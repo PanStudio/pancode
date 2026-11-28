@@ -27,6 +27,7 @@ import {
 import { recordRunTimingBestEffort } from "./phase-timing.js";
 import { defaultRoutingIntent } from "./routing-intent.js";
 import { unobservedRunUsageFacts } from "./run-call-usage.js";
+import { flushRunFeed } from "./run-feed.js";
 import { createRunResultQuality, deriveRunVerification } from "./run-findings.js";
 import {
 	assessDispatchFinishContract,
@@ -468,7 +469,7 @@ export async function settleAcpRun(rt: DispatchRuntime, delegation: RunningDeleg
 				agentId: req.agentId,
 				exitCode: receipt.exitCode,
 			});
-			await closeRunJournal();
+			await Promise.all([closeRunJournal(), flushRunFeed(envelope.id)]);
 			delegation.terminalEventEmitted = true;
 			emitTerminalDispatchEvent({ context }, finalizing, receipt, finalOutcome);
 			rt.retry.completeAssignmentAttempt(

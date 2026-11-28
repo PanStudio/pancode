@@ -16,7 +16,7 @@ import { isSemanticVersion, satisfiesSemVerRange } from "../extensions/compatibi
 import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
 import { bundledHubIndexPath, parsePluginGithubSource } from "../plugins/catalog.js";
 import { withPluginDiscoveryPass } from "../plugins/index.js";
-import type { InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
+import type { ForeignPackageFormat, InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
 import type { ResourceDiagnostic } from "./collision.js";
 import { discoverHub } from "./hub.js";
 import {
@@ -45,8 +45,6 @@ import { loadSkills, type Skill } from "./skills/loader.js";
  * executes, reloads or writes. Package and component readers never call back into
  * this module.
  */
-
-export type HubPackageFormat = "portable" | "claude-code" | "codex" | "agent-skill";
 
 /** Where the bytes came from, derived from discovery, install and adoption evidence only. */
 export type HubOrigin =
@@ -86,7 +84,7 @@ export interface HubCopy {
 	trust: "trusted" | "foreign";
 	overriddenBy?: PluginScope;
 	origin: HubOrigin;
-	format?: HubPackageFormat;
+	format?: ForeignPackageFormat;
 	recordedDigest?: string;
 	observedDigest?: string;
 	installedAt?: string;
@@ -105,7 +103,7 @@ export interface HubPackageRecord {
 	sourceUrl: string;
 	requires?: HubRequirementRef[];
 	origin: HubOrigin;
-	format?: HubPackageFormat;
+	format?: ForeignPackageFormat;
 	/** Hints only; absent means contents are unknown until inspection. */
 	provides?: HubProvidedResource[];
 	/** Which reader produced the row: a catalog, a scoped index, or install state alone. */
@@ -130,7 +128,7 @@ export interface HubComponent {
 	source: { class: HubComponentSourceClass; id: string; scope: "package" | "user" | "project" };
 	owner?: { ref: HubRequirementRef; scope: PluginScope; componentId?: string };
 	origin: HubOrigin;
-	format?: HubPackageFormat;
+	format?: ForeignPackageFormat;
 	availability: HubComponentAvailability;
 	reason?: string;
 	trusted: boolean;
@@ -309,7 +307,7 @@ function compatHost(sourceId: string): string | undefined {
 	return host && host !== "unknown" ? host : undefined;
 }
 
-function formatForHost(host: string | undefined): HubPackageFormat | undefined {
+function formatForHost(host: string | undefined): ForeignPackageFormat | undefined {
 	if (host === "claude" || host === "claude-code") return "claude-code";
 	if (host === "codex") return "codex";
 	return undefined;
@@ -323,7 +321,7 @@ export type HubOriginEvidence =
 /** One rule shared by CLI, context and UI. Author metadata never reaches it. */
 export function classifyHubOrigin(evidence: HubOriginEvidence): {
 	origin: HubOrigin;
-	format?: HubPackageFormat;
+	format?: ForeignPackageFormat;
 } {
 	if (evidence.kind === "catalog-row") {
 		const { entry } = evidence;
@@ -545,7 +543,7 @@ function resourceOrigin(
 	sourceId: string,
 	filePath: string,
 	owner: HubCopy | undefined,
-): { origin: HubOrigin; format?: HubPackageFormat } {
+): { origin: HubOrigin; format?: ForeignPackageFormat } {
 	if (owner) return { origin: owner.origin, ...(owner.format ? { format: owner.format } : {}) };
 	return classifyHubOrigin({ kind: "resource-root", sourceId, path: filePath });
 }

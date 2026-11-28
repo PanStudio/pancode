@@ -3,6 +3,7 @@
 
 import { relative } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
+import { PROJECT_PRELOAD_MODES, type ProjectPreloadMode } from "../../core/telemetry/session-vocabulary.js";
 import type { ProjectPromptContext } from "../context/contract.js";
 import { renderProjectContextFragment } from "../context/pancode-md.js";
 import { safePrefixOffsets, sourceLineCount } from "./preload-prefix.js";
@@ -17,7 +18,7 @@ import { safePrefixOffsets, sourceLineCount } from "./preload-prefix.js";
  */
 export const FULL_PROJECT_CONTEXT_MAX_CHARS = 24_000;
 export const FULL_PROJECT_CONTEXT_MAX_LINES = 220;
-export type ProjectPreloadMode = "full" | "partial" | "synopsis" | "none";
+export { PROJECT_PRELOAD_MODES, type ProjectPreloadMode };
 export type ProjectPreloadReason = "size" | "lines" | "no-pancode-md";
 export interface ProjectPreloadSource {
 	path: string;

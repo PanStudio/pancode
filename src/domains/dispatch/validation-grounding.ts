@@ -39,6 +39,7 @@
  */
 
 import { parseVerifierPayload } from "../../core/json-payload.js";
+import type { ValidationGroundingBasis } from "../../core/telemetry/run-vocabulary.js";
 import { parseVerifierResult } from "../agents/result-contract-gate.js";
 import type { ResultContract } from "../agents/result-contract-types.js";
 import { typedValidationSummary } from "../safety/finish-validation-evidence.js";
@@ -73,7 +74,7 @@ export interface ValidationGrounding {
 	 * an execution (DESIGN 4.8 V1: unobserved, never zero); the claims read unknown, never ungrounded.
 	 * `grounded` means every claim matched an executed command.
 	 */
-	basis: "grounded" | "no-command-executed" | "unmatched-command" | "unattributable-status" | "unobserved-lane";
+	basis: ValidationGroundingBasis;
 }
 
 export interface ValidationGroundingInput {

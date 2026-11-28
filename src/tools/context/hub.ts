@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { discoveryScore } from "../../core/harness-discovery.js";
 import { ToolNames } from "../../core/tool-names.js";
+import type { HubComponentKind } from "../../core/views/hub-words.js";
 import { guidanceForHubKind } from "../../domains/prompts/runtime-guidance.js";
 import type {
 	HubComponent,
@@ -48,7 +49,7 @@ const MAX_INVOCATION = 200;
 /** How much of an echoed argument comes back in the payload header. */
 const MAX_ECHO = 120;
 
-export type HubRowKind = "skill" | "agent" | "prompt" | "playbook" | "plugin";
+export type HubRowKind = HubComponentKind | "plugin";
 
 export interface HubScopeDeps {
 	getCwd(): string;

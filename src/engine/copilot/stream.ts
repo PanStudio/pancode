@@ -18,6 +18,7 @@
  * Every parked handler settles: with PanCode's result, or rejected when its call is retired by Copilot, when
  * the conversation is disposed (divergence, abort, PanCode session end) or when the process stops the runtime.
  */
+
 import { randomUUID } from "node:crypto";
 import type {
 	Api,
@@ -48,6 +49,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { isHostPolicyMessage } from "../../core/host-policy-message.js";
 import { isNarrationSummary, type NarrationSummaryMark } from "../../core/narration-summary.js";
 import { claimWireEffort, stampWireEffort } from "../../core/telemetry/call-effort.js";
+import type { CopilotSessionOrigin } from "../../core/telemetry/session-vocabulary.js";
 import type { EngineRegisteredApiProvider } from "../api-registry.js";
 import type { PinnedPromptPrefix } from "../apis/anthropic-system-split.js";
 import type { AgentMessage } from "../types.js";
@@ -845,13 +847,6 @@ function narrationOf(reasoningBlocks: unknown): string[] {
 	}
 	return said;
 }
-
-/**
- * The session a step's request went to, as PanCode's own pool knows it: `new` (createSession for this step), `spare`
- * (a PV-2 pooled session holding nothing), `continued` (an open one holding the transcript), `resumed` (resumeSession
- * on one an earlier process left).
- */
-type CopilotSessionOrigin = "new" | "spare" | "continued" | "resumed";
 
 /** The recipient clause of a Harmony tool call: `to=functions.<name>`. */
 const TOOL_CHANNEL_PREFIX = "to=functions.";

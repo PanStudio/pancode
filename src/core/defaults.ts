@@ -18,20 +18,14 @@ import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
 import type { EgressMode, EgressPresetName, SandboxMode, UnixSocketMode } from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
+import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
+import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
+import type { ThinkingLevel } from "./views/thinking-levels.js";
 
 export type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 export type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-export const THINKING_LEVELS: ReadonlyArray<ThinkingLevel> = [
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-];
+export { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
 interface WorkerTarget {
 	target: string | null;
@@ -124,9 +118,10 @@ interface SystemOneSettings {
  * a block or no verdict denies it. It behaves as "deny" at yolo, when
  * safety.judge is off, and where no judge can answer.
  * Operator-authority asks always go to the operator, and an ask no one can
- * answer is denied.
+ * answer is denied. Listed in the order /settings and configure offer them.
  */
-export type WorkerPermissionMode = "deny" | "fail" | "escalate" | "main" | "judge";
+export const WORKER_PERMISSION_MODES = ["judge", "deny", "escalate", "fail", "main"] as const;
+export type WorkerPermissionMode = (typeof WORKER_PERMISSION_MODES)[number];
 
 /** Bounds for the escalate posture; the timeout fallback keeps runs non-stall. */
 export interface WorkerEscalationSettings {
@@ -609,20 +604,19 @@ export interface FleetSettings extends FleetRouteSettings {
 	history: FleetHistorySettings;
 }
 
-/** Roles whose authority is narrow enough for active joint routing. */
-export const ACTIVE_ROUTING_ROLES = ["explorer", "seat", "checker", "reviewer", "judge"] as const;
+/** Roles whose authority is narrow enough for active joint routing: every role but the builder. */
+export const ACTIVE_ROUTING_ROLES = RUN_ROLES.filter((role): role is Exclude<RunRole, "builder"> => role !== "builder");
 export type ActiveRoutingRole = (typeof ACTIVE_ROUTING_ROLES)[number];
 
 /** Manual is exact rather than adaptive, so it is never an activated posture. */
-export const ACTIVE_ROUTING_POSTURES = ["quality", "balanced", "latency", "economy"] as const;
+export const ACTIVE_ROUTING_POSTURES = ROUTING_POSTURES.filter(
+	(posture): posture is Exclude<RoutingPosture, "manual"> => posture !== "manual",
+);
 export type ActiveRoutingPosture = (typeof ACTIVE_ROUTING_POSTURES)[number];
-
-export const ACTIVE_AGENT_AUTOMATION_ROLES = ["builder", "explorer", "seat", "checker", "reviewer", "judge"] as const;
-type ActiveAgentAutomationRole = (typeof ACTIVE_AGENT_AUTOMATION_ROLES)[number];
 
 export interface ActiveAgentRole {
 	agentId: string;
-	executionRole: ActiveAgentAutomationRole;
+	executionRole: RunRole;
 }
 
 interface AdaptiveRoutingSettings {
@@ -717,9 +711,13 @@ export interface MemorySurfaceSettings {
 	history: "off" | "on";
 }
 
-export type MemoryDeliveryMode = "off" | "section" | "decision" | "broadcast";
+/** Lesson delivery modes, each opening every channel the one before it opens. */
+export const MEMORY_DELIVERY_MODES = ["off", "section", "decision", "broadcast"] as const;
+export type MemoryDeliveryMode = (typeof MEMORY_DELIVERY_MODES)[number];
 
-export type MemoryLessonsMode = "off" | "rules" | "agent" | "side";
+/** Note authorship modes in the order /settings offers them. */
+export const MEMORY_LESSONS_MODES = ["agent", "rules", "side", "off"] as const;
+export type MemoryLessonsMode = (typeof MEMORY_LESSONS_MODES)[number];
 
 interface MemorySettings {
 	enabled: boolean;
@@ -740,6 +738,10 @@ interface MemorySettings {
 	timeoutMs: number;
 }
 
+/** What a semantic index can embed. */
+export const SEMANTIC_MODALITIES = ["text", "image", "audio", "mixed"] as const;
+export type SemanticModality = (typeof SEMANTIC_MODALITIES)[number];
+
 /** The optional local semantic index and its explicit ingestion roots. */
 interface SemanticSettings {
 	enabled: boolean;
@@ -748,7 +750,7 @@ interface SemanticSettings {
 	assetIdentity: string | null;
 	projectorIdentity: string | null;
 	canaryFingerprint: string | null;
-	modalities: Array<"text" | "image" | "audio" | "mixed">;
+	modalities: SemanticModality[];
 	background: boolean;
 	inboxes: Array<{ id: string; root: string; scope: "project" | "global"; project: string | null }>;
 }

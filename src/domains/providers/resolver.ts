@@ -6,7 +6,7 @@ import { isOrchestratorEligibleRuntime } from "./eligibility.js";
 import { modelCandidatesForStatus } from "./model-discovery.js";
 import { modelDateMs, modelFamilyForId } from "./model-recency.js";
 import type { ThinkingLevel } from "./types/capability-flags.js";
-import { VALID_THINKING_LEVELS } from "./types/capability-flags.js";
+import { THINKING_LEVELS } from "./types/capability-flags.js";
 
 export interface ResolveModelOptions {
 	use?: "chat";
@@ -30,7 +30,7 @@ export interface ResolveModelResult {
 const GLOB_CHARS = /[*?[]/;
 
 function isThinkingLevel(token: string): token is ThinkingLevel {
-	return (VALID_THINKING_LEVELS as ReadonlyArray<string>).includes(token);
+	return (THINKING_LEVELS as ReadonlyArray<string>).includes(token);
 }
 
 /**

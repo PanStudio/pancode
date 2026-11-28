@@ -33,6 +33,7 @@
  */
 
 import { PANCODE_MIN_CONTEXT_WINDOW, PANCODE_MIN_MAX_OUTPUT_TOKENS } from "../../../../core/context-floor.js";
+import { BOOLEAN_CAPABILITY_KEYS } from "../../../../core/runtime-vocabulary.js";
 import type { Api, Model } from "../../../../engine/types.js";
 import { probeJson } from "../../probe/http.js";
 import type { CapabilityFlags } from "../../types/capability-flags.js";
@@ -153,17 +154,6 @@ export function capabilitiesFromLiteLLMModelInfo(info: Record<string, unknown>):
 	return caps;
 }
 
-const BOOLEAN_CAPABILITIES = [
-	"chat",
-	"tools",
-	"reasoning",
-	"vision",
-	"audio",
-	"embeddings",
-	"rerank",
-	"fim",
-] as const satisfies ReadonlyArray<keyof CapabilityFlags>;
-
 /**
  * One alias may load-balance across heterogeneous deployments. PanCode can only
  * promise what every possible route supports: numerical limits take the
@@ -179,7 +169,7 @@ export function aggregateLiteLLMCapabilities(rows: ReadonlyArray<Partial<Capabil
 			aggregate[key] = Math.min(...values);
 		}
 	}
-	for (const key of BOOLEAN_CAPABILITIES) {
+	for (const key of BOOLEAN_CAPABILITY_KEYS) {
 		const values = rows.map((row) => row[key]);
 		if (values.some((value) => value === false)) aggregate[key] = false;
 		else if (values.every((value) => value === true)) aggregate[key] = true;

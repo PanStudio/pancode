@@ -10,10 +10,12 @@ import { Value } from "typebox/value";
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
 import { safeResourceWriteAsync } from "../../core/safe-resource-write.js";
+import { literalUnion } from "../../core/telemetry/enums.js";
 import { EvidenceFindingsObjectSchema } from "../../core/telemetry/evidence-schemas.js";
 import { RunResultObjectSchema } from "../../core/telemetry/run-schemas.js";
 import type { ObjectRef } from "../../core/telemetry/schemas.js";
 import { ObjectRefSchema } from "../../core/telemetry/schemas.js";
+import { PROJECT_PRELOAD_MODES } from "../../core/telemetry/session-vocabulary.js";
 import { matchesTrace, traceValue } from "../../core/value-trace.js";
 import type { RedactionTally } from "../../lib/secrets/redact.js";
 import { createRedactionTally, secretRedactingReplacer } from "../../lib/secrets/redact.js";
@@ -39,7 +41,7 @@ const projectPreloadSchema = Type.Union([
 	Type.Null(),
 	Type.Object(
 		{
-			mode: Type.Union([Type.Literal("full"), Type.Literal("partial"), Type.Literal("synopsis"), Type.Literal("none")]),
+			mode: literalUnion(PROJECT_PRELOAD_MODES),
 			chars: count,
 			lines: count,
 			reason: Type.Union([Type.Literal("size"), Type.Literal("lines"), Type.Literal("no-pancode-md"), Type.Null()]),

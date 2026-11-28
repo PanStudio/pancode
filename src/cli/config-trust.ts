@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { realpathSync } from "node:fs";
+import { PROJECT_TRUST_SURFACES } from "../core/views/trust-words.js";
 import {
 	captureProjectSurface,
 	type ProjectPackageEntry,
@@ -20,15 +22,6 @@ const TRUST_PATH = ["config", "trust"] as const;
 function fail(slug: ErrorSlug, message: string, json: boolean): void {
 	writeCliFailure({ path: TRUST_PATH, slug, message, json });
 }
-
-const SURFACES: ReadonlyArray<ProjectTrustSurface> = [
-	"safety",
-	"hooks",
-	"settings",
-	"extensions",
-	"plugins",
-	"handbook",
-];
 
 const PACKAGE_RELOAD: Partial<Record<ProjectTrustSurface, string>> = {
 	extensions: "Reload extensions (/reload extensions) to apply it.",
@@ -73,8 +66,8 @@ export function runConfigTrustCommand(args: ReadonlyArray<string>, cwd = process
 		return 2;
 	}
 	const surface = parsed.positional[0] as ProjectTrustSurface | undefined;
-	if (surface === undefined || !SURFACES.includes(surface) || parsed.positional.length > 1) {
-		fail("usage", `expects one surface: ${SURFACES.join("|")}`, jsonAsked);
+	if (surface === undefined || !PROJECT_TRUST_SURFACES.includes(surface) || parsed.positional.length > 1) {
+		fail("usage", `expects one surface: ${PROJECT_TRUST_SURFACES.join("|")}`, jsonAsked);
 		return 2;
 	}
 	const { json = false, revoke = false, hash } = parsed.flags;

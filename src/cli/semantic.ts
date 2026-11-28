@@ -3,6 +3,8 @@
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { PancodeSettings, updateSettings } from "../core/config.js";
+import { SEMANTIC_MODALITIES, type SemanticModality } from "../core/defaults.js";
+import { SEMANTIC_SOURCE_KINDS, type SemanticSourceKind } from "../domains/semantic/types.js";
 
 const SEMANTIC_HELP = `pancode semantic configure --target <id> --model <id> --asset-identity <identity>
                             [--projector-identity <identity>] [--profile <id>] [--modality text|image|audio|mixed ...]
@@ -45,7 +47,7 @@ export type SemanticCliRequest =
 			assetIdentity: string;
 			projectorIdentity?: string;
 			profile?: string;
-			modalities?: Array<"text" | "image" | "audio" | "mixed">;
+			modalities?: SemanticModality[];
 			qualify: boolean;
 			background?: boolean;
 	  }
@@ -169,9 +171,9 @@ export function parseSemanticArgs(
 	const none = () => {
 		if (positional.length > 0) throw new Error(`${command} does not accept positional arguments`);
 	};
-	if (values.get("modality")?.some((value) => !["text", "image", "audio", "mixed"].includes(value)))
+	if (values.get("modality")?.some((value) => !(SEMANTIC_MODALITIES as readonly string[]).includes(value)))
 		throw new Error("Unknown --modality; expected text, image, audio or mixed");
-	if (values.get("kind")?.some((value) => !["code", "wiki", "memory", "evidence", "inbox", "recording"].includes(value)))
+	if (values.get("kind")?.some((value) => !(SEMANTIC_SOURCE_KINDS as readonly string[]).includes(value)))
 		throw new Error("Unknown --kind; expected code, wiki, memory, evidence, inbox or recording");
 	let request: SemanticCliRequest;
 	switch (command) {
@@ -184,9 +186,7 @@ export function parseSemanticArgs(
 				assetIdentity: required("asset-identity"),
 				qualify,
 				...(background ? { background } : {}),
-				...(values.has("modality")
-					? { modalities: values.get("modality") as Array<"text" | "image" | "audio" | "mixed"> }
-					: {}),
+				...(values.has("modality") ? { modalities: values.get("modality") as SemanticModality[] } : {}),
 				...(get("projector-identity") ? { projectorIdentity: get("projector-identity") as string } : {}),
 				...(get("profile") ? { profile: get("profile") as string } : {}),
 			};
@@ -260,8 +260,6 @@ async function defaultContext(): Promise<Omit<SemanticCliContext, "signal">> {
 }
 
 type SemanticConfiguration = PancodeSettings["context"]["semantic"];
-type Modality = SemanticConfiguration["modalities"][number];
-type SourceKind = "code" | "wiki" | "memory" | "evidence" | "inbox" | "recording";
 type AppOptions = { projectRoot: string; settings: PancodeSettings };
 export interface SemanticCliBridge {
 	openSemanticApp(options: AppOptions): Promise<{ profile: { id: string }; profileIdentity: string }>;
@@ -274,7 +272,7 @@ export interface SemanticCliBridge {
 		query: string,
 		filters: {
 			limit: number;
-			kinds?: readonly SourceKind[];
+			kinds?: readonly SemanticSourceKind[];
 			runId?: string;
 			after?: string;
 			before?: string;
@@ -301,8 +299,8 @@ export async function executeSemanticRequest(
 			throw new Error("--target must name a configured llama.cpp embedding or LiteLLM target");
 		if (request.profile && request.profile !== "embeddinggemma-2-q8-768")
 			throw new Error("Only profile embeddinggemma-2-q8-768 is supported by this bridge");
-		const modalities = [...new Set<Modality>(request.modalities ?? ["text"])];
-		if (!modalities.includes("text") || modalities.some((value) => !["text", "image", "audio", "mixed"].includes(value)))
+		const modalities = [...new Set<SemanticModality>(request.modalities ?? ["text"])];
+		if (!modalities.includes("text") || modalities.some((value) => !SEMANTIC_MODALITIES.includes(value)))
 			throw new Error("--modality requires text and only qualified text/image/audio/mixed values");
 		const next: SemanticConfiguration = {
 			enabled: true,
@@ -422,8 +420,8 @@ export async function executeSemanticRequest(
 	if (request.command === "search") {
 		if (request.project && request.project !== projectRoot)
 			throw new Error("--project must match the current canonical project identity");
-		const kinds = request.kinds as SourceKind[] | undefined;
-		if (kinds?.some((kind) => !["code", "wiki", "memory", "evidence", "inbox", "recording"].includes(kind)))
+		const kinds = request.kinds as SemanticSourceKind[] | undefined;
+		if (kinds?.some((kind) => !SEMANTIC_SOURCE_KINDS.includes(kind)))
 			throw new Error("Unknown --kind; expected code, wiki, memory, evidence, inbox or recording");
 		return bridge.searchSemantic(
 			options,

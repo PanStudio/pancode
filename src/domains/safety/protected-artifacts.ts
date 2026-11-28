@@ -3,6 +3,7 @@
 import path from "node:path";
 import { artifactDefaultPath } from "../../core/artifact-paths.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
+import type { ProtectedArtifactSource } from "../../core/telemetry/session-vocabulary.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { checkWordOf } from "./check-prefix.js";
 import { basenameToken, commandTokenIndex } from "./command-token.js";
@@ -32,7 +33,7 @@ import {
 	validationMatch,
 } from "./validation-check-match.js";
 
-export type ProtectedArtifactSource = "validation" | "middleware" | "user" | "session";
+export type { ProtectedArtifactSource };
 
 export interface ProtectedArtifact {
 	path: string;

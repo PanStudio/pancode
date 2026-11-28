@@ -15,7 +15,7 @@
 
 import { isRecord } from "../../../core/type-guards.js";
 import type { ThinkingBudgetByLevel, ThinkingEffortByLevel } from "../thinking-control-policy.js";
-import { type ThinkingLevel, VALID_THINKING_LEVELS } from "./capability-flags.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "./capability-flags.js";
 
 export interface SamplingProfile {
 	temperature?: number;
@@ -234,7 +234,7 @@ function extractChatTemplateKwargs(raw: unknown): ChatTemplateKwargsQuirks | und
 		const byLevelRaw = raw.byLevel;
 		if (typeof byLevelRaw.key === "string" && byLevelRaw.key.trim().length > 0 && isRecord(byLevelRaw.values)) {
 			const values: Partial<Record<ThinkingLevel, string | number>> = {};
-			for (const level of VALID_THINKING_LEVELS) {
+			for (const level of THINKING_LEVELS) {
 				const val = byLevelRaw.values[level];
 				if (typeof val === "string" && val.length > 0) {
 					values[level] = val;

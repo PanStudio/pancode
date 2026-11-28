@@ -31,6 +31,8 @@ import { readSettings } from "../core/config.js";
  */
 
 import {
+	type HubAuditState,
+	isHubAuditState,
 	loadSkills,
 	type ResourceDiagnostic,
 	type Skill,
@@ -47,7 +49,7 @@ const MAX_SKILLS_INVENTORY_TOOLS = 32;
 
 const TOOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
-type SkillAuditState = "pass" | "warn" | "fail" | "unknown" | "not-reported";
+type SkillAuditState = HubAuditState | "not-reported";
 
 interface SkillsInventoryDiagnosticCounts {
 	readonly errors: number;
@@ -100,8 +102,6 @@ interface SkillsInventorySnapshot {
 	readonly skills: readonly SkillsInventorySkill[];
 	readonly skillsTruncated: boolean;
 }
-
-const AUDIT_STATES: ReadonlySet<string> = new Set(["pass", "warn", "fail", "unknown"]);
 
 function countDiagnostics(diagnostics: ReadonlyArray<ResourceDiagnostic>): SkillsInventoryDiagnosticCounts {
 	let errors = 0;
@@ -156,7 +156,7 @@ function projectSkill(skill: Skill): SkillsInventorySkill {
 		// The URL itself is a host-side fact; that one exists is what tells the
 		// operator whether an update has anywhere to come from.
 		updatable: provenance?.installUrl !== undefined || provenance?.registryUrl !== undefined,
-		audit: audit !== undefined && AUDIT_STATES.has(audit) ? (audit as SkillAuditState) : "not-reported",
+		audit: isHubAuditState(audit) ? audit : "not-reported",
 		installedAt: timestamp(provenance?.installedAt),
 		updatedAt: timestamp(provenance?.updatedAt),
 	};

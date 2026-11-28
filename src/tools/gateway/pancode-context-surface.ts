@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Type } from "typebox";
 import { ToolNames } from "../../core/tool-names.js";
+import { HUB_COMPONENT_KINDS } from "../../core/views/hub-words.js";
 import { StringEnum } from "../../engine/ai.js";
 import type { ToolSurface } from "../lazy-tool.js";
 
@@ -30,7 +31,7 @@ export const pancodeHubToolSurface: ToolSurface = {
 	parameters: Type.Object({
 		query: Type.Optional(Type.String({ description: "Name, owner, or description terms." })),
 		kind: Type.Optional(
-			StringEnum(["skill", "agent", "prompt", "playbook", "plugin"], {
+			StringEnum([...HUB_COMPONENT_KINDS, "plugin"], {
 				description: "One recipe kind, or plugin for installable package rows.",
 			}),
 		),

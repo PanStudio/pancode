@@ -13,6 +13,7 @@ import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
 import { withRunResultV2, writeRunDiagnostic } from "../../src/cli/run-failure.js";
 import { formatDispatchHumanOutput } from "../../src/cli/run-output.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
+import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-writes.js";
 import type { RunEventJournalBody } from "../../src/domains/dispatch/run-event-journal.js";
 import { appendRunFeed, holdBack, runFeedPath } from "../../src/domains/dispatch/run-feed.js";
 import { projectAsideAnswer, projectDraftOutcome } from "../../src/engine/acp/aside.js";
@@ -110,6 +111,7 @@ function feedText(runId: string, ...items: (string | RunEventJournalBody)[]): st
 	for (const item of items) {
 		appendRunFeed(runId, typeof item === "string" ? { kind: "event", type: "text", detail: item } : item);
 	}
+	drainDeferredWritesSync();
 	return readFileSync(runFeedPath(runId, pancodeStateDir()), "utf8")
 		.trim()
 		.split("\n")

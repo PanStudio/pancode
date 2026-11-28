@@ -7,8 +7,9 @@ import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/c
 import { formatCount } from "../core/format-time.js";
 import { isHostPolicyMessage } from "../core/host-policy-message.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
-import type { ContextActivityPhase, ContextActivityStatus } from "../core/telemetry/live-events.js";
+import type { ContextActivityPhase } from "../core/telemetry/live-events.js";
 import type { CallMessageObserver } from "../core/telemetry/producer.js";
+import type { ContextActivityStatus } from "../core/telemetry/session-vocabulary.js";
 import { supersededStageApplies } from "../domains/context/fold/contract.js";
 import { SMALL_WINDOW_TOKENS } from "../domains/context/fold/pressure.js";
 import { withinRearmBand } from "../domains/context/working-set/checkpoint.js";

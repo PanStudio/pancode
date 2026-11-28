@@ -3,6 +3,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
+import { JOB_DELIVERY_STATES, JOB_OUTCOMES } from "../../core/job-types.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { pancodeStateDir } from "../../core/xdg.js";
@@ -105,7 +106,7 @@ function validateRecord(value: unknown, owner: JobOwner): asserts value is JobRe
 	const evidence = (v: unknown): boolean =>
 		v === null ||
 		(obj(v) &&
-			["succeeded", "failed", "noop", "canceled", "timed_out", "interrupted"].includes(String(v.outcome)) &&
+			(JOB_OUTCOMES as ReadonlyArray<string>).includes(String(v.outcome)) &&
 			typeof v.summary === "string" &&
 			Buffer.byteLength(v.summary) <= 2052 &&
 			typeof v.truncated === "boolean" &&
@@ -137,7 +138,7 @@ function validateRecord(value: unknown, owner: JobOwner): asserts value is JobRe
 			typeof d.id !== "string" ||
 			typeof d.occurrenceId !== "string" ||
 			!["notice", "main_turn"].includes(String(d.kind)) ||
-			!["pending", "running", "delivered", "dropped", "failed"].includes(String(d.state)) ||
+			!(JOB_DELIVERY_STATES as ReadonlyArray<string>).includes(String(d.state)) ||
 			!validTime(d.createdAt) ||
 			!nullableTime(d.startedAt) ||
 			!nullableTime(d.endedAt) ||

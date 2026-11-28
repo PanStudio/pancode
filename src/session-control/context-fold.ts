@@ -11,7 +11,8 @@
 
 import type { PancodeSettings } from "../core/config.js";
 import { sessionTelemetryContext } from "../core/telemetry/context.js";
-import type { ContextActivityStatus, ContextFoldPayload, ContextPrunedPayload } from "../core/telemetry/live-events.js";
+import type { ContextFoldPayload, ContextPrunedPayload } from "../core/telemetry/live-events.js";
+import type { ContextActivityStatus } from "../core/telemetry/session-vocabulary.js";
 import type { FoldCheckpoint } from "../domains/context/fold/contract.js";
 import { evictionPressure, overflowEvictionInputLimit } from "../domains/context/fold/pressure.js";
 import { withinRearmBand } from "../domains/context/working-set/checkpoint.js";

@@ -8,6 +8,7 @@ import { vocabulary } from "./enums.js";
 import { factSchema } from "./fact.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId } from "./id-schemas.js";
 import { closed, count, duration, ObjectRefSchema, text, UsageSchema, UtcSchema as utc } from "./schemas.js";
+import { MEMORY_GUARDIAN_STATES } from "./session-vocabulary.js";
 
 /** A task-memory step's prompt and reply in a consented research object (#434). */
 export const MemoryTracedSchema = Type.Object(
@@ -106,10 +107,7 @@ export const MemoryStepDecidedSchema = Type.Object(
 	closed,
 );
 export const MemoryStepCompletedSchema = Type.Object({ endpointKey: text, targetId: ExistingId }, closed);
-export const MemoryGuardianChangedSchema = Type.Object(
-	{ state: vocabulary(["off", "idle", "reviewing", "waiting-capacity", "unavailable"]) },
-	closed,
-);
+export const MemoryGuardianChangedSchema = Type.Object({ state: vocabulary(MEMORY_GUARDIAN_STATES) }, closed);
 export const MemoryObservationRecordedSchema = Type.Object(
 	{
 		event: vocabulary([

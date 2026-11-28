@@ -4,6 +4,14 @@ import { type Static, Type } from "typebox";
 import { Id } from "./common.js";
 import { RunResultFacts } from "./run-result-facts.js";
 
+// Every fold of these frames takes whether a run is live or over from the one run lifecycle the terminal folds too.
+export {
+	type RunLifecycle,
+	reduceRunLifecycle,
+	runLifecycleEvent,
+	runLifecycleLive,
+} from "../../../src/core/views/run-lifecycle.js";
+
 const closed = { additionalProperties: false };
 const identifier = Type.String({ maxLength: 128 });
 const nullableId = Type.Union([identifier, Type.Null()]);

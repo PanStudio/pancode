@@ -5,12 +5,12 @@ import type { ExtensionOutputV2 } from "@pancode/sdk/extension";
 import type { SettingsAreaId } from "../core/settings-areas.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
+import type { ThinkingLevel } from "../core/views/thinking-levels.js";
 import type { AgentSpec } from "../domains/agents/spec.js";
 import type { AttachOperations } from "../domains/attach/host.js";
 import type { ContextInitOptions } from "../domains/context/init-options.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
-import type { JobThinkingLevel } from "../domains/dispatch/validation.js";
 import type { InstalledExtension } from "../domains/extensions/index.js";
 import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
 import type { InteropAgentId, InteropProposal, InteropReport } from "../domains/interop/index.js";
@@ -20,7 +20,13 @@ import type { PanePeerId, PanesOperations, PanesPresetId } from "../domains/mux/
 import type { ProvidersContract, ResolvedModelRef } from "../domains/providers/index.js";
 import type { BundleRequest } from "../domains/report/bundle-flow.js";
 import type { ReportTextDuplicate, ReportTextHost } from "../domains/report/text-flow.js";
-import type { HubCategory, PromptTemplate, PromptTemplateExpansion, ResourceList } from "../domains/resources/index.js";
+import type {
+	HubCategory,
+	HubOperation,
+	PromptTemplate,
+	PromptTemplateExpansion,
+	ResourceList,
+} from "../domains/resources/index.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { ShareImportPlan } from "../domains/share/index.js";
 import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
@@ -68,7 +74,7 @@ export type SlashReportRequest =
 	| { kind: "security" };
 
 /** What `/hub <verb> <ref>` asks the browser to review once it is open. */
-export type HubBrowseIntent = "install" | "update" | "enable" | "disable" | "remove";
+export type HubBrowseIntent = HubOperation;
 
 /**
  * How a command opens PanHub.
@@ -277,7 +283,7 @@ export interface RunCommandOptions {
 	/** Place this run in a PanCode-created task worktree and retain it for review. */
 	worktree?: boolean;
 	model?: string;
-	thinkingLevel?: JobThinkingLevel;
+	thinkingLevel?: ThinkingLevel;
 	toolProfile?: ToolProfileName;
 	requiredCapabilities?: string[];
 	/** Hand the receipt's answer to the main agent when the run finishes. Off by default. */

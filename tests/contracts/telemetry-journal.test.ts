@@ -1674,6 +1674,61 @@ test("the call fold deduplicates forks and retries, preserves unknown coverage a
 	strictEqual(facts.absentCount, 1);
 });
 
+test("a run's live meter folds each record once and always equals the full fold of what it saw", () => {
+	const run = { sessionId: null, runId: "meter-run", agent: { role: "worker" as const, id: "meter-run" } };
+	const origin = { host: "local", pid: 1, birthToken: "b", monoEpochWallMs: 0 };
+	const clock = { t: "2026-10-30T12:00:00.000Z", mono: 1 };
+	const start = (attempt = 0, callId: string = newCallId()): CallStarted => ({
+		callId,
+		attemptId: newAttemptId(),
+		attempt,
+		target: { targetId: "target", runtimeId: "fixture", api: "fixture", requestedModel: "model", reportedModel: unknown },
+		roundKind: "normal",
+		toolChoice: "auto",
+	});
+	const callContext = (started: CallStarted) => ({ ...run, callId: started.callId, attemptId: started.attemptId });
+	const settle = (started: CallStarted, message: unknown, pricing: "target-rates" | "none" = "none") =>
+		makeTelemetryRecord(
+			"call.settled",
+			{ ...started, ...callSettlementFromMessage(message, pricing), stages: { settle: 1 } },
+			callContext(started),
+			clock,
+		);
+	const usage = (input: number, cost: number) => ({
+		stopReason: "stop",
+		usage: { input, output: 3, cacheRead: 1, cacheWrite: 0, cost: { total: cost } },
+	});
+	const first = start();
+	const retry = start(1, first.callId);
+	const open = start();
+	const priced = settle(first, usage(10, 0.1), "target-rates");
+	const records = [
+		makeTelemetryRecord("call.started", first, callContext(first), clock),
+		priced,
+		makeTelemetryRecord("call.started", retry, callContext(retry), clock),
+		settle(retry, usage(7, 0.3), "target-rates"),
+		priced,
+		{ ...priced, id: makeTelemetryRecord("session.opened", {}, run, clock).id },
+		settle(start(), { stopReason: "aborted", callInvoked: false }),
+		makeTelemetryRecord("call.started", open, callContext(open), clock),
+		makeTelemetryRecord("journal.gap", { sink: "worker-ndjson", reason: "writer-drop", count: 2 }, run, clock),
+		settle(start(), usage(5, 0.7)),
+	];
+	const meter = createRunCallUsage(run);
+	const seen: TelemetryRecord[] = [];
+	for (const record of records) {
+		ok(meter.observe({ type: "pancode_telemetry", record: { ...record, origin } }));
+		seen.push(record);
+		deepStrictEqual(meter.snapshot(), runUsageFromCallRecords(seen));
+	}
+	const closed = meter.settleOpen("internal");
+	deepStrictEqual(
+		closed.map((record) => record.data.attemptId),
+		[open.attemptId],
+	);
+	deepStrictEqual(meter.snapshot(), runUsageFromCallRecords([...seen, ...closed]));
+});
+
 test("fork lineage resolves the inherited prefix without copying facts or double-counting shared attempts", async () => {
 	const root = await mkdtemp(join(tmpdir(), "telemetry-fork-"));
 	const parentDirectory = telemetrySessionDirectory(root, "parent");

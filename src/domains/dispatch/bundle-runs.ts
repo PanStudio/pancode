@@ -11,6 +11,7 @@ import type { DispatchRuntime } from "./bundle-runtime.js";
 import { RUN_WRITE_TARGET_HISTORY } from "./bundle-support.js";
 import type { ActiveRun } from "./bundle-types.js";
 import type { DispatchRequest, DispatchSnapshot } from "./contract.js";
+import { flushDeferredWrites } from "./deferred-writes.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { agentRoleFactsResolver, agentRunRoles } from "./execution-role.js";
 import { classifyHeartbeat, heartbeatMonotonicAt } from "./heartbeat.js";
@@ -20,6 +21,7 @@ import { type DispatchPathScope, runLedgerProjection } from "./path-scope.js";
 import { unobservedRunUsageFacts } from "./run-call-usage.js";
 import { defaultRunEventJournal } from "./run-event-journal.js";
 import { attachRunEventJournalBridge, type RunEventJournalBridge } from "./run-event-journal-bridge.js";
+import { flushRunFeed } from "./run-feed.js";
 import { emitSettledDispatchEvent, type FinalizingRun, publishedLineage } from "./run-finish.js";
 import { settleUnfinishedRun } from "./run-settlement.js";
 import { type RunTelemetryJournal, runTelemetryJournal } from "./run-telemetry.js";
@@ -92,6 +94,7 @@ export function createRunTable(rt: DispatchRuntime) {
 	/** A settlement can queue a reservation release as it lands, so loop until none is pending (#428). */
 	async function flushDurableWrites(): Promise<void> {
 		while (durableWrites.size > 0) await Promise.allSettled([...durableWrites]);
+		await flushDeferredWrites();
 	}
 
 	function persistAssignment(operation: Promise<unknown>, label: string): void {
@@ -214,6 +217,7 @@ export function createRunTable(rt: DispatchRuntime) {
 				agentId: run.req.agentId,
 				exitCode,
 			});
+			await flushRunFeed(envelope.id);
 			if (!state.assignmentCompleted) {
 				settleAssignmentDurablyWithoutReceipt(
 					run.lineage.rootRunId,
@@ -263,6 +267,12 @@ export function createRunTable(rt: DispatchRuntime) {
 			reportDispatchDiagnostic(`persist failed row for run ${envelope.id}`, ledgerError);
 		}
 		active.delete(envelope.id);
+		journalBridge?.closeFeed("failed", detail, {
+			runId: envelope.id,
+			agentId: run.req.agentId,
+			exitCode: 1,
+		});
+		await flushRunFeed(envelope.id);
 		settleAssignmentDurablyWithoutReceipt(run.lineage.rootRunId, envelope.id, "failed");
 		recordTargetOutcome(envelope.id, run.targetId, run.runtimeId, run.wireModelId, "failed", 1, "internal");
 		context.bus.emit("run.failed", {

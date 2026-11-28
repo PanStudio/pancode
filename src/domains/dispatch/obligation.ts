@@ -10,11 +10,12 @@
  */
 
 import { gatePositionRole, type RunObligation } from "../../core/telemetry/run-vocabulary.js";
+import type { RunRole } from "../../core/views/run-roles.js";
 import { capabilityClassRole } from "../agents/role-class.js";
 import { isAgentCapabilityClass } from "../agents/spec.js";
 import type { GateTopologyRole } from "./execution-role.js";
 
-export type RunRole = "explorer" | "builder" | "checker" | "reviewer" | "judge" | "seat";
+export type { RunRole };
 
 export type Obligation = RunObligation;
 

@@ -16,6 +16,8 @@
  * Pure: no I/O.
  */
 
+import type { TargetHealthStatus } from "./contract.js";
+
 export type ModelLineage =
 	| "anthropic"
 	| "openai"
@@ -97,7 +99,7 @@ export interface SecondOpinionCandidate {
 	target: string;
 	model: string;
 	/** Probe health; a `down` or unavailable target is never chosen. */
-	health: "healthy" | "degraded" | "unknown" | "down";
+	health: TargetHealthStatus;
 	available: boolean;
 }
 

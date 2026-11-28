@@ -78,12 +78,6 @@ export const WORKER_STDOUT_INCOMPLETE_MARKER = "[worker] bulk output incomplete:
  * code and the frame type being written, so the host records worker.channel_failed without reading prose (#425).
  */
 export const WORKER_STDOUT_FAILURE_MARKER = "[worker] bulk lane failure ";
-export type WorkerStdoutFailure =
-	| "write-failed"
-	| "oversize-frame"
-	| "unserializable-frame"
-	| "backlog-full"
-	| "undrained";
 
 /** Orchestrator event-queue ceiling, in frames, before display frames drop. */
 export const WORKER_EVENT_QUEUE_MAX_FRAMES = 4096;

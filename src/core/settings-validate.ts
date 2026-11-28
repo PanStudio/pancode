@@ -14,15 +14,18 @@ import { scratchRootProblem } from "../lib/scratch-roots/scratch-roots.js";
 import { validationWrapperProblem } from "../lib/validation-wrappers/validation-wrappers.js";
 import type { PancodeSettings } from "./config.js";
 import {
-	ACTIVE_AGENT_AUTOMATION_ROLES,
 	ACTIVE_ROUTING_POSTURES,
 	ACTIVE_ROUTING_ROLES,
 	COUNCIL_MEMBER_LABEL_PATTERN,
 	DEFAULT_SETTINGS,
+	MEMORY_DELIVERY_MODES,
+	MEMORY_LESSONS_MODES,
 	normalizeExitSummaryStyle,
 	normalizeOutputStyle,
+	SEMANTIC_MODALITIES,
 	THEME_NAMED_COLORS,
 	THINKING_LEVELS,
+	WORKER_PERMISSION_MODES,
 	WORKING_SET_PROFILE_IDS,
 	WORKSPACE_SNAPSHOT_MODES,
 } from "./defaults.js";
@@ -61,6 +64,7 @@ import {
 import { fundingMap, TOOL_GOVERNANCE, validateFundingPool, validateTarget } from "./settings-validate-target.js";
 import { MAX_TIMER_DELAY_MS } from "./timers.js";
 import { isRecord } from "./type-guards.js";
+import { RUN_ROLES } from "./views/run-roles.js";
 
 const TOP_LEVEL_KEYS = [
 	"version",
@@ -513,12 +517,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 							}
 							issues.unknownKeys(path, value, ["agentId", "executionRole"]);
 							const agentId = expectString(issues, `${path}.agentId`, value.agentId);
-							const executionRole = expectEnum(
-								issues,
-								`${path}.executionRole`,
-								value.executionRole,
-								ACTIVE_AGENT_AUTOMATION_ROLES,
-							);
+							const executionRole = expectEnum(issues, `${path}.executionRole`, value.executionRole, RUN_ROLES);
 							if (agentId === "auto")
 								issues.add(`${path}.agentId`, "'auto' is reserved for coordinator-owned agent selection");
 							if (agentId === undefined || agentId === "auto" || executionRole === undefined) continue;
@@ -541,13 +540,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 			else {
 				issues.unknownKeys("fleet.permissions", rawFleet.permissions, ["mode", "escalation"]);
 				if ("mode" in rawFleet.permissions) {
-					const parsed = expectEnum(issues, "fleet.permissions.mode", rawFleet.permissions.mode, [
-						"deny",
-						"fail",
-						"escalate",
-						"main",
-						"judge",
-					] as const);
+					const parsed = expectEnum(issues, "fleet.permissions.mode", rawFleet.permissions.mode, WORKER_PERMISSION_MODES);
 					if (parsed !== undefined) settings.fleet.permissions.mode = parsed;
 				}
 				if ("escalation" in rawFleet.permissions) {
@@ -794,21 +787,21 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 								if (parsed !== undefined) settings.context.memory.surfaces.observe = parsed;
 							}
 							if ("delivery" in memory.surfaces) {
-								const parsed = expectEnum(issues, "context.memory.surfaces.delivery", memory.surfaces.delivery, [
-									"off",
-									"section",
-									"decision",
-									"broadcast",
-								] as const);
+								const parsed = expectEnum(
+									issues,
+									"context.memory.surfaces.delivery",
+									memory.surfaces.delivery,
+									MEMORY_DELIVERY_MODES,
+								);
 								if (parsed !== undefined) settings.context.memory.surfaces.delivery = parsed;
 							}
 							if ("lessons" in memory.surfaces) {
-								const parsed = expectEnum(issues, "context.memory.surfaces.lessons", memory.surfaces.lessons, [
-									"off",
-									"rules",
-									"agent",
-									"side",
-								] as const);
+								const parsed = expectEnum(
+									issues,
+									"context.memory.surfaces.lessons",
+									memory.surfaces.lessons,
+									MEMORY_LESSONS_MODES,
+								);
 								if (parsed !== undefined) settings.context.memory.surfaces.lessons = parsed;
 							}
 							for (const key of ["correct", "bank"] as const) {
@@ -897,12 +890,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 							issues.add("context.semantic.modalities", "expected a nonempty list");
 						} else {
 							const modalities = semantic.modalities.map((value, index) =>
-								expectEnum(issues, `context.semantic.modalities[${index}]`, value, [
-									"text",
-									"image",
-									"audio",
-									"mixed",
-								] as const),
+								expectEnum(issues, `context.semantic.modalities[${index}]`, value, SEMANTIC_MODALITIES),
 							);
 							if (
 								modalities.every((value) => value !== undefined) &&

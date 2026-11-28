@@ -6,7 +6,14 @@ import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import { findBuiltinRuntimeBootMetadata } from "../domains/providers/runtimes/boot-manifest.js";
 import type { PancodeSettings } from "./config.js";
 import { semanticUsable } from "./config.js";
-import { DEFAULT_SETTINGS, STORE_BACKEND_KINDS, THINKING_LEVELS } from "./defaults.js";
+import {
+	DEFAULT_SETTINGS,
+	MEMORY_DELIVERY_MODES,
+	MEMORY_LESSONS_MODES,
+	STORE_BACKEND_KINDS,
+	THINKING_LEVELS,
+	WORKER_PERMISSION_MODES,
+} from "./defaults.js";
 import { getAtPath, setAtPath } from "./session-routing.js";
 import {
 	SETTINGS_AREA_GROUPS,
@@ -554,12 +561,12 @@ const CHOICES: Record<string, readonly string[]> = {
 	"chat.steering.triage.thinkingLevel": THINKING_LEVELS,
 	"context.memory.thinkingLevel": THINKING_LEVELS,
 	"context.memory.surfaces.observe": ["off", "on"],
-	"context.memory.surfaces.delivery": ["off", "section", "decision", "broadcast"],
-	"context.memory.surfaces.lessons": ["agent", "rules", "side", "off"],
+	"context.memory.surfaces.delivery": MEMORY_DELIVERY_MODES,
+	"context.memory.surfaces.lessons": MEMORY_LESSONS_MODES,
 	"context.memory.surfaces.correct": ["rules", "model"],
 	"context.memory.surfaces.bank": ["rules", "model"],
 	"context.memory.surfaces.history": ["off", "on"],
-	"fleet.permissions.mode": ["judge", "deny", "escalate", "fail", "main"],
+	"fleet.permissions.mode": WORKER_PERMISSION_MODES,
 	"fleet.permissions.escalation.fallback": ["deny", "fail"],
 	"interface.mode": ["regular", "fullscreen"],
 	"interface.outputDetail": ["compact", "standard", "detailed"],

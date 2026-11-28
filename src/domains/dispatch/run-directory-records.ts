@@ -15,7 +15,8 @@
  *                                an answer from another process, echoing the binding; the owner applies it through the
  *                                same path its own card uses, then removes it
  *
- * Every write goes through `safeResourceWrite` (temp file, fsync, rename), so a reader never sees a torn record. A
+ * Every write goes through temp file, fsync and rename, so a reader never sees a torn record. The owner's own records
+ * land off the emitter, latest value only (deferred-writes.ts); an answer from another process is written at once. A
  * reader never trusts a record whose owner died: `ownerState` probes the pid and its birth token the way the capacity
  * lease does, and a `pending` ask whose owner is gone is no ask at all. Everything here is best-effort: a record that
  * cannot be written or read costs the cross-process view, never the run.
@@ -32,6 +33,7 @@ import type {
 	PermissionRequestedPayload,
 	PermissionResolvedPayload,
 } from "../../core/telemetry/live-events.js";
+import { deferRecord } from "./deferred-writes.js";
 
 export const RUN_OWNER_FILE = "owner.json";
 export const RUN_GRANTS_DIR = "grants";
@@ -56,11 +58,19 @@ function directoryIsPlain(path: string): boolean {
 	}
 }
 
-function writeRecord(stateDir: string, runId: string, relative: string, value: unknown): boolean {
+/** False when written now and a directory on the way is not plain or the write failed; deferred writes check off the emitter. */
+function writeRecord(stateDir: string, runId: string, relative: string, value: unknown, now = false): boolean {
 	const directory = runDirectory(stateDir, runId);
-	if (![join(stateDir, "runs"), directory, join(directory, RUN_GRANTS_DIR)].every(directoryIsPlain)) return false;
+	const plainDirectories = [join(stateDir, "runs"), directory, join(directory, RUN_GRANTS_DIR)];
+	const path = join(directory, relative);
+	const contents = `${JSON.stringify(value)}\n`;
+	if (!now) {
+		deferRecord(path, contents, { plainDirectories });
+		return true;
+	}
+	if (!plainDirectories.every(directoryIsPlain)) return false;
 	try {
-		safeResourceWrite(join(directory, relative), `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
+		safeResourceWrite(path, contents, { encoding: "utf8", mode: 0o600 });
 		return true;
 	} catch {
 		return false;
@@ -173,7 +183,7 @@ function grantPath(stateDir: string, runId: string, requestId: string, answer = 
 	return join(runDirectory(stateDir, runId), RUN_GRANTS_DIR, `${requestId}${answer ? ".answer" : ""}.json`);
 }
 
-/** Record an operator-visible ask this process holds. Null when the ids are unsafe or the write failed. */
+/** Record an operator-visible ask this process holds. Null when the ids are unsafe or the run directory is not plain. */
 export function writeGrantRequestRecord(
 	stateDir: string,
 	input: { request: PermissionRequestedPayload; runId: string; attempt: number | null; argDigest: string | null },
@@ -290,7 +300,7 @@ export function writeGrantAnswerRecord(
 		answeredBy,
 		at: new Date().toISOString(),
 	};
-	return writeRecord(stateDir, binding.runId, `${RUN_GRANTS_DIR}/${binding.requestId}.answer.json`, record);
+	return writeRecord(stateDir, binding.runId, `${RUN_GRANTS_DIR}/${binding.requestId}.answer.json`, record, true);
 }
 
 /**

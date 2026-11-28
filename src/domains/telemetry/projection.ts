@@ -20,10 +20,19 @@ import { normalizeTokenUsage } from "../../core/token-split.js";
  */
 
 import { resolveDispatchFailureStatus } from "../../core/dispatch-outcome.js";
+import type { TelemetryContext } from "../../core/telemetry/context.js";
+import type { EventPayload } from "../../core/telemetry/events.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { DispatchRunIdentity, ForeignRunObservedPayload } from "../../core/telemetry/live-events.js";
 import { unobservedRunUsageFacts } from "../../core/telemetry/pricing.js";
 import { type RunUsageFacts, RunUsageFactsSchema } from "../../core/telemetry/schemas.js";
+import {
+	type RunLifecycle,
+	type RunLifecycleEvent,
+	reduceRunLifecycle,
+	runLifecycleEvent,
+	runLifecycleLive,
+} from "../../core/views/run-lifecycle.js";
 import { truncateToWidth } from "../../engine/tui-primitives.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import type { AgentAudience } from "../agents/spec.js";
@@ -84,6 +93,8 @@ function resolveHeartbeat(status: unknown): TelemetryRunSummary["status"] | null
 
 interface RunEntry extends TelemetryRunSummary {
 	progressFold: WorkerProgressFold;
+	/** Whether the run is queued, live or over; absent for an entry no lifecycle event has reached. */
+	lifecycle?: RunLifecycle;
 }
 
 const TASK_SUMMARY_MAX_WIDTH = 240;
@@ -240,7 +251,7 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 			// Newest-first: Map preserves first-seen (enqueue) order, so reversing
 			// surfaces the most recently started runs at the head of the list.
 			runs: [...runs.values()].reverse().map((entry) => {
-				const { progressFold, ...summary } = entry;
+				const { progressFold, lifecycle: _lifecycle, ...summary } = entry;
 				return structuredClone({
 					...summary,
 					status: entry.retry ? "retrying" : entry.status,
@@ -418,6 +429,7 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 			if (!existing) {
 				entry.agentId = retry.agentId;
 				entry.status = "failed";
+				entry.lifecycle = reduceRunLifecycle(undefined, { kind: "ended", runId, outcome: "failed" });
 			}
 			entry.retry = { ...retry.retry };
 			if (entry.taskSummary === undefined && retry.taskSummary !== undefined) entry.taskSummary = retry.taskSummary;
@@ -438,14 +450,40 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 		if (changed) markChanged();
 	}
 
+	/**
+	 * End a run's entry from its terminal event or its run.settled. The settled record's outcome stands over any live
+	 * word; `reason` refines a failure's status only while it describes the outcome the lifecycle holds.
+	 */
+	function endRun(summary: RunEntry, event: RunLifecycleEvent | null, reason: unknown): void {
+		if (event === null) return;
+		const lifecycle = reduceRunLifecycle(summary.lifecycle, event);
+		summary.lifecycle = lifecycle;
+		if (lifecycle.view === "done") summary.status = "completed";
+		else
+			summary.status = resolveDispatchFailureStatus(
+				lifecycle.outcome === event.outcome ? (reason ?? event.outcome) : lifecycle.outcome,
+			);
+	}
+	/** A run's settled record, heard once it is on disk and before the run's live terminal event. */
+	function onSettled(payload: EventPayload<"run.settled">, context?: TelemetryContext): void {
+		const event = runLifecycleEvent("run.settled", { runId: context?.runId, outcome: payload.outcome });
+		const summary = event === null ? undefined : runs.get(event.runId);
+		if (event === null || summary === undefined) return;
+		endRun(summary, event, undefined);
+		summary.finishedAtMs ??= Date.now();
+		markChanged();
+	}
 	function onStarted(raw: unknown): void {
 		const payload = (raw ?? {}) as Record<string, unknown>;
 		const runId = asRunId(payload.runId);
 		if (!runId) return;
 		const now = Date.now();
 		const summary = runs.get(runId) ?? emptyRun(runId, now);
+		// A late start never brings an ended run back.
+		if (!runLifecycleLive(summary.lifecycle)) return;
+		summary.lifecycle = reduceRunLifecycle(summary.lifecycle, { kind: "started", runId, outcome: null });
 		applyIdentity(summary, payload as Partial<DispatchRunIdentity>);
-		summary.status = "running";
+		summary.status = summary.lifecycle.phase === "cancelling" ? "cancelling" : "running";
 		summary.startedAtMs = now;
 		delete summary.retry;
 		summary.finishedAtMs = null;
@@ -462,15 +500,6 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 		const now = Date.now();
 		const event = (payload.event ?? {}) as Record<string, unknown>;
 		const type = typeof event.type === "string" ? event.type : "";
-		if (type === "heartbeat_status") {
-			const status = resolveHeartbeat(event.status);
-			if (status && !isTerminal(summary.status) && summary.status !== "cancelling") summary.status = status;
-			// The fold keeps when the worker went quiet, so its last phase is not read as what it is doing now.
-			summary.progressFold.observe(event);
-			if (status === "dead") summary.progressFold.settle(undefined, false);
-			markChanged();
-			return;
-		}
 		if (type === "attempt_start") {
 			summary.failoverHops = (summary.failoverHops ?? 0) + 1;
 			const attemptRunId = asRunId(event.runId);
@@ -481,11 +510,29 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 				markChanged();
 				return;
 			}
+			if (!runLifecycleLive(summary.lifecycle)) {
+				// A restart frame for a run that already ended is late; the run stays as it ended.
+				delete summary.retry;
+				markChanged();
+				return;
+			}
+			summary.lifecycle = reduceRunLifecycle(summary.lifecycle, { kind: "started", runId, outcome: null });
 			summary.status = "running";
 			summary.finishedAtMs = null;
 			summary.durationMs = null;
 			summary.progressFold.restart();
 			delete summary.retry;
+			markChanged();
+			return;
+		}
+		// Progress arriving after a run ended or settled never mutates its final state.
+		if (!runLifecycleLive(summary.lifecycle)) return;
+		if (type === "heartbeat_status") {
+			const status = resolveHeartbeat(event.status);
+			if (status && !isTerminal(summary.status) && summary.status !== "cancelling") summary.status = status;
+			// The fold keeps when the worker went quiet, so its last phase is not read as what it is doing now.
+			summary.progressFold.observe(event);
+			if (status === "dead") summary.progressFold.settle(undefined, false);
 			markChanged();
 			return;
 		}
@@ -532,7 +579,14 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 		const now = Date.now();
 		const summary = runs.get(runId) ?? emptyRun(runId, now);
 		applyIdentity(summary, payload as Partial<DispatchRunIdentity>);
-		summary.status = "completed";
+		const alreadySettled = summary.lifecycle?.phase === "settled";
+		const event = runLifecycleEvent("run.completed", payload);
+		endRun(summary, event, undefined);
+		if (alreadySettled && event !== null && summary.lifecycle?.outcome !== event.outcome) {
+			putRun(runId, summary);
+			markChanged();
+			return;
+		}
 		summary.finishedAtMs = now;
 		summary.durationMs = num(payload.durationMs, Math.max(0, now - summary.startedAtMs));
 		applyTerminalTokens(summary, payload);
@@ -548,7 +602,14 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 		const now = Date.now();
 		const summary = runs.get(runId) ?? emptyRun(runId, now);
 		applyIdentity(summary, payload as Partial<DispatchRunIdentity>);
-		summary.status = resolveDispatchFailureStatus(payload.reason);
+		const alreadySettled = summary.lifecycle?.phase === "settled";
+		const event = runLifecycleEvent("run.failed", payload);
+		endRun(summary, event, payload.reason);
+		if (alreadySettled && event !== null && summary.lifecycle?.outcome !== event.outcome) {
+			putRun(runId, summary);
+			markChanged();
+			return;
+		}
 		summary.finishedAtMs = now;
 		summary.durationMs = num(payload.durationMs, Math.max(0, now - summary.startedAtMs));
 		applyTerminalTokens(summary, payload);
@@ -581,8 +642,10 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 			if (!runId) return;
 			const now = Date.now();
 			const summary = runs.get(runId) ?? emptyRun(runId, now);
+			if (!runLifecycleLive(summary.lifecycle)) return;
+			summary.lifecycle = reduceRunLifecycle(summary.lifecycle, { kind: "enqueued", runId, outcome: null });
 			applyIdentity(summary, payload as Partial<DispatchRunIdentity>);
-			summary.status = "enqueued";
+			if (summary.lifecycle.phase === "queued") summary.status = "enqueued";
 			delete summary.retry;
 			putRun(runId, summary);
 			markChanged();
@@ -591,6 +654,7 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 		bus.subscribe("run.progressed", onProgressed),
 		bus.subscribe("run.completed", onCompleted),
 		bus.subscribe("run.failed", onFailed),
+		bus.subscribe("run.settled", onSettled),
 		bus.subscribe("run.foreign_observed", onForeignObserved),
 		bus.subscribe("run.aborted", (raw) => {
 			const runId = asRunId(raw?.runId);
@@ -599,11 +663,22 @@ export function createTelemetryProjection(bus: TelemetryHub, deps: ProjectionRea
 			const wasRetrying = summary.retry !== undefined;
 			delete summary.retry;
 			if (wasRetrying && raw.startedAt === null) {
+				summary.lifecycle = reduceRunLifecycle(summary.lifecycle, {
+					kind: "ended",
+					runId: summary.runId,
+					outcome: "canceled",
+				});
 				summary.status = "aborted";
 				summary.finishedAtMs = Date.now();
 				summary.progressFold.settle(undefined, false);
 			} else {
-				if (isTerminal(summary.status) && !wasRetrying) return;
+				if (!runLifecycleLive(summary.lifecycle) && !wasRetrying) return;
+				if (runLifecycleLive(summary.lifecycle))
+					summary.lifecycle = reduceRunLifecycle(summary.lifecycle, {
+						kind: "aborted",
+						runId: summary.runId,
+						outcome: null,
+					});
 				summary.status = "cancelling";
 			}
 			summary.outcomeDetail = typeof raw.reason === "string" ? raw.reason : (summary.outcomeDetail ?? null);

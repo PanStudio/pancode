@@ -379,4 +379,4 @@ $ ran `npm test` · exit 1 ✗ · 4.1s       head: hanging wrap, status tail nev
 | Input gate and wheel | [application-input-tui.ts](../../src/engine/application-input-tui.ts) | `ApplicationInputTuiAltScreen` |
 | Interview selection lease | [instrumented-tui.ts](../../src/engine/instrumented-tui.ts) | `InstrumentedTuiAltScreen.useTerminalSelection` |
 | Exit summary | [exit-summary.ts](../../src/interactive/exit-summary.ts) | `renderExitSummary` |
-| Shared view words | `src/core/views/` | Approval, count, diff-row, hub, slash, tool and usage words the GUI renders too, such as `actionClassWords`, `countNoun`, `hubCopyStateWords`, `renderArgsSpec`, `toolSubject` and `usageFigure` |
+| Shared view words | `src/core/views/` | Approval, count, diff-row, hub, run lifecycle, slash, tool and usage words the GUI renders too, such as `actionClassWords`, `countNoun`, `hubCopyStateWords`, `reduceRunLifecycle`, `renderArgsSpec`, `toolSubject` and `usageFigure` |

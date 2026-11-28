@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { parseWorkerContextPolicy, type WorkerContextPolicy } from "../context/worker/contract.js";
+
 /**
  * Validate a dispatch job spec before it enters the queue. Pure function, no
  * I/O. Accepts unknown input so callers can hand it raw JSON or CLI args
@@ -13,9 +13,11 @@ import { THINKING_LEVELS, type ThinkingLevel } from "../../core/defaults.js";
 import { asDirectoryPathBoundary, resolvePathBoundary } from "../../core/path-boundary.js";
 import { cloneValidatedResponseSchema } from "../../core/response-schema.js";
 import { validateTagName } from "../../core/store-paths.js";
+import { DISPATCH_REQUEST_ORIGINS } from "../../core/telemetry/run-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { isToolProfileName, type ToolProfileName } from "../../tools/profiles.js";
 import type { AgentProduct } from "../agents/spec.js";
+import { parseWorkerContextPolicy, type WorkerContextPolicy } from "../context/worker/contract.js";
 import { cloneDispatchBudgetRequest, type DispatchBudgetRequest } from "./budget-envelope.js";
 import {
 	EXECUTION_HANDOFF_MAX_ITEMS,
@@ -36,9 +38,7 @@ import type {
 	RunNodeReroute,
 	RunPlanProvenance,
 } from "./types.js";
-
-/** Dispatch speaks the same thinking vocabulary as the rest of the product. */
-export type JobThinkingLevel = ThinkingLevel;
+import { DISPATCH_PLAN_TOPOLOGIES } from "./types.js";
 
 /** Maximum UTF-8 size of caller-supplied parent-to-worker briefing data. */
 export const DISPATCH_BRIEFING_MAX_BYTES = 12_000;
@@ -85,7 +85,7 @@ export interface JobSpec {
 	delegationAgentId?: string;
 	target?: string;
 	model?: string;
-	thinkingLevel?: JobThinkingLevel;
+	thinkingLevel?: ThinkingLevel;
 	/** An earlier settled ACP delegation of the same agent whose peer session this run continues. */
 	continueRunId?: string;
 	/** Invocation phase and optional preauthorized retry or revision ceiling. */
@@ -241,7 +241,7 @@ const KNOWN_KEYS = new Set([
 ]);
 const VALID_COMPETE_STANCES = new Set<string>(COMPETE_STANCES);
 const VALID_THINKING = new Set<string>(THINKING_LEVELS);
-const VALID_REQUEST_ORIGINS = new Set(["user", "agent", "internal", "harness"]);
+const VALID_REQUEST_ORIGINS = new Set<string>(DISPATCH_REQUEST_ORIGINS);
 const VALID_FAILOVER_MODES = new Set(["none", "approved", "automatic"]);
 
 export function validateJobSpec(spec: unknown): Validated {
@@ -636,7 +636,7 @@ export function validateJobSpec(spec: unknown): Validated {
 	if (Array.isArray(spec.reroutes) && spec.reroutes.every((hop) => isValidReroute(hop))) {
 		out.reroutes = spec.reroutes.map((hop) => ({ ...hop }));
 	}
-	if (typeof spec.thinkingLevel === "string") out.thinkingLevel = spec.thinkingLevel as JobThinkingLevel;
+	if (typeof spec.thinkingLevel === "string") out.thinkingLevel = spec.thinkingLevel as ThinkingLevel;
 	if (typeof spec.continueRunId === "string") out.continueRunId = spec.continueRunId.trim();
 	if (budget !== undefined) out.budget = budget;
 	if (Array.isArray(spec.requiredCapabilities)) {
@@ -769,16 +769,7 @@ const VALID_GATE_ROLES = new Set(["builder", "reviewer", "candidate", "judge", "
 const VALID_GATE_VERDICTS = new Set(["pass", "fail", "revise"]);
 const VALID_WORKTREE_BACKENDS = new Set(["herdr", "native"]);
 const VALID_WORKTREE_FALLBACKS = new Set(["mux-unavailable", "mux-operation-failed"]);
-const VALID_PLAN_TOPOLOGIES = new Set([
-	"parallel",
-	"sequential",
-	"pipeline",
-	"review",
-	"compete",
-	"council",
-	"detached",
-	"fleet",
-]);
+const VALID_PLAN_TOPOLOGIES: ReadonlySet<string> = new Set(DISPATCH_PLAN_TOPOLOGIES);
 const VALID_PLAN_APPROVALS = new Set(["operator", "yolo", "read-only"]);
 
 function isValidGate(value: unknown): value is RunGateProvenance {

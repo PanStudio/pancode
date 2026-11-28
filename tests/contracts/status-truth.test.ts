@@ -2215,6 +2215,27 @@ test("each step of a plan opens its own worker card, though every step shares th
 	strictEqual(progressed?.entry, first?.entry, "the first step keeps streaming into its own card");
 });
 
+test("a start or progress frame that arrives after its run ended opens no card and streams into none", () => {
+	const stream = createWorkerStream({ readResult: () => null });
+	const started = {
+		runId: "late",
+		assignmentId: "late",
+		attempt: 0,
+		requestOrigin: "user",
+		agentId: "coder",
+		task: "map the stats",
+		targetId: "local",
+		wireModelId: "worker-model",
+		runtimeId: "openai",
+		runtimeKind: "http",
+		pid: 1,
+	} as never;
+	stream.completed({ runId: "late", agentId: "coder", outcome: "failed", durationMs: 10, exitCode: 1 } as never);
+	strictEqual(stream.started(started), null, "a start after the run's end opens no card nothing would settle");
+	const delta = { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "late" } };
+	strictEqual(stream.progress({ runId: "late", agentId: "coder", event: delta } as never), null);
+});
+
 test("a loop repair after a step that succeeded opens its own card, and a retry after a failure folds in", () => {
 	const stream = createWorkerStream({ readResult: () => null });
 	const start = (runId: string, attempt: number) =>

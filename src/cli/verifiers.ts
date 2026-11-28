@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { readSettings } from "../core/config.js";
 import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../core/safe-exec.js";
+import { DECLARED_CHECK_KINDS, type DeclaredCheckKind } from "../core/telemetry/session-vocabulary.js";
 import { hostVerificationSandbox } from "../domains/dispatch/host-verification.js";
 import {
 	createVerifierDraft,
@@ -15,8 +17,6 @@ import {
 import {
 	BROWSER_CHECK_ASSERTIONS,
 	type BrowserCheckAssertion,
-	DECLARED_CHECK_KINDS,
-	type DeclaredCheckKind,
 	loadProjectVerifierCatalog,
 	PROJECT_VERIFIER_CATALOG_RELATIVE_PATH,
 } from "../tools/verify/catalog.js";

@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Type } from "typebox";
-import type { JobCreateInput, JobOwner, JobRecord, JobRunner } from "../core/job-types.js";
+import {
+	JOB_PREDICATE_OPS,
+	type JobControlAction,
+	type JobCreateInput,
+	type JobOwner,
+	type JobRecord,
+	type JobRunner,
+} from "../core/job-types.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
 import { ToolNames } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -45,7 +52,7 @@ function predicateSchema(description: string) {
 	return Type.Object(
 		{
 			path: Type.Array(Type.String()),
-			op: StringEnum(["eq", "ne", "lt", "lte", "gt", "gte", "exists"]),
+			op: StringEnum([...JOB_PREDICATE_OPS]),
 			value: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()])),
 		},
 		{ description },
@@ -54,7 +61,7 @@ function predicateSchema(description: string) {
 
 type PreparedJob =
 	| { kind: "create"; input: JobCreateInput; owner: JobOwner }
-	| { kind: "control"; action: "pause" | "resume" | "stop" | "cancel"; id: string; owner: JobOwner; job: JobRecord }
+	| { kind: "control"; action: JobControlAction; id: string; owner: JobOwner; job: JobRecord }
 	| { kind: "execution"; context: JobExecutionContext }
 	| { kind: "error"; message: string };
 

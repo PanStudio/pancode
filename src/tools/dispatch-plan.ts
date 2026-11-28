@@ -41,18 +41,11 @@ import {
 import { isRouteDecisionAgentSelection, type RouteDecisionV1 } from "../domains/dispatch/route-decision.js";
 import { ROUTE_POLICY_VERSION } from "../domains/dispatch/route-policy.js";
 import { isRoutingIntent, type RoutingIntent } from "../domains/dispatch/routing-intent.js";
+import type { DispatchPlanTopology } from "../domains/dispatch/types.js";
 import type { DispatchFailoverCandidate, DispatchFailoverMode } from "../domains/dispatch/validation.js";
 import { prepareDispatchArguments } from "./dispatch-arguments.js";
 
-export type DispatchPlanTopology =
-	| "parallel"
-	| "sequential"
-	| "pipeline"
-	| "review"
-	| "compete"
-	| "council"
-	| "detached"
-	| "fleet";
+export type { DispatchPlanTopology };
 
 export type DispatchPlanSource = null | {
 	kind: "scout-transition";

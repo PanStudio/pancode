@@ -16,6 +16,8 @@
  * shell-escape territory (spec 4.8, and the risk register's "tool misuse" row).
  */
 
+import type { DockSlot } from "./dock-controller.js";
+
 /**
  * Utility pane presets, in the order `/panes open` lists them.
  *
@@ -98,7 +100,7 @@ export interface PanesEffectiveSettings {
 
 /** One managed dock's live geometry, flattened for `/panes` status. */
 export interface PanesDockStatus {
-	slot: "workers" | "files" | "extension";
+	slot: DockSlot;
 	paneId: string;
 	/** Share of the axis the dock currently targets, 0..0.5. */
 	targetShare: number;
@@ -112,7 +114,7 @@ export interface PanesDockStatus {
  * settings files cannot give, such as a setting that keeps a dock closed.
  */
 export interface PanesDockReport {
-	slot: "workers" | "files" | "extension";
+	slot: DockSlot;
 	state: "visible" | "hidden" | "closed";
 	detail?: string;
 }

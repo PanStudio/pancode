@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { VALID_THINKING_LEVELS } from "../providers/types/capability-flags.js";
+import { THINKING_LEVELS } from "../providers/types/capability-flags.js";
 
 /**
  * A campaign roster: the models one fixture is run across (WTF-P 0.8.3 C4). The file is
@@ -47,8 +47,8 @@ function parseEntry(raw: unknown, index: number): RosterEntry {
 	let thinking: string | null = null;
 	if (entry.thinking !== undefined) {
 		thinking = text(entry.thinking, `${where}.thinking`);
-		if (!(VALID_THINKING_LEVELS as ReadonlyArray<string>).includes(thinking))
-			fail(`${where}.thinking`, `expected one of ${VALID_THINKING_LEVELS.join(", ")}`);
+		if (!(THINKING_LEVELS as ReadonlyArray<string>).includes(thinking))
+			fail(`${where}.thinking`, `expected one of ${THINKING_LEVELS.join(", ")}`);
 	}
 	const label =
 		entry.label === undefined

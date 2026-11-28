@@ -14,6 +14,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import {
 	classifyOperatorStatement,
 	type DurableOperatorScope,
@@ -58,7 +59,7 @@ export interface OperatorMemoryChip {
 }
 
 interface OperatorMemoryReport {
-	level: "info" | "success" | "warning" | "error";
+	level: NotificationLevel;
 	text: string;
 	chip?: OperatorMemoryChip;
 }

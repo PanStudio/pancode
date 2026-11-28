@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { ConfigChangeScope, ConfigChangeSource, vocabulary } from "./enums.js";
 import { ExistingId } from "./id-schemas.js";
 import { closed, count, duration, ObjectRefSchema, sha256Hex, text, UtcSchema as utc } from "./schemas.js";
+import { AUTH_REFRESH_OUTCOMES, EXTENSION_HOOKS } from "./session-vocabulary.js";
 
 /**
  * The settings digest worker specs and route decisions carry, declared as R7 asks and as the receipt hash set declares
@@ -48,7 +49,7 @@ export const HookRanSchema = Type.Object(
 		origin: vocabulary(["extension", "user", "project", "project.local"]),
 		sourceId: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
 		hash: ExistingId,
-		hook: vocabulary(["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction", "prompt_submit"]),
+		hook: vocabulary(EXTENSION_HOOKS),
 		kind: vocabulary(["command", "prompt", "effect", "runtime"]),
 		outcome: vocabulary([
 			"emitted",
@@ -321,7 +322,7 @@ export const AuthRefreshedSchema = Type.Object(
 		 * refreshed: this process minted the new credential. adopted: another writer had already replaced it under
 		 * the lock. failed: no usable credential came back. cancelled: the request ended first.
 		 */
-		outcome: vocabulary(["refreshed", "adopted", "failed", "cancelled"]),
+		outcome: vocabulary(AUTH_REFRESH_OUTCOMES),
 		/** The process that wrote the credential now in use; null when another process wrote it. */
 		writerPid: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
 		/** The stored credential's updatedAt when this process read it, and after the refresh. */

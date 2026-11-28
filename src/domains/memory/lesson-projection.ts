@@ -14,7 +14,7 @@
 
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { MemoryDeliveryMode } from "../../core/defaults.js";
+import { MEMORY_DELIVERY_MODES, type MemoryDeliveryMode } from "../../core/defaults.js";
 import { sha256Hex } from "../../core/hash.js";
 import { canonicalCheckout } from "../../core/project-root.js";
 import { COMMAND_EVIDENCE_REF_PREFIX, parseSourceEvidenceRef, type SourceEvidence } from "./command-evidence.js";
@@ -611,8 +611,7 @@ export class MemoryDeliveryGate {
  * from `decision` up; the first-change broadcast only under `broadcast`.
  */
 export function deliveryOpens(mode: MemoryDeliveryMode, channel: "section" | "decision" | "broadcast"): boolean {
-	const order: readonly MemoryDeliveryMode[] = ["off", "section", "decision", "broadcast"];
-	return order.indexOf(mode) >= order.indexOf(channel);
+	return MEMORY_DELIVERY_MODES.indexOf(mode) >= MEMORY_DELIVERY_MODES.indexOf(channel);
 }
 
 /** The `# Memory` section carries a lesson with command evidence, or one an operator approved (DESIGN 4.4 channel table). */

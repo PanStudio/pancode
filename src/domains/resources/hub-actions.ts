@@ -69,11 +69,13 @@ import {
 	type HubPackageEntry,
 	type HubRequirementRef,
 	type HubTier,
+	isHubComponentKind,
 	isHubKind,
 } from "./hub-types.js";
 import { validateHubPackage } from "./hub-validation.js";
 
-export type HubOperation = "install" | "update" | "enable" | "disable" | "remove";
+export const HUB_OPERATIONS = ["install", "update", "enable", "disable", "remove"] as const;
+export type HubOperation = (typeof HUB_OPERATIONS)[number];
 
 export interface HubPackageIdentity {
 	ref: HubRequirementRef;
@@ -355,9 +357,7 @@ function contentOf(root: string): NonNullable<HubPlanStep["content"]> {
 	return {
 		valid: result.valid,
 		resources: result.validation.resources
-			.filter((item): item is typeof item & { kind: HubComponentKind } =>
-				["skill", "agent", "prompt", "playbook"].includes(item.kind),
-			)
+			.filter((item): item is typeof item & { kind: HubComponentKind } => isHubComponentKind(item.kind))
 			.map((item) => ({ kind: item.kind, name: item.name, valid: item.valid })),
 		diagnostics: [...result.diagnostics.map((d) => d.message), ...result.validation.diagnostics.map((d) => d.message)],
 	};
