@@ -98,7 +98,7 @@ test("promote --from-handoff finds the source from any directory and refuses onl
 		};
 		const custom = (customType: string) =>
 			JSON.stringify({ ...base, kind: "custom", turnId: customType, customType, data: {} });
-		session("labeled", [custom("pancode_flow_restriction")]);
+		session("labeled", [custom("pancode_flow_restrictions")]);
 		session("torn", [custom("noop"), '{"kind":"message","torn', custom("noop2")]);
 		const promote = async (source: string, cwd: string) => {
 			const path = join(env.dir, `${source}.md`);
@@ -271,7 +271,7 @@ test("propose --from-evidence refuses a run or dispatching session that carries 
 		);
 		writeFileSync(
 			join(sessionDir, "current.jsonl"),
-			`${JSON.stringify({ kind: "custom", turnId: "label", parentTurnId: null, timestamp: at, customType: "pancode_flow_restriction", data: {} })}\n`,
+			`${JSON.stringify({ kind: "custom", turnId: "label", parentTurnId: null, timestamp: at, customType: "pancode_flow_restrictions", data: {} })}\n`,
 		);
 
 		await settle("run-labeled", null, true);
@@ -307,7 +307,7 @@ test("a closed session's flow label restricts it from any branch, not only the a
 		turnId: "label",
 		parentTurnId: "a0",
 		timestamp: at,
-		customType: "pancode_flow_restriction",
+		customType: "pancode_flow_restrictions",
 		data: {},
 	};
 	const active = [

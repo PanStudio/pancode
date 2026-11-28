@@ -7,7 +7,7 @@
  * transcript, every later request from that session carries its restriction,
  * through summaries, compaction, resume and branch switches alike. The ledger
  * is one durable union per session, persisted as `custom` session entries of
- * type `pancode_flow_restriction` and rebuilt from the ledger whenever the
+ * type `pancode_flow_restrictions` and rebuilt from the ledger whenever the
  * current session changes, so the model cannot erase it and a session read
  * successfully without entries carries nothing rather than an invented
  * history.
@@ -38,7 +38,7 @@ import type { SessionContract } from "../domains/session/index.js";
 import { parseSessionEntries } from "../domains/session/index.js";
 import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
 
-export const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restriction";
+export const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restrictions";
 
 interface FlowLedger {
 	/** The union carried by the current session, or null when nothing restricted has entered it. */

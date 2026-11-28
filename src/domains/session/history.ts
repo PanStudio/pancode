@@ -297,7 +297,7 @@ export function latestPriorSession(
 
 const PREVIEW_MAX_CHARS = 240;
 /** Persisted flow labels; the same custom entry type `src/entry/flow-ledger.ts` writes. */
-export const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restriction";
+export const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restrictions";
 /** The custom entry `src/domains/memory/recording-marker.ts` writes; memory imports session, not the reverse. */
 const MEMORY_OFF_ENTRY_TYPE = "pancode_memory_off";
 
