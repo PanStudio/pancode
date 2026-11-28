@@ -201,6 +201,8 @@ export interface RunEffectsRecorder {
 	checkOutcome(toolCallId: string, outcome: "ok" | "error" | "blocked", unresolved?: boolean): void;
 	snapshot(): RunEffects;
 	checkFreshness(): CheckFreshness;
+	/** The run's one {@link gitRunsConfiguredHelpers} answer at its `cwd`, for the run's other folds to reuse. */
+	readonly gitHelpers: boolean;
 }
 
 interface PendingEffects {
@@ -520,6 +522,7 @@ export function createRunEffectsRecorder(cwd: string, options: RunEffectsRecorde
 	const proofs = new Map<string, ObservedProof>();
 	const latestProofCalls = new Map<string, string>();
 	return {
+		gitHelpers,
 		started(toolCallId) {
 			return pending.has(toolCallId);
 		},

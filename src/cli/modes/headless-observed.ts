@@ -61,6 +61,8 @@ export function observeHeadlessRun(input: {
 	/** The run's workspace and `safety.scratchRoots`, for the dispatch run records; absent, none is read. */
 	workspaceRoot?: string;
 	scratchRoots?: ReadonlyArray<string>;
+	/** The run's git helper answer at `workspaceRoot`, from its run-effects recorder. */
+	gitHelpers?: boolean;
 }): HeadlessObserved {
 	const own = input.entries.slice(Math.max(0, input.start));
 	const verifyChecks = input.toolCalls > 0 ? verifyCheckIds(own) : new Set<string>();
@@ -76,7 +78,13 @@ export function observeHeadlessRun(input: {
 				)
 			: [];
 	if (input.toolCalls > 0 && input.workspaceRoot !== undefined)
-		for (const run of standingDispatchRuns(input.entries, input.start, input.workspaceRoot, input.scratchRoots))
+		for (const run of standingDispatchRuns(
+			input.entries,
+			input.start,
+			input.workspaceRoot,
+			input.scratchRoots,
+			input.gitHelpers,
+		))
 			checks.push({ name: run, passed: true });
 	const noChecksDeclared = input.toolCalls > 0 && checks.length === 0 && verifyFoundNoChecks(own);
 	// The receipt's own rule: the recorder lists a call only while an outcome stands, so both surfaces count one list (x6-6).

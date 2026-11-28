@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import chalk from "chalk";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
 import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
@@ -2610,11 +2610,14 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	const runVerifyChecks = options.headless?.verify?.checks ?? [];
 	let creditedRunChecks: ReadonlySet<string> = new Set();
 	let declaredCompletionFacts: ReadonlyArray<CompletionFact> = [];
+	let headlessGitHelpers: { root: string; gitHelpers: boolean } | undefined;
 	if (session) {
 		middlewareRegistrar.registerHook(
 			createFinishContractRegistration({
 				getTurnConstraints: () => chat.currentTurnConstraints?.(),
 				...(runVerifyChecks.length > 0 ? { readSessionVerifiers: () => runVerifyChecks } : {}),
+				readRunGitHelpers: (root) =>
+					headlessGitHelpers?.root === resolve(root) ? headlessGitHelpers.gitHelpers : undefined,
 				// Tail-scoped: the contract only needs the last-user-message window, so
 				// it parses a bounded ledger tail per turn_end rather than the whole
 				// file (which grows unbounded with session length).
@@ -3970,6 +3973,9 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				autonomyHalt: () => lastAutonomyHalt,
 				readEntries: activePathEntries,
 				scratchRoots: getCurrentSettings().safety.scratchRoots,
+				onRunGitHelpers: (root, gitHelpers) => {
+					headlessGitHelpers = { root: resolve(root), gitHelpers };
+				},
 				autonomy: () => autonomyWindow.report(true),
 				scopeNotices: (listener) => bus.subscribe("run.scope_notice_raised", listener),
 				sessionCostCeilingUsd: () => getCurrentSettings().safety.limits.sessionCostUsd,

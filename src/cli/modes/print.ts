@@ -207,6 +207,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 			options.constraints?.mode !== "proposal",
 		incompleteLimitations: 0,
 	};
+	options.onRunGitHelpers?.(process.cwd(), runStats.runEffects.gitHelpers);
 	// The ledger row is this run's accounting, so it has to exist on the costly
 	// failure paths too. Two callers can reach it: the turn's own completion
 	// path, and the coordinated shutdown a SIGINT/SIGTERM starts. The signal
@@ -239,7 +240,13 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 			}
 			const dispatchRuns =
 				options.readEntries !== undefined
-					? standingDispatchRuns(options.readEntries(), entriesBefore, process.cwd(), options.scratchRoots ?? [])
+					? standingDispatchRuns(
+							options.readEntries(),
+							entriesBefore,
+							process.cwd(),
+							options.scratchRoots ?? [],
+							runStats.runEffects.gitHelpers,
+						)
 					: [];
 			await recordHeadlessMainAgentRun({
 				runId,
@@ -659,6 +666,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 					writes: writtenPaths(runStats),
 					workspaceRoot: process.cwd(),
 					scratchRoots: options.scratchRoots ?? [],
+					gitHelpers: runStats.runEffects.gitHelpers,
 				})
 			: null;
 	// Every exit of the answer. A reply the token limit stopped can end inside a URL, which a terminating tool's result cannot (#446).
