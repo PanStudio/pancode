@@ -3,53 +3,15 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { STRUCTURED_SETTINGS, type StructuredField } from "../../contracts/structured-settings.js";
 
-import { invalidCollectionNames } from "./settings-control-model.js";
-
-type Row = { id: string; name: string; values: Record<string, unknown>; members?: Row[] };
-function record(value: unknown): Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-function rowsFrom(path: string, value: string): Row[] {
-	try {
-		const editor = STRUCTURED_SETTINGS[path];
-		if (!editor) return [];
-		const data: unknown = JSON.parse(value);
-		const row = (value: unknown, name = ""): Row => ({ id: crypto.randomUUID(), name, values: record(value) });
-		if (editor.kind === "list") return Array.isArray(data) ? data.map((item) => row(item)) : [];
-		return Object.entries(record(data)).map(([name, item]) =>
-			editor.kind === "values"
-				? row({ value: item }, name)
-				: editor.kind === "rosters"
-					? {
-							...row({}, name),
-							members: Array.isArray(record(item).members)
-								? (record(item).members as unknown[]).map((member) => row(member))
-								: [],
-						}
-					: row(item, name),
-		);
-	} catch {
-		return [];
-	}
-}
-function asJson(kind: string, rows: Row[]): string {
-	const clean = (values: Record<string, unknown>) =>
-		Object.fromEntries(Object.entries(values).filter(([, value]) => value !== "" && value !== undefined));
-	return JSON.stringify(
-		kind === "list"
-			? rows.map((row) => clean(row.values))
-			: Object.fromEntries(
-					rows.map((row) => [
-						row.name.trim(),
-						kind === "values"
-							? (row.values.value ?? "")
-							: kind === "rosters"
-								? { members: row.members?.map((member) => clean(member.values)) ?? [] }
-								: clean(row.values),
-					]),
-				),
-	);
-}
+import {
+	invalidCollectionNames,
+	newEntryName,
+	type StructuredRow,
+	structuredFieldText,
+	structuredFieldValue,
+	structuredJson,
+	structuredRows,
+} from "./settings-control-model.js";
 
 export function StructuredSettingsEditor({
 	path,
@@ -69,7 +31,7 @@ export function StructuredSettingsEditor({
 	describedBy: string;
 }) {
 	const editor = STRUCTURED_SETTINGS[path];
-	const [rows, setRows] = useState(() => rowsFrom(path, value));
+	const [rows, setRows] = useState(() => structuredRows(path, value, () => crypto.randomUUID()));
 	const [fieldText, setFieldText] = useState<Record<string, string>>({});
 	const id = useId();
 	const root = useRef<HTMLFieldSetElement>(null);
@@ -85,22 +47,21 @@ export function StructuredSettingsEditor({
 		onValidityChange(!invalidName);
 	}, [invalidName, onValidityChange]);
 	if (!editor) return null;
-	const update = (next: Row[]) => {
+	const update = (next: StructuredRow[]) => {
 		setRows(next);
-		onChange(asJson(editor.kind, next));
+		onChange(structuredJson(editor.kind, next));
 	};
 	const change = (rowId: string, key: string, value: unknown, parent?: string) => {
-		const amend = (row: Row) => (row.id === rowId ? { ...row, values: { ...row.values, [key]: value } } : row);
+		const amend = (row: StructuredRow) => (row.id === rowId ? { ...row, values: { ...row.values, [key]: value } } : row);
 		update(
 			rows.map((row) => (parent && row.id === parent ? { ...row, members: (row.members ?? []).map(amend) } : amend(row))),
 		);
 	};
-	const fields = (row: Row, parent?: string) =>
+	const fields = (row: StructuredRow, parent?: string) =>
 		editor.fields.map((field: StructuredField) => {
 			const raw = row.values[field.key];
 			const key = `${id}-${row.id}-${field.key}`;
-			const text =
-				fieldText[key] ?? (Array.isArray(raw) ? raw.join(", ") : raw === undefined || raw === null ? "" : String(raw));
+			const text = fieldText[key] ?? structuredFieldText(raw);
 			return (
 				<div key={field.key} className="structured-settings__field">
 					<label htmlFor={key}>{field.label}</label>
@@ -126,19 +87,7 @@ export function StructuredSettingsEditor({
 								const input = event.target.value;
 								// Keep the user's punctuation and partial numbers while serializing the runtime value.
 								setFieldText((previous) => ({ ...previous, [key]: input }));
-								change(
-									row.id,
-									field.key,
-									field.kind === "number" && input !== ""
-										? Number(input)
-										: field.kind === "list"
-											? input
-													.split(",")
-													.map((value) => value.trim())
-													.filter(Boolean)
-											: input,
-									parent,
-								);
+								change(row.id, field.key, structuredFieldValue(field.kind, input), parent);
 							}}
 						/>
 					)}
@@ -229,16 +178,13 @@ export function StructuredSettingsEditor({
 			<button
 				type="button"
 				onClick={() => {
-					const prefix = `new-${editor.name.toLowerCase().replaceAll(" ", "-")}-`;
-					let number = 1;
-					while (names.includes(`${prefix}${number}`)) number++;
 					const rowId = crypto.randomUUID();
 					pendingFocus.current = rowId;
 					update([
 						...rows,
 						{
 							id: rowId,
-							name: `${prefix}${number}`,
+							name: newEntryName(editor.name, names),
 							values: {},
 							...(editor.kind === "rosters" ? { members: [] } : {}),
 						},
