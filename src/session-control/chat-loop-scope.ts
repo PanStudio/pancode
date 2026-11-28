@@ -70,6 +70,7 @@ export interface ChatLoopScope {
 	readonly headlessObservation: HeadlessObservationPool | null;
 	readonly missingOutputs: () => string[];
 	readonly hostRunContext: AsyncLocalStorage<ToolInvokeOptions["hostRun"]>;
+	readonly operatorToolLimits: TurnConstraints | undefined;
 	readonly sessionResetListeners: Set<() => void>;
 	readonly eggs: ReturnType<typeof createConversationEggs>;
 	readonly leavePreparation: () => void;

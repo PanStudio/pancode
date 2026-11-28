@@ -759,6 +759,19 @@ export type ChatLoopSessionResetState = TurnStateView<
 	| "streaming"
 >;
 
+/** chat-loop/session-commands: reads the turn scope an operator session command narrows or resumes. */
+export type ChatLoopSessionCommandsState = TurnStateView<
+	| "activeSkillSurface"
+	| "activeUserTurnId"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastTurnId"
+	| "replayedContextMessages"
+	| "runtime"
+	| "streaming",
+	"currentTurnConstraints"
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

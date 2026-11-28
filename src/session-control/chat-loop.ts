@@ -20,7 +20,6 @@ export { createTurnControlRunner } from "./turn-control-runner.js";
 import type { RouteName, RouteSource } from "../core/route-provenance.js";
 import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
-import { captureWorkerContext } from "../domains/context/worker/snapshot.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 /**
@@ -40,20 +39,10 @@ import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 
 import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
-import {
-	evaluateSkillToolSurface,
-	type PendingSkillRequest,
-	type SkillSurfaceChange,
-	skillSurfaceNames,
-} from "../core/skill-activation.js";
+import { type PendingSkillRequest, type SkillSurfaceChange, skillSurfaceNames } from "../core/skill-activation.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { TurnAbortSource } from "../core/telemetry/live-events.js";
-import {
-	narrowTurnConstraints,
-	snapshotTurnConstraints,
-	type TurnConstraints,
-	toolSurfaceSources,
-} from "../core/turn-constraints.js";
+import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
 import type { TurnOrigin, TurnToolCall } from "../core/turn-origin.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
@@ -87,6 +76,7 @@ import { createChatLoopContextCommands } from "./chat-loop/context-commands.js";
 import { createChatLoopNotices } from "./chat-loop/notices.js";
 import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { createChatLoopRouteMove } from "./chat-loop/route-move.js";
+import { createChatLoopSessionCommands } from "./chat-loop/session-commands.js";
 import { createChatLoopSessionReset } from "./chat-loop/session-reset.js";
 import { createChatLoopSideRounds } from "./chat-loop/side-rounds.js";
 import { createChatLoopToolOptions, toolInvokeOptions } from "./chat-loop/tool-options.js";
@@ -1020,6 +1010,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		leavePreparation,
 		eggs,
 		sessionResetListeners,
+		operatorToolLimits,
 		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
@@ -1297,23 +1288,8 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		moveQueuedEntry: (id, delta) => queues.moveEntry(id, delta),
 		setQueuedEntryKind: (id, kind) => queues.setEntryKind(id, kind),
 		interruptRefusal: () => (state.streaming ? interruptRefusalReason() : null),
-		resumeAutonomy: () => {
-			const autonomy = deps.autonomy;
-			if (autonomy === undefined || autonomy.halted() === null) return false;
-			if (loop.disposed || state.streaming || state.activeUserTurnId !== null) return false;
-			autonomy.operatorSpoke();
-			void api.submit(
-				"[PanCode] The operator resumed yolo after it paused. Continue from where the previous turn stopped, and if the work is already finished, say so and stop.",
-				{ origin: "yolo resume", yoloContinuation: true },
-			);
-			return true;
-		},
+		...createChatLoopSessionCommands(loop, state),
 		autonomyStatus: () => deps.autonomy?.status?.() ?? null,
-		clearSkillSurface: () => {
-			const cleared = skillSurfaceNames(state.activeSkillSurface);
-			armSkillSurface(undefined, undefined, true);
-			return cleared;
-		},
 		activeSkillSurface: () => skillSurfaceNames(state.activeSkillSurface),
 		activeEggs: eggs.active,
 		eggsCommand: eggs.command,
@@ -1334,16 +1310,6 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			return () => {
 				listeners.delete(handler);
 			};
-		},
-
-		captureWorkerContext(): WorkerContextSnapshot | null {
-			const meta = deps.session?.current();
-			if (!meta) return null;
-			return captureWorkerContext(
-				{ sessionId: meta.id, leafTurnId: state.lastTurnId, cwd: meta.cwd },
-				state.runtime?.agent.state.messages ?? state.replayedContextMessages,
-				deps.readSessionEntries?.(),
-			);
 		},
 
 		getSessionId(): string | null {
@@ -1389,43 +1355,6 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 		contextUsage: () => context.contextUsage(),
 		currentTurnConstraints: () => state.currentTurnConstraints,
-		setToolCeiling(ceilings, lifetime = "session") {
-			const limits = snapshotTurnConstraints(
-				ceilings.reduce(narrowTurnConstraints, lifetime === "session" ? operatorToolLimits : sessionToolLimits),
-			);
-			if (lifetime === "session") sessionToolLimits = limits;
-			promptToolLimits = limits;
-			// A run in flight keeps the scope it was admitted under (#423).
-			if (!state.streaming) state.currentTurnConstraints = promptToolLimits;
-			return limits;
-		},
-		toolLimits: () => promptToolLimits,
-		jobConstraints: () => {
-			const constraints = state.currentTurnConstraints;
-			const policy = state.currentPendingSkillPolicy ?? state.activeSkillSurface;
-			if (!policy) return snapshotTurnConstraints(constraints);
-			const allowedTools = (deps.toolRegistry?.listAll() ?? [])
-				.map((tool) => tool.name)
-				.filter(
-					(name) =>
-						evaluateSkillToolSurface(policy, name) === null &&
-						(constraints?.allowedTools === undefined || constraints.allowedTools.includes(name)),
-				);
-			// The skill surface narrows the job, so a refusal must name it rather than
-			// blame a wider scope that still admits the tool.
-			return snapshotTurnConstraints({
-				...constraints,
-				allowedTools,
-				toolSurfaceSources: [
-					...toolSurfaceSources(constraints),
-					{
-						tools: allowedTools,
-						source: `active skill tool surface (${skillSurfaceNames(policy).join(", ")})`,
-						remedy: "Unload the narrowing skill or widen its allowed-tools, then recreate the job.",
-					},
-				],
-			});
-		},
 		contextLedger: () => context.contextLedger(),
 		screenWindow: () =>
 			state.runtime ? { messages: state.runtime.agent.state.messages, since: loop.operatorSpokeAt } : null,
