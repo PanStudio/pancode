@@ -69,7 +69,7 @@ Checks and tests:
 - `check-dist.mjs`: refuses a `dist/` built from another commit before `test:full`.
 - `check-economy-rates.ts`: `pnpm run economy:check`.
 - `check-packed-install.mjs`: `pnpm run check:packed-install`.
-- `pnpm.mjs`: starts pnpm from scripts, falling back to `corepack pnpm` when no `pnpm` command is on `PATH`.
+- `pnpm.mjs` (+ `.d.mts`): starts pnpm from scripts, falling back to `corepack pnpm` when no `pnpm` command is on `PATH`.
 - `package-files.ts`: decides whether a repository path ships, from the `package.json` `files` list.
 - `license-headers.mjs` (+ `.d.mts`): inserts or checks the two SPDX lines on every tracked source file in scope; lint runs the check.
 - `third-party-notices.mjs`: writes or checks `THIRD-PARTY-NOTICES.md` for every third-party package the build copies into `dist/`; lint runs the check.
@@ -112,7 +112,7 @@ Release (see [release/README.md](release/README.md)):
 - `check-release.mjs`: audits the built `dist/` and the packed tarball's contents.
 - `release-manifest.json`: runtime files the installed package must contain.
 - `release-audit.mjs` (+ `.d.mts`): audits the exact bundled dependency versions for advisories.
-- `packed-license.mjs` (+ `.d.mts`): checks the packed LICENSE and NOTICE against the committed files.
+- `packed-license.mjs`: checks the packed LICENSE and NOTICE against the committed files.
 - `report-credits.mjs`: lists reporters who opted in to credit and regenerates `CHAMPIONS.md`.
 - `report-dataset.ts`: turns consented report bundles into a dataset release.
 

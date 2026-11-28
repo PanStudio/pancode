@@ -105,10 +105,7 @@ function checkoutTsc() {
 	}
 }
 
-/**
- * Installs `tarball` into the empty `prefix` and runs every check above. Returns the report lines and what the
- * release checks read (`installed`), which qualification records in its test results.
- */
+/** Installs `tarball` into the empty `prefix`, runs every check above and returns the report lines. */
 export async function checkPackedInstall({ tarball, prefix }) {
 	const files = readTarball(readFileSync(tarball));
 	const problems = tarballProblems(files);
@@ -138,7 +135,7 @@ export async function checkPackedInstall({ tarball, prefix }) {
 			XDG_CACHE_HOME: join(home, "xdg-cache"),
 		};
 		const bin = (command) => join(prefix, "node_modules", ".bin", shell ? `${command}.cmd` : command);
-		const reported = run(bin("pancode"), ["--version"], { cwd: prefix, env }).split("\n")[0];
+		const reported = run(bin("pancode"), ["--version"], { cwd: prefix, env }).split("\n")[0].trim();
 		if (!reported.includes(manifest.version))
 			throw new Error(`pancode --version printed ${reported}; expected ${manifest.version}`);
 		const lines = [`pancode --version: ${reported}`];
