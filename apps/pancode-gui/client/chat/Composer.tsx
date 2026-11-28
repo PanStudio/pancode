@@ -45,9 +45,9 @@ import { countRender } from "../render/render-probe.js";
 import { requestReport } from "../report/report-events.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
+import { useRenameSession } from "../shell/sessions.js";
 import { useShell } from "../shell/shell-context.js";
 import { taskTitle } from "../shell/shell-model.js";
-import { useRenameTask } from "../shell/tasks.js";
 import { AutonomyPill } from "./AutonomyPill.js";
 import { persistAttachments, savedAttachments } from "./attachment-drafts.js";
 import { readAttachment } from "./attachment-image.js";
@@ -274,7 +274,7 @@ export const Composer = memo(function Composer({
 	const [aliasNote, setAliasNote] = useState<{ text: string; message: string } | null>(null);
 	const shell = useShell();
 	const navigate = useNavigate();
-	const renameTask = useRenameTask(client);
+	const renameTask = useRenameSession(client);
 	// The branch tree is keyed on settled turns, the way the pane passes it.
 	const [settledTurns, setSettledTurns] = useState(0);
 	useEffect(() => {

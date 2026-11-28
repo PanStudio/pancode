@@ -12,9 +12,9 @@ import { useDetailsDismiss } from "../interaction/use-details-dismiss.js";
 import { HomeAside } from "../shell/HomeAside.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { PancodeStage } from "../shell/PancodeStage.js";
+import { rememberWorkspace } from "../shell/sessions.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
-import { rememberWorkspace } from "../shell/tasks.js";
 import { firstRequestBusy, homeDraft, subscribeHomeDraft, updateHomeDraft } from "./home-draft.js";
 import {
 	canStartFirstTask,
@@ -26,7 +26,7 @@ import {
 	workspaceNotice,
 } from "./home-draft-model.js";
 import { settleStarted } from "./started-request.js";
-import { reconcileFirstTask, useFirstTask } from "./use-first-task.js";
+import { reconcileFirstSession, useFirstSession } from "./use-first-session.js";
 import "../chat/composer-box.css";
 import "./home.css";
 import { metaQuery, workspacesQuery } from "../api/queries.js";
@@ -202,11 +202,11 @@ export function Home({ client }: { client: Client }) {
 	const setup = useSetupStatus(client, true, setupWorkspaceId(workspaceId, list));
 	const ready = setup.data?.state === "ready";
 	const meta = useQuery(metaQuery(client));
-	const send = useFirstTask(client);
+	const send = useFirstSession(client);
 	const reconcile = useMutation({
 		mutationFn: async () => {
 			await meta.refetch({ throwOnError: true });
-			return reconcileFirstTask(client);
+			return reconcileFirstSession(client);
 		},
 	});
 	const epochChanged = !!pending && !!meta.data && pending.epoch !== meta.data.epoch;

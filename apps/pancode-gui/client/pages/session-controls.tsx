@@ -6,7 +6,7 @@ import { useState } from "react";
 // the task actions menu; the approval cards, cancellation and the fleet feed live in chat/.
 
 import type { Client } from "../api/client.js";
-import { useDeleteTask } from "../shell/tasks.js";
+import { useDeleteSession } from "../shell/sessions.js";
 
 /**
  * Deleting a closed session removes its saved conversation for good, so it takes two presses: the
@@ -25,7 +25,7 @@ export function DeleteSession({
 	name?: string;
 }) {
 	const [confirming, setConfirming] = useState(false);
-	const remove = useDeleteTask(client);
+	const remove = useDeleteSession(client);
 	return (
 		<div className="delete-session">
 			{confirming ? (

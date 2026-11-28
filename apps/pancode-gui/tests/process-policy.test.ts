@@ -12,7 +12,7 @@ import { Hono } from "hono";
 import { Accepted } from "../contracts/operations.js";
 import { problemResponse } from "../server/http/problem.js";
 import { staticClient } from "../server/http/static.js";
-import { fixtureOptions } from "./fixtures/toolchain.js";
+import { fixtureOptions } from "./fixtures/programs.js";
 import { pinnedFetcher } from "./harness/adapter.js";
 import { harness, json, terminal } from "./harness/app.js";
 import { exchangeLaunchTicket } from "./harness/exchange.js";

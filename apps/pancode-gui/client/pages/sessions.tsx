@@ -29,7 +29,7 @@ import { foldFleetRuns, isLiveRun } from "../chat/fleet-facts.js";
 import type { HealthRow } from "../chat/health.js";
 import { compactionRows, summarizeHealth } from "../chat/health.js";
 import { LiveJobs } from "../chat/JobStrip.js";
-import { LiveElsewhereTask } from "../chat/LiveElsewhereTask.js";
+import { LiveElsewhereSession } from "../chat/LiveElsewhereSession.js";
 import { MemoryCaptureChip } from "../chat/MemoryCaptureChip.js";
 import { OutputDetailPicker } from "../chat/OutputDetailPicker.js";
 import { FilePreviewDialog } from "../chat/on-demand-panels.js";
@@ -60,9 +60,9 @@ import { countRender } from "../render/render-probe.js";
 import { Menu, MenuItem } from "../shell/Menu.js";
 import { PancodeEmptyMark, PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
+import { rememberedWorkspace, useRenameSession, useSessionWorkers } from "../shell/sessions.js";
 import { answeredTurns, renameBlocker, taskTitle } from "../shell/shell-model.js";
 import { TopBar } from "../shell/TopBar.js";
-import { rememberedWorkspace, useRenameTask, useSessionWorkers } from "../shell/tasks.js";
 import { openAppWindow } from "../shell/windows.js";
 import { preferredFirst, taskChip, unreadProjectsNote } from "./sessions-model.js";
 import { settleStarted, startedRequest } from "./started-request.js";
@@ -254,7 +254,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 			void queries.invalidateQueries({ queryKey: ["session-history", snapshot.workspaceId] });
 		},
 	});
-	const renameTask = useRenameTask(client);
+	const renameTask = useRenameSession(client);
 	const [renaming, setRenaming] = useState(false);
 	const [outline, setOutline] = useState(false);
 	const pendingJump = useRef<string | null>(null);
@@ -357,7 +357,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 			return (
 				<>
 					<TopBar />
-					<LiveElsewhereTask
+					<LiveElsewhereSession
 						client={client}
 						sessionId={id}
 						workspaceId={found.id}

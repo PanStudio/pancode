@@ -1,36 +1,32 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { Machine, MachineAdd, MachineMutation } from "../../contracts/machines.js";
+import type { Node, NodeAdd, NodeMutation } from "../../contracts/nodes.js";
 import type { Operation } from "../../contracts/operations.js";
 import { terminalOperation } from "../api/operation-request-model.js";
 import { matchesText } from "../design/text-match.js";
 
-export type MachineRequest = {
+export type NodeRequest = {
 	readonly key: string;
 	/** Null when sent with no workspace open: registration only, no readiness check. */
 	readonly workspaceId: string | null;
-	readonly body: MachineMutation;
+	readonly body: NodeMutation;
 	readonly epoch: string | null;
 	readonly operationId: string | null;
 	readonly settled: boolean;
 };
 
-export function acceptMachineRequest(
-	current: MachineRequest | null,
-	key: string,
-	operationId: string,
-): MachineRequest | null {
+export function acceptNodeRequest(current: NodeRequest | null, key: string, operationId: string): NodeRequest | null {
 	return current?.key === key ? { ...current, operationId } : current;
 }
 
 /** Polling stops once the operation is over, or once a restart has made its id meaningless. */
-export function pollsMachineOperation(operation: Operation | undefined, epochChanged: boolean): boolean {
+export function pollsNodeOperation(operation: Operation | undefined, epochChanged: boolean): boolean {
 	return !epochChanged && !(operation !== undefined && terminalOperation(operation));
 }
 
 /** The tracked request's operation once it is over and not yet settled; null while there is nothing to settle. */
-export function settlingMachineOperation(
-	request: MachineRequest | null,
+export function settlingNodeOperation(
+	request: NodeRequest | null,
 	operation: Operation | undefined,
 	epochChanged: boolean,
 ): Operation | null {
@@ -39,27 +35,29 @@ export function settlingMachineOperation(
 }
 
 /** A settled request closes the add form; a successful add also clears the draft it sent. */
-export function settleMachineRequest<
-	T extends { request: MachineRequest | null; adding: boolean; draft: MachineDraft },
->(current: T, request: MachineRequest, status: Operation["status"]): T {
+export function settleNodeRequest<T extends { request: NodeRequest | null; adding: boolean; draft: NodeDraft }>(
+	current: T,
+	request: NodeRequest,
+	status: Operation["status"],
+): T {
 	if (current.request?.key !== request.key) return current;
 	const add = request.body.action === "add";
 	return {
 		...current,
 		request: { ...current.request, settled: true },
 		adding: add ? false : current.adding,
-		draft: status === "succeeded" && add ? emptyMachineDraft : current.draft,
+		draft: status === "succeeded" && add ? emptyNodeDraft : current.draft,
 	};
 }
 
 /** The settings views a finished operation makes stale: a successful add or remove changes them, a check does not. */
-export function machineSettingsInvalidations(request: MachineRequest, status: Operation["status"]): readonly string[] {
+export function nodeSettingsInvalidations(request: NodeRequest, status: Operation["status"]): readonly string[] {
 	return status === "succeeded" && request.body.action !== "check"
 		? ["settings-report", "settings-controls", "config-graph"]
 		: [];
 }
 
-export type MachineDraft = {
+export type NodeDraft = {
 	id: string;
 	host: string;
 	user: string;
@@ -67,7 +65,7 @@ export type MachineDraft = {
 	maxWorkers: string;
 	labels: string;
 };
-export const emptyMachineDraft: MachineDraft = {
+export const emptyNodeDraft: NodeDraft = {
 	id: "",
 	host: "",
 	user: "",
@@ -76,7 +74,7 @@ export const emptyMachineDraft: MachineDraft = {
 	labels: "",
 };
 
-export function machineDraft(draft: MachineDraft): { machine: MachineAdd; error?: never } | { error: string } {
+export function nodeDraft(draft: NodeDraft): { machine: NodeAdd; error?: never } | { error: string } {
 	const id = draft.id.trim();
 	const host = draft.host.trim();
 	const user = draft.user.trim();
@@ -114,7 +112,7 @@ export function machineDraft(draft: MachineDraft): { machine: MachineAdd; error?
 	};
 }
 
-export function machineAge(machine: Machine, now: number): string {
+export function nodeAge(machine: Node, now: number): string {
 	if (!machine.checkedAt) return "Never checked";
 	const checked = Date.parse(machine.checkedAt);
 	if (!Number.isFinite(checked) || checked > now) return "Check time unavailable";
@@ -125,7 +123,7 @@ export function machineAge(machine: Machine, now: number): string {
 	return `${Math.floor(minutes / 1440)} days ago`;
 }
 
-export function machineStatus(machine: Machine, now: number) {
+export function nodeStatus(machine: Node, now: number) {
 	if (
 		machine.readiness === "ready for this project" &&
 		(!machine.checkedAt ||
@@ -145,32 +143,32 @@ export function machineStatus(machine: Machine, now: number) {
 	};
 }
 
-export function machineSummary(machines: readonly Machine[], now: number) {
+export function nodeSummary(machines: readonly Node[], now: number) {
 	return machines.reduce(
 		(counts, machine) => {
-			counts[machineStatus(machine, now).group]++;
+			counts[nodeStatus(machine, now).group]++;
 			return counts;
 		},
 		{ ready: 0, attention: 0, unchecked: 0 },
 	);
 }
 
-export const MACHINE_FILTERS = ["all", "ready", "attention", "unchecked"] as const;
-export function filterMachines(
-	machines: readonly Machine[],
+export const NODE_FILTERS = ["all", "ready", "attention", "unchecked"] as const;
+export function filterNodes(
+	machines: readonly Node[],
 	query: string,
-	filter: (typeof MACHINE_FILTERS)[number],
+	filter: (typeof NODE_FILTERS)[number],
 	now: number,
 ) {
 	return machines
 		.filter((machine) => {
-			if (filter !== "all" && machineStatus(machine, now).group !== filter) return false;
+			if (filter !== "all" && nodeStatus(machine, now).group !== filter) return false;
 			return matchesText(query, [machine.id, machine.host, machine.user, ...machine.labels]);
 		})
 		.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export const machineCheckLabels = [
+export const nodeCheckLabels = [
 	["reachable", "SSH reached"],
 	["pancodePresent", "PanCode found"],
 	["versionMatch", "Version matched"],

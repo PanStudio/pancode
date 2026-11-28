@@ -4,7 +4,7 @@ import { type Static, Type } from "typebox";
 import { Id } from "./common.js";
 
 const NullableString = Type.Union([Type.String(), Type.Null()]);
-export const Tool = Type.Object(
+export const Program = Type.Object(
 	{
 		id: Id,
 		version: Type.String(),
@@ -38,7 +38,7 @@ export const Tool = Type.Object(
 	},
 	{ additionalProperties: false },
 );
-export type Tool = Static<typeof Tool>;
-export const Tools = Type.Array(Tool);
+export type Program = Static<typeof Program>;
+export const Programs = Type.Array(Program);
 export const Install = Type.Object({ force: Type.Optional(Type.Boolean()) }, { additionalProperties: false });
-export const ToolResult = Type.Object({ id: Id, message: Type.String() }, { additionalProperties: false });
+export const ProgramResult = Type.Object({ id: Id, message: Type.String() }, { additionalProperties: false });

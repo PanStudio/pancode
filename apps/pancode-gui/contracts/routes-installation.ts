@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Type } from "typebox";
 import { Empty, Id } from "./common.js";
-import { MachineAttachment, MachineAttachments, MachineId, MachineMutation, Machines } from "./machines.js";
+import { NodeAttachment, NodeAttachments, NodeId, NodeMutation, Nodes } from "./nodes.js";
 import { Accepted } from "./operations.js";
 import { defineRoute, get, operationParams, post } from "./route-schema.js";
 import { routes as runtimeRoutes } from "./runtime-routes.js";
@@ -14,43 +14,43 @@ export const installationRoutes = {
 	nodes: defineRoute({
 		...get,
 		params: Type.Object({ id: Id }, { additionalProperties: false }),
-		response: Machines,
+		response: Nodes,
 		summary: "Read registered SSH nodes and recorded project readiness without probing hosts.",
 		...runtimeRoutes.nodes,
 	}),
 	nodeMutation: defineRoute({
 		...post,
 		params: Type.Object({ id: Id }, { additionalProperties: false }),
-		body: MachineMutation,
+		body: NodeMutation,
 		response: Accepted,
 		summary: "Register, remove, or explicitly check an SSH node through a serial operation.",
 		...runtimeRoutes.nodeMutation,
 	}),
 	installationNodes: defineRoute({
 		...get,
-		response: Machines,
+		response: Nodes,
 		summary: "Read the registered SSH nodes with no workspace open; readiness is not checked for any project.",
 		...runtimeRoutes.installationNodes,
 	}),
 	installationNodeMutation: defineRoute({
 		...post,
 		params: Empty,
-		body: MachineMutation,
+		body: NodeMutation,
 		response: Accepted,
 		summary: "Register or remove an SSH node with no workspace open; a readiness check needs a workspace.",
 		...runtimeRoutes.installationNodeMutation,
 	}),
 	nodeAttachments: defineRoute({
 		...get,
-		response: MachineAttachments,
+		response: NodeAttachments,
 		summary: "Registered SSH nodes with the state of this app's attachment to each node's own GUI.",
 		...runtimeRoutes.nodeAttachments,
 	}),
 	nodeAttach: defineRoute({
 		...post,
 		status: 200,
-		params: Type.Object({ id: MachineId }, { additionalProperties: false }),
-		response: MachineAttachment,
+		params: Type.Object({ id: NodeId }, { additionalProperties: false }),
+		response: NodeAttachment,
 		summary: "Start or resume this app's attachment to the node's own GUI over SSH, answering the current state.",
 		...runtimeRoutes.nodeAttach,
 	}),

@@ -9,8 +9,8 @@ import { Value } from "typebox/value";
 import { Problem } from "../contracts/common.js";
 import type { Event } from "../contracts/events.js";
 import { Accepted, Operation } from "../contracts/operations.js";
-import { Tools } from "../contracts/toolchain.js";
-import { PINNED_PROGRAMS } from "./fixtures/toolchain.js";
+import { Programs } from "../contracts/programs.js";
+import { PINNED_PROGRAMS } from "./fixtures/programs.js";
 import { harness, json, terminal } from "./harness/app.js";
 import { scratchHome } from "./harness/scratch-home.js";
 
@@ -19,7 +19,7 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 	t.after(h.close);
 	const list = await h.request("/api/programs");
 	const tools = await list.json();
-	assert.ok(Value.Check(Tools, tools));
+	assert.ok(Value.Check(Programs, tools));
 	assert.deepEqual(
 		tools.map((row) => row.id),
 		PINNED_PROGRAMS.map((row) => row.id),
@@ -72,7 +72,7 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 	const finished = events.find((event) => event.type === "operation.finished");
 	assert.ok(finished?.type === "operation.finished");
 	assert.deepEqual(finished.payload.operation, record);
-	const installed = (await json(await h.request("/api/programs"), Tools)).find((row) => row.id === "herdr");
+	const installed = (await json(await h.request("/api/programs"), Programs)).find((row) => row.id === "herdr");
 	assert.equal(installed?.installed, true);
 	assert.equal(installed?.resolution.source, "vendored");
 	const file = join(
@@ -117,7 +117,7 @@ test("production programStatuses and removeProgram execute in separate workers w
 	const h = await harness({ fixture: false });
 	t.after(h.close);
 	const response = await h.request("/api/programs");
-	const rows = await json(response, Tools);
+	const rows = await json(response, Programs);
 	assert.deepEqual(
 		rows.map((row) => row.id),
 		PINNED_PROGRAMS.map((pin) => pin.id),
@@ -146,13 +146,13 @@ test("removing the vendored copy preserves the compatible executable on the oper
 	t.after(h.close);
 	const installed = await json(await h.post("/api/programs/herdr/install"), Accepted);
 	assert.equal((await terminal(h.operations, installed.operationId)).status, "succeeded");
-	const before = (await json(await h.request("/api/programs"), Tools)).find((row) => row.id === "herdr");
+	const before = (await json(await h.request("/api/programs"), Programs)).find((row) => row.id === "herdr");
 	assert.equal(before?.installed, true);
 	assert.equal(before?.resolution.source, "path");
 	assert.equal(before?.resolution.binaryPath, executable);
 	const removed = await json(await h.post("/api/programs/herdr/remove"), Accepted);
 	assert.equal((await terminal(h.operations, removed.operationId)).status, "succeeded");
-	const after = (await json(await h.request("/api/programs"), Tools)).find((row) => row.id === "herdr");
+	const after = (await json(await h.request("/api/programs"), Programs)).find((row) => row.id === "herdr");
 	assert.equal(after?.installed, false);
 	assert.equal(after?.resolution.source, "path");
 	assert.equal(after?.resolution.binaryPath, executable);

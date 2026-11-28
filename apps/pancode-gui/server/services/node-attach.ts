@@ -3,8 +3,8 @@
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { createAdaptorServer } from "@hono/node-server";
-import type { MachineAttachment } from "../../contracts/machines.js";
-import type { MachineAttachmentsApi, MachineRoute } from "../http/routes-machines.js";
+import type { NodeAttachment } from "../../contracts/nodes.js";
+import type { NodeAttachmentsApi, NodeRoute } from "../http/routes-nodes.js";
 import { type RemoteServerMeta, remoteServerMeta } from "../local-server.js";
 import { startSshCommand, startSshForward, stopPancodeCommand } from "../process-policy.js";
 import {
@@ -16,13 +16,13 @@ import {
 	remoteGuiCommand,
 	versionGate,
 } from "../ssh-model.js";
-import type { MachineEndpoint } from "../worker/protocol.js";
+import type { NodeEndpoint } from "../worker/protocol.js";
 import type { EventHub } from "./event-hub.js";
 import { AppProblem } from "./problem.js";
 
-export interface MachineAttachDeps {
+export interface NodeAttachDeps {
 	/** The registry's SSH destinations, read each time so a node added meanwhile can be opened. */
-	endpoints(): Promise<MachineEndpoint[]>;
+	endpoints(): Promise<NodeEndpoint[]>;
 	/** This server's own version and build, which the node's must match. */
 	local(): BuildIdentity;
 	hub: EventHub;
@@ -36,7 +36,7 @@ export interface MachineAttachDeps {
 type ChildProcess = ReturnType<typeof startSshCommand>["child"] | ReturnType<typeof startSshForward>["child"];
 type Owned = { child: ChildProcess; birthToken: string | null };
 type Live = {
-	endpoint: MachineEndpoint;
+	endpoint: NodeEndpoint;
 	token: string;
 	command: Owned | null;
 	forward: Owned | null;
@@ -44,7 +44,7 @@ type Live = {
 	remotePort: number | null;
 };
 type Entry = {
-	attachment: MachineAttachment;
+	attachment: NodeAttachment;
 	live: Live | null;
 	timer: ReturnType<typeof setTimeout> | null;
 	/** Consecutive failed connections since the operator last opened the machine. */
@@ -176,18 +176,18 @@ async function sleep(ms: number) {
  * a local port to it and proxies the browser there. The node's GUI stops itself when idle; this app
  * stops every channel when it stops.
  */
-export class MachineAttachments implements MachineAttachmentsApi {
+export class NodeAttachments implements NodeAttachmentsApi {
 	private readonly entries = new Map<string, Entry>();
 	private readonly startedAt = new Date().toISOString();
 	private stopped = false;
-	constructor(private readonly deps: MachineAttachDeps) {}
+	constructor(private readonly deps: NodeAttachDeps) {}
 
-	async list(): Promise<MachineAttachment[]> {
+	async list(): Promise<NodeAttachment[]> {
 		const endpoints = await this.registry();
 		return endpoints.map((endpoint) => this.entries.get(endpoint.id)?.attachment ?? this.detached(endpoint));
 	}
 
-	async attach(id: string): Promise<MachineAttachment> {
+	async attach(id: string): Promise<NodeAttachment> {
 		if (this.stopped) throw new AppProblem("unavailable", "PanCode is stopping.");
 		const endpoint = (await this.registry()).find((candidate) => candidate.id === id);
 		if (this.stopped) throw new AppProblem("unavailable", "PanCode is stopping.");
@@ -222,7 +222,7 @@ export class MachineAttachments implements MachineAttachmentsApi {
 		this.publish(entry);
 	}
 
-	route(id: string): MachineRoute | null {
+	route(id: string): NodeRoute | null {
 		const entry = this.entries.get(id);
 		if (!entry) return null;
 		const state = entry.attachment.state;
@@ -245,14 +245,14 @@ export class MachineAttachments implements MachineAttachmentsApi {
 	}
 
 	/** The registry as it stands now; an attachment whose node is no longer in it ends here. */
-	private async registry(): Promise<MachineEndpoint[]> {
+	private async registry(): Promise<NodeEndpoint[]> {
 		const endpoints = await this.deps.endpoints();
 		const registered = new Set(endpoints.map((endpoint) => endpoint.id));
 		for (const id of [...this.entries.keys()]) if (!registered.has(id)) this.forget(id);
 		return endpoints;
 	}
 
-	private detached(endpoint: MachineEndpoint): MachineAttachment {
+	private detached(endpoint: NodeEndpoint): NodeAttachment {
 		return {
 			id: endpoint.id,
 			host: endpoint.host,
@@ -265,7 +265,7 @@ export class MachineAttachments implements MachineAttachmentsApi {
 		};
 	}
 
-	private start(endpoint: MachineEndpoint, failures: number): Entry {
+	private start(endpoint: NodeEndpoint, failures: number): Entry {
 		const previous = this.entries.get(endpoint.id);
 		if (previous?.timer) clearTimeout(previous.timer);
 		const entry: Entry = {

@@ -2,26 +2,26 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { hostname } from "node:os";
 import type { Hono } from "hono";
-import type { MachineAttachment, MachineAttachmentState } from "../../contracts/machines.js";
+import type { NodeAttachment, NodeAttachmentState } from "../../contracts/nodes.js";
 import { routes } from "../../contracts/routes.js";
 import { clientCredential, dropClientCredential, proxyRequest } from "../local-server.js";
 import type { EventHub } from "../services/event-hub.js";
-import type { MachinesService } from "../services/machines.js";
+import type { NodesService } from "../services/nodes.js";
 import { AppProblem, decodeRequestPath } from "../services/problem.js";
 import { requestClient } from "./auth.js";
 import { idempotencyKey, register } from "./validate.js";
 
 /** Where a node's GUI answers, once it does: the forward's local port, and the port the node listens on. */
-export type MachineRoute =
+export type NodeRoute =
 	| { kind: "ready"; port: number; remotePort: number; token: string }
-	| { kind: "pending"; state: Exclude<MachineAttachmentState, "ready"> };
+	| { kind: "pending"; state: Exclude<NodeAttachmentState, "ready"> };
 
 /** What the attach routes and the proxy need from the per-machine supervisor. */
-export interface MachineAttachmentsApi {
-	list(): Promise<MachineAttachment[]>;
-	attach(id: string): Promise<MachineAttachment>;
+export interface NodeAttachmentsApi {
+	list(): Promise<NodeAttachment[]>;
+	attach(id: string): Promise<NodeAttachment>;
 	/** Null for a node this app has not attached; pending while it is not ready. */
-	route(id: string): MachineRoute | null;
+	route(id: string): NodeRoute | null;
 	/** Stop and drop the attachment of a node removed from the registry. */
 	forget(id: string): void;
 }
@@ -51,12 +51,7 @@ const UNFORWARDED_RESPONSE_HEADERS = new Set([
 ]);
 const MACHINE_ID = /^(?!local$)[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-export function machinesRoutes(
-	app: Hono,
-	hub: EventHub,
-	machines?: MachinesService,
-	attachments?: MachineAttachmentsApi,
-) {
+export function nodesRoutes(app: Hono, hub: EventHub, machines?: NodesService, attachments?: NodeAttachmentsApi) {
 	const service = () => {
 		if (!machines) throw new AppProblem("unsupported", "Node management is not enabled on this host.");
 		return machines;

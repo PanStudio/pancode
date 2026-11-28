@@ -10,7 +10,7 @@ import { StatusMark, TONE_GLYPHS } from "../design/status.js";
 import { useCopy } from "../render/Markdown.js";
 import { requestReport } from "../report/report-events.js";
 import { failedRunReport } from "../report/report-model.js";
-import { useSessionWorkers } from "../shell/tasks.js";
+import { useSessionWorkers } from "../shell/sessions.js";
 import { steeringAffordances } from "./composer-model.js";
 import { FleetRunPanel } from "./FleetRunPanel.js";
 import { RunSteer, type RunSteering } from "./FleetStrip.js";

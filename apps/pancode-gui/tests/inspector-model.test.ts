@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { reportedCount } from "../client/design/facts-model.js";
-import { toolCandidateNote, toolResolution } from "../client/pages/toolchain-model.js";
+import { toolCandidateNote, toolResolution } from "../client/pages/programs-model.js";
 import { histogram, runTone, runTotals } from "../client/pages/traces/trace-model.js";
 import type { TraceRun } from "../contracts/traces.js";
 

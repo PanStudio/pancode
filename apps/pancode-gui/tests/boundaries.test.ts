@@ -305,7 +305,7 @@ test("boundary checker rejects representative bypasses", () => {
 	for (const source of [
 		'import { programStatuses } from "../../../../src/lib/programs/index.js";',
 		'import { Worker as Thread } from "node:worker_threads";',
-		'export * from "../pancode/adapters/toolchain.js";',
+		'export * from "../pancode/adapters/programs.js";',
 		"const module = await import(path);",
 		'import cp from "child_process";',
 		'import { request } from "node:https";',

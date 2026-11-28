@@ -33,7 +33,7 @@ export function rememberWorkspace(id: string): void {
 	writePref(WORKSPACE_KEY, id);
 }
 
-export interface TaskActions {
+export interface SessionActions {
 	readonly launch: ProjectLaunch;
 	/** Open the Home composer, or return to this window's untouched task when Home has no unfinished request. */
 	newTask(workspaceId?: string): void;
@@ -90,7 +90,7 @@ function sessionWorkers(overview: SessionOverview, sessionId: string) {
 	};
 }
 
-export function useTaskActions(client: Client, afterNavigate?: () => void): TaskActions {
+export function useSessionActions(client: Client, afterNavigate?: () => void): SessionActions {
 	const navigate = useNavigate();
 	const queries = useQueryClient();
 	const launch = useProjectLaunch(client);
@@ -148,7 +148,7 @@ export function useTaskActions(client: Client, afterNavigate?: () => void): Task
 }
 
 /** Save a task's name. An empty label clears it, and the task is named by its first request again. */
-export function useRenameTask(client: Client) {
+export function useRenameSession(client: Client) {
 	const queries = useQueryClient();
 	return useMutation({
 		mutationFn: async ({ sessionId, workspaceId, label }: { sessionId: string; workspaceId: string; label: string }) => {
@@ -175,7 +175,7 @@ export function useRenameTask(client: Client) {
 }
 
 /** Delete a saved task for good. The caller asks first; leaving the deleted task's own page is handled here. */
-export function useDeleteTask(client: Client) {
+export function useDeleteSession(client: Client) {
 	const queries = useQueryClient();
 	const navigate = useNavigate();
 	const location = useLocation();

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Accepted } from "../contracts/operations.js";
 import { restrictNetwork } from "../server/network-policy.js";
-import { fixtureOptions } from "./fixtures/toolchain.js";
+import { fixtureOptions } from "./fixtures/programs.js";
 import { pinnedFetcher } from "./harness/adapter.js";
 import { harness, json, terminal } from "./harness/app.js";
 

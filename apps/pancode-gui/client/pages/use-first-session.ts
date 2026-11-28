@@ -10,8 +10,8 @@ import { touchFirst } from "../chat/composer-field.js";
 import { rememberPrompt } from "../chat/composer-history.js";
 import { focusComposerSoon } from "../interaction/focus-return.js";
 import { ownDrafts, rememberOwnDraft } from "../shell/own-drafts.js";
+import { rememberWorkspace } from "../shell/sessions.js";
 import { reusableDraft } from "../shell/shell-model.js";
-import { rememberWorkspace } from "../shell/tasks.js";
 import {
 	acquireFirstRequest,
 	confirmFirstRequest,
@@ -23,7 +23,7 @@ import { rememberStarted, settleStarted } from "./started-request.js";
 import { setupStatusInput } from "./target-onboarding.js";
 
 /** Every retry is explicit and uses the original body, workspace, session and command keys. */
-export function useFirstTask(client: Client) {
+export function useFirstSession(client: Client) {
 	const queries = useQueryClient();
 	const navigate = useNavigate();
 	return useMutation({
@@ -123,7 +123,7 @@ export function useFirstTask(client: Client) {
 }
 
 /** Reconciliation is read-only. Matching text alone cannot prove admission of this command. */
-export async function reconcileFirstTask(client: Client) {
+export async function reconcileFirstSession(client: Client) {
 	const request = homeDraft().pending;
 	if (!request?.sessionId) return null;
 	const session = await client.call(routes.session, { params: { id: request.sessionId }, query: {}, body: {} });

@@ -27,7 +27,7 @@ import {
 	voteOptions,
 	voteState,
 } from "./arena-model.js";
-import { operationUnsettled } from "./toolchain-model.js";
+import { operationUnsettled } from "./programs-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 import "./arena.css";
 

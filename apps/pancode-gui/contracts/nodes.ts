@@ -6,10 +6,10 @@ import { Id } from "./common.js";
 
 const closed = { additionalProperties: false };
 const nullableText = Type.Union([Type.String(), Type.Null()]);
-export const MachineId = Type.String({ pattern: "^(?!local$)[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" });
-export const MachineAdd = Type.Object(
+export const NodeId = Type.String({ pattern: "^(?!local$)[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" });
+export const NodeAdd = Type.Object(
 	{
-		id: MachineId,
+		id: NodeId,
 		host: Type.String({ minLength: 1, maxLength: 253, pattern: "^[A-Za-z0-9:][A-Za-z0-9._:-]*$" }),
 		user: Type.Optional(Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_][A-Za-z0-9_.-]*$" })),
 		port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
@@ -21,14 +21,14 @@ export const MachineAdd = Type.Object(
 	},
 	closed,
 );
-export type MachineAdd = Static<typeof MachineAdd>;
-export const MachineMutation = Type.Union([
-	Type.Object({ action: Type.Literal("add"), node: MachineAdd }, closed),
-	Type.Object({ action: Type.Literal("remove"), id: MachineId, confirmed: Type.Literal(true) }, closed),
-	Type.Object({ action: Type.Literal("check"), id: MachineId, confirmed: Type.Literal(true) }, closed),
+export type NodeAdd = Static<typeof NodeAdd>;
+export const NodeMutation = Type.Union([
+	Type.Object({ action: Type.Literal("add"), node: NodeAdd }, closed),
+	Type.Object({ action: Type.Literal("remove"), id: NodeId, confirmed: Type.Literal(true) }, closed),
+	Type.Object({ action: Type.Literal("check"), id: NodeId, confirmed: Type.Literal(true) }, closed),
 ]);
-export type MachineMutation = Static<typeof MachineMutation>;
-const MachineChecks = Type.Object(
+export type NodeMutation = Static<typeof NodeMutation>;
+const NodeChecks = Type.Object(
 	{
 		reachable: Type.Boolean(),
 		pancodePresent: Type.Boolean(),
@@ -38,9 +38,9 @@ const MachineChecks = Type.Object(
 	},
 	closed,
 );
-export const Machine = Type.Object(
+export const Node = Type.Object(
 	{
-		id: MachineId,
+		id: NodeId,
 		host: Type.String(),
 		user: nullableText,
 		port: Type.Union([Type.Integer(), Type.Null()]),
@@ -57,7 +57,7 @@ export const Machine = Type.Object(
 		reason: nullableText,
 		checkedAt: nullableText,
 		ageMs: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
-		checks: Type.Union([MachineChecks, Type.Null()]),
+		checks: Type.Union([NodeChecks, Type.Null()]),
 		localVersion: nullableText,
 		remoteVersion: nullableText,
 		note: nullableText,
@@ -75,33 +75,33 @@ export const Machine = Type.Object(
 	},
 	closed,
 );
-export type Machine = Static<typeof Machine>;
-export const Machines = Type.Object(
+export type Node = Static<typeof Node>;
+export const Nodes = Type.Object(
 	{
 		/** Null with no workspace open: the registry is listed, and no project's readiness applies. */
 		workspaceId: Type.Union([Id, Type.Null()]),
 		projectRoot: Type.Union([Type.String(), Type.Null()]),
 		observedAt: Type.String(),
-		nodes: Type.Array(Machine),
+		nodes: Type.Array(Node),
 	},
 	closed,
 );
-export type Machines = Static<typeof Machines>;
+export type Nodes = Static<typeof Nodes>;
 
 /** How far this app has come in reaching a node's own GUI over SSH. */
-export const MachineAttachmentState = Type.Union([
+export const NodeAttachmentState = Type.Union([
 	Type.Literal("detached"),
 	Type.Literal("connecting"),
 	Type.Literal("ready"),
 	Type.Literal("failed"),
 	Type.Literal("version-mismatch"),
 ]);
-export type MachineAttachmentState = Static<typeof MachineAttachmentState>;
-export const MachineAttachment = Type.Object(
+export type NodeAttachmentState = Static<typeof NodeAttachmentState>;
+export const NodeAttachment = Type.Object(
 	{
-		id: MachineId,
+		id: NodeId,
 		host: Type.String(),
-		state: MachineAttachmentState,
+		state: NodeAttachmentState,
 		/** When the state was entered. */
 		since: Type.String(),
 		/** Why the attachment failed or was refused; null in every other state. */
@@ -118,6 +118,6 @@ export const MachineAttachment = Type.Object(
 	},
 	closed,
 );
-export type MachineAttachment = Static<typeof MachineAttachment>;
-export const MachineAttachments = Type.Object({ attachments: Type.Array(MachineAttachment) }, closed);
-export type MachineAttachments = Static<typeof MachineAttachments>;
+export type NodeAttachment = Static<typeof NodeAttachment>;
+export const NodeAttachments = Type.Object({ attachments: Type.Array(NodeAttachment) }, closed);
+export type NodeAttachments = Static<typeof NodeAttachments>;

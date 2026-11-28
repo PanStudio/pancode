@@ -20,9 +20,9 @@ import {
 	toolAvailability,
 	toolCandidateNote,
 	toolResolution,
-} from "./toolchain-model.js";
-import "./toolchain.css";
-export function Toolchain({
+} from "./programs-model.js";
+import "./programs.css";
+export function ProgramsPage({
 	client,
 	compact = false,
 	filter = "",

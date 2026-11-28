@@ -5,20 +5,20 @@ import type { SessionSummary } from "../../contracts/sessions.js";
 import { matchesText } from "../design/text-match.js";
 import type { TaskRow } from "../shell/shell-model.js";
 
-export const PROJECT_TASK_FILTERS = ["all", "open", "attention", "saved"] as const;
-export type ProjectTaskFilter = (typeof PROJECT_TASK_FILTERS)[number];
-export const PROJECT_TASK_SORTS = ["recent", "oldest", "name"] as const;
-export type ProjectTaskSort = (typeof PROJECT_TASK_SORTS)[number];
+export const PROJECT_SESSION_FILTERS = ["all", "open", "attention", "saved"] as const;
+export type ProjectSessionFilter = (typeof PROJECT_SESSION_FILTERS)[number];
+export const PROJECT_SESSION_SORTS = ["recent", "oldest", "name"] as const;
+export type ProjectSessionSort = (typeof PROJECT_SESSION_SORTS)[number];
 const needsAttention = (row: TaskRow) =>
 	row.state === "approval" || row.state === "question" || row.state === "unknown" || row.state === "failed";
 
-export function projectTaskInventory(
+export function projectSessionInventory(
 	rows: readonly TaskRow[],
 	history: readonly SessionSummary[],
 	sessions: readonly SessionOverviewItem[],
 	query: string,
-	filter: ProjectTaskFilter,
-	sort: ProjectTaskSort,
+	filter: ProjectSessionFilter,
+	sort: ProjectSessionSort,
 ) {
 	const saved = new Map(history.map((row) => [row.id, row]));
 	const held = new Map(sessions.map((row) => [row.id, row]));

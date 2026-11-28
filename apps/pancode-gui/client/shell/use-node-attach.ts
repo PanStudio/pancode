@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { MachineAttachment, MachineAttachments } from "../../contracts/machines.js";
+import type { NodeAttachment, NodeAttachments } from "../../contracts/nodes.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import { type Client, emptyInput } from "../api/client.js";
-import { attachmentsSettling, pendingOutcome } from "./machine-switcher-model.js";
+import { attachmentsSettling, pendingOutcome } from "./node-switcher-model.js";
 
 /**
  * The attachments the app on this machine holds to registered nodes, and the way to open one. An
  * Open waits for its node to become ready, then leaves for the node's own view in this window.
  */
-export function useMachineAttach(local: Client, enabled = true) {
+export function useNodeAttach(local: Client, enabled = true) {
 	const queries = useQueryClient();
 	const [pending, setPending] = useState<string | null>(null);
 	const attachments = useQuery({
@@ -26,8 +26,8 @@ export function useMachineAttach(local: Client, enabled = true) {
 	});
 	const attach = useMutation({
 		mutationFn: (id: string) => local.call(routes.nodeAttach, { ...emptyInput, params: { id } }),
-		onSuccess: (attachment: MachineAttachment) => {
-			queries.setQueryData<MachineAttachments>(["node-attachments"], (current) =>
+		onSuccess: (attachment: NodeAttachment) => {
+			queries.setQueryData<NodeAttachments>(["node-attachments"], (current) =>
 				current
 					? {
 							attachments: current.attachments.some((row) => row.id === attachment.id)

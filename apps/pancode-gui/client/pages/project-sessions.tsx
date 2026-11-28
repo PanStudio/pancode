@@ -16,6 +16,7 @@ import { useInventoryWindow } from "../interaction/use-inventory-window.js";
 import { HomeAside } from "../shell/HomeAside.js";
 import { InlineRename } from "../shell/InlineRename.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
+import { useMinuteClock, useRenameSession, useSessionActions, useSessionOverview } from "../shell/sessions.js";
 import {
 	answeredInOverview,
 	READY_LABEL,
@@ -26,15 +27,14 @@ import {
 	taskRows,
 } from "../shell/shell-model.js";
 import { TopBar } from "../shell/TopBar.js";
-import { useMinuteClock, useRenameTask, useSessionOverview, useTaskActions } from "../shell/tasks.js";
 import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
-import { PROJECT_TASK_FILTERS, PROJECT_TASK_SORTS, projectTaskInventory } from "./project-tasks-model.js";
+import { PROJECT_SESSION_FILTERS, PROJECT_SESSION_SORTS, projectSessionInventory } from "./project-sessions-model.js";
 import { DeleteSession } from "./session-controls.js";
-import "./tasks.css";
+import "./project-sessions.css";
 
 const FILTER_NAMES = { all: "All work", open: "Open sessions", attention: "Needs you", saved: "Saved history" };
 
-export function TaskHistoryActions({
+export function SessionHistoryActions({
 	client,
 	row,
 	summary,
@@ -46,7 +46,7 @@ export function TaskHistoryActions({
 }) {
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState<string | null>(null);
-	const rename = useRenameTask(client);
+	const rename = useRenameSession(client);
 	return (
 		<div className="taskpage__actions">
 			{editing ? (
@@ -98,12 +98,12 @@ export function Sessions({ client }: { client: Client }) {
 	const { workspaceId = "" } = useParams();
 	const [search, setSearch] = useSearchParams();
 	const now = useMinuteClock();
-	const actions = useTaskActions(client);
+	const actions = useSessionActions(client);
 	const query = search.get("q") ?? "";
 	const searchBox = useSearchDraft(query, (value) => setSearch(liveSearchWith("q", value), { replace: true }));
 	const deferredQuery = useDeferredValue(query);
-	const filter = PROJECT_TASK_FILTERS.find((item) => item === search.get("status")) ?? "all";
-	const sort = PROJECT_TASK_SORTS.find((item) => item === search.get("sort")) ?? "recent";
+	const filter = PROJECT_SESSION_FILTERS.find((item) => item === search.get("status")) ?? "all";
+	const sort = PROJECT_SESSION_SORTS.find((item) => item === search.get("sort")) ?? "recent";
 	const page = useInventoryWindow(JSON.stringify([workspaceId, deferredQuery, filter, sort]));
 	const list = useRef<HTMLUListElement>(null);
 	const set = (key: string, value: string) =>
@@ -124,7 +124,7 @@ export function Sessions({ client }: { client: Client }) {
 		[workspaceId, overview.data, history.data],
 	);
 	const inventory = useMemo(
-		() => projectTaskInventory(rows, history.data ?? [], overview.data?.sessions ?? [], deferredQuery, filter, sort),
+		() => projectSessionInventory(rows, history.data ?? [], overview.data?.sessions ?? [], deferredQuery, filter, sort),
 		[rows, history.data, overview.data, deferredQuery, filter, sort],
 	);
 	const saved = useMemo(() => new Map((history.data ?? []).map((row) => [row.id, row])), [history.data]);
@@ -236,7 +236,7 @@ export function Sessions({ client }: { client: Client }) {
 					<FilterChips
 						className="taskpage__filters"
 						label="Project session activity"
-						filters={PROJECT_TASK_FILTERS}
+						filters={PROJECT_SESSION_FILTERS}
 						names={FILTER_NAMES}
 						value={filter}
 						count={(item) => (item === "saved" && !history.data ? null : inventory.counts[item])}
@@ -298,7 +298,7 @@ export function Sessions({ client }: { client: Client }) {
 											</button>
 										)}
 										{renameBlocker({ saved: !!summary, answered: session ? answeredInOverview(session) : 0 }) === null ? (
-											<TaskHistoryActions client={client} row={row} summary={summary} />
+											<SessionHistoryActions client={client} row={row} summary={summary} />
 										) : null}
 									</li>
 								);

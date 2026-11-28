@@ -26,7 +26,7 @@ const KILL_GRACE_MS = 15_000;
 const STDOUT_LIMIT = 8 * 1024 * 1024;
 const LINE = /^pancode research: (r[0-9]{8}-[0-9]{6}-[0-9a-f]{4}): (.*)$/;
 
-type ToolResult = { id: string; message: string };
+type ProgramResult = { id: string; message: string };
 
 function checked<T extends TSchema>(schema: T, value: unknown, what: string): Static<T> {
 	if (!Value.Check(schema, value))
@@ -159,7 +159,7 @@ export class ResearchService {
 		request: ResearchStartRequest,
 		progress: (message: string) => void,
 		signal: AbortSignal,
-	): Promise<ToolResult> {
+	): Promise<ProgramResult> {
 		if (this.closed) return Promise.reject(new AppProblem("unavailable", "PanCode is stopping."));
 		const controller = new AbortController();
 		const forward = () => controller.abort();
@@ -179,7 +179,7 @@ export class ResearchService {
 		request: ResearchStartRequest,
 		progress: (message: string) => void,
 		signal: AbortSignal,
-	): Promise<ToolResult> {
+	): Promise<ProgramResult> {
 		if (signal.aborted) throw new AppProblem("operation_failed", "Research campaign was cancelled before it started.");
 		const { child, birthToken } = await runPancodeCommand({ kind: "research.start", request }, cwd, this.env);
 		progress(`PanCode is opening a campaign on ${request.check}/${request.metric}.`);

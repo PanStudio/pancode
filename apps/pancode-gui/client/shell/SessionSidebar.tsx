@@ -19,10 +19,17 @@ import { countRender } from "../render/render-probe.js";
 import { chordHint } from "./chords.js";
 import { ExploreDrawer } from "./ExploreDrawer.js";
 import { InlineRename } from "./InlineRename.js";
-import { MachineSwitcher } from "./MachineSwitcher.js";
 import { Menu, MenuItem } from "./Menu.js";
+import { NodeSwitcher } from "./NodeSwitcher.js";
 import { PancodeEmptyMark, PancodeLogo, PancodePulse, PancodeWordmark, PULSE_SIZE } from "./PancodeMark.js";
 import { SettingsSidebar } from "./SettingsSidebar.js";
+import {
+	type SessionActions,
+	useDeleteSession,
+	useMinuteClock,
+	useRenameSession,
+	useSessionOverview,
+} from "./sessions.js";
 import {
 	isSettingsPath,
 	STATE_LABELS,
@@ -36,15 +43,14 @@ import {
 	visibleTaskCount,
 	workspacesByRecency,
 } from "./shell-model.js";
-import { type TaskActions, useDeleteTask, useMinuteClock, useRenameTask, useSessionOverview } from "./tasks.js";
 import { setThemeChoice, themeSwitchLabel, useTheme } from "./theme.js";
 import { useSessionIntent } from "./use-session-intent.js";
-import "./task-sidebar-actions.css";
+import "./session-sidebar-actions.css";
 
 const TASKS_PER_PROJECT = 6;
 const PROJECTS_SHOWN = 10;
 const moveTaskFocus = moveRowFocus(".wb-task__main");
-export function TaskSidebar({
+export function SessionSidebar({
 	client,
 	local,
 	remoteHost,
@@ -65,7 +71,7 @@ export function TaskSidebar({
 	remoteHost: string | undefined;
 	version: string | undefined;
 	platform: string | undefined;
-	actions: TaskActions;
+	actions: SessionActions;
 	connection: ConnectionState;
 	activeWorkspaceId: string | null;
 	onOpenWorkspace: () => void;
@@ -164,7 +170,7 @@ export function TaskSidebar({
 				</button>
 			</div>
 
-			<MachineSwitcher local={local} current={client.machine} remoteHost={remoteHost} />
+			<NodeSwitcher local={local} current={client.machine} remoteHost={remoteHost} />
 
 			<nav className="wb-side__discover" aria-label="Find and explore">
 				<button
@@ -330,7 +336,7 @@ function ProjectGroup({
 	sessions: readonly SessionOverviewItem[];
 	current: boolean;
 	activeTask: string | null;
-	actions: TaskActions;
+	actions: SessionActions;
 	now: number;
 	onNavigate: () => void;
 }) {
@@ -453,12 +459,12 @@ function TaskItem({
 	client: Client;
 	row: TaskRow;
 	selected: boolean;
-	actions: TaskActions;
+	actions: SessionActions;
 	now: number;
 	onNavigate: () => void;
 }) {
-	const rename = useRenameTask(client);
-	const remove = useDeleteTask(client);
+	const rename = useRenameSession(client);
+	const remove = useDeleteSession(client);
 	const intent = useSessionIntent(client, row.id, row.open && !selected);
 	const [editing, setEditing] = useState(false);
 	const [confirming, setConfirming] = useState(false);

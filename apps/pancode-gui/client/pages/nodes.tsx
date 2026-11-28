@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RefObject } from "react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "react-router";
-import type { Machine, MachineAdd, MachineAttachment, MachineMutation } from "../../contracts/machines.js";
+import type { Node, NodeAdd, NodeAttachment, NodeMutation } from "../../contracts/nodes.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { emptyInput } from "../api/client.js";
@@ -13,39 +13,39 @@ import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
 import { setPageTitle } from "../interaction/announcer.js";
 import { Dialog } from "../interaction/Dialog.js";
-import { attachInstallCommand, attachmentStatus, openAction } from "../shell/machine-switcher-model.js";
-import { useMachineAttach } from "../shell/use-machine-attach.js";
+import { attachInstallCommand, attachmentStatus, openAction } from "../shell/node-switcher-model.js";
+import { useNodeAttach } from "../shell/use-node-attach.js";
 import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
-import type { MachineDraft, MachineRequest } from "./machines-model.js";
+import type { NodeDraft, NodeRequest } from "./nodes-model.js";
 import {
-	acceptMachineRequest,
-	emptyMachineDraft,
-	filterMachines,
-	MACHINE_FILTERS,
-	machineAge,
-	machineCheckLabels,
-	machineDraft,
-	machineSettingsInvalidations,
-	machineStatus,
-	machineSummary,
-	pollsMachineOperation,
-	settleMachineRequest,
-	settlingMachineOperation,
-} from "./machines-model.js";
+	acceptNodeRequest,
+	emptyNodeDraft,
+	filterNodes,
+	NODE_FILTERS,
+	nodeAge,
+	nodeCheckLabels,
+	nodeDraft,
+	nodeSettingsInvalidations,
+	nodeStatus,
+	nodeSummary,
+	pollsNodeOperation,
+	settleNodeRequest,
+	settlingNodeOperation,
+} from "./nodes-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
-import "./machines.css";
+import "./nodes.css";
 import { freshMeta, metaQuery } from "../api/queries.js";
 
-type MachinesDraft = {
-	draft: MachineDraft;
+type NodesDraft = {
+	draft: NodeDraft;
 	adding: boolean;
-	request: MachineRequest | null;
+	request: NodeRequest | null;
 	sending: boolean;
 	error: string | null;
 };
 const machineDrafts = new WeakMap<Client, ReturnType<typeof createMachinesDraft>>();
 function createMachinesDraft() {
-	let value: MachinesDraft = { draft: emptyMachineDraft, adding: false, request: null, sending: false, error: null };
+	let value: NodesDraft = { draft: emptyNodeDraft, adding: false, request: null, sending: false, error: null };
 	const listeners = new Set<() => void>();
 	return {
 		read: () => value,
@@ -55,7 +55,7 @@ function createMachinesDraft() {
 				listeners.delete(listener);
 			};
 		},
-		update: (change: (current: MachinesDraft) => MachinesDraft) => {
+		update: (change: (current: NodesDraft) => NodesDraft) => {
 			value = change(value);
 			for (const listener of listeners) listener();
 		},
@@ -72,7 +72,7 @@ function machinesDraft(client: Client) {
 	return draft;
 }
 
-function AddMachine({
+function AddNode({
 	busy,
 	draft,
 	onDraft,
@@ -80,13 +80,13 @@ function AddMachine({
 	inputRef,
 }: {
 	busy: boolean;
-	draft: MachineDraft;
-	onDraft: (draft: MachineDraft) => void;
-	onAdd: (machine: MachineAdd) => void;
+	draft: NodeDraft;
+	onDraft: (draft: NodeDraft) => void;
+	onAdd: (machine: NodeAdd) => void;
 	inputRef: RefObject<HTMLInputElement | null>;
 }) {
 	const [error, setError] = useState("");
-	const field = (key: keyof MachineDraft, value: string) => {
+	const field = (key: keyof NodeDraft, value: string) => {
 		setError("");
 		onDraft({ ...draft, [key]: value });
 	};
@@ -95,7 +95,7 @@ function AddMachine({
 			className="machines-add"
 			onSubmit={(event) => {
 				event.preventDefault();
-				const result = machineDraft(draft);
+				const result = nodeDraft(draft);
 				if (result.error !== undefined) {
 					setError(result.error);
 					return;
@@ -188,7 +188,7 @@ function AddMachine({
 	);
 }
 
-function MachineDetail({
+function NodeDetail({
 	machine,
 	now,
 	projectRoot,
@@ -198,20 +198,20 @@ function MachineDetail({
 	opening,
 	onOpen,
 }: {
-	machine: Machine;
+	machine: Node;
 	now: number;
 	/** Null with no workspace open: there is no project to check readiness for. */
 	projectRoot: string | null;
 	busy: boolean;
-	onAction: (mutation: MachineMutation) => void;
+	onAction: (mutation: NodeMutation) => void;
 	/** This app's attachment to the node's own GUI; undefined while the list has not answered. */
-	attachment: MachineAttachment | undefined;
+	attachment: NodeAttachment | undefined;
 	opening: boolean;
 	/** Absent while this window already shows a node, whose registry is not this machine's. */
 	onOpen: ((id: string) => void) | undefined;
 }) {
 	const [confirm, setConfirm] = useState<"check" | "remove" | null>(null);
-	const status = machineStatus(machine, now);
+	const status = nodeStatus(machine, now);
 	const attachState = attachment?.state ?? "detached";
 	const open = openAction(attachState, opening);
 	const attachStatus = attachmentStatus(opening ? "connecting" : attachState);
@@ -247,7 +247,7 @@ function MachineDetail({
 				<div>
 					<dt>Last check</dt>
 					<dd>
-						{machineAge(machine, now)}
+						{nodeAge(machine, now)}
 						{machine.checkedAt && <time dateTime={machine.checkedAt}>{machine.checkedAt}</time>}
 					</dd>
 				</div>
@@ -264,7 +264,7 @@ function MachineDetail({
 					<span className="machines-kicker">Recorded project evidence</span>
 					<p className="machines-path">{projectRoot}</p>
 					<div className="machines-checks">
-						{machineCheckLabels.map(([key, label]) => (
+						{nodeCheckLabels.map(([key, label]) => (
 							<div key={key} data-confirmed={machine.checks?.[key] === true}>
 								<Icon name={machine.checks?.[key] ? "success" : "unverified"} />
 								<span>
@@ -382,14 +382,14 @@ function MachineDetail({
 	);
 }
 
-export function MachinesPage({ client, local }: { client: Client; local: Client }) {
+export function NodesPage({ client, local }: { client: Client; local: Client }) {
 	useEffect(() => {
 		setPageTitle("Nodes");
 		return () => setPageTitle(null);
 	}, []);
 	const queries = useQueryClient();
 	// Open belongs to this machine's app; a window already showing a node lists that node's registry.
-	const attach = useMachineAttach(local, client.machine === null);
+	const attach = useNodeAttach(local, client.machine === null);
 	const selection = useWorkspaceSelection(client);
 	const { id } = selection;
 	const [now, setNow] = useState(() => clock.now());
@@ -401,7 +401,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		next.delete("node");
 		setSearch(next, { replace: true });
 	});
-	const filter = MACHINE_FILTERS.find((item) => item === search.get("status")) ?? "all";
+	const filter = NODE_FILTERS.find((item) => item === search.get("status")) ?? "all";
 	const set = (key: string, value: string) =>
 		setSearch(
 			(previous) => {
@@ -450,7 +450,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		enabled: operationScope !== null && !epochChanged,
 		queryFn: ({ signal }) =>
 			client.call(routes.operation, { ...emptyInput, params: { id: operationScope?.id ?? "" } }, undefined, signal),
-		refetchInterval: (query) => (pollsMachineOperation(query.state.data, epochChanged) ? 1000 : false),
+		refetchInterval: (query) => (pollsNodeOperation(query.state.data, epochChanged) ? 1000 : false),
 		retry: false,
 	});
 	useEffect(() => {
@@ -474,7 +474,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 	}, [adding, saved.error, operation.data?.status]);
 	const mutation = useMutation({
 		meta: { errorSurface: "inline" },
-		mutationFn: async (sent: MachineRequest) => {
+		mutationFn: async (sent: NodeRequest) => {
 			try {
 				// Read the epoch for every explicit attempt. A restart loses server idempotency records.
 				const currentMeta = await freshMeta(client, queries);
@@ -502,7 +502,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 							);
 				store.update((current) => ({
 					...current,
-					request: acceptMachineRequest(current.request, sent.key, accepted.operationId),
+					request: acceptNodeRequest(current.request, sent.key, accepted.operationId),
 				}));
 			} catch (error) {
 				store.update((current) => ({
@@ -519,25 +519,25 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		retry: false,
 	});
 	useEffect(() => {
-		const settling = settlingMachineOperation(request, operation.data, epochChanged);
+		const settling = settlingNodeOperation(request, operation.data, epochChanged);
 		if (!request || !settling) return;
 		// Registration is user-wide; readiness is scoped to the checked workspace.
 		void queries.invalidateQueries({ queryKey: ["nodes"] });
-		store.update((current) => settleMachineRequest(current, request, settling.status));
-		for (const key of machineSettingsInvalidations(request, settling.status))
+		store.update((current) => settleNodeRequest(current, request, settling.status));
+		for (const key of nodeSettingsInvalidations(request, settling.status))
 			void queries.invalidateQueries({ queryKey: [key] });
 	}, [operation.data, request, epochChanged, queries, store]);
 	const busy = saved.sending || (request !== null && !request.settled);
 	const machines = inventory.data?.nodes ?? [];
-	const shown = filterMachines(machines, query, filter, now);
+	const shown = filterNodes(machines, query, filter, now);
 	const selected = shown.find((machine) => machine.id === selectedId) ?? shown[0];
-	const summary = machineSummary(machines, now);
-	const send = (sent: MachineRequest) => {
+	const summary = nodeSummary(machines, now);
+	const send = (sent: NodeRequest) => {
 		if (store.read().sending || sent.operationId !== null) return;
 		store.update((current) => ({ ...current, request: sent, sending: true, error: null }));
 		mutation.mutate(sent);
 	};
-	const act = (body: MachineMutation) => {
+	const act = (body: NodeMutation) => {
 		const current = store.read();
 		if (!resolved || current.sending || (current.request && !current.request.settled)) return;
 		send({
@@ -709,7 +709,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 					initialFocus={addField}
 					onClose={() => setAdding(false)}
 				>
-					<AddMachine
+					<AddNode
 						busy={busy}
 						draft={saved.draft}
 						onDraft={(draft) => store.update((current) => ({ ...current, draft }))}
@@ -821,7 +821,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 							<div className="machines-workbench">
 								<nav className="machines-list" aria-label="Registered nodes">
 									{shown.map((machine) => {
-										const status = machineStatus(machine, now);
+										const status = nodeStatus(machine, now);
 										return (
 											<button
 												type="button"
@@ -839,13 +839,13 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 												</span>
 												<span className="machines-row-host">{machine.host}</span>
 												<StatusMark tone={status.tone} label={status.label} />
-												<span className="machines-row-age">{machineAge(machine, now)}</span>
+												<span className="machines-row-age">{nodeAge(machine, now)}</span>
 											</button>
 										);
 									})}
 								</nav>
 								{selected && (
-									<MachineDetail
+									<NodeDetail
 										key={`${id}:${selected.id}`}
 										machine={selected}
 										now={now}

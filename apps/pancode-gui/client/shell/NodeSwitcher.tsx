@@ -5,15 +5,15 @@ import type { Client } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { TONE_GLYPHS } from "../design/status.js";
 import { useDetailsDismiss } from "../interaction/use-details-dismiss.js";
-import { attachmentStatus, machineChoices, machineDestination, switcherLabel } from "./machine-switcher-model.js";
-import { useMachineAttach } from "./use-machine-attach.js";
+import { attachmentStatus, nodeChoices, nodeDestination, switcherLabel } from "./node-switcher-model.js";
+import { useNodeAttach } from "./use-node-attach.js";
 
 /**
  * Which machine's app this window shows. The list always comes from the app on this machine, so it
  * is the same whichever node the window is looking at; choosing a node starts its own GUI over SSH
  * when needed and then leaves for it.
  */
-export function MachineSwitcher({
+export function NodeSwitcher({
 	local,
 	current,
 	remoteHost,
@@ -26,10 +26,10 @@ export function MachineSwitcher({
 	// The list costs a registry read on the server, and only the open menu shows it: read it when the menu first
 	// opens, not on every page load.
 	const [wanted, setWanted] = useState(false);
-	const { attachments, error, loading, pending, open } = useMachineAttach(local, wanted);
+	const { attachments, error, loading, pending, open } = useNodeAttach(local, wanted);
 	const ref = useRef<HTMLDetailsElement>(null);
 	useDetailsDismiss(ref);
-	const choices = machineChoices(attachments, current);
+	const choices = nodeChoices(attachments, current);
 	const label = switcherLabel(current, remoteHost);
 	return (
 		<details
@@ -67,7 +67,7 @@ export function MachineSwitcher({
 							title={choice.detail ?? undefined}
 							onClick={() => {
 								if (choice.state === "local" || choice.state === "ready")
-									window.location.assign(machineDestination(choice.state === "local" ? null : choice.id));
+									window.location.assign(nodeDestination(choice.state === "local" ? null : choice.id));
 								else open(choice.id);
 							}}
 						>

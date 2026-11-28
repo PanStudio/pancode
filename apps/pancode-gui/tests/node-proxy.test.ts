@@ -14,12 +14,12 @@ import { Problem } from "../contracts/common.js";
 import { auth, requestClient } from "../server/http/auth.js";
 import { problemResponse } from "../server/http/problem.js";
 import { authRoutes } from "../server/http/routes-auth.js";
-import { type MachineAttachmentsApi, machinesRoutes } from "../server/http/routes-machines.js";
+import { type NodeAttachmentsApi, nodesRoutes } from "../server/http/routes-nodes.js";
 import { ClientRegistry } from "../server/services/clients.js";
 import { EventHub } from "../server/services/event-hub.js";
-import { MachineAttachments } from "../server/services/machine-attach.js";
+import { NodeAttachments } from "../server/services/node-attach.js";
 import { SessionControls } from "../server/services/session-control.js";
-import type { MachineEndpoint } from "../server/worker/protocol.js";
+import type { NodeEndpoint } from "../server/worker/protocol.js";
 
 const LOCAL_TOKEN = "local-launch-token-0123456789abcdefghij";
 const REMOTE_TOKEN = "remote-attach-token-0123456789abcdefghij";
@@ -28,11 +28,11 @@ const ORIGIN = "http://127.0.0.1:4317";
 const REMOTE_LISTENER_PORT = 38211;
 
 test("an attachment awaiting the registry cannot start after shutdown", async () => {
-	let resolveRegistry: (endpoints: MachineEndpoint[]) => void = () => {};
-	const registry = new Promise<MachineEndpoint[]>((resolve) => {
+	let resolveRegistry: (endpoints: NodeEndpoint[]) => void = () => {};
+	const registry = new Promise<NodeEndpoint[]>((resolve) => {
 		resolveRegistry = resolve;
 	});
-	const attachments = new MachineAttachments({
+	const attachments = new NodeAttachments({
 		endpoints: () => registry,
 		local: () => ({ pancode: "test", build: "test" }),
 		hub: new EventHub(),
@@ -96,7 +96,7 @@ test("the node proxy rewrites Host, Origin and bearer, strips browser credential
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 	const port = (server.address() as AddressInfo).port;
-	const attachments: MachineAttachmentsApi = {
+	const attachments: NodeAttachmentsApi = {
 		list: async () => [],
 		attach: async () => {
 			throw new Error("not under test");
@@ -121,7 +121,7 @@ test("the node proxy rewrites Host, Origin and bearer, strips browser credential
 		token: LOCAL_TOKEN,
 		origin: () => ORIGIN,
 	});
-	machinesRoutes(app, hub, undefined, attachments);
+	nodesRoutes(app, hub, undefined, attachments);
 	const request = (path: string, init: RequestInit = {}) => app.request(`${ORIGIN}${path}`, init);
 	const command = (path: string, bearer: string) =>
 		request(path, {
@@ -323,7 +323,7 @@ if (forward === -1) {
 				process.kill(Number(pid), "SIGKILL");
 			} catch {}
 	});
-	const endpoint: MachineEndpoint = {
+	const endpoint: NodeEndpoint = {
 		id: "node",
 		host: "node.example",
 		user: null,
@@ -333,7 +333,7 @@ if (forward === -1) {
 		pancodeEntry: null,
 	};
 	const hub = new EventHub();
-	const attachments = new MachineAttachments({
+	const attachments = new NodeAttachments({
 		endpoints: async () => [endpoint],
 		local: () => ({ pancode: "test", build: "test" }),
 		hub,

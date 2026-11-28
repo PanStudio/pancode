@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Value } from "typebox/value";
-import type { MachineMutation } from "../../contracts/machines.js";
-import { Machines } from "../../contracts/machines.js";
+import type { NodeMutation } from "../../contracts/nodes.js";
+import { Nodes } from "../../contracts/nodes.js";
 import type { WorkerHost } from "../worker/host.js";
 import type { OperationRegistry } from "./operations.js";
 import { fingerprint } from "./operations.js";
@@ -14,7 +14,7 @@ export interface AttachmentRegistryListener {
 	forget(id: string): void;
 }
 
-export class MachinesService {
+export class NodesService {
 	constructor(
 		private readonly reads: WorkerHost,
 		private readonly ops: WorkerHost,
@@ -23,10 +23,10 @@ export class MachinesService {
 		private readonly attachments?: AttachmentRegistryListener,
 	) {}
 
-	async list(workspaceId: string | null): Promise<Machines> {
+	async list(workspaceId: string | null): Promise<Nodes> {
 		const workspace = workspaceId === null ? null : await this.workspaces.get(workspaceId);
 		const cwd = workspace?.path ?? (await this.workspaces.installationPath());
-		const machines = await this.reads.call("machines.list", { cwd }, { deadlineMs: 65_000 });
+		const machines = await this.reads.call("nodes.list", { cwd }, { deadlineMs: 65_000 });
 		const result = {
 			workspaceId,
 			projectRoot: workspace?.path ?? null,
@@ -48,11 +48,11 @@ export class MachinesService {
 						}))
 					: machines,
 		};
-		if (!Value.Check(Machines, result)) throw new AppProblem("unavailable", "Invalid node inventory.");
+		if (!Value.Check(Nodes, result)) throw new AppProblem("unavailable", "Invalid node inventory.");
 		return result;
 	}
 
-	async mutate(workspaceId: string | null, mutation: MachineMutation, key: string) {
+	async mutate(workspaceId: string | null, mutation: NodeMutation, key: string) {
 		if (workspaceId === null && mutation.action === "check")
 			throw new AppProblem("validation", "Readiness is checked for one project. Open a workspace to check this node.");
 		const workspace = workspaceId === null ? null : await this.workspaces.get(workspaceId);
@@ -68,7 +68,7 @@ export class MachinesService {
 						? `Checking and recording SSH readiness for ${cwd}.`
 						: "Updating the user fleet-node registry.",
 				);
-				const result = await this.ops.call("machines.mutate", { cwd, mutation }, { progress });
+				const result = await this.ops.call("nodes.mutate", { cwd, mutation }, { progress });
 				// A node that left the registry is no longer a place this app may reach.
 				if (mutation.action === "remove") this.attachments?.forget(mutation.id);
 				return result;

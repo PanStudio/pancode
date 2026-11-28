@@ -16,7 +16,7 @@ import "./live-elsewhere.css";
  * nothing is sent into it until the operator takes it over, which asks the holder to end and then resumes the
  * task here.
  */
-export function LiveElsewhereTask({
+export function LiveElsewhereSession({
 	client,
 	sessionId,
 	workspaceId,

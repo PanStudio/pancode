@@ -9,9 +9,9 @@ import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
 import { useSetupStatus } from "../pages/target-onboarding.js";
 import { setAsideExpanded, useAsideExpanded } from "./aside-state.js";
+import { useSessionOverview } from "./sessions.js";
 import { useShell } from "./shell-context.js";
 import { activeWork, isHeld, isUntouched, STATE_LABELS, taskTitle } from "./shell-model.js";
-import { useSessionOverview } from "./tasks.js";
 import "../chat/pane.css";
 import { workspacesQuery } from "../api/queries.js";
 

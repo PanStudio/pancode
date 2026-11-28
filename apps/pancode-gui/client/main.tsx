@@ -285,14 +285,14 @@ const router = createBrowserRouter([
 			{
 				path: "/nodes",
 				lazy: async () => {
-					const { MachinesPage } = await import("./pages/machines.js");
-					return { element: <MachinesPage client={client} local={local} /> };
+					const { NodesPage } = await import("./pages/nodes.js");
+					return { element: <NodesPage client={client} local={local} /> };
 				},
 			},
 			{
 				path: "/workspaces/:workspaceId/sessions",
 				lazy: async () => {
-					const { Sessions } = await import("./pages/tasks.js");
+					const { Sessions } = await import("./pages/project-sessions.js");
 					return { element: <Sessions client={client} /> };
 				},
 			},
@@ -321,8 +321,8 @@ const router = createBrowserRouter([
 			{
 				path: "/programs",
 				lazy: async () => {
-					const { Toolchain } = await import("./pages/toolchain.js");
-					return { element: <Toolchain client={client} /> };
+					const { ProgramsPage } = await import("./pages/programs.js");
+					return { element: <ProgramsPage client={client} /> };
 				},
 			},
 		],

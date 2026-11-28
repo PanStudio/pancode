@@ -10,6 +10,7 @@ import { targetsQuery, useOperation } from "../api/queries.js";
 import { Boundary, PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState } from "../design/panel-model.js";
 import { InspectionError } from "../design/run-inspection.js";
+import { operationUnsettled } from "./programs-model.js";
 import {
 	aaLine,
 	bestCurve,
@@ -29,7 +30,6 @@ import {
 	summaryMeta,
 	summaryObjective,
 } from "./research-model.js";
-import { operationUnsettled } from "./toolchain-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 import "./research.css";
 

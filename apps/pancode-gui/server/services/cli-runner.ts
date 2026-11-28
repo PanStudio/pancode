@@ -108,7 +108,7 @@ export class CliRunner {
 				}
 				// A completed fleet preflight exits 1 for negative evidence and still emits its JSON record; so does a
 				// research report whose recomputed grades disagree with the journal.
-				const recordOnOne = command.kind === "machines.check" || command.kind === "research.report";
+				const recordOnOne = command.kind === "nodes.check" || command.kind === "research.report";
 				if (code !== 0 && !(recordOnOne && code === 1)) {
 					const verb = command.kind.split(".")[0];
 					if (code === 2 && (verb === "arena" || verb === "research")) {

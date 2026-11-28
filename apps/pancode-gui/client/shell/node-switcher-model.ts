@@ -5,27 +5,27 @@
 // `/m/<id>/`; switching is a document navigation, so nothing cached for one machine survives
 // into another.
 
-import type { MachineAttachment, MachineAttachmentState } from "../../contracts/machines.js";
+import type { NodeAttachment, NodeAttachmentState } from "../../contracts/nodes.js";
 
 export type AttachTone = "neutral" | "running" | "success" | "warn" | "fail";
 
-export interface MachineChoice {
+export interface NodeChoice {
 	readonly id: string;
 	readonly label: string;
 	readonly host: string;
-	readonly state: MachineAttachmentState | "local";
+	readonly state: NodeAttachmentState | "local";
 	readonly detail: string | null;
 	readonly current: boolean;
 }
 
 /** The app on this machine first, then every registered node by id. */
-export function machineChoices(attachments: readonly MachineAttachment[], current: string | null): MachineChoice[] {
+export function nodeChoices(attachments: readonly NodeAttachment[], current: string | null): NodeChoice[] {
 	return [
 		{ id: "local", label: "This machine", host: "", state: "local", detail: null, current: current === null },
 		...[...attachments]
 			.sort((a, b) => a.id.localeCompare(b.id))
 			.map(
-				(attachment): MachineChoice => ({
+				(attachment): NodeChoice => ({
 					id: attachment.id,
 					label: attachment.id,
 					host: attachment.host,
@@ -37,7 +37,7 @@ export function machineChoices(attachments: readonly MachineAttachment[], curren
 	];
 }
 
-export function attachmentStatus(state: MachineAttachmentState | "local"): { label: string; tone: AttachTone } {
+export function attachmentStatus(state: NodeAttachmentState | "local"): { label: string; tone: AttachTone } {
 	switch (state) {
 		case "local":
 			return { label: "Here", tone: "neutral" };
@@ -55,7 +55,7 @@ export function attachmentStatus(state: MachineAttachmentState | "local"): { lab
 }
 
 /** Where the app for a machine opens: the root for this machine, the node prefix for a registered node. */
-export function machineDestination(id: string | null): string {
+export function nodeDestination(id: string | null): string {
 	return id === null || id === "local" ? "/" : `/m/${encodeURIComponent(id)}/`;
 }
 
@@ -66,12 +66,12 @@ export function switcherLabel(current: string | null, remoteHost: string | undef
 }
 
 /** The command that puts this build on a node that refused for its version; null in every other state. */
-export function attachInstallCommand(attachment: Pick<MachineAttachment, "id" | "state">): string | null {
+export function attachInstallCommand(attachment: Pick<NodeAttachment, "id" | "state">): string | null {
 	return attachment.state === "version-mismatch" ? `pancode fleet nodes install ${attachment.id} --yes` : null;
 }
 
 /** Whether a list is still moving and worth re-reading on a short interval. */
-export function attachmentsSettling(attachments: readonly MachineAttachment[]): boolean {
+export function attachmentsSettling(attachments: readonly NodeAttachment[]): boolean {
 	return attachments.some(
 		(attachment) => attachment.state === "connecting" || (attachment.state === "failed" && attachment.retryAt !== null),
 	);
@@ -82,19 +82,19 @@ export function attachmentsSettling(attachments: readonly MachineAttachment[]): 
  * ready, stop waiting when it ended, keep waiting otherwise.
  */
 export function pendingOutcome(
-	attachments: readonly MachineAttachment[],
+	attachments: readonly NodeAttachment[],
 	pending: string | null,
 ): { kind: "go"; destination: string } | { kind: "stop" } | { kind: "wait" } {
 	if (pending === null) return { kind: "stop" };
 	const row = attachments.find((attachment) => attachment.id === pending);
 	if (!row) return { kind: "wait" };
-	if (row.state === "ready") return { kind: "go", destination: machineDestination(pending) };
+	if (row.state === "ready") return { kind: "go", destination: nodeDestination(pending) };
 	if (row.state === "failed" || row.state === "version-mismatch" || row.state === "detached") return { kind: "stop" };
 	return { kind: "wait" };
 }
 
 /** The button for a machine: what it says and whether it can be pressed now. */
-export function openAction(state: MachineAttachmentState, pending: boolean): { label: string; disabled: boolean } {
+export function openAction(state: NodeAttachmentState, pending: boolean): { label: string; disabled: boolean } {
 	if (pending || state === "connecting") return { label: "Connecting…", disabled: true };
 	if (state === "ready") return { label: "Open", disabled: false };
 	if (state === "failed" || state === "version-mismatch") return { label: "Try again", disabled: false };

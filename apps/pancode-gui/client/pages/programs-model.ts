@@ -4,7 +4,7 @@
 // supported, a copy found on PATH, the vendored pin, and nothing at all are four different facts,
 // and only the last one is a problem an operator can act on. Pure, so the words are testable.
 
-import type { Tool } from "../../contracts/toolchain.js";
+import type { Program } from "../../contracts/programs.js";
 import type { StatusTone } from "../design/status.js";
 
 export interface ToolResolution {
@@ -12,7 +12,7 @@ export interface ToolResolution {
 	tone: StatusTone;
 }
 
-export function toolResolution(tool: Pick<Tool, "supported" | "resolution">): ToolResolution {
+export function toolResolution(tool: Pick<Program, "supported" | "resolution">): ToolResolution {
 	if (!tool.supported) return { label: "Platform unsupported", tone: "neutral" };
 	if (tool.resolution.source === "path") return { label: "Using PATH", tone: "success" };
 	if (tool.resolution.source === "vendored") return { label: "Using pinned copy", tone: "success" };
@@ -20,7 +20,7 @@ export function toolResolution(tool: Pick<Tool, "supported" | "resolution">): To
 }
 
 /** What a PATH copy that lost to the pin, or a pin that is not there, means for this row. */
-export function toolCandidateNote(tool: Pick<Tool, "resolution">): string | null {
+export function toolCandidateNote(tool: Pick<Program, "resolution">): string | null {
 	const candidate = tool.resolution.pathCandidate;
 	if (!candidate) return null;
 	if (candidate.satisfiesMinimum) return null;
@@ -28,7 +28,7 @@ export function toolCandidateNote(tool: Pick<Tool, "resolution">): string | null
 }
 
 /** Explain the effect beside the action rather than making an operator infer it from the resolution. */
-export function toolActionEffect(tool: Pick<Tool, "supported" | "installed" | "resolution">): string {
+export function toolActionEffect(tool: Pick<Program, "supported" | "installed" | "resolution">): string {
 	if (!tool.supported)
 		return "No pinned download is available for this platform. A compatible program on PATH can still be inspected above.";
 	if (tool.installed) return "Check confirms the pinned binaries are present. Remove deletes only the vendored copy.";
@@ -45,7 +45,7 @@ export const TOOL_FILTER_LABELS: Record<ToolFilter, string> = {
 	missing: "Missing",
 	unsupported: "No platform download",
 };
-export function matchesTool(tool: Tool, query: string, filter: ToolFilter): boolean {
+export function matchesTool(tool: Program, query: string, filter: ToolFilter): boolean {
 	const available = tool.resolution.source === "path" || tool.resolution.source === "vendored";
 	const matchesState =
 		filter === "all" ||
@@ -67,7 +67,7 @@ export function requestOutcomeUnknown(status: number | undefined): boolean {
 	return status === undefined || status === 408 || status >= 500;
 }
 
-export function toolAvailability(tool: Pick<Tool, "supported" | "resolution">): string {
+export function toolAvailability(tool: Pick<Program, "supported" | "resolution">): string {
 	if (tool.resolution.source === "path") return "A compatible executable on PATH is available to PanCode.";
 	if (tool.resolution.source === "vendored") return "PanCode resolves the installed pinned executable.";
 	return tool.supported

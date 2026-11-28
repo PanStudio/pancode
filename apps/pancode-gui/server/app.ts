@@ -16,7 +16,7 @@ import { controlGuard, controlRoutes } from "./http/routes-control.js";
 import { evidenceRoutes } from "./http/routes-evidence.js";
 import { fleetRoutes } from "./http/routes-fleet.js";
 import { hubRoutes } from "./http/routes-hub.js";
-import { type MachineAttachmentsApi, machinesRoutes } from "./http/routes-machines.js";
+import { type NodeAttachmentsApi, nodesRoutes } from "./http/routes-nodes.js";
 import { reportRoutes } from "./http/routes-reports.js";
 import { researchRoutes } from "./http/routes-research.js";
 import { reviewRoutes } from "./http/routes-review.js";
@@ -38,10 +38,11 @@ import type { EventHub } from "./services/event-hub.js";
 import type { EvidenceService } from "./services/evidence.js";
 import type { FleetService } from "./services/fleet.js";
 import type { HubService } from "./services/hub.js";
-import type { MachinesService } from "./services/machines.js";
+import type { NodesService } from "./services/nodes.js";
 import type { OperationRegistry } from "./services/operations.js";
 import { AppProblem } from "./services/problem.js";
 import type { ProblemReportsService } from "./services/problem-reports.js";
+import type { ProgramsService } from "./services/programs.js";
 import type { ProjectReviewService } from "./services/project-review.js";
 import type { ReportsService } from "./services/reports.js";
 import type { ResearchService } from "./services/research.js";
@@ -52,7 +53,6 @@ import type { SetupService } from "./services/setup.js";
 import type { SystemService } from "./services/system.js";
 import type { TargetsService } from "./services/targets-cli.js";
 import type { TelemetryService } from "./services/telemetry.js";
-import type { ToolchainService } from "./services/toolchain.js";
 import type { TraceService } from "./services/traces.js";
 import type { RuntimeInfo } from "./worker/protocol.js";
 
@@ -64,16 +64,16 @@ export function createApp(options: {
 	origin: () => string;
 	hub: EventHub;
 	operations: OperationRegistry;
-	toolchain: ToolchainService;
+	toolchain: ProgramsService;
 	traces: TraceService;
 	telemetry: TelemetryService;
 	settings: SettingsService;
 	setup: SetupService;
 	targets: TargetsService;
 	fleet: FleetService;
-	machines?: MachinesService;
+	machines?: NodesService;
 	/** Attachments to registered nodes' own GUIs, proxied under /m/<id>/api. */
-	attachments?: MachineAttachmentsApi;
+	attachments?: NodeAttachmentsApi;
 	system: SystemService;
 	hubService: HubService;
 	/** Project trust and pending memory lessons. */
@@ -172,7 +172,7 @@ export function createApp(options: {
 	settingsRoutes(app, hub, options.settings);
 	targetsRoutes(app, hub, options.targets, options.setup);
 	fleetRoutes(app, hub, options.fleet, artifacts);
-	machinesRoutes(app, hub, options.machines, options.attachments);
+	nodesRoutes(app, hub, options.machines, options.attachments);
 	systemRoutes(app, hub, options.system);
 	hubRoutes(app, hub, options.hubService, options.sessions.supervisor);
 	reviewRoutes(app, hub, options.review);

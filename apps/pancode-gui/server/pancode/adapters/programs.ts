@@ -32,7 +32,7 @@ export function pinnedFetcher(pins: readonly PinnedProgram[], fetcher: ProgramFe
 		return fetcher(url);
 	};
 }
-export function toolDownloader(network: typeof fetch): ProgramFetcher {
+export function programDownloader(network: typeof fetch): ProgramFetcher {
 	return async (url: string): Promise<Buffer> => {
 		// GitHub's pinned release URLs redirect to signed asset URLs. Hash verification
 		// remains owned by installProgram; arbitrary entry URLs never reach this function.
@@ -51,9 +51,9 @@ function containedTool(id: string) {
 	if (relativePathEscapes(relative(canonical(root), canonical(resolve(root, id)))))
 		throw new AppProblem("validation", "Program directory escapes the programs root.");
 }
-export function toolchainAdapter(options: { pins?: readonly PinnedProgram[]; fetcher?: ProgramFetcher } = {}) {
+export function programsAdapter(options: { pins?: readonly PinnedProgram[]; fetcher?: ProgramFetcher } = {}) {
 	const pins = options.pins ?? PINNED_PROGRAMS;
-	const fetcher = pinnedFetcher(pins, options.fetcher ?? toolDownloader(globalThis.fetch));
+	const fetcher = pinnedFetcher(pins, options.fetcher ?? programDownloader(globalThis.fetch));
 	const known = (id: string) => {
 		const entry = pins.find((pin) => pin.id === id);
 		if (!entry || !findPinnedProgram(id)) throw new AppProblem("not_found", "Unknown pinned tool.");

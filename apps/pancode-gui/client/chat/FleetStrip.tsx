@@ -11,7 +11,7 @@ import { STEER_TEXT_MAX_BYTES } from "../../contracts/runtime.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { StatusMark } from "../design/status.js";
-import { useSessionWorkers } from "../shell/tasks.js";
+import { useSessionWorkers } from "../shell/sessions.js";
 import { capabilityRefusal, steeringAffordances } from "./composer-model.js";
 import {
 	FLEET_GLYPHS,

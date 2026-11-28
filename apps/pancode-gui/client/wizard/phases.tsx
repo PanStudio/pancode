@@ -10,7 +10,7 @@ import { type Client, emptyInput } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { PathField } from "../shell/PathField.js";
-import { rememberWorkspace } from "../shell/tasks.js";
+import { rememberWorkspace } from "../shell/sessions.js";
 import { type SignIn, testedLede, type WizardView } from "./wizard-model.js";
 
 function useHeadingFocus() {

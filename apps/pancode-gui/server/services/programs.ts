@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { Tool } from "../../contracts/toolchain.js";
+import type { Program } from "../../contracts/programs.js";
 import type { WorkerHost } from "../worker/host.js";
-import type { RawTool } from "../worker/protocol.js";
+import type { RawProgram } from "../worker/protocol.js";
 import type { EventHub } from "./event-hub.js";
 import { fingerprint, type OperationRegistry } from "./operations.js";
 import { AppProblem } from "./problem.js";
 
 /** The HTTP projection deliberately exposes installDir and binaryPath to the local operator. */
-function projectTool(raw: RawTool): Tool {
+function projectTool(raw: RawProgram): Program {
 	return {
 		id: raw.id,
 		version: raw.version,
@@ -34,7 +34,7 @@ function projectTool(raw: RawTool): Tool {
 		},
 	};
 }
-export class ToolchainService {
+export class ProgramsService {
 	constructor(
 		private reads: WorkerHost,
 		private ops: WorkerHost,
@@ -42,7 +42,7 @@ export class ToolchainService {
 		private hub: EventHub,
 	) {}
 	async list() {
-		const result = await this.reads.call("tools.list", {});
+		const result = await this.reads.call("programs.list", {});
 		return { tools: result.rows.map(projectTool), threadId: result.threadId };
 	}
 	async mutate(action: "install" | "remove", id: string, body: { force?: boolean }, key: string) {
@@ -56,8 +56,8 @@ export class ToolchainService {
 			run: async (progress) => {
 				try {
 					return action === "install"
-						? await this.ops.call("tools.install", { id, force: body.force ?? false }, { progress })
-						: await this.ops.call("tools.remove", { id });
+						? await this.ops.call("programs.install", { id, force: body.force ?? false }, { progress })
+						: await this.ops.call("programs.remove", { id });
 				} finally {
 					this.hub.publish({ type: "programs.changed", payload: { id } });
 				}

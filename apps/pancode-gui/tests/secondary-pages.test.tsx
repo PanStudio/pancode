@@ -27,8 +27,8 @@ const { isSettingsPath, showsSettingsRail } = await import("../client/shell/shel
 const { ShellContext } = await import("../client/shell/shell-context.js");
 const { SettingsPage } = await import("../client/pages/settings.js");
 const { SystemPage } = await import("../client/pages/system.js");
-const { Toolchain } = await import("../client/pages/toolchain.js");
-const { Sessions, TaskHistoryActions } = await import("../client/pages/tasks.js");
+const { ProgramsPage } = await import("../client/pages/programs.js");
+const { Sessions, SessionHistoryActions } = await import("../client/pages/project-sessions.js");
 const { MissionControl } = await import("../client/pages/mission-control.js");
 const { SessionControlsProvider } = await import("../client/shell/SessionControls.js");
 const { useWorkspaceSelection, WorkspacePicker } = await import("../client/pages/workspace-selection.js");
@@ -245,7 +245,7 @@ test("saved project tasks can be renamed without resuming and only closed, unhel
 	const html = render(
 		queries(),
 		"/workspaces/workspace-1/sessions",
-		<TaskHistoryActions client={client} row={row} summary={summary} />,
+		<SessionHistoryActions client={client} row={row} summary={summary} />,
 	);
 	assert.match(html, /aria-label="Rename Sensor notes"/);
 	assert.match(html, /aria-label="Delete Sensor notes"/);
@@ -256,7 +256,7 @@ test("saved project tasks can be renamed without resuming and only closed, unhel
 		const protectedHtml = render(
 			queries(),
 			"/workspaces/workspace-1/sessions",
-			<TaskHistoryActions client={client} row={{ ...row, open: held }} summary={{ ...summary, endedAt }} />,
+			<SessionHistoryActions client={client} row={{ ...row, open: held }} summary={{ ...summary, endedAt }} />,
 		);
 		assert.match(protectedHtml, /aria-label="Rename Sensor notes"/);
 		assert.doesNotMatch(protectedHtml, /aria-label="Delete Sensor notes"/);
@@ -336,7 +336,7 @@ test("System prioritizes warnings even when doctor marked the observed condition
 	assert.doesNotMatch(html, />Repair<\/button>/);
 });
 
-test("Toolchain distinguishes a PATH executable from an installed vendored copy", () => {
+test("ProgramsPage distinguishes a PATH executable from an installed vendored copy", () => {
 	const cache = queries();
 	cache.setQueryData(
 		["tools"],
@@ -361,7 +361,7 @@ test("Toolchain distinguishes a PATH executable from an installed vendored copy"
 			},
 		],
 	);
-	const html = render(cache, "/programs", <Toolchain client={client} />);
+	const html = render(cache, "/programs", <ProgramsPage client={client} />);
 	assert.match(html, /Using PATH/);
 	assert.match(html, /Resolved version/);
 	assert.match(html, /2.0.0/);
