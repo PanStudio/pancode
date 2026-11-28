@@ -79,7 +79,6 @@ import {
 	composerPlaceholder,
 	composerSituation,
 	draftEstimate,
-	draftStore,
 	noticeForError,
 	noticeForQueueEdit,
 	noticeForRefusal,
@@ -104,6 +103,7 @@ import { actionOpeners, commandRunners, focusHandlers, formOpeners } from "./com
 import { contextBaseline, invokeContextCommand } from "./context-command.js";
 import type { ContextOperationRef } from "./context-command-model.js";
 import { commandPresentation, contextCommandKind, startedByCommand } from "./context-command-model.js";
+import { draftStore } from "./draft-store.js";
 import { foldFleetRuns, isLiveRun, steerOutcome } from "./fleet-facts.js";
 import { SuggestionPalette, suggestionOptionId } from "./MentionPalette.js";
 import {
