@@ -34,7 +34,6 @@ import { consumeRestartIntent } from "../core/restart-intent.js";
 import { sandboxAvailability } from "../core/sandbox/availability.js";
 import { createGitHooksFingerprinter } from "../core/sandbox/git-hooks-fingerprint.js";
 import { mainShellContained, mainShellSandboxSettings, yoloScriptSandboxState } from "../core/sandbox/main-session.js";
-import { type SessionOverrides, seedSessionRouting } from "../core/session-routing.js";
 import { StartupTimer } from "../core/startup-timer.js";
 import { captureAdmits } from "../core/telemetry/capture.js";
 import { sessionTelemetryContext } from "../core/telemetry/context.js";
@@ -58,12 +57,7 @@ import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
 import { createExtensionRuntimeHookBridge } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
-import {
-	describeUpgradeNotice,
-	ensurePancodeState,
-	takeContainedYoloNotice,
-	takeUpgradeNotice,
-} from "../domains/install/index.js";
+import { describeUpgradeNotice, ensurePancodeState, takeUpgradeNotice } from "../domains/install/index.js";
 import { InteropDomainModule } from "../domains/interop/module.js";
 import {
 	createBackgroundCallJournal,
@@ -225,7 +219,6 @@ import { reloadPluginResourcesAndNotify } from "./plugin-reload.js";
 import { createReloadClasses } from "./reload-classes.js";
 import { applyRouteOverlay } from "./route-overlay.js";
 import { createJudgeScreen, createSafetyJudgeCompletion, createSafetyJudgeHost } from "./safety-judge-host.js";
-import { createSessionSettingsView } from "./session-settings-view.js";
 import { bindTaskMemoryLifecycle } from "./task-memory-lifecycle.js";
 
 export type { BootOptions, HeadlessSamplingOverrides } from "./boot-options.js";
@@ -268,6 +261,7 @@ import { runAcpSurface } from "./boot/acp-surface.js";
 import { startBootChat } from "./boot/chat.js";
 import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
+import { buildBootSettings } from "./boot/settings.js";
 import type { BootSurfaceCells, BootSurfaceInput, BootSurfaceSeams } from "./boot/surface.js";
 import { buildBootSystemOne } from "./boot/system-one.js";
 import { registerBootTools } from "./boot/tools.js";
@@ -1928,89 +1922,38 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			return { exitCode, bootTimeMs: timer.snapshot().totalMs };
 		}
 	}
-	const sessionRouting = seedSessionRouting(initialRoutingSettings);
-	// Non-routing settings a session changed "for this session only" via the
-	// /settings overlay. Layered under the routing overlay in the effective
-	// view, so the live session reflects them immediately while settings.yaml
-	// (the global default for new sessions) stays untouched until the operator
-	// chooses to save globally.
-	// Overrides are keyed by settings path, the same ids the /settings overlay
-	// commits (`setAtPath` walks the dotted path). The headless `--autonomy`
-	// flag was keyed by the bare word, which wrote a top-level `autonomy` key
-	// nothing reads, so `run --autonomy yolo` compiled and admitted at
-	// whatever settings.yaml said.
-	// The interactive `pancode --autonomy <level>` seeds the same override.
-	// yolo is a grant from a present human to the main agent. A headless run has
-	// no human to have granted it, so it runs at default unless its own command
-	// line says --autonomy yolo; a settings.yaml yolo does not carry over (D1).
-	const startupAutonomy = options.headless !== undefined ? (options.headless.autonomy ?? "default") : options.autonomy;
-	if (
-		options.headless !== undefined &&
-		options.headless.autonomy === undefined &&
-		(config?.get() ?? readSettings()).safety.autonomy === "yolo"
-	) {
-		process.stderr.write(
-			"pancode run: autonomy default (settings.yaml sets yolo, which a headless run takes only from --autonomy yolo)\n",
-		);
-	}
-	// An interactive session that would start at yolo holds at default when yolo
-	// is refused here, and until the operator has accepted it once; the
-	// acceptance card then asks (#407). Headless `--autonomy yolo` and an ACP
-	// client's mode choice count as acceptance.
-	const savedSafety = (config?.get() ?? readSettings()).safety;
-	let bootAutonomy = startupAutonomy;
-	let yoloHeldAtBoot = false;
-	if (options.headless === undefined && (startupAutonomy ?? savedSafety.autonomy) === "yolo") {
-		if (yoloRefusal !== null) {
-			bootAutonomy = "default";
-			if (interactive) initialNotices.push(`Autonomy is default. ${yoloRefusal}`);
-			else process.stderr.write(`pancode: autonomy default. ${yoloRefusal}\n`);
-		} else if (interactive && savedSafety.yoloAccepted !== true) {
-			bootAutonomy = "default";
-			yoloHeldAtBoot = true;
-		}
-	}
-	// Yolo is contained (ob-yolo D1): the lifecycle domain says so once per home (interactive after accepting yolo,
-	// headless on a yolo run), remembered in its own state and never in the operator's settings.
-	const yoloNotice =
-		yoloRefusal === null && (interactive ? savedSafety.yoloAccepted === true : startupAutonomy === "yolo")
-			? takeContainedYoloNotice(savedSafety)
-			: null;
-	if (yoloNotice !== null) {
-		if (interactive) initialNotices.push(yoloNotice);
-		else process.stderr.write(`pancode: ${yoloNotice}\n`);
-	}
-	const startupOverrides: SessionOverrides = new Map(
-		bootAutonomy === undefined ? [] : [["safety.autonomy", bootAutonomy]],
-	);
-	if (options.demo !== undefined) startupOverrides.set("interface.demo", options.demo);
 	const {
-		getCurrentSettings,
-		bump: bumpSessionState,
-		persistCurrentThinkingLevel,
-		routeProvenance,
-		settingOrigin,
-		persistSavedMutation,
-		selectAtScope,
-		clampAtScope,
-		readAcpSafeSettings,
-		commitAcpSafeSettings,
 		applySettingsBlob,
+		bumpSessionState,
+		clampAtScope,
+		commitAcpSafeSettings,
 		commitSetting,
-		routingGestures,
-		restoreResumedRoute,
 		createRoutedSession,
-		start: startSessionSettings,
-	} = createSessionSettingsView({
-		config,
-		providers,
-		session,
-		bus,
+		getCurrentSettings,
+		persistCurrentThinkingLevel,
+		persistSavedMutation,
+		readAcpSafeSettings,
+		restoreResumedRoute,
+		routeProvenance,
+		routingGestures,
+		selectAtScope,
+		settingOrigin,
+		startSessionSettings,
 		startupOverrides,
-		sessionRouting,
-		outputStyleListeners,
-		selectModel,
+		settingsState,
+	} = buildBootSettings({
+		bus,
 		clampThinkingLevel,
+		config,
+		initialNotices,
+		initialRoutingSettings,
+		interactive,
+		options,
+		outputStyleListeners,
+		providers,
+		selectModel,
+		session,
+		yoloRefusal,
 	});
 	effectiveSettingsForDispatch = getCurrentSettings;
 	void startLoginEnvCapture(); // after getCurrentSettings: building the capture's env reads unattendedYolo
@@ -2305,7 +2248,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			return unsubscribeDispatchShutdown;
 		},
 		get yoloHeldAtBoot() {
-			return yoloHeldAtBoot;
+			return settingsState.yoloHeldAtBoot;
 		},
 	};
 	const surface: BootSurfaceInput = {
