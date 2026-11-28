@@ -928,6 +928,8 @@ export const CodeStepSettledSchema = Type.Object(
 		outputTruncated: Type.Boolean(),
 		outputDigest: sha256Hex,
 		reportDigest: sha256Hex,
+		/** Where its commands ran (P8): the host verification sandbox, or the host on the operator's authority. */
+		confinement: Type.Optional(vocabulary(["sandboxed", "host"])),
 	},
 	closed,
 );

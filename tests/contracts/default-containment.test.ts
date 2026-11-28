@@ -1123,6 +1123,96 @@ test("a read-only session refuses shell commands where the read-only sandbox doe
 	deepStrictEqual(session.reviewed, []);
 });
 
+test("uncontained main-session shell commands journal sandbox.uncontained with the accurate reason once per session (P6)", async () => {
+	const { telemetryContexts, telemetryHub } = await import("../../src/core/telemetry/hub.js");
+	const { openCallJournal, readCallJournal } = await import("../../src/domains/telemetry/call-journal.js");
+	const cwd = workspace("pancode-uncontained-why-");
+	const seen: Array<{ caller: string; why: string; mode: string; backend: string | null }> = [];
+	const unsub = telemetryHub().subscribe("sandbox.uncontained", (payload) => {
+		seen.push(payload);
+	});
+	try {
+		// Read-only without readOnlySandbox blocks shell execution altogether (never emits uncontained).
+		const roRegistry = createRegistry({
+			safety: createWorkerSafety({ cwd }),
+			autonomy: () => "yolo",
+			readOnly: true,
+			scratchRoots: () => [],
+			containment: () => ({ sandbox: true, snapshots: true, readOnlySandbox: false }),
+			sandboxState: () => ({ mode: "auto", backend: "seatbelt" }),
+			currentSessionId: () => "s-ro-seatbelt",
+		});
+		roRegistry.register({ ...bashTool, run: async () => ({ kind: "ok", output: "" }) });
+		const roVerdict = await telemetryContexts.run(
+			{ sessionId: "s-ro-seatbelt", agent: { role: "main", id: "s-ro-seatbelt" } },
+			() => roRegistry.invoke(bash("ls")),
+		);
+		strictEqual(roVerdict.kind, "blocked");
+		deepStrictEqual(seen, []);
+
+		// Normal session with sandbox off, no backend, and yolo opt-in each journal their own reason once per session.
+		const cases = [
+			{
+				sid: "s-off",
+				autonomy: "default" as const,
+				sandbox: false,
+				state: { mode: "off" as const, backend: "bwrap" as const },
+				why: "sandbox-off",
+			},
+			{
+				sid: "s-nobackend",
+				autonomy: "default" as const,
+				sandbox: false,
+				state: { mode: "auto" as const, backend: null },
+				why: "no-backend",
+			},
+			{
+				sid: "s-yolo",
+				autonomy: "yolo" as const,
+				sandbox: true,
+				state: { mode: "auto" as const, backend: "bwrap" as const },
+				why: "unconfined-opt-in",
+			},
+		];
+		for (const each of cases) {
+			seen.length = 0;
+			const journalDir = workspace(`pancode-uncontained-journal-${each.sid}-`);
+			const ctx = { sessionId: each.sid, agent: { role: "main" as const, id: each.sid } };
+			const journal = await openCallJournal({
+				directory: journalDir,
+				context: ctx,
+				writer: { pancodeVersion: "0.0.0-test", piVersion: "0.0.0-test" },
+			});
+			try {
+				const registry = createRegistry({
+					safety: createWorkerSafety({ cwd }),
+					autonomy: () => each.autonomy,
+					scratchRoots: () => [],
+					containment: () => ({ sandbox: each.sandbox, snapshots: true }),
+					sandboxState: () => each.state,
+					currentSessionId: () => each.sid,
+				});
+				registry.register({ ...bashTool, run: async () => ({ kind: "ok", output: "" }) });
+				strictEqual((await telemetryContexts.run(ctx, () => registry.invoke(bash("echo one")))).kind, "ok");
+				strictEqual((await telemetryContexts.run(ctx, () => registry.invoke(bash("echo two")))).kind, "ok");
+				await journal.flush();
+				const rows = (await readCallJournal(journalDir)).records
+					.map(({ record }) => record)
+					.filter((record) => record.k === "sandbox.uncontained");
+				deepStrictEqual(
+					rows.map((row) => row.data),
+					[{ caller: "main", why: each.why, mode: each.state.mode, backend: each.state.backend }],
+				);
+				deepStrictEqual(seen, [{ caller: "main", why: each.why, mode: each.state.mode, backend: each.state.backend }]);
+			} finally {
+				await journal.close();
+			}
+		}
+	} finally {
+		unsub();
+	}
+});
+
 test("a read-only worker's shell command passes only when its sandbox confines every write, and never asks", () => {
 	const cwd = workspace("pancode-read-only-worker-shell-");
 	const safety = createWorkerSafety({ cwd });

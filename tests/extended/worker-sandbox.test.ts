@@ -14,11 +14,13 @@ import {
 } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { type AddressInfo, connect, createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { readSettings } from "../../src/core/config.js";
+import { isSameOrDescendant } from "../../src/core/path-containment.js";
+import { runCommandVector } from "../../src/core/safe-exec.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
 import { egressResultNote } from "../../src/core/sandbox/egress/bridge.js";
@@ -28,12 +30,39 @@ import {
 	redactedUpstreamProxy,
 	upstreamProxyProblem,
 } from "../../src/core/sandbox/egress/policy.js";
-import { createEgressProxy } from "../../src/core/sandbox/egress/proxy.js";
+import { createEgressProxy, type EgressReceipt } from "../../src/core/sandbox/egress/proxy.js";
 import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
 import { planHomeReads } from "../../src/core/sandbox/home-reads.js";
-import { mainLaunchEgress, mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
+import { notConfinedLabel, sandboxedLabel, uncontainedLabel } from "../../src/core/sandbox/host-launch.js";
+import {
+	collectHostLaunches,
+	seamLaunchLabel,
+	seamOrHostLaunch,
+	settleHostLaunch,
+} from "../../src/core/sandbox/host-launch-record.js";
+import {
+	emptySandboxLaunchTally,
+	launchFacts,
+	recordUncontainedShell,
+	type SandboxLaunchFacts,
+	sandboxLaunch,
+	sandboxLaunchRecord,
+	tallySandboxLaunch,
+} from "../../src/core/sandbox/launch-record.js";
+import {
+	confinedIntegrationPolicy,
+	documentReaderLaunch,
+	mainLaunchEgress,
+	mainSandboxPolicy,
+	optInLaunch,
+	planMainSandboxSpawn,
+} from "../../src/core/sandbox/main-session.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
-import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
+import {
+	type HomeReadList,
+	WORKER_SANDBOX_SPEC_VERSION,
+	type WorkerSandboxSpec,
+} from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import {
 	composeWorkerSandboxInvocation,
@@ -42,7 +71,9 @@ import {
 } from "../../src/core/sandbox/worker-process.js";
 import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
-import { readLayeredSettings } from "../../src/core/settings-layers.js";
+import { layeredConfineList, readLayeredSettings } from "../../src/core/settings-layers.js";
+import type { TelemetryContext } from "../../src/core/telemetry/context.js";
+import { attachJournalRoute, telemetryContexts } from "../../src/core/telemetry/hub.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
@@ -729,6 +760,17 @@ test("the egress proxy checks names before any lookup, screens every answer and 
 	);
 	assert.equal(refused["nope.test:443"], EGRESS_UNGRANTED);
 	assert.match(refused["rebind.test:443"] ?? "", /resolves to 10\.0\.0\.1, a local or private address/u);
+	// Each receipt carries its reason as a code and, when admitted, what admitted it (P6).
+	const coded = Object.fromEntries(
+		proxy
+			.receipts()
+			.map((receipt) => [`${receipt.host}:${receipt.port}`, [receipt.decision, receipt.code ?? receipt.source]]),
+	);
+	assert.deepEqual(coded["svc.test:443"], ["allowed", "grant"]);
+	assert.deepEqual(coded["asked.test:443"], ["allowed", "operator"]);
+	assert.deepEqual(coded["nope.test:443"], ["denied", "operator-denied"]);
+	assert.deepEqual(coded["rebind.test:443"], ["denied", "private-answer"]);
+	assert.deepEqual(coded["10.1.2.3:80"], ["denied", "private-literal"]);
 	assert.match(refused["10.1.2.3:80"] ?? "", /local or private address/u);
 	const note = egressResultNote({
 		receipts: proxy.receipts(),
@@ -748,6 +790,275 @@ test("the egress proxy checks names before any lookup, screens every answer and 
 			denyHint: "",
 		}),
 		null,
+	);
+});
+
+test("the launch record keeps denials, completed connects and failed dials apart, bounded and clipped (P6)", async (t) => {
+	const target = createServer((socket) => socket.end());
+	await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+	t.after(() => target.close());
+	const targetPort = (target.address() as AddressInfo).port;
+	const closed = createServer();
+	await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+	const closedPort = (closed.address() as AddressInfo).port;
+	await new Promise<void>((resolve) => closed.close(() => resolve()));
+	const { proxy, port } = await servedEgressProxy({
+		// `remembered.test` was approved earlier this session; the operator's settings grant the others.
+		grants: egressGrants(["svc.test:443", "down.test:443", "gone.test:443"], [], ["remembered.test:443"]),
+		denyHint: "add it to safety.egress.main.allow",
+		lookup: async (host) => (host === "gone.test" ? [] : [{ address: "8.8.8.8", family: 4 }]),
+		dial: () => connect(targetPort, "127.0.0.1"),
+		ask: async (origin) => (origin.host === "earlier.test" ? "session" : "unasked"),
+	});
+	t.after(() => proxy.close());
+	assert.equal(await proxyConnect(port, "svc.test:443"), 200);
+	assert.equal(await proxyConnect(port, "remembered.test:443"), 200);
+	assert.equal(await proxyConnect(port, "earlier.test:443"), 200);
+	// Nobody could answer: the origin stays outside the grants.
+	assert.equal(await proxyConnect(port, "headless.test:443"), 403);
+	// Admitted, but the name resolves nowhere: a failed dial, not a denial.
+	assert.equal(await proxyConnect(port, "gone.test:443"), 502);
+	const receipts = Object.fromEntries(
+		proxy.receipts().map((receipt) => [`${receipt.host}:${receipt.port}`, receipt] as const),
+	);
+	assert.equal(receipts["svc.test:443"]?.source, "grant");
+	assert.equal(receipts["remembered.test:443"]?.source, "session");
+	assert.equal(receipts["earlier.test:443"]?.source, "session");
+	assert.deepEqual(
+		[receipts["headless.test:443"]?.decision, receipts["headless.test:443"]?.code],
+		["denied", "ungranted"],
+	);
+	assert.deepEqual(
+		[receipts["gone.test:443"]?.decision, receipts["gone.test:443"]?.code, receipts["gone.test:443"]?.source],
+		["failed", "unresolved", "grant"],
+	);
+
+	// A refused dial to an admitted origin is a failed receipt; the connect never completed, so nothing reads allowed.
+	const refusing = await servedEgressProxy({
+		grants: egressGrants(["down.test:443"], []),
+		lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+		dial: () => connect(closedPort, "127.0.0.1"),
+	});
+	t.after(() => refusing.proxy.close());
+	assert.equal(await proxyConnect(refusing.port, "down.test:443"), 502);
+	assert.deepEqual(
+		refusing.proxy.receipts().map(({ decision, code }) => [decision, code]),
+		[["failed", "dial-error"]],
+	);
+	const note = egressResultNote({
+		receipts: [...proxy.receipts(), ...refusing.proxy.receipts()],
+		listeningPorts: [],
+		setupFailed: false,
+		denyHint: "",
+		dropped: 2,
+		shed: 1,
+	});
+	assert.match(note ?? "", /could not reach gone\.test:443 \(the name did not resolve\)/u);
+	assert.match(note ?? "", /could not reach down\.test:443 \(the connection failed\)/u);
+	assert.match(note ?? "", /2 more connection attempts not listed/u);
+	assert.match(note ?? "", /1 connection closed unread/u);
+
+	// Past its receipt bound the proxy counts what it no longer lists.
+	const flooded = await servedEgressProxy({ grants: egressGrants([], []), lookup: async () => [] });
+	t.after(() => flooded.proxy.close());
+	for (let index = 0; index < 70; index += 1) assert.equal(await proxyConnect(flooded.port, `n${index}.test:443`), 403);
+	assert.equal(flooded.proxy.receipts().length, 64);
+	assert.deepEqual(flooded.proxy.overflow(), { dropped: 6, shed: 0 });
+
+	const facts: SandboxLaunchFacts = {
+		caller: "main",
+		launcher: "shell",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: "bwrap",
+		network: "proxied",
+	};
+	const long = `${"a".repeat(60)}.${"b".repeat(40)}.exfil.example`;
+	const many: EgressReceipt[] = Array.from({ length: 40 }, (_, index) => ({
+		host: `h${index}.test`,
+		port: 443,
+		decision: "denied",
+		code: "ungranted",
+		count: 2,
+	}));
+	const record = sandboxLaunchRecord(facts, {
+		outcome: "ran",
+		exitCode: 1,
+		egress: {
+			receipts: [
+				{ host: long, port: 443, decision: "denied", code: "ungranted", count: 1 },
+				{ host: `${"g".repeat(70)}.granted.test`, port: 443, decision: "allowed", source: "grant", count: 1 },
+				...many,
+			],
+			listeningPorts: [4555],
+			setupFailed: false,
+			denyHint: "",
+			dropped: 5,
+			shed: 1,
+		},
+		hint: "write-denied",
+	});
+	assert.equal(record.network.observed, true);
+	assert.equal(record.destinations?.length, 32);
+	// 10 receipts past the record's bound, 2 attempts each, plus the proxy's own 5.
+	assert.equal(record.dropped, 25);
+	assert.equal(record.shed, 1);
+	assert.deepEqual(record.listeningPorts, [4555]);
+	assert.equal(record.hint, "write-denied");
+	assert.deepEqual(record.destinations?.[0], {
+		host: `${"b".repeat(32)}.exfil.example`,
+		port: 443,
+		decision: "denied",
+		reason: "ungranted",
+		count: 1,
+		hostClipped: true,
+	});
+	// A granted host equals an operator's entry and stays whole.
+	assert.equal(record.destinations?.[1]?.host, `${"g".repeat(70)}.granted.test`);
+	assert.equal(JSON.stringify(record).includes("a".repeat(33)), false);
+	// The egress note appended to tool output applies the same host clip so long ungranted subdomains never leak there either.
+	const clippedNote =
+		egressResultNote({
+			receipts: [{ host: long, port: 443, decision: "denied", code: "ungranted", count: 1 }],
+			listeningPorts: [],
+			setupFailed: false,
+			denyHint: "",
+		}) ?? "";
+	assert.equal(clippedNote.includes("a".repeat(33)), false);
+	assert.match(clippedNote, new RegExp(`${"b".repeat(32)}\\.exfil\\.example:443`, "u"));
+
+	// An open network was not observed: no destination list, never an empty one.
+	const open = sandboxLaunchRecord({ ...facts, network: "open" }, { outcome: "ran", exitCode: 0 });
+	assert.deepEqual(open.network, { mode: "open", observed: false });
+	assert.equal("destinations" in open, false);
+	const unconfined = sandboxLaunchRecord(
+		{ ...facts, caller: "worker", confinement: "unconfined", why: "unconfined-opt-in", backend: null, network: "open" },
+		{ outcome: "ran", exitCode: 0, hint: "write-denied" },
+	);
+	assert.equal(unconfined.network.observed, false);
+	const refused = sandboxLaunchRecord(facts, { outcome: "refused", hint: "write-denied" });
+	assert.deepEqual(
+		[refused.outcome, refused.network.observed, "hint" in refused, "exitCode" in refused],
+		["refused", false, false, false],
+	);
+	const setup = sandboxLaunchRecord(facts, {
+		outcome: "ran",
+		exitCode: 125,
+		egress: { receipts: [], listeningPorts: [], setupFailed: true, denyHint: "" },
+	});
+	assert.equal(setup.outcome, "launch-failed");
+
+	// An overlong granted host is clipped to stay inside SandboxDestinationSchema's 255-char bound, a leading-dot
+	// clip boundary never starts with '.', operator approval matches session, and proxied without a report is unobserved.
+	const overlongGranted = `${"g".repeat(260)}.granted.test`;
+	const dotBoundary = `${"a".repeat(32)}.${"b".repeat(31)}.${"c".repeat(32)}`;
+	const edge = sandboxLaunchRecord(facts, {
+		outcome: "ran",
+		exitCode: 0,
+		egress: {
+			receipts: [
+				{ host: overlongGranted, port: 443, decision: "allowed", source: "session", count: 1 },
+				{ host: dotBoundary, port: 443, decision: "denied", code: "ungranted", count: 1 },
+				{ host: "a.b.c.d.operator.test", port: 443, decision: "allowed", source: "operator", count: 1 },
+			],
+			listeningPorts: [],
+			setupFailed: false,
+			denyHint: "",
+		},
+	});
+	assert.equal((edge.destinations?.[0]?.host.length ?? 0) <= 64, true);
+	assert.equal(edge.destinations?.[0]?.hostClipped, true);
+	assert.equal(edge.destinations?.[1]?.host.startsWith("."), false);
+	assert.equal(edge.destinations?.[1]?.hostClipped, true);
+	assert.equal(edge.destinations?.[2]?.host, "a.b.c.d.operator.test");
+	assert.equal(edge.destinations?.[2]?.hostClipped, undefined);
+	const noReport = sandboxLaunchRecord(facts, { outcome: "ran", exitCode: 0 });
+	assert.deepEqual(noReport.network, { mode: "proxied", observed: false });
+	assert.equal("destinations" in noReport, false);
+	// Seatbelt cannot isolate a proxied network, so its launch plan stays open and unobserved with no destinations.
+	const seatbeltPlan = planMainSandboxSpawn(
+		{
+			...mainSandboxPolicy({ workspace: tmpdir(), scratchRoots: [] }),
+			egress: { grants: egressGrants(["example.com:443"], []), denyHint: "" },
+		},
+		{ argv: ["/bin/sh", "-c", "true"] },
+		tmpdir(),
+		{ available: true, backend: "seatbelt", executable: "/usr/bin/sandbox-exec", reason: null },
+		{ bridge: true },
+	);
+	assert.equal(seatbeltPlan.launch.network, "open");
+	const seatbeltRecord = sandboxLaunchRecord(launchFacts(seatbeltPlan.launch, "shell", undefined), {
+		outcome: "ran",
+		exitCode: 0,
+	});
+	assert.deepEqual(seatbeltRecord.network, { mode: "open", observed: false });
+	assert.equal("destinations" in seatbeltRecord, false);
+
+	const tally = emptySandboxLaunchTally();
+	for (const each of [record, open, unconfined, refused, setup, noReport]) tallySandboxLaunch(tally, each);
+	assert.deepEqual(tally, {
+		launches: 6,
+		refused: 1,
+		launchFailed: 1,
+		allowed: 1,
+		denied: 61,
+		failed: 0,
+		dropped: 26,
+		unobserved: 3,
+	});
+});
+
+test("a launch journals one record under the call that planned it, and an uncontained shell once per session (P6)", () => {
+	const journaled: Array<{ name: string; payload: unknown; ctx: TelemetryContext | undefined }> = [];
+	attachJournalRoute({
+		journal(name, payload, _preimage, ctx) {
+			if (!name.startsWith("sandbox.")) return false;
+			journaled.push({ name, payload, ctx });
+			return true;
+		},
+		dropped() {},
+	});
+	const facts: SandboxLaunchFacts = {
+		caller: "main",
+		launcher: "command",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: "bwrap",
+		network: "off",
+	};
+	const callA: TelemetryContext = { sessionId: "ses_p6", agent: { role: "main", id: "ses_p6" }, toolCallId: "call_a" };
+	const callB: TelemetryContext = { sessionId: "ses_p6", agent: { role: "main", id: "ses_p6" }, toolCallId: "call_b" };
+	// Two concurrent launches capture their own call's context at plan time and attribute accurately even out of order.
+	const launchA = telemetryContexts.run(callA, () => sandboxLaunch(facts));
+	const launchB = telemetryContexts.run(callB, () => sandboxLaunch(facts));
+	const settledB = launchB.settle({ outcome: "ran", exitCode: 2 });
+	const settledA = launchA.settle({ outcome: "ran", exitCode: 0 });
+	assert.equal(launchA.settle({ outcome: "launch-failed" }), settledA);
+	assert.equal(sandboxLaunch(undefined).settle({ outcome: "ran", exitCode: 0 }), undefined);
+	assert.deepEqual(
+		journaled.map(({ name, ctx, payload }) => [name, ctx?.toolCallId, (payload as { exitCode?: number }).exitCode]),
+		[
+			["sandbox.launched", "call_b", 2],
+			["sandbox.launched", "call_a", 0],
+		],
+	);
+	assert.deepEqual(journaled[1]?.payload, settledA);
+	assert.deepEqual(journaled[0]?.payload, settledB);
+	assert.deepEqual(settledA?.network, { mode: "off", observed: false });
+
+	journaled.length = 0;
+	const session: TelemetryContext = { sessionId: "ses_p6_open", agent: { role: "main", id: "ses_p6_open" } };
+	const state = { caller: "main", why: "sandbox-off", mode: "off", backend: null } as const;
+	recordUncontainedShell(state, session);
+	recordUncontainedShell(state, session);
+	recordUncontainedShell({ ...state, caller: "main-read-only" }, session);
+	recordUncontainedShell(state, undefined);
+	assert.deepEqual(
+		journaled.map(({ name, payload }) => [name, (payload as { caller: string }).caller]),
+		[
+			["sandbox.uncontained", "main"],
+			["sandbox.uncontained", "main-read-only"],
+		],
 	);
 });
 
@@ -780,6 +1091,40 @@ test("allowed egress leaves through safety.egress.upstreamProxy by name with its
 	// The upstream proxy carries only what the grants admit.
 	assert.equal(await proxyConnect(port, "elsewhere.test:443"), 403);
 	assert.equal(requests.length, 1);
+
+	// Neither userinfo, query strings, headers nor the upstream proxy URL or credentials reach launch records or notes.
+	const plainHttp = await new Promise<number>((resolve, reject) => {
+		const socket = connect(port, "127.0.0.1", () => {
+			socket.write(
+				"GET http://alice:top-secret-pw@internal.corp.test:80/private/path?api_key=LEAKED_QUERY HTTP/1.1\r\n" +
+					"Host: internal.corp.test:80\r\nAuthorization: Bearer LEAKED_HEADER\r\nConnection: close\r\n\r\n",
+			);
+		});
+		let head = "";
+		socket.on("data", (chunk: Buffer) => {
+			head += chunk.toString("latin1");
+		});
+		socket.on("end", () => resolve(Number(/^HTTP\/1\.[01] (\d{3})/u.exec(head)?.[1] ?? 0)));
+		socket.on("error", reject);
+	});
+	assert.equal(plainHttp, 403);
+	const report = { receipts: proxy.receipts(), listeningPorts: [], setupFailed: false, denyHint: "" };
+	const record = sandboxLaunchRecord(
+		{
+			caller: "main",
+			launcher: "shell",
+			confinement: "sandboxed",
+			why: "main-policy",
+			backend: "bwrap",
+			network: "proxied",
+		},
+		{ outcome: "ran", exitCode: 0, egress: report },
+	);
+	const serialized = `${JSON.stringify(record)}\n${egressResultNote(report) ?? ""}`;
+	for (const secret of ["ops", "s3cr", "alice", "top-secret-pw", "LEAKED_QUERY", "LEAKED_HEADER", "/private/path"]) {
+		assert.equal(serialized.includes(secret), false, `leaked ${secret}`);
+	}
+	assert.equal(record.destinations?.find((d) => d.host === "internal.corp.test" && d.port === 443)?.viaUpstream, true);
 });
 
 test("under bwrap a proxied command reaches only its grants through the bridge and its own servers stay inside (P3)", async (t) => {
@@ -823,6 +1168,18 @@ test("under bwrap a proxied command reaches only its grants through the bridge a
 	assert.deepEqual(result.egress?.listeningPorts, [4555]);
 	const note = egressResultNote(result.egress) ?? "";
 	assert.match(note, /refused 127\.0\.0\.1:\d+ \(a local or private address/u);
+	// The launch record is the one the call journal gets: who launched, how it was confined, what its network did.
+	const record = result.sandbox;
+	assert.deepEqual(
+		[record?.caller, record?.launcher, record?.confinement, record?.why, record?.backend, record?.outcome],
+		["main", "shell", "sandboxed", "main-policy", "bwrap", "ran"],
+	);
+	assert.deepEqual(record?.network, { mode: "proxied", observed: true });
+	const reached = record?.destinations?.find((destination) => destination.port === hostPort);
+	assert.deepEqual([reached?.decision, reached?.source], ["allowed", "grant"]);
+	const denied = record?.destinations?.find((destination) => destination.port === hostPort + 1);
+	assert.deepEqual([denied?.decision, denied?.reason], ["denied", "private-literal"]);
+	assert.deepEqual(record?.listeningPorts, [4555]);
 	assert.match(note, /listening on port 4555 inside the sandbox/u);
 });
 
@@ -872,6 +1229,177 @@ test("safety.egress is user-set, a project may only lower a mode, and the launch
 	assert.equal(mainLaunchEgress(proxied, "seatbelt", true), "open");
 	assert.equal(mainLaunchEgress({ network: true }, "bwrap", true), "open");
 	assert.equal(mainLaunchEgress({ network: false, egress: proxied.egress }, "bwrap", true), "off");
+});
+
+test("safety.confine is user-set, a project may only add to it, and an opt-in launch says where it ran (P8)", async (t) => {
+	const userFile = join(pancodeHome.dir, "config", "settings.yaml");
+	const workspace = realpathSync(mkdtempSync(join(tmpdir(), "pancode-confine-")));
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	mkdirSync(join(pancodeHome.dir, "config"), { recursive: true });
+	try {
+		assert.deepEqual(readSettings().safety.confine, []);
+		writeFileSync(userFile, "version: 2\nsafety:\n  confine: [shell]\n");
+		assert.throws(() => readSettings(), /safety\.confine/u);
+		writeFileSync(userFile, "version: 2\nsafety:\n  confine: ['mcp:docs', jobs, jobs]\n");
+		assert.deepEqual(readSettings().safety.confine, ["mcp:docs", "jobs"]);
+		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "safety:\n  confine: [hooks]\n");
+		writeFileSync(join(workspace, ".pancode", "settings.local.yaml"), "safety:\n  confine: [git]\n");
+		const snapshot = captureProjectSurface(workspace, "settings");
+		if (!snapshot.contentHash) throw new Error("missing project settings hash");
+		recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+		assert.deepEqual([...layeredConfineList(workspace)].sort(), ["git", "hooks", "jobs", "mcp:docs"]);
+	} finally {
+		writeFileSync(userFile, "version: 2\n");
+	}
+
+	assert.deepEqual(optInLaunch("job", "jobs", []), {
+		label: { launcher: "job", integration: "jobs", confinement: "unconfined", why: "not-opted-in" },
+		confined: false,
+	});
+	const listed = optInLaunch("mcp-stdio", "mcp:docs", ["mcp:docs"]);
+	const availability = sandboxAvailability();
+	if (availability.available)
+		assert.deepEqual(listed, { label: sandboxedLabel("mcp-stdio", "confine-opt-in", "mcp:docs"), confined: true });
+	else assert.match("refused" in listed ? listed.refused : "", /remove it from safety\.confine to run it unconfined/u);
+	assert.deepEqual(documentReaderLaunch("sqlite", workspace, "off").label, uncontainedLabel("sqlite", "sandbox-off"));
+
+	// Inside a worker, optInLaunch yields to the worker sandbox and an unconfined host label never overwrites worker-policy.
+	configureWorkerProcessSandbox(
+		{
+			version: 1,
+			mode: "auto",
+			writableRoots: [workspace],
+			readOnlyPaths: [],
+			readableRoots: [workspace],
+			gitWritablePaths: [],
+			network: false,
+		},
+		true,
+	);
+	try {
+		assert.deepEqual(optInLaunch("job", "jobs", ["jobs"]), {
+			label: sandboxedLabel("job", "worker-policy", "jobs"),
+			confined: false,
+		});
+		const workerSearch = settleHostLaunch(
+			uncontainedLabel("search", "read-admitted"),
+			{ outcome: "ran", exitCode: 0 },
+			{ caller: "worker", confinement: "sandboxed", why: "worker-policy", backend: "bwrap", network: "off" },
+		);
+		assert.equal(workerSearch.caller, "worker");
+		assert.equal(workerSearch.confinement, "sandboxed");
+		assert.equal(workerSearch.why, "worker-policy");
+	} finally {
+		configureWorkerProcessSandbox(undefined);
+	}
+
+	// A host launch journals one record, the same one its result carries; a seam's own record is not journaled again.
+	const journaled: unknown[] = [];
+	attachJournalRoute({
+		journal(name, payload) {
+			if (name !== "sandbox.launched") return false;
+			journaled.push(payload);
+			return true;
+		},
+		dropped() {},
+	});
+	const { value: record, launches } = await collectHostLaunches(async () => {
+		const host = settleHostLaunch(notConfinedLabel("extension-binary", "extension:demo"), {
+			outcome: "ran",
+			exitCode: 3,
+		});
+		seamOrHostLaunch(host, uncontainedLabel("search", "read-admitted"), { exitCode: 0 });
+		return host;
+	});
+	assert.deepEqual(journaled, [record]);
+	assert.deepEqual(launches, [record, record]);
+	assert.equal(record.launcher, "extension-binary");
+	assert.equal(record.integration, "extension:demo");
+	assert.equal(record.confinement, "unconfined");
+	assert.equal(record.why, "not-opted-in");
+	assert.equal(record.outcome, "ran");
+
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		rmSync(workspace, { recursive: true, force: true });
+		return;
+	}
+	// A confined integration writes its tree and nothing outside it, with the network off, and records why.
+	const outside = realpathSync(mkdtempSync(join(tmpdir(), "pancode-confine-outside-")));
+	t.after(() => {
+		rmSync(workspace, { recursive: true, force: true });
+		rmSync(outside, { recursive: true, force: true });
+	});
+	const label = sandboxedLabel("job", "confine-opt-in", "jobs");
+	const result = await runCommandVector(
+		"sh",
+		["-c", `echo in > ${join(workspace, "in.txt")}; echo out > ${join(outside, "out.txt")}`],
+		{
+			cwd: workspace,
+			workspaceRoot: workspace,
+			shellSandbox: confinedIntegrationPolicy({
+				workspace,
+				scratchRoots: [],
+				stateDirs: [],
+				network: "off",
+				homeReads: undefined,
+			}),
+			launchLabel: seamLaunchLabel(label),
+		},
+	);
+	assert.notEqual(result.exitCode, 0);
+	assert.ok(existsSync(join(workspace, "in.txt")));
+	assert.ok(!existsSync(join(outside, "out.txt")));
+	assert.equal(result.sandbox?.confinement, "sandboxed");
+	assert.equal(result.sandbox?.why, "confine-opt-in");
+	assert.equal(result.sandbox?.integration, "jobs");
+	assert.deepEqual(result.sandbox?.network, { mode: "off", observed: false });
+
+	// A listed `safety.homeReads.main` hides the rest of the home from a confined integration as from the main shell.
+	if (!isSameOrDescendant(outside, homedir())) return;
+	writeFileSync(join(outside, "home-note.txt"), "home");
+	const read = (homeReads: HomeReadList | undefined) =>
+		runCommandVector("cat", [join(outside, "home-note.txt")], {
+			cwd: workspace,
+			workspaceRoot: workspace,
+			shellSandbox: confinedIntegrationPolicy({ workspace, scratchRoots: [], stateDirs: [], network: "off", homeReads }),
+			launchLabel: seamLaunchLabel(label),
+		});
+	assert.equal((await read(undefined)).stdout, "home");
+	const hidden = await read({ roots: [], toolchains: [] });
+	assert.notEqual(hidden.exitCode, 0);
+	assert.equal(hidden.stdout, "");
+
+	// Under listed homeReads, a confined integration can run from its own stateDir and read its vendored root
+	// while the rest of $HOME remains hidden.
+	const stateDir = join(outside, "state");
+	const toolDir = join(outside, "tool");
+	mkdirSync(stateDir, { recursive: true });
+	mkdirSync(toolDir, { recursive: true });
+	writeFileSync(join(toolDir, "helper.txt"), "vendored");
+	const listedRun = await runCommandVector(
+		"sh",
+		[
+			"-c",
+			`cat ${join(toolDir, "helper.txt")}; echo ok > ${join(stateDir, "out.txt")}; cat ${join(outside, "home-note.txt")} 2>/dev/null || true`,
+		],
+		{
+			cwd: stateDir,
+			workspaceRoot: stateDir,
+			shellSandbox: confinedIntegrationPolicy({
+				workspace,
+				scratchRoots: [],
+				stateDirs: [stateDir],
+				extraReadableRoots: [toolDir],
+				network: "off",
+				homeReads: { roots: [], toolchains: [] },
+			}),
+			launchLabel: seamLaunchLabel(sandboxedLabel("extension-binary", "confine-opt-in", "extension:demo")),
+		},
+	);
+	assert.equal(listedRun.exitCode, 0, listedRun.stderr);
+	assert.equal(listedRun.stdout, "vendored");
+	assert.ok(existsSync(join(stateDir, "out.txt")));
 });
 
 test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6, and redacts upstreamProxy control values (P3)", async (t) => {

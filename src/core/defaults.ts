@@ -869,6 +869,11 @@ export interface SafetySettings {
 	 */
 	sandboxCacheMaxGiB: number;
 	/**
+	 * Host-launched integrations that run in PanCode's OS sandbox (P8): `mcp:<id>`, `extension:<id>`, `hooks`, `git`,
+	 * `jobs`. Any other runs on the host as before, labelled unconfined. A project layer may only add entries.
+	 */
+	confine: string[];
+	/**
 	 * What sandboxed commands may read under the operator's home, per caller.
 	 * `roots` and `toolchains` are read only from the operator's own settings
 	 * file; a project layer may only move a mode to `listed`.
@@ -1151,6 +1156,7 @@ export const DEFAULT_SETTINGS = {
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
 		sandboxCacheMaxGiB: 4,
+		confine: [] as string[],
 		homeReads: {
 			main: "open",
 			workers: "open",

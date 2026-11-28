@@ -20,6 +20,7 @@
  * resources, prompts, completion and skills (client-reads.ts).
  */
 
+import type { MainSandboxPolicy } from "../../core/sandbox/main-session.js";
 import { clampTimerDelayMs } from "../../core/timers.js";
 import { createMcpElicitation } from "./client-elicitation.js";
 import { createMcpInitialization } from "./client-init.js";
@@ -47,7 +48,12 @@ import type {
 	McpResourceRead,
 } from "./resources.js";
 import type { McpSkillsTransport } from "./skills.js";
-import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "./stdio-transport.js";
+import {
+	containedCwd,
+	createMcpStdioTransport,
+	type McpLaunchReport,
+	type McpStdioServerSpec,
+} from "./stdio-transport.js";
 import type { McpToolCallResult, McpToolDescriptor } from "./tool-results.js";
 import type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
@@ -97,6 +103,10 @@ export interface McpClientOptions {
 	signal?: AbortSignal;
 	/** The worker attested the operator's network grant for this server, so its sandboxed process gets network. */
 	sandboxNetwork?: boolean;
+	/** The operator confined this orchestrator server (`safety.confine`); its stdio process runs under this policy. */
+	hostSandbox?: MainSandboxPolicy;
+	/** Labels the stdio process's launch (P8) and receives its record. */
+	launch?: McpLaunchReport;
 	/**
 	 * Answers the server's elicitations. Only its presence declares the
 	 * `elicitation` capability; without it the client declares none, so a
@@ -372,6 +382,8 @@ export function createMcpStdioClient(spec: McpStdioServerSpec, options: McpClien
 					killGraceMs: clampTimerDelayMs(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS),
 					teardownBoundMs: clampTimerDelayMs(options.teardownBoundMs ?? DEFAULT_TEARDOWN_BOUND_MS),
 					sandboxNetwork: options.sandboxNetwork === true,
+					...(options.hostSandbox !== undefined ? { hostSandbox: options.hostSandbox } : {}),
+					...(options.launch !== undefined ? { launch: options.launch } : {}),
 				},
 				events,
 			),

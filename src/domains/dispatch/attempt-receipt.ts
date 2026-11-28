@@ -251,7 +251,10 @@ export function createAttemptReceiptDraft(rt: DispatchRuntime, attempt: RunningA
 				// be a claim about the wrong machine.
 				...(lifecycle.target.runtime.kind === "http"
 					? {
-							sandbox: workerSandboxReceipt(attempt.spec.sandbox, lifecycle.placedSandbox, attempt.spec.limits.resources),
+							sandbox: {
+								...workerSandboxReceipt(attempt.spec.sandbox, lifecycle.placedSandbox, attempt.spec.limits.resources),
+								...(attempt.runJournal !== undefined ? { observed: attempt.runJournal.sandboxLaunches() } : {}),
+							},
 						}
 					: {}),
 			},

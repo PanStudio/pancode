@@ -3,6 +3,11 @@
 import { join } from "node:path";
 import { writeDiagnostic } from "../../core/diagnostics.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
+import {
+	emptySandboxLaunchTally,
+	type SandboxLaunchTally,
+	tallySandboxLaunch,
+} from "../../core/sandbox/launch-record.js";
 import { StateFileLockTimeoutError } from "../../core/state-file-lock.js";
 import type { RunOwnerTelemetryContext, TelemetryContext } from "../../core/telemetry/context.js";
 import { isRunOwnerTelemetryContext } from "../../core/telemetry/context.js";
@@ -39,6 +44,8 @@ export interface RunTelemetryJournal {
 	settle(settlement: RunSettlement): Promise<void>;
 	/** The settlement this journal durably recorded, once its settle resolved; undefined before then. */
 	landed(): RunSettlement | undefined;
+	/** The run's sandbox launches as its forwarded `sandbox.launched` records tell them (sandbox P6). */
+	sandboxLaunches(): SandboxLaunchTally;
 	/** A channel failure the host saw, after exit included; a closed journal records nothing (#425). */
 	channel(data: EventPayload<"worker.channel_failed">): void;
 	/** `position` is where the run's feed.jsonl put this row: its seq, and any truncation marker it wrote (C-29). */
@@ -303,6 +310,9 @@ async function openOwnedRunTelemetry(
 	let settling: Promise<void> = Promise.resolve();
 	let durableSettle: Promise<void> = Promise.resolve();
 	let landedSettlement: RunSettlement | undefined;
+	const launches = emptySandboxLaunchTally();
+	for (const { record } of previous.records)
+		if (record.k === "sandbox.launched") tallySandboxLaunch(launches, record.data);
 	const reportHealth = () => {
 		const health = writer.health();
 		if (!reported && (health.writeErrors > 0 || health.dropped > 0 || health.invalid > 0)) {
@@ -326,6 +336,7 @@ async function openOwnedRunTelemetry(
 				return false;
 			}
 			if (!writer.enqueue(record)) return false;
+			if (record.kind === "sandbox.launched") tallySandboxLaunch(launches, record.data);
 			if (parent && (record.kind === "call.started" || record.kind === "call.settled")) {
 				const callId = record.data.callId;
 				if (!references.has(callId) && telemetryHub().emit("call.linked", { runId: context.runId, callId }, parent))
@@ -340,6 +351,7 @@ async function openOwnedRunTelemetry(
 				references.add(context.runId);
 			return true;
 		},
+		sandboxLaunches: () => ({ ...launches }),
 		settleCalls(records) {
 			if (journal.closed) return;
 			for (const record of records)

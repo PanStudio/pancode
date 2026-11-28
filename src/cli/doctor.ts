@@ -10,6 +10,7 @@ import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/poli
 import { homeReadList } from "../core/sandbox/home-read-roots.js";
 import { homeReadsLine, planHomeReads } from "../core/sandbox/home-reads.js";
 import {
+	documentReaderSandboxProblem,
 	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
@@ -24,7 +25,12 @@ import { hostSandboxStatus, sandboxStatusLine } from "../core/sandbox/status.js"
 import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
 import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
 import { physicalSandboxPath } from "../core/sandbox/worker-process.js";
-import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
+import {
+	type LayeredSettings,
+	layeredConfineList,
+	readLayeredSettings,
+	settingsSourceFor,
+} from "../core/settings-layers.js";
 import { reportInvalidInstallRecordsAsRows } from "../domains/extensions/index.js";
 import {
 	type DoctorFinding,
@@ -322,6 +328,34 @@ function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): 
 		granted: egressGrants(egress.main.allow, egress.main.presets).origins.size,
 		upstreamProxy: egress.upstreamProxy === null ? null : redactedUpstreamProxy(egress.upstreamProxy),
 		isolationFailure: egress.main.mode === "open" ? null : sandboxNetworkIsolation(availability),
+	};
+}
+
+/**
+ * Where the main session's host-launched tools run (P8, D11): the readers
+ * PanCode confines by default, the integrations `safety.confine` opts in, and
+ * the operator's own work that runs on the host. A confined entry this host
+ * cannot sandbox warns, since that integration then refuses to start.
+ */
+function hostLaunchersFinding(workspaceRoot: string): DoctorFinding {
+	const confine = layeredConfineList(workspaceRoot);
+	const backend = sandboxAvailability();
+	const refused = confine.length > 0 && !backend.available;
+	const readerProblem =
+		configuredSandboxMode() === "off" ? "safety.sandbox is off" : documentReaderSandboxProblem(backend);
+	const readerLine =
+		readerProblem === null
+			? "sqlite and PDF readers: read-only sandbox, no network"
+			: `sqlite and PDF readers: unconfined (${readerProblem})`;
+	const confinedLine =
+		confine.length === 0
+			? "MCP stdio servers, extension programs, project and extension hooks, typed git and jobs: unconfined on the host (safety.confine is empty)"
+			: `safety.confine: ${confine.join(", ")}${refused ? ` (no sandbox backend: ${backend.reason ?? "none found"}; these refuse to start)` : " run in the sandbox"}; the rest of MCP stdio servers, extension programs, project and extension hooks, typed git and jobs: unconfined on the host`;
+	return {
+		ok: true,
+		name: "host launchers",
+		level: refused ? "warn" : "info",
+		detail: `grep and find: a worker's sandbox in workers, the host in the main session; ${readerLine}; ${confinedLine}; user hooks, code steps and run --verify: host (operator authority)`,
 	};
 }
 
@@ -626,6 +660,7 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 				sandboxStatusFinding(),
 				resourceLimitsFinding(),
 				shellSandboxFinding(workspaceRoot),
+				hostLaunchersFinding(workspaceRoot),
 				homeReadsFinding(workspaceRoot),
 				...schedulerClientFindings(),
 			];
