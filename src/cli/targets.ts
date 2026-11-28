@@ -32,9 +32,9 @@ import { runtimeNotRegistered } from "../domains/providers/runtime-not-registere
 import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.js";
 import type { CapabilityFlags } from "../domains/providers/types/capability-flags.js";
 import type { RuntimeTier } from "../domains/providers/types/runtime-descriptor.js";
+import { printError, printOk } from "./argv.js";
 import { inventoryNote, resolveSupportedWireModels } from "./configure-target.js";
 import { runTargetRemove, runTargetRename } from "./configure-target-setup.js";
-import { printError, printOk } from "./shared.js";
 import { column, terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 
 type ProviderOutputTier = RuntimeTier | "unknown";

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+/** Question builders and validation. */
+
 import type { SemanticKind } from "./contract.js";
 import type { PointQuestion, Question } from "./types.js";
 

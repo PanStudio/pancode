@@ -37,9 +37,6 @@ import { renderToolArguments } from "./renderers/tool-arguments.js";
 import { factRows, GLYPH, pancodeTheme, positionRow, rule, sectionRule } from "./theme/index.js";
 import { skinEpoch } from "./theme/tokens.js";
 
-export { askAxis } from "../domains/safety/approval-axis.js";
-export type { ApprovalRequestView } from "../session-control/approval-request-view.js";
-
 /** A boxed frame for the card: the card's own columns plus the frame's borders and padding. */
 export const PERMISSION_OVERLAY_WIDTH = CARD_CALLOUT_MAX_WIDTH + 4;
 

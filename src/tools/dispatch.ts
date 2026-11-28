@@ -18,11 +18,6 @@ import { buildDispatchParameters, FULL_DISPATCH_SCHEMA_COMPOSITION } from "./dis
 import type { DispatchExecutionSnapshot, DispatchToolDeps } from "./dispatch-types.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
-export {
-	createDispatchRunEventRegistry,
-	type DispatchRunEventRegistry,
-} from "./dispatch-run-events.js";
-
 /**
  * Stable, lightweight dispatch surface. Admission remains synchronous so the
  * policy decision and provisional reservation are bound to the exact argument

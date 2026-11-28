@@ -5,12 +5,9 @@ import { test } from "node:test";
 import { stripTerminalSequences } from "../../src/engine/tui.js";
 import { PancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
 import { routeOverlayKey } from "../../src/interactive/overlay-key-routing.js";
-import {
-	type ApprovalRequestView,
-	createPermissionOverlayBody,
-	PERMISSION_OVERLAY_WIDTH,
-} from "../../src/interactive/permission-overlay.js";
+import { createPermissionOverlayBody, PERMISSION_OVERLAY_WIDTH } from "../../src/interactive/permission-overlay.js";
 import { permissionOverlayHint } from "../../src/interactive/permission-overlay-model.js";
+import type { ApprovalRequestView } from "../../src/session-control/approval-request-view.js";
 
 // BT-005: at 60x40 the safety-net card had 17 rows above the composer, and
 // `?` opened terms that ended at "… 3 more rows" with no key that reached them.

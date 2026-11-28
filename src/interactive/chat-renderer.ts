@@ -94,11 +94,6 @@ import {
 	workerSettledFromData,
 } from "./worker-replay.js";
 
-export {
-	buildReplayAgentMessagesFromTurns,
-	retireActiveUserContextForNextOperator,
-} from "../session-control/session-replay-messages.js";
-
 const DEFAULT_COALESCE_MS = 16;
 /**
  * Stock Markdown re-lexes the whole open reply on every text change, about

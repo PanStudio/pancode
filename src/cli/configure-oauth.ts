@@ -14,6 +14,7 @@ import { canOpenBrowser, openBrowser } from "../core/open-browser.js";
 import { proxyEnvSummary } from "../core/proxy-env.js";
 import { openAuthStorage } from "../domains/providers/auth/index.js";
 import type { RuntimeDescriptor } from "../domains/providers/types/runtime-descriptor.js";
+import { printError, printOk } from "./argv.js";
 import type { ConfigureWizardHost } from "./configure-host.js";
 import { createDelayedManualCodeInput } from "./oauth-manual-input.js";
 import {
@@ -23,7 +24,7 @@ import {
 	oauthUrlLines,
 	promptOAuthSelection,
 } from "./oauth-select.js";
-import { credentialWriteFailed, printError, printOk } from "./shared.js";
+import { credentialWriteFailed } from "./shared.js";
 
 export async function loginOAuthRuntime(
 	rl: Pick<ReturnType<typeof createInterface>, "question"> | null,

@@ -109,13 +109,6 @@ import { WORKER_SETTLED_ENTRY } from "./worker-replay.js";
 import { createWorkspaceFacts } from "./workspace-facts.js";
 import { createYoloActivation } from "./yolo-activation.js";
 
-export type { RunIo } from "../session-control/slash-command-types.js";
-// Re-exports preserve the public surface for diag scripts that import these
-// names from "interactive/index.js"; the implementations live in
-// slash-commands.ts.
-export { BUILTIN_SLASH_COMMANDS, parseSlashCommand } from "../session-control/slash-commands.js";
-export * from "./overlay-lifecycle.js";
-
 /** The report offer's notice key; dismissing it records a no (R-11). */
 const REPORT_OFFER_NOTICE_KEY = "report-offer";
 /** At yolo, an operator with no keypress for this long is away and is not offered a report. */

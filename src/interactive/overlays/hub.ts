@@ -24,6 +24,8 @@ import type {
 	HubCopyInspection,
 	HubInventory,
 	HubInventoryOptions,
+	HubLifecyclePlan,
+	HubOperation,
 } from "../../domains/resources/index.js";
 import {
 	type HubPairs,
@@ -36,7 +38,7 @@ import {
 import { type OverlayHandle, stripTerminalSequences, type TUI } from "../../engine/tui.js";
 import type { NoticeLevel } from "../command-output.js";
 import { fitUnits, GLYPH, keyCap, pancodeTheme } from "../theme/index.js";
-import type { HubLifecyclePlan, HubLifecyclePort, HubOperation } from "./hub-lifecycle.js";
+import type { HubLifecyclePort } from "./hub-lifecycle.js";
 import {
 	buildHubRows,
 	type HubMode,

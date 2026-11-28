@@ -5,19 +5,6 @@ import chalk from "chalk";
 import { authStoragePath } from "../domains/providers/auth/index.js";
 import { printError } from "./argv.js";
 
-// The dependency-light CLI helpers live in ./argv.js so cli/index.ts can import
-// them without pulling the provider/auth graph into the startup chunk. They are
-// re-exported here so the command modules keep their existing `./shared.js`
-// import sites unchanged.
-export {
-	columnWidths,
-	formatColumnRow,
-	formatColumns,
-	printError,
-	printNote,
-	printOk,
-} from "./argv.js";
-
 /**
  * How the credentials file is protected on this platform, for copy that names
  * it: POSIX gets mode 0600, Windows gets an owner-only ACL (backend-file.ts

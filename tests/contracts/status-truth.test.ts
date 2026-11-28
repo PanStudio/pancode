@@ -61,7 +61,7 @@ import { silenceNoteForms } from "../../src/interactive/footer/silence-note.js";
 import type { OverlayState } from "../../src/interactive/overlay-key-routing.js";
 import { modelListTurnEffect, routeTurnEffect } from "../../src/interactive/overlay-model-selectors.js";
 import { createOverlayPermissionLifecycle } from "../../src/interactive/overlay-permission-lifecycle.js";
-import { type ApprovalRequestView, createPermissionOverlayBody } from "../../src/interactive/permission-overlay.js";
+import { createPermissionOverlayBody } from "../../src/interactive/permission-overlay.js";
 import { permissionRailTitle } from "../../src/interactive/permission-overlay-model.js";
 import {
 	presentProviderError,
@@ -86,6 +86,7 @@ import {
 	workerActivityWords,
 	workerSilenceWords,
 } from "../../src/interactive/worker-activity.js";
+import type { ApprovalRequestView } from "../../src/session-control/approval-request-view.js";
 import {
 	classifyTurnEnding,
 	noteWrittenCalls,

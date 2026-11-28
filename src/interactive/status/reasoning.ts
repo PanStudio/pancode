@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { Quantity } from "../../core/telemetry/dto.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
 import type { ReasoningTokenProvenance } from "../../session-control/status-types.js";

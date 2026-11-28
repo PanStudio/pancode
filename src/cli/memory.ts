@@ -31,8 +31,7 @@ import {
 import { projectDeclaresFlowRules } from "../domains/safety/flow-policy-snapshot.js";
 import { FLOW_RESTRICTION_ENTRY_TYPE } from "../domains/session/history.js";
 import { openSession } from "../engine/session.js";
-import { printNote } from "./argv.js";
-import { printError, printOk } from "./shared.js";
+import { printError, printNote, printOk } from "./argv.js";
 
 const HELP = `pancode memory list [--approved-by operator|guardian] [--json]
 pancode memory propose --from-evidence <runId> [scope options]

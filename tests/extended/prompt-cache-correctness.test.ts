@@ -12,7 +12,6 @@ import type { PromptsContract } from "../../src/domains/prompts/contract.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { createEngineAgent } from "../../src/engine/agent.js";
-import { buildReplayAgentMessagesFromTurns } from "../../src/interactive/chat-renderer.js";
 import { toolSignatureFromState } from "../../src/session-control/chat-loop-messages.js";
 import {
 	attachedToolSchemaBytes,
@@ -20,7 +19,11 @@ import {
 	type MainPromptCacheIdentityInput,
 	mainPromptCacheIdentity,
 } from "../../src/session-control/prompt-cache-identity.js";
-import { stringifyPreview, truncateReplayText } from "../../src/session-control/session-replay-messages.js";
+import {
+	buildReplayAgentMessagesFromTurns,
+	stringifyPreview,
+	truncateReplayText,
+} from "../../src/session-control/session-replay-messages.js";
 import { createTurnContext } from "../../src/session-control/turn-context.js";
 import type { TurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
