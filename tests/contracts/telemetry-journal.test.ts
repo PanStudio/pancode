@@ -32,6 +32,7 @@ import type { TelemetryContext } from "../../src/core/telemetry/context.js";
 import type { CostReportV1, ExplanationV1 } from "../../src/core/telemetry/dto.js";
 import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { makeTelemetryRecord, SegmentHeaderSchema } from "../../src/core/telemetry/envelope.js";
+import type { EventPayload } from "../../src/core/telemetry/events.js";
 import type { Fact } from "../../src/core/telemetry/fact.js";
 import type { WorkerTelemetryFrame } from "../../src/core/telemetry/forwarder.js";
 import { createTelemetryForwarder, readWorkerTelemetryFrame } from "../../src/core/telemetry/forwarder.js";
@@ -380,6 +381,69 @@ test("parent replay resolves aggregate-only run references and replaces a partia
 		await parent.release();
 		// The idle hold keeps the session owner registered after release; later tests open "parent" themselves (#434).
 		await journals.closeAll();
+		await rm(scratch, { recursive: true, force: true });
+	}
+});
+
+test("a run counts its workers' sandbox launch records, and a reopened journal counts the ones it holds (P6)", async () => {
+	const scratch = await mkdtemp(join(tmpdir(), "telemetry-run-sandbox-"));
+	const context = { sessionId: null, runId: "run_sbx", agent: { role: "worker" as const, id: "run_sbx" } };
+	const directory = telemetryRunDirectory(join(scratch, "state"), "run_sbx");
+	const launched = (data: EventPayload<"sandbox.launched">) => ({
+		type: "pancode_telemetry" as const,
+		record: {
+			...makeTelemetryRecord("sandbox.launched", data, context, { t: new Date().toISOString(), mono: 1 }),
+			origin: { host: "fixture", pid: 1, birthToken: "fixture", monoEpochWallMs: 1 },
+		},
+	});
+	const base = {
+		caller: "worker",
+		launcher: "shell",
+		confinement: "sandboxed",
+		why: "worker-policy",
+		backend: "bwrap",
+	} as const;
+	const expected = {
+		launches: 2,
+		refused: 0,
+		launchFailed: 0,
+		allowed: 2,
+		denied: 1,
+		failed: 1,
+		dropped: 4,
+		unobserved: 1,
+	};
+	const run = await openRunTelemetry(context, directory);
+	try {
+		ok(
+			run.worker(
+				launched({
+					...base,
+					outcome: "ran",
+					exitCode: 0,
+					network: { mode: "proxied", observed: true },
+					destinations: [
+						{ host: "registry.npmjs.org", port: 443, decision: "allowed", source: "grant", count: 2 },
+						{ host: "10.0.0.1", port: 80, decision: "denied", reason: "private-literal", count: 1 },
+						{ host: "gone.test", port: 443, decision: "failed", reason: "unresolved", source: "grant", count: 1 },
+					],
+					dropped: 3,
+					shed: 1,
+				}),
+			),
+		);
+		ok(run.worker(launched({ ...base, outcome: "ran", exitCode: 0, network: { mode: "open", observed: false } })));
+		deepStrictEqual(run.sandboxLaunches(), expected);
+		await run.flush();
+	} finally {
+		await run.close();
+	}
+	// A closed owner stays a tombstone in this process; the next host to own the directory reads what it holds.
+	const reopened = await openRunTelemetry({ ...context, runId: "run_sbx_next" }, directory);
+	try {
+		deepStrictEqual(reopened.sandboxLaunches(), expected);
+	} finally {
+		await reopened.close();
 		await rm(scratch, { recursive: true, force: true });
 	}
 });

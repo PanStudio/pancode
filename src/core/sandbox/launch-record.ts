@@ -102,6 +102,35 @@ function destination(receipt: EgressReceipt): SandboxDestination {
 	};
 }
 
+/**
+ * A run's launches as its records tell them. `allowed`, `denied` and `failed` count connection attempts the proxy
+ * observed; `unobserved` counts launches that ran with an open network no proxy watched.
+ */
+export interface SandboxLaunchTally {
+	launches: number;
+	refused: number;
+	launchFailed: number;
+	allowed: number;
+	denied: number;
+	failed: number;
+	/** Connection attempts the records counted but did not list or read: past a bound, or shed. */
+	dropped: number;
+	unobserved: number;
+}
+
+export function emptySandboxLaunchTally(): SandboxLaunchTally {
+	return { launches: 0, refused: 0, launchFailed: 0, allowed: 0, denied: 0, failed: 0, dropped: 0, unobserved: 0 };
+}
+
+export function tallySandboxLaunch(tally: SandboxLaunchTally, record: SandboxLaunchRecord): void {
+	tally.launches += 1;
+	if (record.outcome === "refused") tally.refused += 1;
+	else if (record.outcome === "launch-failed") tally.launchFailed += 1;
+	else if (record.network.mode === "open") tally.unobserved += 1;
+	for (const destination of record.destinations ?? []) tally[destination.decision] += destination.count;
+	tally.dropped += (record.dropped ?? 0) + (record.shed ?? 0);
+}
+
 /** The record of one settled launch. A proxied launch that ran lists its origins; any other network was not observed. */
 export function sandboxLaunchRecord(
 	facts: SandboxLaunchFacts,
