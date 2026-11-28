@@ -443,7 +443,7 @@ describe("smoke/built CLI core", { concurrency: false }, () => {
 
 			const configureCancel = await runCli(["configure"], { env: scratch.env, input: "q\n" });
 			strictEqual(configureCancel.code, 130, configureCancel.stdout + configureCancel.stderr);
-			match(configureCancel.stderr, /configuration cancelled/u);
+			match(configureCancel.stderr, /configuration canceled/u);
 
 			const firstRunCancel = await runCli([], {
 				env: { ...firstRun.env, PANCODE_INTERACTIVE: "1", TERM: "xterm-256color" },
@@ -452,7 +452,7 @@ describe("smoke/built CLI core", { concurrency: false }, () => {
 			strictEqual(firstRunCancel.code, 130, firstRunCancel.stdout + firstRunCancel.stderr);
 			// The notice wraps to the terminal (5906516d3), so the sentence may break across lines.
 			match(firstRunCancel.stdout, /PanCode needs a model before it can do\s+anything\s+else/u);
-			match(firstRunCancel.stderr, /configuration cancelled/u);
+			match(firstRunCancel.stderr, /configuration canceled/u);
 		} finally {
 			firstRun.cleanup();
 			scratch.cleanup();

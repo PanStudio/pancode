@@ -553,7 +553,7 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 
 		await checkInstalledBrowser(origin, await mintLaunchTicket(origin, credential));
 
-		const tools = await request("/api/toolchain/tools");
+		const tools = await request("/api/programs");
 		strictEqual(tools.status, 200);
 		strictEqual(
 			((await tools.json()) as unknown[]).length,
@@ -561,7 +561,7 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 			"the reads worker lists every pinned tool",
 		);
 
-		const removal = await request("/api/toolchain/tools/herdr/remove", {});
+		const removal = await request("/api/programs/herdr/remove", {});
 		strictEqual(removal.status, 202);
 		const { operationId } = (await removal.json()) as { operationId: string };
 		let operation: { status: string } | undefined;
