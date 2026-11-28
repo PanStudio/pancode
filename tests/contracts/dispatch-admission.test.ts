@@ -65,13 +65,13 @@ import { quotaSharedStatePath } from "../../src/domains/quota/shared-state.js";
 import { credentialFingerprint } from "../../src/domains/quota/types.js";
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
 import { planFacts, planRouteSources, readDispatchPlan } from "../../src/interactive/dispatch-plan-summary.js";
+import type { WorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { createDispatchAdmissionController } from "../../src/tools/dispatch-admission.js";
 import { dispatchRequestsFromArgs } from "../../src/tools/dispatch-arguments.js";
 import { normalizeDispatchAdmission } from "../../src/tools/dispatch-normalize.js";
 import { DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT, describeDispatchPlan } from "../../src/tools/dispatch-plan.js";
 import type { DispatchToolDeps } from "../../src/tools/dispatch-types.js";
-import type { WorkerSpec } from "../../src/worker/spec-contract.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

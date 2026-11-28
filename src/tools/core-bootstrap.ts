@@ -21,7 +21,7 @@ import type { WorkspaceSnapshot } from "../domains/session/workspace/index.js";
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
 import type { ImageContent } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import type { AgentLedgerPort } from "../worker/protocol.js";
+import type { AgentLedgerPort } from "../lib/worker-wire/protocol.js";
 import { createArtifactTool } from "./artifact.js";
 import { type AskUserHandler, createAskUserTool } from "./ask-user.js";
 import { bashTool } from "./bash.js";

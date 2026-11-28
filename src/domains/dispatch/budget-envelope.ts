@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isRecord } from "../../core/type-guards.js";
-import type { WorkerBudget } from "../../worker/spec-contract.js";
+import type { WorkerBudget } from "../../lib/worker-wire/spec-contract.js";
 import type { AgentBudget, AgentBudgetPhase } from "../agents/recipe.js";
 
 /** Invocation-level phase requested by dispatch. */

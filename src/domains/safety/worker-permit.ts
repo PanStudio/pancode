@@ -7,7 +7,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { isMcpToolName, mcpToolName, ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
-import { workerPermitDigest } from "../../worker/protocol.js";
+import { workerPermitDigest } from "../../lib/worker-wire/protocol.js";
 import { capabilityClassExcludes } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
 import type { McpAttestedSkill } from "../mcp/skill-catalog.js";

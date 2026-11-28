@@ -43,13 +43,13 @@ import {
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../domains/safety/scope.js";
 import { probeWorkspace } from "../domains/session/workspace/index.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../lib/autonomy/autonomy.js";
+import { type AgentLedgerPort, toolSignatureOf } from "../lib/worker-wire/protocol.js";
 import { envelopeSurfaceNames, wireParameterSchema } from "../tools/agent-tools.js";
 import { assertRegisteredBuiltinTools, registerCoreTools } from "../tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { registerHarnessExtensionTools } from "../tools/harness-extensions.js";
 import { createRegistry } from "../tools/registry.js";
 import type { RegistryDeps, ToolRegistry } from "../tools/registry-contract.js";
-import { type AgentLedgerPort, toolSignatureOf } from "../worker/protocol.js";
 
 /** Host-owned terminal protocol, never an additional workspace capability. */
 export const INTERNAL_HELPER_RESULT_TOOL = "pancode_submit_result";

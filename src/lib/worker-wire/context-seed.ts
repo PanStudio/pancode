@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Pure Pi message seed contract shared by the host and subprocess. No domain runtime or protected engine graph is loaded. */
 
-import { canonicalJson } from "../core/canonical-json.js";
-import { sha256Hex } from "../core/hash.js";
-import { isRecord } from "../core/type-guards.js";
+import { canonicalJson } from "../../core/canonical-json.js";
+import { sha256Hex } from "../../core/hash.js";
+import { isRecord } from "../../core/type-guards.js";
 import type {
 	WorkerContextProvenance,
 	WorkerContextSeed,
 	WorkerRecallLineage,
-} from "../domains/context/worker/contract.js";
-import type { AgentMessage } from "../engine/types.js";
+} from "../../domains/context/worker/contract.js";
+import type { AgentMessage } from "../../engine/types.js";
 
 export const WORKER_CONTEXT_MAX_BYTES = 512 * 1024;
 

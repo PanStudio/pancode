@@ -13,10 +13,10 @@ import {
 import { resultContractRepairMessages } from "../../src/domains/agents/result-contract-repair.js";
 import { capacityLeaseUsage } from "../../src/domains/dispatch/capacity-lease.js";
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
+import type { WorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { createMonitorTool } from "../../src/tools/monitor.js";
 import { runEvidenceLabels } from "../../src/tools/worker-evidence.js";
-import type { WorkerSpec } from "../../src/worker/spec-contract.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { resolvedRunResult } from "../harness/settled-run.js";

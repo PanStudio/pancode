@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { WorkerHookResultFrame } from "../../lib/worker-wire/protocol.js";
 import type { TaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type { TaskWorktreePreview } from "../../tools/task-worktree-preview.js";
-import type { WorkerHookResultFrame } from "../../worker/protocol.js";
 import type { FlowRestrictionSet } from "../safety/information-flow.js";
 import type { TelemetrySessionLease } from "../telemetry/session-journals.js";
 import type { AgentLedgerAttribution } from "./agent-ledger-store.js";

@@ -1351,7 +1351,7 @@ function shadowStandInCommand(parsed: RunCliArgs, standIn: string): string {
  * loads only once a dispatched run has settled.
  */
 export async function mapExitCode(r: RunResult): Promise<number> {
-	const { WORKER_EXIT_PERMISSION_REQUIRED } = await import("../worker/spec-contract.js");
+	const { WORKER_EXIT_PERMISSION_REQUIRED } = await import("../lib/worker-wire/spec-contract.js");
 	const { compromisedSuccess } = await import("../domains/dispatch/gate-verdict.js");
 	// The run's assurance is the one value read here (fleet design 4.8): a compromised result (a verifier's failed
 	// verdict, a check the run saw fail after its last edit, a validation claimed and never run) makes

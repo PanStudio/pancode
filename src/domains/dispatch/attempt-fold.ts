@@ -9,7 +9,7 @@ import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
 import { INTERNAL_HELPER_RESULT_TOOL } from "../../engine/worker-tools.js";
-import { WORKER_REFUSAL_LIMIT_PREFIX } from "../../worker/spec-contract.js";
+import { WORKER_REFUSAL_LIMIT_PREFIX } from "../../lib/worker-wire/spec-contract.js";
 import { isFlowRestrictionSet, mergeFlowRestrictions } from "../safety/information-flow.js";
 import type { SpawnedAttempt } from "./attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";

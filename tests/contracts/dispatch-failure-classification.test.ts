@@ -28,7 +28,7 @@ import type { ToolCallStat } from "../../src/domains/dispatch/types.js";
 import type { ActionClass } from "../../src/domains/safety/action-classifier.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
-import { WORKER_PROVIDER_HTTP_STATUS_MARKER } from "../../src/worker/spec-contract.js";
+import { WORKER_PROVIDER_HTTP_STATUS_MARKER } from "../../src/lib/worker-wire/spec-contract.js";
 import { settleStubBuilder } from "../harness/dispatch.js";
 import { BUILDER_GRADE, cleanGradeFacts, gradeWork } from "../harness/grade-facts.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";

@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { requirePricedRefusal } from "../../core/run-overrides.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
-import type { WorkerGrantBinding } from "../../worker/spec-contract.js";
+import type { WorkerGrantBinding } from "../../lib/worker-wire/spec-contract.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
 import { normalizeAgentSpec } from "../agents/spec.js";
 import { persistWorkerContextSeed } from "../context/worker/store.js";

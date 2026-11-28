@@ -5,8 +5,8 @@ import { sha256Hex } from "../../core/hash.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerEgressMode, workerMcpNoNetworkNotice } from "../../core/sandbox/worker-policy.js";
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
+import { endpointIdentityHash, toolSignatureOf } from "../../lib/worker-wire/protocol.js";
 import { toolPromptHintsForNames } from "../../tools/builtin-tool-catalog.js";
-import { endpointIdentityHash, toolSignatureOf } from "../../worker/protocol.js";
 import { agentHasTrait } from "../agents/spec.js";
 import { workerHandbookAudience } from "../context/handbook-units.js";
 import {

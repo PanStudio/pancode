@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { restoreTaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type {
 	AgentLedgerBody,
 	WorkerGrantRequestFrame,
 	WorkerHookEffect,
 	WorkerHookRequest,
 	WorkerModelLoad,
-} from "../../worker/protocol.js";
+} from "../../lib/worker-wire/protocol.js";
+import { restoreTaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import { recordAgentLedgerDispute } from "../claims/index.js";
 import { resolveClaudeLaunchCredential } from "../providers/auth/index.js";
 import { type FlowRestrictionSet, mergeFlowRestrictions } from "../safety/information-flow.js";

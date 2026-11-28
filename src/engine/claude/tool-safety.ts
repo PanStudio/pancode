@@ -12,9 +12,9 @@ import type { SafetyContract, SafetyDecision } from "../../domains/safety/contra
 import type { RejectionMessage } from "../../domains/safety/rejection-feedback.js";
 import { MAIN_GRANTS_UNAVAILABLE_REASON } from "../../domains/safety/worker-permit.js";
 import { describeCallAction } from "../../lib/call-target/call-target.js";
+import { WORKER_REFUSAL_LIMIT } from "../../lib/worker-wire/spec-contract.js";
 import type { ToolFinishEvent, ToolStartEvent } from "../../tools/agent-tools.js";
 import { toolCallFacts } from "../../tools/agent-tools.js";
-import { WORKER_REFUSAL_LIMIT } from "../../worker/spec-contract.js";
 import type { PancodeWorkerEvent } from "../worker-events.js";
 import type { WorkerRefusal } from "../worker-refusals.js";
 import {

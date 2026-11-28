@@ -1,38 +1,38 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { isAbsolute } from "node:path";
-import { THINKING_LEVELS } from "../core/defaults.js";
-import { MODEL_TIERS } from "../core/model-tier.js";
-import type { ProtectedModelRef, ResidencyRole } from "../core/residency-protection.js";
-import { assertValidResponseSchema, runtimeSpeaksResponseSchemaDialect } from "../core/response-schema.js";
+import { THINKING_LEVELS } from "../../core/defaults.js";
+import { MODEL_TIERS } from "../../core/model-tier.js";
+import type { ProtectedModelRef, ResidencyRole } from "../../core/residency-protection.js";
+import { assertValidResponseSchema, runtimeSpeaksResponseSchemaDialect } from "../../core/response-schema.js";
 import {
 	BOOLEAN_CAPABILITY_KEYS,
 	RUNTIME_API_FAMILIES,
 	RUNTIME_AUTHS,
 	RUNTIME_KINDS,
-} from "../core/runtime-vocabulary.js";
-import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
-import { homeReadRootProblem } from "../core/sandbox/home-read-roots.js";
+} from "../../core/runtime-vocabulary.js";
+import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../../core/sandbox/egress/policy.js";
+import { homeReadRootProblem } from "../../core/sandbox/home-read-roots.js";
 import {
 	HOME_READ_TOOLCHAINS,
 	RESOURCE_LIMIT_KEYS,
 	RESOURCE_LIMIT_MAX,
 	WORKER_SANDBOX_SPEC_VERSION,
 	type WorkerSandboxSpec,
-} from "../core/sandbox/types.js";
-import type { SharedStoreGrant } from "../core/store-shared-grant.js";
-import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
-import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
-import { MIDDLEWARE_HOOKS, PROTECTED_ARTIFACT_SOURCES } from "../core/telemetry/session-vocabulary.js";
-import { isMcpToolName, mcpToolName, type ToolName } from "../core/tool-names.js";
-import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
-import { RUN_ROLES, type RunRole } from "../core/views/run-roles.js";
-import type { ResultContract } from "../domains/agents/result-contract-types.js";
-import type { AgentProduct } from "../domains/agents/spec.js";
-import type { WorkerContextSeed } from "../domains/context/worker/contract.js";
-import type { WorkerEnvelope } from "../domains/dispatch/envelope.js";
-import type { RunLimits } from "../domains/dispatch/run-limits.js";
-import type { MiddlewareEffectKind, MiddlewareSnapshot } from "../domains/middleware/index.js";
+} from "../../core/sandbox/types.js";
+import type { SharedStoreGrant } from "../../core/store-shared-grant.js";
+import type { WorkerTelemetryContext } from "../../core/telemetry/context.js";
+import { isWorkerTelemetryContext } from "../../core/telemetry/context.js";
+import { MIDDLEWARE_HOOKS, PROTECTED_ARTIFACT_SOURCES } from "../../core/telemetry/session-vocabulary.js";
+import { isMcpToolName, mcpToolName, type ToolName } from "../../core/tool-names.js";
+import { snapshotTurnConstraints, type TurnConstraints } from "../../core/turn-constraints.js";
+import { RUN_ROLES, type RunRole } from "../../core/views/run-roles.js";
+import type { ResultContract } from "../../domains/agents/result-contract-types.js";
+import type { AgentProduct } from "../../domains/agents/spec.js";
+import type { WorkerContextSeed } from "../../domains/context/worker/contract.js";
+import type { WorkerEnvelope } from "../../domains/dispatch/envelope.js";
+import type { RunLimits } from "../../domains/dispatch/run-limits.js";
+import type { MiddlewareEffectKind, MiddlewareSnapshot } from "../../domains/middleware/index.js";
 import type {
 	CapabilityFlags,
 	RuntimeApiFamily,
@@ -42,11 +42,11 @@ import type {
 	RuntimeTargetSnapshot,
 	TargetDescriptor,
 	ThinkingLevel,
-} from "../domains/providers/index.js";
-import type { FlowRestrictionSet, WorkerFlowPolicyInput } from "../domains/safety/information-flow.js";
-import type { ProtectedArtifact } from "../domains/safety/protected-artifacts.js";
-import type { WorkerPermit } from "../domains/safety/worker-permit.js";
-import type { ToolProfileName } from "../tools/profiles.js";
+} from "../../domains/providers/index.js";
+import type { FlowRestrictionSet, WorkerFlowPolicyInput } from "../../domains/safety/information-flow.js";
+import type { ProtectedArtifact } from "../../domains/safety/protected-artifacts.js";
+import type { WorkerPermit } from "../../domains/safety/worker-permit.js";
+import type { ToolProfileName } from "../../tools/profiles.js";
 import { parseWorkerContextSeed } from "./context-seed.js";
 import {
 	INTERNAL_HELPER_RESULT_KINDS,

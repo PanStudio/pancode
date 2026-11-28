@@ -6,9 +6,9 @@ import { describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
 import { attestedToolSignature, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { toolSignatureOf } from "../../src/lib/worker-wire/protocol.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import { toolSignatureOf } from "../../src/worker/protocol.js";
 
 /**
  * The orchestrator admits `ledger` for every member of a batch and signs the

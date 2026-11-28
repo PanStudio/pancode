@@ -32,8 +32,8 @@ import { mainGrantsUnavailable } from "../../domains/safety/worker-permit.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { findExecutableOnPath } from "../../lib/programs/resolve.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED, type WorkerBudget } from "../../lib/worker-wire/spec-contract.js";
 import { toolCallFacts } from "../../tools/agent-tools.js";
-import { WORKER_EXIT_PERMISSION_REQUIRED, type WorkerBudget } from "../../worker/spec-contract.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
 import type { AgentEvent, AgentMessage } from "../types.js";
 import {

@@ -109,6 +109,18 @@ import {
 import { estimateAgentMessageTokens } from "../domains/session/context-accounting.js";
 import { abortReasonCause } from "../domains/telemetry/call-facts.js";
 import { describeCallTarget, WORKER_CALL_TARGET_MAX_CHARS } from "../lib/call-target/call-target.js";
+import { seededWorkerMessages, seedRecallLineage } from "../lib/worker-wire/context-seed.js";
+import { permissionHoldBackstopAt, type WorkerGrantRequestFrame } from "../lib/worker-wire/protocol.js";
+import {
+	DEFAULT_ESCALATION_FALLBACK,
+	DEFAULT_ESCALATION_TIMEOUT_MS,
+	WORKER_EXIT_PERMISSION_REQUIRED,
+	WORKER_PROVIDER_HTTP_STATUS_MARKER,
+	WORKER_REFUSAL_LIMIT,
+	type WorkerBudget,
+	type WorkerEscalationConfig,
+	type WorkerPromptMessage,
+} from "../lib/worker-wire/spec-contract.js";
 import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
 import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { createWorkerGitContext } from "../tools/git-exec.js";
@@ -121,18 +133,6 @@ import {
 	contractDeclaresTaskGates,
 	isTaskGateCall,
 } from "../tools/verify/task-gates.js";
-import { seededWorkerMessages, seedRecallLineage } from "../worker/context-seed.js";
-import { permissionHoldBackstopAt, type WorkerGrantRequestFrame } from "../worker/protocol.js";
-import {
-	DEFAULT_ESCALATION_FALLBACK,
-	DEFAULT_ESCALATION_TIMEOUT_MS,
-	WORKER_EXIT_PERMISSION_REQUIRED,
-	WORKER_PROVIDER_HTTP_STATUS_MARKER,
-	WORKER_REFUSAL_LIMIT,
-	type WorkerBudget,
-	type WorkerEscalationConfig,
-	type WorkerPromptMessage,
-} from "../worker/spec-contract.js";
 import type { WorkerDecisionBinding } from "../worker/stdin-demux.js";
 import { createEngineAgent, type EngineAgentOptions } from "./agent.js";
 import { registerFauxFromEnv } from "./ai.js";

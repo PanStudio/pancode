@@ -3,12 +3,12 @@
 import { isCopilotRefusal } from "../../core/copilot-refusal.js";
 import { isResponseSchemaRejection } from "../../core/response-schema.js";
 import { isEngineContextOverflow, isProviderContentFilter } from "../../engine/ai.js";
-import { WORKER_STDOUT_UNDRAINED_REASON } from "../../worker/ndjson.js";
+import { WORKER_STDOUT_UNDRAINED_REASON } from "../../lib/worker-wire/ndjson.js";
 import {
 	WORKER_EXIT_PERMISSION_REQUIRED,
 	WORKER_PROVIDER_HTTP_STATUS_MARKER,
 	WORKER_SPEC_VERSION_SKEW,
-} from "../../worker/spec-contract.js";
+} from "../../lib/worker-wire/spec-contract.js";
 import { isDeterministicOutcomeCode } from "./backoff.js";
 import type { RunTerminationEvidence } from "./outcome.js";
 import type { RunOutcome, RunOutcomeCode } from "./types.js";

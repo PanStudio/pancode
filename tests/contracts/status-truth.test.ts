@@ -86,6 +86,13 @@ import {
 	workerActivityWords,
 	workerSilenceWords,
 } from "../../src/interactive/worker-activity.js";
+import {
+	permissionHoldBackstopAt,
+	WORKER_APPROVAL_BACKSTOP_MARGIN_MS,
+	WORKER_PERMISSION_HOLD_LIMIT_MS,
+	WORKER_PERMISSION_HOLD_VERSION,
+	type WorkerPermissionHoldFrame,
+} from "../../src/lib/worker-wire/protocol.js";
 import type { ApprovalRequestView } from "../../src/session-control/approval-request-view.js";
 import {
 	classifyTurnEnding,
@@ -99,13 +106,6 @@ import { createTurnRecovery } from "../../src/session-control/turn-recovery.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
 import type { WorkerEntryState } from "../../src/session-control/worker-stream.js";
 import { createWorkerStream } from "../../src/session-control/worker-stream.js";
-import {
-	permissionHoldBackstopAt,
-	WORKER_APPROVAL_BACKSTOP_MARGIN_MS,
-	WORKER_PERMISSION_HOLD_LIMIT_MS,
-	WORKER_PERMISSION_HOLD_VERSION,
-	type WorkerPermissionHoldFrame,
-} from "../../src/worker/protocol.js";
 import { createWorkerStdinDemux } from "../../src/worker/stdin-demux.js";
 
 const STUCK_AFTER_MS = 180_000;

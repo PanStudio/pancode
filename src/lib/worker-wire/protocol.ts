@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { canonicalJson } from "../core/canonical-json.js";
-import type { FlowRestrictionSet } from "../core/flow-restrictions.js";
-import { isFlowRestrictionSet } from "../core/flow-restrictions.js";
-import { sha256Hex } from "../core/hash.js";
-import { type ModelRunInfo, parseModelRunInfo } from "../core/model-tier.js";
-import { isRecord } from "../core/type-guards.js";
+import { canonicalJson } from "../../core/canonical-json.js";
+import type { FlowRestrictionSet } from "../../core/flow-restrictions.js";
+import { isFlowRestrictionSet } from "../../core/flow-restrictions.js";
+import { sha256Hex } from "../../core/hash.js";
+import { type ModelRunInfo, parseModelRunInfo } from "../../core/model-tier.js";
+import { isRecord } from "../../core/type-guards.js";
 /**
  * Worker wire protocol: lanes, bounds, and the attestation frame schema.
  *

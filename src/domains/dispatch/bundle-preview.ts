@@ -10,7 +10,7 @@ import {
 	toolSignatureOf,
 	WORKER_EXTENSION_HOOKS_MAX,
 	type WorkerExtensionHook,
-} from "../../worker/protocol.js";
+} from "../../lib/worker-wire/protocol.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import {
 	type AgentSpec,
