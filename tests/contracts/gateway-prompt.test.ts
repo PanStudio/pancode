@@ -139,7 +139,8 @@ describe("gateway in the session prompt", () => {
 			// schema size is not a lab constraint (maintainer 13:10Z), so the ceiling follows the ruled description.
 			// 13,628: finish states when it applies first (a text-only reply never calls it), 751 -> 938 bytes (15:27Z ruling).
 			// 13,646: the product name PanCode is three bytes longer than the old name in six tool descriptions.
-			ok(total <= 13_646, `ten attached tools must stay within 13,646 bytes, down from ${ATTACHED_BUDGET_BYTES}`);
+			// 13,962: bash and verify declare unsandboxed_reason, the operator-shown reason an escape now requires (sandbox D9).
+			ok(total <= 13_962, `ten attached tools must stay within 13,962 bytes, down from ${ATTACHED_BUDGET_BYTES}`);
 			const gateway = sizes.find((entry) => entry.name === ToolNames.Gateway);
 			ok(gateway !== undefined && gateway.bytes < 2_048, `the gateway schema stays small: ${gateway?.bytes}`);
 			doesNotMatch(

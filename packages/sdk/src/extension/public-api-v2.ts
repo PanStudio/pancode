@@ -9,7 +9,13 @@
  * handler can be tested by calling it.
  */
 
-import type { ExtensionClaims, ExtensionRuns, ExtensionVerify, ExtensionWorktrees } from "./services-v2.js";
+import type {
+	ExtensionClaims,
+	ExtensionPathGrant,
+	ExtensionRuns,
+	ExtensionVerify,
+	ExtensionWorktrees,
+} from "./services-v2.js";
 import type { View, ViewTone } from "./view.js";
 import type { EmbeddingInput, EmbeddingResponse, EmbeddingTask, FactSum, ModelRunInfo, TurnOrigin } from "./wire.js";
 
@@ -649,6 +655,16 @@ export interface ExtensionContextV2 {
 	 * Acts only from a command, an action or a tool call, never in a read-only turn; elsewhere a call throws the reason.
 	 */
 	readonly pane?: ExtensionPane;
+	/**
+	 * Present in a command run as `pancode <verb>` whose `runtime.cli[].paths` named flags the operator gave: the paths
+	 * this command may read, and write, outside its declared roots. A session invocation never has any.
+	 */
+	readonly paths?: ReadonlyArray<ExtensionPathGrant>;
+	/**
+	 * Present in a command or an action: parse YAML text in the host, at most 64 KiB, into plain data. A bad document
+	 * rejects with the parser's message.
+	 */
+	readonly yaml?: (text: string) => Promise<unknown>;
 	/** Present in a command or an action when runtime.services.runs is declared and approved. */
 	readonly runs?: ExtensionRuns;
 	/** Present in a command or an action when runtime.services.worktrees is declared and approved. */

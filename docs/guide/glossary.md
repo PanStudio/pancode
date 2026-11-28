@@ -375,8 +375,8 @@ The words you meet first, each in a sentence or two, with the guide that explain
 - **Owning Type**: `ModelTier` and `defaultModelTier` in [model-tier.ts](../../src/core/model-tier.ts).
 
 ### 84. Model campaign
-- **Definition**: One seeded project run by `pancode campaign run` across a roster of models, one entry at a time. Each entry gets a fresh copy of the fixture and its own empty data, state and cache directories, runs headless with the same `--answers` file, and reports its status, extension gates reached, refusals, loop-guard blocks, tokens and wall time. Not to be confused with a research campaign, which hill-climbs one metric.
-- **Owning Type**: `runCampaign` in [runner.ts](../../src/domains/campaign/runner.ts).
+- **Definition**: One seeded project run by `pancode campaign run` across a roster of models, one entry at a time. Each entry gets a fresh copy of the fixture and its own empty data, state and cache directories, runs headless with the same `--answers` file, and reports its status, extension gates reached, refusals, loop-guard blocks, tokens and wall time. It comes from the [campaign pack](../../hub/packs/extensions/campaign/README.md). Not to be confused with a research campaign, which hill-climbs one metric.
+- **Owning Type**: `runCampaign` in the campaign pack's [runner.ts](../../hub/packs/extensions/campaign/runtime/runner.ts).
 
 ### 85. Answers file
 - **Definition**: The YAML file `pancode run --answers <file>` reads to answer, ahead of time, the questions only the author may answer in a headless run: extension interview steps and `operator_only` `ask_user` questions. Each entry matches one question by checkpoint `id`, `header` or a `match` regular expression and gives a `choice`, a `note`, or both. A matched answer is recorded as scripted; an author question no entry matches ends the run with exit `5`. See [Exit codes](exit-codes-and-output.md#exit-code-contract).

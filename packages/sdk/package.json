@@ -19,10 +19,6 @@
 		"LICENSE"
 	],
 	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
-		},
 		"./extension": {
 			"types": "./dist/extension/index.d.ts",
 			"import": "./dist/extension/index.js"
