@@ -118,6 +118,7 @@ import {
 	recordedExecution,
 	withRegistryScope,
 } from "./registry-nested-calls.js";
+import { createShellEgress, enqueueOperatorAsk, type OperatorAskQueue } from "./registry-operator-asks.js";
 import {
 	askUserAnswered,
 	blockDecision,
@@ -230,6 +231,8 @@ interface ParkedCall {
 	hookDrift?: GitHookDriftReport;
 	/** Set when a before_tool hook's `request_approval` parked the call: what its hook stage decided. */
 	settledHookEffects?: ReadonlyArray<MiddlewareEffect>;
+	/** Settles an operator-only ask once the operator approves it (a contained command's egress ask). */
+	approve?: (requestedBy: string | undefined) => void;
 }
 
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
@@ -360,20 +363,20 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	};
 	const shellSandboxPolicy = (
 		roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
-		sessionId: string | undefined,
+		options: ToolInvokeOptions | undefined,
 	): MainSandboxPolicy => {
 		const env = deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {};
 		const unixSockets = deps.sandboxUnixSockets !== undefined ? { unixSockets: deps.sandboxUnixSockets() } : {};
-		if (roots.readOnly === true) {
-			return readOnlyMainSandboxPolicy({
-				workspace: roots.workspace,
-				scratchRoots: roots.scratchRoots,
-				scratchDir: readOnlyScratchDir(sessionId ?? deps.currentSessionId?.()),
-				...env,
-				...unixSockets,
-			});
-		}
-		return mainSandboxPolicy({ workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets });
+		const scope = { workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets };
+		return shellEgress.apply(
+			roots.readOnly === true
+				? readOnlyMainSandboxPolicy({
+						...scope,
+						scratchDir: readOnlyScratchDir(options?.sessionId ?? deps.currentSessionId?.()),
+					})
+				: mainSandboxPolicy(scope),
+			options,
+		);
 	};
 	/**
 	 * True yolo for this registry's calls (#407): the operator's session at
@@ -389,6 +392,15 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const permissionListeners = new Set<
 		(call: ClassifierCall, decision: SafetyDecision, meta: PermissionRequiredMeta) => void
 	>();
+	const askQueue: OperatorAskQueue = {
+		parked,
+		cardsRendered: () => permissionListeners.size > 0,
+		nextRequestId: () => nextApprovalRequestId(),
+		cancel: (requestId, reason) => cancelParkedCallById(requestId, reason),
+		record: (call, decision, disposition, overrides) => recordRegistryDisposition(call, decision, disposition, overrides),
+		notify: (call, decision, meta) => notifyPermissionRequired(call, decision, meta),
+	};
+	const shellEgress = createShellEgress(deps, askQueue);
 	const admissionReviewListeners = new Set<(event: AdmissionReviewEvent) => void>();
 	const bodyStartListeners = new Set<(toolCallId: string) => void>();
 	const notifyBodyStart = (options: ToolInvokeOptions | undefined): void => {
@@ -764,7 +776,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 						? { operatorYolo: true as const }
 						: {}),
 					...(decision.policy?.shellSandbox !== undefined
-						? { shellSandbox: shellSandboxPolicy(decision.policy.shellSandbox, options?.sessionId) }
+						? { shellSandbox: shellSandboxPolicy(decision.policy.shellSandbox, options) }
 						: {}),
 					...(landing !== undefined && landing !== null ? { hookLanding: landing } : {}),
 					...(deps.flow !== undefined && !trueYolo()
@@ -2331,17 +2343,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 							);
 						},
 					};
-					if (options?.signal) {
-						const abort = () => cancelParkedCallById(meta.requestId, PARK_ABORT_REASON);
-						options.signal.addEventListener("abort", abort, { once: true });
-						entry.abortCleanup = () => options.signal?.removeEventListener("abort", abort);
-					}
-					parked.push(entry);
-					recordRegistryDisposition(call, decision, "permission_requested", {
-						requestId: meta.requestId,
-						reasonCode: "confirmation:dispatch-external-read",
-					});
-					notifyPermissionRequired(call, decision, meta);
+					enqueueOperatorAsk(askQueue, entry, "confirmation:dispatch-external-read");
 				});
 			});
 		},
@@ -2374,12 +2376,13 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			}
 			for (const { entry, reparkIndex } of pending) {
 				await withRegistryScope(entry.options, async () => {
-					if (entry.readRootApproval === true) {
+					if (entry.readRootApproval === true || entry.approve !== undefined) {
 						if (grant === undefined || grant.actionClass !== "read" || (grant.issuer ?? "operator") !== "operator") {
 							reparkEntry(entry, reparkIndex);
 							return;
 						}
 						cleanupParkedEntry(entry);
+						if (entry.approve !== undefined) return entry.approve(grant.requestedBy);
 						const disposition = evaluateAdmission({
 							principal: "main",
 							effects: [entry.call],

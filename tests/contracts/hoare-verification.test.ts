@@ -383,7 +383,7 @@ describe("Hoare contract honesty", () => {
 			for (const scenario of ["unobserved", "unknown", "observed"] as const) {
 				const settings = structuredClone(DEFAULT_SETTINGS);
 				settings.safety.sandbox = "off";
-				settings.safety.sandboxNetwork = true;
+				settings.safety.egress.workers.mode = "open";
 				settings.fleet.retry.maxRetries = 0;
 				const output = JSON.stringify(report(scenario === "unknown" ? "unknown" : "mechanized"));
 				let spawns = 0;
