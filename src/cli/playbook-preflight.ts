@@ -16,6 +16,7 @@ import { isShadowAgent, normalizeAgentSpec, userOriginAudienceRefusal } from "..
 import type { ExecutionPlan } from "../domains/dispatch/execution-plan.js";
 import { gateAuthorContractKind, requestRunRole, withAttemptRole } from "../domains/dispatch/execution-role.js";
 import { compileFleetExecutionPlan } from "../domains/dispatch/fleet-plan.js";
+import { loadSkills } from "../domains/resources/skills/loader.js";
 
 export interface PlaybookPreflightResult {
 	playbook: Playbook;
@@ -103,7 +104,7 @@ export function playbookPreflightDiagnostic(
 }
 
 function discoverSpecs(cwd: string): AgentSpec[] {
-	return discoverAgentRecipes(cwd).map(normalizeAgentSpec);
+	return discoverAgentRecipes(loadSkills, cwd).map(normalizeAgentSpec);
 }
 
 export function inspectPlaybook(name: string, vars?: Readonly<Record<string, string>>): PlaybookPreflightResult {

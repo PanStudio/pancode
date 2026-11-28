@@ -27,7 +27,7 @@ import {
 import { createTurnContext } from "../../src/session-control/turn-context.js";
 import type { TurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 
 function identityInput(): MainPromptCacheIdentityInput {
 	return {

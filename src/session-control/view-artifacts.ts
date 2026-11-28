@@ -3,46 +3,33 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { clockLocal, formatCount, formatElapsed } from "../../core/format-time.js";
-import { parseJsonObjectPayload } from "../../core/json-payload.js";
-import { relativePathEscapes } from "../../core/path-containment.js";
-import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
-import type { Fact } from "../../core/telemetry/fact.js";
-import { renderCalls, renderCompactCount, renderPricing } from "../../core/telemetry/render.js";
-import type { RunResultObject } from "../../core/telemetry/run-schemas.js";
-import { displayImageMimeType, toolResultShotPaths } from "../../core/tool-result-images.js";
-import { expandChainMessages } from "../../core/tool-surface.js";
-import { isRecord } from "../../core/type-guards.js";
-import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
-import { redactSecretString } from "../../lib/secrets/redaction.js";
-import { displayToolCall } from "../../tools/gateway-display.js";
-import type { DispatchContract } from "../dispatch/contract.js";
-import { plainOutcomeLabel } from "../dispatch/failure-headline.js";
-import { hostCheckNotRunNote } from "../dispatch/host-verification-note.js";
-import type { DispatchOwnership } from "../dispatch/ownership.js";
-import { dispatchOwnership, sessionAncestorIds } from "../dispatch/ownership.js";
-import type { RunEnvelope } from "../dispatch/types.js";
-import { listRunEvidence, runEvidence } from "../evidence/run-evidence.js";
-import { readRunGateIndex } from "../evidence/run-trust.js";
-import { formatTrustSummaryLine, trustStateWord, unexecutedHostChecksClause } from "../evidence/trust-projection.js";
-import type { CanonicalTrustStatus, TrustStatusAxis } from "../evidence/trust-status.js";
-import { inspectRunTrustStatus, TRUST_STATUS_AXES } from "../evidence/trust-status.js";
-import type { RunEvidence } from "../evidence/types.js";
-import { type DecisionRow, decisionRow } from "../telemetry/fact-folds.js";
-import type { AccountabilitySummary } from "../telemetry/index.js";
+import { clockLocal, formatCount, formatElapsed } from "../core/format-time.js";
+import { parseJsonObjectPayload } from "../core/json-payload.js";
+import { relativePathEscapes } from "../core/path-containment.js";
+import type { RunTelemetryV1 } from "../core/telemetry/dto.js";
+import type { Fact } from "../core/telemetry/fact.js";
+import { renderCalls, renderCompactCount, renderPricing } from "../core/telemetry/render.js";
+import type { RunResultObject } from "../core/telemetry/run-schemas.js";
+import { displayImageMimeType, toolResultShotPaths } from "../core/tool-result-images.js";
+import { expandChainMessages } from "../core/tool-surface.js";
+import { isRecord } from "../core/type-guards.js";
+import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { plainOutcomeLabel } from "../domains/dispatch/failure-headline.js";
+import { hostCheckNotRunNote } from "../domains/dispatch/host-verification-note.js";
+import type { DispatchOwnership } from "../domains/dispatch/ownership.js";
+import { dispatchOwnership, sessionAncestorIds } from "../domains/dispatch/ownership.js";
+import type { RunEnvelope } from "../domains/dispatch/types.js";
+import { listRunEvidence, runEvidence } from "../domains/evidence/run-evidence.js";
+import { readRunGateIndex } from "../domains/evidence/run-trust.js";
 import {
-	readRunRecord,
-	readRunRecordAsync,
-	summarizeRunAccountability,
-	telemetryJournalPath,
-	telemetryRunDirectory,
-	telemetrySessionDirectory,
-} from "../telemetry/index.js";
-import { callsReport } from "../telemetry/read-model-reports.js";
-import { accountabilityRecords, sessionJournals } from "../telemetry/read-model-runs.js";
-import type { JournalSource, SessionSource } from "../telemetry/read-model-sources.js";
-import { timeline } from "../telemetry/read-model-timeline.js";
-import type { SessionMeta } from "./contract.js";
+	formatTrustSummaryLine,
+	trustStateWord,
+	unexecutedHostChecksClause,
+} from "../domains/evidence/trust-projection.js";
+import type { CanonicalTrustStatus, TrustStatusAxis } from "../domains/evidence/trust-status.js";
+import { inspectRunTrustStatus, TRUST_STATUS_AXES } from "../domains/evidence/trust-status.js";
+import type { RunEvidence } from "../domains/evidence/types.js";
+import type { SessionMeta } from "../domains/session/contract.js";
 import type {
 	BashExecutionEntry,
 	MessageEntry,
@@ -51,14 +38,31 @@ import type {
 	TaskLedgerEntry,
 	TaskLedgerGoal,
 	TaskLedgerValidationEvidence,
-} from "./entries.js";
-import { forkParentSessionId } from "./fork-journal.js";
-import type { MessagePathTone } from "./message-path-view.js";
-import { foldMessagePaths } from "./message-path-view.js";
-import type { SessionPromptCompileRecord } from "./prompt-manifest.js";
-import { readPromptCompileManifest } from "./prompt-manifest.js";
-import { foldSessionArtifacts, resolveSessionArtifactPath } from "./session-artifacts.js";
-import { filterEntriesToActivePath } from "./tree/active-path.js";
+} from "../domains/session/entries.js";
+import { forkParentSessionId } from "../domains/session/fork-journal.js";
+import type { MessagePathTone } from "../domains/session/message-path-view.js";
+import { foldMessagePaths } from "../domains/session/message-path-view.js";
+import type { SessionPromptCompileRecord } from "../domains/session/prompt-manifest.js";
+import { readPromptCompileManifest } from "../domains/session/prompt-manifest.js";
+import { foldSessionArtifacts, resolveSessionArtifactPath } from "../domains/session/session-artifacts.js";
+import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
+import { type DecisionRow, decisionRow } from "../domains/telemetry/fact-folds.js";
+import type { AccountabilitySummary } from "../domains/telemetry/index.js";
+import {
+	readRunRecord,
+	readRunRecordAsync,
+	summarizeRunAccountability,
+	telemetryJournalPath,
+	telemetryRunDirectory,
+	telemetrySessionDirectory,
+} from "../domains/telemetry/index.js";
+import { callsReport } from "../domains/telemetry/read-model-reports.js";
+import { accountabilityRecords, sessionJournals } from "../domains/telemetry/read-model-runs.js";
+import type { JournalSource, SessionSource } from "../domains/telemetry/read-model-sources.js";
+import { timeline } from "../domains/telemetry/read-model-timeline.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
+import { displayToolCall } from "../tools/gateway-display.js";
 
 export type ViewArtifactCategory =
 	| "changes"
@@ -1622,7 +1626,7 @@ class SafetyAuditArtifactProvider implements ArtifactProvider {
 		let source: SessionSource | null;
 		try {
 			// The journal loader reaches run records and dispatch; the /view list loads it only when opened.
-			const { loadSessionTelemetrySourceAsync } = await import("../telemetry/index.js");
+			const { loadSessionTelemetrySourceAsync } = await import("../domains/telemetry/index.js");
 			source = await loadSessionTelemetrySourceAsync(this.deps.stateDir, sessionId);
 		} catch {
 			return [];
@@ -1672,7 +1676,7 @@ class MessagePathArtifactProvider implements ArtifactProvider {
 		const sessionId = this.deps.sessionMeta?.id;
 		if (!sessionId) return [];
 		// The journal loader reaches run records and dispatch; the /view list loads it only when opened.
-		const { loadSessionTelemetrySourceAsync } = await import("../telemetry/index.js");
+		const { loadSessionTelemetrySourceAsync } = await import("../domains/telemetry/index.js");
 		const source = await loadSessionTelemetrySourceAsync(this.deps.stateDir, sessionId);
 		if (source === null) return [];
 		const now = new Date();

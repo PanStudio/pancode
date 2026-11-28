@@ -31,8 +31,8 @@ import {
 } from "../../src/tools/ask-user.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { resolveToolRow } from "../../src/tools/presentation.js";
+import type { AskUserToolPolicy } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { AskUserToolPolicy } from "../../src/tools/registry-contract.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";

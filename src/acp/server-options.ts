@@ -26,7 +26,7 @@ import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { MachineTurnProjectionHost } from "../session-control/job-turn-types.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import type { AcpArtifactsSource } from "./artifacts.js";
 import type { AcpAsideControl } from "./aside.js";
 import type { AcpBoardSource } from "./board.js";

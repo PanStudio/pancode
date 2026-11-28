@@ -18,7 +18,7 @@ import { sessionChangesTree } from "../../domains/safety/run-effects.js";
 import { seedRecallLineage } from "../../lib/worker-wire/context-seed.js";
 import type { WorkerBudget } from "../../lib/worker-wire/spec-contract.js";
 import { createWorkerGitContext } from "../../tools/git-exec.js";
-import type { RegistryDeps } from "../../tools/registry-contract.js";
+import type { RegistryDeps } from "../../tools/registry/contract.js";
 import { clearTaskGates, configureWorkerTaskGates, contractDeclaresTaskGates } from "../../tools/verify/task-gates.js";
 import {
 	callRepeatsAsRead,
@@ -147,8 +147,8 @@ export function createWorkerGating(scope: WorkerRunScope) {
 		// cap in addition to repetition blocking, plus the synthesis lockout:
 		// after the loop-block budget the worker is told to report from what it
 		// gathered instead of burning the lifetime cap on a retry spiral, and
-		// the bounded backstop reason is watched in telemetry.onFinish below to
-		// abort a worker that keeps calling tools anyway.
+		// the bounded backstop reason is watched in telemetry.onFinish in
+		// worker-runtime.ts to abort a worker that keeps calling tools anyway.
 		[
 			loopGuardRegistration,
 			...(readStreakRegistration !== null ? [readStreakRegistration] : []),

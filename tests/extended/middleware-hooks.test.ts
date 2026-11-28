@@ -50,8 +50,8 @@ import { runTriageRound, type TriageSystemOne } from "../../src/session-control/
 import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { createTurnOutcomeCollector } from "../../src/session-control/turn-outcome-collector.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import type { ToolInvokeOptions } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolInvokeOptions } from "../../src/tools/registry-contract.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { middlewareOwner } from "../harness/middleware-owner.js";
 import { trustProjectPackages } from "../harness/project-trust.js";

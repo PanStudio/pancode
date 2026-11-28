@@ -8,11 +8,12 @@ import { settingsPath, updateSettings } from "../../src/core/config.js";
 import { loadDomains } from "../../src/core/domain-loader.js";
 import { readStrictLayeredSettings } from "../../src/core/settings-layers.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
-import { AgentsDomainModule } from "../../src/domains/agents/module.js";
+import { createAgentsDomainModule } from "../../src/domains/agents/module.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../../src/domains/config/module.js";
 import { ExtensionsDomainModule } from "../../src/domains/extensions/module.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { PluginsDomainModule } from "../../src/domains/plugins/module.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../../src/domains/safety/module.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -29,7 +30,7 @@ test("config validates the actual mutation result before publishing or writing i
 			SafetyDomainModule,
 			ExtensionsDomainModule,
 			PluginsDomainModule,
-			AgentsDomainModule,
+			createAgentsDomainModule({ loadSkills }),
 		]);
 		try {
 			const config = loaded.getContract("config");
@@ -108,7 +109,7 @@ test("a boot-time hold keeps a watched settings write until the agents namespace
 				SafetyDomainModule,
 				ExtensionsDomainModule,
 				PluginsDomainModule,
-				AgentsDomainModule,
+				createAgentsDomainModule({ loadSkills }),
 			],
 			{
 				async beforeEach() {

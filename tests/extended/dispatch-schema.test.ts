@@ -18,6 +18,7 @@ import { assessCapabilityMismatch } from "../../src/domains/dispatch/capability-
 import { normalizeDispatchIntent } from "../../src/domains/dispatch/intent.js";
 import { mergeOperatorNamedChecks, operatorNamedChecks } from "../../src/domains/dispatch/operator-checks.js";
 import { scoutReadWorkspace } from "../../src/domains/dispatch/scout-workspace.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { streamSimple } from "../../src/engine/ai.js";
 import type { EngineModel } from "../../src/engine/types.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
@@ -187,7 +188,7 @@ describe("dispatch schema composition", () => {
 			/^Job table \([^)]*\): inspect=scout; review a diff=reviewer; run checks=verifier; diagnose a failure=debugger; add tests=tester; implement=coder;/u,
 		);
 		// The ruled reviewer: read-only by class, verify required, its verdict in the review gate's shape.
-		const reviewer = discoverAgentRecipes(process.cwd()).find((recipe) => recipe.id === "reviewer");
+		const reviewer = discoverAgentRecipes(loadSkills, process.cwd()).find((recipe) => recipe.id === "reviewer");
 		assert.ok(reviewer);
 		const spec = normalizeAgentSpec(reviewer);
 		assert.equal(spec.capabilityClass, "verification");

@@ -151,7 +151,7 @@ export function registerBootTurnHooks(input: BootTurnHooksInput) {
 			cells.deferredWatchdogNoticeSink(notice);
 		} else if (options.acp !== undefined) {
 			// ACP has no advisory channel outside a prompt; record it where the
-			// routing notices already go (see the ConfigNextTurn subscriber below).
+			// routing notices already go (see the config.next_turn_scheduled subscriber in boot/acp-surface.ts).
 			try {
 				session?.appendEntry({
 					kind: "custom",

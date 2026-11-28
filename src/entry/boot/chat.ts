@@ -61,7 +61,7 @@ import type { AskUserHandler } from "../../tools/ask-user.js";
 import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
 import { mcpSubmitReader } from "../../tools/gateway/mcp-submit-reader.js";
-import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolRegistry } from "../../tools/registry/contract.js";
 import type { VisionSidecar } from "../../tools/vision-sidecar.js";
 import type { BootOptions } from "../boot-options.js";
 import type { ExtensionReloadCoordinator } from "../extension-reload.js";

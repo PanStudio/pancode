@@ -30,7 +30,6 @@ import {
 import type { ResourcesContract } from "../domains/resources/index.js";
 import { installSkill } from "../domains/resources/skills/marketplace.js";
 import type { SessionContract, SessionEntry } from "../domains/session/index.js";
-import { verifyRunRecordReport } from "../domains/session/view-artifacts.js";
 import { archiveCommandHost, type ShareArchiver } from "../domains/share/index.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
@@ -52,6 +51,7 @@ import type {
 } from "../session-control/slash-command-types.js";
 import { parseSlashCommand, type SettingsAreaId } from "../session-control/slash-commands.js";
 import { dispatchSlashCommand } from "../session-control/slash-dispatch.js";
+import { verifyRunRecordReport } from "../session-control/view-artifacts.js";
 import type { WorkerEntryState } from "../session-control/worker-stream.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import type { JobOperations } from "../tools/job-types.js";

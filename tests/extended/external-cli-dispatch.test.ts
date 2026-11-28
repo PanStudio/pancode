@@ -15,7 +15,7 @@ import { closeAgentLedger, openAgentLedger, readAgentLedger } from "../../src/do
 import { type DispatchIntent, declaredScopeIntent } from "../../src/domains/dispatch/intent.js";
 import codexCliRuntime from "../../src/domains/providers/runtimes/codex/codex-cli.js";
 import { opencodeCliRuntime, piCliRuntime } from "../../src/domains/providers/runtimes/external-cli-peers.js";
-import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
+import { verifyRunRecordReport } from "../../src/session-control/view-artifacts.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

@@ -34,8 +34,6 @@ import { foldRecallTelemetry } from "../domains/session/recall-telemetry.js";
 import { foldSessionArtifacts } from "../domains/session/session-artifacts.js";
 import { foldSessionTaskHistory } from "../domains/session/task-board.js";
 import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
-import type { ArtifactProviderDeps } from "../domains/session/view-artifacts.js";
-import { createDefaultArtifactProviders } from "../domains/session/view-artifacts.js";
 import type { GitChanges } from "../domains/session/workspace/git-probe.js";
 import { probeGitChangesAsync } from "../domains/session/workspace/git-probe.js";
 import type { SystemOne } from "../domains/system-one/index.js";
@@ -52,6 +50,8 @@ import type {
 	FleetRunStartOptions,
 	UsageTab,
 } from "../session-control/slash-command-types.js";
+import type { ArtifactProviderDeps } from "../session-control/view-artifacts.js";
+import { createDefaultArtifactProviders } from "../session-control/view-artifacts.js";
 import type { OpenContextOverlayOptions } from "./context-overlay.js";
 import { openContextOverlay } from "./context-overlay.js";
 import { type createDispatchBoardView, dispatchBoardEscapeEntry, dispatchBoardHintEntries } from "./dispatch-board.js";

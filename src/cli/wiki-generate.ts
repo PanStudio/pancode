@@ -25,7 +25,7 @@ import { ALL_TOOL_NAMES, ToolNames } from "../core/tool-names.js";
 import { isRecord } from "../core/type-guards.js";
 import type { ThinkingLevel } from "../core/views/thinking-levels.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { AgentsDomainModule } from "../domains/agents/module.js";
+import { createAgentsDomainModule } from "../domains/agents/module.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ContextDomainModule } from "../domains/context/module.js";
 import { pageSourceIndex } from "../domains/context/wiki/assemble.js";
@@ -58,6 +58,7 @@ import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { canonicalizeWireModelId } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
 import { ResourcesDomainModule } from "../domains/resources/module.js";
+import { loadSkills } from "../domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
@@ -1070,7 +1071,7 @@ async function loadWikiDispatch(): Promise<{
 		ProvidersDomainModule,
 		SafetyDomainModule,
 		createPromptsDomainModule({ noContextFiles: true }),
-		AgentsDomainModule,
+		createAgentsDomainModule({ loadSkills }),
 		workerHooks.middlewareModule,
 		SessionDomainModule,
 		createTelemetryDomainModule({ retention: retentionPruners }),

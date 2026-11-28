@@ -41,6 +41,16 @@ export {
 	type RigorSource,
 	resolveRigor,
 } from "./rigor.js";
+export {
+	capabilityClassExcludes,
+	capabilityClassRole,
+	capabilityClassWritesNothing,
+	type RoleClass,
+	roleExcludes,
+	roleHeldTools,
+	roleRemedy,
+	toolActionClass,
+} from "./role-class.js";
 export { callChangesTree, sessionChangesTree } from "./run-effects.js";
 export {
 	describeValidationContract,

@@ -19,7 +19,7 @@ import type { DispatchBackgroundRegistry } from "./dispatch-background.js";
 import type { DispatchPlanView, ResolvedDispatchPlanArtifact } from "./dispatch-plan.js";
 import type { DispatchRunEventRegistry } from "./dispatch-run-events.js";
 import type { DispatchSchemaComposition } from "./dispatch-schema.js";
-import type { DispatchReadRootTask, ToolInvokeOptions } from "./registry-contract.js";
+import type { DispatchReadRootTask, ToolInvokeOptions } from "./registry/contract.js";
 
 export type DispatchMode = "parallel" | "sequential" | "pipeline" | "compete" | "council";
 

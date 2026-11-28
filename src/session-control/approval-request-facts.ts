@@ -28,7 +28,7 @@ import { redactCommandOutputSecrets } from "../lib/secrets/redact.js";
 import { redactSecretString } from "../lib/secrets/redaction.js";
 import { askUserExposure } from "../tools/ask-user.js";
 import type { Edit } from "../tools/edit-diff.js";
-import type { PermissionRequiredMeta } from "../tools/registry-contract.js";
+import type { PermissionRequiredMeta } from "../tools/registry/contract.js";
 import { resolveVerifyCall, verifyResolutionArgv } from "../tools/verify/resolve.js";
 import { prepareVerifyArguments } from "../tools/verify/surface.js";
 import type { ApprovalRequestView, MutationFacts } from "./approval-request-view.js";

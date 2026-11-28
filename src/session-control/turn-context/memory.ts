@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { sha256Hex } from "../core/hash.js";
-import { requestFits } from "../domains/context/budget/request-fit.js";
-import { estimateAgentMessageTokens } from "../domains/session/context-accounting.js";
-import type { HostInsertRecord, SessionEntry } from "../domains/session/entries.js";
-import { findLastEntry } from "../domains/session/tree/active-path.js";
-import type { AgentMessage } from "../engine/types.js";
-import type { TurnContext } from "./turn-context.js";
-import type { TurnContextScope } from "./turn-context-scope.js";
+import { sha256Hex } from "../../core/hash.js";
+import { requestFits } from "../../domains/context/budget/request-fit.js";
+import { estimateAgentMessageTokens } from "../../domains/session/context-accounting.js";
+import type { HostInsertRecord, SessionEntry } from "../../domains/session/entries.js";
+import { findLastEntry } from "../../domains/session/tree/active-path.js";
+import type { AgentMessage } from "../../engine/types.js";
+import type { TurnContext } from "../turn-context.js";
+import type { TurnContextScope } from "./scope.js";
 
 /**
  * The memory section the active path's last prompt compile recorded, or null when none was recorded since the last

@@ -5,11 +5,11 @@ import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { isRecord } from "../../core/type-guards.js";
 import { enumerateWorkspaceFiles } from "../../core/workspace-files.js";
 import { interopUserHome } from "../../core/xdg.js";
-import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
 import { instructionUnits } from "./instruction-units.js";
 import type { TreeFact } from "./tree-facts.js";
 import { contradictingFact, factClaims, treeFacts } from "./tree-facts.js";

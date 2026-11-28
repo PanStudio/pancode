@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { loadDomains } from "../core/domain-loader.js";
-import { AgentsDomainModule } from "../domains/agents/module.js";
+import { createAgentsDomainModule } from "../domains/agents/module.js";
 import { type AgentSpec, isUserVisibleAgent } from "../domains/agents/spec.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { ensurePancodeState } from "../domains/install/index.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
+import { loadSkills } from "../domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import { writeCliFailure } from "./kit/json-out.js";
 
@@ -52,7 +53,7 @@ export async function runAgentsCommand(args: ReadonlyArray<string>): Promise<num
 		SafetyDomainModule,
 		ExtensionsDomainModule,
 		PluginsDomainModule,
-		AgentsDomainModule,
+		createAgentsDomainModule({ loadSkills }),
 	]);
 	const agents = result.getContract("agents");
 	if (!agents) {
@@ -88,7 +89,7 @@ async function runAgentsValidate(args: ReadonlyArray<string>): Promise<number> {
 	ensurePancodeState();
 	const { formatHarnessIssues, validateHarnessAt } = await import("../domains/agents/harness-validate.js");
 	const workspaceRoot = process.cwd();
-	const issues = validateHarnessAt(workspaceRoot);
+	const issues = validateHarnessAt(workspaceRoot, { loadSkills });
 	if (json) {
 		process.stdout.write(`${JSON.stringify({ ok: issues.length === 0, workspaceRoot, issues }, null, 2)}\n`);
 	} else if (issues.length === 0) {

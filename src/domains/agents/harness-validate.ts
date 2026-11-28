@@ -20,12 +20,12 @@ import { captureProjectSurface } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isWorkerSurfaceExcludedTool } from "../../tools/policy.js";
 import { mcpSkillReferenceServer } from "../mcp/skills.js";
-import { resolvePackageReferences } from "../resources/package-references.js";
-import { loadSkills, type Skill, type SkillList } from "../resources/skills/loader.js";
+import type { Skill, SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
+import { resolvePackageReferences } from "./package-references.js";
 import type { AgentRecipe } from "./recipe.js";
 import { parseAgentRecipeSchemaIssues } from "./recipe-schema.js";
-import { type AgentRecipeDiagnostic, discoverAgentRecipes } from "./registry.js";
+import { type AgentRecipeDiagnostic, discoverAgentRecipes, type SkillCatalogLoader } from "./registry.js";
 import { agentSpecPolicyErrors, normalizeAgentSpec } from "./spec.js";
 
 /**
@@ -546,6 +546,8 @@ function readPackageScripts(workspaceRoot: string): ReadonlySet<string> | null {
 }
 
 export interface CollectHarnessOptions {
+	/** The resources domain's skill catalog reader; recipes bind against it and the skill checks read it. */
+	loadSkills: SkillCatalogLoader;
 	/** Validate only this recipe file (absolute path); the catalog and settings still load so its references resolve. */
 	recipeFile?: string;
 }
@@ -557,7 +559,7 @@ export interface CollectHarnessOptions {
  * inputs for custom recipes. Never throws: a loader that fails leaves its part
  * empty and the artifacts still get their own checks.
  */
-export function collectHarnessInput(workspaceRoot: string, options: CollectHarnessOptions = {}): HarnessInput {
+export function collectHarnessInput(workspaceRoot: string, options: CollectHarnessOptions): HarnessInput {
 	let configDir: string | null = null;
 	try {
 		configDir = pancodeConfigDir();
@@ -573,13 +575,13 @@ export function collectHarnessInput(workspaceRoot: string, options: CollectHarne
 	const catalogDiagnostics: AgentRecipeDiagnostic[] = [];
 	let catalog: ReadonlyArray<AgentRecipe> = [];
 	try {
-		catalog = discoverAgentRecipes(workspaceRoot, catalogDiagnostics);
+		catalog = discoverAgentRecipes(options.loadSkills, workspaceRoot, catalogDiagnostics);
 	} catch {
 		// A shipped recipe defect aborts discovery; the custom files still get their own pass.
 	}
 	let skills: SkillList = { items: [], diagnostics: [] };
 	try {
-		skills = loadSkills({ cwd: workspaceRoot, trustProjectCompatRoots: trustProjectImports });
+		skills = options.loadSkills({ cwd: workspaceRoot, trustProjectCompatRoots: trustProjectImports });
 	} catch (error) {
 		skills = {
 			items: [],
@@ -676,6 +678,6 @@ export function collectHarnessInput(workspaceRoot: string, options: CollectHarne
 }
 
 /** Collect and validate in one call. */
-export function validateHarnessAt(workspaceRoot: string, options: CollectHarnessOptions = {}): HarnessIssue[] {
+export function validateHarnessAt(workspaceRoot: string, options: CollectHarnessOptions): HarnessIssue[] {
 	return validateHarness(collectHarnessInput(workspaceRoot, options));
 }

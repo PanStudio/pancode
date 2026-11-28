@@ -35,8 +35,8 @@ import type { TurnMiddleware } from "../../src/session-control/turn-middleware.j
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { createContextTool } from "../../src/tools/context/index.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";

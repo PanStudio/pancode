@@ -13,7 +13,7 @@ import { formatAskUserQuestion, optionAsksForText } from "../../src/interactive/
 import { GLYPH } from "../../src/interactive/theme/index.js";
 import type { UnattendedTimers } from "../../src/interactive/unattended-countdown.js";
 import type { AskUserQuestion, AskUserResult } from "../../src/tools/ask-user.js";
-import { createHarnessHold } from "../../src/tools/registry-contract.js";
+import { createHarnessHold } from "../../src/tools/registry/contract.js";
 
 const ENTER = "\r";
 const DOWN = "\u001b[B";

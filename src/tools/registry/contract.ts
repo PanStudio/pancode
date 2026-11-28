@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import type { EgressCallerSettings } from "../core/defaults.js";
-import type { ModelRunInfo } from "../core/model-tier.js";
-import type { MainSandboxPolicy, YoloScriptSandboxState } from "../core/sandbox/main-session.js";
+import type { EgressCallerSettings } from "../../core/defaults.js";
+import type { ModelRunInfo } from "../../core/model-tier.js";
+import type { MainSandboxPolicy, YoloScriptSandboxState } from "../../core/sandbox/main-session.js";
 import type {
 	HomeReadList,
 	ResourceLimits,
@@ -11,32 +11,32 @@ import type {
 	SandboxEnvPolicy,
 	SandboxMode,
 	UnixSocketMode,
-} from "../core/sandbox/types.js";
-import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
-import type { ToolName } from "../core/tool-names.js";
-import type { TurnConstraints } from "../core/turn-constraints.js";
-import type { MiddlewareContract } from "../domains/middleware/contract.js";
+} from "../../core/sandbox/types.js";
+import type { PendingSkillToolPolicy } from "../../core/skill-activation.js";
+import type { ToolName } from "../../core/tool-names.js";
+import type { TurnConstraints } from "../../core/turn-constraints.js";
+import type { MiddlewareContract } from "../../domains/middleware/contract.js";
 import type {
 	MiddlewareEffect,
 	MiddlewareHookInput,
 	MiddlewareReminderSeverity,
 	ToolCallLanding,
-} from "../domains/middleware/types.js";
-import type { ActionClass, ClassifierCall } from "../domains/safety/action-classifier.js";
-import type { AdmissionGitContext, AdmissionPrincipal, ApprovalAuthority } from "../domains/safety/admission.js";
-import type { OpenDecisionKind } from "../domains/safety/autonomy-window.js";
-import type { SafetyContract, SafetyDecision } from "../domains/safety/contract.js";
-import type { DecisionPresentation } from "../domains/safety/decision-presentation.js";
-import type { ToolDenial } from "../domains/safety/denial.js";
-import type { EscapeScope, EscapeScopeLedger } from "../domains/safety/escape-scope.js";
-import type { GitHookDriftGuard } from "../domains/safety/hook-drift.js";
-import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
-import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
-import type { SessionCodeConsent } from "../domains/safety/session-code-consent.js";
-import type { WorkspaceSnapshotOutcome, WorkspaceSnapshotRequest } from "../domains/workspace-snapshots/store.js";
-import type { AutonomyExposure, AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import type { DispatchPlanView } from "./dispatch-plan.js";
-import type { ToolResult, ToolSpec } from "./tool-spec.js";
+} from "../../domains/middleware/types.js";
+import type { ActionClass, ClassifierCall } from "../../domains/safety/action-classifier.js";
+import type { AdmissionGitContext, AdmissionPrincipal, ApprovalAuthority } from "../../domains/safety/admission.js";
+import type { OpenDecisionKind } from "../../domains/safety/autonomy-window.js";
+import type { SafetyContract, SafetyDecision } from "../../domains/safety/contract.js";
+import type { DecisionPresentation } from "../../domains/safety/decision-presentation.js";
+import type { ToolDenial } from "../../domains/safety/denial.js";
+import type { EscapeScope, EscapeScopeLedger } from "../../domains/safety/escape-scope.js";
+import type { GitHookDriftGuard } from "../../domains/safety/hook-drift.js";
+import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
+import type { SafetyJudgeSeat } from "../../domains/safety/safety-judge.js";
+import type { SessionCodeConsent } from "../../domains/safety/session-code-consent.js";
+import type { WorkspaceSnapshotOutcome, WorkspaceSnapshotRequest } from "../../domains/workspace-snapshots/store.js";
+import type { AutonomyExposure, AutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import type { DispatchPlanView } from "../dispatch-plan.js";
+import type { ToolResult, ToolSpec } from "../tool-spec.js";
 
 export interface RegistryDeps {
 	safety: SafetyContract;
@@ -340,7 +340,7 @@ export interface ToolInvokeOptions {
 	 */
 	flowAdmitsFileTarget?: (url: string) => string | null;
 	/** Trusted submitting host identity for nested dispatch; never model arguments. */
-	hostRun?: import("../domains/dispatch/contract.js").DispatchPreparationOptions["hostRun"];
+	hostRun?: import("../../domains/dispatch/contract.js").DispatchPreparationOptions["hostRun"];
 	/**
 	 * Set by the main session's registry while it admits at yolo (#419), so a
 	 * tool's own workspace confinement (a bash or run_script cwd) can follow the
