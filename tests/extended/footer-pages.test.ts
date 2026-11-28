@@ -154,7 +154,7 @@ test("the footer exposes workspace, model identity and worker count in bounded r
 	idle.dispatchRows = [];
 	strictEqual(renderCompactDashboard(idle, 40).length, 1, "a narrow idle footer is one row");
 	const text = plain(renderCompactDashboard(state(), 160));
-	match(text, /1 worker/);
+	match(text, /✓ ready · ● 1 running/);
 	match(text, /^\s*▐∀▌ /);
 	match(text, /ctx /);
 	match(text, /pancode.*v050/);
@@ -437,7 +437,7 @@ test("the status line stays calm and reports live workers cleanly at every width
 	snapshot.session.activeSkills = ["tdd", "perf-review"];
 	for (const width of [40, 60, 100]) {
 		const row = facts(width);
-		if (width >= 60) match(row, /1 worker/u);
+		if (width >= 60) match(row, /● 1 running/u);
 		doesNotMatch(row, /……|skill/u);
 		ok(visibleWidth(row) <= width, row);
 	}

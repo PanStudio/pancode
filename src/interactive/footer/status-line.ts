@@ -46,6 +46,7 @@ import { skinEpoch } from "../theme/tokens.js";
 import { type ContextOccupancyFacts, contextRailUnit, thinkingRailUnit } from "./context-rail.js";
 import type { FooterDashboardRenderState } from "./dashboard.js";
 import { extensionFactLine, extensionFactsKey } from "./extension-facts.js";
+import { liveRunCounts } from "./fleet-band.js";
 import { footerKeyHint } from "./key-hints.js";
 import { phaseElapsedMs } from "./live-work.js";
 import { type Notification, notificationGlyph, notificationToken, topNotification } from "./notifications.js";
@@ -217,12 +218,17 @@ export function renderPhaseSegment(
 				: `${theme.fg("activity", GLYPH.running)} ${theme.fg("activity", clean(bg.purpose))}`;
 			return truncateToWidth(text, Math.max(1, room), GLYPH.ellipsis, false);
 		}
-		const liveWorkers =
-			state.fleetBandVisible === true || state.fleetBoardOpen === true
-				? 0
-				: workerRowsOf(state.dispatchRows).filter((row) => ACTIVE_DISPATCH_STATUSES.has(row.status)).length;
-		if (liveWorkers > 0) {
-			const countText = `${GLYPH.workerAgent} ${liveWorkers} ${liveWorkers === 1 ? "worker" : "workers"}`;
+		// The same live runs the Fleet band counts, a plan as one run, whether or not the band shows: hiding the count
+		// beside a visible band left the footer reading `✓ ready` alone while a plan ran.
+		const live = liveRunCounts(state.dispatchRows, now);
+		const running = live.running + live.unverified + live.failed + live.cancelled + live.ok;
+		const counts = [
+			...(live.waiting > 0 ? [`${GLYPH.phaseBlocked} ${live.waiting} waiting`] : []),
+			...(running > 0 ? [`${GLYPH.running} ${running} running`] : []),
+			...(live.queued > 0 ? [`${GLYPH.queued} ${live.queued} queued`] : []),
+		];
+		if (counts.length > 0) {
+			const countText = counts.join(` ${GLYPH.sep} `);
 			const withReady = `${theme.fg("success", `${GLYPH.ok} ready`)}${sep}${theme.fg("activity", countText)}`;
 			if (visibleWidth(withReady) <= room) return withReady;
 			return truncateToWidth(theme.fg("activity", countText), Math.max(1, room), GLYPH.ellipsis, false);

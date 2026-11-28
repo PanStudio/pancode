@@ -24,7 +24,8 @@ import {
 
 /**
  * The v1 recipe frontmatter schema, split into the keys every recipe must
- * declare and the keys it may. Exported because `scripts/check-release.mjs`
+ * declare and the keys it may. `audience` is required only of a shipped recipe;
+ * any other recipe takes `custom` from where it lives. Exported because `scripts/check-release.mjs`
  * enforces the same schema against the built recipes in the tarball and used to
  * carry its own copy of the list, which drifted the moment `product` was added.
  * A contract test holds the gate against these two arrays.
@@ -86,24 +87,21 @@ function enumArray<T extends string>(value: unknown, path: string, predicate: (v
  * reach it, so a discovered recipe declaring `shadow` or `internal` would hide
  * itself from `pancode agents` while staying reachable by internal orchestration,
  * and one declaring `base` would present itself as shipped. Only recipes PanCode
- * ships may name any audience; everything discovered under a user or project
- * root is `custom`. The declaration is rejected rather than coerced, because a
- * recipe whose audience was quietly rewritten is a recipe whose author still
- * believes it is hidden.
+ * ships declare an audience; everything discovered under a plugin, user or
+ * project root is `custom` by location and may omit the line. Any other claim is
+ * rejected rather than coerced, because a recipe whose audience was quietly
+ * rewritten is a recipe whose author still believes it is hidden.
  */
 function parseAudience(value: unknown, source: AgentRecipe["source"], filepath: string): AgentAudience {
-	const audience = enumValue<AgentAudience>(value, `${filepath}: audience`, isAgentAudience);
-	if (source === "builtin") {
-		if (audience === "custom") {
-			throw new Error(`agent recipe: ${filepath}: a builtin recipe must not declare audience 'custom'`);
-		}
-		return audience;
-	}
-	if (audience !== "custom") {
+	if (source !== "builtin") {
+		if (value === undefined || value === "custom") return "custom";
 		throw new Error(
-			`agent recipe: ${filepath}: a ${source} recipe must declare audience 'custom', not '${audience}'; ` +
-				"audience follows where the recipe was discovered and cannot be claimed in frontmatter",
+			`agent recipe: ${filepath}: audience is set by where the recipe lives, and a ${source} recipe is always 'custom'; remove the audience line`,
 		);
+	}
+	const audience = enumValue<AgentAudience>(value, `${filepath}: audience`, isAgentAudience);
+	if (audience === "custom") {
+		throw new Error(`agent recipe: ${filepath}: a builtin recipe must not declare audience 'custom'`);
 	}
 	return audience;
 }
@@ -286,6 +284,7 @@ export function parseAgentRecipeSchemaIssues(input: ParseRecipeSchemaInput): Par
 		}
 	}
 	for (const key of RECIPE_KEYS) {
+		if (key === "audience" && input.source !== "builtin") continue;
 		if (!(key in frontmatter)) issues.push({ field: key, message: `agent recipe: ${filepath}: ${key} is required` });
 	}
 	if ("version" in frontmatter && frontmatter.version !== 1) {
@@ -332,7 +331,7 @@ export function parseAgentRecipeSchemaIssues(input: ParseRecipeSchemaInput): Par
 		"skills" in frontmatter ? stringArrayIssues(frontmatter.skills, `${filepath}: skills`, "skills") : [];
 	issues.push(...skillProblems);
 	const audience =
-		"audience" in frontmatter
+		"audience" in frontmatter || input.source !== "builtin"
 			? attempt("audience", () => parseAudience(frontmatter.audience, input.source, filepath))
 			: undefined;
 	const category =

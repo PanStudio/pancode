@@ -72,6 +72,7 @@ import {
 	writeFleetRootRecord,
 } from "../domains/dispatch/fleet-root-record.js";
 import type { FleetRunStepOutcome } from "../domains/dispatch/fleet-run-types.js";
+import { fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
 import {
 	describeFleetResumeDiff,
 	type ExecuteFleetRunInput,
@@ -919,7 +920,15 @@ async function runFleetTracked(
 		return finishFleetRun(options, reporter, track, settledExitCode(outcome.cleanRun), shutdownSignal?.aborted === true);
 	}
 	reporter.stdout(
-		`fleet ${playbook.name}: ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded, ${outcome.resolvedLoopCount}/${outcome.result.loops.length} loops resolved, total cost ${renderPricingSum(outcome.totalCost)}\n`,
+		`fleet ${playbook.name}: ${fleetStepCountText({
+			ran: outcome.ranStepCount,
+			planned: outcome.plannedStepCount,
+			succeeded: outcome.succeededStepCount,
+			required: outcome.requiredStepCount,
+			...(outcome.result.loops.length > 0
+				? { loops: { resolved: outcome.resolvedLoopCount, total: outcome.result.loops.length } }
+				: {}),
+		})}, ${fleetLoopText({ resolved: outcome.resolvedLoopCount, total: outcome.result.loops.length })}, total cost ${renderPricingSum(outcome.totalCost)}\n`,
 	);
 	for (const loop of outcome.result.loops) {
 		reporter.stdout(
